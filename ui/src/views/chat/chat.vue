@@ -1,11 +1,11 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
-import { computed, ref, watch, h, onMounted, onBeforeMount, nextTick, type Component, inject, reactive } from 'vue'
+import { computed, ref, watch, h, onMounted, onBeforeMount, onBeforeUnmount, nextTick, type Component, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message } from '@satorijs/protocol'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Eye, EyeOff } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import UploadSupport from './components/upload.vue'
@@ -77,6 +77,75 @@ async function replaceUsernames(text: string) {
 
 const instantMessages = reactive(new Set<Message>());
 
+interface TypingPreviewItem {
+  userId: string;
+  displayName: string;
+  avatar?: string;
+  content: string;
+  indicatorOnly: boolean;
+}
+
+const typingPreviewStorageKey = 'sealchat.typingPreviewEnabled';
+const typingPreviewEnabled = ref(localStorage.getItem(typingPreviewStorageKey) === 'true');
+const typingPreviewActive = ref(false);
+const typingPreviewList = ref<TypingPreviewItem[]>([]);
+let lastTypingChannelId = '';
+
+const upsertTypingPreview = (item: TypingPreviewItem) => {
+  typingPreviewList.value = typingPreviewList.value.filter((i) => i.userId !== item.userId);
+  typingPreviewList.value.push(item);
+};
+
+const removeTypingPreview = (userId?: string) => {
+  if (!userId) {
+    return;
+  }
+  typingPreviewList.value = typingPreviewList.value.filter((item) => item.userId !== userId);
+};
+
+const resetTypingPreview = () => {
+  typingPreviewList.value = [];
+};
+
+const sendTypingUpdate = throttle((enabled: boolean, content: string, channelId: string) => {
+  chat.messageTyping(enabled, content, channelId);
+}, 400, { leading: true, trailing: true });
+
+const stopTypingPreviewNow = () => {
+  sendTypingUpdate.cancel();
+  if (typingPreviewActive.value && lastTypingChannelId) {
+    chat.messageTyping(false, '', lastTypingChannelId);
+  }
+  typingPreviewActive.value = false;
+  lastTypingChannelId = '';
+};
+
+const emitTypingPreview = () => {
+  if (chat.connectState !== 'connected') return;
+  const channelId = chat.curChannel?.id;
+  if (!channelId) return;
+
+  const raw = textToSend.value;
+  if (raw.trim().length === 0) {
+    stopTypingPreviewNow();
+    return;
+  }
+
+  typingPreviewActive.value = true;
+  lastTypingChannelId = channelId;
+  const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
+  const content = typingPreviewEnabled.value ? truncated : '';
+  sendTypingUpdate(true, content, channelId);
+};
+
+const typingPreviewTooltip = computed(() =>
+  typingPreviewEnabled.value ? '关闭实时输入预览' : '开启实时输入预览'
+);
+
+const toggleTypingPreview = () => {
+  typingPreviewEnabled.value = !typingPreviewEnabled.value;
+};
+
 const textToSend = ref('');
 const send = throttle(async () => {
   if (chat.connectState !== 'connected') {
@@ -93,6 +162,7 @@ const send = throttle(async () => {
     return;
   }
   let replyTo = chat.curReplyTo || undefined;
+  stopTypingPreviewNow();
   textToSend.value = '';
   chat.curReplyTo = null;
 
@@ -139,6 +209,24 @@ const send = throttle(async () => {
 
   scrollToBottom();
 }, 500);
+
+watch(textToSend, () => {
+  emitTypingPreview();
+});
+
+watch(typingPreviewEnabled, (enabled) => {
+  localStorage.setItem(typingPreviewStorageKey, enabled ? 'true' : 'false');
+  if (!typingPreviewActive.value || !lastTypingChannelId) {
+    return;
+  }
+  const raw = textToSend.value;
+  if (raw.trim().length === 0) {
+    return;
+  }
+  const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
+  sendTypingUpdate.cancel();
+  chat.messageTyping(true, enabled ? truncated : '', lastTypingChannelId);
+});
 
 const toBottom = () => {
   scrollToBottom();
@@ -225,10 +313,33 @@ onMounted(async () => {
           rows.value.push(e.message);
         }
       }
+      removeTypingPreview(e.message.user?.id);
       if (!showButton.value) {
         scrollToBottom();
       }
     }
+  });
+
+  chatEvent.off('typing-preview', '*');
+  chatEvent.on('typing-preview', (e?: Event) => {
+    if (!e?.channel || e.channel.id !== chat.curChannel?.id) {
+      return;
+    }
+    const typingUserId = e.user?.id;
+    if (!typingUserId || typingUserId === user.info.id) {
+      return;
+    }
+    if (!e.typing?.enabled) {
+      removeTypingPreview(typingUserId);
+      return;
+    }
+  upsertTypingPreview({
+      userId: typingUserId,
+      displayName: e.member?.nick || e.user?.nick || '未知成员',
+      avatar: e.member?.avatar || e.user?.avatar || '',
+      content: e.typing?.content || '',
+      indicatorOnly: !e.typing?.content,
+    });
   });
 
   chatEvent.off('channel-deleted', '*');
@@ -256,6 +367,8 @@ onMounted(async () => {
   chatEvent.on('connected', async (e) => {
     // 重连了之后，重新加载这之间的数据
     console.log('尝试获取重连数据')
+    stopTypingPreviewNow();
+    resetTypingPreview();
     if (rows.value.length > 0) {
       let now = Date.now();
       const lastCreatedAt = rows.value[rows.value.length - 1].createdAt || now;
@@ -286,6 +399,8 @@ onMounted(async () => {
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
+    stopTypingPreviewNow();
+    resetTypingPreview();
     rows.value = []
     showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
@@ -297,9 +412,15 @@ onMounted(async () => {
   firstLoad = true;
 })
 
+onBeforeUnmount(() => {
+  stopTypingPreviewNow();
+  resetTypingPreview();
+});
+
 const messagesNextFlag = ref("");
 
 const loadMessages = async () => {
+  resetTypingPreview();
   const messages = await chat.messageList(chat.curChannel?.id || '');
   messagesNextFlag.value = messages.next || "";
   rows.value.push(...messages.data);
@@ -531,6 +652,35 @@ const isManagingEmoji = ref(false);
           @avatar-longpress="avatarLongpress(itemData)" />
       </template>
 
+      <template v-for="preview in typingPreviewList" :key="preview.userId">
+        <div class="typing-preview-item">
+          <AvatarVue :border="false" :size="40" :src="preview.avatar" />
+          <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
+            <div class="typing-preview-bubble__header">
+              <div class="typing-preview-bubble__meta">
+                <span class="typing-preview-bubble__name">{{ preview.displayName }}</span>
+                <span class="typing-preview-bubble__tag">
+                  {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
+                </span>
+              </div>
+              <span class="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+            </div>
+            <div class="typing-preview-bubble__body" :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }">
+              <template v-if="preview.indicatorOnly">
+                正在输入
+              </template>
+              <template v-else>
+                {{ preview.content }}
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
               @toBottom="reachBottom" @toTop="reachTop">
               <template #default="{ itemData }">
@@ -635,19 +785,29 @@ const isManagingEmoji = ref(false);
           </n-popover>
         </div>
 
-        <div class="absolute" style="z-index: 1; right: 0.6rem; top: .55rem;">
-          <n-space>
-            <n-popover trigger="hover">
-              <template #trigger>
-                <n-button text @click="doUpload">
-                  <template #icon>
-                    <n-icon :component="Upload" size="20" />
-                  </template>
-                </n-button>
-              </template>
-              <span>上传图片</span>
-            </n-popover>
-          </n-space>
+        <div class="absolute flex items-center space-x-1" style="z-index: 1; right: 0.6rem; top: .55rem;">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text class="typing-toggle" :class="{ 'typing-toggle--active': typingPreviewEnabled }"
+                @click="toggleTypingPreview">
+                <template #icon>
+                  <n-icon :component="typingPreviewEnabled ? Eye : EyeOff" size="20" />
+                </template>
+              </n-button>
+            </template>
+            {{ typingPreviewTooltip }}
+          </n-tooltip>
+
+          <n-popover trigger="hover">
+            <template #trigger>
+              <n-button text @click="doUpload">
+                <template #icon>
+                  <n-icon :component="Upload" size="20" />
+                </template>
+              </n-button>
+            </template>
+            <span>上传图片</span>
+          </n-popover>
         </div>
 
         <n-mention type="textarea" :rows="1" autosize v-model:value="textToSend" :on-keydown="keyDown"
@@ -680,6 +840,134 @@ const isManagingEmoji = ref(false);
 .chat-item {
   @apply pb-8; // margin会抖动，pb不会
 }
+
+.typing-preview-item {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  font-size: 0.9375rem;
+  color: #4b5563;
+}
+
+.typing-preview-bubble {
+  max-width: 28rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 1rem;
+  border: 1px dashed rgba(107, 114, 128, 0.65);
+  background-color: rgba(243, 244, 246, 0.85);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(2px);
+}
+
+.typing-preview-bubble--content {
+  border-color: rgba(59, 130, 246, 0.55);
+  background-color: rgba(219, 234, 254, 0.95);
+  color: #1d4ed8;
+}
+
+.typing-preview-bubble__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.typing-preview-bubble__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.typing-preview-bubble__name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #4b5563;
+}
+
+.typing-preview-bubble--content .typing-preview-bubble__name {
+  color: #1e3a8a;
+}
+
+.typing-preview-bubble__tag {
+  font-size: 0.625rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  background-color: rgba(156, 163, 175, 0.18);
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.typing-preview-bubble--content .typing-preview-bubble__tag {
+  background-color: rgba(59, 130, 246, 0.18);
+  color: #1d4ed8;
+}
+
+.typing-preview-bubble__body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 0.9375rem;
+}
+
+.typing-preview-bubble__placeholder {
+  color: #6b7280;
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+}
+
+.typing-dots span {
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-left: 0.18rem;
+  border-radius: 9999px;
+  background-color: rgba(107, 114, 128, 0.9);
+  animation: typing-dots 1.2s infinite ease-in-out;
+}
+
+.typing-preview-bubble--content .typing-dots span {
+  background-color: rgba(37, 99, 235, 0.85);
+}
+
+.typing-dots span:first-child {
+  margin-left: 0;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.typing-toggle {
+  color: #9ca3af;
+  transition: color 0.2s ease;
+}
+
+.typing-toggle--active {
+  color: #2563eb;
+}
+
+.typing-toggle:hover {
+  color: #3b82f6;
+}
+
+@keyframes typing-dots {
+  0%, 80%, 100% {
+    transform: scale(0.4);
+    opacity: 0.35;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
 </style>
 
 <style lang="scss">
@@ -695,6 +983,6 @@ const isManagingEmoji = ref(false);
 
 .chat-text>.n-input>.n-input-wrapper {
   padding-left: 2rem;
-  padding-right: 2rem;
+  padding-right: 4rem;
 }
 </style>

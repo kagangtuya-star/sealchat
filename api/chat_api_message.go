@@ -60,6 +60,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	QuoteID   string `json:"quote_id"`
 	Content   string `json:"content"`
+	WhisperTo string `json:"whisper_to"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -98,11 +99,39 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	channelData := channel.ToProtocolType()
 
+	var whisperUser *model.UserModel
+	if data.WhisperTo != "" {
+		if data.WhisperTo == ctx.User.ID {
+			return nil, nil
+		}
+		if len(channelId) < 30 {
+			targetMember, _ := model.MemberGetByUserIDAndChannelIDBase(data.WhisperTo, channelId, "", false)
+			if targetMember == nil {
+				return nil, nil
+			}
+		} else {
+			if data.WhisperTo != privateOtherUser {
+				return nil, nil
+			}
+		}
+		whisperUser = model.UserGet(data.WhisperTo)
+		if whisperUser == nil {
+			return nil, nil
+		}
+	}
+
 	var quote model.MessageModel
 	if data.QuoteID != "" {
-		db.Where("id = ?", data.QuoteID).Limit(1).Find(&quote)
+		db.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, username, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("id = ?", data.QuoteID).Limit(1).Find(&quote)
 		if quote.ID == "" {
 			return nil, nil
+		}
+		if quote.WhisperTo != "" {
+			quote.WhisperTarget = model.UserGet(quote.WhisperTo)
 		}
 	}
 
@@ -117,6 +146,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		Content:   content,
 
 		SenderMemberName: member.Nickname,
+		IsWhisper:        whisperUser != nil,
+		WhisperTo:        data.WhisperTo,
+	}
+	if whisperUser != nil {
+		m.WhisperTarget = whisperUser
 	}
 	rows := db.Create(&m).RowsAffected
 
@@ -125,16 +159,29 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		member.UpdateRecentSent()
 
 		userData := ctx.User.ToProtocolType()
-		// channelData := &protocol.Channel{ID: data.Data.ChannelID}
 
-		messageData := &protocol.Message{
-			ID:        m.ID,
-			Content:   content,
-			Channel:   channelData,
-			User:      userData,
-			Member:    member.ToProtocolType(),
-			CreatedAt: time.Now().UnixMilli(), // 跟js相匹配
-			Quote:     quote.ToProtocolType2(channelData),
+		messageData := m.ToProtocolType2(channelData)
+		messageData.Content = content
+		messageData.User = userData
+		messageData.Member = member.ToProtocolType()
+		if quote.ID != "" {
+			qData := quote.ToProtocolType2(channelData)
+			qData.Content = quote.Content
+			if quote.User != nil {
+				qData.User = quote.User.ToProtocolType()
+			}
+			if quote.Member != nil {
+				qData.Member = quote.Member.ToProtocolType()
+			}
+			if quote.WhisperTarget != nil {
+				qData.WhisperTo = quote.WhisperTarget.ToProtocolType()
+			}
+			messageData.Quote = qData
+		} else {
+			messageData.Quote = nil
+		}
+		if whisperUser != nil {
+			messageData.WhisperTo = whisperUser.ToProtocolType()
 		}
 
 		// 发出广播事件
@@ -145,28 +192,43 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			Channel: channelData,
 			User:    userData,
 		}
-		ctx.BroadcastEventInChannel(data.ChannelID, ev)
-		ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
-		// ctx.BroadcastEvent(ev)
 
-		if appConfig.BuiltInSealBotEnable {
+		if whisperUser != nil {
+			recipients := lo.Uniq([]string{ctx.User.ID, whisperUser.ID})
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+		}
+
+		if appConfig.BuiltInSealBotEnable && whisperUser == nil {
 			builtinSealBotSolve(ctx, data, channelData)
 		}
 
-		// 处理维度提醒和消息通知
 		if channel.PermType == "private" {
-			// 如果是私聊，使得双方可见
-			// ids := channel.GetPrivateUserIDs()
-			// model.FriendRelationSetVisible(ids[0], ids[1])
 			model.FriendRelationSetVisibleById(channel.ID)
-			_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
+		}
 
-			// 发送快速更新通知
-			ctx.BroadcastToUserJSON(privateOtherUser, map[string]any{
-				"op":        0,
-				"type":      "message-created-notice",
-				"channelId": data.ChannelID,
-			})
+		noticePayload := map[string]any{
+			"op":        0,
+			"type":      "message-created-notice",
+			"channelId": data.ChannelID,
+		}
+
+		if whisperUser != nil {
+			targets := lo.Uniq([]string{data.WhisperTo})
+			for _, uid := range targets {
+				if uid == "" || uid == ctx.User.ID {
+					continue
+				}
+				_ = model.ChannelReadInit(data.ChannelID, uid)
+				ctx.BroadcastToUserJSON(uid, noticePayload)
+			}
+		} else if channel.PermType == "private" {
+			if privateOtherUser != "" {
+				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
+				ctx.BroadcastToUserJSON(privateOtherUser, noticePayload)
+			}
 		} else {
 			// 给当前在线人都通知一遍
 			var uids []string
@@ -188,23 +250,19 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
 
 			// 发送快速更新通知
-			ctx.BroadcastJSON(map[string]any{
-				"op":        0,
-				"type":      "message-created-notice",
-				"channelId": data.ChannelID,
-			}, uidsOnline)
+			ctx.BroadcastJSON(noticePayload, uidsOnline)
 		}
 
 		return messageData, nil
-	} else {
-		return &struct {
-			ErrStatus int    `json:"errStatus"`
-			Echo      string `json:"echo"`
-		}{
-			ErrStatus: http.StatusInternalServerError,
-			Echo:      echo,
-		}, nil
 	}
+
+	return &struct {
+		ErrStatus int    `json:"errStatus"`
+		Echo      string `json:"echo"`
+	}{
+		ErrStatus: http.StatusInternalServerError,
+		Echo:      echo,
+	}, nil
 }
 
 func apiMessageList(ctx *ChatContext, data *struct {
@@ -235,6 +293,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 
 	var items []*model.MessageModel
 	q := db.Where("channel_id = ?", data.ChannelID)
+	q = q.Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, ctx.User.ID, ctx.User.ID)
 
 	if data.Type == "time" {
 		// 如果有这俩，附加一个条件
@@ -280,14 +339,57 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		next = strconv.FormatInt(items[0].CreatedAt.UnixMilli(), 36)
 	}
 
+	whisperIdSet := map[string]struct{}{}
 	for _, i := range items {
 		if i.IsRevoked {
 			i.Content = ""
+		}
+		if i.WhisperTo != "" {
+			whisperIdSet[i.WhisperTo] = struct{}{}
 		}
 		if i.Quote != nil {
 			if i.Quote.IsRevoked {
 				i.Quote.Content = ""
 			}
+			if i.Quote.WhisperTo != "" {
+				whisperIdSet[i.Quote.WhisperTo] = struct{}{}
+			}
+		}
+	}
+
+	if len(whisperIdSet) > 0 {
+		var ids []string
+		for id := range whisperIdSet {
+			ids = append(ids, id)
+		}
+		var whisperUsers []*model.UserModel
+		if len(ids) > 0 {
+			model.GetDB().Where("id in ?", ids).Find(&whisperUsers)
+		}
+		id2User := map[string]*model.UserModel{}
+		for _, u := range whisperUsers {
+			id2User[u.ID] = u
+		}
+		for _, i := range items {
+			if user, ok := id2User[i.WhisperTo]; ok {
+				i.WhisperTarget = user
+			}
+			if i.Quote != nil {
+				if user, ok := id2User[i.Quote.WhisperTo]; ok {
+					i.Quote.WhisperTarget = user
+				}
+			}
+		}
+	}
+
+	for _, i := range items {
+		if i.IsWhisper && i.UserID != ctx.User.ID && i.WhisperTo != ctx.User.ID {
+			// 理论上不会出现，因为已经过滤，但保险起见
+			i.Content = ""
+		}
+		if i.Quote != nil && i.Quote.IsWhisper && i.Quote.UserID != ctx.User.ID && i.Quote.WhisperTo != ctx.User.ID {
+			i.Quote.Content = ""
+			i.Quote.WhisperTarget = nil
 		}
 	}
 
@@ -300,10 +402,265 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiMessageUpdate(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+	Content   string `json:"content"`
+}) (any, error) {
+	db := model.GetDB()
+
+	var msg model.MessageModel
+	db.Where("id = ? AND channel_id = ?", data.MessageID, data.ChannelID).Limit(1).Find(&msg)
+	if msg.ID == "" {
+		return nil, nil
+	}
+	if msg.UserID != ctx.User.ID {
+		return nil, nil
+	}
+	if msg.IsRevoked {
+		return nil, nil
+	}
+
+	channel, _ := model.ChannelGet(data.ChannelID)
+	if channel.ID == "" {
+		return nil, nil
+	}
+	channelData := channel.ToProtocolType()
+
+	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
+
+	var quote model.MessageModel
+	if msg.QuoteID != "" {
+		db.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, username, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("id = ?", msg.QuoteID).Limit(1).Find(&quote)
+		if quote.WhisperTo != "" {
+			quote.WhisperTarget = model.UserGet(quote.WhisperTo)
+		}
+	}
+
+	if msg.WhisperTo != "" {
+		msg.WhisperTarget = model.UserGet(msg.WhisperTo)
+	}
+
+	buildMessage := func() *protocol.Message {
+		messageData := msg.ToProtocolType2(channelData)
+		messageData.Content = msg.Content
+		messageData.User = ctx.User.ToProtocolType()
+		if member != nil {
+			messageData.Member = member.ToProtocolType()
+		}
+		if msg.WhisperTarget != nil {
+			messageData.WhisperTo = msg.WhisperTarget.ToProtocolType()
+		}
+		if quote.ID != "" {
+			qData := quote.ToProtocolType2(channelData)
+			qData.Content = quote.Content
+			if quote.User != nil {
+				qData.User = quote.User.ToProtocolType()
+			}
+			if quote.Member != nil {
+				qData.Member = quote.Member.ToProtocolType()
+			}
+			if quote.WhisperTarget != nil {
+				qData.WhisperTo = quote.WhisperTarget.ToProtocolType()
+			}
+			messageData.Quote = qData
+		}
+		return messageData
+	}
+
+	prevContent := msg.Content
+	if prevContent == data.Content {
+		return &struct {
+			Message *protocol.Message `json:"message"`
+		}{Message: buildMessage()}, nil
+	}
+
+	history := model.MessageEditHistoryModel{
+		MessageID:    msg.ID,
+		EditorID:     ctx.User.ID,
+		PrevContent:  prevContent,
+		ChannelID:    msg.ChannelID,
+		EditedUserID: msg.UserID,
+	}
+	db.Create(&history)
+
+	msg.Content = data.Content
+	msg.IsEdited = true
+	msg.EditCount = msg.EditCount + 1
+	msg.UpdatedAt = time.Now()
+	err := db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(map[string]any{
+		"content":    msg.Content,
+		"is_edited":  msg.IsEdited,
+		"edit_count": msg.EditCount,
+		"updated_at": msg.UpdatedAt,
+	}).Error
+	if err != nil {
+		return nil, err
+	}
+
+	messageData := buildMessage()
+
+	ev := &protocol.Event{
+		Type:    protocol.EventMessageUpdated,
+		Message: messageData,
+		Channel: channelData,
+		User:    messageData.User,
+	}
+
+	if msg.IsWhisper && msg.WhisperTo != "" {
+		recipients := lo.Uniq([]string{ctx.User.ID, msg.WhisperTo})
+		ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+	} else {
+		ctx.BroadcastEventInChannel(data.ChannelID, ev)
+		ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+	}
+
+	return &struct {
+		Message *protocol.Message `json:"message"`
+	}{Message: messageData}, nil
+}
+
+func apiMessageEditHistory(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}) (any, error) {
+	channelId := data.ChannelID
+	if len(channelId) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelId)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	var histories []model.MessageEditHistoryModel
+	model.GetDB().Where("message_id = ?", data.MessageID).Order("created_at asc").Find(&histories)
+
+	userIDs := make([]string, 0, len(histories))
+	for _, h := range histories {
+		userIDs = append(userIDs, h.EditorID)
+	}
+	userIDs = lo.Uniq(userIDs)
+
+	id2User := map[string]*model.UserModel{}
+	if len(userIDs) > 0 {
+		var users []*model.UserModel
+		model.GetDB().Where("id in ?", userIDs).Find(&users)
+		for _, u := range users {
+			id2User[u.ID] = u
+		}
+	}
+
+	type historyItem struct {
+		PrevContent string           `json:"prev_content"`
+		EditedAt    int64            `json:"edited_at"`
+		Editor      *protocol.User   `json:"editor"`
+	}
+
+	var resp []historyItem
+	for _, h := range histories {
+		var editor *protocol.User
+		if u, ok := id2User[h.EditorID]; ok {
+			editor = u.ToProtocolType()
+		}
+		resp = append(resp, historyItem{
+			PrevContent: h.PrevContent,
+			EditedAt:    h.CreatedAt.UnixMilli(),
+			Editor:      editor,
+		})
+	}
+
+	return &struct {
+		History []historyItem `json:"history"`
+	}{History: resp}, nil
+}
+
+func apiMessageTyping(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	Enabled   bool   `json:"enabled"`
+	Content   string `json:"content"`
+}) (any, error) {
+	channelId := data.ChannelID
+	if len(channelId) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelId)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	if ctx.ConnInfo == nil || ctx.ConnInfo.ChannelId != channelId {
+		return &struct {
+			Success bool `json:"success"`
+		}{Success: false}, nil
+	}
+
+	runes := []rune(data.Content)
+	if len(runes) > 500 {
+		data.Content = string(runes[:500])
+	}
+
+	now := time.Now().UnixMilli()
+	const typingThrottleGap int64 = 250
+	if data.Enabled {
+		if ctx.ConnInfo.TypingEnabled &&
+			now-ctx.ConnInfo.TypingUpdatedAt < typingThrottleGap &&
+			ctx.ConnInfo.TypingContent == data.Content {
+			return &struct {
+				Success bool `json:"success"`
+			}{Success: true}, nil
+		}
+		ctx.ConnInfo.TypingEnabled = true
+		ctx.ConnInfo.TypingContent = data.Content
+		ctx.ConnInfo.TypingUpdatedAt = now
+	} else {
+		ctx.ConnInfo.TypingEnabled = false
+		ctx.ConnInfo.TypingContent = ""
+		ctx.ConnInfo.TypingUpdatedAt = 0
+	}
+
+	channel, _ := model.ChannelGet(channelId)
+	if channel.ID == "" {
+		return nil, nil
+	}
+	channelData := channel.ToProtocolType()
+	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, channelId, ctx.User.Nickname)
+
+	event := &protocol.Event{
+		Type:    protocol.EventTypingPreview,
+		Channel: channelData,
+		User:    ctx.User.ToProtocolType(),
+		Typing: &protocol.TypingPreview{
+			Enabled: data.Enabled,
+			Content: data.Content,
+		},
+	}
+	if member != nil {
+		event.Member = member.ToProtocolType()
+	}
+
+	ctx.BroadcastEventInChannelExcept(channelId, []string{ctx.User.ID}, event)
+
+	return &struct {
+		Success bool `json:"success"`
+	}{Success: true}, nil
+}
+
 func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	QuoteID   string `json:"quote_id"`
 	Content   string `json:"content"`
+	WhisperTo string `json:"whisper_to"`
 }, channelData *protocol.Channel) {
 	content := data.Content
 	if len(content) >= 2 && (content[0] == '/' || content[0] == '.') && content[1] == 'x' {

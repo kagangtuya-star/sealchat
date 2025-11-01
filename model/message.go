@@ -17,12 +17,18 @@ type MessageModel struct {
 	QuoteID   string `json:"quote_id" gorm:"null;size:100"`
 
 	IsRevoked bool `json:"is_revoked" gorm:"null"` // 被撤回。这样实现可能不很严肃，但是能填补窗口中空白
+	IsWhisper bool   `json:"is_whisper" gorm:"default:false"`
+	WhisperTo string `json:"whisper_to" gorm:"size:100"`
+	IsEdited  bool   `json:"is_edited" gorm:"default:false"`
+	EditCount int    `json:"edit_count" gorm:"default:0"`
 
 	SenderMemberName string `json:"sender_member_name"` // 用户在当时的名字
 
 	User   *UserModel    `json:"user"`           // 嵌套 User 结构体
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
 	Quote  *MessageModel `json:"quote" gorm:"-"` // 嵌套 Message 结构体
+	// WhisperTarget 为前端展示提供冗余
+	WhisperTarget *UserModel `json:"whisper_target" gorm:"-"`
 }
 
 func (*MessageModel) TableName() string {
@@ -30,14 +36,39 @@ func (*MessageModel) TableName() string {
 }
 
 func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.Message {
-	return &protocol.Message{
-		ID:      m.ID,
-		Content: m.Content,
-		Channel: channelData,
-		// User:      userData,
-		// Member:    member.ToProtocolType(),
-		CreatedAt: time.Now().UnixMilli(), // 跟js相匹配
+	var updatedAt int64
+	if !m.UpdatedAt.IsZero() {
+		updatedAt = m.UpdatedAt.UnixMilli()
 	}
+	return &protocol.Message{
+		ID:        m.ID,
+		Content:   m.Content,
+		Channel:   channelData,
+		CreatedAt: m.CreatedAt.UnixMilli(),
+		UpdatedAt: updatedAt,
+		IsWhisper: m.IsWhisper,
+		IsEdited:  m.IsEdited,
+		EditCount: m.EditCount,
+		WhisperTo: func() *protocol.User {
+			if m.WhisperTarget != nil {
+				return m.WhisperTarget.ToProtocolType()
+			}
+			return nil
+		}(),
+	}
+}
+
+type MessageEditHistoryModel struct {
+	StringPKBaseModel
+	MessageID    string `json:"message_id" gorm:"index"`
+	EditorID     string `json:"editor_id" gorm:"index"`
+	PrevContent  string `json:"prev_content"`
+	ChannelID    string `json:"channel_id" gorm:"index"`
+	EditedUserID string `json:"edited_user_id" gorm:"index"`
+}
+
+func (*MessageEditHistoryModel) TableName() string {
+	return "message_edit_histories"
 }
 
 func MessagesCountByChannelIDsAfterTime(channelIDs []string, updateTimes []time.Time, userID string) (map[string]int64, error) {

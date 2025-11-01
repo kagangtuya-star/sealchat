@@ -32,10 +32,13 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 type ConnInfo struct {
-	User         *model.UserModel
-	Conn         *WsSyncConn
-	LastPingTime int64
-	ChannelId    string
+	User            *model.UserModel
+	Conn            *WsSyncConn
+	LastPingTime    int64
+	ChannelId       string
+	TypingEnabled   bool
+	TypingContent   string
+	TypingUpdatedAt int64
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -255,11 +258,20 @@ func websocketWorks(app *fiber.App) {
 					case "message.create":
 						apiWrap(ctx, msg, apiMessageCreate)
 						solved = true
+					case "message.update":
+						apiWrap(ctx, msg, apiMessageUpdate)
+						solved = true
 					case "message.delete":
 						apiWrap(ctx, msg, apiMessageDelete)
 						solved = true
 					case "message.list":
 						apiWrap(ctx, msg, apiMessageList)
+						solved = true
+					case "message.edit.history":
+						apiWrap(ctx, msg, apiMessageEditHistory)
+						solved = true
+					case "message.typing":
+						apiWrap(ctx, msg, apiMessageTyping)
 						solved = true
 
 					case "unread.count":
@@ -286,6 +298,42 @@ func websocketWorks(app *fiber.App) {
 			//	log.Println("write:", err)
 			//	break
 			// }
+		}
+
+		// 连接断开，补发停止输入信令
+		if curConnInfo != nil && curConnInfo.TypingEnabled && curConnInfo.ChannelId != "" && curUser != nil {
+			ctx := &ChatContext{
+				Conn:            c,
+				User:            curUser,
+				ConnInfo:        curConnInfo,
+				ChannelUsersMap: channelUsersMap,
+				UserId2ConnInfo: userId2ConnInfo,
+			}
+
+			channel, _ := model.ChannelGet(curConnInfo.ChannelId)
+			if channel.ID != "" {
+				channelData := channel.ToProtocolType()
+				member, _ := model.MemberGetByUserIDAndChannelID(curUser.ID, curConnInfo.ChannelId, curUser.Nickname)
+
+				event := &protocol.Event{
+					Type:    protocol.EventTypingPreview,
+					Channel: channelData,
+					User:    curUser.ToProtocolType(),
+					Typing: &protocol.TypingPreview{
+						Enabled: false,
+						Content: "",
+					},
+				}
+				if member != nil {
+					event.Member = member.ToProtocolType()
+				}
+
+				ctx.BroadcastEventInChannelExcept(curConnInfo.ChannelId, []string{curUser.ID}, event)
+			}
+
+			curConnInfo.TypingEnabled = false
+			curConnInfo.TypingContent = ""
+			curConnInfo.TypingUpdatedAt = 0
 		}
 
 		// 连接断开，后续封装成函数

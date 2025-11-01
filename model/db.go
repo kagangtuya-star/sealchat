@@ -4,10 +4,10 @@ import (
 	"strings"
 	"time"
 
-	// "github.com/glebarez/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
+	//"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"sealchat/utils"
@@ -81,6 +81,7 @@ func DBInit(dsn string) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
+	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
 	db.AutoMigrate(&MemberModel{})

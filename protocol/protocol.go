@@ -87,6 +87,10 @@ type Message struct {
 	Quote     *Message     `json:"quote"`
 	CreatedAt int64        `json:"createdAt"`
 	UpdatedAt int64        `json:"updatedAt"`
+	IsWhisper bool         `json:"isWhisper"`
+	WhisperTo *User        `json:"whisperTo"`
+	IsEdited  bool         `json:"isEdited"`
+	EditCount int          `json:"editCount"`
 }
 
 type Button struct {
@@ -135,6 +139,7 @@ const (
 	EventFriendRequest        EventName = "friend-request"
 	EventGuildRequest         EventName = "guild-request"
 	EventGuildMemberRequest   EventName = "guild-member-request"
+	EventTypingPreview        EventName = "typing-preview"
 )
 
 type Event struct {
@@ -153,6 +158,12 @@ type Event struct {
 	Role      *GuildRole   `json:"role"`
 	User      *User        `json:"user"`
 	Button    *Button      `json:"button"`
+	Typing    *TypingPreview `json:"typing"`
+}
+
+type TypingPreview struct {
+	Enabled bool   `json:"enabled"`
+	Content string `json:"content"`
 }
 
 type GatewayPayloadStructure struct {

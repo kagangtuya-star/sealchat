@@ -402,6 +402,22 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    async messageTyping(enabled: boolean, content: string, channelId?: string) {
+      const targetChannelId = channelId || this.curChannel?.id;
+      if (!targetChannelId) {
+        return;
+      }
+      try {
+        await this.sendAPI('message.typing', {
+          channel_id: targetChannelId,
+          enabled,
+          content,
+        });
+      } catch (error) {
+        console.warn('message.typing 调用失败', error);
+      }
+    },
+
     // friend
 
     async ChannelPrivateList() {
