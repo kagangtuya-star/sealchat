@@ -407,6 +407,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	MessageID string `json:"message_id"`
 	Content   string `json:"content"`
 }) (any, error) {
+	if strings.TrimSpace(data.Content) == "" {
+		return nil, fmt.Errorf("消息内容不能为空")
+	}
+
 	db := model.GetDB()
 
 	var msg model.MessageModel
@@ -559,9 +563,9 @@ func apiMessageEditHistory(ctx *ChatContext, data *struct {
 	}
 
 	type historyItem struct {
-		PrevContent string           `json:"prev_content"`
-		EditedAt    int64            `json:"edited_at"`
-		Editor      *protocol.User   `json:"editor"`
+		PrevContent string         `json:"prev_content"`
+		EditedAt    int64          `json:"edited_at"`
+		Editor      *protocol.User `json:"editor"`
 	}
 
 	var resp []historyItem
@@ -586,6 +590,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	Enabled   bool   `json:"enabled"`
 	Content   string `json:"content"`
+	MessageID string `json:"message_id"`
+	Mode      string `json:"mode"`
 }) (any, error) {
 	channelId := data.ChannelID
 	if len(channelId) < 30 {
@@ -641,8 +647,10 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		Channel: channelData,
 		User:    ctx.User.ToProtocolType(),
 		Typing: &protocol.TypingPreview{
-			Enabled: data.Enabled,
-			Content: data.Content,
+			Enabled:   data.Enabled,
+			Content:   data.Content,
+			Mode:      data.Mode,
+			MessageID: data.MessageID,
 		},
 	}
 	if member != nil {

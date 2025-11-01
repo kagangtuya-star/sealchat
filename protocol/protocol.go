@@ -143,27 +143,29 @@ const (
 )
 
 type Event struct {
-	ID        int64        `json:"id"`
-	Type      EventName    `json:"type"`
-	SelfID    string       `json:"selfID"`
-	Platform  string       `json:"platform"`
-	Timestamp int64        `json:"timestamp"`
-	Argv      *Argv        `json:"argv"`
-	Channel   *Channel     `json:"channel"`
-	Guild     *Guild       `json:"guild"`
-	Login     *Login       `json:"login"`
-	Member    *GuildMember `json:"member"`
-	Message   *Message     `json:"message"`
-	Operator  *User        `json:"operator"`
-	Role      *GuildRole   `json:"role"`
-	User      *User        `json:"user"`
-	Button    *Button      `json:"button"`
+	ID        int64          `json:"id"`
+	Type      EventName      `json:"type"`
+	SelfID    string         `json:"selfID"`
+	Platform  string         `json:"platform"`
+	Timestamp int64          `json:"timestamp"`
+	Argv      *Argv          `json:"argv"`
+	Channel   *Channel       `json:"channel"`
+	Guild     *Guild         `json:"guild"`
+	Login     *Login         `json:"login"`
+	Member    *GuildMember   `json:"member"`
+	Message   *Message       `json:"message"`
+	Operator  *User          `json:"operator"`
+	Role      *GuildRole     `json:"role"`
+	User      *User          `json:"user"`
+	Button    *Button        `json:"button"`
 	Typing    *TypingPreview `json:"typing"`
 }
 
 type TypingPreview struct {
-	Enabled bool   `json:"enabled"`
-	Content string `json:"content"`
+	Enabled   bool   `json:"enabled"`
+	Content   string `json:"content"`
+	Mode      string `json:"mode,omitempty"`
+	MessageID string `json:"messageId,omitempty"`
 }
 
 type GatewayPayloadStructure struct {

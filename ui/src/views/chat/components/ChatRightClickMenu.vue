@@ -25,6 +25,19 @@ const clickDelete = async () => {
   }
 }
 
+const clickEdit = () => {
+  if (!chat.messageMenu.item?.id || !chat.curChannel?.id) {
+    return;
+  }
+  chat.startEditingMessage({
+    messageId: chat.messageMenu.item.id,
+    channelId: chat.curChannel.id,
+    originalContent: chat.messageMenu.item.content || '',
+    draft: chat.messageMenu.item.content || ''
+  });
+  chat.messageMenu.show = false;
+}
+
 const clickCopy = async () => {
   let copyText = '';
   const items = Element.parse(chat.messageMenu.item?.content || '');
@@ -108,6 +121,8 @@ const showWhisper = computed(() => {
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
     <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
+    <context-menu-item label="编辑消息" @click="clickEdit"
+      v-if="chat.messageMenu.item?.user?.id && (chat.messageMenu.item?.user?.id === user.info.id)" />
     <context-menu-item label="撤回" @click="clickDelete"
       v-if="chat.messageMenu.item?.user?.id && (chat.messageMenu.item?.user?.id === user.info.id)" />
     <!-- <context-menu-group label="Menu with child">

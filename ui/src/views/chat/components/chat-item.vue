@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed } from 'vue';
+import { onMounted, ref, h, computed, watch, PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
@@ -10,8 +10,17 @@ import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
 import Avatar from '@/components/avatar.vue'
-import { Lock } from '@vicons/tabler';
+import { Lock, Edit } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
+
+type EditingPreviewInfo = {
+  userId: string;
+  displayName: string;
+  avatar?: string;
+  content: string;
+  indicatorOnly: boolean;
+  isSelf: boolean;
+};
 
 const user = useUserStore();
 const chat = useChatStore();
@@ -33,10 +42,11 @@ function timeFormat2(time?: string) {
 
 let hasImage = ref(false);
 
-const parseContent = (props: any) => {
-  const content = props.content;
+const parseContent = (payload: any, overrideContent?: string) => {
+  const content = overrideContent ?? payload?.content ?? '';
   const items = Element.parse(content);
   let textItems = []
+  hasImage.value = false;
 
   for (const item of items) {
     switch (item.type) {
@@ -120,10 +130,13 @@ const props = defineProps({
   avatar: String,
   isRtl: Boolean,
   item: Object,
+  editingPreview: Object as PropType<EditingPreviewInfo | undefined>,
 })
 
 const timeText = ref(timeFormat(props.item?.createdAt));
 const timeText2 = ref(timeFormat2(props.item?.createdAt));
+const editedTimeText = ref(props.item?.isEdited ? timeFormat(props.item?.updatedAt) : '');
+const editedTimeText2 = ref(props.item?.isEdited ? timeFormat2(props.item?.updatedAt) : '');
 
 const getMemberDisplayName = (item: any) => item?.member?.nick || item?.user?.nick || item?.user?.name || '未知成员';
 const getTargetDisplayName = (item: any) => item?.whisperTo?.nick || item?.whisperTo?.name || '未知成员';
@@ -148,6 +161,16 @@ const buildWhisperLabel = (item?: any) => {
 
 const whisperLabel = computed(() => buildWhisperLabel(props.item));
 const quoteWhisperLabel = computed(() => buildWhisperLabel((props.item as any)?.quote));
+
+const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
+const canEdit = computed(() => props.item?.user?.id === user.info.id);
+
+const displayContent = computed(() => {
+  if (isEditing.value && chat.editing) {
+    return chat.editing.draft;
+  }
+  return props.item?.content ?? props.content ?? '';
+});
 
 const onContextMenu = (e: MouseEvent, item: any) => {
   e.preventDefault();
@@ -175,12 +198,34 @@ const doAvatarClick = (e: MouseEvent) => {
   emit('avatar-click')
 }
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click']);
+const handleEditClick = (e: MouseEvent) => {
+  e.stopPropagation();
+  if (!canEdit.value) {
+    return;
+  }
+  emit('edit', props.item);
+}
+
+const handleEditSave = (e: MouseEvent) => {
+  e.stopPropagation();
+  emit('edit-save', props.item);
+}
+
+const handleEditCancel = (e: MouseEvent) => {
+  e.stopPropagation();
+  emit('edit-cancel', props.item);
+}
+
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel']);
 
 onMounted(() => {
   setInterval(() => {
     timeText.value = timeFormat(props.item?.createdAt);
     timeText2.value = timeFormat2(props.item?.createdAt);
+    if (props.item?.isEdited) {
+      editedTimeText.value = timeFormat(props.item?.updatedAt);
+      editedTimeText2.value = timeFormat2(props.item?.updatedAt);
+    }
   }, 10000);
 })
 
@@ -191,12 +236,19 @@ const nick = computed(() => {
   return props.item?.member?.nick || props.item?.user?.name || '未知';
 });
 
+watch(() => props.item?.updatedAt, () => {
+  if (props.item?.isEdited) {
+    editedTimeText.value = timeFormat(props.item?.updatedAt);
+    editedTimeText2.value = timeFormat2(props.item?.updatedAt);
+  }
+});
+
 </script>
 
 <template>
   <div v-if="item?.is_revoked" class="py-4 text-center">一条消息已被撤回</div>
   <div v-else :id="item?.id" class="chat-item" :style="props.isRtl ? { direction: 'rtl' } : {}"
-    :class="props.isRtl ? ['is-rtl'] : []">
+    :class="[{ 'is-rtl': props.isRtl }, { 'is-editing': isEditing }]">
     <Avatar :src="props.avatar" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->
@@ -220,32 +272,73 @@ const nick = computed(() => {
         </n-popover>
 
         <!-- <span v-if="props.isRtl" class="time">{{ timeText }}</span> -->
+        <n-popover trigger="hover" placement="bottom" v-if="props.item?.isEdited">
+          <template #trigger>
+            <span class="edited-label">(已编辑)</span>
+          </template>
+          <span v-if="editedTimeText2">编辑于 {{ editedTimeText2 }}</span>
+          <span v-else>编辑时间未知</span>
+        </n-popover>
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
       <div class="content break-all relative" @contextmenu="onContextMenu($event, item)"
-        :class="{ 'whisper-content': props.item?.isWhisper }">
-        <div>
-          <div v-if="whisperLabel" class="whisper-label">
-            <n-icon :component="Lock" size="16" />
-            <span>{{ whisperLabel }}</span>
-          </div>
-          <div v-if="props.item?.quote?.id" class="border-l-4 pl-2 border-blue-500 mb-2">
-            <template v-if="props.item?.quote?.is_revoked">
-              <span class="text-gray-400">此消息已撤回</span>
+        :class="[{ 'whisper-content': props.item?.isWhisper }, { 'content--editing-preview': !!props.editingPreview }]">
+        <div v-if="canEdit && !(props.editingPreview && props.editingPreview.isSelf)" class="message-action-bar"
+          :class="{ 'message-action-bar--active': isEditing }">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text size="small" class="message-action-bar__btn" @click="handleEditClick">
+                <n-icon :component="Edit" size="18" />
+              </n-button>
             </template>
-            <template v-else>
-              <div v-if="quoteWhisperLabel" class="whisper-label whisper-label--quote">
-                <n-icon :component="Lock" size="14" />
-                <span>{{ quoteWhisperLabel }}</span>
-              </div>
-              <span class="text-gray-500">
-                <component :is="parseContent(props.item?.quote)" />
-              </span>
-            </template>
-          </div>
-          <component :is="parseContent(props)" />
+            编辑消息
+          </n-tooltip>
         </div>
+        <template v-if="!props.editingPreview">
+          <div>
+            <div v-if="whisperLabel" class="whisper-label">
+              <n-icon :component="Lock" size="16" />
+              <span>{{ whisperLabel }}</span>
+            </div>
+            <div v-if="props.item?.quote?.id" class="border-l-4 pl-2 border-blue-500 mb-2">
+              <template v-if="props.item?.quote?.is_revoked">
+                <span class="text-gray-400">此消息已撤回</span>
+              </template>
+              <template v-else>
+                <div v-if="quoteWhisperLabel" class="whisper-label whisper-label--quote">
+                  <n-icon :component="Lock" size="14" />
+                  <span>{{ quoteWhisperLabel }}</span>
+                </div>
+                <span class="text-gray-500">
+                  <component :is="parseContent(props.item?.quote)" />
+                </span>
+              </template>
+            </div>
+            <component :is="parseContent(props, displayContent)" />
+          </div>
+        </template>
+        <template v-else>
+          <div class="editing-preview__bubble editing-preview__bubble--inline">
+            <div class="editing-preview__header">
+              <span class="editing-preview__name">{{ props.editingPreview.displayName || '未知成员' }}</span>
+              <span class="editing-preview__tag">正在编辑</span>
+            </div>
+            <div class="editing-preview__body" :class="{ 'is-placeholder': props.editingPreview.indicatorOnly }">
+              <template v-if="props.editingPreview.indicatorOnly">
+                正在更新内容...
+              </template>
+              <template v-else>
+                {{ props.editingPreview.content.slice(0, 200) }}
+                <span v-if="props.editingPreview.content.length > 200">...</span>
+              </template>
+            </div>
+            <div v-if="props.editingPreview.isSelf" class="editing-preview__actions">
+              <n-button size="tiny" type="primary" @click.stop="handleEditSave">保存</n-button>
+              <n-button size="tiny" text @click.stop="handleEditCancel">取消</n-button>
+            </div>
+          </div>
+        </template>
         <div v-if="props.item?.failed" class="failed absolute bg-red-600 rounded-md px-2 text-white">!</div>
       </div>
     </div>
@@ -331,16 +424,17 @@ const nick = computed(() => {
         mask-image: url("data:image/svg+xml,%3csvg width='3' height='3' xmlns='http://www.w3.org/2000/svg'%3e%3cpath fill='black' d='m 0 3 L 3 3 L 3 0 C 3 1 1 3 0 3'/%3e%3c/svg%3e");
       }
 
-      width: fit-content;
-      direction: ltr;
-      @apply text-base mt-1 px-4 py-2 relative;
-      @apply rounded bg-gray-200 text-gray-900;
+  width: fit-content;
+  direction: ltr;
+  @apply text-base mt-1 px-4 py-2 relative;
+  @apply rounded bg-gray-200 text-gray-900;
       min-width: 0;
-    }
+        transition: box-shadow 0.2s ease, border-color 0.2s ease;
+      }
 
-    >.content.whisper-content {
-      background: linear-gradient(135deg, #1f2937 0%, #312e81 100%);
-      color: #f4f4ff;
+      >.content.whisper-content {
+    background: linear-gradient(135deg, #1f2937 0%, #312e81 100%);
+    color: #f4f4ff;
       border: 1px solid rgba(129, 140, 248, 0.4);
       box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.25);
     }
@@ -348,11 +442,113 @@ const nick = computed(() => {
     >.content.whisper-content .text-gray-500 {
       color: #e0e7ff;
     }
+
   }
 
 .content img {
   max-width: min(36vw, 200px);
 }
+}
+
+
+.chat-item.is-editing > .right > .content {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+  border: 1px dashed rgba(37, 99, 235, 0.65);
+}
+
+.edited-label {
+  @apply text-xs text-blue-500 font-medium;
+  margin-left: 0.2rem;
+}
+
+.message-action-bar {
+  position: absolute;
+  top: -1.6rem;
+  right: -0.4rem;
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.message-action-bar__btn {
+  pointer-events: auto;
+}
+
+.chat-item .content:hover .message-action-bar,
+.chat-item.is-editing .message-action-bar,
+.chat-item .message-action-bar--active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.content--editing-preview {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.content--editing-preview.whisper-content {
+  background: transparent;
+}
+
+.content--editing-preview .editing-preview__bubble--inline {
+  border: 1px dashed rgba(59, 130, 246, 0.55);
+  background-color: rgba(219, 234, 254, 0.92);
+  color: #1d4ed8;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  max-width: 32rem;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+}
+
+.editing-preview__bubble {
+  border: 1px dashed rgba(59, 130, 246, 0.55);
+  background-color: rgba(219, 234, 254, 0.9);
+  color: #1d4ed8;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  max-width: 32rem;
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+}
+
+.editing-preview__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.editing-preview__name {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.editing-preview__tag {
+  font-size: 0.625rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  background-color: rgba(59, 130, 246, 0.18);
+}
+
+.editing-preview__body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9rem;
+  color: #1e3a8a;
+}
+
+.editing-preview__body.is-placeholder {
+  color: #4b5563;
+}
+
+.editing-preview__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
 }
 
 .whisper-label {

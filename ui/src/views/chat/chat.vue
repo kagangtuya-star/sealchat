@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
-import { computed, ref, watch, h, onMounted, onBeforeMount, onBeforeUnmount, nextTick, type Component, reactive } from 'vue'
+import { computed, ref, watch, h, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
@@ -20,7 +20,7 @@ import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { useUtilsStore } from '@/stores/utils';
-import { contentEscape } from '@/utils/tools'
+import { contentEscape, contentUnescape } from '@/utils/tools'
 import IconNumber from '@/components/icons/IconNumber.vue'
 import { computedAsync } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
@@ -34,6 +34,7 @@ import { useI18n } from 'vue-i18n';
 
 const chat = useChatStore();
 const user = useUserStore();
+const isEditing = computed(() => !!chat.editing);
 
 const emojiLoading = ref(false)
 const uploadImages = computedAsync(async () => {
@@ -54,6 +55,33 @@ const messagesListRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 
 const rows = ref<Message[]>([]);
+
+const normalizeMessageShape = (msg: any): Message => {
+  if (!msg) {
+    return msg as Message;
+  }
+  if (msg.isEdited === undefined && msg.is_edited !== undefined) {
+    msg.isEdited = msg.is_edited;
+  }
+  if (msg.editCount === undefined && msg.edit_count !== undefined) {
+    msg.editCount = msg.edit_count;
+  }
+  if (msg.createdAt === undefined && msg.created_at !== undefined) {
+    msg.createdAt = msg.created_at;
+  }
+  if (msg.updatedAt === undefined && msg.updated_at !== undefined) {
+    msg.updatedAt = msg.updated_at;
+  }
+  if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
+    msg.whisperTo = msg.whisper_to;
+  }
+  if (msg.quote) {
+    msg.quote = normalizeMessageShape(msg.quote);
+  }
+  return msg as Message;
+};
+
+const normalizeMessageList = (items: any[] = []): Message[] => items.map((item) => normalizeMessageShape(item));
 
 const upsertMessage = (incoming?: Message) => {
   if (!incoming || !incoming.id) {
@@ -103,24 +131,36 @@ interface TypingPreviewItem {
   avatar?: string;
   content: string;
   indicatorOnly: boolean;
+  mode: 'typing' | 'editing';
+  messageId?: string;
+}
+
+interface EditingPreviewInfo {
+  userId: string;
+  displayName: string;
+  avatar?: string;
+  content: string;
+  indicatorOnly: boolean;
+  isSelf: boolean;
 }
 
 const typingPreviewStorageKey = 'sealchat.typingPreviewEnabled';
 const typingPreviewEnabled = ref(localStorage.getItem(typingPreviewStorageKey) === 'true');
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
+const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) => item.mode === 'typing'));
 let lastTypingChannelId = '';
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
-  typingPreviewList.value = typingPreviewList.value.filter((i) => i.userId !== item.userId);
+  typingPreviewList.value = typingPreviewList.value.filter((i) => !(i.userId === item.userId && i.mode === item.mode));
   typingPreviewList.value.push(item);
 };
 
-const removeTypingPreview = (userId?: string) => {
+const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typing') => {
   if (!userId) {
     return;
   }
-  typingPreviewList.value = typingPreviewList.value.filter((item) => item.userId !== userId);
+  typingPreviewList.value = typingPreviewList.value.filter((item) => !(item.userId === userId && item.mode === mode));
 };
 
 const resetTypingPreview = () => {
@@ -138,6 +178,41 @@ const stopTypingPreviewNow = () => {
   }
   typingPreviewActive.value = false;
   lastTypingChannelId = '';
+};
+
+const editingPreviewActive = ref(false);
+let lastEditingChannelId = '';
+let lastEditingMessageId = '';
+
+const sendEditingPreview = throttle((channelId: string, messageId: string, content: string) => {
+  if (!typingPreviewEnabled.value) {
+    return;
+  }
+  chat.messageTyping(true, content, channelId, { mode: 'editing', messageId });
+  editingPreviewActive.value = true;
+  lastEditingChannelId = channelId;
+  lastEditingMessageId = messageId;
+}, 400, { leading: true, trailing: true });
+
+const stopEditingPreviewNow = () => {
+  sendEditingPreview.cancel();
+  if (editingPreviewActive.value && lastEditingChannelId && lastEditingMessageId) {
+    chat.messageTyping(false, '', lastEditingChannelId, { mode: 'editing', messageId: lastEditingMessageId });
+  }
+  editingPreviewActive.value = false;
+  lastEditingChannelId = '';
+  lastEditingMessageId = '';
+};
+
+const convertMessageContentToDraft = (content?: string) => {
+  if (!content) {
+    return '';
+  }
+  let text = contentUnescape(content);
+  text = text.replace(/<at\s+[^>]*name="([^"]+)"[^>]*\/>/gi, (_, name) => `@${name}`);
+  text = text.replace(/<at\s+[^>]*id="([^"]+)"[^>]*\/>/gi, (_, id) => `@${id}`);
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  return text;
 };
 
 const emitTypingPreview = () => {
@@ -158,6 +233,20 @@ const emitTypingPreview = () => {
   sendTypingUpdate(true, content, channelId);
 };
 
+const emitEditingPreview = () => {
+  if (!chat.editing || chat.connectState !== 'connected') {
+    return;
+  }
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    return;
+  }
+  const messageId = chat.editing.messageId;
+  const raw = textToSend.value;
+  const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
+  sendEditingPreview(channelId, messageId, truncated);
+};
+
 const typingPreviewTooltip = computed(() =>
   typingPreviewEnabled.value ? '关闭实时输入预览' : '开启实时输入预览'
 );
@@ -167,6 +256,33 @@ const toggleTypingPreview = () => {
 };
 
 const textToSend = ref('');
+const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
+  const map: Record<string, EditingPreviewInfo> = {};
+  typingPreviewList.value.forEach((item) => {
+    if (item.mode === 'editing' && item.messageId) {
+      map[item.messageId] = {
+        userId: item.userId,
+        displayName: item.displayName,
+        avatar: item.avatar,
+        content: item.content || '',
+        indicatorOnly: item.indicatorOnly,
+        isSelf: item.userId === user.info.id,
+      };
+    }
+  });
+  if (isEditing.value && chat.editing) {
+    const draft = textToSend.value;
+    map[chat.editing.messageId] = {
+      userId: user.info.id,
+      displayName: chat.curMember?.nick || user.info.nick || user.info.name || '我',
+      avatar: chat.curMember?.avatar || user.info.avatar || '',
+      content: draft,
+      indicatorOnly: draft.trim().length === 0,
+      isSelf: true,
+    };
+  }
+  return map;
+});
 const whisperPanelVisible = ref(false);
 const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
@@ -226,6 +342,77 @@ const ensureInputFocus = () => {
   nextTick(() => {
     textInputRef.value?.focus?.();
   });
+};
+
+const beginEdit = (target?: Message) => {
+  if (!target?.id || !chat.curChannel?.id) {
+    return;
+  }
+  if (target.user?.id !== user.info.id) {
+    message.error('只能编辑自己发送的消息');
+    return;
+  }
+  stopTypingPreviewNow();
+  stopEditingPreviewNow();
+  chat.curReplyTo = null;
+  chat.clearWhisperTarget();
+  chat.startEditingMessage({
+    messageId: target.id,
+    channelId: chat.curChannel.id,
+    originalContent: target.content || '',
+    draft: target.content || '',
+  });
+};
+
+const cancelEditing = () => {
+  if (!chat.editing) {
+    return;
+  }
+  stopEditingPreviewNow();
+  chat.cancelEditing();
+  textToSend.value = '';
+  stopTypingPreviewNow();
+  ensureInputFocus();
+};
+
+const saveEdit = async () => {
+  if (!chat.editing) {
+    return;
+  }
+  if (chat.connectState !== 'connected') {
+    message.error('尚未连接，请稍等');
+    return;
+  }
+  const draft = textToSend.value;
+  if (draft.trim() === '') {
+    message.error('消息内容不能为空');
+    return;
+  }
+  if (draft.length > 10000) {
+    message.error('消息过长，请分段编辑');
+    return;
+  }
+  try {
+    stopTypingPreviewNow();
+    const escaped = contentEscape(draft);
+    const replaced = await replaceUsernames(escaped);
+    if (replaced.trim() === '') {
+      message.error('消息内容不能为空');
+      return;
+    }
+    const updated = await chat.messageUpdate(chat.editing.channelId, chat.editing.messageId, replaced);
+    if (updated) {
+      upsertMessage(updated as unknown as Message);
+    }
+    message.success('消息已更新');
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    textToSend.value = '';
+    ensureInputFocus();
+  } catch (error: any) {
+    console.error('更新消息失败', error);
+    message.error((error?.message ?? '编辑失败，请稍后重试'));
+  }
 };
 
 function openWhisperPanel(source: 'slash' | 'manual') {
@@ -341,7 +528,36 @@ const getTextarea = () => {
   return el as HTMLTextAreaElement | undefined;
 };
 
+watch(() => chat.editing?.messageId, (messageId, previousId) => {
+  if (!messageId && previousId) {
+    stopEditingPreviewNow();
+    textToSend.value = '';
+    return;
+  }
+  if (messageId && chat.editing) {
+    if (previousId && previousId !== messageId) {
+      stopEditingPreviewNow();
+    }
+    const draft = convertMessageContentToDraft(chat.editing.draft);
+    chat.curReplyTo = null;
+    chat.clearWhisperTarget();
+    textToSend.value = draft;
+    chat.updateEditingDraft(draft);
+    chat.messageMenu.show = false;
+    stopTypingPreviewNow();
+    ensureInputFocus();
+    nextTick(() => {
+      document.getElementById(messageId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      emitEditingPreview();
+    });
+  }
+});
+
 const send = throttle(async () => {
+  if (isEditing.value) {
+    await saveEdit();
+    return;
+  }
   if (chat.connectState !== 'connected') {
     message.error('尚未连接，请稍等');
     return;
@@ -408,7 +624,12 @@ const send = throttle(async () => {
 
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
-  emitTypingPreview();
+  if (isEditing.value) {
+    chat.updateEditingDraft(value);
+    emitEditingPreview();
+  } else {
+    emitTypingPreview();
+  }
 });
 
 watch(filteredWhisperCandidates, (list) => {
@@ -434,16 +655,22 @@ watch(() => chat.whisperTarget, (target) => {
 
 watch(typingPreviewEnabled, (enabled) => {
   localStorage.setItem(typingPreviewStorageKey, enabled ? 'true' : 'false');
-  if (!typingPreviewActive.value || !lastTypingChannelId) {
+  if (!enabled) {
+    stopTypingPreviewNow();
+    stopEditingPreviewNow();
     return;
   }
-  const raw = textToSend.value;
-  if (raw.trim().length === 0) {
-    return;
+  if (typingPreviewActive.value && lastTypingChannelId) {
+    const raw = textToSend.value;
+    if (raw.trim().length > 0) {
+      const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
+      sendTypingUpdate.cancel();
+      chat.messageTyping(true, truncated, lastTypingChannelId);
+    }
   }
-  const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
-  sendTypingUpdate.cancel();
-  chat.messageTyping(true, enabled ? truncated : '', lastTypingChannelId);
+  if (isEditing.value) {
+    emitEditingPreview();
+  }
 });
 
 const toBottom = () => {
@@ -526,9 +753,25 @@ onMounted(async () => {
       }
       upsertMessage(e.message);
       removeTypingPreview(e.message.user?.id);
+      removeTypingPreview(e.message.user?.id, 'editing');
       if (!showButton.value) {
         scrollToBottom();
       }
+    }
+  });
+
+  chatEvent.off('message-updated', '*');
+  chatEvent.on('message-updated', (e?: Event) => {
+    if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+      return;
+    }
+    upsertMessage(e.message);
+    removeTypingPreview(e.user?.id, 'editing');
+    if (chat.editing && chat.editing.messageId === e.message.id) {
+      stopEditingPreviewNow();
+      chat.cancelEditing();
+      textToSend.value = '';
+      ensureInputFocus();
     }
   });
 
@@ -541,16 +784,19 @@ onMounted(async () => {
     if (!typingUserId || typingUserId === user.info.id) {
       return;
     }
+    const mode = e.typing?.mode === 'editing' ? 'editing' : 'typing';
     if (!e.typing?.enabled) {
-      removeTypingPreview(typingUserId);
+      removeTypingPreview(typingUserId, mode);
       return;
     }
-  upsertTypingPreview({
+    upsertTypingPreview({
       userId: typingUserId,
       displayName: e.member?.nick || e.user?.nick || '未知成员',
       avatar: e.member?.avatar || e.user?.avatar || '',
       content: e.typing?.content || '',
       indicatorOnly: !e.typing?.content,
+      mode,
+      messageId: e.typing?.messageId,
     });
   });
 
@@ -595,7 +841,7 @@ onMounted(async () => {
         rows.value = rows.value.filter((i) => i.createdAt || now > lastCreatedAt);
       }
       // 插入新数据
-      rows.value.push(...messages.data);
+      rows.value.push(...normalizeMessageList(messages.data));
       // 为防止混乱，重新排序
       rows.value.sort((a, b) => (a.createdAt || now) - (b.createdAt || now));
 
@@ -613,6 +859,9 @@ onMounted(async () => {
     if (!firstLoad) return;
     stopTypingPreviewNow();
     resetTypingPreview();
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    textToSend.value = '';
     rows.value = []
     showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
@@ -626,6 +875,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopTypingPreviewNow();
+  stopEditingPreviewNow();
   resetTypingPreview();
 });
 
@@ -635,7 +885,7 @@ const loadMessages = async () => {
   resetTypingPreview();
   const messages = await chat.messageList(chat.curChannel?.id || '');
   messagesNextFlag.value = messages.next || "";
-  rows.value.push(...messages.data);
+  rows.value.push(...normalizeMessageList(messages.data));
   rows.value = rows.value.slice();
 
   nextTick(() => {
@@ -670,7 +920,7 @@ const pauseKeydown = ref(false);
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
-  if (handleWhisperKeydown(e)) {
+  if (!isEditing.value && handleWhisperKeydown(e)) {
     return;
   }
 
@@ -689,8 +939,18 @@ const keyDown = function (e: KeyboardEvent) {
     }
   }
 
+  if (e.key === 'Escape' && isEditing.value) {
+    cancelEditing();
+    e.preventDefault();
+    return;
+  }
+
   if (e.key === 'Enter' && (!e.ctrlKey) && (!e.shiftKey)) {
-    send();
+    if (isEditing.value) {
+      saveEdit();
+    } else {
+      send();
+    }
     e.preventDefault();
   }
 }
@@ -808,7 +1068,7 @@ const reachTop = throttle(async (evt: any) => {
       oldId = rows.value[0].id || '';
     }
 
-    rows.value.unshift(...messages.data);
+    rows.value.unshift(...normalizeMessageList(messages.data));
     rows.value = rows.value.slice();
 
     nextTick(() => {
@@ -872,10 +1132,12 @@ const isManagingEmoji = ref(false);
         <!-- {{itemData}} -->
         <chat-item :avatar="itemData.member?.avatar || itemData.user?.avatar" :username="itemData.member?.nick ?? '未知'"
           :content="itemData.content" :is-rtl="isMe(itemData)" :item="itemData"
-          @avatar-longpress="avatarLongpress(itemData)" />
+          :editing-preview="editingPreviewMap[itemData.id]"
+          @avatar-longpress="avatarLongpress(itemData)" @edit="beginEdit(itemData)"
+          @edit-save="saveEdit" @edit-cancel="cancelEditing" />
       </template>
 
-      <template v-for="preview in typingPreviewList" :key="preview.userId">
+      <template v-for="preview in typingPreviewItems" :key="`${preview.userId}-typing`">
         <div class="typing-preview-item">
           <AvatarVue :border="false" :size="40" :src="preview.avatar" />
           <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
@@ -892,7 +1154,8 @@ const isManagingEmoji = ref(false);
                 <span></span>
               </span>
             </div>
-            <div class="typing-preview-bubble__body" :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }">
+            <div class="typing-preview-bubble__body"
+              :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }">
               <template v-if="preview.indicatorOnly">
                 正在输入
               </template>
@@ -948,7 +1211,7 @@ const isManagingEmoji = ref(false);
         <div class="absolute" style="z-index: 1; left: 0.5rem; top: .55rem;">
           <n-popover v-model:show="emojiPopoverShow" trigger="click">
             <template #trigger>
-              <n-button text>
+              <n-button text :disabled="isEditing">
                 <template #icon>
                   <n-icon :component="Plus" size="20" />
                 </template>
@@ -1012,7 +1275,7 @@ const isManagingEmoji = ref(false);
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
-                @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
+                @click="startWhisperSelection" :disabled="!canOpenWhisperPanel || isEditing">
                 <template #icon>
                   <n-icon :component="Lock" size="20" />
                 </template>
@@ -1024,7 +1287,7 @@ const isManagingEmoji = ref(false);
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text class="typing-toggle" :class="{ 'typing-toggle--active': typingPreviewEnabled }"
-                @click="toggleTypingPreview">
+                @click="toggleTypingPreview" :disabled="isEditing">
                 <template #icon>
                   <n-icon :component="typingPreviewEnabled ? Eye : EyeOff" size="20" />
                 </template>
@@ -1035,7 +1298,7 @@ const isManagingEmoji = ref(false);
 
           <n-popover trigger="hover">
             <template #trigger>
-              <n-button text @click="doUpload">
+              <n-button text @click="doUpload" :disabled="isEditing">
                 <template #icon>
                   <n-icon :component="Upload" size="20" />
                 </template>
@@ -1080,7 +1343,7 @@ const isManagingEmoji = ref(false);
         </n-mention>
       </div>
       <div class="flex" style="align-items: end; padding-bottom: 1px;">
-        <n-button class="" type="primary" @click="send" :disabled="chat.connectState !== 'connected'">{{ 
+        <n-button class="" type="primary" @click="send" :disabled="chat.connectState !== 'connected' || isEditing">{{ 
           $t('inputBox.send') }}</n-button>
       </div>
     </div>
@@ -1127,6 +1390,13 @@ const isManagingEmoji = ref(false);
   border-color: rgba(59, 130, 246, 0.55);
   background-color: rgba(219, 234, 254, 0.95);
   color: #1d4ed8;
+}
+
+.typing-preview-bubble__footer {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .typing-preview-bubble__header {

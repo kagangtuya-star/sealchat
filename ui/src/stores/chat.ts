@@ -43,7 +43,14 @@ interface ChatState {
     show: boolean,
     optionsComponent: MenuOptions,
     item: SatoriMessage | null
-  }
+  },
+
+  editing: {
+    messageId: string;
+    channelId: string;
+    originalContent: string;
+    draft: string;
+  } | null
 }
 
 const apiMap = new Map<string, any>();
@@ -104,6 +111,8 @@ export const useChatStore = defineStore({
       } as MenuOptions,
       item: null,
     },
+
+    editing: null,
   }),
 
   getters: {
@@ -280,6 +289,8 @@ export const useChatStore = defineStore({
         return;
       }
 
+      this.cancelEditing();
+
       let oldChannel = this.curChannel;
       this.curChannel = nextChannel;
       const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
@@ -400,6 +411,14 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async messageUpdate(channel_id: string, message_id: string, content: string) {
+      const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', { channel_id, message_id, content });
+      if ((resp as any)?.err) {
+        throw new Error((resp as any).err);
+      }
+      return (resp as any).data?.message;
+    },
+
     async messageCreate(content: string, quote_id?: string, whisper_to?: string) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -416,17 +435,24 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
-    async messageTyping(enabled: boolean, content: string, channelId?: string) {
+    async messageTyping(enabled: boolean, content: string, channelId?: string, extra?: { mode?: string; messageId?: string }) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
         return;
       }
       try {
-        await this.sendAPI('message.typing', {
+        const payload: Record<string, any> = {
           channel_id: targetChannelId,
           enabled,
           content,
-        });
+        };
+        if (extra?.mode) {
+          payload.mode = extra.mode;
+        }
+        if (extra?.messageId) {
+          payload.message_id = extra.messageId;
+        }
+        await this.sendAPI('message.typing', payload as APIMessage);
       } catch (error) {
         console.warn('message.typing 调用失败', error);
       }
@@ -438,6 +464,24 @@ export const useChatStore = defineStore({
 
     clearWhisperTarget() {
       this.whisperTarget = null;
+    },
+
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string }) {
+      this.editing = { ...payload };
+    },
+
+    updateEditingDraft(draft: string) {
+      if (this.editing) {
+        this.editing.draft = draft;
+      }
+    },
+
+    cancelEditing() {
+      this.editing = null;
+    },
+
+    isEditingMessage(messageId?: string | null) {
+      return !!(this.editing && messageId && this.editing.messageId === messageId);
     },
 
     // friend
