@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue';
 import type { MentionOption } from 'naive-ui';
-import ChatInputPlain from './inputs/ChatInputPlain.vue';
+import ChatInputHybrid from './inputs/ChatInputHybrid.vue';
 import ChatInputRich from './inputs/ChatInputRich.vue';
 
 type EditorMode = 'plain' | 'rich';
@@ -154,7 +154,7 @@ defineExpose({
 </script>
 
 <template>
-  <ChatInputPlain
+  <ChatInputHybrid
     v-if="currentComponent === 'plain'"
     ref="plainRef"
     v-model="valueBinder"
@@ -175,6 +175,8 @@ defineExpose({
     @focus="handleFocus"
     @blur="handleBlur"
     @remove-image="handleRemoveImage"
+    @paste-image="handlePasteImage"
+    @drop-files="handleDropFiles"
   />
   <ChatInputRich
     v-else

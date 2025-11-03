@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, computed } from 'vue';
+import { nextTick, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import type { MentionOption } from 'naive-ui';
 import InlineImagePreview from './InlineImagePreview.vue';
 
@@ -38,9 +38,12 @@ const emit = defineEmits<{
   (event: 'focus'): void
   (event: 'blur'): void
   (event: 'remove-image', markerId: string): void
+  (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
 }>();
 
 const mentionRef = ref<any>(null);
+const wrapperRef = ref<HTMLElement | null>(null);
 
 const classList = computed(() => {
   const base: string[] = ['chat-text'];
@@ -86,6 +89,79 @@ const handleRemoveImage = (markerId: string) => {
   emit('remove-image', markerId);
 };
 
+const getTextarea = (): HTMLTextAreaElement | undefined => {
+  const textarea = mentionRef.value?.$el?.querySelector?.('textarea');
+  return textarea || undefined;
+};
+
+// 处理粘贴事件
+const handlePaste = (event: ClipboardEvent) => {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+
+  const files: File[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        files.push(file);
+      }
+    }
+  }
+
+  if (files.length > 0) {
+    event.preventDefault();
+    const textarea = getTextarea();
+    const start = textarea?.selectionStart || 0;
+    const end = textarea?.selectionEnd || 0;
+    emit('paste-image', { files, selectionStart: start, selectionEnd: end });
+  }
+};
+
+// 处理拖拽事件
+const handleDrop = (event: DragEvent) => {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const files = Array.from(event.dataTransfer?.files || []).filter((file) =>
+    file.type.startsWith('image/')
+  );
+
+  if (files.length > 0) {
+    const textarea = getTextarea();
+    const start = textarea?.selectionStart || 0;
+    const end = textarea?.selectionEnd || 0;
+    emit('drop-files', { files, selectionStart: start, selectionEnd: end });
+  }
+};
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault();
+  event.stopPropagation();
+};
+
+// 挂载和卸载事件监听
+onMounted(() => {
+  nextTick(() => {
+    const textarea = getTextarea();
+    if (textarea) {
+      textarea.addEventListener('paste', handlePaste as EventListener);
+      textarea.addEventListener('drop', handleDrop as EventListener);
+      textarea.addEventListener('dragover', handleDragOver as EventListener);
+    }
+  });
+});
+
+onBeforeUnmount(() => {
+  const textarea = getTextarea();
+  if (textarea) {
+    textarea.removeEventListener('paste', handlePaste as EventListener);
+    textarea.removeEventListener('drop', handleDrop as EventListener);
+    textarea.removeEventListener('dragover', handleDragOver as EventListener);
+  }
+});
+
 const focus = () => {
   nextTick(() => {
     mentionRef.value?.focus?.();
@@ -101,11 +177,6 @@ const blur = () => {
   textarea?.blur();
 };
 
-const getTextarea = (): HTMLTextAreaElement | undefined => {
-  const textarea = mentionRef.value?.$el?.querySelector?.('textarea');
-  return textarea || undefined;
-};
-
 defineExpose({
   focus,
   blur,
@@ -115,7 +186,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="chat-input-plain-wrapper">
+  <div class="chat-input-plain-wrapper" ref="wrapperRef">
     <n-mention
       ref="mentionRef"
       type="textarea"

@@ -5,7 +5,7 @@ import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, RotateClockwise } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -29,6 +29,8 @@ import type { UserEmojiModel } from '@/types';
 import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
+import { tiptapJsonToHtml } from '@/utils/tiptap-render';
+import DOMPurify from 'dompurify';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -723,6 +725,140 @@ const typingToggleClass = computed(() => ({
 }));
 
 const textToSend = ref('');
+
+// 草稿保存和恢复功能
+const DRAFT_STORAGE_KEY = 'sealchat_message_draft';
+const hasSavedDraft = ref(false);
+
+// 保存草稿到 localStorage
+const saveDraft = () => {
+  if (!textToSend.value.trim() && Object.keys(inlineImages).length === 0) {
+    // 空内容不保存
+    return;
+  }
+
+  try {
+    const draftData = {
+      content: textToSend.value,
+      mode: inputMode.value,
+      timestamp: Date.now(),
+      channelId: chat.curChannel?.id,
+      inlineImages: Object.fromEntries(
+        Object.entries(inlineImages).map(([key, value]) => [
+          key,
+          {
+            status: value.status,
+            previewUrl: value.previewUrl,
+            attachmentId: value.attachmentId,
+          }
+        ])
+      ),
+    };
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
+    console.log('草稿已保存');
+  } catch (e) {
+    console.error('保存草稿失败', e);
+  }
+};
+
+// 读取草稿
+const loadDraft = () => {
+  try {
+    const stored = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!stored) {
+      hasSavedDraft.value = false;
+      return null;
+    }
+
+    const draftData = JSON.parse(stored);
+
+    // 检查草稿是否过期（7天）
+    if (Date.now() - draftData.timestamp > 7 * 24 * 60 * 60 * 1000) {
+      clearDraft();
+      return null;
+    }
+
+    hasSavedDraft.value = true;
+    return draftData;
+  } catch (e) {
+    console.error('读取草稿失败', e);
+    hasSavedDraft.value = false;
+    return null;
+  }
+};
+
+// 清除草稿
+const clearDraft = () => {
+  try {
+    localStorage.removeItem(DRAFT_STORAGE_KEY);
+    hasSavedDraft.value = false;
+    console.log('草稿已清除');
+  } catch (e) {
+    console.error('清除草稿失败', e);
+  }
+};
+
+// 恢复草稿
+const restoreDraft = () => {
+  const draft = loadDraft();
+  if (!draft) {
+    message.warning('没有找到可恢复的草稿');
+    return;
+  }
+
+  // 确认恢复（如果当前有内容）
+  if (textToSend.value.trim()) {
+    dialog.warning({
+      title: '恢复草稿',
+      content: '当前输入框有内容，恢复草稿将覆盖现有内容，是否继续？',
+      positiveText: '恢复',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        applyDraft(draft);
+      },
+    });
+  } else {
+    applyDraft(draft);
+  }
+};
+
+// 应用草稿
+const applyDraft = (draft: any) => {
+  try {
+    // 恢复输入模式
+    if (draft.mode) {
+      inputMode.value = draft.mode;
+    }
+
+    // 恢复文本内容
+    textToSend.value = draft.content || '';
+
+    // 恢复图片（仅恢复已上传成功的）
+    if (draft.inlineImages) {
+      Object.entries(draft.inlineImages).forEach(([markerId, imageData]: [string, any]) => {
+        if (imageData.status === 'uploaded' && imageData.attachmentId && imageData.previewUrl) {
+          inlineImages[markerId] = {
+            status: 'uploaded',
+            previewUrl: imageData.previewUrl,
+            attachmentId: imageData.attachmentId,
+          };
+        }
+      });
+    }
+
+    clearDraft();
+    message.success('草稿已恢复');
+
+    // 聚焦到输入框
+    nextTick(() => {
+      textInputRef.value?.focus();
+    });
+  } catch (e) {
+    console.error('应用草稿失败', e);
+    message.error('恢复草稿失败');
+  }
+};
+
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
   const map: Record<string, EditingPreviewInfo> = {};
   typingPreviewList.value.forEach((item) => {
@@ -1051,7 +1187,101 @@ const syncInlineMarkersWithText = (value: string) => {
   });
 };
 
-const formatInlinePreviewText = (value: string) => value.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
+// 格式化预览文本 - 支持图片和富文本
+const formatInlinePreviewText = (value: string) => {
+  // 检测是否为 TipTap JSON
+  if (value.trim().startsWith('{') && value.includes('"type":"doc"')) {
+    try {
+      const json = JSON.parse(value);
+      // 提取纯文本内容
+      return extractTipTapText(json).slice(0, 100);
+    } catch {
+      // 如果解析失败，继续处理为普通文本
+    }
+  }
+
+  // 替换图片标记为 [图片]
+  return value.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
+};
+
+// 从 TipTap JSON 提取纯文本
+const extractTipTapText = (node: any): string => {
+  if (!node) return '';
+
+  if (node.text !== undefined) {
+    return node.text;
+  }
+
+  if (node.type === 'image') {
+    return '[图片]';
+  }
+
+  if (node.content && Array.isArray(node.content)) {
+    return node.content.map(extractTipTapText).join('');
+  }
+
+  return '';
+};
+
+// 渲染预览内容（支持图片和富文本）
+const renderPreviewContent = (value: string) => {
+  // 检测是否为 TipTap JSON
+  if (value.trim().startsWith('{') && value.includes('"type":"doc"')) {
+    try {
+      const json = JSON.parse(value);
+      const html = tiptapJsonToHtml(json, {
+        baseUrl: urlBase,
+        imageClass: 'preview-inline-image',
+        linkClass: 'text-blue-500',
+      });
+      return DOMPurify.sanitize(html);
+    } catch {
+      // 如果解析失败，继续处理为普通文本
+    }
+  }
+
+  // 处理普通文本和图片标记
+  const imageMarkerRegex = /\[\[图片:([^\]]+)\]\]/g;
+  let result = '';
+  let lastIndex = 0;
+
+  let match;
+  while ((match = imageMarkerRegex.exec(value)) !== null) {
+    // 添加标记前的文本
+    if (match.index > lastIndex) {
+      result += escapeHtml(value.substring(lastIndex, match.index));
+    }
+
+    // 添加图片
+    const markerId = match[1];
+    const imageInfo = inlineImages.get(markerId);
+    if (imageInfo && imageInfo.previewUrl) {
+      result += `<img src="${imageInfo.previewUrl}" class="preview-inline-image" alt="图片" />`;
+    } else {
+      result += '<span class="preview-image-placeholder">[图片]</span>';
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // 添加剩余文本
+  if (lastIndex < value.length) {
+    result += escapeHtml(value.substring(lastIndex));
+  }
+
+  return DOMPurify.sanitize(result || value);
+};
+
+const escapeHtml = (text: string): string => {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return text.replace(/[&<>"']/g, (char) => map[char] || char);
+};
 
 const buildMessageHtml = async (draft: string) => {
   const placeholderMap = new Map<string, string>();
@@ -1182,7 +1412,7 @@ const handleRichImageInsert = async (files: File[]) => {
     const markerId = nanoid();
     const objectUrl = URL.createObjectURL(file);
 
-    // 在编辑器中插入临时图片（使用 base64 或 object URL）
+    // 在编辑器中插入临时图片（使用 object URL）
     editor.chain().focus().setImage({ src: objectUrl, alt: `图片-${markerId}` }).run();
 
     // 创建上传记录
@@ -1202,14 +1432,16 @@ const handleRichImageInsert = async (files: File[]) => {
       draftRecord.status = 'uploaded';
       draftRecord.error = '';
 
-      // 更新编辑器中的图片 URL
+      // 更新编辑器中的图片 URL（使用 id: 协议）
+      const finalUrl = `id:${result.attachmentId}`;
       const { state } = editor;
       const { doc } = state;
+
       doc.descendants((node, pos) => {
         if (node.type.name === 'image' && node.attrs.src === objectUrl) {
           const tr = state.tr.setNodeMarkup(pos, undefined, {
             ...node.attrs,
-            src: result.attachmentId,
+            src: finalUrl,
           });
           editor.view.dispatch(tr);
           return false;
@@ -1232,7 +1464,17 @@ const handleInlineFileChange = (event: Event) => {
     pendingInlineSelection = null;
     return;
   }
-  insertInlineImages(Array.from(input.files), pendingInlineSelection || undefined);
+
+  const files = Array.from(input.files);
+
+  if (inputMode.value === 'rich') {
+    // 富文本模式：调用富文本图片插入
+    handleRichImageInsert(files);
+  } else {
+    // 纯文本模式：调用纯文本图片插入
+    insertInlineImages(files, pendingInlineSelection || undefined);
+  }
+
   pendingInlineSelection = null;
   input.value = '';
 };
@@ -1298,6 +1540,9 @@ const send = throttle(async () => {
     }
   }
 
+  // 保存草稿（以防发送失败）
+  saveDraft();
+
   const replyTo = chat.curReplyTo || undefined;
   stopTypingPreviewNow();
   suspendInlineSync = true;
@@ -1352,6 +1597,9 @@ const send = throttle(async () => {
     upsertMessage(tmpMsg);
     resetInlineImages();
     pendingInlineSelection = null;
+
+    // 发送成功，清除草稿
+    clearDraft();
   } catch (e) {
     message.error('发送失败,您可能没有权限在此频道发送消息');
     console.error('消息发送失败', e);
@@ -1494,6 +1742,9 @@ onMounted(async () => {
   await utils.commandsRefresh();
 
   chat.channelRefreshSetup()
+
+  // 检查是否有保存的草稿
+  loadDraft();
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -2027,7 +2278,7 @@ const isManagingEmoji = ref(false);
                 正在输入
               </template>
               <template v-else>
-                {{ formatInlinePreviewText(preview.content) }}
+                <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
               </template>
             </div>
           </div>
@@ -2248,6 +2499,19 @@ const isManagingEmoji = ref(false);
                 {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
               </n-tooltip>
             </div>
+
+            <div v-if="hasSavedDraft" class="chat-input-actions__cell">
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button quaternary circle @click="restoreDraft" :disabled="isEditing">
+                    <template #icon>
+                      <n-icon :component="RotateClockwise" size="18" />
+                    </template>
+                  </n-button>
+                </template>
+                恢复上次未发送的内容
+              </n-tooltip>
+            </div>
           </div>
 
           <div class="chat-input-actions__cell chat-input-actions__send">
@@ -2435,6 +2699,60 @@ const isManagingEmoji = ref(false);
 
 .typing-preview-bubble__placeholder {
   color: #6b7280;
+}
+
+.preview-content {
+  max-width: 100%;
+
+  p {
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  p + p {
+    margin-top: 0.5rem;
+  }
+
+  strong {
+    font-weight: 600;
+  }
+
+  em {
+    font-style: italic;
+  }
+
+  u {
+    text-decoration: underline;
+  }
+
+  s {
+    text-decoration: line-through;
+  }
+
+  code {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+  }
+}
+
+.preview-inline-image {
+  max-height: 3rem;
+  max-width: 6rem;
+  border-radius: 0.375rem;
+  vertical-align: middle;
+  margin: 0 0.25rem;
+  object-fit: contain;
+}
+
+.preview-image-placeholder {
+  display: inline-block;
+  padding: 0.125rem 0.375rem;
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
 }
 
 .typing-dots {
