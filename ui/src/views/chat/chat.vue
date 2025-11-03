@@ -54,6 +54,8 @@ const uploadSupportRef = ref<any>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 
+const SCROLL_STICKY_THRESHOLD = 200;
+
 const rows = ref<Message[]>([]);
 
 const normalizeMessageShape = (msg: any): Message => {
@@ -178,8 +180,12 @@ const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) 
 let lastTypingChannelId = '';
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
+  const shouldStick = isNearBottom();
   typingPreviewList.value = typingPreviewList.value.filter((i) => !(i.userId === item.userId && i.mode === item.mode));
   typingPreviewList.value.push(item);
+  if (shouldStick) {
+    toBottom();
+  }
 };
 
 const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typing') => {
@@ -636,6 +642,7 @@ const send = throttle(async () => {
 
   const now = Date.now();
   const clientId = nanoid();
+  const wasAtBottom = isNearBottom();
   const tmpMsg: Message = {
     id: clientId,
     createdAt: now,
@@ -682,7 +689,9 @@ const send = throttle(async () => {
     }
   }
 
-  scrollToBottom();
+  if (wasAtBottom) {
+    toBottom();
+  }
 }, 500);
 
 watch(textToSend, (value) => {
@@ -741,6 +750,15 @@ watch(typingPreviewMode, (mode) => {
     stopEditingPreviewNow();
   }
 });
+
+const isNearBottom = () => {
+  const elLst = messagesListRef.value;
+  if (!elLst) {
+    return true;
+  }
+  const offset = elLst.scrollHeight - (elLst.clientHeight + elLst.scrollTop);
+  return offset <= SCROLL_STICKY_THRESHOLD;
+};
 
 const toBottom = () => {
   scrollToBottom();
@@ -810,6 +828,7 @@ chatEvent.on('message-created', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
+  const shouldStick = isNearBottom();
   const incoming = normalizeMessageShape(e.message);
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
@@ -836,8 +855,8 @@ chatEvent.on('message-created', (e?: Event) => {
       upsertMessage(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      if (!showButton.value) {
-        scrollToBottom();
+      if (shouldStick) {
+        toBottom();
       }
       return;
     }
@@ -847,8 +866,8 @@ chatEvent.on('message-created', (e?: Event) => {
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
-  if (!showButton.value) {
-    scrollToBottom();
+  if (shouldStick) {
+    toBottom();
   }
 });
 
@@ -1014,7 +1033,7 @@ const onScroll = (evt: any) => {
   if (messagesListRef.value) {
     const elLst = messagesListRef.value;
     const offset = elLst.scrollHeight - (elLst.clientHeight + elLst.scrollTop);
-    showButton.value = offset > 200;
+    showButton.value = offset > SCROLL_STICKY_THRESHOLD;
 
     if (elLst.scrollTop === 0) {
       //  首次加载前不触发
