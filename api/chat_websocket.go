@@ -37,6 +37,7 @@ type ConnInfo struct {
 	LastPingTime    int64
 	ChannelId       string
 	TypingEnabled   bool
+	TypingState     protocol.TypingState
 	TypingContent   string
 	TypingUpdatedAt int64
 }
@@ -72,9 +73,9 @@ func websocketWorks(app *fiber.App) {
 				user, err = model.UserVerifyAccessToken(token)
 			}
 
-			if err == nil {
-				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
-				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().Unix(), User: user}
+				if err == nil {
+					m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
+					curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().Unix(), User: user, TypingState: protocol.TypingStateSilent}
 				m.Store(c, curConnInfo)
 
 				curUser = user
@@ -320,6 +321,7 @@ func websocketWorks(app *fiber.App) {
 					Channel: channelData,
 					User:    curUser.ToProtocolType(),
 					Typing: &protocol.TypingPreview{
+						State:   protocol.TypingStateSilent,
 						Enabled: false,
 						Content: "",
 					},
@@ -332,6 +334,7 @@ func websocketWorks(app *fiber.App) {
 			}
 
 			curConnInfo.TypingEnabled = false
+			curConnInfo.TypingState = protocol.TypingStateSilent
 			curConnInfo.TypingContent = ""
 			curConnInfo.TypingUpdatedAt = 0
 		}

@@ -91,6 +91,7 @@ type Message struct {
 	WhisperTo *User        `json:"whisperTo"`
 	IsEdited  bool         `json:"isEdited"`
 	EditCount int          `json:"editCount"`
+	ClientID  string       `json:"clientId,omitempty"`
 }
 
 type Button struct {
@@ -161,11 +162,23 @@ type Event struct {
 	Typing    *TypingPreview `json:"typing"`
 }
 
+type TypingState string
+
+const (
+	TypingStateIndicator TypingState = "indicator"
+	TypingStateContent   TypingState = "content"
+	TypingStateSilent    TypingState = "silent"
+	// Deprecated aliases for backward compatibility with旧版本
+	TypingStateOff TypingState = "off"
+	TypingStateOn  TypingState = "on"
+)
+
 type TypingPreview struct {
-	Enabled   bool   `json:"enabled"`
-	Content   string `json:"content"`
-	Mode      string `json:"mode,omitempty"`
-	MessageID string `json:"messageId,omitempty"`
+	State     TypingState `json:"state"`
+	Enabled   bool        `json:"enabled"`
+	Content   string      `json:"content"`
+	Mode      string      `json:"mode,omitempty"`
+	MessageID string      `json:"messageId,omitempty"`
 }
 
 type GatewayPayloadStructure struct {

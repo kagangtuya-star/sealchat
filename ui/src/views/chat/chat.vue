@@ -144,8 +144,34 @@ interface EditingPreviewInfo {
   isSelf: boolean;
 }
 
-const typingPreviewStorageKey = 'sealchat.typingPreviewEnabled';
-const typingPreviewEnabled = ref(localStorage.getItem(typingPreviewStorageKey) === 'true');
+type TypingBroadcastState = 'indicator' | 'content' | 'silent';
+
+const typingPreviewStorageKey = 'sealchat.typingPreviewMode';
+const legacyTypingPreviewKey = 'sealchat.typingPreviewEnabled';
+const resolveTypingPreviewMode = (): TypingBroadcastState => {
+  const stored = localStorage.getItem(typingPreviewStorageKey);
+  if (stored === 'indicator' || stored === 'content' || stored === 'silent') {
+    return stored as TypingBroadcastState;
+  }
+  if (stored === 'on') {
+    return 'content';
+  }
+  if (stored === 'off') {
+    return 'indicator';
+  }
+  const legacy = localStorage.getItem(legacyTypingPreviewKey);
+  if (legacy === 'true') {
+    return 'content';
+  }
+  if (legacy === 'false') {
+    return 'indicator';
+  }
+  return 'indicator';
+};
+const typingPreviewMode = ref<TypingBroadcastState>(resolveTypingPreviewMode());
+if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
+  localStorage.removeItem(legacyTypingPreviewKey);
+}
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
 const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) => item.mode === 'typing'));
@@ -167,14 +193,14 @@ const resetTypingPreview = () => {
   typingPreviewList.value = [];
 };
 
-const sendTypingUpdate = throttle((enabled: boolean, content: string, channelId: string) => {
-  chat.messageTyping(enabled, content, channelId);
+const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string, channelId: string) => {
+  chat.messageTyping(state, content, channelId);
 }, 400, { leading: true, trailing: true });
 
 const stopTypingPreviewNow = () => {
   sendTypingUpdate.cancel();
   if (typingPreviewActive.value && lastTypingChannelId) {
-    chat.messageTyping(false, '', lastTypingChannelId);
+    chat.messageTyping('silent', '', lastTypingChannelId);
   }
   typingPreviewActive.value = false;
   lastTypingChannelId = '';
@@ -185,10 +211,10 @@ let lastEditingChannelId = '';
 let lastEditingMessageId = '';
 
 const sendEditingPreview = throttle((channelId: string, messageId: string, content: string) => {
-  if (!typingPreviewEnabled.value) {
+  if (typingPreviewMode.value !== 'content') {
     return;
   }
-  chat.messageTyping(true, content, channelId, { mode: 'editing', messageId });
+  chat.messageTyping('content', content, channelId, { mode: 'editing', messageId });
   editingPreviewActive.value = true;
   lastEditingChannelId = channelId;
   lastEditingMessageId = messageId;
@@ -197,7 +223,7 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
 const stopEditingPreviewNow = () => {
   sendEditingPreview.cancel();
   if (editingPreviewActive.value && lastEditingChannelId && lastEditingMessageId) {
-    chat.messageTyping(false, '', lastEditingChannelId, { mode: 'editing', messageId: lastEditingMessageId });
+    chat.messageTyping('silent', '', lastEditingChannelId, { mode: 'editing', messageId: lastEditingMessageId });
   }
   editingPreviewActive.value = false;
   lastEditingChannelId = '';
@@ -220,6 +246,11 @@ const emitTypingPreview = () => {
   const channelId = chat.curChannel?.id;
   if (!channelId) return;
 
+  if (typingPreviewMode.value === 'silent') {
+    stopTypingPreviewNow();
+    return;
+  }
+
   const raw = textToSend.value;
   if (raw.trim().length === 0) {
     stopTypingPreviewNow();
@@ -229,8 +260,8 @@ const emitTypingPreview = () => {
   typingPreviewActive.value = true;
   lastTypingChannelId = channelId;
   const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
-  const content = typingPreviewEnabled.value ? truncated : '';
-  sendTypingUpdate(true, content, channelId);
+  const content = typingPreviewMode.value === 'content' ? truncated : '';
+  sendTypingUpdate(typingPreviewMode.value, content, channelId);
 };
 
 const emitEditingPreview = () => {
@@ -247,13 +278,40 @@ const emitEditingPreview = () => {
   sendEditingPreview(channelId, messageId, truncated);
 };
 
-const typingPreviewTooltip = computed(() =>
-  typingPreviewEnabled.value ? '关闭实时输入预览' : '开启实时输入预览'
-);
+const typingPreviewTooltip = computed(() => {
+  switch (typingPreviewMode.value) {
+    case 'indicator':
+      return '当前：实时广播关闭（仅显示“正在输入”提示）。点击开启实时广播';
+    case 'content':
+      return '当前：实时广播开启。点击切换为沉默广播';
+    case 'silent':
+      return '当前：实时广播沉默。点击恢复指示模式';
+    default:
+      return '调整实时广播状态';
+  }
+});
 
 const toggleTypingPreview = () => {
-  typingPreviewEnabled.value = !typingPreviewEnabled.value;
+  if (typingPreviewMode.value === 'indicator') {
+    typingPreviewMode.value = 'content';
+    emitTypingPreview();
+    return;
+  }
+  if (typingPreviewMode.value === 'content') {
+    typingPreviewMode.value = 'silent';
+    return;
+  }
+  typingPreviewMode.value = 'indicator';
+  emitTypingPreview();
 };
+
+const typingToggleClass = computed(() => ({
+  'typing-toggle--indicator': typingPreviewMode.value === 'indicator',
+  'typing-toggle--content': typingPreviewMode.value === 'content',
+  'typing-toggle--silent': typingPreviewMode.value === 'silent',
+}));
+
+const typingToggleIcon = computed(() => (typingPreviewMode.value === 'indicator' ? EyeOff : Eye));
 
 const textToSend = ref('');
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
@@ -577,8 +635,9 @@ const send = throttle(async () => {
   chat.curReplyTo = null;
 
   const now = Date.now();
+  const clientId = nanoid();
   const tmpMsg: Message = {
-    id: nanoid(),
+    id: clientId,
     createdAt: now,
     updatedAt: now,
     content: t,
@@ -586,6 +645,10 @@ const send = throttle(async () => {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
+  (tmpMsg as any).clientId = clientId;
+  if (chat.curChannel) {
+    (tmpMsg as any).channel = chat.curChannel;
+  }
 
   const whisperTargetForSend = chat.whisperTarget;
   if (whisperTargetForSend) {
@@ -602,7 +665,7 @@ const send = throttle(async () => {
     t = await replaceUsernames(t);
 
     tmpMsg.content = t;
-    const newMsg = await chat.messageCreate(t, replyTo?.id, whisperTargetForSend?.id);
+    const newMsg = await chat.messageCreate(t, replyTo?.id, whisperTargetForSend?.id, clientId);
     for (const [k, v] of Object.entries(newMsg)) {
       (tmpMsg as any)[k] = v;
     }
@@ -653,9 +716,9 @@ watch(() => chat.whisperTarget, (target) => {
   }
 });
 
-watch(typingPreviewEnabled, (enabled) => {
-  localStorage.setItem(typingPreviewStorageKey, enabled ? 'true' : 'false');
-  if (!enabled) {
+watch(typingPreviewMode, (mode) => {
+  localStorage.setItem(typingPreviewStorageKey, mode);
+  if (mode === 'silent') {
     stopTypingPreviewNow();
     stopEditingPreviewNow();
     return;
@@ -665,11 +728,17 @@ watch(typingPreviewEnabled, (enabled) => {
     if (raw.trim().length > 0) {
       const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
       sendTypingUpdate.cancel();
-      chat.messageTyping(true, truncated, lastTypingChannelId);
+      const content = mode === 'content' ? truncated : '';
+      chat.messageTyping(mode, content, lastTypingChannelId);
+    } else {
+      stopTypingPreviewNow();
     }
   }
-  if (isEditing.value) {
+  if (mode === 'content' && isEditing.value) {
     emitEditingPreview();
+  }
+  if (mode !== 'content' && editingPreviewActive.value) {
+    stopEditingPreviewNow();
   }
 });
 
@@ -736,29 +805,52 @@ onMounted(async () => {
     }
   });
 
-  chatEvent.off('message-created', '*');
-  chatEvent.on('message-created', (e?: Event) => {
-    if (e && e.message && e.channel?.id === chat.curChannel?.id) {
-      if (e.message.user?.id !== user.info.id) {
-        // 不是自己发的消息，播放提示音
-        sound.play();
-      } else {
-        // 自己发出的消息需要清理本地的待确认集合，避免重复渲染
-        for (const pending of instantMessages) {
-          if (pending.id === e.message.id) {
-            instantMessages.delete(pending);
-            break;
-          }
+chatEvent.off('message-created', '*');
+chatEvent.on('message-created', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const incoming = normalizeMessageShape(e.message);
+  const isSelf = incoming.user?.id === user.info.id;
+  if (isSelf) {
+    let matchedPending: Message | undefined;
+    const clientId = (incoming as any).clientId;
+    if (clientId) {
+      for (const pending of instantMessages) {
+        if ((pending as any).clientId === clientId) {
+          matchedPending = pending;
+          break;
         }
       }
-      upsertMessage(e.message);
-      removeTypingPreview(e.message.user?.id);
-      removeTypingPreview(e.message.user?.id, 'editing');
+    } else {
+      for (const pending of instantMessages) {
+        if ((pending as any).content === incoming.content) {
+          matchedPending = pending;
+          break;
+        }
+      }
+    }
+    if (matchedPending) {
+      instantMessages.delete(matchedPending);
+      Object.assign(matchedPending, incoming);
+      upsertMessage(matchedPending);
+      removeTypingPreview(incoming.user?.id);
+      removeTypingPreview(incoming.user?.id, 'editing');
       if (!showButton.value) {
         scrollToBottom();
       }
+      return;
     }
-  });
+  } else {
+    sound.play();
+  }
+  upsertMessage(incoming);
+  removeTypingPreview(incoming.user?.id);
+  removeTypingPreview(incoming.user?.id, 'editing');
+  if (!showButton.value) {
+    scrollToBottom();
+  }
+});
 
   chatEvent.off('message-updated', '*');
   chatEvent.on('message-updated', (e?: Event) => {
@@ -775,30 +867,48 @@ onMounted(async () => {
     }
   });
 
-  chatEvent.off('typing-preview', '*');
-  chatEvent.on('typing-preview', (e?: Event) => {
-    if (!e?.channel || e.channel.id !== chat.curChannel?.id) {
-      return;
+chatEvent.off('typing-preview', '*');
+chatEvent.on('typing-preview', (e?: Event) => {
+  if (!e?.channel || e.channel.id !== chat.curChannel?.id) {
+    return;
+  }
+  const typingUserId = e.user?.id;
+  if (!typingUserId || typingUserId === user.info.id) {
+    return;
+  }
+  const mode = e.typing?.mode === 'editing' ? 'editing' : 'typing';
+  const typingState: TypingBroadcastState = (() => {
+    const candidate = (e.typing?.state || '').toLowerCase();
+    switch (candidate) {
+      case 'content':
+      case 'on':
+        return 'content';
+      case 'silent':
+        return 'silent';
+      case 'indicator':
+      case 'off':
+        return 'indicator';
+      default:
+        if (typeof e.typing?.enabled === 'boolean') {
+          return e.typing.enabled ? 'content' : 'indicator';
+        }
+        return 'indicator';
     }
-    const typingUserId = e.user?.id;
-    if (!typingUserId || typingUserId === user.info.id) {
-      return;
-    }
-    const mode = e.typing?.mode === 'editing' ? 'editing' : 'typing';
-    if (!e.typing?.enabled) {
-      removeTypingPreview(typingUserId, mode);
-      return;
-    }
-    upsertTypingPreview({
-      userId: typingUserId,
-      displayName: e.member?.nick || e.user?.nick || '未知成员',
-      avatar: e.member?.avatar || e.user?.avatar || '',
-      content: e.typing?.content || '',
-      indicatorOnly: !e.typing?.content,
-      mode,
-      messageId: e.typing?.messageId,
-    });
+  })();
+  if (typingState === 'silent') {
+    removeTypingPreview(typingUserId, mode);
+    return;
+  }
+  upsertTypingPreview({
+    userId: typingUserId,
+    displayName: e.member?.nick || e.user?.nick || '未知成员',
+    avatar: e.member?.avatar || e.user?.avatar || '',
+    content: typingState === 'content' ? (e.typing?.content || '') : '',
+    indicatorOnly: typingState !== 'content' || !e.typing?.content,
+    mode,
+    messageId: e.typing?.messageId,
   });
+});
 
   chatEvent.off('channel-deleted', '*');
   chatEvent.on('channel-deleted', (e) => {
@@ -1286,10 +1396,10 @@ const isManagingEmoji = ref(false);
 
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-button text class="typing-toggle" :class="{ 'typing-toggle--active': typingPreviewEnabled }"
+              <n-button text class="typing-toggle" :class="typingToggleClass"
                 @click="toggleTypingPreview" :disabled="isEditing">
                 <template #icon>
-                  <n-icon :component="typingPreviewEnabled ? Eye : EyeOff" size="20" />
+                  <n-icon :component="typingToggleIcon" size="20" />
                 </template>
               </n-button>
             </template>
@@ -1479,16 +1589,31 @@ const isManagingEmoji = ref(false);
 }
 
 .typing-toggle {
-  color: #9ca3af;
   transition: color 0.2s ease;
 }
 
-.typing-toggle--active {
+.typing-toggle--indicator {
+  color: #9ca3af;
+}
+
+.typing-toggle--indicator:hover {
+  color: #6b7280;
+}
+
+.typing-toggle--content {
   color: #2563eb;
 }
 
-.typing-toggle:hover {
-  color: #3b82f6;
+.typing-toggle--content:hover {
+  color: #1d4ed8;
+}
+
+.typing-toggle--silent {
+  color: #f59e0b;
+}
+
+.typing-toggle--silent:hover {
+  color: #d97706;
 }
 
 .chat-text :deep(textarea) {

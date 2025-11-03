@@ -419,7 +419,7 @@ export const useChatStore = defineStore({
       return (resp as any).data?.message;
     },
 
-    async messageCreate(content: string, quote_id?: string, whisper_to?: string) {
+    async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
         content,
@@ -431,11 +431,14 @@ export const useChatStore = defineStore({
       if (whisperId) {
         payload.whisper_to = whisperId;
       }
+      if (clientId) {
+        payload.client_id = clientId;
+      }
       const resp = await this.sendAPI('message.create', payload);
       return resp?.data;
     },
 
-    async messageTyping(enabled: boolean, content: string, channelId?: string, extra?: { mode?: string; messageId?: string }) {
+    async messageTyping(state: 'indicator' | 'content' | 'silent', content: string, channelId?: string, extra?: { mode?: string; messageId?: string }) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
         return;
@@ -443,7 +446,8 @@ export const useChatStore = defineStore({
       try {
         const payload: Record<string, any> = {
           channel_id: targetChannelId,
-          enabled,
+          state,
+          enabled: state === 'content',
           content,
         };
         if (extra?.mode) {

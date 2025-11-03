@@ -61,6 +61,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	QuoteID   string `json:"quote_id"`
 	Content   string `json:"content"`
 	WhisperTo string `json:"whisper_to"`
+	ClientID  string `json:"client_id"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -164,6 +165,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		messageData.Content = content
 		messageData.User = userData
 		messageData.Member = member.ToProtocolType()
+		messageData.ClientID = data.ClientID
 		if quote.ID != "" {
 			qData := quote.ToProtocolType2(channelData)
 			qData.Content = quote.Content
@@ -586,12 +588,32 @@ func apiMessageEditHistory(ctx *ChatContext, data *struct {
 	}{History: resp}, nil
 }
 
+func normalizeTypingState(raw string, enabled *bool) protocol.TypingState {
+	state := strings.ToLower(strings.TrimSpace(raw))
+	switch state {
+	case string(protocol.TypingStateContent), string(protocol.TypingStateOn):
+		return protocol.TypingStateContent
+	case string(protocol.TypingStateSilent):
+		return protocol.TypingStateSilent
+	case string(protocol.TypingStateIndicator), string(protocol.TypingStateOff):
+		return protocol.TypingStateIndicator
+	}
+	if enabled != nil {
+		if *enabled {
+			return protocol.TypingStateContent
+		}
+		return protocol.TypingStateIndicator
+	}
+	return protocol.TypingStateIndicator
+}
+
 func apiMessageTyping(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
-	Enabled   bool   `json:"enabled"`
+	State     string `json:"state"`
 	Content   string `json:"content"`
 	MessageID string `json:"message_id"`
 	Mode      string `json:"mode"`
+	Enabled   *bool  `json:"enabled"`
 }) (any, error) {
 	channelId := data.ChannelID
 	if len(channelId) < 30 {
@@ -618,8 +640,14 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 
 	now := time.Now().UnixMilli()
 	const typingThrottleGap int64 = 250
-	if data.Enabled {
+
+	state := normalizeTypingState(data.State, data.Enabled)
+
+	isActive := state != protocol.TypingStateSilent
+
+	if isActive {
 		if ctx.ConnInfo.TypingEnabled &&
+			ctx.ConnInfo.TypingState == state &&
 			now-ctx.ConnInfo.TypingUpdatedAt < typingThrottleGap &&
 			ctx.ConnInfo.TypingContent == data.Content {
 			return &struct {
@@ -627,10 +655,12 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			}{Success: true}, nil
 		}
 		ctx.ConnInfo.TypingEnabled = true
+		ctx.ConnInfo.TypingState = state
 		ctx.ConnInfo.TypingContent = data.Content
 		ctx.ConnInfo.TypingUpdatedAt = now
 	} else {
 		ctx.ConnInfo.TypingEnabled = false
+		ctx.ConnInfo.TypingState = protocol.TypingStateSilent
 		ctx.ConnInfo.TypingContent = ""
 		ctx.ConnInfo.TypingUpdatedAt = 0
 	}
@@ -642,13 +672,19 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	channelData := channel.ToProtocolType()
 	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, channelId, ctx.User.Nickname)
 
+	content := data.Content
+	if state == protocol.TypingStateIndicator {
+		content = ""
+	}
+
 	event := &protocol.Event{
 		Type:    protocol.EventTypingPreview,
 		Channel: channelData,
 		User:    ctx.User.ToProtocolType(),
 		Typing: &protocol.TypingPreview{
-			Enabled:   data.Enabled,
-			Content:   data.Content,
+			State:     state,
+			Enabled:   state != protocol.TypingStateSilent,
+			Content:   content,
 			Mode:      data.Mode,
 			MessageID: data.MessageID,
 		},
@@ -669,6 +705,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	QuoteID   string `json:"quote_id"`
 	Content   string `json:"content"`
 	WhisperTo string `json:"whisper_to"`
+	ClientID  string `json:"client_id"`
 }, channelData *protocol.Channel) {
 	content := data.Content
 	if len(content) >= 2 && (content[0] == '/' || content[0] == '.') && content[1] == 'x' {
