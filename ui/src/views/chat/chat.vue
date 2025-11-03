@@ -9,6 +9,7 @@ import { ArrowBarToDown, Plus, Upload, Eye, EyeOff, Lock } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import UploadSupport from './components/upload.vue'
+import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import { liveQuery } from "dexie";
 import { useObservable } from "@vueuse/rxjs";
 import { db, getSrc, type Thumb } from '@/models';
@@ -53,6 +54,7 @@ const { t } = useI18n();
 const uploadSupportRef = ref<any>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
+const inputMode = ref<'plain' | 'rich'>('plain');
 
 const SCROLL_STICKY_THRESHOLD = 200;
 
@@ -915,8 +917,7 @@ const clearWhisperTarget = () => {
 };
 
 const getTextarea = () => {
-  const el = textInputRef.value?.$el?.getElementsByTagName('textarea')[0];
-  return el as HTMLTextAreaElement | undefined;
+  return textInputRef.value?.getTextarea?.();
 };
 
 watch(() => chat.editing?.messageId, (messageId, previousId) => {
@@ -1121,12 +1122,6 @@ onMounted(async () => {
   await utils.commandsRefresh();
 
   chat.channelRefreshSetup()
-
-  const elInput = textInputRef.value;
-  if (elInput) {
-    // 注: n-mention 不支持这个事件监听，所以这里手动监听
-    elInput.$el.getElementsByTagName('textarea')[0].onkeydown = keyDown;
-  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -1392,6 +1387,11 @@ const onScroll = (evt: any) => {
 }
 
 const pauseKeydown = ref(false);
+
+const handleMentionSelect = () => {
+  pauseKeydown.value = false;
+};
+
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
@@ -1830,12 +1830,21 @@ const isManagingEmoji = ref(false);
           <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
         </div>
 
-        <n-mention type="textarea" :rows="1" autosize v-model:value="textToSend" :on-keydown="keyDown"
-          ref="textInputRef" :class="['chat-text', { 'whisper-mode': whisperMode }]"
-          :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')" :options="atOptions"
-          :loading="atLoading" @search="atHandleSearch" @select="pauseKeydown = false" placement="top-start"
-          :prefix="atPrefix" :render-label="atRenderLabel">
-        </n-mention>
+        <ChatInputSwitcher
+          ref="textInputRef"
+          v-model="textToSend"
+          v-model:mode="inputMode"
+          :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
+          :whisper-mode="whisperMode"
+          :mention-options="atOptions"
+          :mention-loading="atLoading"
+          :mention-prefix="atPrefix"
+          :mention-render-label="atRenderLabel"
+          :rows="1"
+          @mention-search="atHandleSearch"
+          @mention-select="handleMentionSelect"
+          @keydown="keyDown"
+        />
       </div>
       <div class="flex" style="align-items: end; padding-bottom: 1px;">
         <n-button class="" type="primary" @click="send" :disabled="chat.connectState !== 'connected' || isEditing">{{ 
