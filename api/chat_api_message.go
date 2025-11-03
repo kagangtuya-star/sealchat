@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"sealchat/service"
 	"strconv"
@@ -17,6 +18,33 @@ import (
 	"sealchat/protocol"
 	"sealchat/utils"
 )
+
+const (
+	displayOrderGap     = 1024.0
+	displayOrderEpsilon = 1e-6
+)
+
+func canReorderAllMessages(userID string, channel *model.ChannelModel) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.UserID == userID {
+		return true
+	}
+	if pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return true
+	}
+	if pm.CanWithChannelRole(userID, channel.ID,
+		pm.PermFuncChannelManageInfo,
+		pm.PermFuncChannelManageRole,
+		pm.PermFuncChannelRoleLinkRoot,
+		pm.PermFuncChannelRoleUnlinkRoot,
+		pm.PermFuncChannelMemberRemove,
+	) {
+		return true
+	}
+	return false
+}
 
 func apiMessageDelete(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
@@ -140,11 +168,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
 		},
-		UserID:    ctx.User.ID,
-		ChannelID: data.ChannelID,
-		MemberID:  member.ID,
-		QuoteID:   data.QuoteID,
-		Content:   content,
+		UserID:       ctx.User.ID,
+		ChannelID:    data.ChannelID,
+		MemberID:     member.ID,
+		QuoteID:      data.QuoteID,
+		Content:      content,
+		DisplayOrder: float64(time.Now().UnixMilli()),
 
 		SenderMemberName: member.Nickname,
 		IsWhisper:        whisperUser != nil,
@@ -308,16 +337,50 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 
 	var count int64
+	var cursorOrder float64
+	var cursorTime time.Time
+	var cursorID string
+	var hasCursor bool
+	channel, _ := model.ChannelGet(data.ChannelID)
+	canReorderAll := canReorderAllMessages(ctx.User.ID, channel)
 	if data.Next != "" {
-		t, err := strconv.ParseInt(data.Next, 36, 64)
-		if err != nil {
-			return nil, err
+		if strings.Contains(data.Next, "|") {
+			parts := strings.SplitN(data.Next, "|", 3)
+			if len(parts) == 3 {
+				if order, err := strconv.ParseFloat(parts[0], 64); err == nil {
+					if ts, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+						cursorOrder = order
+						cursorTime = time.UnixMilli(ts)
+						cursorID = parts[2]
+						hasCursor = true
+					}
+				}
+			}
+		}
+		if !hasCursor {
+			t, err := strconv.ParseInt(data.Next, 36, 64)
+			if err != nil {
+				return nil, err
+			}
+			cursorOrder = float64(t)
+			cursorTime = time.UnixMilli(t)
+			hasCursor = true
 		}
 
-		q = q.Where("created_at < ?", time.UnixMilli(t))
+		if hasCursor {
+			cond := "(display_order < ?) OR (display_order = ? AND created_at < ?)"
+			args := []interface{}{cursorOrder, cursorOrder, cursorTime}
+			if cursorID != "" {
+				cond += " OR (display_order = ? AND created_at = ? AND id < ?)"
+				args = append(args, cursorOrder, cursorTime, cursorID)
+			}
+			q = q.Where(cond, args...)
+		}
 	}
 
-	q.Order("created_at desc").
+	q.Order("display_order desc").
+		Order("created_at desc").
+		Order("id desc").
 		Preload("User", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id, username, nickname, avatar, is_bot")
 		}).
@@ -338,7 +401,9 @@ func apiMessageList(ctx *ChatContext, data *struct {
 
 	items = lo.Reverse(items)
 	if count > int64(len(items)) && len(items) > 0 {
-		next = strconv.FormatInt(items[0].CreatedAt.UnixMilli(), 36)
+		orderStr := strconv.FormatFloat(items[0].DisplayOrder, 'f', 8, 64)
+		timeStr := strconv.FormatInt(items[0].CreatedAt.UnixMilli(), 10)
+		next = fmt.Sprintf("%s|%s|%s", orderStr, timeStr, items[0].ID)
 	}
 
 	whisperIdSet := map[string]struct{}{}
@@ -396,11 +461,13 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 
 	return &struct {
-		Data []*model.MessageModel `json:"data"`
-		Next string                `json:"next"`
+		Data          []*model.MessageModel `json:"data"`
+		Next          string                `json:"next"`
+		CanReorderAll bool                  `json:"can_reorder_all"`
 	}{
-		Data: items,
-		Next: next,
+		Data:          items,
+		Next:          next,
+		CanReorderAll: canReorderAll,
 	}, nil
 }
 
@@ -528,6 +595,158 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	return &struct {
 		Message *protocol.Message `json:"message"`
 	}{Message: messageData}, nil
+}
+
+func apiMessageReorder(ctx *ChatContext, data *struct {
+	ChannelID  string `json:"channel_id"`
+	MessageID  string `json:"message_id"`
+	BeforeID   string `json:"before_id"`
+	AfterID    string `json:"after_id"`
+	ClientOpID string `json:"client_op_id"`
+}) (any, error) {
+	if strings.TrimSpace(data.ChannelID) == "" || strings.TrimSpace(data.MessageID) == "" {
+		return nil, fmt.Errorf("缺少必要参数")
+	}
+
+	db := model.GetDB()
+
+	var msg model.MessageModel
+	err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, username, nickname, avatar, is_bot")
+	}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, nickname, channel_id, user_id")
+	}).Where("id = ? AND channel_id = ?", data.MessageID, data.ChannelID).Limit(1).Find(&msg).Error
+	if err != nil {
+		return nil, err
+	}
+	if msg.ID == "" {
+		return nil, nil
+	}
+
+	channel, _ := model.ChannelGet(data.ChannelID)
+	if channel.ID == "" {
+		return nil, nil
+	}
+
+	if !canReorderAllMessages(ctx.User.ID, channel) && msg.UserID != ctx.User.ID {
+		return nil, fmt.Errorf("您没有权限调整该消息的位置")
+	}
+
+	if strings.TrimSpace(data.BeforeID) == "" && strings.TrimSpace(data.AfterID) == "" {
+		return nil, fmt.Errorf("缺少目标位置参数")
+	}
+
+	var beforeMsg, afterMsg model.MessageModel
+	if data.BeforeID != "" && data.BeforeID != data.MessageID {
+		if err := db.Where("id = ? AND channel_id = ?", data.BeforeID, data.ChannelID).Limit(1).Find(&beforeMsg).Error; err != nil {
+			return nil, err
+		}
+		if beforeMsg.ID == "" {
+			return nil, fmt.Errorf("before_id 指定的消息不存在")
+		}
+	}
+
+	if data.AfterID != "" && data.AfterID != data.MessageID {
+		if err := db.Where("id = ? AND channel_id = ?", data.AfterID, data.ChannelID).Limit(1).Find(&afterMsg).Error; err != nil {
+			return nil, err
+		}
+		if afterMsg.ID == "" {
+			return nil, fmt.Errorf("after_id 指定的消息不存在")
+		}
+	}
+
+	if beforeMsg.ID != "" && afterMsg.ID != "" && beforeMsg.ID == afterMsg.ID {
+		return nil, fmt.Errorf("before_id 与 after_id 不应指向同一条消息")
+	}
+
+	newOrder := msg.DisplayOrder
+	switch {
+	case beforeMsg.ID != "" && afterMsg.ID != "":
+		if beforeMsg.DisplayOrder <= afterMsg.DisplayOrder+displayOrderEpsilon {
+			if err := model.RebalanceChannelDisplayOrder(data.ChannelID); err != nil {
+				return nil, err
+			}
+			if err := db.Where("id = ? AND channel_id = ?", data.BeforeID, data.ChannelID).Limit(1).Find(&beforeMsg).Error; err != nil {
+				return nil, err
+			}
+			if err := db.Where("id = ? AND channel_id = ?", data.AfterID, data.ChannelID).Limit(1).Find(&afterMsg).Error; err != nil {
+				return nil, err
+			}
+		}
+		if beforeMsg.ID == "" || afterMsg.ID == "" {
+			return nil, fmt.Errorf("无法获取目标位置的邻居消息")
+		}
+		newOrder = (beforeMsg.DisplayOrder + afterMsg.DisplayOrder) / 2
+	case beforeMsg.ID != "":
+		newOrder = beforeMsg.DisplayOrder - displayOrderGap/2
+	case afterMsg.ID != "":
+		newOrder = afterMsg.DisplayOrder + displayOrderGap/2
+	}
+
+	if math.Abs(newOrder-msg.DisplayOrder) < displayOrderEpsilon {
+		return &struct {
+			MessageID    string  `json:"message_id"`
+			ChannelID    string  `json:"channel_id"`
+			DisplayOrder float64 `json:"display_order"`
+		}{MessageID: msg.ID, ChannelID: data.ChannelID, DisplayOrder: msg.DisplayOrder}, nil
+	}
+
+	if err := db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("display_order", newOrder).Error; err != nil {
+		return nil, err
+	}
+	msg.DisplayOrder = newOrder
+
+	if msg.WhisperTo != "" && msg.WhisperTarget == nil {
+		msg.WhisperTarget = model.UserGet(msg.WhisperTo)
+	}
+
+	channelData := channel.ToProtocolType()
+	messageData := msg.ToProtocolType2(channelData)
+	messageData.Content = msg.Content
+	if msg.User != nil {
+		messageData.User = msg.User.ToProtocolType()
+	}
+	if msg.Member != nil {
+		messageData.Member = msg.Member.ToProtocolType()
+	}
+	if msg.WhisperTarget != nil {
+		messageData.WhisperTo = msg.WhisperTarget.ToProtocolType()
+	}
+
+	operatorData := ctx.User.ToProtocolType()
+	ev := &protocol.Event{
+		Type:     protocol.EventMessageReordered,
+		Message:  messageData,
+		Channel:  channelData,
+		User:     operatorData,
+		Operator: operatorData,
+		Reorder: &protocol.MessageReorder{
+			MessageID:    msg.ID,
+			ChannelID:    data.ChannelID,
+			DisplayOrder: msg.DisplayOrder,
+			BeforeID:     data.BeforeID,
+			AfterID:      data.AfterID,
+			ClientOpID:   data.ClientOpID,
+		},
+	}
+
+	if msg.IsWhisper && msg.WhisperTo != "" {
+		recipients := lo.Uniq([]string{ctx.User.ID, msg.WhisperTo})
+		ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+	} else {
+		ctx.BroadcastEventInChannel(data.ChannelID, ev)
+		ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+	}
+
+	return &struct {
+		MessageID    string  `json:"message_id"`
+		ChannelID    string  `json:"channel_id"`
+		DisplayOrder float64 `json:"display_order"`
+	}{
+		MessageID:    msg.ID,
+		ChannelID:    data.ChannelID,
+		DisplayOrder: msg.DisplayOrder,
+	}, nil
 }
 
 func apiMessageEditHistory(ctx *ChatContext, data *struct {

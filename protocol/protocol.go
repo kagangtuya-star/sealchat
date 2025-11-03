@@ -75,23 +75,33 @@ const (
 )
 
 type Message struct {
-	ID        string       `json:"id"`
-	MessageID string       // Deprecated
-	Channel   *Channel     `json:"channel"`
-	Guild     *Guild       `json:"guild"`
-	User      *User        `json:"user"`
-	Member    *GuildMember `json:"member"`
-	Content   string       `json:"content"`
-	Elements  []*Element   `json:"elements"`
-	Timestamp int64        `json:"timestamp"`
-	Quote     *Message     `json:"quote"`
-	CreatedAt int64        `json:"createdAt"`
-	UpdatedAt int64        `json:"updatedAt"`
-	IsWhisper bool         `json:"isWhisper"`
-	WhisperTo *User        `json:"whisperTo"`
-	IsEdited  bool         `json:"isEdited"`
-	EditCount int          `json:"editCount"`
-	ClientID  string       `json:"clientId,omitempty"`
+	ID           string       `json:"id"`
+	MessageID    string       // Deprecated
+	Channel      *Channel     `json:"channel"`
+	Guild        *Guild       `json:"guild"`
+	User         *User        `json:"user"`
+	Member       *GuildMember `json:"member"`
+	Content      string       `json:"content"`
+	Elements     []*Element   `json:"elements"`
+	Timestamp    int64        `json:"timestamp"`
+	Quote        *Message     `json:"quote"`
+	CreatedAt    int64        `json:"createdAt"`
+	UpdatedAt    int64        `json:"updatedAt"`
+	DisplayOrder float64      `json:"displayOrder"`
+	IsWhisper    bool         `json:"isWhisper"`
+	WhisperTo    *User        `json:"whisperTo"`
+	IsEdited     bool         `json:"isEdited"`
+	EditCount    int          `json:"editCount"`
+	ClientID     string       `json:"clientId,omitempty"`
+}
+
+type MessageReorder struct {
+	MessageID    string  `json:"messageId"`
+	ChannelID    string  `json:"channelId"`
+	DisplayOrder float64 `json:"displayOrder"`
+	BeforeID     string  `json:"beforeId,omitempty"`
+	AfterID      string  `json:"afterId,omitempty"`
+	ClientOpID   string  `json:"clientOpId,omitempty"`
 }
 
 type Button struct {
@@ -130,6 +140,7 @@ const (
 	EventMessageUpdated       EventName = "message-updated"
 	EventMessagePinned        EventName = "message-pinned"
 	EventMessageUnpinned      EventName = "message-unpinned"
+	EventMessageReordered     EventName = "message-reordered"
 	EventInteractionCommand   EventName = "interaction/command"
 	EventReactionAdded        EventName = "reaction-added"
 	EventReactionDeleted      EventName = "reaction-deleted"
@@ -144,22 +155,23 @@ const (
 )
 
 type Event struct {
-	ID        int64          `json:"id"`
-	Type      EventName      `json:"type"`
-	SelfID    string         `json:"selfID"`
-	Platform  string         `json:"platform"`
-	Timestamp int64          `json:"timestamp"`
-	Argv      *Argv          `json:"argv"`
-	Channel   *Channel       `json:"channel"`
-	Guild     *Guild         `json:"guild"`
-	Login     *Login         `json:"login"`
-	Member    *GuildMember   `json:"member"`
-	Message   *Message       `json:"message"`
-	Operator  *User          `json:"operator"`
-	Role      *GuildRole     `json:"role"`
-	User      *User          `json:"user"`
-	Button    *Button        `json:"button"`
-	Typing    *TypingPreview `json:"typing"`
+	ID        int64           `json:"id"`
+	Type      EventName       `json:"type"`
+	SelfID    string          `json:"selfID"`
+	Platform  string          `json:"platform"`
+	Timestamp int64           `json:"timestamp"`
+	Argv      *Argv           `json:"argv"`
+	Channel   *Channel        `json:"channel"`
+	Guild     *Guild          `json:"guild"`
+	Login     *Login          `json:"login"`
+	Member    *GuildMember    `json:"member"`
+	Message   *Message        `json:"message"`
+	Operator  *User           `json:"operator"`
+	Role      *GuildRole      `json:"role"`
+	User      *User           `json:"user"`
+	Button    *Button         `json:"button"`
+	Typing    *TypingPreview  `json:"typing"`
+	Reorder   *MessageReorder `json:"reorder"`
 }
 
 type TypingState string

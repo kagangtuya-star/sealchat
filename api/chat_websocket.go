@@ -73,9 +73,9 @@ func websocketWorks(app *fiber.App) {
 				user, err = model.UserVerifyAccessToken(token)
 			}
 
-				if err == nil {
-					m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
-					curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().Unix(), User: user, TypingState: protocol.TypingStateSilent}
+			if err == nil {
+				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
+				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().Unix(), User: user, TypingState: protocol.TypingStateSilent}
 				m.Store(c, curConnInfo)
 
 				curUser = user
@@ -264,6 +264,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "message.delete":
 						apiWrap(ctx, msg, apiMessageDelete)
+						solved = true
+					case "message.reorder":
+						apiWrap(ctx, msg, apiMessageReorder)
 						solved = true
 					case "message.list":
 						apiWrap(ctx, msg, apiMessageList)

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"log"
 	"strings"
 	"time"
 
@@ -95,6 +96,10 @@ func DBInit(dsn string) {
 
 	db.AutoMigrate(&SystemRoleModel{}, &ChannelRoleModel{}, &RolePermissionModel{}, &UserRoleMappingModel{})
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
+
+	if err := BackfillMessageDisplayOrder(); err != nil {
+		log.Printf("补齐消息 display_order 失败: %v", err)
+	}
 }
 
 func GetDB() *gorm.DB {

@@ -77,10 +77,338 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
     msg.whisperTo = msg.whisper_to;
   }
+  if ((msg as any).displayOrder === undefined && (msg as any).display_order !== undefined) {
+    (msg as any).displayOrder = Number((msg as any).display_order);
+  } else if ((msg as any).displayOrder !== undefined) {
+    (msg as any).displayOrder = Number((msg as any).displayOrder);
+  }
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
   }
   return msg as Message;
+};
+
+const compareByDisplayOrder = (a: Message, b: Message) => {
+  const orderA = Number((a as any).displayOrder ?? a.createdAt ?? 0);
+  const orderB = Number((b as any).displayOrder ?? b.createdAt ?? 0);
+  if (orderA === orderB) {
+    return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+  }
+  return orderA - orderB;
+};
+
+const sortRowsByDisplayOrder = () => {
+  rows.value = rows.value
+    .slice()
+    .sort(compareByDisplayOrder);
+};
+
+const localReorderOps = new Set<string>();
+
+const messageRowRefs = new Map<string, HTMLElement>();
+const registerMessageRow = (el: HTMLElement | null, id: string) => {
+  if (!id) {
+    return;
+  }
+  if (el) {
+    messageRowRefs.set(id, el);
+  } else {
+    messageRowRefs.delete(id);
+  }
+};
+
+const dragState = reactive({
+  snapshot: [] as Message[],
+  clientOpId: null as string | null,
+  overId: null as string | null,
+  position: null as 'before' | 'after' | null,
+  activeId: null as string | null,
+  pointerId: null as number | null,
+  startY: 0,
+  ghostEl: null as HTMLElement | null,
+  originEl: null as HTMLElement | null,
+});
+
+const clearGhost = () => {
+  if (dragState.ghostEl && dragState.ghostEl.parentElement) {
+    dragState.ghostEl.parentElement.removeChild(dragState.ghostEl);
+  }
+  dragState.ghostEl = null;
+};
+
+const resetDragState = () => {
+  clearGhost();
+  dragState.snapshot = [];
+  dragState.clientOpId = null;
+  dragState.overId = null;
+  dragState.position = null;
+  dragState.activeId = null;
+  dragState.pointerId = null;
+  dragState.startY = 0;
+  if (dragState.originEl) {
+    dragState.originEl.classList.remove('message-row--drag-source');
+  }
+  dragState.originEl = null;
+  document.body.style.userSelect = '';
+};
+
+const canReorderAll = computed(() => chat.canReorderAllMessages);
+const isSelfMessage = (item?: Message) => item?.user?.id === user.info.id;
+const canDragMessage = (item: Message) => {
+  if (!item?.id) return false;
+  if (chat.connectState !== 'connected') {
+    return false;
+  }
+  if (chat.editing && chat.editing.messageId === item.id) {
+    return false;
+  }
+  if ((item as any).is_revoked) {
+    return false;
+  }
+  if (isSelfMessage(item)) {
+    return true;
+  }
+  return canReorderAll.value;
+};
+
+const shouldShowHandle = (item: Message) => canDragMessage(item);
+
+const rowClass = (item: Message) => ({
+  'message-row': true,
+  'message-row--self': isSelfMessage(item),
+  'draggable-item': canDragMessage(item),
+  'message-row--drop-before': dragState.overId === item.id && dragState.position === 'before',
+  'message-row--drop-after': dragState.overId === item.id && dragState.position === 'after',
+});
+
+const createGhostElement = (rowEl: HTMLElement) => {
+  const rect = rowEl.getBoundingClientRect();
+  const ghost = rowEl.cloneNode(true) as HTMLElement;
+  ghost.classList.add('message-row__ghost');
+  ghost.style.position = 'fixed';
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.pointerEvents = 'none';
+  ghost.style.opacity = '0.85';
+  ghost.style.zIndex = '999';
+  document.body.appendChild(ghost);
+  dragState.ghostEl = ghost;
+};
+
+const updateOverTarget = (clientY: number) => {
+  let matched = false;
+  if (dragState.activeId) {
+    const activeEl = messageRowRefs.get(dragState.activeId);
+    if (activeEl) {
+      const rectActive = activeEl.getBoundingClientRect();
+      if (clientY >= rectActive.top && clientY <= rectActive.bottom) {
+        const mid = rectActive.top + rectActive.height / 2;
+        dragState.overId = dragState.activeId;
+        dragState.position = clientY <= mid ? 'before' : 'after';
+        matched = true;
+      }
+    }
+  }
+  const currentRows = rows.value;
+  for (const item of currentRows) {
+    if (!item?.id || item.id === dragState.activeId) {
+      continue;
+    }
+    const el = messageRowRefs.get(item.id);
+    if (!el) {
+      continue;
+    }
+    const rect = el.getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    if (clientY <= mid) {
+      dragState.overId = item.id;
+      dragState.position = 'before';
+      matched = true;
+      break;
+    }
+    if (clientY < rect.bottom) {
+      dragState.overId = item.id;
+      dragState.position = 'after';
+      matched = true;
+      break;
+    }
+  }
+  if (!matched && currentRows.length > 0) {
+    const last = currentRows[currentRows.length - 1];
+    if (last?.id) {
+      dragState.overId = last.id;
+      dragState.position = 'after';
+      matched = true;
+    }
+  }
+  if (!matched) {
+    dragState.overId = null;
+    dragState.position = null;
+  }
+};
+
+const cancelDrag = () => {
+  window.removeEventListener('pointermove', onDragPointerMove);
+  window.removeEventListener('pointerup', onDragPointerUp);
+  window.removeEventListener('pointercancel', onDragPointerCancel);
+  window.removeEventListener('keydown', onDragKeyDown);
+  if (dragState.snapshot.length > 0) {
+    rows.value = dragState.snapshot.slice();
+  }
+  resetDragState();
+};
+
+const finalizeDrag = async () => {
+  const channelId = chat.curChannel?.id;
+  const activeId = dragState.activeId;
+  const overId = dragState.overId;
+  const position = dragState.position;
+  const snapshot = dragState.snapshot.slice();
+
+  window.removeEventListener('pointermove', onDragPointerMove);
+  window.removeEventListener('pointerup', onDragPointerUp);
+  window.removeEventListener('pointercancel', onDragPointerCancel);
+  window.removeEventListener('keydown', onDragKeyDown);
+
+  clearGhost();
+  document.body.style.userSelect = '';
+
+  if (!channelId || !activeId || !overId || activeId === overId) {
+    resetDragState();
+    return;
+  }
+
+  const fromIndex = snapshot.findIndex((item) => item.id === activeId);
+  const toReference = snapshot.findIndex((item) => item.id === overId);
+  if (fromIndex < 0 || toReference < 0) {
+    resetDragState();
+    return;
+  }
+
+  const [moving] = snapshot.splice(fromIndex, 1);
+  let targetIndex = toReference;
+  if (position === 'after') {
+    if (fromIndex < toReference) {
+      targetIndex = toReference;
+    } else {
+      targetIndex = toReference + 1;
+    }
+  }
+  if (targetIndex < 0) {
+    targetIndex = 0;
+  }
+  if (targetIndex > snapshot.length) {
+    targetIndex = snapshot.length;
+  }
+  snapshot.splice(targetIndex, 0, moving);
+  rows.value = snapshot;
+
+  const beforeId = rows.value[targetIndex + 1]?.id || '';
+  const afterId = rows.value[targetIndex - 1]?.id || '';
+  const clientOpId = dragState.clientOpId || nanoid();
+  localReorderOps.add(clientOpId);
+  try {
+    const resp = await chat.messageReorder(channelId, {
+      messageId: activeId,
+      beforeId,
+      afterId,
+      clientOpId,
+    });
+    if (resp?.display_order !== undefined) {
+      (moving as any).displayOrder = Number(resp.display_order);
+      sortRowsByDisplayOrder();
+    }
+  } catch (error) {
+    rows.value = dragState.snapshot.slice();
+    message.error('消息排序失败，请稍后重试');
+  } finally {
+    localReorderOps.delete(clientOpId);
+    resetDragState();
+  }
+};
+
+const onDragPointerMove = (event: PointerEvent) => {
+  if (event.pointerId !== dragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  if (dragState.ghostEl) {
+    dragState.ghostEl.style.transform = `translateY(${event.clientY - dragState.startY}px)`;
+  }
+  updateOverTarget(event.clientY);
+};
+
+const onDragPointerUp = (event: PointerEvent) => {
+  if (event.pointerId !== dragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  finalizeDrag();
+};
+
+const onDragPointerCancel = (event: PointerEvent) => {
+  if (event.pointerId !== dragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  cancelDrag();
+};
+
+const onDragKeyDown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    cancelDrag();
+  }
+};
+
+const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
+  if (!canDragMessage(item) || !item.id) {
+    return;
+  }
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  const rowEl = messageRowRefs.get(item.id);
+  if (!rowEl) {
+    return;
+  }
+  rowEl.classList.add('message-row--drag-source');
+  dragState.snapshot = rows.value.slice();
+  dragState.clientOpId = nanoid();
+  dragState.activeId = item.id;
+  dragState.pointerId = event.pointerId;
+  dragState.startY = event.clientY;
+  dragState.overId = item.id;
+  dragState.position = 'after';
+  dragState.originEl = rowEl;
+  document.body.style.userSelect = 'none';
+  createGhostElement(rowEl);
+  updateOverTarget(event.clientY);
+
+  window.addEventListener('pointermove', onDragPointerMove);
+  window.addEventListener('pointerup', onDragPointerUp);
+  window.addEventListener('pointercancel', onDragPointerCancel);
+  window.addEventListener('keydown', onDragKeyDown);
+
+  event.preventDefault();
+};
+
+const applyReorderPayload = (payload: any) => {
+  if (!payload?.messageId) {
+    return;
+  }
+  const target = rows.value.find((item) => item.id === payload.messageId);
+  if (!target) {
+    return;
+  }
+  if (payload.displayOrder !== undefined) {
+    const parsed = Number(payload.displayOrder);
+    if (!Number.isNaN(parsed)) {
+      (target as any).displayOrder = parsed;
+    }
+  }
+  sortRowsByDisplayOrder();
 };
 
 const normalizeMessageList = (items: any[] = []): Message[] => items.map((item) => normalizeMessageShape(item));
@@ -99,8 +427,7 @@ const upsertMessage = (incoming?: Message) => {
   } else {
     rows.value.push(incoming);
   }
-  // 重新赋值触发渲染更新，避免在部分浏览器中出现静默不刷新的情况
-  rows.value = rows.value.slice();
+  sortRowsByDisplayOrder();
 };
 
 async function replaceUsernames(text: string) {
@@ -871,20 +1198,37 @@ chatEvent.on('message-created', (e?: Event) => {
   }
 });
 
-  chatEvent.off('message-updated', '*');
-  chatEvent.on('message-updated', (e?: Event) => {
-    if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
-      return;
-    }
-    upsertMessage(e.message);
-    removeTypingPreview(e.user?.id, 'editing');
-    if (chat.editing && chat.editing.messageId === e.message.id) {
-      stopEditingPreviewNow();
-      chat.cancelEditing();
-      textToSend.value = '';
-      ensureInputFocus();
-    }
-  });
+chatEvent.off('message-updated', '*');
+chatEvent.on('message-updated', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  upsertMessage(e.message);
+  removeTypingPreview(e.user?.id, 'editing');
+  if (chat.editing && chat.editing.messageId === e.message.id) {
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    textToSend.value = '';
+    ensureInputFocus();
+  }
+});
+
+chatEvent.off('message-reordered', '*');
+chatEvent.on('message-reordered', (e?: Event) => {
+  if (!e || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const reorderPayload = (e as any)?.reorder;
+  if (e.message) {
+    upsertMessage(normalizeMessageShape(e.message));
+  } else if (reorderPayload) {
+    applyReorderPayload(reorderPayload);
+  }
+  const clientOpId = reorderPayload?.clientOpId;
+  if (clientOpId && localReorderOps.has(clientOpId)) {
+    localReorderOps.delete(clientOpId);
+  }
+});
 
 chatEvent.off('typing-preview', '*');
 chatEvent.on('typing-preview', (e?: Event) => {
@@ -971,8 +1315,7 @@ chatEvent.on('typing-preview', (e?: Event) => {
       }
       // 插入新数据
       rows.value.push(...normalizeMessageList(messages.data));
-      // 为防止混乱，重新排序
-      rows.value.sort((a, b) => (a.createdAt || now) - (b.createdAt || now));
+      sortRowsByDisplayOrder();
 
       // 滚动到最下方
       nextTick(() => {
@@ -989,10 +1332,12 @@ chatEvent.on('typing-preview', (e?: Event) => {
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
-    chat.cancelEditing();
-    textToSend.value = '';
-    rows.value = []
-    showButton.value = false;
+  chat.cancelEditing();
+  textToSend.value = '';
+  rows.value = []
+  resetDragState();
+  localReorderOps.clear();
+  showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     loadMessages();
@@ -1006,6 +1351,7 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  cancelDrag();
 });
 
 const messagesNextFlag = ref("");
@@ -1015,7 +1361,7 @@ const loadMessages = async () => {
   const messages = await chat.messageList(chat.curChannel?.id || '');
   messagesNextFlag.value = messages.next || "";
   rows.value.push(...normalizeMessageList(messages.data));
-  rows.value = rows.value.slice();
+  sortRowsByDisplayOrder();
 
   nextTick(() => {
     scrollToBottom();
@@ -1198,7 +1544,7 @@ const reachTop = throttle(async (evt: any) => {
     }
 
     rows.value.unshift(...normalizeMessageList(messages.data));
-    rows.value = rows.value.slice();
+    sortRowsByDisplayOrder();
 
     nextTick(() => {
       // 注意: el会变，如果不在下一帧取的话
@@ -1257,13 +1603,33 @@ const isManagingEmoji = ref(false);
       ref="messagesListRef">
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
               @toBottom="reachBottom" @toTop="reachTop"> -->
-      <template v-for="itemData in rows">
-        <!-- {{itemData}} -->
-        <chat-item :avatar="itemData.member?.avatar || itemData.user?.avatar" :username="itemData.member?.nick ?? '未知'"
-          :content="itemData.content" :is-rtl="isMe(itemData)" :item="itemData"
-          :editing-preview="editingPreviewMap[itemData.id]"
-          @avatar-longpress="avatarLongpress(itemData)" @edit="beginEdit(itemData)"
-          @edit-save="saveEdit" @edit-cancel="cancelEditing" />
+      <template v-for="itemData in rows" :key="itemData.id">
+        <div
+          :class="rowClass(itemData)"
+          :data-message-id="itemData.id"
+          :ref="el => registerMessageRow(el as HTMLElement | null, itemData.id || '')"
+        >
+          <div
+            v-if="shouldShowHandle(itemData)"
+            class="message-row__handle"
+            tabindex="-1"
+            @pointerdown="onDragHandlePointerDown($event, itemData)"
+          >
+            <span class="message-row__dot" v-for="n in 6" :key="n"></span>
+          </div>
+          <chat-item
+            :avatar="itemData.member?.avatar || itemData.user?.avatar"
+            :username="itemData.member?.nick ?? '未知'"
+            :content="itemData.content"
+            :is-rtl="isMe(itemData)"
+            :item="itemData"
+            :editing-preview="editingPreviewMap[itemData.id]"
+            @avatar-longpress="avatarLongpress(itemData)"
+            @edit="beginEdit(itemData)"
+            @edit-save="saveEdit"
+            @edit-cancel="cancelEditing"
+          />
+        </div>
       </template>
 
       <template v-for="preview in typingPreviewItems" :key="`${preview.userId}-typing`">
@@ -1484,6 +1850,82 @@ const isManagingEmoji = ref(false);
 </template>
 
 <style lang="scss" scoped>
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  position: relative;
+  padding-left: 0.25rem;
+}
+
+.message-row--self {
+  flex-direction: row-reverse;
+}
+
+.message-row__handle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  min-height: 100%;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  margin-top: 0.5rem;
+}
+
+.message-row.draggable-item:hover .message-row__handle,
+.message-row.draggable-item:focus-within .message-row__handle {
+  opacity: 1;
+}
+
+.message-row__handle:active {
+  cursor: grabbing;
+}
+
+.message-row__dot {
+  width: 0.2rem;
+  height: 0.2rem;
+  margin: 0.12rem 0;
+  background-color: #9ca3af;
+  border-radius: 50%;
+}
+
+.message-row--drag-source {
+  opacity: 0.4;
+}
+
+.message-row__ghost {
+  box-shadow: 0 12px 24px rgba(30, 64, 175, 0.25);
+  border-radius: 0.75rem;
+}
+
+.message-row--drop-before::after,
+.message-row--drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  border-top: 2px solid rgba(59, 130, 246, 0.8);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
+  pointer-events: none;
+}
+
+.message-row--drop-before::after {
+  top: -0.3rem;
+}
+
+.message-row--drop-after::after {
+  bottom: -0.3rem;
+}
+
+@media (hover: none) {
+  .message-row__handle {
+    opacity: 1;
+  }
+}
+
 .chat>.virtual-list__client {
   @apply px-4 pt-4;
 

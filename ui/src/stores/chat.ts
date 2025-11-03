@@ -51,6 +51,8 @@ interface ChatState {
     originalContent: string;
     draft: string;
   } | null
+
+  canReorderAllMessages: boolean;
 }
 
 const apiMap = new Map<string, any>();
@@ -113,6 +115,7 @@ export const useChatStore = defineStore({
     },
 
     editing: null,
+    canReorderAllMessages: false,
   }),
 
   getters: {
@@ -383,6 +386,7 @@ export const useChatStore = defineStore({
 
     async messageList(channelId: string, next?: string) {
       const resp = await this.sendAPI('message.list', { channel_id: channelId, next });
+      this.canReorderAllMessages = !!resp.data?.can_reorder_all;
       return resp.data;
     },
 
@@ -393,7 +397,8 @@ export const useChatStore = defineStore({
         from_time: fromTime,
         to_time: toTime,
       });
-      return resp;
+      this.canReorderAllMessages = !!resp.data?.can_reorder_all;
+      return resp.data;
     },
 
     async guildMemberListRaw(guildId: string, next?: string) {
@@ -417,6 +422,17 @@ export const useChatStore = defineStore({
         throw new Error((resp as any).err);
       }
       return (resp as any).data?.message;
+    },
+
+    async messageReorder(channel_id: string, payload: { messageId: string; beforeId?: string; afterId?: string; clientOpId?: string }) {
+      const resp = await this.sendAPI('message.reorder', {
+        channel_id,
+        message_id: payload.messageId,
+        before_id: payload.beforeId || '',
+        after_id: payload.afterId || '',
+        client_op_id: payload.clientOpId || '',
+      });
+      return resp.data;
     },
 
     async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string) {

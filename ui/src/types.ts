@@ -12,6 +12,7 @@ export interface SatoriMessage {
   quote?: SatoriMessage;
   createdAt?: number;
   updatedAt?: number;
+  displayOrder?: number;
 
   sender_member_name?: string;
   isWhisper?: boolean;
