@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed, watch, PropType } from 'vue';
+import { onMounted, ref, h, computed, watch, PropType, onBeforeUnmount } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
@@ -13,6 +13,7 @@ import Avatar from '@/components/avatar.vue'
 import { Lock, Edit } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
+import { onLongPress } from '@vueuse/core';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -42,6 +43,8 @@ function timeFormat2(time?: string) {
 }
 
 let hasImage = ref(false);
+const messageContentRef = ref<HTMLElement | null>(null);
+let stopMessageLongPress: (() => void) | null = null;
 
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
@@ -193,17 +196,41 @@ const displayContent = computed(() => {
   return props.item?.content ?? props.content ?? '';
 });
 
-const onContextMenu = (e: MouseEvent, item: any) => {
-  e.preventDefault();
-  //Set the mouse position
-
-  chat.messageMenu.optionsComponent.x = e.x;
-  chat.messageMenu.optionsComponent.y = e.y;
-  //Show menu
-  chat.messageMenu.show = true;
+const openContextMenu = (point: { x: number, y: number }, item: any) => {
+  chat.avatarMenu.show = false;
+  chat.messageMenu.optionsComponent.x = point.x;
+  chat.messageMenu.optionsComponent.y = point.y;
   chat.messageMenu.item = item;
   chat.messageMenu.hasImage = hasImage.value;
-}
+  chat.messageMenu.show = true;
+};
+
+const onContextMenu = (e: MouseEvent, item: any) => {
+  e.preventDefault();
+  openContextMenu({ x: e.clientX, y: e.clientY }, item);
+};
+
+const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item: any) => {
+  const resolvePoint = (): { x: number, y: number } => {
+    if ('clientX' in event && typeof event.clientX === 'number') {
+      return { x: event.clientX, y: event.clientY };
+    }
+    if ('touches' in event && event.touches?.length) {
+      const touch = event.touches[0];
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    const rect = messageContentRef.value?.getBoundingClientRect();
+    if (rect) {
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    }
+    return { x: 0, y: 0 };
+  };
+
+  openContextMenu(resolvePoint(), item);
+};
 
 const message = useMessage()
 const doAvatarClick = (e: MouseEvent) => {
@@ -240,6 +267,15 @@ const handleEditCancel = (e: MouseEvent) => {
 const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel']);
 
 onMounted(() => {
+  stopMessageLongPress = onLongPress(
+    messageContentRef,
+    (event) => {
+      event.preventDefault?.();
+      onMessageLongPress(event, props.item);
+    },
+    { modifiers: { prevent: true } }
+  );
+
   setInterval(() => {
     timeText.value = timeFormat(props.item?.createdAt);
     timeText2.value = timeFormat2(props.item?.createdAt);
@@ -249,6 +285,13 @@ onMounted(() => {
     }
   }, 10000);
 })
+
+onBeforeUnmount(() => {
+  if (stopMessageLongPress) {
+    stopMessageLongPress();
+    stopMessageLongPress = null;
+  }
+});
 
 const nick = computed(() => {
   if (props.item?.sender_member_name) {
@@ -303,7 +346,7 @@ watch(() => props.item?.updatedAt, () => {
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" @contextmenu="onContextMenu($event, item)"
+      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)"
         :class="[{ 'whisper-content': props.item?.isWhisper }, { 'content--editing-preview': !!props.editingPreview }]">
         <div v-if="canEdit && !(props.editingPreview && props.editingPreview.isSelf)" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">

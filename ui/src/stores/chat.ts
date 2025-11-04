@@ -50,6 +50,7 @@ interface ChatState {
     channelId: string;
     originalContent: string;
     draft: string;
+    mode?: 'plain' | 'rich';
   } | null
 
   canReorderAllMessages: boolean;
@@ -486,7 +487,7 @@ export const useChatStore = defineStore({
       this.whisperTarget = null;
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich' }) {
       this.editing = { ...payload };
     },
 

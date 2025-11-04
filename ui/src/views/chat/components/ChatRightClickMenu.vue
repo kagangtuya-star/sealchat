@@ -7,48 +7,118 @@ import Element from '@satorijs/element'
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
 import { useI18n } from 'vue-i18n';
+import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 
 const chat = useChatStore()
 const message = useMessage()
 const { t } = useI18n();
-
-const clickReplyTo = async () => {
-  chat.setReplayTo(chat.messageMenu.item)
-}
-
 const user = useUserStore()
 
-const clickDelete = async () => {
-  if (chat.curChannel?.id && chat.messageMenu.item?.id) {
-    await chat.messageDelete(chat.curChannel?.id, chat.messageMenu.item?.id)
-    message.success('撤回成功')
+const menuMessage = computed(() => {
+  const raw = chat.messageMenu.item as any;
+  if (!raw) {
+    return {
+      raw: null,
+      author: null,
+      member: null,
+    };
   }
+
+  const memberUser: User | undefined = raw.member?.user || raw.member?.userInfo;
+  const author: User | null = raw.user || memberUser || raw.author || null;
+
+  return {
+    raw,
+    author,
+    member: raw.member,
+  };
+});
+
+const detectContentMode = (content?: string): 'plain' | 'rich' => {
+  if (!content) {
+    return 'plain';
+  }
+  if (isTipTapJson(content)) {
+    return 'rich';
+  }
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return 'plain';
+  }
+  if (/<(p|img|br|span|at|strong|em|blockquote|ul|ol|li|code|pre|a)\b/i.test(trimmed)) {
+    return 'rich';
+  }
+  return 'plain';
+};
+
+const isSelfMessage = computed(() => {
+  const authorId = menuMessage.value.author?.id;
+  if (!authorId) {
+    return false;
+  }
+  return authorId === user.info.id;
+});
+
+const canWhisper = computed(() => {
+  const authorId = menuMessage.value.author?.id;
+  if (!authorId) {
+    return false;
+  }
+  return authorId !== user.info.id;
+});
+
+const clickReplyTo = () => {
+  if (!menuMessage.value.raw) {
+    return;
+  }
+  chat.setReplayTo(menuMessage.value.raw);
+}
+
+const clickDelete = async () => {
+  if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
+    return;
+  }
+  await chat.messageDelete(chat.curChannel.id, menuMessage.value.raw.id)
+  message.success('撤回成功')
 }
 
 const clickEdit = () => {
-  if (!chat.messageMenu.item?.id || !chat.curChannel?.id) {
+  if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
     return;
   }
+  const target = menuMessage.value.raw;
+  const mode = detectContentMode(target.content || target.originalContent || '');
   chat.startEditingMessage({
-    messageId: chat.messageMenu.item.id,
+    messageId: target.id,
     channelId: chat.curChannel.id,
-    originalContent: chat.messageMenu.item.content || '',
-    draft: chat.messageMenu.item.content || ''
+    originalContent: target.content || '',
+    draft: target.content || '',
+    mode,
   });
   chat.messageMenu.show = false;
 }
 
 const clickCopy = async () => {
+  const content = menuMessage.value.raw?.content || '';
   let copyText = '';
-  const items = Element.parse(chat.messageMenu.item?.content || '');
-  for (let item of items) {
-    if (item.type == 'text') {
-      copyText += item.toString();
+  if (detectContentMode(content) === 'rich') {
+    try {
+      const json = JSON.parse(content);
+      copyText = tiptapJsonToPlainText(json);
+    } catch (error) {
+      console.warn('富文本解析失败，回退为纯文本复制', error);
+      copyText = '';
+    }
+  } else {
+    const items = Element.parse(content);
+    for (const item of items) {
+      if (item.type === 'text') {
+        copyText += item.toString();
+      }
     }
   }
 
   try {
-    // 执行复制操作
     await navigator.clipboard.writeText(copyText);
     message.success("已复制");
   } catch (err) {
@@ -57,20 +127,12 @@ const clickCopy = async () => {
 }
 
 const addToMyEmoji = async () => {
-  const items = Element.parse(chat.messageMenu.item?.content || '');
+  const items = Element.parse(menuMessage.value.raw?.content || '');
   for (let item of items) {
     if (item.type == "img") {
       const id = item.attrs.src.replace('id:', '');
       try {
-        const resp = await user.emojiAdd(id);
-        console.log(222, resp);
-        // await db.thumbs.add({
-        //   id: id,
-        //   recentUsed: Number(Date.now()),
-        //   filename: 'image.png',
-        //   mimeType: '',
-        //   data: null, // 无数据，按id加载
-        // });
+        await user.emojiAdd(id);
         message.success('收藏成功');
       } catch (e: any) {
         if (e.name === "ConstraintError") {
@@ -82,56 +144,37 @@ const addToMyEmoji = async () => {
 }
 
 const clickWhisper = () => {
-  const data = chat.messageMenu.item as any;
-  if (!data?.user?.id) {
+  const targetAuthor = menuMessage.value.author;
+  if (!targetAuthor?.id) {
     message.warning(t('whisper.userUnknown'));
     return;
   }
-  if (data.user.id === user.info.id) {
+  if (targetAuthor.id === user.info.id) {
     message.warning(t('whisper.selfNotAllowed'));
     return;
   }
+  const memberInfo = menuMessage.value.member;
   const targetUser: User = {
-    id: data.user.id,
-    name: data.user.name || data.user.username || '',
-    nick: data.member?.nick || data.user.nick || data.user.name || '未知成员',
-    avatar: data.member?.avatar || data.user.avatar || '',
-    discriminator: data.user.discriminator || '',
-    is_bot: !!data.user.is_bot,
+    id: targetAuthor.id,
+    name: targetAuthor.name || (targetAuthor as any).username || '',
+    nick: memberInfo?.nick || targetAuthor.nick || targetAuthor.name || '未知成员',
+    avatar: memberInfo?.avatar || targetAuthor.avatar || '',
+    discriminator: targetAuthor.discriminator || '',
+    is_bot: !!targetAuthor.is_bot,
   };
   chat.setWhisperTarget(targetUser);
   chat.messageMenu.show = false;
 };
 
-const showWhisper = computed(() => {
-  const data = chat.messageMenu.item;
-  if (!data?.user?.id) {
-    return false;
-  }
-  return data.user.id !== user.info.id;
-});
 </script>
 
 <template>
   <context-menu v-model:show="chat.messageMenu.show" :options="chat.messageMenu.optionsComponent">
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
-    <!-- <context-menu-sperator /> -->
-    <!-- <context-menu-item label="Item with a icon" icon="icon-reload-1" @click="alertContextMenuItemClicked('Item2')" /> -->
-    <!-- <context-menu-item label="Test Item" @click="alertContextMenuItemClicked('Item2')" /> -->
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
-    <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
+    <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
-    <context-menu-item label="编辑消息" @click="clickEdit"
-      v-if="chat.messageMenu.item?.user?.id && (chat.messageMenu.item?.user?.id === user.info.id)" />
-    <context-menu-item label="撤回" @click="clickDelete"
-      v-if="chat.messageMenu.item?.user?.id && (chat.messageMenu.item?.user?.id === user.info.id)" />
-    <!-- <context-menu-group label="Menu with child">
-      <context-menu-item label="Item1" @click="alertContextMenuItemClicked('Item2-1')" />
-      <context-menu-item label="Item1" @click="alertContextMenuItemClicked('Item2-2')" />
-      <context-menu-group label="Child with v-for 50">
-        <context-menu-item v-for="index of 50" :key="index" :label="'Item3-' + index"
-          @click="alertContextMenuItemClicked('Item3-' + index)" />
-      </context-menu-group>
-    </context-menu-group> -->
+    <context-menu-item label="编辑消息" @click="clickEdit" v-if="isSelfMessage" />
+    <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
   </context-menu>
 </template>

@@ -143,11 +143,19 @@ const getEditor = () => {
   return undefined;
 };
 
+const getJson = () => {
+  if (modeRef.value === 'rich') {
+    return richRef.value?.getJson?.();
+  }
+  return null;
+};
+
 defineExpose({
   focus,
   blur,
   getTextarea,
   getEditor,
+  getJson,
   getMode: () => modeRef.value,
   switchMode,
 });

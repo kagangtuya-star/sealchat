@@ -338,6 +338,7 @@ defineExpose({
   getTextarea,
   getInstance: () => editor.value,
   getEditor: () => editor.value,
+  getJson: () => editor.value?.getJSON(),
   insertImagePlaceholder,
 });
 </script>

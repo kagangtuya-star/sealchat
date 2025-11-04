@@ -29,7 +29,7 @@ import type { UserEmojiModel } from '@/types';
 import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
-import { tiptapJsonToHtml } from '@/utils/tiptap-render';
+import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
 import DOMPurify from 'dompurify';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -706,6 +706,9 @@ const convertMessageContentToDraft = (content?: string) => {
   if (!content) {
     return '';
   }
+  if (isTipTapJson(content)) {
+    return content;
+  }
   let text = contentUnescape(content);
   const imageRecords: Array<{ id: string; token: string; attachmentId: string }> = [];
   text = text.replace(/<img\s+[^>]*src="([^"]+)"[^>]*\/?>/gi, (_, src) => {
@@ -1024,6 +1027,23 @@ const ensureInputFocus = () => {
   });
 };
 
+const detectMessageContentMode = (content?: string): 'plain' | 'rich' => {
+  if (!content) {
+    return 'plain';
+  }
+  if (isTipTapJson(content)) {
+    return 'rich';
+  }
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return 'plain';
+  }
+  if (/<(p|img|br|span|at|strong|em|blockquote|ul|ol|li|code|pre|a)\b/i.test(trimmed)) {
+    return 'rich';
+  }
+  return 'plain';
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
@@ -1036,12 +1056,15 @@ const beginEdit = (target?: Message) => {
   stopEditingPreviewNow();
   chat.curReplyTo = null;
   chat.clearWhisperTarget();
+  const detectedMode = detectMessageContentMode(target.content);
   chat.startEditingMessage({
     messageId: target.id,
     channelId: chat.curChannel.id,
     originalContent: target.content || '',
     draft: target.content || '',
+    mode: detectedMode,
   });
+  inputMode.value = detectedMode;
 };
 
 const cancelEditing = () => {
@@ -1084,7 +1107,17 @@ const saveEdit = async () => {
   }
   try {
     stopTypingPreviewNow();
-    const finalContent = await buildMessageHtml(draft);
+    let finalContent: string;
+    if (inputMode.value === 'rich') {
+      const editorInstance = textInputRef.value?.getEditor?.();
+      if (editorInstance) {
+        finalContent = JSON.stringify(editorInstance.getJSON());
+      } else {
+        finalContent = draft;
+      }
+    } else {
+      finalContent = await buildMessageHtml(draft);
+    }
     if (finalContent.trim() === '') {
       message.error('消息内容不能为空');
       return;
@@ -1566,7 +1599,23 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     if (previousId && previousId !== messageId) {
       stopEditingPreviewNow();
     }
-    const draft = convertMessageContentToDraft(chat.editing.draft);
+    const editingMode = chat.editing.mode ?? detectMessageContentMode(chat.editing.originalContent || chat.editing.draft);
+    inputMode.value = editingMode;
+    let draft = '';
+    if (editingMode === 'rich') {
+      const source = chat.editing.draft ?? '';
+      const original = chat.editing.originalContent ?? '';
+      resetInlineImages();
+      if (isTipTapJson(source)) {
+        draft = source;
+      } else if (isTipTapJson(original)) {
+        draft = original;
+      } else {
+        draft = source;
+      }
+    } else {
+      draft = convertMessageContentToDraft(chat.editing.draft);
+    }
     chat.curReplyTo = null;
     chat.clearWhisperTarget();
     textToSend.value = draft;
@@ -1575,6 +1624,16 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     stopTypingPreviewNow();
     ensureInputFocus();
     nextTick(() => {
+      if (inputMode.value === 'plain') {
+        const textarea = getTextarea();
+        if (textarea) {
+          const len = textarea.value.length;
+          textarea.setSelectionRange(len, len);
+        }
+      } else {
+        const editor = textInputRef.value?.getEditor?.();
+        editor?.chain().focus('end').run();
+      }
       document.getElementById(messageId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       emitEditingPreview();
     });
