@@ -4,11 +4,13 @@ import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTi
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
+import type { ChannelIdentity } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Users } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
+import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
@@ -98,14 +100,18 @@ const inlineImagePreviewMap = computed<Record<string, { status: 'uploading' | 'u
   const result: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }> = {};
   inlineImages.forEach((draft, key) => {
     let previewUrl = draft.objectUrl;
-    if (!previewUrl && draft.attachmentId) {
-      if (/^https?:/i.test(draft.attachmentId)) {
-        previewUrl = draft.attachmentId;
+  if (!previewUrl && draft.attachmentId) {
+    if (/^https?:/i.test(draft.attachmentId)) {
+      previewUrl = draft.attachmentId;
+    } else {
+      const attachmentToken = draft.attachmentId.startsWith('id:') ? draft.attachmentId.slice(3) : draft.attachmentId;
+      if (draft.attachmentId.startsWith('id:')) {
+        previewUrl = `${urlBase}/api/v1/attachment/${attachmentToken}`;
       } else {
-        const attachmentId = draft.attachmentId.startsWith('id:') ? draft.attachmentId.slice(3) : draft.attachmentId;
-        previewUrl = `${urlBase}/api/v1/attachments/${attachmentId}`;
+        previewUrl = `${urlBase}/api/v1/attachments/${attachmentToken}`;
       }
     }
+  }
     result[key] = {
       status: draft.status,
       previewUrl,
@@ -114,6 +120,393 @@ const inlineImagePreviewMap = computed<Record<string, { status: 'uploading' | 'u
   });
   return result;
 });
+
+const identityDialogVisible = ref(false);
+const identityDialogMode = ref<'create' | 'edit'>('create');
+const identityManageVisible = ref(false);
+const identitySubmitting = ref(false);
+const identityForm = reactive({
+  displayName: '',
+  color: '',
+  avatarAttachmentId: '',
+  isDefault: false,
+});
+const identityAvatarPreview = ref('');
+const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
+const editingIdentity = ref<ChannelIdentity | null>(null);
+const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+let identityAvatarObjectURL: string | null = null;
+let identityAvatarFile: File | null = null;
+const identityAvatarDisplay = computed(() => identityAvatarPreview.value || resolveAttachmentUrl(identityForm.avatarAttachmentId));
+
+const normalizeAttachmentId = (value: string) => {
+  if (!value) {
+    return '';
+  }
+  return value.startsWith('id:') ? value.slice(3) : value;
+};
+
+const resolveAttachmentUrl = (value?: string) => {
+  const raw = (value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  if (/^(https?:|blob:|data:|\/\/)/i.test(raw)) {
+    return raw;
+  }
+  const normalized = raw.startsWith('id:') ? raw.slice(3) : raw;
+  if (!normalized) {
+    return '';
+  }
+  if (/^[0-9a-f]{32}_[0-9]+$/i.test(normalized)) {
+    return `${urlBase}/api/v1/attachments/${normalized}`;
+  }
+  return `${urlBase}/api/v1/attachment/${normalized}`;
+};
+
+const normalizeHexColor = (value: string) => {
+  let color = value.trim().toLowerCase();
+  if (!color) return '';
+  if (!color.startsWith('#')) {
+    color = `#${color}`;
+  }
+  if (/^#[0-9a-f]{3}$/.test(color)) {
+    const [, r, g, b] = color.split('');
+    color = `#${r}${r}${g}${g}${b}${b}`;
+  }
+  if (!/^#[0-9a-f]{6}$/.test(color)) {
+    return '';
+  }
+  return color;
+};
+
+const applyIdentityAppearanceToMessages = (identity: ChannelIdentity) => {
+  if (!identity || identity.channelId !== chat.curChannel?.id) {
+    return;
+  }
+  const normalizedColor = normalizeHexColor(identity.color || '');
+  const avatarAttachment = identity.avatarAttachmentId || '';
+  const displayName = identity.displayName || '';
+  let updated = false;
+  for (const msg of rows.value) {
+    const senderIdentityId = (msg as any).sender_identity_id;
+    if (senderIdentityId === identity.id) {
+      if (displayName) {
+        msg.sender_member_name = displayName;
+        (msg as any).sender_identity_name = displayName;
+      }
+      (msg as any).sender_identity_color = normalizedColor;
+      (msg as any).sender_identity_avatar_id = avatarAttachment;
+      if (!msg.identity) {
+        msg.identity = {
+          id: identity.id,
+          displayName,
+          color: normalizedColor,
+          avatarAttachment,
+        } as any;
+      }
+      updated = true;
+    }
+    if (msg.identity?.id === identity.id) {
+      msg.identity.displayName = displayName;
+      msg.identity.color = normalizedColor;
+      msg.identity.avatarAttachment = avatarAttachment;
+      updated = true;
+    }
+    if (msg.quote?.identity?.id === identity.id) {
+      msg.quote.identity.displayName = displayName;
+      msg.quote.identity.color = normalizedColor;
+      msg.quote.identity.avatarAttachment = avatarAttachment;
+      updated = true;
+    }
+    if ((msg.quote as any)?.sender_identity_id === identity.id) {
+      (msg.quote as any).sender_identity_color = normalizedColor;
+      (msg.quote as any).sender_identity_avatar_id = avatarAttachment;
+      if (displayName) {
+        msg.quote.sender_member_name = displayName;
+      }
+      updated = true;
+    }
+  }
+  typingPreviewList.value = typingPreviewList.value.map((item) => {
+    if (item.userId === user.info.id) {
+      return {
+        ...item,
+        displayName: displayName || item.displayName,
+      };
+    }
+    return item;
+  });
+  if (updated) {
+    rows.value = [...rows.value];
+  }
+};
+
+const clearRemovedIdentityFromMessages = (identityId: string) => {
+  let updated = false;
+  for (const msg of rows.value) {
+    if ((msg as any).sender_identity_id === identityId) {
+      const fallbackName = msg.member?.nick || msg.user?.nick || msg.user?.name || msg.sender_member_name;
+      msg.sender_member_name = fallbackName;
+      delete (msg as any).sender_identity_id;
+      delete (msg as any).sender_identity_name;
+      delete (msg as any).sender_identity_color;
+      delete (msg as any).sender_identity_avatar_id;
+      if (msg.identity?.id === identityId) {
+        msg.identity = undefined;
+      }
+      updated = true;
+    } else if (msg.identity?.id === identityId) {
+      msg.identity = undefined;
+      updated = true;
+    }
+    if (msg.quote?.identity?.id === identityId) {
+      msg.quote.identity = undefined;
+      updated = true;
+    }
+    if ((msg.quote as any)?.sender_identity_id === identityId) {
+      const fallbackQuoteName = msg.quote?.member?.nick || msg.quote?.user?.nick || msg.quote?.user?.name || msg.quote?.sender_member_name;
+      if (msg.quote) {
+        msg.quote.sender_member_name = fallbackQuoteName;
+      }
+      delete (msg.quote as any)?.sender_identity_id;
+      delete (msg.quote as any)?.sender_identity_name;
+      delete (msg.quote as any)?.sender_identity_color;
+      delete (msg.quote as any)?.sender_identity_avatar_id;
+      updated = true;
+    }
+  }
+  typingPreviewList.value = typingPreviewList.value.map((item) => {
+    if (item.userId === user.info.id) {
+      return {
+        ...item,
+        displayName: chat.curMember?.nick || user.info.nick || item.displayName,
+      };
+    }
+    return item;
+  });
+  if (updated) {
+    rows.value = [...rows.value];
+  }
+};
+
+const handleIdentityColorBlur = () => {
+  if (!identityForm.color) {
+    return;
+  }
+  const normalized = normalizeHexColor(identityForm.color);
+  if (!normalized) {
+    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    identityForm.color = '';
+    return;
+  }
+  identityForm.color = normalized;
+};
+
+const handleIdentityUpdated = (payload?: any) => {
+  const identity = payload?.identity as ChannelIdentity | undefined;
+  if (identity) {
+    if (identity.channelId !== chat.curChannel?.id) {
+      return;
+    }
+    applyIdentityAppearanceToMessages(identity);
+  }
+  if (payload?.removedId && payload?.channelId === chat.curChannel?.id) {
+    clearRemovedIdentityFromMessages(payload.removedId);
+  }
+};
+
+const revokeIdentityObjectURL = () => {
+  if (identityAvatarObjectURL) {
+    URL.revokeObjectURL(identityAvatarObjectURL);
+    identityAvatarObjectURL = null;
+  }
+};
+
+const resetIdentityForm = (identity?: ChannelIdentity | null) => {
+  revokeIdentityObjectURL();
+  identityAvatarFile = null;
+  identityForm.displayName = identity?.displayName || '';
+  identityForm.color = normalizeHexColor(identity?.color || '') || '';
+  identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
+  identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
+  identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
+};
+
+const openIdentityCreate = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  editingIdentity.value = null;
+  identityDialogMode.value = 'create';
+  resetIdentityForm(null);
+  if (!identityForm.displayName) {
+    identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
+  }
+  identityDialogVisible.value = true;
+};
+
+const openIdentityEdit = (identity: ChannelIdentity) => {
+  editingIdentity.value = identity;
+  identityDialogMode.value = 'edit';
+  resetIdentityForm(identity);
+  identityDialogVisible.value = true;
+};
+
+const openIdentityManager = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  await chat.loadChannelIdentities(chat.curChannel.id, true);
+  identityManageVisible.value = true;
+};
+
+const closeIdentityDialog = () => {
+  identityDialogVisible.value = false;
+};
+
+const handleIdentityAvatarTrigger = () => {
+  identityAvatarInputRef.value?.click();
+};
+
+const handleIdentityAvatarChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  if (!input || !input.files?.length) {
+    return;
+  }
+  const file = input.files[0];
+  identityForm.avatarAttachmentId = '';
+  identityAvatarFile = file;
+  revokeIdentityObjectURL();
+  identityAvatarObjectURL = URL.createObjectURL(file);
+  identityAvatarPreview.value = identityAvatarObjectURL;
+  input.value = '';
+};
+
+const removeIdentityAvatar = () => {
+  identityForm.avatarAttachmentId = '';
+  identityAvatarFile = null;
+  revokeIdentityObjectURL();
+  identityAvatarPreview.value = '';
+};
+
+const submitIdentityForm = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!identityForm.displayName.trim()) {
+    message.warning('频道昵称不能为空');
+    return;
+  }
+  const rawColor = identityForm.color || '';
+  const trimmedColor = rawColor.trim();
+  const normalizedColor = trimmedColor ? normalizeHexColor(trimmedColor) : '';
+  if (trimmedColor && !normalizedColor) {
+    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    return;
+  }
+  identityForm.color = normalizedColor;
+  identitySubmitting.value = true;
+  const payload = {
+    channelId: chat.curChannel.id,
+    displayName: identityForm.displayName.trim(),
+    color: normalizedColor,
+    avatarAttachmentId: identityForm.avatarAttachmentId,
+    isDefault: identityForm.isDefault,
+  };
+  try {
+    if (identityAvatarFile) {
+      const uploadResult = await uploadImageAttachment(identityAvatarFile, { channelId: chat.curChannel.id });
+      const fileToken = uploadResult.response?.files?.[0] || uploadResult.attachmentId || '';
+      const normalizedToken = normalizeAttachmentId(fileToken);
+      identityForm.avatarAttachmentId = normalizedToken;
+      payload.avatarAttachmentId = identityForm.avatarAttachmentId;
+      identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
+      identityAvatarFile = null;
+    }
+    if (identityDialogMode.value === 'create') {
+      await chat.channelIdentityCreate(payload);
+      message.success('频道角色已创建');
+    } else if (editingIdentity.value) {
+      await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+      message.success('频道角色已更新');
+    }
+    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    identityDialogVisible.value = false;
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '保存失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    identitySubmitting.value = false;
+  }
+};
+
+const deleteIdentity = async (identity: ChannelIdentity) => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  const confirmed = await dialogAskConfirm(dialog, {
+    title: '删除频道角色',
+    content: `确定要删除「${identity.displayName}」吗？此操作无法撤销。`,
+  });
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await chat.channelIdentityDelete(chat.curChannel.id, identity.id);
+    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    message.success('已删除频道角色');
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
+    message.error(errMsg);
+  }
+};
+
+const getMessageDisplayName = (message: any) => {
+  return message?.identity?.displayName
+    || message?.sender_member_name
+    || message?.member?.nick
+    || message?.user?.nick
+    || message?.user?.name
+    || '未知';
+};
+
+const getMessageAvatar = (message: any) => {
+  const candidates = [
+    message?.identity?.avatarAttachment,
+    (message as any)?.sender_identity_avatar_id,
+    (message as any)?.sender_identity_avatar,
+    (message as any)?.senderIdentityAvatarID,
+    (message as any)?.senderIdentityAvatarId,
+  ];
+  for (const id of candidates) {
+    if (id) {
+      return resolveAttachmentUrl(id);
+    }
+  }
+  return message?.member?.avatar || message?.user?.avatar || '';
+};
+
+const getMessageIdentityColor = (message: any) => {
+  return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
+};
+
+const handleIdentityMenuOpen = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  await chat.loadChannelIdentities(chat.curChannel.id, false);
+  const current = chat.getActiveIdentity(chat.curChannel.id);
+  if (current) {
+    openIdentityEdit(current);
+  } else {
+    openIdentityCreate();
+  }
+};
 
 const SCROLL_STICKY_THRESHOLD = 200;
 
@@ -1976,6 +2369,21 @@ watch(typingPreviewMode, (mode) => {
   }
 });
 
+watch(() => identityForm.color, (value) => {
+  if (!value) {
+    return;
+  }
+  const trimmed = value.trim();
+  if (trimmed !== value) {
+    identityForm.color = trimmed;
+    return;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower !== trimmed) {
+    identityForm.color = lower;
+  }
+});
+
 const isNearBottom = () => {
   const elLst = messagesListRef.value;
   if (!elLst) {
@@ -2205,6 +2613,9 @@ chatEvent.on('typing-preview', (e?: Event) => {
       }
     }
   })
+
+  chatEvent.on('channel-identity-open', handleIdentityMenuOpen);
+  chatEvent.on('channel-identity-updated', handleIdentityUpdated);
 
   chatEvent.on('connected', async (e) => {
     // 重连了之后，重新加载这之间的数据
@@ -2511,6 +2922,12 @@ const emojiSelectedDelete = async () => {
 
 const emojiPopoverShow = ref(false);
 const isManagingEmoji = ref(false);
+
+onBeforeUnmount(() => {
+  chatEvent.off('channel-identity-open', handleIdentityMenuOpen);
+  chatEvent.off('channel-identity-updated', handleIdentityUpdated);
+  revokeIdentityObjectURL();
+});
 </script>
 
 <template>
@@ -2534,8 +2951,9 @@ const isManagingEmoji = ref(false);
             <span class="message-row__dot" v-for="n in 6" :key="n"></span>
           </div>
           <chat-item
-            :avatar="itemData.member?.avatar || itemData.user?.avatar"
-            :username="itemData.member?.nick ?? '未知'"
+            :avatar="getMessageAvatar(itemData)"
+            :username="getMessageDisplayName(itemData)"
+            :identity-color="getMessageIdentityColor(itemData)"
             :content="itemData.content"
             :is-rtl="isMe(itemData)"
             :item="itemData"
@@ -2644,6 +3062,16 @@ const isManagingEmoji = ref(false);
             <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
               <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
               <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
+            </div>
+            <div
+              v-if="chat.curChannel"
+              class="identity-switcher-floating"
+            >
+              <ChannelIdentitySwitcher
+                :disabled="isEditing"
+                @create="openIdentityCreate"
+                @manage="openIdentityManager"
+              />
             </div>
 
             <ChatInputSwitcher
@@ -2866,6 +3294,93 @@ const isManagingEmoji = ref(false);
 
   <RightClickMenu />
   <AvatarClickMenu />
+  <n-modal
+    v-model:show="identityDialogVisible"
+    preset="card"
+    :title="identityDialogMode === 'create' ? '创建频道角色' : '编辑频道角色'"
+    :auto-focus="false"
+    class="identity-dialog"
+  >
+    <n-form label-width="90px" label-placement="left">
+      <n-form-item label="频道昵称">
+        <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
+      </n-form-item>
+      <n-form-item label="昵称颜色">
+        <div class="identity-color-field">
+          <n-color-picker
+            v-model:value="identityForm.color"
+            :modes="['hex']"
+            :show-alpha="false"
+            size="small"
+            class="identity-color-picker"
+          />
+          <n-input
+            v-model:value="identityForm.color"
+            size="small"
+            placeholder="#RRGGBB"
+            class="identity-color-input"
+            @blur="handleIdentityColorBlur"
+            @keyup.enter="handleIdentityColorBlur"
+          />
+          <n-button tertiary size="small" @click="identityForm.color = ''">清除</n-button>
+        </div>
+      </n-form-item>
+      <n-form-item label="频道头像">
+        <div class="identity-avatar-field">
+          <AvatarVue :size="48" :border="false" :src="identityAvatarDisplay || user.info.avatar" />
+          <n-space>
+            <n-button size="small" type="primary" @click="handleIdentityAvatarTrigger">上传头像</n-button>
+            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
+          </n-space>
+        </div>
+      </n-form-item>
+      <n-form-item>
+        <n-checkbox v-model:checked="identityForm.isDefault">
+          设为频道默认身份
+        </n-checkbox>
+      </n-form-item>
+    </n-form>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="closeIdentityDialog">取消</n-button>
+        <n-button type="primary" :loading="identitySubmitting" @click="submitIdentityForm">保存</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
+  <n-drawer v-model:show="identityManageVisible" placement="right" :width="340">
+    <n-drawer-content title="频道角色管理">
+      <div v-if="currentChannelIdentities.length" class="identity-list">
+        <div v-for="identity in currentChannelIdentities" :key="identity.id" class="identity-list__item">
+          <AvatarVue
+            :size="40"
+            :border="false"
+            :src="resolveAttachmentUrl(identity.avatarAttachmentId) || user.info.avatar"
+          />
+          <div class="identity-list__meta">
+            <div class="identity-list__name">
+              <span v-if="identity.color" class="identity-list__color" :style="{ backgroundColor: identity.color }"></span>
+              <span :style="identity.color ? { color: identity.color } : undefined">{{ identity.displayName }}</span>
+              <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
+            </div>
+            <div class="identity-list__hint">身份ID：{{ identity.id }}</div>
+          </div>
+          <div class="identity-list__actions">
+            <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
+            <n-button text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+          </div>
+        </div>
+      </div>
+      <n-empty v-else description="暂无频道角色">
+        <template #extra>
+          <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
+        </template>
+      </n-empty>
+      <template #footer>
+        <n-button type="primary" block @click="openIdentityCreate">创建新角色</n-button>
+      </template>
+    </n-drawer-content>
+  </n-drawer>
 </template>
 
 <style lang="scss" scoped>
@@ -3423,6 +3938,100 @@ const isManagingEmoji = ref(false);
   text-align: center;
   font-size: 0.85rem;
   color: #9ca3af;
+}
+
+.identity-switcher-cell {
+  display: flex;
+  align-items: center;
+}
+
+.identity-switcher-floating {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.5rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+}
+
+.chat-input-area {
+  padding-top: 2.8rem;
+}
+
+.identity-color-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.identity-color-picker {
+  width: 36px;
+  height: 32px;
+  :deep(.n-color-picker-trigger) {
+    padding: 0;
+    border-radius: 8px;
+    justify-content: center;
+  }
+  :deep(.n-color-picker-trigger__icon) {
+    margin-right: 0;
+  }
+  :deep(.n-color-picker-trigger__value) {
+    display: none;
+  }
+}
+
+.identity-color-input {
+  width: 110px;
+}
+
+.identity-avatar-field {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.identity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.identity-list__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.identity-list__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-list__name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.identity-list__color {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.identity-list__actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.identity-list__hint {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 0.25rem;
 }
 
 .whisper-toggle-button {

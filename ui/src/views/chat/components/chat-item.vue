@@ -156,6 +156,7 @@ const props = defineProps({
   avatar: String,
   isRtl: Boolean,
   item: Object,
+  identityColor: String,
   editingPreview: Object as PropType<EditingPreviewInfo | undefined>,
 })
 
@@ -164,7 +165,7 @@ const timeText2 = ref(timeFormat2(props.item?.createdAt));
 const editedTimeText = ref(props.item?.isEdited ? timeFormat(props.item?.updatedAt) : '');
 const editedTimeText2 = ref(props.item?.isEdited ? timeFormat2(props.item?.updatedAt) : '');
 
-const getMemberDisplayName = (item: any) => item?.member?.nick || item?.user?.nick || item?.user?.name || '未知成员';
+const getMemberDisplayName = (item: any) => item?.identity?.displayName || item?.sender_member_name || item?.member?.nick || item?.user?.nick || item?.user?.name || '未知成员';
 const getTargetDisplayName = (item: any) => item?.whisperTo?.nick || item?.whisperTo?.name || '未知成员';
 
 const buildWhisperLabel = (item?: any) => {
@@ -296,11 +297,16 @@ onBeforeUnmount(() => {
 });
 
 const nick = computed(() => {
+  if (props.item?.identity?.displayName) {
+    return props.item.identity.displayName;
+  }
   if (props.item?.sender_member_name) {
-    return props.item?.sender_member_name;
+    return props.item.sender_member_name;
   }
   return props.item?.member?.nick || props.item?.user?.name || '未知';
 });
+
+const nameColor = computed(() => props.item?.identity?.color || props.identityColor || '');
 
 watch(() => props.item?.updatedAt, () => {
   if (props.item?.isEdited) {
@@ -327,9 +333,9 @@ watch(() => props.item?.updatedAt, () => {
           </template>
           <span>{{ timeText2 }}</span>
         </n-popover>
-        <span v-if="props.isRtl" class="name">{{ nick }}</span>
+        <span v-if="props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
 
-        <span v-if="!props.isRtl" class="name">{{ nick }}</span>
+        <span v-if="!props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl">
           <template #trigger>
             <span class="time">{{ timeText }}</span>

@@ -85,11 +85,12 @@ func apiMessageDelete(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
-	ChannelID string `json:"channel_id"`
-	QuoteID   string `json:"quote_id"`
-	Content   string `json:"content"`
-	WhisperTo string `json:"whisper_to"`
-	ClientID  string `json:"client_id"`
+	ChannelID  string `json:"channel_id"`
+	QuoteID    string `json:"quote_id"`
+	Content    string `json:"content"`
+	WhisperTo  string `json:"whisper_to"`
+	ClientID   string `json:"client_id"`
+	IdentityID string `json:"identity_id"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -118,6 +119,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	content := data.Content
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
+	if err != nil {
+		return nil, err
+	}
+
+	identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, data.IdentityID)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +185,15 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		IsWhisper:        whisperUser != nil,
 		WhisperTo:        data.WhisperTo,
 	}
+	if identity != nil {
+		m.SenderIdentityID = identity.ID
+		m.SenderIdentityName = identity.DisplayName
+		m.SenderIdentityColor = identity.Color
+		m.SenderIdentityAvatarID = identity.AvatarAttachmentID
+		if identity.DisplayName != "" {
+			m.SenderMemberName = identity.DisplayName
+		}
+	}
 	if whisperUser != nil {
 		m.WhisperTarget = whisperUser
 	}
@@ -233,7 +248,20 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		if appConfig.BuiltInSealBotEnable && whisperUser == nil {
-			builtinSealBotSolve(ctx, data, channelData)
+			botReq := &struct {
+				ChannelID string `json:"channel_id"`
+				QuoteID   string `json:"quote_id"`
+				Content   string `json:"content"`
+				WhisperTo string `json:"whisper_to"`
+				ClientID  string `json:"client_id"`
+			}{
+				ChannelID: data.ChannelID,
+				QuoteID:   data.QuoteID,
+				Content:   data.Content,
+				WhisperTo: data.WhisperTo,
+				ClientID:  data.ClientID,
+			}
+			builtinSealBotSolve(ctx, botReq, channelData)
 		}
 
 		if channel.PermType == "private" {

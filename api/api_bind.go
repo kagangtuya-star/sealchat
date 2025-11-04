@@ -79,6 +79,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/attachment-upload-quick", AttachmentUploadQuick)
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
 	v1Auth.Post("/attachments-delete", AttachmentDelete)
+	v1Auth.Get("/attachment/:id", AttachmentGet)
+
+	v1Auth.Get("/channel-identities", ChannelIdentityList)
+	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
+	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
+	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}

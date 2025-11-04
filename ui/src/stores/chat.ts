@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
 import { Emitter } from '@/utils/event';
@@ -54,12 +54,22 @@ interface ChatState {
   } | null
 
   canReorderAllMessages: boolean;
+  channelIdentities: Record<string, ChannelIdentity[]>;
+  activeChannelIdentity: Record<string, string>;
 }
 
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
 
-type myEventName = EventName | 'message-created' | 'channel-switch-to' | 'connected' | 'channel-member-updated' | 'message-created-notice';
+type myEventName =
+  | EventName
+  | 'message-created'
+  | 'channel-switch-to'
+  | 'connected'
+  | 'channel-member-updated'
+  | 'message-created-notice'
+  | 'channel-identity-open'
+  | 'channel-identity-updated';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -117,6 +127,8 @@ export const useChatStore = defineStore({
 
     editing: null,
     canReorderAllMessages: false,
+    channelIdentities: {},
+    activeChannelIdentity: {},
   }),
 
   getters: {
@@ -306,6 +318,7 @@ export const useChatStore = defineStore({
       }
 
       this.curMember = resp.data.member;
+      await this.loadChannelIdentities(id);
       localStorage.setItem('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
@@ -315,6 +328,114 @@ export const useChatStore = defineStore({
       chatEvent.emit('channel-switch-to', undefined);
       this.channelList();
       return true;
+    },
+
+    getActiveIdentity(channelId?: string) {
+      const targetId = channelId || this.curChannel?.id || '';
+      if (!targetId) {
+        return null;
+      }
+      const list = this.channelIdentities[targetId] || [];
+      const activeId = this.activeChannelIdentity[targetId];
+      const found = activeId ? list.find(item => item.id === activeId) : undefined;
+      if (found) {
+        return found;
+      }
+      return list.length > 0 ? list[0] : null;
+    },
+
+    getActiveIdentityId(channelId?: string) {
+      return this.getActiveIdentity(channelId)?.id || '';
+    },
+
+    setActiveIdentity(channelId: string, identityId: string) {
+      this.activeChannelIdentity = {
+        ...this.activeChannelIdentity,
+        [channelId]: identityId,
+      };
+      localStorage.setItem(`channelIdentity:${channelId}`, identityId || '');
+    },
+
+    upsertChannelIdentity(identity: ChannelIdentity) {
+      const list = [...(this.channelIdentities[identity.channelId] || [])];
+      const idx = list.findIndex(item => item.id === identity.id);
+      if (idx >= 0) {
+        list.splice(idx, 1, identity);
+      } else {
+        list.push(identity);
+      }
+      list.sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentities = {
+        ...this.channelIdentities,
+        [identity.channelId]: list,
+      };
+      if (identity.isDefault || !this.activeChannelIdentity[identity.channelId]) {
+        this.setActiveIdentity(identity.channelId, identity.id);
+      }
+      chatEvent.emit('channel-identity-updated', { identity, channelId: identity.channelId });
+    },
+
+    removeChannelIdentity(channelId: string, identityId: string) {
+      const list = (this.channelIdentities[channelId] || []).filter(item => item.id !== identityId);
+      this.channelIdentities = {
+        ...this.channelIdentities,
+        [channelId]: list,
+      };
+      if (this.activeChannelIdentity[channelId] === identityId) {
+        const fallback = list.find(item => item.isDefault) || list[0];
+        this.setActiveIdentity(channelId, fallback?.id || '');
+      }
+    },
+
+    async loadChannelIdentities(channelId: string, force = false) {
+      if (!channelId) {
+        return [];
+      }
+      if (!force && this.channelIdentities[channelId]) {
+        const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
+        if (cached) {
+          this.activeChannelIdentity = {
+            ...this.activeChannelIdentity,
+            [channelId]: cached,
+          };
+        }
+        return this.channelIdentities[channelId];
+      }
+      const resp = await api.get<{ items: ChannelIdentity[] }>('api/v1/channel-identities', { params: { channelId } });
+      const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentities = {
+        ...this.channelIdentities,
+        [channelId]: items,
+      };
+      const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
+      const defaultItem = items.find(item => item.isDefault) || items[0];
+      const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
+      this.activeChannelIdentity = {
+        ...this.activeChannelIdentity,
+        [channelId]: activeId,
+      };
+      return items;
+    },
+
+    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; }) {
+      const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
+      const identity = resp.data.item;
+      this.upsertChannelIdentity(identity);
+      this.setActiveIdentity(payload.channelId, identity.id);
+      return identity;
+    },
+
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; }) {
+      const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
+      const identity = resp.data.item;
+      this.upsertChannelIdentity(identity);
+      return identity;
+    },
+
+    async channelIdentityDelete(channelId: string, identityId: string) {
+      await api.delete('api/v1/channel-identities/' + identityId, { params: { channelId } });
+      this.removeChannelIdentity(channelId, identityId);
+      chatEvent.emit('channel-identity-updated', { channelId, removedId: identityId });
     },
 
     async channelList() {
@@ -450,6 +571,10 @@ export const useChatStore = defineStore({
       }
       if (clientId) {
         payload.client_id = clientId;
+      }
+      const identityId = this.getActiveIdentityId(this.curChannel?.id);
+      if (identityId) {
+        payload.identity_id = identityId;
       }
       const resp = await this.sendAPI('message.create', payload);
       return resp?.data;

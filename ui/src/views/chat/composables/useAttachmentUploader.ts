@@ -28,35 +28,50 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
     headers.ChannelId = channelId;
   }
 
-  const resp = await api.post('/api/v1/upload', formData, { headers });
+  const resp = await api.post('/api/v1/attachment-upload', formData, { headers });
   const filesField = resp.data?.files;
-  let rawId = '';
-  if (Array.isArray(filesField)) {
-    rawId = filesField[0];
-  } else if (typeof filesField === 'string') {
-    rawId = filesField;
-  } else if (filesField && typeof filesField === 'object') {
-    rawId = (filesField as any)[0];
-  }
+  const idsField = resp.data?.ids;
 
-  if (!rawId) {
+  const extractFirst = (value: unknown): string => {
+    if (!value) return '';
+    if (Array.isArray(value) && value.length) return String(value[0] ?? '');
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object') {
+      const firstKey = Object.keys(value as Record<string, unknown>)[0];
+      if (firstKey) {
+        return String((value as Record<string, unknown>)[firstKey] ?? '');
+      }
+    }
+    return '';
+  };
+
+  const rawId = extractFirst(idsField);
+  const rawFile = extractFirst(filesField);
+
+  if (!rawId && !rawFile) {
     throw new Error('上传失败，请稍后重试');
   }
 
-  try {
-    await db.thumbs.add({
-      id: rawId,
-      recentUsed: Number(Date.now()),
-      filename: file.name,
-      mimeType: file.type,
-      data: await blobToArrayBuffer(file),
-    });
-  } catch (error) {
-    console.warn('缓存上传文件失败', error);
+  const cacheKey = rawId || rawFile || '';
+
+  if (cacheKey) {
+    try {
+      await db.thumbs.put({
+        id: cacheKey,
+        recentUsed: Number(Date.now()),
+        filename: file.name,
+        mimeType: file.type,
+        data: await blobToArrayBuffer(file),
+      });
+    } catch (error) {
+      console.warn('缓存上传文件失败', error);
+    }
   }
 
+  const attachmentRef = rawId ? `id:${rawId}` : rawFile;
+
   return {
-    attachmentId: rawId.startsWith('id:') ? rawId : `id:${rawId}`,
+    attachmentId: attachmentRef as string,
     response: resp.data,
   };
 };

@@ -24,7 +24,11 @@ type MessageModel struct {
 	IsEdited     bool    `json:"is_edited" gorm:"default:false"`
 	EditCount    int     `json:"edit_count" gorm:"default:0"`
 
-	SenderMemberName string `json:"sender_member_name"` // 用户在当时的名字
+	SenderMemberName       string `json:"sender_member_name"` // 用户在当时的名字
+	SenderIdentityID       string `json:"sender_identity_id" gorm:"size:100"`
+	SenderIdentityName     string `json:"sender_identity_name"`
+	SenderIdentityColor    string `json:"sender_identity_color"`
+	SenderIdentityAvatarID string `json:"sender_identity_avatar_id"`
 
 	User   *UserModel    `json:"user"`           // 嵌套 User 结构体
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
@@ -42,7 +46,7 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	if !m.UpdatedAt.IsZero() {
 		updatedAt = m.UpdatedAt.UnixMilli()
 	}
-	return &protocol.Message{
+	msg := &protocol.Message{
 		ID:           m.ID,
 		Content:      m.Content,
 		Channel:      channelData,
@@ -59,6 +63,15 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			return nil
 		}(),
 	}
+	if m.SenderIdentityID != "" {
+		msg.Identity = &protocol.MessageIdentity{
+			ID:               m.SenderIdentityID,
+			DisplayName:      m.SenderIdentityName,
+			Color:            m.SenderIdentityColor,
+			AvatarAttachment: m.SenderIdentityAvatarID,
+		}
+	}
+	return msg
 }
 
 func BackfillMessageDisplayOrder() error {

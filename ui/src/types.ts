@@ -5,6 +5,7 @@ export interface SatoriMessage {
   channel?: Channel;
   guild?: Guild;
   user?: User;
+  identity?: MessageIdentity;
   member?: GuildMember;
   content?: string;
   elements?: any[]; // Element[] 这个好像会让vscode提示一个错误
@@ -170,4 +171,22 @@ export interface PaginationListResponse<T> {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface ChannelIdentity {
+  id: string;
+  channelId: string;
+  userId: string;
+  displayName: string;
+  color: string;
+  avatarAttachmentId: string;
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+export interface MessageIdentity {
+  id?: string;
+  displayName?: string;
+  color?: string;
+  avatarAttachment?: string;
 }

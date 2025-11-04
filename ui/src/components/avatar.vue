@@ -25,13 +25,24 @@ const onload = function () {
 onMounted(() => {
 })
 
-const src = computed(() => {
-  if (props.src?.startsWith('id:')) {
-    return props.src.replace('id:', `${urlBase}/api/v1/attachments/`);
-  }
-  if (!props.src) {
+const resolvedSrc = computed(() => {
+  const source = (props.src || '').trim();
+  if (!source) {
     opacity.value = 1;
+    return '';
   }
+  if (/^(https?:|blob:|data:|\/\/)/i.test(source)) {
+    return source;
+  }
+  const normalized = source.startsWith('id:') ? source.slice(3) : source;
+  if (!normalized) {
+    opacity.value = 1;
+    return '';
+  }
+  if (/^[0-9a-f]{32}_[0-9]+$/i.test(normalized)) {
+    return `${urlBase}/api/v1/attachments/${normalized}`;
+  }
+  return `${urlBase}/api/v1/attachment/${normalized}`;
 })
 
 const emit = defineEmits(['longpress']);
@@ -51,7 +62,7 @@ onLongPress(
 <template>
   <div class="rounded-md w-12 h-12 border-gray-300 relative overflow-clip" ref="htmlRefHook"
     :style="{ width: `${size}px`, height: `${size}px`, 'min-width': `${size}px`, 'min-height': `${size}px` }" :class="border ? ['border'] : []">
-    <img class="w-full h-full" :src="src" v-if="src" :onload="onload" />
+    <img class="w-full h-full" :src="resolvedSrc" v-if="resolvedSrc" :onload="onload" />
     <img class="absolute w-full h-full" :class="{ 'pointer-events-none': opacity === 0 }" :src="imgAvatar" style="top:0" :style="{ opacity: opacity }" />
   </div>
 </template>

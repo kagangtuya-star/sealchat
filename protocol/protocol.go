@@ -75,24 +75,32 @@ const (
 )
 
 type Message struct {
-	ID           string       `json:"id"`
-	MessageID    string       // Deprecated
-	Channel      *Channel     `json:"channel"`
-	Guild        *Guild       `json:"guild"`
-	User         *User        `json:"user"`
-	Member       *GuildMember `json:"member"`
-	Content      string       `json:"content"`
-	Elements     []*Element   `json:"elements"`
-	Timestamp    int64        `json:"timestamp"`
-	Quote        *Message     `json:"quote"`
-	CreatedAt    int64        `json:"createdAt"`
-	UpdatedAt    int64        `json:"updatedAt"`
-	DisplayOrder float64      `json:"displayOrder"`
-	IsWhisper    bool         `json:"isWhisper"`
-	WhisperTo    *User        `json:"whisperTo"`
-	IsEdited     bool         `json:"isEdited"`
-	EditCount    int          `json:"editCount"`
-	ClientID     string       `json:"clientId,omitempty"`
+	ID           string           `json:"id"`
+	MessageID    string           // Deprecated
+	Channel      *Channel         `json:"channel"`
+	Guild        *Guild           `json:"guild"`
+	User         *User            `json:"user"`
+	Identity     *MessageIdentity `json:"identity,omitempty"`
+	Member       *GuildMember     `json:"member"`
+	Content      string           `json:"content"`
+	Elements     []*Element       `json:"elements"`
+	Timestamp    int64            `json:"timestamp"`
+	Quote        *Message         `json:"quote"`
+	CreatedAt    int64            `json:"createdAt"`
+	UpdatedAt    int64            `json:"updatedAt"`
+	DisplayOrder float64          `json:"displayOrder"`
+	IsWhisper    bool             `json:"isWhisper"`
+	WhisperTo    *User            `json:"whisperTo"`
+	IsEdited     bool             `json:"isEdited"`
+	EditCount    int              `json:"editCount"`
+	ClientID     string           `json:"clientId,omitempty"`
+}
+
+type MessageIdentity struct {
+	ID               string `json:"id"`
+	DisplayName      string `json:"displayName"`
+	Color            string `json:"color"`
+	AvatarAttachment string `json:"avatarAttachment"`
 }
 
 type MessageReorder struct {

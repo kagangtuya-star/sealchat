@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -142,6 +144,44 @@ func AttachmentList(c *fiber.Ctx) error {
 		"message": "ok",
 		"data":    items,
 	})
+}
+
+func AttachmentGet(c *fiber.Ctx) error {
+	attachmentID := c.Params("id")
+	if attachmentID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "无效的附件ID",
+		})
+	}
+	var att model.AttachmentModel
+	if err := model.GetDB().Where("id = ?", attachmentID).Limit(1).Find(&att).Error; err != nil {
+		return wrapError(c, err, "读取附件失败")
+	}
+	if att.ID == "" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "附件不存在",
+		})
+	}
+	filename := fmt.Sprintf("%s_%d", hex.EncodeToString([]byte(att.Hash)), att.Size)
+	fullPath := filepath.Join("./data/upload", filename)
+	file, err := appFs.Open(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "附件文件不存在",
+			})
+		}
+		return wrapError(c, err, "读取附件失败")
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return wrapError(c, err, "读取附件失败")
+	}
+
+	c.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	return c.SendStream(file)
 }
 
 func wrapError(c *fiber.Ctx, err error, s string) error {

@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { computed, nextTick } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
@@ -116,6 +116,19 @@ const nick = computed(() => {
   }
   return `${displayName}(${realName})`;
 });
+
+const showIdentitySettings = computed(() => {
+  const data = chat.avatarMenu.item;
+  if (!data?.user?.id) {
+    return false;
+  }
+  return data.user.id === user.info.id;
+});
+
+const openIdentitySettings = () => {
+  chat.avatarMenu.show = false;
+  chatEvent.emit('channel-identity-open');
+};
 </script>
 
 <template>
@@ -134,5 +147,6 @@ const nick = computed(() => {
     <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="私聊" @click="clickTalkTo" />
     <context-menu-item v-if="showFriendAdd" label="加好友" @click="clickFriendAdd" />
+    <context-menu-item v-if="showIdentitySettings" label="更改频道内资料" @click="openIdentitySettings" />
   </context-menu>
 </template>
