@@ -188,7 +188,78 @@ const dragState = reactive({
   startY: 0,
   ghostEl: null as HTMLElement | null,
   originEl: null as HTMLElement | null,
+  autoScrollDirection: 0 as -1 | 0 | 1,
+  autoScrollSpeed: 0,
+  autoScrollRafId: null as number | null,
+  lastClientY: null as number | null,
 });
+
+const AUTO_SCROLL_EDGE_THRESHOLD = 60;
+const AUTO_SCROLL_MIN_SPEED = 2;
+const AUTO_SCROLL_MAX_SPEED = 18;
+
+const stopAutoScroll = () => {
+  if (dragState.autoScrollRafId !== null) {
+    cancelAnimationFrame(dragState.autoScrollRafId);
+    dragState.autoScrollRafId = null;
+  }
+  dragState.autoScrollDirection = 0;
+  dragState.autoScrollSpeed = 0;
+};
+
+const stepAutoScroll = () => {
+  const container = messagesListRef.value;
+  if (!container || dragState.autoScrollDirection === 0 || dragState.autoScrollSpeed <= 0) {
+    stopAutoScroll();
+    return;
+  }
+  const prev = container.scrollTop;
+  container.scrollTop += dragState.autoScrollDirection * dragState.autoScrollSpeed;
+  if (container.scrollTop === prev) {
+    stopAutoScroll();
+    return;
+  }
+  dragState.autoScrollRafId = requestAnimationFrame(stepAutoScroll);
+  if (dragState.lastClientY !== null) {
+    updateOverTarget(dragState.lastClientY);
+  }
+};
+
+const startAutoScroll = () => {
+  if (dragState.autoScrollRafId !== null) {
+    return;
+  }
+  dragState.autoScrollRafId = requestAnimationFrame(stepAutoScroll);
+};
+
+const updateAutoScroll = (clientY: number) => {
+  dragState.lastClientY = clientY;
+  const container = messagesListRef.value;
+  if (!container) {
+    stopAutoScroll();
+    return;
+  }
+  const rect = container.getBoundingClientRect();
+  let direction: -1 | 0 | 1 = 0;
+  let distance = 0;
+  if (clientY < rect.top + AUTO_SCROLL_EDGE_THRESHOLD) {
+    direction = -1;
+    distance = rect.top + AUTO_SCROLL_EDGE_THRESHOLD - clientY;
+  } else if (clientY > rect.bottom - AUTO_SCROLL_EDGE_THRESHOLD) {
+    direction = 1;
+    distance = clientY - (rect.bottom - AUTO_SCROLL_EDGE_THRESHOLD);
+  }
+  if (direction === 0) {
+    stopAutoScroll();
+    return;
+  }
+  const normalized = Math.min(distance, AUTO_SCROLL_EDGE_THRESHOLD) / AUTO_SCROLL_EDGE_THRESHOLD;
+  const speed =
+    AUTO_SCROLL_MIN_SPEED + normalized * (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED);
+  dragState.autoScrollDirection = direction;
+  dragState.autoScrollSpeed = speed;
+  startAutoScroll();
+};
 
 const clearGhost = () => {
   if (dragState.ghostEl && dragState.ghostEl.parentElement) {
@@ -199,6 +270,7 @@ const clearGhost = () => {
 
 const resetDragState = () => {
   clearGhost();
+  stopAutoScroll();
   dragState.snapshot = [];
   dragState.clientOpId = null;
   dragState.overId = null;
@@ -206,6 +278,7 @@ const resetDragState = () => {
   dragState.activeId = null;
   dragState.pointerId = null;
   dragState.startY = 0;
+  dragState.lastClientY = null;
   if (dragState.originEl) {
     dragState.originEl.classList.remove('message-row--drag-source');
   }
@@ -314,6 +387,7 @@ const cancelDrag = () => {
   window.removeEventListener('pointerup', onDragPointerUp);
   window.removeEventListener('pointercancel', onDragPointerCancel);
   window.removeEventListener('keydown', onDragKeyDown);
+  stopAutoScroll();
   if (dragState.snapshot.length > 0) {
     rows.value = dragState.snapshot.slice();
   }
@@ -332,6 +406,7 @@ const finalizeDrag = async () => {
   window.removeEventListener('pointercancel', onDragPointerCancel);
   window.removeEventListener('keydown', onDragKeyDown);
 
+  stopAutoScroll();
   clearGhost();
   document.body.style.userSelect = '';
 
@@ -398,6 +473,7 @@ const onDragPointerMove = (event: PointerEvent) => {
     dragState.ghostEl.style.transform = `translateY(${event.clientY - dragState.startY}px)`;
   }
   updateOverTarget(event.clientY);
+  updateAutoScroll(event.clientY);
 };
 
 const onDragPointerUp = (event: PointerEvent) => {
@@ -446,6 +522,7 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   document.body.style.userSelect = 'none';
   createGhostElement(rowEl);
   updateOverTarget(event.clientY);
+  updateAutoScroll(event.clientY);
 
   window.addEventListener('pointermove', onDragPointerMove);
   window.addEventListener('pointerup', onDragPointerUp);
