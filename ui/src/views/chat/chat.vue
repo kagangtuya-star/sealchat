@@ -1,11 +1,11 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
-import { computed, ref, watch, h, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, RotateClockwise } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -29,7 +29,7 @@ import type { UserEmojiModel } from '@/types';
 import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
-import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
+import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import DOMPurify from 'dompurify';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -808,138 +808,272 @@ const typingToggleClass = computed(() => ({
 
 const textToSend = ref('');
 
-// 草稿保存和恢复功能
-const DRAFT_STORAGE_KEY = 'sealchat_message_draft';
-const hasSavedDraft = ref(false);
+// 输入历史（localStorage 版本，按频道保留 5 条）
+const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
+const HISTORY_CHANNEL_FALLBACK = '__global__';
+const MAX_HISTORY_PER_CHANNEL = 5;
+const HISTORY_PREVIEW_MAX = 120;
 
-// 保存草稿到 localStorage
-const saveDraft = () => {
-  if (!textToSend.value.trim() && Object.keys(inlineImages).length === 0) {
-    // 空内容不保存
-    return;
-  }
+interface InputHistoryEntry {
+  id: string;
+  channelKey: string;
+  mode: 'plain' | 'rich';
+  content: string;
+  createdAt: number;
+}
 
+type HistoryStore = Record<string, InputHistoryEntry[]>;
+
+interface HistoryEntryView extends InputHistoryEntry {
+  preview: string;
+  fullPreview: string;
+  timeLabel: string;
+}
+
+const historyEntries = ref<InputHistoryEntry[]>([]);
+const historyPopoverVisible = ref(false);
+const hasHistoryEntries = computed(() => historyEntries.value.length > 0);
+const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curChannel.id) : HISTORY_CHANNEL_FALLBACK);
+const lastHistorySignature = ref<string | null>(null);
+
+const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
+
+const readHistoryStore = (): HistoryStore => {
   try {
-    const draftData = {
-      content: textToSend.value,
-      mode: inputMode.value,
-      timestamp: Date.now(),
-      channelId: chat.curChannel?.id,
-      inlineImages: Object.fromEntries(
-        Object.entries(inlineImages).map(([key, value]) => [
-          key,
-          {
-            status: value.status,
-            previewUrl: value.previewUrl,
-            attachmentId: value.attachmentId,
-          }
-        ])
-      ),
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as HistoryStore;
+    }
+  } catch (e) {
+    console.error('读取输入历史失败', e);
+  }
+  return {};
+};
+
+const writeHistoryStore = (store: HistoryStore) => {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(store));
+  } catch (e) {
+    console.error('写入输入历史失败', e);
+  }
+};
+
+const normalizeHistoryEntries = (entries: any[]): InputHistoryEntry[] => {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const mode = entry.mode === 'rich' ? 'rich' : 'plain';
+      const content = typeof entry.content === 'string' ? entry.content : '';
+      if (!content) {
+        return null;
+      }
+      const createdAt = typeof entry.createdAt === 'number' ? entry.createdAt : Date.now();
+      const id = typeof entry.id === 'string' ? entry.id : nanoid();
+      const channelKey = typeof entry.channelKey === 'string' ? entry.channelKey : currentChannelKey.value;
+      return { id, channelKey, mode, content, createdAt } as InputHistoryEntry;
+    })
+    .filter((entry): entry is InputHistoryEntry => !!entry);
+};
+
+const refreshHistoryEntries = () => {
+  const store = readHistoryStore();
+  const rawEntries = store[currentChannelKey.value] || [];
+  const entries = normalizeHistoryEntries(rawEntries)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, MAX_HISTORY_PER_CHANNEL);
+  historyEntries.value = entries;
+  lastHistorySignature.value = entries.length
+    ? buildHistorySignature(entries[0].mode, entries[0].content)
+    : null;
+};
+
+const pruneAndPersist = (channelKey: string, entries: InputHistoryEntry[]) => {
+  const store = readHistoryStore();
+  store[channelKey] = entries.slice(0, MAX_HISTORY_PER_CHANNEL);
+  writeHistoryStore(store);
+  if (channelKey === currentChannelKey.value) {
+    historyEntries.value = store[channelKey].slice();
+    lastHistorySignature.value = historyEntries.value.length
+      ? buildHistorySignature(historyEntries.value[0].mode, historyEntries.value[0].content)
+      : null;
+  }
+};
+
+const isRichContentEmpty = (content: string) => {
+  if (!isTipTapJson(content)) {
+    return content.trim().length === 0;
+  }
+  try {
+    const plain = tiptapJsonToPlainText(content);
+    return plain.trim().length === 0;
+  } catch (e) {
+    console.warn('富文本解析失败，按非空处理', e);
+    return false;
+  }
+};
+
+const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
+  if (!content) {
+    return false;
+  }
+  if (mode === 'plain') {
+    return content.trim().length > 0 || containsInlineImageMarker(content);
+  }
+  return !isRichContentEmpty(content);
+};
+
+const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { force?: boolean } = {}): boolean => {
+  if (!isContentMeaningful(mode, content)) {
+    return false;
+  }
+  const signature = buildHistorySignature(mode, content);
+  if (!options.force && signature === lastHistorySignature.value) {
+    return false;
+  }
+  const channelKey = currentChannelKey.value;
+  const store = readHistoryStore();
+  const existing = normalizeHistoryEntries(store[channelKey] || []);
+  const filtered = existing.filter((entry) => buildHistorySignature(entry.mode, entry.content) !== signature);
+  const newEntry: InputHistoryEntry = {
+    id: nanoid(),
+    channelKey,
+    mode,
+    content,
+    createdAt: Date.now(),
+  };
+  filtered.unshift(newEntry);
+  pruneAndPersist(channelKey, filtered);
+  lastHistorySignature.value = signature;
+  return true;
+};
+
+const formatHistoryTimestamp = (timestamp: number) => {
+  const date = new Date(timestamp);
+  return date.toLocaleString();
+};
+
+const getHistoryPreview = (entry: InputHistoryEntry) => {
+  try {
+    if (entry.mode === 'rich' && isTipTapJson(entry.content)) {
+      const plain = tiptapJsonToPlainText(entry.content).replace(/\s+/g, ' ').trim();
+      return plain;
+    }
+    return contentUnescape(entry.content).replace(/\s+/g, ' ').trim();
+  } catch (e) {
+    console.warn('生成历史预览失败', e);
+    return entry.mode === 'rich' ? '[富文本内容]' : entry.content;
+  }
+};
+
+const historyEntryViews = computed<HistoryEntryView[]>(() => {
+  return historyEntries.value.map((entry) => {
+    const fullPreview = getHistoryPreview(entry);
+    const truncated = fullPreview.length > HISTORY_PREVIEW_MAX
+      ? `${fullPreview.slice(0, HISTORY_PREVIEW_MAX)}…`
+      : fullPreview;
+    return {
+      ...entry,
+      fullPreview: fullPreview || (entry.mode === 'rich' ? '[富文本格式]' : '[文本内容]'),
+      preview: truncated || (entry.mode === 'rich' ? '[富文本格式]' : '[文本内容]'),
+      timeLabel: formatHistoryTimestamp(entry.createdAt),
     };
-    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
-    console.log('草稿已保存');
-  } catch (e) {
-    console.error('保存草稿失败', e);
-  }
-};
+  });
+});
 
-// 读取草稿
-const loadDraft = () => {
-  try {
-    const stored = localStorage.getItem(DRAFT_STORAGE_KEY);
-    if (!stored) {
-      hasSavedDraft.value = false;
-      return null;
-    }
+const canManuallySaveHistory = computed(() => isContentMeaningful(inputMode.value, textToSend.value));
 
-    const draftData = JSON.parse(stored);
-
-    // 检查草稿是否过期（7天）
-    if (Date.now() - draftData.timestamp > 7 * 24 * 60 * 60 * 1000) {
-      clearDraft();
-      return null;
-    }
-
-    hasSavedDraft.value = true;
-    return draftData;
-  } catch (e) {
-    console.error('读取草稿失败', e);
-    hasSavedDraft.value = false;
-    return null;
-  }
-};
-
-// 清除草稿
-const clearDraft = () => {
-  try {
-    localStorage.removeItem(DRAFT_STORAGE_KEY);
-    hasSavedDraft.value = false;
-    console.log('草稿已清除');
-  } catch (e) {
-    console.error('清除草稿失败', e);
-  }
-};
-
-// 恢复草稿
-const restoreDraft = () => {
-  const draft = loadDraft();
-  if (!draft) {
-    message.warning('没有找到可恢复的草稿');
+const restoreHistoryEntry = (entryId: string) => {
+  const target = historyEntries.value.find((entry) => entry.id === entryId);
+  if (!target) {
+    message.warning('未找到可恢复的内容');
     return;
   }
-
-  // 确认恢复（如果当前有内容）
-  if (textToSend.value.trim()) {
+  const willOverride = textToSend.value.trim().length > 0 && textToSend.value !== target.content;
+  const proceed = () => {
+    applyHistoryEntry(target);
+    historyPopoverVisible.value = false;
+  };
+  if (willOverride) {
     dialog.warning({
-      title: '恢复草稿',
-      content: '当前输入框有内容，恢复草稿将覆盖现有内容，是否继续？',
+      title: '恢复历史内容',
+      content: '当前输入框已有内容，恢复历史将覆盖现有内容，是否继续？',
       positiveText: '恢复',
       negativeText: '取消',
       onPositiveClick: () => {
-        applyDraft(draft);
+        proceed();
       },
     });
-  } else {
-    applyDraft(draft);
+    return;
   }
+  proceed();
 };
 
-// 应用草稿
-const applyDraft = (draft: any) => {
+const applyHistoryEntry = (entry: InputHistoryEntry) => {
   try {
-    // 恢复输入模式
-    if (draft.mode) {
-      inputMode.value = draft.mode;
-    }
-
-    // 恢复文本内容
-    textToSend.value = draft.content || '';
-
-    // 恢复图片（仅恢复已上传成功的）
-    if (draft.inlineImages) {
-      Object.entries(draft.inlineImages).forEach(([markerId, imageData]: [string, any]) => {
-        if (imageData.status === 'uploaded' && imageData.attachmentId && imageData.previewUrl) {
-          inlineImages[markerId] = {
-            status: 'uploaded',
-            previewUrl: imageData.previewUrl,
-            attachmentId: imageData.attachmentId,
-          };
-        }
-      });
-    }
-
-    clearDraft();
-    message.success('草稿已恢复');
-
-    // 聚焦到输入框
+    inputMode.value = entry.mode;
+    suspendInlineSync = true;
+    textToSend.value = entry.content;
+    suspendInlineSync = false;
+    syncInlineMarkersWithText(entry.content);
+    message.success('已恢复历史输入');
     nextTick(() => {
       textInputRef.value?.focus();
     });
   } catch (e) {
-    console.error('应用草稿失败', e);
-    message.error('恢复草稿失败');
+    console.error('恢复历史输入失败', e);
+    message.error('恢复失败');
   }
 };
+
+const handleManualHistoryRecord = () => {
+  if (!canManuallySaveHistory.value) {
+    message.warning('当前内容为空，无法保存到历史');
+    return;
+  }
+  const success = appendHistoryEntry(inputMode.value, textToSend.value, { force: true });
+  if (success) {
+    message.success('已保存当前输入');
+    refreshHistoryEntries();
+  }
+};
+
+const scheduleHistorySnapshot = throttle(
+  () => {
+    if (isEditing.value) {
+      return;
+    }
+    appendHistoryEntry(inputMode.value, textToSend.value);
+  },
+  2000,
+  { leading: false, trailing: true },
+);
+
+watch(currentChannelKey, () => {
+  historyPopoverVisible.value = false;
+  refreshHistoryEntries();
+});
+
+const handleHistoryPopoverShow = (show: boolean) => {
+  historyPopoverVisible.value = show;
+  if (show) {
+    refreshHistoryEntries();
+  }
+};
+
+watch(hasHistoryEntries, (has) => {
+  if (!has) {
+    historyPopoverVisible.value = false;
+  }
+});
 
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
   const map: Record<string, EditingPreviewInfo> = {};
@@ -1699,8 +1833,8 @@ const send = throttle(async () => {
     }
   }
 
-  // 保存草稿（以防发送失败）
-  saveDraft();
+  // 记录发送前的输入历史，便于失败后回溯
+  appendHistoryEntry(inputMode.value, draft);
 
   const replyTo = chat.curReplyTo || undefined;
   stopTypingPreviewNow();
@@ -1757,8 +1891,6 @@ const send = throttle(async () => {
     resetInlineImages();
     pendingInlineSelection = null;
 
-    // 发送成功，清除草稿
-    clearDraft();
     textToSend.value = '';
     ensureInputFocus();
   } catch (e) {
@@ -1781,6 +1913,7 @@ const send = throttle(async () => {
 
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
+  scheduleHistorySnapshot();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
     emitEditingPreview();
@@ -1904,8 +2037,7 @@ onMounted(async () => {
 
   chat.channelRefreshSetup()
 
-  // 检查是否有保存的草稿
-  loadDraft();
+  refreshHistoryEntries();
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -2661,17 +2793,61 @@ const isManagingEmoji = ref(false);
               </n-tooltip>
             </div>
 
-            <div v-if="hasSavedDraft" class="chat-input-actions__cell">
-              <n-tooltip trigger="hover">
+            <div class="chat-input-actions__cell">
+              <n-popover
+                trigger="click"
+                placement="top"
+                :show="historyPopoverVisible"
+                :show-arrow="false"
+                class="history-popover"
+                @update:show="handleHistoryPopoverShow"
+              >
                 <template #trigger>
-                  <n-button quaternary circle @click="restoreDraft" :disabled="isEditing">
-                    <template #icon>
-                      <n-icon :component="RotateClockwise" size="18" />
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button quaternary circle>
+                        <template #icon>
+                          <n-icon :component="ArrowBackUp" size="18" />
+                        </template>
+                      </n-button>
                     </template>
-                  </n-button>
+                    输入历史 / 保存当前
+                  </n-tooltip>
                 </template>
-                恢复上次未发送的内容
-              </n-tooltip>
+                <div class="history-panel" @click.stop>
+                  <div class="history-panel__header">
+                    <span class="history-panel__title">输入回溯</span>
+                    <n-button
+                      size="tiny"
+                      tertiary
+                      round
+                      :disabled="!canManuallySaveHistory"
+                      @click.stop="handleManualHistoryRecord"
+                    >保存当前</n-button>
+                  </div>
+                  <div v-if="historyEntryViews.length" class="history-panel__body">
+                    <button
+                      v-for="entry in historyEntryViews"
+                      :key="entry.id"
+                      type="button"
+                      class="history-entry"
+                      @click="restoreHistoryEntry(entry.id)"
+                    >
+                      <div class="history-entry__meta">
+                        <span class="history-entry__tag" :class="{ 'history-entry__tag--rich': entry.mode === 'rich' }">
+                          {{ entry.mode === 'rich' ? '富文本' : '纯文本' }}
+                        </span>
+                        <span class="history-entry__time">{{ entry.timeLabel }}</span>
+                      </div>
+                      <div class="history-entry__preview" :title="entry.fullPreview">{{ entry.preview }}</div>
+                    </button>
+                  </div>
+                  <div v-else class="history-panel__empty">
+                    <p>暂无历史记录</p>
+                    <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
+                  </div>
+                </div>
+              </n-popover>
             </div>
           </div>
 
@@ -3012,6 +3188,114 @@ const isManagingEmoji = ref(false);
 
 .chat-input-actions__cell .n-button:disabled {
   opacity: 0.55;
+}
+
+
+:deep(.history-popover .n-popover__content) {
+  padding: 0;
+  border-radius: 0.75rem;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+  min-width: 18rem;
+  max-width: 22rem;
+}
+
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.history-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.history-panel__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.history-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.history-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(248, 250, 252, 0.9);
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.history-entry:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(239, 246, 255, 0.92);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.18);
+}
+
+.history-entry__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.history-entry__tag {
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.16);
+  color: #4c51bf;
+  font-weight: 500;
+}
+
+.history-entry__tag--rich {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.history-entry__time {
+  flex: 1;
+  text-align: right;
+}
+
+.history-entry__preview {
+  font-size: 0.85rem;
+  color: #1f2937;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.history-panel__empty {
+  text-align: center;
+  color: #6b7280;
+  font-size: 0.85rem;
+  padding: 1.2rem 0.5rem;
+  border-radius: 0.65rem;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.history-panel__hint {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
 }
 
 .chat-input-actions__icon {
