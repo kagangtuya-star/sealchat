@@ -22,6 +22,8 @@ type EditingPreviewInfo = {
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
+  summary: string;
+  previewHtml: string;
 };
 
 const user = useUserStore();
@@ -388,18 +390,22 @@ watch(() => props.item?.updatedAt, () => {
               <span class="editing-preview__name">{{ props.editingPreview.displayName || '未知成员' }}</span>
               <span class="editing-preview__tag">正在编辑</span>
             </div>
-            <div class="editing-preview__body" :class="{ 'is-placeholder': props.editingPreview.indicatorOnly }">
-              <template v-if="props.editingPreview.indicatorOnly">
-                正在更新内容...
-              </template>
-              <template v-else>
-                {{ props.editingPreview.content.slice(0, 200) }}
-                <span v-if="props.editingPreview.content.length > 200">...</span>
-              </template>
-            </div>
-            <div v-if="props.editingPreview.isSelf" class="editing-preview__actions">
-              <n-button size="tiny" type="primary" @click.stop="handleEditSave">保存</n-button>
-              <n-button size="tiny" text @click.stop="handleEditCancel">取消</n-button>
+          <div class="editing-preview__body" :class="{ 'is-placeholder': props.editingPreview.indicatorOnly }">
+            <template v-if="props.editingPreview.indicatorOnly">
+              正在更新内容...
+            </template>
+            <template v-else>
+              <div
+                v-if="props.editingPreview.previewHtml"
+                class="editing-preview__rich"
+                v-html="props.editingPreview.previewHtml"
+              ></div>
+              <span v-else>{{ props.editingPreview.summary || '[图片]' }}</span>
+            </template>
+          </div>
+          <div v-if="props.editingPreview.isSelf" class="editing-preview__actions">
+            <n-button size="tiny" type="primary" @click.stop="handleEditSave">保存</n-button>
+            <n-button size="tiny" text @click.stop="handleEditCancel">取消</n-button>
             </div>
           </div>
         </template>
@@ -724,6 +730,11 @@ watch(() => props.item?.updatedAt, () => {
   word-break: break-word;
   font-size: 0.9rem;
   color: #1e3a8a;
+}
+
+.editing-preview__rich {
+  word-break: break-word;
+  white-space: normal;
 }
 
 .editing-preview__body.is-placeholder {

@@ -609,6 +609,8 @@ interface EditingPreviewInfo {
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
+  summary: string;
+  previewHtml: string;
 }
 
 type TypingBroadcastState = 'indicator' | 'content' | 'silent';
@@ -943,25 +945,34 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
   const map: Record<string, EditingPreviewInfo> = {};
   typingPreviewList.value.forEach((item) => {
     if (item.mode === 'editing' && item.messageId) {
+      const contentValue = item.content || '';
+      const indicatorOnly = item.indicatorOnly || contentValue.trim().length === 0;
+      const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(contentValue);
       map[item.messageId] = {
         userId: item.userId,
         displayName: item.displayName,
         avatar: item.avatar,
-        content: item.content || '',
-        indicatorOnly: item.indicatorOnly,
+        content: contentValue,
+        indicatorOnly,
         isSelf: item.userId === user.info.id,
+        summary,
+        previewHtml,
       };
     }
   });
   if (isEditing.value && chat.editing) {
     const draft = textToSend.value;
+    const indicatorOnly = draft.trim().length === 0;
+    const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(draft);
     map[chat.editing.messageId] = {
       userId: user.info.id,
       displayName: chat.curMember?.nick || user.info.nick || user.info.name || '我',
       avatar: chat.curMember?.avatar || user.info.avatar || '',
       content: draft,
-      indicatorOnly: draft.trim().length === 0,
+      indicatorOnly,
       isSelf: true,
+      summary,
+      previewHtml,
     };
   }
   return map;
@@ -1394,6 +1405,12 @@ const renderPreviewContent = (value: string) => {
   return DOMPurify.sanitize(result || value);
 };
 
+const buildPreviewMeta = (value: string) => {
+  const summary = value ? formatInlinePreviewText(value) : '';
+  const previewHtml = value ? renderPreviewContent(value) : '';
+  return { summary, previewHtml };
+};
+
 const escapeHtml = (text: string): string => {
   const map: Record<string, string> = {
     '&': '&amp;',
@@ -1742,6 +1759,8 @@ const send = throttle(async () => {
 
     // 发送成功，清除草稿
     clearDraft();
+    textToSend.value = '';
+    ensureInputFocus();
   } catch (e) {
     message.error('发送失败,您可能没有权限在此频道发送消息');
     console.error('消息发送失败', e);

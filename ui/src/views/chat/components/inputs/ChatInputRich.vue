@@ -46,6 +46,18 @@ const editor = shallowRef<Editor | null>(null);
 const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
 const isFocused = ref(false);
+const isSyncingFromProps = ref(false);
+
+const EMPTY_DOC = {
+  type: 'doc',
+  content: [
+    {
+      type: 'paragraph',
+    },
+  ],
+};
+
+const cloneEmptyDoc = () => JSON.parse(JSON.stringify(EMPTY_DOC));
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -197,7 +209,11 @@ const initEditor = async () => {
       onUpdate: ({ editor: ed }) => {
         const json = ed.getJSON();
         const jsonString = JSON.stringify(json);
+        isSyncingFromProps.value = true;
         emit('update:modelValue', jsonString);
+        nextTick(() => {
+          isSyncingFromProps.value = false;
+        });
       },
       onFocus: () => {
         isFocused.value = true;
@@ -209,14 +225,16 @@ const initEditor = async () => {
       },
       onCreate: ({ editor: ed }) => {
         // 初始化完成后，如果有内容则设置
-        if (props.modelValue) {
-          try {
-            const json = JSON.parse(props.modelValue);
-            ed.commands.setContent(json, false);
-          } catch {
-            // 如果不是 JSON，当作纯文本
-            ed.commands.setContent(props.modelValue, false);
-          }
+        if (!props.modelValue) {
+          ed.commands.setContent(cloneEmptyDoc(), false);
+          return;
+        }
+        try {
+          const json = JSON.parse(props.modelValue);
+          ed.commands.setContent(json, false);
+        } catch {
+          // 如果不是 JSON，当作纯文本
+          ed.commands.setContent(props.modelValue, false);
         }
       },
     });
@@ -234,6 +252,13 @@ initEditor();
 // 监听外部值变化
 watch(() => props.modelValue, (newValue) => {
   if (!editor.value || editor.value.isDestroyed) return;
+  if (isSyncingFromProps.value) return;
+
+  if (!newValue || newValue.trim() === '') {
+    editor.value.commands.setContent(cloneEmptyDoc(), false);
+    editor.value.commands.setTextSelection(0);
+    return;
+  }
 
   try {
     const currentJson = JSON.stringify(editor.value.getJSON());
