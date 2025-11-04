@@ -45,6 +45,8 @@ const emit = defineEmits<{
 const mentionRef = ref<any>(null);
 const wrapperRef = ref<HTMLElement | null>(null);
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 const classList = computed(() => {
   const base: string[] = ['chat-text'];
   if (props.whisperMode) {
@@ -92,6 +94,35 @@ const handleRemoveImage = (markerId: string) => {
 const getTextarea = (): HTMLTextAreaElement | undefined => {
   const textarea = mentionRef.value?.$el?.querySelector?.('textarea');
   return textarea || undefined;
+};
+
+const getSelectionRange = () => {
+  const textarea = getTextarea();
+  if (!textarea) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
+  return {
+    start: textarea.selectionStart ?? 0,
+    end: textarea.selectionEnd ?? 0,
+  };
+};
+
+const setSelectionRange = (start: number, end: number) => {
+  const textarea = getTextarea();
+  if (!textarea) return;
+  const length = textarea.value.length;
+  const safeStart = clamp(start, 0, length);
+  const safeEnd = clamp(end, 0, length);
+  textarea.setSelectionRange(safeStart, safeEnd);
+};
+
+const moveCursorToEnd = () => {
+  const textarea = getTextarea();
+  if (!textarea) return;
+  const length = textarea.value.length;
+  textarea.setSelectionRange(length, length);
+  textarea.focus();
 };
 
 // 处理粘贴事件
@@ -181,6 +212,9 @@ defineExpose({
   focus,
   blur,
   getTextarea,
+  getSelectionRange,
+  setSelectionRange,
+  moveCursorToEnd,
   getInstance: () => mentionRef.value,
 });
 </script>

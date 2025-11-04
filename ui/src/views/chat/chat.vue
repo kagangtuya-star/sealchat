@@ -1027,18 +1027,34 @@ const ensureInputFocus = () => {
   });
 };
 
+const getInputSelection = (): SelectionRange => {
+  const selection = textInputRef.value?.getSelectionRange?.();
+  if (selection) {
+    return { start: selection.start, end: selection.end };
+  }
+  const length = textToSend.value.length;
+  return { start: length, end: length };
+};
+
+const setInputSelection = (start: number, end: number) => {
+  textInputRef.value?.setSelectionRange?.(start, end);
+};
+
+const moveInputCursorToEnd = () => {
+  if (textInputRef.value?.moveCursorToEnd) {
+    textInputRef.value.moveCursorToEnd();
+    return;
+  }
+  const length = textToSend.value.length;
+  setInputSelection(length, length);
+  textInputRef.value?.focus?.();
+};
+
 const detectMessageContentMode = (content?: string): 'plain' | 'rich' => {
   if (!content) {
     return 'plain';
   }
   if (isTipTapJson(content)) {
-    return 'rich';
-  }
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return 'plain';
-  }
-  if (/<(p|img|br|span|at|strong|em|blockquote|ul|ol|li|code|pre|a)\b/i.test(trimmed)) {
     return 'rich';
   }
   return 'plain';
@@ -1246,10 +1262,6 @@ const clearWhisperTarget = () => {
   ensureInputFocus();
 };
 
-const getTextarea = () => {
-  return textInputRef.value?.getTextarea?.();
-};
-
 const containsInlineImageMarker = (text: string) => /\[\[图片:[^\]]+\]\]/.test(text);
 
 const collectInlineMarkerIds = (text: string) => {
@@ -1419,14 +1431,8 @@ const buildMessageHtml = async (draft: string) => {
 };
 
 const captureSelectionRange = (): SelectionRange => {
-  const textarea = getTextarea();
-  const len = textToSend.value.length;
-  if (!textarea) {
-    return { start: len, end: len };
-  }
-  const start = textarea.selectionStart ?? len;
-  const end = textarea.selectionEnd ?? len;
-  return { start, end };
+  const selection = getInputSelection();
+  return { start: selection.start, end: selection.end };
 };
 
 const startInlineImageUpload = async (markerId: string, draft: InlineImageDraft) => {
@@ -1458,8 +1464,11 @@ const insertInlineImages = (files: File[], selection?: SelectionRange) => {
   }
   const draftText = textToSend.value;
   const range = selection ?? captureSelectionRange();
-  let cursor = range.start;
-  let updatedText = draftText.slice(0, range.start) + draftText.slice(range.end);
+  const draftLength = draftText.length;
+  const start = Math.max(0, Math.min(range.start, draftLength));
+  const end = Math.max(start, Math.min(range.end, draftLength));
+  let cursor = start;
+  let updatedText = draftText.slice(0, start) + draftText.slice(end);
   imageFiles.forEach((file, index) => {
     const markerId = nanoid();
     const token = `[[图片:${markerId}]]`;
@@ -1470,20 +1479,21 @@ const insertInlineImages = (files: File[], selection?: SelectionRange) => {
       status: 'uploading',
       objectUrl,
       file,
+  });
+  inlineImages.set(markerId, draftRecord);
+  updatedText = updatedText.slice(0, cursor) + token + updatedText.slice(cursor);
+  cursor += token.length;
+  startInlineImageUpload(markerId, draftRecord);
+});
+textToSend.value = updatedText;
+nextTick(() => {
+  requestAnimationFrame(() => {
+    textInputRef.value?.focus?.();
+    requestAnimationFrame(() => {
+      setInputSelection(cursor, cursor);
     });
-    inlineImages.set(markerId, draftRecord);
-    updatedText = updatedText.slice(0, cursor) + token + updatedText.slice(cursor);
-    cursor += token.length;
-    startInlineImageUpload(markerId, draftRecord);
   });
-  textToSend.value = updatedText;
-  nextTick(() => {
-    const textarea = getTextarea();
-    if (textarea) {
-      textarea.focus();
-      textarea.setSelectionRange(cursor, cursor);
-    }
-  });
+});
 };
 
 const handlePlainPasteImage = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
@@ -1621,15 +1631,11 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
-    stopTypingPreviewNow();
+   stopTypingPreviewNow();
     ensureInputFocus();
     nextTick(() => {
       if (inputMode.value === 'plain') {
-        const textarea = getTextarea();
-        if (textarea) {
-          const len = textarea.value.length;
-          textarea.setSelectionRange(len, len);
-        }
+        moveInputCursorToEnd();
       } else {
         const editor = textInputRef.value?.getEditor?.();
         editor?.chain().focus('end').run();
@@ -2165,8 +2171,8 @@ const keyDown = function (e: KeyboardEvent) {
   }
 
   if (e.key === 'Backspace' && chat.whisperTarget) {
-    const textarea = getTextarea();
-    if (textarea && textarea.selectionStart === 0 && textarea.selectionEnd === 0 && textToSend.value.length === 0) {
+    const selection = getInputSelection();
+    if (selection.start === 0 && selection.end === 0 && textToSend.value.length === 0) {
       clearWhisperTarget();
       e.preventDefault();
       return;

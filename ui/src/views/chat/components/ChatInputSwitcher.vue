@@ -65,7 +65,7 @@ const switchMode = (value: EditorMode) => {
   emit('update:mode', value);
 };
 
-const plainRef = ref<InstanceType<typeof ChatInputPlain> | null>(null);
+const plainRef = ref<InstanceType<typeof ChatInputHybrid> | null>(null);
 const richRef = ref<any>(null);
 
 const currentComponent = computed(() => modeRef.value);
@@ -150,12 +150,38 @@ const getJson = () => {
   return null;
 };
 
+const getSelectionRange = () => {
+  if (modeRef.value === 'plain') {
+    return plainRef.value?.getSelectionRange?.();
+  }
+  return richRef.value?.getSelectionRange?.();
+};
+
+const setSelectionRange = (start: number, end: number) => {
+  if (modeRef.value === 'plain') {
+    plainRef.value?.setSelectionRange?.(start, end);
+  } else {
+    richRef.value?.setSelectionRange?.(start, end);
+  }
+};
+
+const moveCursorToEnd = () => {
+  if (modeRef.value === 'plain') {
+    plainRef.value?.moveCursorToEnd?.();
+  } else {
+    richRef.value?.moveCursorToEnd?.();
+  }
+};
+
 defineExpose({
   focus,
   blur,
   getTextarea,
   getEditor,
   getJson,
+  getSelectionRange,
+  setSelectionRange,
+  moveCursorToEnd,
   getMode: () => modeRef.value,
   switchMode,
 });

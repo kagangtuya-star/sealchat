@@ -46,6 +46,174 @@ const editorRef = ref<HTMLDivElement | null>(null);
 const isFocused = ref(false);
 const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更新
 
+const PLACEHOLDER_PREFIX = '[[图片:';
+const PLACEHOLDER_SUFFIX = ']]';
+
+const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
+const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const isImageElement = (node: Node): node is HTMLElement =>
+  node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__image');
+
+const getNodeModelLength = (node: Node): number => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent?.length ?? 0;
+  }
+  if (node.nodeName === 'BR') {
+    return 1;
+  }
+  if (isImageElement(node)) {
+    const markerId = (node as HTMLElement).dataset.markerId || '';
+    return markerId ? getMarkerLength(markerId) : 0;
+  }
+  let total = 0;
+  node.childNodes.forEach((child) => {
+    total += getNodeModelLength(child);
+  });
+  return total;
+};
+
+const getOffsetWithinNode = (node: Node, offset: number): number => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const length = node.textContent?.length ?? 0;
+    return clamp(offset, 0, length);
+  }
+  if (node.nodeName === 'BR') {
+    return offset > 0 ? 1 : 0;
+  }
+  if (isImageElement(node)) {
+    const markerId = (node as HTMLElement).dataset.markerId || '';
+    const tokenLength = markerId ? getMarkerLength(markerId) : 0;
+    return offset > 0 ? tokenLength : 0;
+  }
+  const children = Array.from(node.childNodes);
+  const safeOffset = clamp(offset, 0, children.length);
+  let total = 0;
+  for (let i = 0; i < safeOffset; i++) {
+    total += getNodeModelLength(children[i]);
+  }
+  return total;
+};
+
+const reduceNode = (node: Node, target: Node, offset: number): { found: boolean; length: number } => {
+  if (node === target) {
+    return { found: true, length: getOffsetWithinNode(node, offset) };
+  }
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    return { found: false, length: node.textContent?.length ?? 0 };
+  }
+
+  if (node.nodeName === 'BR') {
+    return { found: false, length: 1 };
+  }
+
+  if (isImageElement(node)) {
+    const markerId = (node as HTMLElement).dataset.markerId || '';
+    return { found: false, length: markerId ? getMarkerLength(markerId) : 0 };
+  }
+
+  let total = 0;
+  const children = Array.from(node.childNodes);
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const { found, length } = reduceNode(child, target, offset);
+    total += length;
+    if (found) {
+      return { found: true, length: total };
+    }
+  }
+
+  return { found: false, length: total };
+};
+
+const calculateModelIndexForPosition = (container: Node, offset: number): number => {
+  if (!editorRef.value) return 0;
+  const { length } = reduceNode(editorRef.value, container, offset);
+  return length;
+};
+
+const resolvePositionByIndex = (node: Node, position: number): { node: Node; offset: number } => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const length = node.textContent?.length ?? 0;
+    return { node, offset: clamp(position, 0, length) };
+  }
+
+  if (node.nodeName === 'BR') {
+    const parent = node.parentNode ?? node;
+    const index = Array.prototype.indexOf.call(parent.childNodes, node);
+    if (position <= 0) {
+      return { node: parent, offset: index };
+    }
+    return { node: parent, offset: index + 1 };
+  }
+
+  if (isImageElement(node)) {
+    const parent = node.parentNode ?? node;
+    const index = Array.prototype.indexOf.call(parent.childNodes, node);
+    if (position <= 0) {
+      return { node: parent, offset: index };
+    }
+    return { node: parent, offset: index + 1 };
+  }
+
+  let remaining = position;
+  const children = Array.from(node.childNodes);
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const childLength = getNodeModelLength(child);
+    if (remaining <= childLength) {
+      return resolvePositionByIndex(child, remaining);
+    }
+    remaining -= childLength;
+  }
+
+  return { node, offset: children.length };
+};
+
+const getSelectionRange = () => {
+  if (!editorRef.value) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
+  const range = selection.getRangeAt(0);
+  const start = calculateModelIndexForPosition(range.startContainer, range.startOffset);
+  const end = calculateModelIndexForPosition(range.endContainer, range.endOffset);
+  return { start, end };
+};
+
+const setSelectionRange = (start: number, end: number) => {
+  if (!editorRef.value) return;
+  const selection = window.getSelection();
+  if (!selection) return;
+  const totalLength = getNodeModelLength(editorRef.value);
+  const safeStart = clamp(start, 0, totalLength);
+  const safeEnd = clamp(end, 0, totalLength);
+  const range = document.createRange();
+  const minPos = Math.min(safeStart, safeEnd);
+  const maxPos = Math.max(safeStart, safeEnd);
+  const startPosition = resolvePositionByIndex(editorRef.value, minPos);
+  const endPosition = resolvePositionByIndex(editorRef.value, maxPos);
+  range.setStart(startPosition.node, startPosition.offset);
+  range.setEnd(endPosition.node, endPosition.offset);
+  selection.removeAllRanges();
+  selection.addRange(range);
+};
+
+const moveCursorToEnd = () => {
+  if (!editorRef.value) return;
+  const totalLength = getNodeModelLength(editorRef.value);
+  setSelectionRange(totalLength, totalLength);
+  editorRef.value.focus();
+};
+
 // 撤销/重做历史记录
 interface HistoryState {
   content: string;
@@ -166,7 +334,7 @@ const renderContent = (preserveCursor = false) => {
   editorRef.value.innerHTML = html || '<span class="empty-line">\u200B</span>';
 
   // 恢复光标位置
-  if (preserveCursor && isFocused.value && savedPosition > 0) {
+  if (preserveCursor && isFocused.value) {
     nextTick(() => {
       setCursorPosition(savedPosition);
     });
@@ -272,44 +440,13 @@ const getTextContent = (): string => {
 
 // 获取光标位置（在原始文本中的位置）
 const getCursorPosition = (): number => {
-  const selection = window.getSelection();
-  if (!selection || !selection.rangeCount || !editorRef.value) return 0;
-
-  const range = selection.getRangeAt(0);
-  const preCaretRange = range.cloneRange();
-  preCaretRange.selectNodeContents(editorRef.value);
-  preCaretRange.setEnd(range.endContainer, range.endOffset);
-
-  return preCaretRange.toString().length;
+  const { end } = getSelectionRange();
+  return end;
 };
 
 // 设置光标位置
 const setCursorPosition = (position: number) => {
-  if (!editorRef.value) return;
-
-  const selection = window.getSelection();
-  if (!selection) return;
-
-  let currentPos = 0;
-  const walker = document.createTreeWalker(
-    editorRef.value,
-    NodeFilter.SHOW_TEXT,
-    null
-  );
-
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    const nodeLength = node.textContent?.length || 0;
-    if (currentPos + nodeLength >= position) {
-      const range = document.createRange();
-      range.setStart(node, position - currentPos);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
-    }
-    currentPos += nodeLength;
-  }
+  setSelectionRange(position, position);
 };
 
 // 处理输入事件
@@ -326,11 +463,11 @@ const handleInput = () => {
       text += node.textContent || '';
     } else if (node.nodeName === 'BR') {
       text += '\n';
-    } else if (node.nodeName === 'SPAN' && (node as HTMLElement).classList.contains('hybrid-input__image')) {
+    } else if (isImageElement(node)) {
       // 图片节点 - 保留标记
       const markerId = (node as HTMLElement).dataset.markerId;
       if (markerId) {
-        text += `[[图片:${markerId}]]`;
+        text += buildMarkerToken(markerId);
       }
     } else {
       text += node.textContent || '';
@@ -471,6 +608,9 @@ defineExpose({
   focus,
   blur,
   getTextarea,
+  getSelectionRange,
+  setSelectionRange,
+  moveCursorToEnd,
   getInstance: () => editorRef.value,
 });
 </script>

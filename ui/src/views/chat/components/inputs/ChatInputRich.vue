@@ -47,6 +47,8 @@ const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
 const isFocused = ref(false);
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 const classList = computed(() => {
   const base: string[] = ['tiptap-editor'];
   if (props.whisperMode) {
@@ -285,6 +287,29 @@ const getTextarea = (): HTMLTextAreaElement | undefined => {
   return undefined;
 };
 
+const getSelectionRange = () => {
+  const ed = editor.value;
+  if (!ed) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
+  const { from, to } = ed.state.selection;
+  return { start: from, end: to };
+};
+
+const setSelectionRange = (start: number, end: number) => {
+  const ed = editor.value;
+  if (!ed) return;
+  const docSize = ed.state.doc.content.size;
+  const safeStart = clamp(start, 0, docSize);
+  const safeEnd = clamp(end, 0, docSize);
+  ed.chain().setTextSelection({ from: safeStart, to: safeEnd }).run();
+};
+
+const moveCursorToEnd = () => {
+  editor.value?.chain().focus('end').run();
+};
+
 const insertImagePlaceholder = (markerId: string, previewUrl: string) => {
   if (!editor.value) return;
 
@@ -336,6 +361,9 @@ defineExpose({
   focus,
   blur,
   getTextarea,
+  getSelectionRange,
+  setSelectionRange,
+  moveCursorToEnd,
   getInstance: () => editor.value,
   getEditor: () => editor.value,
   getJson: () => editor.value?.getJSON(),
