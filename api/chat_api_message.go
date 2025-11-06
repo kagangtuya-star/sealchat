@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -84,6 +85,290 @@ func apiMessageDelete(ctx *ChatContext, data *struct {
 	return nil, nil
 }
 
+func hydrateMessagesForBroadcast(messages []*model.MessageModel) {
+	if len(messages) == 0 {
+		return
+	}
+
+	utils.QueryOneToManyMap(model.GetDB(), messages, func(i *model.MessageModel) []string {
+		if i.QuoteID == "" {
+			return nil
+		}
+		return []string{i.QuoteID}
+	}, func(i *model.MessageModel, x []*model.MessageModel) {
+		if len(x) == 0 {
+			return
+		}
+		i.Quote = x[0]
+	}, "id, content, created_at, user_id, is_revoked, whisper_to, channel_id")
+
+	whisperIDSet := map[string]struct{}{}
+	for _, item := range messages {
+		if item.WhisperTo != "" {
+			whisperIDSet[item.WhisperTo] = struct{}{}
+		}
+		if item.Quote != nil && item.Quote.WhisperTo != "" {
+			whisperIDSet[item.Quote.WhisperTo] = struct{}{}
+		}
+	}
+	if len(whisperIDSet) == 0 {
+		return
+	}
+	var ids []string
+	for id := range whisperIDSet {
+		ids = append(ids, id)
+	}
+	var whisperUsers []*model.UserModel
+	if len(ids) > 0 {
+		model.GetDB().Where("id IN ?", ids).Find(&whisperUsers)
+	}
+	id2User := make(map[string]*model.UserModel, len(whisperUsers))
+	for _, u := range whisperUsers {
+		id2User[u.ID] = u
+	}
+	for _, item := range messages {
+		if user, ok := id2User[item.WhisperTo]; ok {
+			item.WhisperTarget = user
+		}
+		if item.Quote != nil {
+			if user, ok := id2User[item.Quote.WhisperTo]; ok {
+				item.Quote.WhisperTarget = user
+			}
+		}
+	}
+}
+
+func buildProtocolMessage(msg *model.MessageModel, channelData *protocol.Channel) *protocol.Message {
+	messageData := msg.ToProtocolType2(channelData)
+	messageData.Content = msg.Content
+	if msg.User != nil {
+		messageData.User = msg.User.ToProtocolType()
+	} else {
+		if user := model.UserGet(msg.UserID); user != nil {
+			messageData.User = user.ToProtocolType()
+		}
+	}
+	if msg.Member != nil {
+		messageData.Member = msg.Member.ToProtocolType()
+	}
+	if msg.WhisperTarget != nil {
+		messageData.WhisperTo = msg.WhisperTarget.ToProtocolType()
+	}
+	if msg.Quote != nil {
+		quoteData := msg.Quote.ToProtocolType2(channelData)
+		quoteData.Content = msg.Quote.Content
+		if msg.Quote.User != nil {
+			quoteData.User = msg.Quote.User.ToProtocolType()
+		}
+		if msg.Quote.Member != nil {
+			quoteData.Member = msg.Quote.Member.ToProtocolType()
+		}
+		if msg.Quote.WhisperTarget != nil {
+			quoteData.WhisperTo = msg.Quote.WhisperTarget.ToProtocolType()
+		}
+		messageData.Quote = quoteData
+	}
+	return messageData
+}
+
+func messageArchiveMutate(ctx *ChatContext, channelID string, messageIDs []string, reason string, archived bool) ([]*model.MessageModel, *model.ChannelModel, error) {
+	db := model.GetDB()
+
+	reason = strings.TrimSpace(reason)
+	var ids []string
+	for _, id := range messageIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil, fmt.Errorf("message_ids 不能为空")
+	}
+
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if channel.ID == "" {
+		return nil, nil, fmt.Errorf("频道不存在")
+	}
+
+	updates := map[string]any{
+		"is_archived": archived,
+	}
+	var archivedAt time.Time
+	if archived {
+		archivedAt = time.Now()
+		updates["archived_at"] = archivedAt
+		updates["archived_by"] = ctx.User.ID
+		updates["archive_reason"] = reason
+	} else {
+		updates["archived_at"] = gorm.Expr("NULL")
+		updates["archived_by"] = ""
+		updates["archive_reason"] = ""
+	}
+
+	if err := db.Model(&model.MessageModel{}).
+		Where("channel_id = ? AND id IN ?", channelID, ids).
+		Updates(updates).Error; err != nil {
+		return nil, nil, err
+	}
+
+	var messages []*model.MessageModel
+	err = db.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, username, nickname, avatar, is_bot")
+	}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, nickname, channel_id, user_id")
+	}).Where("channel_id = ? AND id IN ?", channelID, ids).Find(&messages).Error
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, msg := range messages {
+		msg.IsArchived = archived
+		if archived {
+			msg.ArchivedAt = &archivedAt
+			msg.ArchivedBy = ctx.User.ID
+			msg.ArchiveReason = reason
+		} else {
+			msg.ArchivedAt = nil
+			msg.ArchivedBy = ""
+			msg.ArchiveReason = ""
+		}
+	}
+
+	hydrateMessagesForBroadcast(messages)
+
+	payload := map[string]any{
+		"reason":    reason,
+		"archived":  archived,
+		"operator":  ctx.User.ID,
+		"timestamp": time.Now().UnixMilli(),
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	var logs []*model.MessageArchiveLogModel
+	action := "archive"
+	if !archived {
+		action = "unarchive"
+	}
+	for _, id := range ids {
+		logs = append(logs, &model.MessageArchiveLogModel{
+			MessageID:   id,
+			ChannelID:   channelID,
+			OperatorID:  ctx.User.ID,
+			Action:      action,
+			PayloadJSON: string(payloadBytes),
+		})
+	}
+	_ = model.MessageArchiveLogBatchCreate(logs)
+
+	return messages, channel, nil
+}
+
+func apiMessageArchive(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+	Reason     string   `json:"reason"`
+}) (any, error) {
+	if strings.TrimSpace(data.ChannelID) == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	if len(data.MessageIDs) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+	if !pm.CanWithChannelRole(ctx.User.ID, data.ChannelID, pm.PermFuncChannelMessageArchive, pm.PermFuncChannelManageInfo) {
+		return nil, nil
+	}
+
+	messages, channel, err := messageArchiveMutate(ctx, data.ChannelID, data.MessageIDs, data.Reason, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return &struct {
+			MessageIDs []string `json:"message_ids"`
+			Archived   bool     `json:"archived"`
+		}{MessageIDs: nil, Archived: true}, nil
+	}
+
+	channelData := channel.ToProtocolType()
+	operator := ctx.User.ToProtocolType()
+
+	for _, msg := range messages {
+		messageData := buildProtocolMessage(msg, channelData)
+		ev := &protocol.Event{
+			Type:    protocol.EventMessageArchived,
+			Message: messageData,
+			Channel: channelData,
+			User:    operator,
+		}
+		if msg.IsWhisper && msg.WhisperTo != "" {
+			recipients := lo.Uniq([]string{ctx.User.ID, msg.WhisperTo})
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+		Archived   bool     `json:"archived"`
+	}{MessageIDs: lo.Uniq(data.MessageIDs), Archived: true}, nil
+}
+
+func apiMessageUnarchive(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+}) (any, error) {
+	if strings.TrimSpace(data.ChannelID) == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	if len(data.MessageIDs) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+	if !pm.CanWithChannelRole(ctx.User.ID, data.ChannelID, pm.PermFuncChannelMessageArchive, pm.PermFuncChannelManageInfo) {
+		return nil, nil
+	}
+
+	messages, channel, err := messageArchiveMutate(ctx, data.ChannelID, data.MessageIDs, "", false)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return &struct {
+			MessageIDs []string `json:"message_ids"`
+			Archived   bool     `json:"archived"`
+		}{MessageIDs: nil, Archived: false}, nil
+	}
+
+	channelData := channel.ToProtocolType()
+	operator := ctx.User.ToProtocolType()
+
+	for _, msg := range messages {
+		messageData := buildProtocolMessage(msg, channelData)
+		ev := &protocol.Event{
+			Type:    protocol.EventMessageUnarchived,
+			Message: messageData,
+			Channel: channelData,
+			User:    operator,
+		}
+		if msg.IsWhisper && msg.WhisperTo != "" {
+			recipients := lo.Uniq([]string{ctx.User.ID, msg.WhisperTo})
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+		Archived   bool     `json:"archived"`
+	}{MessageIDs: lo.Uniq(data.MessageIDs), Archived: false}, nil
+}
+
 func apiMessageCreate(ctx *ChatContext, data *struct {
 	ChannelID  string `json:"channel_id"`
 	QuoteID    string `json:"quote_id"`
@@ -91,6 +376,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	WhisperTo  string `json:"whisper_to"`
 	ClientID   string `json:"client_id"`
 	IdentityID string `json:"identity_id"`
+	ICMode     string `json:"ic_mode"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -98,10 +384,21 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	var privateOtherUser string
 
+	icMode := strings.TrimSpace(strings.ToLower(data.ICMode))
+	if icMode == "" {
+		icMode = "ic"
+	}
+	if icMode != "ic" && icMode != "ooc" {
+		return nil, fmt.Errorf("unsupported ic_mode: %s", icMode)
+	}
+
 	// 权限检查
 	if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelTextSend, pm.PermFuncChannelTextSendAll) {
+			return nil, nil
+		}
+		if icMode == "ooc" && !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelTextSendOOC, pm.PermFuncChannelTextSendAll) {
 			return nil, nil
 		}
 	} else {
@@ -180,6 +477,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		QuoteID:      data.QuoteID,
 		Content:      content,
 		DisplayOrder: float64(time.Now().UnixMilli()),
+		ICMode:       icMode,
 
 		SenderMemberName: member.Nickname,
 		IsWhisper:        whisperUser != nil,
@@ -329,9 +627,14 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	Next      string `json:"next"`
 
 	// 以下两个字段用于查询某个时间段内的消息，可选
-	Type     string `json:"type"` // 查询类型，不填为默认，若time则用下面两个值
-	FromTime int64  `json:"from_time"`
-	ToTime   int64  `json:"to_time"`
+	Type            string   `json:"type"` // 查询类型，不填为默认，若time则用下面两个值
+	FromTime        int64    `json:"from_time"`
+	ToTime          int64    `json:"to_time"`
+	ICOnly          bool     `json:"ic_only"`
+	IncludeOOC      *bool    `json:"include_ooc"`
+	IncludeArchived bool     `json:"include_archived"`
+	ArchivedOnly    bool     `json:"archived_only"`
+	UserIDs         []string `json:"user_ids"`
 }) (any, error) {
 	db := model.GetDB()
 
@@ -353,6 +656,24 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	var items []*model.MessageModel
 	q := db.Where("channel_id = ?", data.ChannelID)
 	q = q.Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, ctx.User.ID, ctx.User.ID)
+
+	if data.ArchivedOnly {
+		q = q.Where("is_archived = ?", true)
+	} else if !data.IncludeArchived {
+		q = q.Where("is_archived = ?", false)
+	}
+	includeOOC := true
+	if data.IncludeOOC != nil {
+		includeOOC = *data.IncludeOOC
+	}
+	if data.ICOnly {
+		q = q.Where("ic_mode = ?", "ic")
+	} else if !includeOOC {
+		q = q.Where("ic_mode <> ?", "ooc")
+	}
+	if len(data.UserIDs) > 0 {
+		q = q.Where("user_id IN ?", data.UserIDs)
+	}
 
 	if data.Type == "time" {
 		// 如果有这俩，附加一个条件

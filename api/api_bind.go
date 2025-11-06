@@ -118,6 +118,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-perm-tree", ChannelPermTree)
 	v1Auth.Get("/channel-role-perms", ChannelRolePermGet)
 	v1Auth.Post("/role-perms-apply", RolePermApply)
+	v1Auth.Get("/channel-presence", ChannelPresence)
+	v1Auth.Post("/chat/export/test", ChatExportTest)
 
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)

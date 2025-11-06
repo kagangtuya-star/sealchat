@@ -3,10 +3,11 @@ package pm
 import "github.com/mikespook/gorbac"
 
 var (
-	PermFuncChannelRead      = gorbac.NewStdPermission("func_channel_read")       // 频道 - 消息 - 查看
-	PermFuncChannelTextSend  = gorbac.NewStdPermission("func_channel_text_send")  // 频道 - 消息 - 文本发送
-	PermFuncChannelFileSend  = gorbac.NewStdPermission("func_channel_file_send")  // 频道 - 消息 - 文件发送
-	PermFuncChannelAudioSend = gorbac.NewStdPermission("func_channel_audio_send") // 频道 - 消息 - 音频发送
+	PermFuncChannelRead        = gorbac.NewStdPermission("func_channel_read")          // 频道 - 消息 - 查看
+	PermFuncChannelTextSend    = gorbac.NewStdPermission("func_channel_text_send")     // 频道 - 消息 - 文本发送
+	PermFuncChannelTextSendOOC = gorbac.NewStdPermission("func_channel_text_send_ooc") // 频道 - 消息 - 场外文本发送
+	PermFuncChannelFileSend    = gorbac.NewStdPermission("func_channel_file_send")     // 频道 - 消息 - 文件发送
+	PermFuncChannelAudioSend   = gorbac.NewStdPermission("func_channel_audio_send")    // 频道 - 消息 - 音频发送
 
 	PermFuncChannelInvite           = gorbac.NewStdPermission("func_channel_invite")             // 频道 - 常规 - 邀请加入频道
 	PermFuncChannelSubChannelCreate = gorbac.NewStdPermission("func_channel_sub_channel_create") // 频道 - 常规 - 创建子频道
@@ -27,6 +28,7 @@ var (
 	PermFuncChannelManageRole     = gorbac.NewStdPermission("func_channel_manage_role")      // 频道 - 频道设置 - 权限管理
 	PermFuncChannelManageRoleRoot = gorbac.NewStdPermission("func_channel_manage_role_root") // 频道 - 频道设置 - 权限管理（Root管理员）
 	PermFuncChannelManageGallery  = gorbac.NewStdPermission("func_channel_manage_gallery")   // 频道 - 频道设置 - 快捷表情资源管理
+	PermFuncChannelMessageArchive = gorbac.NewStdPermission("func_channel_message_archive")  // 频道 - 消息 - 归档
 
 	// 准备加一个at权限
 

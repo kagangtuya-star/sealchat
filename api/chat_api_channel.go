@@ -139,6 +139,7 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		if s, ok := ctx.ChannelUsersMap.Load(ctx.ConnInfo.ChannelId); ok {
 			s.Delete(ctx.User.ID)
 		}
+		ctx.BroadcastChannelPresence(ctx.ConnInfo.ChannelId)
 	}
 
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, channelId, ctx.User.Nickname)
@@ -152,12 +153,14 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	chUserSet.Add(ctx.User.ID)
 
 	ctx.ConnInfo.ChannelId = channelId
+	ctx.ConnInfo.Focused = true
 
 	ctx.BroadcastEventInChannel(channelId, &protocol.Event{
 		Type:   "channel-entered",
 		User:   ctx.User.ToProtocolType(),
 		Member: memberPT,
 	})
+	ctx.BroadcastChannelPresence(channelId)
 
 	rData := &struct {
 		Member *protocol.GuildMember `json:"member"`

@@ -40,13 +40,29 @@ type ConnInfo struct {
 	TypingState     protocol.TypingState
 	TypingContent   string
 	TypingUpdatedAt int64
+	Focused         bool
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
 
+var (
+	channelUsersMapGlobal *utils.SyncMap[string, *utils.SyncSet[string]]
+	userId2ConnInfoGlobal *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
+)
+
+func getChannelUsersMap() *utils.SyncMap[string, *utils.SyncSet[string]] {
+	return channelUsersMapGlobal
+}
+
+func getUserConnInfoMap() *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]] {
+	return userId2ConnInfoGlobal
+}
+
 func websocketWorks(app *fiber.App) {
 	channelUsersMap := &utils.SyncMap[string, *utils.SyncSet[string]]{}
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
+	channelUsersMapGlobal = channelUsersMap
+	userId2ConnInfoGlobal = userId2ConnInfo
 
 	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
 		if body != nil {
@@ -75,7 +91,7 @@ func websocketWorks(app *fiber.App) {
 
 			if err == nil {
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
-				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().Unix(), User: user, TypingState: protocol.TypingStateSilent}
+				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().UnixMilli(), User: user, TypingState: protocol.TypingStateSilent, Focused: true}
 				m.Store(c, curConnInfo)
 
 				curUser = user
@@ -176,14 +192,23 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 						continue
 					}
+					var activeChannel string
 					if info, ok := userId2ConnInfo.Load(curUser.ID); ok {
 						if info2, ok := info.Load(c); ok {
-							info2.LastPingTime = time.Now().Unix()
+							info2.LastPingTime = time.Now().UnixMilli()
+							activeChannel = info2.ChannelId
 						}
 					}
 					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
 						Op: protocol.OpPong,
 					})
+					if activeChannel != "" {
+						ctx := &ChatContext{
+							ChannelUsersMap: channelUsersMap,
+							UserId2ConnInfo: userId2ConnInfo,
+						}
+						ctx.BroadcastChannelPresence(activeChannel)
+					}
 					solved = true
 				}
 			}
@@ -271,6 +296,15 @@ func websocketWorks(app *fiber.App) {
 					case "message.list":
 						apiWrap(ctx, msg, apiMessageList)
 						solved = true
+					case "chat.export.test":
+						apiWrap(ctx, msg, apiChatExportTest)
+						solved = true
+					case "message.archive":
+						apiWrap(ctx, msg, apiMessageArchive)
+						solved = true
+					case "message.unarchive":
+						apiWrap(ctx, msg, apiMessageUnarchive)
+						solved = true
 					case "message.edit.history":
 						apiWrap(ctx, msg, apiMessageEditHistory)
 						solved = true
@@ -350,8 +384,15 @@ func websocketWorks(app *fiber.App) {
 			}
 			return true
 		})
+		ctx := &ChatContext{
+			ChannelUsersMap: channelUsersMap,
+			UserId2ConnInfo: userId2ConnInfo,
+		}
 		channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
-			value.Delete(curUser.ID)
+			if curUser != nil && value.Exists(curUser.ID) {
+				value.Delete(curUser.ID)
+				ctx.BroadcastChannelPresence(chId)
+			}
 			return true
 		})
 	}))

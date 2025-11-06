@@ -83,6 +83,7 @@ func DBInit(dsn string) {
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
+	db.AutoMigrate(&MessageArchiveLogModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
 	db.AutoMigrate(&MemberModel{})

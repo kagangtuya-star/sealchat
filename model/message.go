@@ -24,6 +24,12 @@ type MessageModel struct {
 	IsEdited     bool    `json:"is_edited" gorm:"default:false"`
 	EditCount    int     `json:"edit_count" gorm:"default:0"`
 
+	ICMode        string     `json:"ic_mode" gorm:"size:8;default:'ic';index:idx_msg_ic_archive"`
+	IsArchived    bool       `json:"is_archived" gorm:"default:false;index:idx_msg_ic_archive"`
+	ArchivedAt    *time.Time `json:"archived_at"`
+	ArchivedBy    string     `json:"archived_by" gorm:"size:100"`
+	ArchiveReason string     `json:"archive_reason" gorm:"size:255"`
+
 	SenderMemberName       string `json:"sender_member_name"` // 用户在当时的名字
 	SenderIdentityID       string `json:"sender_identity_id" gorm:"size:100"`
 	SenderIdentityName     string `json:"sender_identity_name"`
@@ -46,16 +52,29 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	if !m.UpdatedAt.IsZero() {
 		updatedAt = m.UpdatedAt.UnixMilli()
 	}
+	icMode := m.ICMode
+	if icMode == "" {
+		icMode = "ic"
+	}
+	var archivedAt int64
+	if m.ArchivedAt != nil {
+		archivedAt = m.ArchivedAt.UnixMilli()
+	}
 	msg := &protocol.Message{
-		ID:           m.ID,
-		Content:      m.Content,
-		Channel:      channelData,
-		CreatedAt:    m.CreatedAt.UnixMilli(),
-		UpdatedAt:    updatedAt,
-		DisplayOrder: m.DisplayOrder,
-		IsWhisper:    m.IsWhisper,
-		IsEdited:     m.IsEdited,
-		EditCount:    m.EditCount,
+		ID:            m.ID,
+		Content:       m.Content,
+		Channel:       channelData,
+		CreatedAt:     m.CreatedAt.UnixMilli(),
+		UpdatedAt:     updatedAt,
+		DisplayOrder:  m.DisplayOrder,
+		IsWhisper:     m.IsWhisper,
+		IsEdited:      m.IsEdited,
+		EditCount:     m.EditCount,
+		IcMode:        icMode,
+		IsArchived:    m.IsArchived,
+		ArchivedAt:    archivedAt,
+		ArchivedBy:    m.ArchivedBy,
+		ArchiveReason: m.ArchiveReason,
 		WhisperTo: func() *protocol.User {
 			if m.WhisperTarget != nil {
 				return m.WhisperTarget.ToProtocolType()

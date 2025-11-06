@@ -84,25 +84,30 @@ const (
 )
 
 type Message struct {
-	ID           string           `json:"id"`
-	MessageID    string           // Deprecated
-	Channel      *Channel         `json:"channel"`
-	Guild        *Guild           `json:"guild"`
-	User         *User            `json:"user"`
-	Identity     *MessageIdentity `json:"identity,omitempty"`
-	Member       *GuildMember     `json:"member"`
-	Content      string           `json:"content"`
-	Elements     []*Element       `json:"elements"`
-	Timestamp    int64            `json:"timestamp"`
-	Quote        *Message         `json:"quote"`
-	CreatedAt    int64            `json:"createdAt"`
-	UpdatedAt    int64            `json:"updatedAt"`
-	DisplayOrder float64          `json:"displayOrder"`
-	IsWhisper    bool             `json:"isWhisper"`
-	WhisperTo    *User            `json:"whisperTo"`
-	IsEdited     bool             `json:"isEdited"`
-	EditCount    int              `json:"editCount"`
-	ClientID     string           `json:"clientId,omitempty"`
+	ID            string           `json:"id"`
+	MessageID     string           // Deprecated
+	Channel       *Channel         `json:"channel"`
+	Guild         *Guild           `json:"guild"`
+	User          *User            `json:"user"`
+	Identity      *MessageIdentity `json:"identity,omitempty"`
+	Member        *GuildMember     `json:"member"`
+	Content       string           `json:"content"`
+	Elements      []*Element       `json:"elements"`
+	Timestamp     int64            `json:"timestamp"`
+	Quote         *Message         `json:"quote"`
+	CreatedAt     int64            `json:"createdAt"`
+	UpdatedAt     int64            `json:"updatedAt"`
+	DisplayOrder  float64          `json:"displayOrder"`
+	IcMode        string           `json:"icMode"`
+	IsWhisper     bool             `json:"isWhisper"`
+	WhisperTo     *User            `json:"whisperTo"`
+	IsEdited      bool             `json:"isEdited"`
+	EditCount     int              `json:"editCount"`
+	IsArchived    bool             `json:"isArchived"`
+	ArchivedAt    int64            `json:"archivedAt"`
+	ArchivedBy    string           `json:"archivedBy"`
+	ArchiveReason string           `json:"archiveReason"`
+	ClientID      string           `json:"clientId,omitempty"`
 }
 
 type MessageIdentity struct {
@@ -110,6 +115,13 @@ type MessageIdentity struct {
 	DisplayName      string `json:"displayName"`
 	Color            string `json:"color"`
 	AvatarAttachment string `json:"avatarAttachment"`
+}
+
+type ChannelPresence struct {
+	User     *User `json:"user"`
+	Latency  int64 `json:"latency"`
+	Focused  bool  `json:"focused"`
+	LastSeen int64 `json:"lastSeen"`
 }
 
 type MessageReorder struct {
@@ -149,46 +161,50 @@ type Argv struct {
 type EventName string
 
 const (
-	EventGenresAdded          EventName = "genres-added"
-	EventGenresDeleted        EventName = "genres-deleted"
-	EventMessage              EventName = "message"
-	EventMessageCreated       EventName = "message-created"
-	EventMessageDeleted       EventName = "message-deleted"
-	EventMessageUpdated       EventName = "message-updated"
-	EventMessagePinned        EventName = "message-pinned"
-	EventMessageUnpinned      EventName = "message-unpinned"
-	EventMessageReordered     EventName = "message-reordered"
-	EventInteractionCommand   EventName = "interaction/command"
-	EventReactionAdded        EventName = "reaction-added"
-	EventReactionDeleted      EventName = "reaction-deleted"
-	EventReactionDeletedOne   EventName = "reaction-deleted/one"
-	EventReactionDeletedAll   EventName = "reaction-deleted/all"
-	EventReactionDeletedEmoji EventName = "reaction-deleted/emoji"
-	EventSend                 EventName = "send"
-	EventFriendRequest        EventName = "friend-request"
-	EventGuildRequest         EventName = "guild-request"
-	EventGuildMemberRequest   EventName = "guild-member-request"
-	EventTypingPreview        EventName = "typing-preview"
+	EventGenresAdded            EventName = "genres-added"
+	EventGenresDeleted          EventName = "genres-deleted"
+	EventMessage                EventName = "message"
+	EventMessageCreated         EventName = "message-created"
+	EventMessageDeleted         EventName = "message-deleted"
+	EventMessageUpdated         EventName = "message-updated"
+	EventMessageArchived        EventName = "message-archived"
+	EventMessageUnarchived      EventName = "message-unarchived"
+	EventMessagePinned          EventName = "message-pinned"
+	EventMessageUnpinned        EventName = "message-unpinned"
+	EventMessageReordered       EventName = "message-reordered"
+	EventInteractionCommand     EventName = "interaction/command"
+	EventReactionAdded          EventName = "reaction-added"
+	EventReactionDeleted        EventName = "reaction-deleted"
+	EventReactionDeletedOne     EventName = "reaction-deleted/one"
+	EventReactionDeletedAll     EventName = "reaction-deleted/all"
+	EventReactionDeletedEmoji   EventName = "reaction-deleted/emoji"
+	EventSend                   EventName = "send"
+	EventFriendRequest          EventName = "friend-request"
+	EventGuildRequest           EventName = "guild-request"
+	EventGuildMemberRequest     EventName = "guild-member-request"
+	EventTypingPreview          EventName = "typing-preview"
+	EventChannelPresenceUpdated EventName = "channel-presence-updated"
 )
 
 type Event struct {
-	ID        int64           `json:"id"`
-	Type      EventName       `json:"type"`
-	SelfID    string          `json:"selfID"`
-	Platform  string          `json:"platform"`
-	Timestamp int64           `json:"timestamp"`
-	Argv      *Argv           `json:"argv"`
-	Channel   *Channel        `json:"channel"`
-	Guild     *Guild          `json:"guild"`
-	Login     *Login          `json:"login"`
-	Member    *GuildMember    `json:"member"`
-	Message   *Message        `json:"message"`
-	Operator  *User           `json:"operator"`
-	Role      *GuildRole      `json:"role"`
-	User      *User           `json:"user"`
-	Button    *Button         `json:"button"`
-	Typing    *TypingPreview  `json:"typing"`
-	Reorder   *MessageReorder `json:"reorder"`
+	ID        int64              `json:"id"`
+	Type      EventName          `json:"type"`
+	SelfID    string             `json:"selfID"`
+	Platform  string             `json:"platform"`
+	Timestamp int64              `json:"timestamp"`
+	Argv      *Argv              `json:"argv"`
+	Channel   *Channel           `json:"channel"`
+	Guild     *Guild             `json:"guild"`
+	Login     *Login             `json:"login"`
+	Member    *GuildMember       `json:"member"`
+	Message   *Message           `json:"message"`
+	Operator  *User              `json:"operator"`
+	Role      *GuildRole         `json:"role"`
+	User      *User              `json:"user"`
+	Button    *Button            `json:"button"`
+	Typing    *TypingPreview     `json:"typing"`
+	Reorder   *MessageReorder    `json:"reorder"`
+	Presence  []*ChannelPresence `json:"presence"`
 }
 
 type TypingState string

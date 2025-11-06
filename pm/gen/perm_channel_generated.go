@@ -5,6 +5,7 @@ package gen
 var PermChannelMap = map[string]string{
 	"func_channel_read":               "频道 - 消息 - 查看",
 	"func_channel_text_send":          "频道 - 消息 - 文本发送",
+	"func_channel_text_send_ooc":      "频道 - 消息 - 场外文本发送",
 	"func_channel_file_send":          "频道 - 消息 - 文件发送",
 	"func_channel_audio_send":         "频道 - 消息 - 音频发送",
 	"func_channel_invite":             "频道 - 常规 - 邀请加入频道",
@@ -21,12 +22,14 @@ var PermChannelMap = map[string]string{
 	"func_channel_manage_role":        "频道 - 频道设置 - 权限管理",
 	"func_channel_manage_role_root":   "频道 - 频道设置 - 权限管理（Root管理员）",
 	"func_channel_manage_gallery":     "频道 - 频道设置 - 快捷表情资源管理",
+	"func_channel_message_archive":    "频道 - 消息 - 归档",
 }
 
 // PermChannelArray 提供权限字符串到描述的映射
 var PermChannelArray = []map[string]string{
 	{"key": "func_channel_read", "desc": "频道 - 消息 - 查看"},
 	{"key": "func_channel_text_send", "desc": "频道 - 消息 - 文本发送"},
+	{"key": "func_channel_text_send_ooc", "desc": "频道 - 消息 - 场外文本发送"},
 	{"key": "func_channel_file_send", "desc": "频道 - 消息 - 文件发送"},
 	{"key": "func_channel_audio_send", "desc": "频道 - 消息 - 音频发送"},
 	{"key": "func_channel_invite", "desc": "频道 - 常规 - 邀请加入频道"},
@@ -43,4 +46,5 @@ var PermChannelArray = []map[string]string{
 	{"key": "func_channel_manage_role", "desc": "频道 - 频道设置 - 权限管理"},
 	{"key": "func_channel_manage_role_root", "desc": "频道 - 频道设置 - 权限管理（Root管理员）"},
 	{"key": "func_channel_manage_gallery", "desc": "频道 - 频道设置 - 快捷表情资源管理"},
+	{"key": "func_channel_message_archive", "desc": "频道 - 消息 - 归档"},
 }
