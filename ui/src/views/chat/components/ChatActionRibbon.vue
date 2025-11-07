@@ -16,6 +16,10 @@ interface Member {
 interface Props {
   filters: FilterState
   members: Member[]
+  archiveActive?: boolean
+  exportActive?: boolean
+  identityActive?: boolean
+  galleryActive?: boolean
 }
 
 interface Emits {
@@ -100,28 +104,48 @@ const clearAllFilters = () => {
     <!-- 功能入口区域 -->
     <div class="ribbon-section ribbon-section--actions">
       <n-button-group size="small">
-        <n-button @click="emit('open-archive')">
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.archiveActive }"
+          @click="emit('open-archive')"
+        >
           <template #icon>
             <n-icon component="ArchiveOutlined" />
           </template>
           消息归档
         </n-button>
 
-        <n-button @click="emit('open-export')">
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.exportActive }"
+          @click="emit('open-export')"
+        >
           <template #icon>
             <n-icon component="DownloadOutlined" />
           </template>
           导出记录
         </n-button>
 
-        <n-button @click="emit('open-identity-manager')">
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.identityActive }"
+          @click="emit('open-identity-manager')"
+        >
           <template #icon>
             <n-icon component="UserOutlined" />
           </template>
           角色管理
         </n-button>
 
-        <n-button @click="emit('open-gallery')">
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.galleryActive }"
+          @click="emit('open-gallery')"
+        >
           <template #icon>
             <n-icon component="PictureOutlined" />
           </template>
@@ -190,6 +214,21 @@ const clearAllFilters = () => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.ribbon-action-button {
+  transition: background-color 0.2s ease, color 0.2s ease;
+  border-radius: 999px;
+  padding: 0 0.85rem;
+}
+
+.ribbon-action-button.is-active {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+}
+
+.ribbon-action-button.is-active :deep(.n-icon) {
+  color: #2563eb;
 }
 
 @media (max-width: 768px) {

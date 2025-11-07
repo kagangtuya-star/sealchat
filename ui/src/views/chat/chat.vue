@@ -36,7 +36,7 @@ import IconNumber from '@/components/icons/IconNumber.vue'
 import { computedAsync, useDebounceFn, useEventListener } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings } from '@vicons/ionicons5';
+import { Settings, AppsOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -128,6 +128,8 @@ const filteredGalleryEmojis = computed(() => {
   );
   return sortByUsage(filtered);
 });
+
+const galleryPanelVisible = computed(() => gallery.isPanelVisible);
 
 const message = useMessage()
 const dialog = useDialog()
@@ -3980,9 +3982,16 @@ onBeforeUnmount(() => {
           />
         </n-popover>
 
-        <n-button quaternary circle @click="showActionRibbon = !showActionRibbon">
+        <n-button
+          circle
+          size="small"
+          :type="showActionRibbon ? 'info' : 'tertiary'"
+          class="action-toggle-button"
+          :class="{ 'is-active': showActionRibbon }"
+          @click="showActionRibbon = !showActionRibbon"
+        >
           <template #icon>
-            <n-icon component="MoreOutlined" size="18" />
+            <n-icon :component="AppsOutline" size="18" :class="{ 'action-toggle-icon--active': showActionRibbon }" />
           </template>
         </n-button>
       </div>
@@ -3994,6 +4003,10 @@ onBeforeUnmount(() => {
         v-if="showActionRibbon"
         :filters="chat.filterState"
         :members="chat.curChannelUsers"
+        :archive-active="archiveDrawerVisible"
+        :export-active="exportDialogVisible"
+        :identity-active="identityDialogVisible"
+        :gallery-active="galleryPanelVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportDialogVisible = true"
@@ -5501,6 +5514,21 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.action-toggle-button {
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  color: #0f172a;
+}
+
+.action-toggle-button.is-active {
+  background-color: rgba(14, 165, 233, 0.18);
+  color: #0369a1;
+  box-shadow: 0 4px 10px rgba(14, 165, 233, 0.25);
+}
+
+.action-toggle-icon--active {
+  color: #0284c7;
 }
 
 /* 过渡动画 */
