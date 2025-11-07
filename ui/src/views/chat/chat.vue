@@ -6,7 +6,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
 import type { ChannelIdentity, GalleryItem } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Users, Download } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -14,7 +14,6 @@ import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
 import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
-import UserPresencePopover from './components/UserPresencePopover.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
@@ -36,7 +35,7 @@ import IconNumber from '@/components/icons/IconNumber.vue'
 import { computedAsync, useDebounceFn, useEventListener } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings, AppsOutline } from '@vicons/ionicons5';
+import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -52,10 +51,32 @@ const gallery = useGalleryStore();
 const isEditing = computed(() => !!chat.editing);
 
 // 新增状态
-const showPresencePopover = ref(false);
 const showActionRibbon = ref(false);
 const archiveDrawerVisible = ref(false);
 const exportDialogVisible = ref(false);
+
+const syncActionRibbonState = () => {
+  chatEvent.emit('action-ribbon-state', showActionRibbon.value);
+};
+
+const handleActionRibbonToggleRequest = () => {
+  showActionRibbon.value = !showActionRibbon.value;
+};
+
+const handleActionRibbonStateRequest = () => {
+  syncActionRibbonState();
+};
+
+watch(
+  showActionRibbon,
+  () => {
+    syncActionRibbonState();
+  },
+  { immediate: true },
+);
+
+chatEvent.on('action-ribbon-toggle', handleActionRibbonToggleRequest);
+chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
 
 const emojiLoading = ref(false)
 const uploadImages = computedAsync(async () => {
@@ -1095,25 +1116,6 @@ const handleIdentityMenuOpen = async () => {
     openIdentityEdit(current);
   } else {
     openIdentityCreate();
-  }
-};
-
-// 新增处理函数
-const handlePresenceRefresh = async () => {
-  try {
-    const data = await chat.getChannelPresence();
-    if (data?.data) {
-      data.data.forEach((item: any) => {
-        chat.updatePresence(item.user_id, {
-          lastPing: item.last_seen || Date.now(),
-          latencyMs: item.latency_ms || 0,
-          isFocused: item.is_focused || false,
-        });
-      });
-    }
-    message.success('状态已刷新');
-  } catch (error) {
-    message.error('刷新失败');
   }
 };
 
@@ -3954,49 +3956,14 @@ const handleGalleryDrop = async (event: DragEvent) => {
 onBeforeUnmount(() => {
   chatEvent.off('channel-identity-open', handleIdentityMenuOpen);
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
+  chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
+  chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   revokeIdentityObjectURL();
 });
 </script>
 
 <template>
   <div class="flex flex-col h-full justify-between">
-    <!-- 顶部控件栏 -->
-    <div class="chat-topbar">
-      <div class="topbar-left">
-        <span class="channel-name">{{ chat.curChannel?.name || '未选择频道' }}</span>
-        <span class="online-count">{{ chat.curChannelUsers.length }} 人在线</span>
-      </div>
-      <div class="topbar-right">
-        <n-popover trigger="click" placement="bottom-end" :show="showPresencePopover" @update:show="showPresencePopover = $event">
-          <template #trigger>
-            <n-button quaternary circle>
-              <template #icon>
-                <n-icon :component="Users" size="18" />
-              </template>
-            </n-button>
-          </template>
-          <UserPresencePopover
-            :members="chat.curChannelUsers"
-            :presence-map="chat.presenceMap"
-            @request-refresh="handlePresenceRefresh"
-          />
-        </n-popover>
-
-        <n-button
-          circle
-          size="small"
-          :type="showActionRibbon ? 'info' : 'tertiary'"
-          class="action-toggle-button"
-          :class="{ 'is-active': showActionRibbon }"
-          @click="showActionRibbon = !showActionRibbon"
-        >
-          <template #icon>
-            <n-icon :component="AppsOutline" size="18" :class="{ 'action-toggle-icon--active': showActionRibbon }" />
-          </template>
-        </n-button>
-      </div>
-    </div>
-
     <!-- 功能面板 -->
     <transition name="slide-down">
       <ChatActionRibbon
@@ -5479,58 +5446,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 顶部控件栏样式 */
-.chat-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1rem;
-  background: rgba(255, 255, 255, 0.95);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  backdrop-filter: blur(8px);
-}
-
-.topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.channel-name {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #1f2937;
-}
-
-.online-count {
-  font-size: 0.875rem;
-  color: #6b7280;
-  background: rgba(107, 114, 128, 0.1);
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.375rem;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.action-toggle-button {
-  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-  color: #0f172a;
-}
-
-.action-toggle-button.is-active {
-  background-color: rgba(14, 165, 233, 0.18);
-  color: #0369a1;
-  box-shadow: 0 4px 10px rgba(14, 165, 233, 0.25);
-}
-
-.action-toggle-icon--active {
-  color: #0284c7;
-}
-
 /* 过渡动画 */
 .slide-down-enter-active,
 .slide-down-leave-active {
@@ -5543,25 +5458,6 @@ onBeforeUnmount(() => {
   transform: translateY(-10px);
 }
 
-@media (max-width: 768px) {
-  .chat-topbar {
-    padding: 0.5rem;
-  }
-
-  .topbar-left {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-  }
-
-  .channel-name {
-    font-size: 0.875rem;
-  }
-
-  .online-count {
-    font-size: 0.75rem;
-  }
-}
 </style>
 
 <style lang="scss">

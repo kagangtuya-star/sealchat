@@ -16,7 +16,7 @@ const active = ref(false)
       <chat-header />
     </n-layout-header>
 
-    <n-layout has-sider position="absolute" style="margin-top: 4rem;">
+    <n-layout has-sider position="absolute" style="margin-top: 3.5rem;">
       <n-layout-sider :collapsed-width="0" :collapsed="width < 700" content-style="" :native-scrollbar="false" bordered>
         <ChatSidebar v-if="width >= 700" />
       </n-layout-sider>
