@@ -1398,6 +1398,9 @@ const sortRowsByDisplayOrder = () => {
 const localReorderOps = new Set<string>();
 
 const messageRowRefs = new Map<string, HTMLElement>();
+const SEARCH_JUMP_WINDOWS_MS = [5, 30, 180, 720, 1440, 10080].map((minutes) => minutes * 60 * 1000);
+const searchJumping = ref(false);
+
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
 
@@ -1428,15 +1431,149 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   }
 };
 
-const handleSearchJump = async (payload: { messageId: string; displayOrder?: number }) => {
+const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
+
+const mergeIncomingMessages = (items: Message[]) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+  let mutated = false;
+  items.forEach((incoming) => {
+    if (!incoming || !incoming.id) {
+      return;
+    }
+    const index = rows.value.findIndex((msg) => msg.id === incoming.id);
+    if (index >= 0) {
+      const merged = {
+        ...rows.value[index],
+        ...incoming,
+      };
+      rows.value.splice(index, 1, merged);
+    } else {
+      rows.value.push(incoming);
+    }
+    mutated = true;
+  });
+  if (mutated) {
+    sortRowsByDisplayOrder();
+  }
+};
+
+const loadMessagesWithinWindow = async (
+  payload: { messageId: string; displayOrder?: number; createdAt?: number },
+  spanMs: number,
+) => {
+  if (!chat.curChannel?.id || !payload.createdAt || spanMs <= 0) {
+    return false;
+  }
+  const center = Number(payload.createdAt);
+  if (!Number.isFinite(center)) {
+    return false;
+  }
+  const from = Math.max(0, Math.floor(center - spanMs));
+  const to = Math.max(from + 1, Math.floor(center + spanMs));
+  try {
+    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
+      includeArchived: true,
+      includeOoc: true,
+    });
+    const incoming = normalizeMessageList(resp?.data || []);
+    if (!incoming.length) {
+      return false;
+    }
+    mergeIncomingMessages(incoming);
+    return messageExistsLocally(payload.messageId);
+  } catch (error) {
+    console.warn('定位消息失败（时间窗口）', error);
+    return false;
+  }
+};
+
+const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+  if (!chat.curChannel?.id || payload.displayOrder === undefined) {
+    return false;
+  }
+  const order = Number(payload.displayOrder);
+  if (!Number.isFinite(order)) {
+    return false;
+  }
+  const cursorOrder = order + 1e-6;
+  const cursorTime = Math.max(0, Math.floor(Number(payload.createdAt ?? Date.now())));
+  const cursor = `${cursorOrder.toFixed(8)}|${cursorTime}|${payload.messageId}`;
+  try {
+    const resp = await chat.messageList(chat.curChannel.id, cursor, {
+      includeArchived: true,
+      includeOoc: true,
+    });
+    const incoming = normalizeMessageList(resp?.data || []);
+    if (!incoming.length) {
+      return false;
+    }
+    mergeIncomingMessages(incoming);
+    return messageExistsLocally(payload.messageId);
+  } catch (error) {
+    console.warn('定位消息失败（游标）', error);
+    return false;
+  }
+};
+
+const locateMessageForJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+  for (const span of SEARCH_JUMP_WINDOWS_MS) {
+    const found = await loadMessagesWithinWindow(payload, span);
+    if (found) {
+      return true;
+    }
+  }
+  return loadMessagesByCursor(payload);
+};
+
+const ensureSearchTargetVisible = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+  if (messageExistsLocally(payload.messageId)) {
+    return true;
+  }
+  if (searchJumping.value) {
+    message.info('正在定位消息，请稍候');
+    return false;
+  }
+  searchJumping.value = true;
+  const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
+  try {
+    const located = await locateMessageForJump(payload);
+    if (!located) {
+      message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+    }
+    return located;
+  } finally {
+    loadingMsg?.destroy?.();
+    searchJumping.value = false;
+  }
+};
+
+const handleSearchJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   const targetId = payload?.messageId;
   if (!targetId) {
     message.warning('未找到要跳转的消息');
     return;
   }
   await nextTick();
-  const target = messageRowRefs.get(targetId);
-  if (target && messagesListRef.value) {
+  let target = messageRowRefs.get(targetId);
+  if (!target) {
+    const loaded = await ensureSearchTargetVisible(payload);
+    if (!loaded) {
+      return;
+    }
+    await nextTick();
+    target = messageRowRefs.get(targetId);
+    if (!target) {
+      if (messageExistsLocally(targetId)) {
+        message.warning('消息已加载，但当前筛选条件可能将其隐藏，请调整筛选后重试');
+      } else {
+        message.warning('仍未定位到该消息，稍后再试');
+      }
+      return;
+    }
+  }
+  if (messagesListRef.value) {
     VueScrollTo.scrollTo(target, {
       container: messagesListRef.value,
       duration: 350,
@@ -1444,9 +1581,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       easing: 'ease-in-out',
     });
     setMessageHighlight(targetId);
-    return;
   }
-  message.info('该消息暂未加载，稍后将支持自动定位');
 };
 
 const dragState = reactive({
@@ -4919,6 +5054,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.5rem 0;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .typing-preview-bubble {

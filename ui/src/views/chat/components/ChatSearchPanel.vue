@@ -10,6 +10,7 @@ import { useChatStore } from '@/stores/chat'
 interface JumpPayload {
   messageId: string
   displayOrder?: number
+  createdAt?: number
 }
 
 const emit = defineEmits<{
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const PANEL_WIDTH = 420
+const PANEL_Z_INDEX = 1800
 
 const chat = useChatStore()
 const channelSearch = useChannelSearchStore()
@@ -40,6 +42,34 @@ const panelRef = ref<HTMLElement | null>(null)
 const dragHandleRef = ref<HTMLElement | null>(null)
 const advancedFiltersVisible = ref(false)
 
+const memberOptionsLoading = ref(false)
+let memberFetchSeq = 0
+
+const normalizeOption = (item?: { id?: string; label?: string }) => {
+  const id = item?.id || ''
+  if (!id) {
+    return null
+  }
+  const label = item?.label?.trim() || '未知成员'
+  return { label, value: id }
+}
+
+const memberOptions = ref<Array<{ label: string; value: string }>>([])
+const speakerSelectorVisible = ref(false)
+const speakerKeyword = ref('')
+const speakerSelectorLabel = computed(() => {
+  const count = filters.value.speakerIds.length
+  return count ? `已选 ${count} 人` : '全部成员'
+})
+const filteredSpeakerOptions = computed(() => {
+  const keyword = speakerKeyword.value.trim().toLowerCase()
+  if (!keyword) {
+    return memberOptions.value
+  }
+  return memberOptions.value.filter((option) => option.label.toLowerCase().includes(keyword))
+})
+const selectedSpeakerCount = computed(() => filters.value.speakerIds.length)
+
 channelSearch.bindChannel(chat.curChannel?.id || null)
 
 const { x, y } = useDraggable(panelRef, {
@@ -51,7 +81,7 @@ const panelStyle = computed(() => ({
   left: `${x.value}px`,
   top: `${y.value}px`,
   width: `${PANEL_WIDTH}px`,
-  zIndex: 6000,
+  zIndex: PANEL_Z_INDEX,
 }))
 
 const clampPosition = (nx: number, ny: number) => {
@@ -90,6 +120,63 @@ watch(
   },
 )
 
+const fetchMemberOptions = async (channelId?: string) => {
+  if (!channelId) {
+    return
+  }
+  const seq = ++memberFetchSeq
+  memberOptionsLoading.value = true
+  try {
+    const payload = await chat.channelMemberOptions(channelId)
+    if (seq !== memberFetchSeq) {
+      return
+    }
+    const remoteOptions =
+      payload?.items
+        ?.map((item) => normalizeOption({ id: item.id, label: item.label }))
+        .filter((option): option is { label: string; value: string } => !!option) || []
+    memberOptions.value = remoteOptions
+  } catch (error) {
+    console.warn('加载频道成员失败', error)
+    if (seq === memberFetchSeq) {
+      memberOptions.value = []
+    }
+  } finally {
+    if (seq === memberFetchSeq) {
+      memberOptionsLoading.value = false
+    }
+  }
+}
+
+const openSpeakerSelector = () => {
+  if (!chat.curChannel?.id) {
+    memberOptions.value = []
+    return
+  }
+  speakerKeyword.value = ''
+  speakerSelectorVisible.value = true
+  fetchMemberOptions(chat.curChannel?.id)
+}
+
+const closeSpeakerSelector = () => {
+  speakerSelectorVisible.value = false
+  speakerKeyword.value = ''
+}
+
+const clearSpeakerSelection = () => {
+  channelSearch.updateFilters({ speakerIds: [] })
+}
+
+watch(
+  () => chat.curChannel?.id,
+  () => {
+    memberOptions.value = []
+    speakerSelectorVisible.value = false
+    speakerKeyword.value = ''
+  },
+  { immediate: true },
+)
+
 watch(
   [x, y],
   ([nx, ny]) => {
@@ -104,13 +191,6 @@ watch(
     channelSearch.setPanelPosition({ x: clamped.x, y: clamped.y })
   },
   { flush: 'post' },
-)
-
-const memberOptions = computed(() =>
-  chat.curChannelUsers.map((member) => ({
-    label: member.nick || member.name || '未知成员',
-    value: member.id || '',
-  })),
 )
 
 const hasSearched = computed(() => !!lastKeyword.value)
@@ -342,17 +422,17 @@ const shortContent = (text: string) => {
                 </n-radio-group>
               </div>
 
-              <div class="filter-group filter-group--inline">
+              <div class="filter-group filter-group--inline speaker-filter">
                 <span class="filter-label">发言人</span>
-                <n-select
-                  placeholder="筛选成员"
-                  :options="memberOptions"
-                  v-model:value="speakerFilter"
-                  multiple
-                  clearable
-                  size="small"
-                  style="width: 180px"
-                />
+                <n-button size="small" secondary class="speaker-filter__trigger" @click="openSpeakerSelector">
+                  <n-icon size="14">
+                    <ChevronDownOutline />
+                  </n-icon>
+                  <span>{{ speakerSelectorLabel }}</span>
+                </n-button>
+                <n-tag v-if="selectedSpeakerCount" size="small" round type="info">
+                  {{ selectedSpeakerCount }}
+                </n-tag>
               </div>
 
               <div class="filter-group filter-group--inline">
@@ -364,6 +444,8 @@ const shortContent = (text: string) => {
                   clearable
                   size="small"
                   :value-format="'timestamp'"
+                  :z-index="PANEL_Z_INDEX + 50"
+                  to="body"
                 />
               </div>
 
@@ -386,37 +468,48 @@ const shortContent = (text: string) => {
           </n-alert>
 
           <div class="chat-search-panel__results">
-            <n-spin :show="loading">
-              <n-empty
-                v-if="showEmptyState"
-                description="没有匹配的结果，尝试更换关键词或放宽筛选条件"
-                size="small"
-              />
-              <div v-else>
-                <div v-for="item in results" :key="item.id" class="search-result">
-                  <div class="search-result__meta">
-                    <div class="search-result__author">{{ item.senderName }}</div>
-                    <div class="search-result__time">{{ formatTime(item.createdAt) }}</div>
-                  </div>
-                  <div class="search-result__badges">
-                    <n-tag size="small" :type="item.icMode === 'ic' ? 'success' : 'default'" round>
-                      {{ item.icMode === 'ic' ? '场内' : '场外' }}
-                    </n-tag>
-                    <n-tag v-if="item.isArchived" size="small" round type="warning">
-                      已归档
-                    </n-tag>
-                  </div>
-                  <div class="search-result__content">
-                    <template v-for="(fragment, idx) in renderSnippetFragments(shortContent(item.contentSnippet), item.highlightRanges)" :key="idx">
-                      <mark v-if="fragment.highlighted">{{ fragment.text }}</mark>
-                      <span v-else>{{ fragment.text }}</span>
-                    </template>
-                  </div>
-                  <div class="search-result__actions">
-                    <span class="search-result__hint">点击下方按钮跳转到该消息</span>
-                    <n-button size="tiny" type="primary" ghost @click="handleResultClick({ messageId: item.id, displayOrder: item.displayOrder })">
-                      跳转
-                    </n-button>
+            <n-spin :show="loading" class="chat-search-panel__results-spin">
+              <div class="chat-search-panel__results-scroll">
+                <n-empty
+                  v-if="showEmptyState"
+                  description="没有匹配的结果，尝试更换关键词或放宽筛选条件"
+                  size="small"
+                />
+                <div v-else class="search-result-list">
+                  <div v-for="item in results" :key="item.id" class="search-result">
+                    <div class="search-result__row search-result__row--meta">
+                      <div class="search-result__title">
+                        <span class="search-result__author" :title="item.senderName">{{ item.senderName }}</span>
+                        <div class="search-result__badges">
+                          <n-tag size="small" :type="item.icMode === 'ic' ? 'success' : 'default'" round>
+                            {{ item.icMode === 'ic' ? '场内' : '场外' }}
+                          </n-tag>
+                          <n-tag size="small" round :type="item.isArchived ? 'warning' : 'default'">
+                            {{ item.isArchived ? '已归档' : '未归档' }}
+                          </n-tag>
+                        </div>
+                      </div>
+                      <div class="search-result__right">
+                        <span class="search-result__time">{{ formatTime(item.createdAt) }}</span>
+                        <n-button
+                          size="tiny"
+                          type="primary"
+                          quaternary
+                          @click="handleResultClick({ messageId: item.id, displayOrder: item.displayOrder, createdAt: item.createdAt })"
+                        >
+                          跳转
+                        </n-button>
+                      </div>
+                    </div>
+                    <div class="search-result__row search-result__row--content">
+                      <template
+                        v-for="(fragment, idx) in renderSnippetFragments(shortContent(item.contentSnippet), item.highlightRanges)"
+                        :key="idx"
+                      >
+                        <mark v-if="fragment.highlighted">{{ fragment.text }}</mark>
+                        <span v-else>{{ fragment.text }}</span>
+                      </template>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -435,6 +528,32 @@ const shortContent = (text: string) => {
         </div>
       </div>
     </transition>
+    <n-modal v-model:show="speakerSelectorVisible" preset="card" title="选择发言人" :style="{ width: '360px' }" @after-leave="speakerKeyword = ''">
+      <div class="speaker-selector">
+        <div class="speaker-selector__search">
+          <n-input v-model:value="speakerKeyword" placeholder="搜索成员" size="small" clearable />
+        </div>
+        <div class="speaker-selector__list">
+          <n-spin :show="memberOptionsLoading">
+            <template v-if="filteredSpeakerOptions.length">
+              <n-checkbox-group v-model:value="speakerFilter">
+                <div class="speaker-selector__item" v-for="option in filteredSpeakerOptions" :key="option.value">
+                  <n-checkbox :value="option.value">{{ option.label }}</n-checkbox>
+                </div>
+              </n-checkbox-group>
+            </template>
+            <n-empty v-else description="暂无成员" size="small" />
+          </n-spin>
+        </div>
+        <div class="speaker-selector__footer">
+          <n-button text size="small" @click="clearSpeakerSelection">清空</n-button>
+          <div class="speaker-selector__footer-actions">
+            <n-button size="small" quaternary @click="closeSpeakerSelector">取消</n-button>
+            <n-button size="small" type="primary" @click="closeSpeakerSelector">完成</n-button>
+          </div>
+        </div>
+      </div>
+    </n-modal>
   </Teleport>
 </template>
 
@@ -451,7 +570,9 @@ const shortContent = (text: string) => {
   backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 160px);
+  max-height: calc(100vh - 120px);
+  min-height: 360px;
+  overflow: hidden;
 }
 
 .chat-search-panel__header {
@@ -504,7 +625,8 @@ const shortContent = (text: string) => {
   flex-direction: column;
   gap: 0.75rem;
   margin-top: 1rem;
-  overflow: visible;
+  flex: 1;
+  min-height: 0;
 }
 
 .chat-search-panel__input-group {
@@ -540,9 +662,25 @@ const shortContent = (text: string) => {
 
 .chat-search-panel__results {
   flex: 1;
-  min-height: 220px;
+  min-height: 260px;
+  min-width: 0;
+  border: 1px solid rgba(226, 232, 240, 0.7);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding-right: 0.25rem;
+}
+
+.chat-search-panel__results-scroll {
+  flex: 1;
+  padding: 0.75rem 0.85rem 0.5rem 0.75rem;
+  box-sizing: border-box;
+}
+
+.chat-search-panel__results-spin {
+  width: 100%;
+  height: 100%;
 }
 
 .chat-search-panel__filter-toggle {
@@ -557,59 +695,119 @@ const shortContent = (text: string) => {
   letter-spacing: 0.02em;
 }
 
-.search-result {
-  border-radius: 0.75rem;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  padding: 0.85rem;
-  margin-bottom: 0.75rem;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
+.speaker-filter__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
-.search-result__meta {
+.speaker-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.speaker-selector__search {
+  width: 100%;
+}
+
+.speaker-selector__list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.speaker-selector__item + .speaker-selector__item {
+  margin-top: 0.35rem;
+}
+
+.speaker-selector__footer {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+.speaker-selector__footer-actions {
+  display: inline-flex;
   gap: 0.5rem;
+}
+
+.search-result-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.search-result {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.search-result:last-child {
+  border-bottom: none;
+}
+
+.search-result__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.search-result__row--meta {
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+
+.search-result__row--content {
+  margin-top: 0.25rem;
+  line-height: 1.4;
+  color: #1f2937;
   font-size: 0.85rem;
+  padding-left: 0.15rem;
+}
+
+.search-result__row--content mark {
+  background: rgba(14, 165, 233, 0.18);
   color: #0f172a;
-  font-weight: 500;
+  border-radius: 0.15rem;
+  padding: 0 0.08rem;
+}
+
+.search-result__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.search-result__author {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result__badges {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.search-result__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
 }
 
 .search-result__time {
   color: #94a3b8;
-  font-weight: 400;
-}
-
-.search-result__badges {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.35rem;
-}
-
-.search-result__content {
-  margin-top: 0.5rem;
-  line-height: 1.45;
-  color: #1f2937;
-  font-size: 0.9rem;
-}
-
-.search-result__content mark {
-  background: rgba(14, 165, 233, 0.2);
-  color: #0f172a;
-  border-radius: 0.15rem;
-  padding: 0 0.1rem;
-}
-
-.search-result__actions {
-  margin-top: 0.65rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.search-result__hint {
-  font-size: 0.75rem;
-  color: #94a3b8;
+  font-size: 0.78rem;
 }
 
 .chat-search-panel__footer {

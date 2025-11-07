@@ -749,13 +749,33 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageListDuring(channelId: string, fromTime: any, toTime: any) {
-      const resp = await this.sendAPI('message.list', {
+    async messageListDuring(channelId: string, fromTime: any, toTime: any, options?: {
+      includeArchived?: boolean;
+      includeOoc?: boolean;
+      icOnly?: boolean;
+      userIds?: string[];
+    }) {
+      const payload: Record<string, any> = {
         channel_id: channelId,
         type: 'time',
         from_time: fromTime,
         to_time: toTime,
-      });
+      };
+      if (options) {
+        if (typeof options.includeArchived === 'boolean') {
+          payload.include_archived = options.includeArchived;
+        }
+        if (typeof options.includeOoc === 'boolean') {
+          payload.include_ooc = options.includeOoc;
+        }
+        if (typeof options.icOnly === 'boolean') {
+          payload.ic_only = options.icOnly;
+        }
+        if (options.userIds && options.userIds.length > 0) {
+          payload.user_ids = options.userIds;
+        }
+      }
+      const resp = await this.sendAPI('message.list', payload);
       this.canReorderAllMessages = !!resp.data?.can_reorder_all;
       return resp.data;
     },
@@ -935,9 +955,25 @@ export const useChatStore = defineStore({
     },
 
     // 频道管理
-    async channelMemberList(id: string) {
-      const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', { params: { id } });
+    async channelMemberList(id: string, params?: { page?: number; pageSize?: number }) {
+      const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+        params: {
+          id,
+          page: params?.page,
+          pageSize: params?.pageSize,
+        },
+      });
       return resp;
+    },
+
+    async channelMemberOptions(channelId: string) {
+      if (!channelId) {
+        return { items: [], total: 0 };
+      }
+      const resp = await api.get<{ items: Array<{ id: string; label: string }>; total: number }>(
+        `api/v1/channels/${channelId}/member-options`,
+      );
+      return resp.data;
     },
 
     // 添加用户角色
