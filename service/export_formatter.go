@@ -185,10 +185,11 @@ func (textFormatter) Build(payload *ExportPayload) ([]byte, error) {
 		if len(prefixParts) > 0 {
 			header = strings.Join(prefixParts, "")
 		}
+		namePart := fmt.Sprintf("<%s>", msg.SenderName)
 		if header != "" {
-			sb.WriteString(fmt.Sprintf("%s %s: %s\n", header, msg.SenderName, msg.Content))
+			sb.WriteString(fmt.Sprintf("%s %s %s\n", header, namePart, msg.Content))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", msg.SenderName, msg.Content))
+			sb.WriteString(fmt.Sprintf("%s %s\n", namePart, msg.Content))
 		}
 	}
 	return []byte(sb.String()), nil
@@ -220,7 +221,7 @@ var exportHTMLTemplate = template.Must(template.New("export_html").Funcs(templat
     body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif; margin: 2rem; background: #f7f7f7; }
     .meta { margin-bottom: 1.5rem; color: #555; }
     .message { padding: 12px 16px; margin-bottom: 8px; background: #fff; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-    .sender { font-weight: 600; color: #222; }
+    .sender { font-weight: 600; color: #222; margin-right: 4px; }
     .timestamp { color: #888; font-size: 0.9rem; }
     .timestamp.hidden { visibility: hidden; height: 0; margin: 0; }
     .ooc { border-left: 3px solid #eab308; }
@@ -236,9 +237,8 @@ var exportHTMLTemplate = template.Must(template.New("export_html").Funcs(templat
   </section>
   {{range .Messages}}
     <article class="message {{if eq .IcMode "ooc"}}ooc{{end}} {{if .IsWhisper}}whisper{{end}}">
-      <div class="sender">{{.SenderName}}</div>
       {{if not $.WithoutTimestamp}}<div class="timestamp">{{formatTime .CreatedAt}}</div>{{end}}
-      <div class="content">{{.Content}}</div>
+      <div class="content"><span class="sender">&lt;{{.SenderName}}&gt;</span>{{.Content}}</div>
     </article>
   {{end}}
 </body>
@@ -285,7 +285,7 @@ func buildDocxDocumentXML(payload *ExportPayload) []byte {
 		if !payload.WithoutTimestamp {
 			timePrefix = fmt.Sprintf("[%s] ", msg.CreatedAt.Format("2006-01-02 15:04:05"))
 		}
-		line := fmt.Sprintf("%s%s: %s", timePrefix, msg.SenderName, msg.Content)
+		line := fmt.Sprintf("%s<%s> %s", timePrefix, msg.SenderName, msg.Content)
 		sb.WriteString(wParagraph(line))
 	}
 	sb.WriteString(`<w:sectPr/>`)
