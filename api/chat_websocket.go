@@ -35,6 +35,7 @@ type ConnInfo struct {
 	User            *model.UserModel
 	Conn            *WsSyncConn
 	LastPingTime    int64
+	LatencyMs       int64
 	ChannelId       string
 	TypingEnabled   bool
 	TypingState     protocol.TypingState
@@ -192,10 +193,56 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 						continue
 					}
+					now := time.Now().UnixMilli()
 					var activeChannel string
 					if info, ok := userId2ConnInfo.Load(curUser.ID); ok {
 						if info2, ok := info.Load(c); ok {
-							info2.LastPingTime = time.Now().UnixMilli()
+							if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
+								if focusedRaw, exists := bodyMap["focused"]; exists {
+									if focusedVal, ok := focusedRaw.(bool); ok {
+										info2.Focused = focusedVal
+									}
+								}
+								latencyUpdated := false
+								if sentAtRaw, exists := bodyMap["clientSentAt"]; exists {
+									switch v := sentAtRaw.(type) {
+									case float64:
+										lat := now - int64(v)
+										if lat >= 0 {
+											info2.LatencyMs = lat
+											latencyUpdated = true
+										}
+									case int64:
+										lat := now - v
+										if lat >= 0 {
+											info2.LatencyMs = lat
+											latencyUpdated = true
+										}
+									case int:
+										lat := now - int64(v)
+										if lat >= 0 {
+											info2.LatencyMs = lat
+											latencyUpdated = true
+										}
+									}
+								}
+								if !latencyUpdated {
+									if latencyRaw, exists := bodyMap["latency"]; exists {
+										switch v := latencyRaw.(type) {
+										case float64:
+											info2.LatencyMs = int64(v)
+											latencyUpdated = true
+										case int:
+											info2.LatencyMs = int64(v)
+											latencyUpdated = true
+										case int64:
+											info2.LatencyMs = v
+											latencyUpdated = true
+										}
+									}
+								}
+							}
+							info2.LastPingTime = now
 							activeChannel = info2.ChannelId
 						}
 					}
@@ -209,6 +256,17 @@ func websocketWorks(app *fiber.App) {
 						}
 						ctx.BroadcastChannelPresence(activeChannel)
 					}
+					solved = true
+				case protocol.OpLatencyProbe:
+					if curUser == nil {
+						solved = true
+						continue
+					}
+					payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult}
+					if gatewayMsg.Body != nil {
+						payload.Body = gatewayMsg.Body
+					}
+					_ = c.WriteJSON(payload)
 					solved = true
 				}
 			}

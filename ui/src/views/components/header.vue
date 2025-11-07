@@ -2,9 +2,9 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { Plus, Users, Link, Refresh } from '@vicons/tabler';
-import { AppsOutline } from '@vicons/ionicons5';
+import { AppsOutline, UnlinkOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted } from 'vue';
+import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 // import AdminSettings from './admin-settings.vue'
@@ -199,7 +199,7 @@ const connectionStatus = computed(() => {
       };
     case 'disconnected':
       return {
-        icon: LinkOff,
+        icon: UnlinkOutline,
         classes: 'text-red-600',
         label: t('connectState.disconnected'),
         spinning: false,
@@ -214,23 +214,51 @@ const connectionStatus = computed(() => {
   }
 });
 
-const handlePresenceRefresh = async () => {
+const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
+  const silent = !!options?.silent;
   try {
     const data = await chat.getChannelPresence();
-    if (data?.data) {
+    if (Array.isArray(data?.data)) {
       data.data.forEach((item: any) => {
-        chat.updatePresence(item.user_id, {
-          lastPing: item.last_seen || Date.now(),
-          latencyMs: item.latency_ms || 0,
-          isFocused: item.is_focused || false,
+        const userId = item?.user?.id || item?.user_id;
+        if (!userId) {
+          return;
+        }
+        chat.updatePresence(userId, {
+          lastPing: item?.lastSeen ?? item?.last_seen ?? Date.now(),
+          latencyMs: item?.latency ?? item?.latency_ms ?? 0,
+          isFocused: item?.focused ?? item?.is_focused ?? false,
         });
       });
     }
-    message.success('状态已刷新');
+    if (!silent) {
+      message.success('状态已刷新');
+    }
   } catch (error) {
-    message.error('刷新失败');
+    if (!silent) {
+      message.error('刷新失败');
+    } else {
+      console.error('自动刷新在线状态失败', error);
+    }
   }
 };
+
+watch(presencePopoverVisible, (visible, oldVisible) => {
+  if (visible && !oldVisible) {
+    handlePresenceRefresh({ silent: true });
+  }
+});
+
+watch(
+  () => chat.curChannel?.id,
+  (channelId, prevChannelId) => {
+    if (!channelId || channelId === prevChannelId) {
+      return;
+    }
+    chat.clearPresenceMap();
+    handlePresenceRefresh({ silent: true });
+  }
+);
 
 const toggleActionRibbon = () => {
   chatEvent.emit('action-ribbon-toggle');

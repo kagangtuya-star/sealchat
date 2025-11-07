@@ -48,9 +48,12 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 		if user == nil {
 			return true
 		}
-		latency := now - active.LastPingTime
-		if latency < 0 {
-			latency = 0
+		latency := active.LatencyMs
+		if latency <= 0 {
+			latency = now - active.LastPingTime
+			if latency < 0 {
+				latency = 0
+			}
 		}
 		results = append(results, &protocol.ChannelPresence{
 			User:     user.ToProtocolType(),

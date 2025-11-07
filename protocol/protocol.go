@@ -239,6 +239,8 @@ const (
 	OpPong
 	OpIdentify
 	OpReady
+	OpLatencyProbe
+	OpLatencyResult
 )
 
 type GatewayBody struct {

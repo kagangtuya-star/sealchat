@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { EyeOutline, EyeOffOutline } from '@vicons/ionicons5'
 import Avatar from '@/components/avatar.vue'
 
 interface PresenceData {
@@ -113,7 +114,7 @@ const handleRefresh = () => {
             </span>
             <n-icon
               v-if="activeTab === 'online'"
-              :component="isFocused(member.id) ? 'EyeOutlined' : 'EyeInvisibleOutlined'"
+              :component="isFocused(member.id) ? EyeOutline : EyeOffOutline"
               size="14"
               :class="{ 'focused': isFocused(member.id), 'unfocused': !isFocused(member.id) }"
             />

@@ -60,6 +60,9 @@ interface ChatState {
   // 新增状态
   icMode: 'ic' | 'ooc';
   presenceMap: Record<string, { lastPing: number; latencyMs: number; isFocused: boolean }>;
+  isAppFocused: boolean;
+  lastPingSentAt: number | null;
+  lastLatencyMs: number;
   filterState: {
     icOnly: boolean;
     showArchived: boolean;
@@ -87,7 +90,9 @@ export const chatEvent = new Emitter<{
   // 'message-created': (msg: Event) => void;
 }>();
 
-let pingLoopOn = false;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+let latencyTimer: ReturnType<typeof setInterval> | null = null;
+let focusListenersBound = false;
 
 export const useChatStore = defineStore({
   id: 'chat',
@@ -145,6 +150,9 @@ export const useChatStore = defineStore({
     // 新增状态初始值
     icMode: 'ic',
     presenceMap: {},
+    isAppFocused: true,
+    lastPingSentAt: null,
+    lastLatencyMs: 0,
     filterState: {
       icOnly: false,
       showArchived: false,
@@ -173,6 +181,19 @@ export const useChatStore = defineStore({
 
   actions: {
     async connect() {
+      this.stopPingLoop();
+      if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
+        focusListenersBound = true;
+        const updateFocusState = () => {
+          const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+          const isVisible = document.visibilityState !== 'hidden';
+          this.setFocusState(hasFocus && isVisible);
+        };
+        window.addEventListener('focus', updateFocusState);
+        window.addEventListener('blur', updateFocusState);
+        document.addEventListener('visibilitychange', updateFocusState);
+        updateFocusState();
+      }
       const u: User = {
         id: '',
       }
@@ -205,6 +226,10 @@ export const useChatStore = defineStore({
             // Opcode.EVENT
             const e = msg as Event;
             this.eventDispatch(e);
+          } else if (msg.op === 2) {
+            this.handlePong();
+          } else if (msg.op === 6) {
+            this.handleLatencyResult(msg?.body);
           } else if (apiMap.get(msg.echo)) {
             apiMap.get(msg.echo).resolve(msg);
             apiMap.delete(msg.echo);
@@ -214,6 +239,7 @@ export const useChatStore = defineStore({
           console.log('ws error', err);
           this.subject = null;
           this.connectState = 'disconnected';
+          this.stopPingLoop();
           this.reconnectAfter(5, () => {
             try {
               err.target?.close();
@@ -224,7 +250,10 @@ export const useChatStore = defineStore({
             }
           })
         }, // Called if at any point WebSocket API signals some kind of error.
-        complete: () => console.log('complete') // Called when connection is closed (for whatever reason).
+        complete: () => {
+          console.log('complete');
+          this.stopPingLoop();
+        } // Called when connection is closed (for whatever reason).
       });
 
       this.subject = subject;
@@ -247,19 +276,8 @@ export const useChatStore = defineStore({
       this.connectState = 'connected';
 
       chatEvent.emit('connected', undefined);
-      if (!pingLoopOn) {
-        pingLoopOn = true;
-        const user = useUserStore();
-        setInterval(async () => {
-          if (this.subject) {
-            this.subject.next({
-              op: 1, body: {
-                token: user.token,
-              }
-            });
-          }
-        }, 10000)
-      }
+      this.startPingLoop();
+      this.sendPresencePing(true);
 
       if (this.curChannel?.id) {
         await this.channelSwitchTo(this.curChannel?.id);
@@ -996,11 +1014,130 @@ export const useChatStore = defineStore({
       this.icMode = mode;
     },
 
+    startPingLoop() {
+      if (typeof window === 'undefined' || pingTimer) {
+        return;
+      }
+      pingTimer = window.setInterval(() => {
+        this.sendPresencePing();
+      }, 5000);
+      this.startLatencyProbeLoop();
+    },
+
+    stopPingLoop() {
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+      }
+      this.stopLatencyProbeLoop();
+    },
+
+    startLatencyProbeLoop() {
+      if (typeof window === 'undefined' || latencyTimer) {
+        return;
+      }
+      this.measureLatency();
+      latencyTimer = window.setInterval(() => {
+        this.measureLatency();
+      }, 10000);
+    },
+
+    stopLatencyProbeLoop() {
+      if (latencyTimer) {
+        clearInterval(latencyTimer);
+        latencyTimer = null;
+      }
+    },
+
+    measureLatency() {
+      if (!this.subject) {
+        return;
+      }
+      const now = Date.now();
+      this.subject.next({
+        op: 5,
+        body: {
+          probeSentAt: now,
+        },
+      });
+    },
+
+    handleLatencyResult(payload: any) {
+      if (!payload) {
+        return;
+      }
+      const sentAt = typeof payload?.probeSentAt === 'number' ? payload.probeSentAt : undefined;
+      if (typeof sentAt !== 'number') {
+        return;
+      }
+      const now = Date.now();
+      const rtt = now - sentAt;
+      if (rtt <= 0) {
+        return;
+      }
+      const latency = rtt / 2;
+      this.lastLatencyMs = Math.round(latency);
+      if (this.curChannel?.id) {
+        this.updatePresence(useUserStore().info.id, {
+          lastPing: Date.now(),
+          latencyMs: this.lastLatencyMs,
+          isFocused: this.isAppFocused,
+        });
+      }
+    },
+
+    setFocusState(focused: boolean) {
+      const normalized = !!focused;
+      if (this.isAppFocused === normalized) {
+        return;
+      }
+      this.isAppFocused = normalized;
+      this.sendPresencePing(true);
+    },
+
     updatePresence(userId: string, data: { lastPing: number; latencyMs: number; isFocused: boolean }) {
       this.presenceMap = {
         ...this.presenceMap,
         [userId]: data,
       };
+    },
+
+    clearPresenceMap() {
+      this.presenceMap = {};
+    },
+
+    async sendPresencePing(force = false) {
+      if (!this.subject) {
+        return;
+      }
+      const now = Date.now();
+      if (!force && this.lastPingSentAt && now - this.lastPingSentAt < 1500) {
+        return;
+      }
+      const user = useUserStore();
+      if (!user.token) {
+        return;
+      }
+      this.lastPingSentAt = now;
+      this.subject.next({
+        op: 1,
+        body: {
+          token: user.token,
+          focused: this.isAppFocused,
+          clientSentAt: now,
+        },
+      });
+    },
+
+    handlePong() {
+      if (!this.lastPingSentAt) {
+        return;
+      }
+      const latency = Date.now() - this.lastPingSentAt;
+      if (latency >= 0) {
+        this.lastLatencyMs = latency;
+      }
+      this.lastPingSentAt = null;
     },
 
     setFilterState(filters: Partial<{ icOnly: boolean; showArchived: boolean; userIds: string[] }>) {
@@ -1040,7 +1177,7 @@ export const useChatStore = defineStore({
     async getChannelPresence(channelId?: string) {
       const targetId = channelId || this.curChannel?.id;
       if (!targetId) return;
-      const resp = await api.get('api/channel/presence', {
+      const resp = await api.get('api/v1/channel-presence', {
         params: { channel_id: targetId },
       });
       return resp.data;

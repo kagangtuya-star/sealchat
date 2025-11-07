@@ -3575,6 +3575,24 @@ chatEvent.on('typing-preview', (e?: Event) => {
   });
 });
 
+chatEvent.off('channel-presence-updated', '*');
+chatEvent.on('channel-presence-updated', (e?: Event) => {
+  if (!e?.presence || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  e.presence.forEach((item) => {
+    const userId = item?.user?.id;
+    if (!userId) {
+      return;
+    }
+    chat.updatePresence(userId, {
+      lastPing: item?.lastSeen ?? Date.now(),
+      latencyMs: typeof item?.latency === 'number' ? item.latency : Number(item?.latency) || 0,
+      isFocused: !!item?.focused,
+    });
+  });
+});
+
   chatEvent.off('channel-deleted', '*');
   chatEvent.on('channel-deleted', (e) => {
     if (e) {
