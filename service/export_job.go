@@ -175,12 +175,20 @@ func canMerge(base *model.MessageModel, last time.Time, next *model.MessageModel
 }
 
 func sameSenderIdentity(a, b *model.MessageModel) bool {
-	idA := strings.TrimSpace(a.SenderIdentityID)
-	idB := strings.TrimSpace(b.SenderIdentityID)
-	if idA != "" || idB != "" {
-		return idA != "" && idA == idB
+	return senderKey(a) != "" && senderKey(a) == senderKey(b)
+}
+
+func senderKey(msg *model.MessageModel) string {
+	if msg == nil {
+		return ""
 	}
-	return strings.TrimSpace(a.UserID) == strings.TrimSpace(b.UserID)
+	if id := strings.TrimSpace(msg.SenderIdentityID); id != "" {
+		return "identity:" + id
+	}
+	if user := strings.TrimSpace(msg.UserID); user != "" {
+		return "user:" + user
+	}
+	return ""
 }
 
 func normalizeIcMode(mode string) string {
