@@ -234,6 +234,29 @@ watch(isManagingEmoji, (val) => {
   }
 });
 
+const openGalleryPanel = async () => {
+  const userId = user.info?.id;
+  if (!userId) {
+    message.warning('请先登录后再打开画廊');
+    return;
+  }
+  try {
+    gallery.loadEmojiPreference(userId);
+    await gallery.openPanel(userId);
+  } catch (error) {
+    console.warn('打开画廊失败', error);
+    message.error('打开画廊失败，请稍后重试');
+  }
+};
+
+const handleEmojiManageClick = async () => {
+  isManagingEmoji.value = !isManagingEmoji.value;
+  if (isManagingEmoji.value) {
+    emojiPopoverShow.value = false;
+    await openGalleryPanel();
+  }
+};
+
 
 const buildEmojiRemarkMap = () => {
   const allEmojis = [
@@ -3975,7 +3998,7 @@ onBeforeUnmount(() => {
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportDialogVisible = true"
         @open-identity-manager="openIdentityManager"
-        @open-gallery="() => {}"
+        @open-gallery="openGalleryPanel"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, userIds: [] })"
       />
     </transition>
@@ -4139,7 +4162,7 @@ onBeforeUnmount(() => {
                       <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button text size="small" @click="isManagingEmoji = !isManagingEmoji">
+                          <n-button text size="small" @click="handleEmojiManageClick">
                             <template #icon>
                               <n-icon :component="Settings" />
                             </template>
