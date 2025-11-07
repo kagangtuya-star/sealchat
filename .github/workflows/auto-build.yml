@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - stardust-dev
   workflow_dispatch:
 
 env:
