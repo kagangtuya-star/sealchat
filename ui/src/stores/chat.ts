@@ -1225,12 +1225,16 @@ export const useChatStore = defineStore({
       timeRange?: [number, number];
       includeOoc?: boolean;
       includeArchived?: boolean;
+      withoutTimestamp?: boolean;
+      mergeMessages?: boolean;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
         format: params.format,
         include_ooc: params.includeOoc ?? true,
         include_archived: params.includeArchived ?? false,
+        without_timestamp: params.withoutTimestamp ?? false,
+        merge_messages: params.mergeMessages ?? true,
       };
       if (params.timeRange && params.timeRange.length === 2) {
         payload.time_range = params.timeRange;

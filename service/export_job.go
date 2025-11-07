@@ -24,13 +24,15 @@ var supportedExportFormats = map[string]struct{}{
 
 // ExportJobOptions 聚合创建导出任务所需的信息。
 type ExportJobOptions struct {
-	UserID          string
-	ChannelID       string
-	Format          string
-	IncludeOOC      bool
-	IncludeArchived bool
-	StartTime       *time.Time
-	EndTime         *time.Time
+	UserID           string
+	ChannelID        string
+	Format           string
+	IncludeOOC       bool
+	IncludeArchived  bool
+	WithoutTimestamp bool
+	MergeMessages    bool
+	StartTime        *time.Time
+	EndTime          *time.Time
 }
 
 func normalizeExportFormat(format string) (string, bool) {
@@ -50,14 +52,16 @@ func CreateMessageExportJob(opts *ExportJobOptions) (*model.MessageExportJobMode
 	}
 
 	job := &model.MessageExportJobModel{
-		UserID:          opts.UserID,
-		ChannelID:       opts.ChannelID,
-		Format:          format,
-		IncludeOOC:      opts.IncludeOOC,
-		IncludeArchived: opts.IncludeArchived,
-		StartTime:       opts.StartTime,
-		EndTime:         opts.EndTime,
-		Status:          model.MessageExportStatusPending,
+		UserID:           opts.UserID,
+		ChannelID:        opts.ChannelID,
+		Format:           format,
+		IncludeOOC:       opts.IncludeOOC,
+		IncludeArchived:  opts.IncludeArchived,
+		WithoutTimestamp: opts.WithoutTimestamp,
+		MergeMessages:    opts.MergeMessages,
+		StartTime:        opts.StartTime,
+		EndTime:          opts.EndTime,
+		Status:           model.MessageExportStatusPending,
 	}
 
 	if err := model.GetDB().Create(job).Error; err != nil {
@@ -111,5 +115,86 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 	if err := query.Find(&messages).Error; err != nil {
 		return nil, err
 	}
+	if job.MergeMessages {
+		return mergeSequentialMessages(messages), nil
+	}
 	return messages, nil
+}
+
+func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageModel {
+	if len(messages) == 0 {
+		return messages
+	}
+	const mergeWindow = 60 * time.Second
+	var result []*model.MessageModel
+	var current *model.MessageModel
+	var lastTime time.Time
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		if current == nil {
+			current = cloneMessage(msg)
+			lastTime = msg.CreatedAt
+			result = append(result, current)
+			continue
+		}
+		if canMerge(current, lastTime, msg, mergeWindow) {
+			current.Content = strings.TrimRight(current.Content, " \n") + "\n" + msg.Content
+			lastTime = msg.CreatedAt
+			continue
+		}
+		current = cloneMessage(msg)
+		lastTime = msg.CreatedAt
+		result = append(result, current)
+	}
+	return result
+}
+
+func canMerge(base *model.MessageModel, last time.Time, next *model.MessageModel, window time.Duration) bool {
+	if base == nil || next == nil {
+		return false
+	}
+	if !sameSenderIdentity(base, next) {
+		return false
+	}
+	if normalizeIcMode(base.ICMode) != normalizeIcMode(next.ICMode) {
+		return false
+	}
+	if base.IsWhisper != next.IsWhisper {
+		return false
+	}
+	if base.IsArchived != next.IsArchived {
+		return false
+	}
+	diff := next.CreatedAt.Sub(last)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= window
+}
+
+func sameSenderIdentity(a, b *model.MessageModel) bool {
+	idA := strings.TrimSpace(a.SenderIdentityID)
+	idB := strings.TrimSpace(b.SenderIdentityID)
+	if idA != "" || idB != "" {
+		return idA != "" && idA == idB
+	}
+	return strings.TrimSpace(a.UserID) == strings.TrimSpace(b.UserID)
+}
+
+func normalizeIcMode(mode string) string {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "" {
+		return "ic"
+	}
+	return mode
+}
+
+func cloneMessage(msg *model.MessageModel) *model.MessageModel {
+	if msg == nil {
+		return nil
+	}
+	clone := *msg
+	return &clone
 }

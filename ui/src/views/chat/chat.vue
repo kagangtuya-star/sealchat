@@ -1251,6 +1251,8 @@ const handleExportMessages = async (params: {
   timeRange: [number, number] | null;
   includeOoc: boolean;
   includeArchived: boolean;
+  withoutTimestamp: boolean;
+  mergeMessages: boolean;
 }) => {
   if (!chat.curChannel?.id) {
     message.error('请选择需要导出的频道');
@@ -1263,6 +1265,8 @@ const handleExportMessages = async (params: {
       timeRange: params.timeRange ?? undefined,
       includeOoc: params.includeOoc,
       includeArchived: params.includeArchived,
+      withoutTimestamp: params.withoutTimestamp,
+      mergeMessages: params.mergeMessages,
     };
     const result = await chat.createExportTask(payload);
     message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);

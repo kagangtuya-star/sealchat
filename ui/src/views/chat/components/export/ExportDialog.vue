@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { nextTick, reactive, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 
 interface ExportParams {
@@ -7,6 +7,8 @@ interface ExportParams {
   timeRange: [number, number] | null
   includeOoc: boolean
   includeArchived: boolean
+  withoutTimestamp: boolean
+  mergeMessages: boolean
 }
 
 interface Props {
@@ -25,11 +27,15 @@ const emit = defineEmits<Emits>()
 const message = useMessage()
 const loading = ref(false)
 
+const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
+const isApplyingPreset = ref(false)
 const form = reactive<ExportParams>({
   format: 'txt',
   timeRange: null,
   includeOoc: true,
   includeArchived: false,
+  withoutTimestamp: false,
+  mergeMessages: true,
 })
 
 const formatOptions = [
@@ -38,6 +44,61 @@ const formatOptions = [
   { label: 'JSON (.json)', value: 'json' },
   { label: 'Word 文档 (.docx)', value: 'docx' },
 ]
+
+const timePresets = [
+  { label: '一天内', value: '1d' },
+  { label: '一周内', value: '7d' },
+  { label: '一月内', value: '30d' },
+]
+
+type PresetValue = '1d' | '7d' | '30d'
+
+const applyPresetRange = (preset: PresetValue) => {
+  isApplyingPreset.value = true
+  const end = Date.now()
+  let start = end
+  switch (preset) {
+    case '1d':
+      start = end - 24 * 60 * 60 * 1000
+      break
+    case '7d':
+      start = end - 7 * 24 * 60 * 60 * 1000
+      break
+    case '30d':
+      start = end - 30 * 24 * 60 * 60 * 1000
+      break
+  }
+  form.timeRange = [start, end]
+  timePreset.value = preset
+  void nextTick(() => {
+    isApplyingPreset.value = false
+  })
+}
+
+const handlePresetClick = (preset: PresetValue) => {
+  applyPresetRange(preset)
+}
+
+const handleClearPreset = () => {
+  form.timeRange = null
+  timePreset.value = 'none'
+}
+
+watch(
+  () => form.timeRange,
+  (newVal, oldVal) => {
+    if (isApplyingPreset.value) {
+      return
+    }
+    if (!newVal && oldVal) {
+      timePreset.value = 'none'
+      return
+    }
+    if (newVal && timePreset.value !== 'custom') {
+      timePreset.value = 'custom'
+    }
+  }
+)
 
 const handleExport = async () => {
   if (!props.channelId) {
@@ -62,6 +123,9 @@ const handleClose = () => {
   form.timeRange = null
   form.includeOoc = true
   form.includeArchived = false
+  form.withoutTimestamp = false
+  form.mergeMessages = true
+  timePreset.value = 'none'
 }
 
 const shortcuts = {
@@ -114,15 +178,32 @@ const shortcuts = {
       </n-form-item>
 
       <n-form-item label="时间范围">
-        <n-date-picker
-          v-model:value="form.timeRange"
-          type="datetimerange"
-          clearable
-          :shortcuts="shortcuts"
-          format="yyyy-MM-dd HH:mm:ss"
-          placeholder="选择时间范围，留空表示全部"
-          style="width: 100%"
-        />
+        <div class="time-range">
+          <n-date-picker
+            v-model:value="form.timeRange"
+            type="datetimerange"
+            clearable
+            :shortcuts="shortcuts"
+            format="yyyy-MM-dd HH:mm:ss"
+            placeholder="选择时间范围，留空表示全部"
+            style="flex: 1"
+          />
+          <div class="preset-group">
+            <n-button-group size="small">
+              <n-button
+                v-for="item in timePresets"
+                :key="item.value"
+                :type="timePreset === item.value ? 'primary' : 'default'"
+                @click="handlePresetClick(item.value as PresetValue)"
+              >
+                {{ item.label }}
+              </n-button>
+            </n-button-group>
+            <n-button text size="small" @click="handleClearPreset" v-if="timePreset !== 'none'">
+              清除
+            </n-button>
+          </div>
+        </div>
       </n-form-item>
 
       <n-form-item label="包含内容">
@@ -133,6 +214,27 @@ const shortcuts = {
           <n-checkbox v-model:checked="form.includeArchived">
             包含已归档消息
           </n-checkbox>
+        </n-space>
+      </n-form-item>
+
+      <n-form-item label="格式选项">
+        <n-space vertical>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.mergeMessages">
+                合并连续消息
+              </n-checkbox>
+            </template>
+            同一角色在短时间内连续发送的消息会拼成一条，仅首条显示时间。
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.withoutTimestamp">
+                不带时间戳
+              </n-checkbox>
+            </template>
+            导出的文本中移除每条消息的时间前缀，适合整理剧本或公开内容。
+          </n-tooltip>
         </n-space>
       </n-form-item>
     </n-form>
@@ -168,5 +270,19 @@ const shortcuts = {
     align-items: center;
     gap: 0.5rem;
   }
+}
+
+.time-range {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.preset-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 </style>

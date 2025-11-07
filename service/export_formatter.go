@@ -33,14 +33,15 @@ type ExportMessage struct {
 }
 
 type ExportPayload struct {
-	ChannelID   string          `json:"channel_id"`
-	ChannelName string          `json:"channel_name"`
-	GeneratedAt time.Time       `json:"generated_at"`
-	StartTime   *time.Time      `json:"start_time,omitempty"`
-	EndTime     *time.Time      `json:"end_time,omitempty"`
-	Messages    []ExportMessage `json:"messages"`
-	Meta        map[string]bool `json:"meta"`
-	Count       int             `json:"count"`
+	ChannelID        string          `json:"channel_id"`
+	ChannelName      string          `json:"channel_name"`
+	GeneratedAt      time.Time       `json:"generated_at"`
+	StartTime        *time.Time      `json:"start_time,omitempty"`
+	EndTime          *time.Time      `json:"end_time,omitempty"`
+	Messages         []ExportMessage `json:"messages"`
+	Meta             map[string]bool `json:"meta"`
+	Count            int             `json:"count"`
+	WithoutTimestamp bool            `json:"without_timestamp"`
 }
 
 var formatterRegistry = map[string]exportFormatter{
@@ -75,16 +76,19 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 	}
 
 	return &ExportPayload{
-		ChannelID:   job.ChannelID,
-		ChannelName: channelName,
-		GeneratedAt: time.Now(),
-		StartTime:   job.StartTime,
-		EndTime:     job.EndTime,
-		Messages:    exportMessages,
-		Count:       len(exportMessages),
+		ChannelID:        job.ChannelID,
+		ChannelName:      channelName,
+		GeneratedAt:      time.Now(),
+		StartTime:        job.StartTime,
+		EndTime:          job.EndTime,
+		Messages:         exportMessages,
+		Count:            len(exportMessages),
+		WithoutTimestamp: job.WithoutTimestamp,
 		Meta: map[string]bool{
-			"include_ooc":      job.IncludeOOC,
-			"include_archived": job.IncludeArchived,
+			"include_ooc":       job.IncludeOOC,
+			"include_archived":  job.IncludeArchived,
+			"merge_messages":    job.MergeMessages,
+			"without_timestamp": job.WithoutTimestamp,
 		},
 	}
 }
@@ -163,20 +167,29 @@ func (textFormatter) Build(payload *ExportPayload) ([]byte, error) {
 	)
 	sb.WriteString(header)
 	for _, msg := range payload.Messages {
-		ts := msg.CreatedAt.Format("2006-01-02 15:04:05")
+		var prefixParts []string
+		if !payload.WithoutTimestamp {
+			prefixParts = append(prefixParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
+		}
 		oocFlag := ""
 		if msg.IcMode == "ooc" {
 			oocFlag = "[OOC]"
 		}
 		if msg.IsWhisper {
-			if oocFlag == "" {
-				oocFlag = "[WHISPER]"
-			} else {
-				oocFlag += "[WHISPER]"
-			}
+			oocFlag += "[WHISPER]"
 		}
-		line := fmt.Sprintf("[%s]%s %s: %s\n", ts, oocFlag, msg.SenderName, msg.Content)
-		sb.WriteString(line)
+		if oocFlag != "" {
+			prefixParts = append(prefixParts, oocFlag)
+		}
+		var header string
+		if len(prefixParts) > 0 {
+			header = strings.Join(prefixParts, "")
+		}
+		if header != "" {
+			sb.WriteString(fmt.Sprintf("%s %s: %s\n", header, msg.SenderName, msg.Content))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s: %s\n", msg.SenderName, msg.Content))
+		}
 	}
 	return []byte(sb.String()), nil
 }
@@ -209,6 +222,7 @@ var exportHTMLTemplate = template.Must(template.New("export_html").Funcs(templat
     .message { padding: 12px 16px; margin-bottom: 8px; background: #fff; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
     .sender { font-weight: 600; color: #222; }
     .timestamp { color: #888; font-size: 0.9rem; }
+    .timestamp.hidden { visibility: hidden; height: 0; margin: 0; }
     .ooc { border-left: 3px solid #eab308; }
     .whisper { border-left: 3px solid #6366f1; }
     .content { margin-top: 4px; white-space: pre-wrap; line-height: 1.5; }
@@ -223,7 +237,7 @@ var exportHTMLTemplate = template.Must(template.New("export_html").Funcs(templat
   {{range .Messages}}
     <article class="message {{if eq .IcMode "ooc"}}ooc{{end}} {{if .IsWhisper}}whisper{{end}}">
       <div class="sender">{{.SenderName}}</div>
-      <div class="timestamp">{{formatTime .CreatedAt}}</div>
+      {{if not $.WithoutTimestamp}}<div class="timestamp">{{formatTime .CreatedAt}}</div>{{end}}
       <div class="content">{{.Content}}</div>
     </article>
   {{end}}
@@ -267,7 +281,11 @@ func buildDocxDocumentXML(payload *ExportPayload) []byte {
 	header := fmt.Sprintf("频道: %s (%s) 导出时间: %s", payload.ChannelName, payload.ChannelID, payload.GeneratedAt.Format(time.RFC3339))
 	sb.WriteString(wParagraph(header))
 	for _, msg := range payload.Messages {
-		line := fmt.Sprintf("[%s] %s: %s", msg.CreatedAt.Format("2006-01-02 15:04:05"), msg.SenderName, msg.Content)
+		timePrefix := ""
+		if !payload.WithoutTimestamp {
+			timePrefix = fmt.Sprintf("[%s] ", msg.CreatedAt.Format("2006-01-02 15:04:05"))
+		}
+		line := fmt.Sprintf("%s%s: %s", timePrefix, msg.SenderName, msg.Content)
 		sb.WriteString(wParagraph(line))
 	}
 	sb.WriteString(`<w:sectPr/>`)

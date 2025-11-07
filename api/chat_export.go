@@ -16,12 +16,14 @@ import (
 )
 
 type chatExportRequest struct {
-	ChannelID       string   `json:"channel_id"`
-	Format          string   `json:"format"`
-	TimeRange       []int64  `json:"time_range"`
-	IncludeOOC      *bool    `json:"include_ooc"`
-	IncludeArchived *bool    `json:"include_archived"`
-	Users           []string `json:"users"`
+	ChannelID        string   `json:"channel_id"`
+	Format           string   `json:"format"`
+	TimeRange        []int64  `json:"time_range"`
+	IncludeOOC       *bool    `json:"include_ooc"`
+	IncludeArchived  *bool    `json:"include_archived"`
+	WithoutTimestamp *bool    `json:"without_timestamp"`
+	MergeMessages    *bool    `json:"merge_messages"`
+	Users            []string `json:"users"`
 }
 
 type chatExportResponse struct {
@@ -83,15 +85,25 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 	if req.IncludeArchived != nil {
 		includeArchived = *req.IncludeArchived
 	}
+	withoutTimestamp := false
+	if req.WithoutTimestamp != nil {
+		withoutTimestamp = *req.WithoutTimestamp
+	}
+	mergeMessages := true
+	if req.MergeMessages != nil {
+		mergeMessages = *req.MergeMessages
+	}
 
 	job, err := service.CreateMessageExportJob(&service.ExportJobOptions{
-		UserID:          userID,
-		ChannelID:       channelID,
-		Format:          format,
-		IncludeOOC:      includeOOC,
-		IncludeArchived: includeArchived,
-		StartTime:       start,
-		EndTime:         end,
+		UserID:           userID,
+		ChannelID:        channelID,
+		Format:           format,
+		IncludeOOC:       includeOOC,
+		IncludeArchived:  includeArchived,
+		WithoutTimestamp: withoutTimestamp,
+		MergeMessages:    mergeMessages,
+		StartTime:        start,
+		EndTime:          end,
 	})
 	if err != nil {
 		return nil, err

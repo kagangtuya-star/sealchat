@@ -17,9 +17,11 @@ type MessageExportJobModel struct {
 	ChannelID string `json:"channel_id" gorm:"index;size:100"`
 	Format    string `json:"format" gorm:"size:32"`
 
-	IncludeOOC      bool   `json:"include_ooc"`
-	IncludeArchived bool   `json:"include_archived"`
-	ExtraOptions    string `json:"extra_options" gorm:"type:text"`
+	IncludeOOC       bool   `json:"include_ooc"`
+	IncludeArchived  bool   `json:"include_archived"`
+	WithoutTimestamp bool   `json:"without_timestamp"`
+	MergeMessages    bool   `json:"merge_messages"`
+	ExtraOptions     string `json:"extra_options" gorm:"type:text"`
 
 	StartTime *time.Time `json:"start_time"`
 	EndTime   *time.Time `json:"end_time"`
