@@ -176,6 +176,8 @@ dbUrl: ./data/chat.db
 domain: 127.0.0.1:3212
 # 是否压缩图片
 imageCompress: true
+# 压缩质量(1-100，越低压缩越狠)
+imageCompressQuality: 85
 # 图片上传大小限制
 imageSizeLimit: 99999999
 # 注册是否开放
