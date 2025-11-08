@@ -108,6 +108,7 @@ type Message struct {
 	ArchivedBy    string           `json:"archivedBy"`
 	ArchiveReason string           `json:"archiveReason"`
 	ClientID      string           `json:"clientId,omitempty"`
+	WhisperMeta   *WhisperMeta     `json:"whisperMeta,omitempty"`
 }
 
 type MessageIdentity struct {
@@ -122,6 +123,19 @@ type ChannelPresence struct {
 	Latency  int64 `json:"latency"`
 	Focused  bool  `json:"focused"`
 	LastSeen int64 `json:"lastSeen"`
+}
+
+type WhisperMeta struct {
+	SenderMemberID   string `json:"senderMemberId,omitempty"`
+	SenderMemberName string `json:"senderMemberName,omitempty"`
+	SenderUserID     string `json:"senderUserId,omitempty"`
+	SenderUserNick   string `json:"senderUserNick,omitempty"`
+	SenderUserName   string `json:"senderUserName,omitempty"`
+	TargetMemberID   string `json:"targetMemberId,omitempty"`
+	TargetMemberName string `json:"targetMemberName,omitempty"`
+	TargetUserID     string `json:"targetUserId,omitempty"`
+	TargetUserNick   string `json:"targetUserNick,omitempty"`
+	TargetUserName   string `json:"targetUserName,omitempty"`
 }
 
 type MessageReorder struct {

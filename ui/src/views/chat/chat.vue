@@ -3,7 +3,7 @@ import ChatItem from './components/chat-item.vue';
 import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
-import type { Event, Message, User } from '@satorijs/protocol'
+import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, GalleryItem } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download } from '@vicons/tabler'
@@ -1409,6 +1409,56 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
     msg.whisperTo = msg.whisper_to;
   }
+  if (msg.whisperMeta === undefined && msg.whisper_meta !== undefined) {
+    msg.whisperMeta = msg.whisper_meta;
+  }
+  const mergeLegacyWhisperMeta = () => {
+    const legacyPairs: Array<[keyof WhisperMeta, any]> = [
+      ['senderMemberId', msg.whisper_sender_member_id],
+      ['senderMemberName', msg.whisper_sender_member_name],
+      ['senderUserNick', msg.whisper_sender_user_nick],
+      ['senderUserName', msg.whisper_sender_user_name],
+      ['targetMemberId', msg.whisper_target_member_id],
+      ['targetMemberName', msg.whisper_target_member_name],
+      ['targetUserNick', msg.whisper_target_user_nick],
+      ['targetUserName', msg.whisper_target_user_name],
+    ];
+    const extracted: Partial<WhisperMeta> = {};
+    let hasValue = false;
+    legacyPairs.forEach(([key, value]) => {
+      if (value === null || value === undefined) {
+        return;
+      }
+      const text = typeof value === 'string' ? value.trim() : value;
+      if (text === '' || text === false) {
+        return;
+      }
+      (extracted as any)[key] = value;
+      hasValue = true;
+    });
+    if (!hasValue) {
+      return;
+    }
+    const meta = { ...(msg.whisperMeta || {}) };
+    Object.entries(extracted).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return;
+      }
+      if (!meta[key]) {
+        meta[key] = value;
+      }
+    });
+    if (!meta.targetUserId && msg.whisper_to) {
+      meta.targetUserId = msg.whisper_to;
+    }
+    if (!meta.senderUserId && msg.user?.id) {
+      meta.senderUserId = msg.user.id;
+    }
+    if (Object.keys(meta).length > 0) {
+      msg.whisperMeta = meta;
+    }
+  };
+  mergeLegacyWhisperMeta();
   if (msg.isWhisper === undefined && msg.is_whisper !== undefined) {
     msg.isWhisper = Boolean(msg.is_whisper);
   } else if (msg.isWhisper !== undefined) {

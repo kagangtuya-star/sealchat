@@ -100,7 +100,7 @@ func hydrateMessagesForBroadcast(messages []*model.MessageModel) {
 			return
 		}
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, whisper_to, channel_id")
+	}, "id, content, created_at, user_id, is_revoked, whisper_to, channel_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	whisperIDSet := map[string]struct{}{}
 	for _, item := range messages {
@@ -126,14 +126,96 @@ func hydrateMessagesForBroadcast(messages []*model.MessageModel) {
 	for _, u := range whisperUsers {
 		id2User[u.ID] = u
 	}
+	channelBuckets := map[string]map[string]*model.UserModel{}
 	for _, item := range messages {
 		if user, ok := id2User[item.WhisperTo]; ok {
 			item.WhisperTarget = user
+			ch := item.ChannelID
+			if ch != "" {
+				if channelBuckets[ch] == nil {
+					channelBuckets[ch] = map[string]*model.UserModel{}
+				}
+				channelBuckets[ch][user.ID] = user
+			}
 		}
 		if item.Quote != nil {
 			if user, ok := id2User[item.Quote.WhisperTo]; ok {
 				item.Quote.WhisperTarget = user
+				ch := item.Quote.ChannelID
+				if ch == "" {
+					ch = item.ChannelID
+				}
+				if ch != "" {
+					if channelBuckets[ch] == nil {
+						channelBuckets[ch] = map[string]*model.UserModel{}
+					}
+					channelBuckets[ch][user.ID] = user
+				}
 			}
+		}
+	}
+	for channelID, users := range channelBuckets {
+		applyChannelNicknamesForUsers(channelID, users)
+	}
+	for _, item := range messages {
+		item.EnsureWhisperMeta()
+		if item.Quote != nil {
+			item.Quote.EnsureWhisperMeta()
+		}
+	}
+}
+
+func setUserNickFromMember(user *model.UserModel, member *model.MemberModel) {
+	if user == nil || member == nil {
+		return
+	}
+	nick := strings.TrimSpace(member.Nickname)
+	if nick == "" {
+		return
+	}
+	user.Nickname = nick
+}
+
+func loadWhisperTargetForChannel(channelID, userID string) *model.UserModel {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	user := model.UserGet(userID)
+	if user == nil {
+		return nil
+	}
+	if len(channelID) >= 30 {
+		return user
+	}
+	member, _ := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false)
+	setUserNickFromMember(user, member)
+	return user
+}
+
+func applyChannelNicknamesForUsers(channelID string, userMap map[string]*model.UserModel) {
+	if len(userMap) == 0 || strings.TrimSpace(channelID) == "" {
+		return
+	}
+	if len(channelID) >= 30 {
+		return
+	}
+	var userIDs []string
+	for id := range userMap {
+		if strings.TrimSpace(id) != "" {
+			userIDs = append(userIDs, id)
+		}
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+	var members []*model.MemberModel
+	model.GetDB().Where("channel_id = ? AND user_id IN ?", channelID, userIDs).Find(&members)
+	for _, member := range members {
+		if member == nil || strings.TrimSpace(member.UserID) == "" {
+			continue
+		}
+		if user, ok := userMap[member.UserID]; ok {
+			setUserNickFromMember(user, member)
 		}
 	}
 }
@@ -522,15 +604,17 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	channelData := channel.ToProtocolType()
 
 	var whisperUser *model.UserModel
+	var whisperMember *model.MemberModel
 	if data.WhisperTo != "" {
 		if data.WhisperTo == ctx.User.ID {
 			return nil, nil
 		}
 		if len(channelId) < 30 {
-			targetMember, _ := model.MemberGetByUserIDAndChannelIDBase(data.WhisperTo, channelId, "", false)
-			if targetMember == nil {
+			member, _ := model.MemberGetByUserIDAndChannelIDBase(data.WhisperTo, channelId, "", false)
+			if member == nil {
 				return nil, nil
 			}
+			whisperMember = member
 		} else {
 			if data.WhisperTo != privateOtherUser {
 				return nil, nil
@@ -540,6 +624,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		if whisperUser == nil {
 			return nil, nil
 		}
+		setUserNickFromMember(whisperUser, whisperMember)
 	}
 
 	var quote model.MessageModel
@@ -553,7 +638,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			return nil, nil
 		}
 		if quote.WhisperTo != "" {
-			quote.WhisperTarget = model.UserGet(quote.WhisperTo)
+			quote.WhisperTarget = loadWhisperTargetForChannel(channelId, quote.WhisperTo)
 		}
 	}
 
@@ -584,6 +669,18 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	if whisperUser != nil {
 		m.WhisperTarget = whisperUser
+		m.WhisperSenderUserNick = ctx.User.Nickname
+		m.WhisperSenderUserName = ctx.User.Username
+		if member != nil {
+			m.WhisperSenderMemberID = member.ID
+			m.WhisperSenderMemberName = m.SenderMemberName
+		}
+		m.WhisperTargetUserNick = whisperUser.Nickname
+		m.WhisperTargetUserName = whisperUser.Username
+		if whisperMember != nil {
+			m.WhisperTargetMemberID = whisperMember.ID
+			m.WhisperTargetMemberName = whisperMember.Nickname
+		}
 	}
 	rows := db.Create(&m).RowsAffected
 
@@ -831,7 +928,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked")
+	}, "id, content, created_at, user_id, is_revoked, whisper_to, channel_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
 
@@ -876,6 +973,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		for _, u := range whisperUsers {
 			id2User[u.ID] = u
 		}
+		applyChannelNicknamesForUsers(data.ChannelID, id2User)
 		for _, i := range items {
 			if user, ok := id2User[i.WhisperTo]; ok {
 				i.WhisperTarget = user
@@ -896,6 +994,10 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		if i.Quote != nil && i.Quote.IsWhisper && i.Quote.UserID != ctx.User.ID && i.Quote.WhisperTo != ctx.User.ID {
 			i.Quote.Content = ""
 			i.Quote.WhisperTarget = nil
+		}
+		i.EnsureWhisperMeta()
+		if i.Quote != nil {
+			i.Quote.EnsureWhisperMeta()
 		}
 	}
 
@@ -949,12 +1051,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			return db.Select("id, nickname, channel_id, user_id")
 		}).Where("id = ?", msg.QuoteID).Limit(1).Find(&quote)
 		if quote.WhisperTo != "" {
-			quote.WhisperTarget = model.UserGet(quote.WhisperTo)
+			quote.WhisperTarget = loadWhisperTargetForChannel(data.ChannelID, quote.WhisperTo)
 		}
 	}
 
 	if msg.WhisperTo != "" {
-		msg.WhisperTarget = model.UserGet(msg.WhisperTo)
+		msg.WhisperTarget = loadWhisperTargetForChannel(data.ChannelID, msg.WhisperTo)
 	}
 
 	buildMessage := func() *protocol.Message {
@@ -1136,7 +1238,7 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 	msg.DisplayOrder = newOrder
 
 	if msg.WhisperTo != "" && msg.WhisperTarget == nil {
-		msg.WhisperTarget = model.UserGet(msg.WhisperTo)
+		msg.WhisperTarget = loadWhisperTargetForChannel(data.ChannelID, msg.WhisperTo)
 	}
 
 	channelData := channel.ToProtocolType()

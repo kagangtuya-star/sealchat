@@ -169,8 +169,21 @@ const timeText2 = ref(timeFormat2(props.item?.createdAt));
 const editedTimeText = ref(props.item?.isEdited ? timeFormat(props.item?.updatedAt) : '');
 const editedTimeText2 = ref(props.item?.isEdited ? timeFormat2(props.item?.updatedAt) : '');
 
-const getMemberDisplayName = (item: any) => item?.identity?.displayName || item?.sender_member_name || item?.member?.nick || item?.user?.nick || item?.user?.name || '未知成员';
-const getTargetDisplayName = (item: any) => item?.whisperTo?.nick || item?.whisperTo?.name || '未知成员';
+const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
+  || item?.identity?.displayName
+  || item?.sender_member_name
+  || item?.member?.nick
+  || item?.user?.nick
+  || item?.user?.name
+  || item?.whisperMeta?.senderUserNick
+  || item?.whisperMeta?.senderUserName
+  || '未知成员';
+const getTargetDisplayName = (item: any) => item?.whisperMeta?.targetMemberName
+  || item?.whisperTo?.nick
+  || item?.whisperTo?.name
+  || item?.whisperMeta?.targetUserNick
+  || item?.whisperMeta?.targetUserName
+  || '未知成员';
 
 const buildWhisperLabel = (item?: any) => {
   if (!item?.isWhisper) return '';
@@ -178,13 +191,15 @@ const buildWhisperLabel = (item?: any) => {
   const targetName = getTargetDisplayName(item);
   const senderLabel = `@${senderName}`;
   const targetLabel = `@${targetName}`;
-  if (item?.user?.id === user.info.id) {
+  const senderUserId = item?.user?.id || item?.whisperMeta?.senderUserId;
+  const targetUserId = item?.whisperTo?.id || item?.whisperMeta?.targetUserId;
+  if (senderUserId === user.info.id) {
     return t('whisper.sendTo', { target: targetLabel });
   }
-  if (item?.whisperTo?.id === user.info.id) {
+  if (targetUserId === user.info.id) {
     return t('whisper.from', { sender: senderLabel });
   }
-  if (item?.whisperTo?.nick || item?.whisperTo?.name) {
+  if (targetName && targetName !== '未知成员') {
     return t('whisper.sendTo', { target: targetLabel });
   }
   return t('whisper.generic');
@@ -517,15 +532,15 @@ watch(() => props.item?.updatedAt, () => {
       }
 
       >.content.whisper-content {
-    background: linear-gradient(135deg, #1f2937 0%, #312e81 100%);
-    color: #f4f4ff;
-      border: 1px solid rgba(129, 140, 248, 0.4);
-      box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.25);
-    }
+        background: #eef2ff;
+        color: #1f2937;
+        border: 1px solid rgba(99, 102, 241, 0.35);
+        box-shadow: 0 6px 18px rgba(79, 70, 229, 0.08);
+      }
 
-    >.content.whisper-content .text-gray-500 {
-      color: #e0e7ff;
-    }
+      >.content.whisper-content .text-gray-500 {
+        color: #4c1d95;
+      }
 
   }
 
@@ -763,45 +778,48 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .whisper-label {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: #1f2937;
-  background: rgba(67, 56, 202, 0.08);
-  border-radius: 9999px;
-  padding: 0.12rem 0.65rem;
-  margin-bottom: 0.4rem;
+  color: #4c1d95;
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 0.65rem;
+  padding: 0.25rem 0.65rem;
+  margin-bottom: 0.55rem;
+  white-space: pre-line;
 }
 
 .whisper-label svg {
   color: inherit;
+  margin-right: 0.35rem;
 }
 
 .whisper-label--quote {
-  font-size: 0.7rem;
-  color: #4338ca;
+  font-size: 0.72rem;
+  color: #5b21b6;
   margin-bottom: 0.25rem;
 }
 
 .whisper-content .whisper-label,
 .whisper-content .whisper-label--quote {
-  color: #f4f4ff;
-  background: rgba(129, 140, 248, 0.22);
+  background: rgba(99, 102, 241, 0.12);
+  color: #4c1d95;
 }
 
 .whisper-content .whisper-label--quote {
-  color: #d6bcfa;
+  color: #6d28d9;
 }
 
 .whisper-content .whisper-label svg {
-  color: #ede9fe;
+  color: #4c1d95;
 }
 
 .whisper-content .text-gray-400 {
-  color: #e0e7ff;
+  color: #5b21b6;
 }
 
 /* Tone 样式 */

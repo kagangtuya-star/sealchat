@@ -23,6 +23,15 @@ type MessageModel struct {
 	WhisperTo    string  `json:"whisper_to" gorm:"size:100"`
 	IsEdited     bool    `json:"is_edited" gorm:"default:false"`
 	EditCount    int     `json:"edit_count" gorm:"default:0"`
+	// Whisper 元数据持久化
+	WhisperSenderMemberID   string `json:"whisper_sender_member_id" gorm:"size:100"`
+	WhisperSenderMemberName string `json:"whisper_sender_member_name"`
+	WhisperSenderUserName   string `json:"whisper_sender_user_name"`
+	WhisperSenderUserNick   string `json:"whisper_sender_user_nick"`
+	WhisperTargetMemberID   string `json:"whisper_target_member_id" gorm:"size:100"`
+	WhisperTargetMemberName string `json:"whisper_target_member_name"`
+	WhisperTargetUserName   string `json:"whisper_target_user_name"`
+	WhisperTargetUserNick   string `json:"whisper_target_user_nick"`
 
 	ICMode        string     `json:"ic_mode" gorm:"size:8;default:'ic';index:idx_msg_ic_archive"`
 	IsArchived    bool       `json:"is_archived" gorm:"default:false;index:idx_msg_ic_archive"`
@@ -40,7 +49,8 @@ type MessageModel struct {
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
 	Quote  *MessageModel `json:"quote" gorm:"-"` // 嵌套 Message 结构体
 	// WhisperTarget 为前端展示提供冗余
-	WhisperTarget *UserModel `json:"whisper_target" gorm:"-"`
+	WhisperTarget *UserModel            `json:"whisper_target" gorm:"-"`
+	WhisperMeta   *protocol.WhisperMeta `json:"whisper_meta,omitempty" gorm:"-"`
 }
 
 func (*MessageModel) TableName() string {
@@ -90,7 +100,71 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			AvatarAttachment: m.SenderIdentityAvatarID,
 		}
 	}
+	if meta := m.buildWhisperMeta(); meta != nil {
+		msg.WhisperMeta = meta
+	}
 	return msg
+}
+
+func (m *MessageModel) buildWhisperMeta() *protocol.WhisperMeta {
+	if !m.IsWhisper {
+		return nil
+	}
+	meta := &protocol.WhisperMeta{
+		SenderMemberID:   m.WhisperSenderMemberID,
+		SenderMemberName: m.WhisperSenderMemberName,
+		SenderUserID:     m.UserID,
+		SenderUserNick:   m.WhisperSenderUserNick,
+		SenderUserName:   m.WhisperSenderUserName,
+		TargetMemberID:   m.WhisperTargetMemberID,
+		TargetMemberName: m.WhisperTargetMemberName,
+		TargetUserID:     m.WhisperTo,
+		TargetUserNick:   m.WhisperTargetUserNick,
+		TargetUserName:   m.WhisperTargetUserName,
+	}
+	if meta.SenderMemberID == "" {
+		meta.SenderMemberID = m.MemberID
+	}
+	if meta.SenderMemberName == "" {
+		meta.SenderMemberName = m.SenderMemberName
+	}
+	if meta.SenderUserNick == "" {
+		if m.User != nil && m.User.Nickname != "" {
+			meta.SenderUserNick = m.User.Nickname
+		} else {
+			meta.SenderUserNick = m.WhisperSenderUserNick
+		}
+	}
+	if meta.SenderUserName == "" && m.User != nil {
+		meta.SenderUserName = m.User.Username
+	}
+	if meta.TargetMemberName == "" && m.WhisperTarget != nil {
+		meta.TargetMemberName = m.WhisperTarget.Nickname
+	}
+	if meta.TargetUserNick == "" && m.WhisperTarget != nil {
+		meta.TargetUserNick = m.WhisperTarget.Nickname
+	}
+	if meta.TargetUserName == "" && m.WhisperTarget != nil {
+		meta.TargetUserName = m.WhisperTarget.Username
+	}
+	// 如果目标 meta 仍全部为空，并且没有 WhisperTo，视为无效
+	if meta.TargetUserID == "" {
+		meta.TargetUserID = m.WhisperTo
+	}
+	if meta.SenderUserID == "" && m.UserID != "" {
+		meta.SenderUserID = m.UserID
+	}
+	return meta
+}
+
+func (m *MessageModel) EnsureWhisperMeta() {
+	if !m.IsWhisper {
+		m.WhisperMeta = nil
+		return
+	}
+	if m.WhisperMeta == nil {
+		m.WhisperMeta = m.buildWhisperMeta()
+	}
 }
 
 func BackfillMessageDisplayOrder() error {

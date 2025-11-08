@@ -119,6 +119,12 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 	if msg.WhisperTarget != nil {
 		addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
 	}
+	if strings.TrimSpace(msg.WhisperTargetMemberName) != "" {
+		addName(msg.WhisperTargetMemberName)
+	}
+	if strings.TrimSpace(msg.WhisperTargetUserNick) != "" && len(targets) == 0 {
+		addName(msg.WhisperTargetUserNick)
+	}
 	for _, id := range parseWhisperIDs(msg.WhisperTo) {
 		if resolver != nil {
 			if name := resolver.resolveIdentityName(id); name != "" {

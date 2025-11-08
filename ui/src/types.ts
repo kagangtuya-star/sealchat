@@ -1,5 +1,24 @@
 import type { User, Message, Guild, GuildMember, Opcode, GatewayPayloadStructure, Channel } from '@satorijs/protocol'
 
+export interface WhisperMeta {
+  senderMemberId?: string;
+  senderMemberName?: string;
+  senderUserId?: string;
+  senderUserNick?: string;
+  senderUserName?: string;
+  targetMemberId?: string;
+  targetMemberName?: string;
+  targetUserId?: string;
+  targetUserNick?: string;
+  targetUserName?: string;
+}
+
+declare module '@satorijs/protocol' {
+  interface Message {
+    whisperMeta?: WhisperMeta;
+  }
+}
+
 export interface SatoriMessage {
   id?: string;
   channel?: Channel;
