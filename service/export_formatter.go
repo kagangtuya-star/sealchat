@@ -21,15 +21,16 @@ type exportFormatter interface {
 }
 
 type ExportMessage struct {
-	ID          string    `json:"id"`
-	SenderID    string    `json:"sender_id"`
-	SenderName  string    `json:"sender_name"`
-	SenderColor string    `json:"sender_color"`
-	IcMode      string    `json:"ic_mode"`
-	IsWhisper   bool      `json:"is_whisper"`
-	IsArchived  bool      `json:"is_archived"`
-	CreatedAt   time.Time `json:"created_at"`
-	Content     string    `json:"content"`
+	ID             string    `json:"id"`
+	SenderID       string    `json:"sender_id"`
+	SenderName     string    `json:"sender_name"`
+	SenderColor    string    `json:"sender_color"`
+	IcMode         string    `json:"ic_mode"`
+	IsWhisper      bool      `json:"is_whisper"`
+	IsArchived     bool      `json:"is_archived"`
+	CreatedAt      time.Time `json:"created_at"`
+	Content        string    `json:"content"`
+	WhisperTargets []string  `json:"whisper_targets"`
 }
 
 type ExportPayload struct {
@@ -63,15 +64,16 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			continue
 		}
 		exportMessages = append(exportMessages, ExportMessage{
-			ID:          msg.ID,
-			SenderID:    msg.UserID,
-			SenderName:  resolveSenderName(msg),
-			SenderColor: msg.SenderIdentityColor,
-			IcMode:      fallbackIcMode(msg.ICMode),
-			IsWhisper:   msg.IsWhisper,
-			IsArchived:  msg.IsArchived,
-			CreatedAt:   msg.CreatedAt,
-			Content:     msg.Content,
+			ID:             msg.ID,
+			SenderID:       msg.UserID,
+			SenderName:     resolveSenderName(msg),
+			SenderColor:    msg.SenderIdentityColor,
+			IcMode:         fallbackIcMode(msg.ICMode),
+			IsWhisper:      msg.IsWhisper,
+			IsArchived:     msg.IsArchived,
+			CreatedAt:      msg.CreatedAt,
+			Content:        msg.Content,
+			WhisperTargets: extractWhisperTargets(msg),
 		})
 	}
 
@@ -91,6 +93,51 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			"without_timestamp": job.WithoutTimestamp,
 		},
 	}
+}
+
+func extractWhisperTargets(msg *model.MessageModel) []string {
+	if msg == nil || !msg.IsWhisper {
+		return nil
+	}
+	var targets []string
+	seen := map[string]struct{}{}
+	addName := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		targets = append(targets, name)
+	}
+	if msg.WhisperTarget != nil {
+		addName(resolveUserDisplayName(msg.WhisperTarget))
+	}
+	for _, id := range parseWhisperIDs(msg.WhisperTo) {
+		if user := model.UserGet(id); user != nil {
+			addName(resolveUserDisplayName(user))
+		} else {
+			addName(id)
+		}
+	}
+	return targets
+}
+
+func parseWhisperIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	var ids []string
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	return ids
 }
 
 func resolveSenderName(msg *model.MessageModel) string {
@@ -118,6 +165,19 @@ func resolveSenderName(msg *model.MessageModel) string {
 		return msg.UserID
 	}
 	return "匿名"
+}
+
+func resolveUserDisplayName(u *model.UserModel) string {
+	if u == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(u.Nickname); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(u.Username); v != "" {
+		return v
+	}
+	return strings.TrimSpace(u.ID)
 }
 
 func fallbackIcMode(value string) string {
@@ -171,28 +231,47 @@ func (textFormatter) Build(payload *ExportPayload) ([]byte, error) {
 		if !payload.WithoutTimestamp {
 			prefixParts = append(prefixParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
 		}
-		oocFlag := ""
-		if msg.IcMode == "ooc" {
-			oocFlag = "[OOC]"
-		}
+		var whisperLabel string
 		if msg.IsWhisper {
-			oocFlag += "[WHISPER]"
-		}
-		if oocFlag != "" {
-			prefixParts = append(prefixParts, oocFlag)
+			whisperLabel = formatWhisperTargets(msg.WhisperTargets)
 		}
 		var header string
 		if len(prefixParts) > 0 {
-			header = strings.Join(prefixParts, "")
+			header = strings.Join(prefixParts, " ")
 		}
 		namePart := fmt.Sprintf("<%s>", msg.SenderName)
+		content := wrapOOCContent(msg.IcMode, msg.Content)
+		parts := []string{}
 		if header != "" {
-			sb.WriteString(fmt.Sprintf("%s %s %s\n", header, namePart, msg.Content))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s %s\n", namePart, msg.Content))
+			parts = append(parts, header)
 		}
+		parts = append(parts, namePart)
+		if whisperLabel != "" {
+			parts = append(parts, whisperLabel)
+		}
+		parts = append(parts, content)
+		sb.WriteString(strings.Join(parts, " ") + "\n")
 	}
 	return []byte(sb.String()), nil
+}
+
+func wrapOOCContent(icMode string, content string) string {
+	if strings.EqualFold(strings.TrimSpace(icMode), "ooc") {
+		trimmed := strings.TrimSpace(content)
+		if (strings.HasPrefix(trimmed, "（") && strings.HasSuffix(trimmed, "）")) ||
+			(strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")")) {
+			return content
+		}
+		return fmt.Sprintf("（%s）", content)
+	}
+	return content
+}
+
+func formatWhisperTargets(targets []string) string {
+	if len(targets) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[对%s]", strings.Join(targets, "、"))
 }
 
 type htmlFormatter struct{}

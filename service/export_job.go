@@ -129,36 +129,48 @@ func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageMod
 	var result []*model.MessageModel
 	var current *model.MessageModel
 	var lastTime time.Time
+	var currentIcMode string
 	for _, msg := range messages {
 		if msg == nil {
 			continue
 		}
+		formatted := formatContentForMerge(msg)
 		if current == nil {
 			current = cloneMessage(msg)
+			current.Content = formatted
 			lastTime = msg.CreatedAt
+			currentIcMode = normalizeIcMode(msg.ICMode)
 			result = append(result, current)
 			continue
 		}
-		if canMerge(current, lastTime, msg, mergeWindow) {
-			current.Content = strings.TrimRight(current.Content, " \n") + "\n" + msg.Content
+		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow) {
+			nextContent := formatted
+			trimmed := strings.TrimRight(current.Content, " \n")
+			if trimmed == "" {
+				current.Content = nextContent
+			} else {
+				current.Content = trimmed + "\n" + nextContent
+			}
 			lastTime = msg.CreatedAt
 			continue
 		}
 		current = cloneMessage(msg)
+		current.Content = formatted
 		lastTime = msg.CreatedAt
+		currentIcMode = normalizeIcMode(msg.ICMode)
 		result = append(result, current)
 	}
 	return result
 }
 
-func canMerge(base *model.MessageModel, last time.Time, next *model.MessageModel, window time.Duration) bool {
+func canMerge(base *model.MessageModel, currentIcMode string, last time.Time, next *model.MessageModel, window time.Duration) bool {
 	if base == nil || next == nil {
 		return false
 	}
 	if !sameSenderIdentity(base, next) {
 		return false
 	}
-	if normalizeIcMode(base.ICMode) != normalizeIcMode(next.ICMode) {
+	if currentIcMode != normalizeIcMode(next.ICMode) {
 		return false
 	}
 	if base.IsWhisper != next.IsWhisper {
@@ -205,4 +217,26 @@ func cloneMessage(msg *model.MessageModel) *model.MessageModel {
 	}
 	clone := *msg
 	return &clone
+}
+
+func formatContentForMerge(msg *model.MessageModel) string {
+	if msg == nil {
+		return ""
+	}
+	if strings.EqualFold(normalizeIcMode(msg.ICMode), "ooc") {
+		return ensureOOCWrapped(msg.Content)
+	}
+	return msg.Content
+}
+
+func ensureOOCWrapped(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return "（）"
+	}
+	if (strings.HasPrefix(trimmed, "（") && strings.HasSuffix(trimmed, "）")) ||
+		(strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")")) {
+		return trimmed
+	}
+	return fmt.Sprintf("（%s）", trimmed)
 }
