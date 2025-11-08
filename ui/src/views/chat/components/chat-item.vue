@@ -292,10 +292,14 @@ onMounted(() => {
   stopMessageLongPress = onLongPress(
     messageContentRef,
     (event) => {
-      event.preventDefault?.();
+      const isTouchEvent =
+        ('touches' in event) ||
+        ('pointerType' in event && event.pointerType === 'touch');
+      if (isTouchEvent) {
+        event.preventDefault?.();
+      }
       onMessageLongPress(event, props.item);
-    },
-    { modifiers: { prevent: true } }
+    }
   );
 
   setInterval(() => {
