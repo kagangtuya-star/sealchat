@@ -2165,6 +2165,7 @@ const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
 const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) => item.mode === 'typing'));
 let lastTypingChannelId = '';
+let lastTypingWhisperTargetId: string | null = null;
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
   const shouldStick = visibleRows.value.length === rows.value.length && isNearBottom();
@@ -2186,41 +2187,61 @@ const resetTypingPreview = () => {
   typingPreviewList.value = [];
 };
 
-const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string, channelId: string) => {
-  chat.messageTyping(state, content, channelId);
+const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.id || null;
+
+const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string, channelId: string, whisperTo?: string | null) => {
+  const targetId = whisperTo ?? resolveCurrentWhisperTargetId();
+  const extra = targetId ? { whisperTo: targetId } : undefined;
+  lastTypingWhisperTargetId = targetId ?? null;
+  chat.messageTyping(state, content, channelId, extra);
 }, 400, { leading: true, trailing: true });
 
 const stopTypingPreviewNow = () => {
   sendTypingUpdate.cancel();
   if (typingPreviewActive.value && lastTypingChannelId) {
-    chat.messageTyping('silent', '', lastTypingChannelId);
+    const extra = lastTypingWhisperTargetId ? { whisperTo: lastTypingWhisperTargetId } : undefined;
+    chat.messageTyping('silent', '', lastTypingChannelId, extra);
   }
   typingPreviewActive.value = false;
   lastTypingChannelId = '';
+  lastTypingWhisperTargetId = null;
 };
 
 const editingPreviewActive = ref(false);
 let lastEditingChannelId = '';
 let lastEditingMessageId = '';
 
+let lastEditingWhisperTargetId: string | null = null;
+
 const sendEditingPreview = throttle((channelId: string, messageId: string, content: string) => {
   if (typingPreviewMode.value !== 'content') {
     return;
   }
-  chat.messageTyping('content', content, channelId, { mode: 'editing', messageId });
+  const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
+  const extra: Record<string, any> = { mode: 'editing', messageId };
+  if (whisperTargetId) {
+    extra.whisperTo = whisperTargetId;
+  }
+  chat.messageTyping('content', content, channelId, extra);
   editingPreviewActive.value = true;
   lastEditingChannelId = channelId;
   lastEditingMessageId = messageId;
+  lastEditingWhisperTargetId = whisperTargetId ?? null;
 }, 400, { leading: true, trailing: true });
 
 const stopEditingPreviewNow = () => {
   sendEditingPreview.cancel();
   if (editingPreviewActive.value && lastEditingChannelId && lastEditingMessageId) {
-    chat.messageTyping('silent', '', lastEditingChannelId, { mode: 'editing', messageId: lastEditingMessageId });
+    const extra: Record<string, any> = { mode: 'editing', messageId: lastEditingMessageId };
+    if (lastEditingWhisperTargetId) {
+      extra.whisperTo = lastEditingWhisperTargetId;
+    }
+    chat.messageTyping('silent', '', lastEditingChannelId, extra);
   }
   editingPreviewActive.value = false;
   lastEditingChannelId = '';
   lastEditingMessageId = '';
+  lastEditingWhisperTargetId = null;
 };
 
 const convertMessageContentToDraft = (content?: string) => {
@@ -2261,6 +2282,11 @@ const emitTypingPreview = () => {
   const channelId = chat.curChannel?.id;
   if (!channelId) return;
 
+  if (isEditing.value) {
+    emitEditingPreview();
+    return;
+  }
+
   if (typingPreviewMode.value === 'silent') {
     stopTypingPreviewNow();
     return;
@@ -2292,7 +2318,7 @@ const emitTypingPreview = () => {
 
   const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
   const content = typingPreviewMode.value === 'content' ? truncated : '';
-  sendTypingUpdate(typingPreviewMode.value, content, channelId);
+  sendTypingUpdate(typingPreviewMode.value, content, channelId, resolveCurrentWhisperTargetId());
 };
 
 const emitEditingPreview = () => {
@@ -2753,6 +2779,35 @@ const detectMessageContentMode = (content?: string): 'plain' | 'rich' => {
   return 'plain';
 };
 
+const resolveMessageWhisperTargetId = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const metaId = msg?.whisperMeta?.targetUserId;
+  if (metaId) {
+    return metaId;
+  }
+  const camel = msg?.whisperTo;
+  if (typeof camel === 'string') {
+    return camel;
+  }
+  if (camel && typeof camel === 'object' && camel.id) {
+    return camel.id;
+  }
+  const snake = msg?.whisper_to;
+  if (typeof snake === 'string') {
+    return snake;
+  }
+  if (snake && typeof snake === 'object' && snake.id) {
+    return snake.id;
+  }
+  const target = msg?.whisper_target;
+  if (target && typeof target === 'object' && target.id) {
+    return target.id;
+  }
+  return null;
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
@@ -2766,12 +2821,15 @@ const beginEdit = (target?: Message) => {
   chat.curReplyTo = null;
   chat.clearWhisperTarget();
   const detectedMode = detectMessageContentMode(target.content);
+  const whisperTargetId = resolveMessageWhisperTargetId(target);
   chat.startEditingMessage({
     messageId: target.id,
     channelId: chat.curChannel.id,
     originalContent: target.content || '',
     draft: target.content || '',
     mode: detectedMode,
+    isWhisper: Boolean(target.isWhisper),
+    whisperTargetId,
   });
   inputMode.value = detectedMode;
 };
@@ -3546,11 +3604,16 @@ watch(canOpenWhisperPanel, (canOpen) => {
   }
 });
 
-watch(() => chat.whisperTarget, (target) => {
-  if (target) {
+watch(() => chat.whisperTarget?.id, (targetId, prevId) => {
+  if (chat.whisperTarget && targetId) {
     closeWhisperPanel();
     ensureInputFocus();
   }
+  if (targetId === prevId) {
+    return;
+  }
+  stopTypingPreviewNow();
+  emitTypingPreview();
 });
 
 watch(typingPreviewMode, (mode) => {
@@ -3566,7 +3629,10 @@ watch(typingPreviewMode, (mode) => {
       const truncated = raw.length > 500 ? raw.slice(0, 500) : raw;
       sendTypingUpdate.cancel();
       const content = mode === 'content' ? truncated : '';
-      chat.messageTyping(mode, content, lastTypingChannelId);
+      const whisperId = resolveCurrentWhisperTargetId();
+      const extra = whisperId ? { whisperTo: whisperId } : undefined;
+      lastTypingWhisperTargetId = whisperId ?? null;
+      chat.messageTyping(mode, content, lastTypingChannelId, extra);
     } else {
       stopTypingPreviewNow();
     }

@@ -50,6 +50,35 @@ const detectContentMode = (content?: string): 'plain' | 'rich' => {
   return containsRich && !onlyImagesOrText ? 'rich' : 'plain';
 };
 
+const resolveWhisperTargetId = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const metaId = msg?.whisperMeta?.targetUserId;
+  if (metaId) {
+    return metaId;
+  }
+  const camel = msg?.whisperTo;
+  if (typeof camel === 'string') {
+    return camel;
+  }
+  if (camel && typeof camel === 'object' && camel.id) {
+    return camel.id;
+  }
+  const snake = msg?.whisper_to;
+  if (typeof snake === 'string') {
+    return snake;
+  }
+  if (snake && typeof snake === 'object' && snake.id) {
+    return snake.id;
+  }
+  const target = msg?.whisper_target;
+  if (target && typeof target === 'object' && target.id) {
+    return target.id;
+  }
+  return null;
+};
+
 const isSelfMessage = computed(() => {
   const authorId = menuMessage.value.author?.id;
   if (!authorId) {
@@ -197,12 +226,15 @@ const clickEdit = () => {
   }
   const target = menuMessage.value.raw;
   const mode = detectContentMode(target.content || target.originalContent || '');
+  const whisperTargetId = resolveWhisperTargetId(target);
   chat.startEditingMessage({
     messageId: target.id,
     channelId: chat.curChannel.id,
     originalContent: target.content || '',
     draft: target.content || '',
     mode,
+    isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
+    whisperTargetId,
   });
   chat.messageMenu.show = false;
 }

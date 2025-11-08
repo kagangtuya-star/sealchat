@@ -233,11 +233,12 @@ const (
 )
 
 type TypingPreview struct {
-	State     TypingState `json:"state"`
-	Enabled   bool        `json:"enabled"`
-	Content   string      `json:"content"`
-	Mode      string      `json:"mode,omitempty"`
-	MessageID string      `json:"messageId,omitempty"`
+	State        TypingState `json:"state"`
+	Enabled      bool        `json:"enabled"`
+	Content      string      `json:"content"`
+	Mode         string      `json:"mode,omitempty"`
+	MessageID    string      `json:"messageId,omitempty"`
+	TargetUserID string      `json:"targetUserId,omitempty"`
 }
 
 type GatewayPayloadStructure struct {

@@ -51,6 +51,8 @@ interface ChatState {
     originalContent: string;
     draft: string;
     mode?: 'plain' | 'rich';
+    isWhisper?: boolean;
+    whisperTargetId?: string | null;
   } | null
 
   canReorderAllMessages: boolean;
@@ -842,7 +844,7 @@ export const useChatStore = defineStore({
       return message;
     },
 
-    async messageTyping(state: 'indicator' | 'content' | 'silent', content: string, channelId?: string, extra?: { mode?: string; messageId?: string }) {
+    async messageTyping(state: 'indicator' | 'content' | 'silent', content: string, channelId?: string, extra?: { mode?: string; messageId?: string; whisperTo?: string }) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
         return;
@@ -859,6 +861,19 @@ export const useChatStore = defineStore({
         }
         if (extra?.messageId) {
           payload.message_id = extra.messageId;
+        }
+        let whisperTargetId: string | null | undefined = extra?.whisperTo;
+        if (!whisperTargetId && this.whisperTarget?.id) {
+          whisperTargetId = this.whisperTarget.id;
+        }
+        if (!whisperTargetId && extra?.messageId && this.editing?.messageId === extra.messageId && this.editing?.whisperTargetId) {
+          whisperTargetId = this.editing.whisperTargetId;
+        }
+        if (!whisperTargetId && extra?.mode === 'editing' && this.editing?.whisperTargetId) {
+          whisperTargetId = this.editing.whisperTargetId;
+        }
+        if (whisperTargetId) {
+          payload.whisper_to = whisperTargetId;
         }
         const activeIdentity = this.getActiveIdentity(targetChannelId);
         if (activeIdentity) {
@@ -878,7 +893,7 @@ export const useChatStore = defineStore({
       this.whisperTarget = null;
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich' }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null }) {
       this.editing = { ...payload };
     },
 

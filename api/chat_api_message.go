@@ -1375,8 +1375,10 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	Mode       string `json:"mode"`
 	Enabled    *bool  `json:"enabled"`
 	IdentityID string `json:"identity_id"`
+	WhisperTo  string `json:"whisper_to"`
 }) (any, error) {
 	channelId := data.ChannelID
+	var privateOtherUser string
 	if len(channelId) < 30 {
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
 			return nil, nil
@@ -1385,6 +1387,10 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		fr, _ := model.FriendRelationGetByID(channelId)
 		if fr.ID == "" {
 			return nil, nil
+		}
+		privateOtherUser = fr.UserID1
+		if fr.UserID1 == ctx.User.ID {
+			privateOtherUser = fr.UserID2
 		}
 	}
 
@@ -1410,7 +1416,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		if ctx.ConnInfo.TypingEnabled &&
 			ctx.ConnInfo.TypingState == state &&
 			now-ctx.ConnInfo.TypingUpdatedAt < typingThrottleGap &&
-			ctx.ConnInfo.TypingContent == data.Content {
+			ctx.ConnInfo.TypingContent == data.Content &&
+			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo {
 			return &struct {
 				Success bool `json:"success"`
 			}{Success: true}, nil
@@ -1418,11 +1425,13 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingEnabled = true
 		ctx.ConnInfo.TypingState = state
 		ctx.ConnInfo.TypingContent = data.Content
+		ctx.ConnInfo.TypingWhisperTo = data.WhisperTo
 		ctx.ConnInfo.TypingUpdatedAt = now
 	} else {
 		ctx.ConnInfo.TypingEnabled = false
 		ctx.ConnInfo.TypingState = protocol.TypingStateSilent
 		ctx.ConnInfo.TypingContent = ""
+		ctx.ConnInfo.TypingWhisperTo = ""
 		ctx.ConnInfo.TypingUpdatedAt = 0
 	}
 
@@ -1432,6 +1441,25 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	}
 	channelData := channel.ToProtocolType()
 	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, channelId, ctx.User.Nickname)
+
+	var whisperUser *model.UserModel
+	if data.WhisperTo != "" {
+		if data.WhisperTo == ctx.User.ID {
+			return nil, nil
+		}
+		if len(channelId) < 30 {
+			mem, _ := model.MemberGetByUserIDAndChannelIDBase(data.WhisperTo, channelId, "", false)
+			if mem == nil {
+				return nil, nil
+			}
+		} else if data.WhisperTo != privateOtherUser {
+			return nil, nil
+		}
+		whisperUser = model.UserGet(data.WhisperTo)
+		if whisperUser == nil {
+			return nil, nil
+		}
+	}
 
 	content := data.Content
 	if state == protocol.TypingStateIndicator {
@@ -1460,7 +1488,12 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		}
 	}
 
-	ctx.BroadcastEventInChannelExcept(channelId, []string{ctx.User.ID}, event)
+	if whisperUser != nil {
+		event.Typing.TargetUserID = whisperUser.ID
+		ctx.BroadcastEventInChannelToUsers(channelId, []string{whisperUser.ID}, event)
+	} else {
+		ctx.BroadcastEventInChannelExcept(channelId, []string{ctx.User.ID}, event)
+	}
 
 	return &struct {
 		Success bool `json:"success"`

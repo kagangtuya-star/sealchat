@@ -40,6 +40,7 @@ type ConnInfo struct {
 	TypingEnabled   bool
 	TypingState     protocol.TypingState
 	TypingContent   string
+	TypingWhisperTo string
 	TypingUpdatedAt int64
 	Focused         bool
 }
