@@ -28,6 +28,9 @@ type MessageExportJobModel struct {
 
 	FilePath string `json:"file_path"`
 	FileName string `json:"file_name"`
+	UploadURL string `json:"upload_url"`
+	UploadMeta string `json:"upload_meta" gorm:"type:text"`
+	UploadedAt *time.Time `json:"uploaded_at"`
 
 	Status     string     `json:"status" gorm:"index;size:24"`
 	ErrorMsg   string     `json:"error_msg" gorm:"type:text"`

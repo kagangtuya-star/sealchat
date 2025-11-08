@@ -39,6 +39,19 @@ type chatExportStatusResponse struct {
 	FileName   string `json:"file_name"`
 	Message    string `json:"message"`
 	FinishedAt int64  `json:"finished_at,omitempty"`
+	UploadURL  string `json:"upload_url,omitempty"`
+	UploadedAt int64  `json:"uploaded_at,omitempty"`
+}
+
+type chatExportUploadRequest struct {
+	Name string `json:"name"`
+}
+
+type chatExportUploadResponse struct {
+	URL        string `json:"url"`
+	Name       string `json:"name,omitempty"`
+	FileName   string `json:"file_name,omitempty"`
+	UploadedAt int64  `json:"uploaded_at,omitempty"`
 }
 
 func validateExportChannel(userID, channelID string) error {
@@ -181,11 +194,62 @@ func ChatExportGet(c *fiber.Ctx) error {
 	if job.FinishedAt != nil {
 		resp.FinishedAt = job.FinishedAt.UnixMilli()
 	}
+	if strings.TrimSpace(job.UploadURL) != "" {
+		resp.UploadURL = job.UploadURL
+	}
+	if job.UploadedAt != nil {
+		resp.UploadedAt = job.UploadedAt.UnixMilli()
+	}
 	return c.JSON(resp)
 }
 
 func ChatExportTest(c *fiber.Ctx) error {
 	return ChatExportCreate(c)
+}
+
+func ChatExportUpload(c *fiber.Ctx) error {
+	if appConfig == nil || !appConfig.LogUpload.Enabled || strings.TrimSpace(appConfig.LogUpload.Endpoint) == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "未启用云端日志上传"})
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "未认证"})
+	}
+	taskID := strings.TrimSpace(c.Params("taskId"))
+	job, err := service.GetMessageExportJob(taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "任务不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if job.UserID != user.ID {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
+	}
+	var req chatExportUploadRequest
+	_ = c.BodyParser(&req)
+	opts := service.LogUploadOptions{
+		Name:           req.Name,
+		Endpoint:       appConfig.LogUpload.Endpoint,
+		Token:          appConfig.LogUpload.Token,
+		UniformID:      appConfig.LogUpload.UniformID,
+		Client:         appConfig.LogUpload.Client,
+		Version:        appConfig.LogUpload.Version,
+		TimeoutSeconds: appConfig.LogUpload.TimeoutSeconds,
+	}
+	result, err := service.UploadExportLog(job, opts)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	resp := chatExportUploadResponse{
+		URL:      result.URL,
+		Name:     result.Name,
+		FileName: result.FileName,
+	}
+	if !result.UploadedAt.IsZero() {
+		resp.UploadedAt = result.UploadedAt.UnixMilli()
+	}
+	return c.JSON(resp)
 }
 
 func apiChatExportTest(ctx *ChatContext, req *chatExportRequest) (any, error) {

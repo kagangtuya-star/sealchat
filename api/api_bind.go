@@ -53,6 +53,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := *appConfig
+		ret.LogUpload.Token = ""
 		u := getCurUser(c)
 		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
 			ret.ServeAt = ""
@@ -125,6 +126,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/chat/export", ChatExportCreate)
 	v1Auth.Get("/chat/export/:taskId", ChatExportGet)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
+	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
 
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)

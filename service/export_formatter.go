@@ -7,6 +7,7 @@ import (
 	"fmt"
 	htmltemplate "html/template"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type ExportMessage struct {
 	IcMode         string    `json:"ic_mode"`
 	IsWhisper      bool      `json:"is_whisper"`
 	IsArchived     bool      `json:"is_archived"`
+	IsBot          bool      `json:"is_bot"`
 	CreatedAt      time.Time `json:"created_at"`
 	Content        string    `json:"content"`
 	WhisperTargets []string  `json:"whisper_targets"`
@@ -47,10 +49,34 @@ type ExportPayload struct {
 	WithoutTimestamp bool            `json:"without_timestamp"`
 }
 
+const diceLogVersion = 105
+
 var formatterRegistry = map[string]exportFormatter{
 	"json": jsonFormatter{},
 	"txt":  textFormatter{},
 	"html": htmlFormatter{},
+}
+
+type diceLogPayload struct {
+	Version int           `json:"version"`
+	Items   []diceLogItem `json:"items"`
+}
+
+type diceLogItem struct {
+	Nickname    string           `json:"nickname"`
+	ImUserID    string           `json:"imUserId"`
+	UniformID   string           `json:"uniformId"`
+	Time        int64            `json:"time"`
+	Message     string           `json:"message"`
+	IsDice      bool             `json:"isDice"`
+	CommandID   string           `json:"commandId"`
+	CommandInfo *diceCommandInfo `json:"commandInfo"`
+	RawMsgID    string           `json:"rawMsgId"`
+}
+
+type diceCommandInfo struct {
+	Cmd    string `json:"cmd"`
+	Result string `json:"result"`
 }
 
 func getFormatter(name string) (exportFormatter, bool) {
@@ -73,6 +99,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			IcMode:         fallbackIcMode(msg.ICMode),
 			IsWhisper:      msg.IsWhisper,
 			IsArchived:     msg.IsArchived,
+			IsBot:          msg.User != nil && msg.User.IsBot,
 			CreatedAt:      msg.CreatedAt,
 			Content:        msg.Content,
 			WhisperTargets: extractWhisperTargets(msg, job.ChannelID, identityResolver),
@@ -500,7 +527,32 @@ func (jsonFormatter) Build(payload *ExportPayload) ([]byte, error) {
 	if payload == nil {
 		return nil, fmt.Errorf("payload 为空")
 	}
-	return json.MarshalIndent(payload, "", "  ")
+	dicePayload := buildDiceLogPayload(payload)
+	return json.MarshalIndent(dicePayload, "", "  ")
+}
+
+func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
+	if payload == nil {
+		return &diceLogPayload{Version: diceLogVersion, Items: nil}
+	}
+	items := make([]diceLogItem, 0, len(payload.Messages))
+	for i := range payload.Messages {
+		msg := &payload.Messages[i]
+		body := buildContentBody(msg)
+		isDice, info := detectDiceCommand(msg)
+		items = append(items, diceLogItem{
+			Nickname:    msg.SenderName,
+			ImUserID:    fallbackIMUserID(msg.SenderID),
+			UniformID:   buildUniformID(msg.SenderID),
+			Time:        safeUnix(msg.CreatedAt),
+			Message:     body,
+			IsDice:      isDice,
+			CommandID:   msg.ID,
+			CommandInfo: info,
+			RawMsgID:    msg.ID,
+		})
+	}
+	return &diceLogPayload{Version: diceLogVersion, Items: items}
 }
 
 type textFormatter struct{}
@@ -535,18 +587,12 @@ func (textFormatter) Build(payload *ExportPayload) ([]byte, error) {
 			header = strings.Join(prefixParts, " ")
 		}
 		namePart := fmt.Sprintf("<%s>", msg.SenderName)
-		cleanContent := stripRichText(msg.Content)
-		content := wrapOOCContent(msg.IcMode, cleanContent)
+		content := buildContentBody(&msg)
 		parts := []string{}
 		if header != "" {
 			parts = append(parts, header)
 		}
 		parts = append(parts, namePart)
-		if msg.IsWhisper {
-			if label := formatWhisperTargets(msg.WhisperTargets); label != "" {
-				parts = append(parts, label)
-			}
-		}
 		parts = append(parts, content)
 		sb.WriteString(strings.Join(parts, " ") + "\n")
 	}
@@ -570,6 +616,75 @@ func formatWhisperTargets(targets []string) string {
 		return ""
 	}
 	return fmt.Sprintf("[对%s]", strings.Join(targets, "、"))
+}
+
+var diceRollPattern = regexp.MustCompile(`(?i)\b(\d+d\d+(?:[+\-x×*/]\d+)?[^=]*)=\s*([^\s]+.*)`)
+
+func detectDiceCommand(msg *ExportMessage) (bool, *diceCommandInfo) {
+	if msg == nil || !msg.IsBot {
+		return false, nil
+	}
+	clean := stripRichText(msg.Content)
+	if clean == "" {
+		return false, nil
+	}
+	lines := strings.Split(clean, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		matches := diceRollPattern.FindStringSubmatch(line)
+		if len(matches) < 3 {
+			continue
+		}
+		cmd := strings.TrimSpace(matches[1])
+		result := strings.TrimSpace(matches[2])
+		if cmd == "" || result == "" {
+			continue
+		}
+		return true, &diceCommandInfo{Cmd: cmd, Result: result}
+	}
+	return false, nil
+}
+
+func buildContentBody(msg *ExportMessage) string {
+	if msg == nil {
+		return ""
+	}
+	clean := stripRichText(msg.Content)
+	clean = wrapOOCContent(msg.IcMode, clean)
+	var parts []string
+	if msg.IsArchived {
+		parts = append(parts, "[已归档]")
+	}
+	if msg.IsWhisper {
+		if label := formatWhisperTargets(msg.WhisperTargets); label != "" {
+			parts = append(parts, label)
+		}
+	}
+	parts = append(parts, clean)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func safeUnix(t time.Time) int64 {
+	if t.IsZero() {
+		return time.Now().Unix()
+	}
+	return t.Unix()
+}
+
+func fallbackIMUserID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "anonymous"
+	}
+	return id
+}
+
+func buildUniformID(id string) string {
+	base := fallbackIMUserID(id)
+	return "Seal:" + base
 }
 
 type htmlFormatter struct{}
