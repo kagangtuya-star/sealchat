@@ -49,6 +49,18 @@ const showCloudUploadOption = computed(() => cloudUploadEnabled.value && form.fo
 const cloudUploadDefaultName = '频道名_时间范围（例如：新的_20251107-20251108）'
 const isSealFormatter = computed(() => form.format === 'json')
 
+watch(
+  () => form.format,
+  (newFormat) => {
+    if (newFormat === 'json' && cloudUploadEnabled.value) {
+      form.autoUpload = true
+    } else if (newFormat !== 'json') {
+      form.autoUpload = false
+    }
+  },
+  { immediate: true }
+)
+
 const formatOptions = [
   { label: '纯文本 (.txt)', value: 'txt' },
   { label: 'HTML (.html)', value: 'html' },
@@ -106,15 +118,6 @@ watch(
     }
     if (newVal && timePreset.value !== 'custom') {
       timePreset.value = 'custom'
-    }
-  }
-)
-
-watch(
-  () => form.format,
-  (newFormat) => {
-    if (newFormat !== 'json') {
-      form.autoUpload = false
     }
   }
 )
@@ -186,7 +189,7 @@ const shortcuts = {
         </template>
         <p>提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。</p>
         <p v-if="cloudUploadEnabled" class="cloud-tip">
-          云端染色已开放：JSON 导出可一键上传到 DicePP 云端，生成 docx/BBcode 渲染结果。
+          云端染色已开放：JSON 导出可一键上传到 SealDice 云端，生成 docx/BBcode 渲染结果。
         </p>
       </n-alert>
     </div>
