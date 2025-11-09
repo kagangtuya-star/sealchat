@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Palette } from '@vicons/tabler'
 
 interface FilterState {
   icOnly: boolean
@@ -20,6 +21,7 @@ interface Props {
   exportActive?: boolean
   identityActive?: boolean
   galleryActive?: boolean
+  displayActive?: boolean
 }
 
 interface Emits {
@@ -28,6 +30,7 @@ interface Emits {
   (e: 'open-export'): void
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
+  (e: 'open-display-settings'): void
   (e: 'clear-filters'): void
 }
 
@@ -138,6 +141,18 @@ const clearAllFilters = () => {
             <n-icon component="UserOutlined" />
           </template>
           角色管理
+        </n-button>
+
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.displayActive }"
+          @click="emit('open-display-settings')"
+        >
+          <template #icon>
+            <n-icon :component="Palette" />
+          </template>
+          显示模式
         </n-button>
 
         <n-button

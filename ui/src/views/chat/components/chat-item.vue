@@ -348,7 +348,7 @@ watch(() => props.item?.updatedAt, () => {
       { 'is-editing': isEditing },
       `chat-item--${props.tone}`
     ]">
-    <Avatar :src="props.avatar" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
+    <Avatar :src="props.avatar" :border="false" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->
     <div class="right">
@@ -679,6 +679,38 @@ watch(() => props.item?.updatedAt, () => {
 .chat-item.is-editing > .right > .content {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
   border: 1px dashed rgba(37, 99, 235, 0.65);
+}
+
+.chat-item--layout-bubble > .right {
+  margin-left: 0.5rem;
+}
+
+.chat-item--layout-bubble .chat-item__avatar {
+  margin-right: 0.5rem;
+}
+
+.chat-item--layout-bubble.chat-item--self {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.chat-item--layout-bubble.chat-item--self .chat-item__avatar {
+  margin-right: 0;
+  margin-left: 0.5rem;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right {
+  margin-left: 0;
+  margin-right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right > .content {
+  margin-left: auto;
+  text-align: left;
 }
 
 .edited-label {

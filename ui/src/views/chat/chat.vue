@@ -15,6 +15,7 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
@@ -31,6 +32,7 @@ import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { useUtilsStore } from '@/stores/utils';
+import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import IconNumber from '@/components/icons/IconNumber.vue'
 import { computedAsync, useDebounceFn, useEventListener } from '@vueuse/core';
@@ -41,6 +43,7 @@ import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import DOMPurify from 'dompurify';
+import type { DisplaySettings } from '@/stores/display';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -50,7 +53,17 @@ const chat = useChatStore();
 const user = useUserStore();
 const gallery = useGalleryStore();
 const utils = useUtilsStore();
+const display = useDisplayStore();
 const isEditing = computed(() => !!chat.editing);
+const displaySettingsVisible = ref(false);
+
+watch(
+  () => display.settings,
+  (value) => {
+    display.applyTheme(value);
+  },
+  { deep: true, immediate: true },
+);
 
 // 新增状态
 const showActionRibbon = ref(false);
@@ -67,6 +80,11 @@ const handleActionRibbonToggleRequest = () => {
 
 const handleActionRibbonStateRequest = () => {
   syncActionRibbonState();
+};
+
+const handleDisplaySettingsSave = (settings: DisplaySettings) => {
+  display.updateSettings(settings);
+  displaySettingsVisible.value = false;
 };
 
 watch(
@@ -1410,9 +1428,51 @@ const visibleRows = computed(() => {
       }
     }
 
-    return true;
-  });
+  return true;
 });
+});
+
+const getMessageRoleKey = (message: any): string => {
+  return (
+    message?.identity?.id ||
+    message?.member?.id ||
+    message?.member?.member_id ||
+    message?.sender_member_id ||
+    getMessageAuthorId(message)
+  );
+};
+
+const getMessageSceneKey = (message: any): string => {
+  return String(message?.icMode ?? message?.ic_mode ?? 'ic').toLowerCase();
+};
+
+const shouldMergeMessages = (prev?: Message, current?: Message) => {
+  if (!prev || !current) return false;
+  if (!prev.id || !current.id) return false;
+  if (prev.isWhisper !== current.isWhisper) return false;
+  const roleSame = getMessageRoleKey(prev) && getMessageRoleKey(prev) === getMessageRoleKey(current);
+  if (!roleSame) return false;
+  return getMessageSceneKey(prev) === getMessageSceneKey(current);
+};
+
+const mergedDisplayState = computed(() => {
+  const map = new Map<string, { merged: boolean }>();
+  if (!display.settings.mergeNeighbors) {
+    return map;
+  }
+  const list = visibleRows.value;
+  list.forEach((message, index) => {
+    if (!message?.id) return;
+    const prev = index > 0 ? list[index - 1] : undefined;
+    map.set(message.id, { merged: shouldMergeMessages(prev, message) });
+  });
+  return map;
+});
+
+const isMergedWithPrev = (message: Message) => {
+  if (!message?.id) return false;
+  return Boolean(mergedDisplayState.value.get(message.id)?.merged);
+};
 
 const normalizeTimestamp = (value: any): number | null => {
   if (value === null || value === undefined) {
@@ -4497,16 +4557,22 @@ onBeforeUnmount(() => {
         :export-active="exportDialogVisible"
         :identity-active="identityDialogVisible"
         :gallery-active="galleryPanelVisible"
+        :display-active="displaySettingsVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportDialogVisible = true"
         @open-identity-manager="openIdentityManager"
         @open-gallery="openGalleryPanel"
+        @open-display-settings="displaySettingsVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, userIds: [] })"
       />
     </transition>
 
-    <div class="chat overflow-y-auto h-full px-4 pt-6" v-show="rows.length > 0" @scroll="onScroll"
+    <div
+      class="chat overflow-y-auto h-full px-4 pt-6"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`]"
+      v-show="rows.length > 0"
+      @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
       ref="messagesListRef">
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
@@ -4530,10 +4596,15 @@ onBeforeUnmount(() => {
             :username="getMessageDisplayName(itemData)"
             :identity-color="getMessageIdentityColor(itemData)"
             :content="itemData.content"
-            :is-rtl="isMe(itemData)"
             :item="itemData"
             :editing-preview="editingPreviewMap[itemData.id]"
             :tone="getMessageTone(itemData)"
+            :show-avatar="display.showAvatar"
+            :hide-avatar="display.showAvatar && isMergedWithPrev(itemData)"
+            :show-header="!isMergedWithPrev(itemData)"
+            :layout="display.layout"
+            :is-self="isSelfMessage(itemData)"
+            :is-merged="isMergedWithPrev(itemData)"
             @avatar-longpress="avatarLongpress(itemData)"
             @edit="beginEdit(itemData)"
             @edit-save="saveEdit"
@@ -5109,6 +5180,12 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel?.id"
     @export="handleExportMessages"
   />
+
+  <DisplaySettingsModal
+    v-model:visible="displaySettingsVisible"
+    :settings="display.settings"
+    @save="handleDisplaySettingsSave"
+  />
 </template>
 
 <style lang="scss" scoped>
@@ -5129,6 +5206,11 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
+.chat--layout-compact {
+  background-color: var(--chat-stage-bg);
+  transition: background-color 0.25s ease;
+}
+
 .identity-drawer__header {
   display: flex;
   align-items: center;
@@ -5147,10 +5229,6 @@ onBeforeUnmount(() => {
   margin-top: 0.15rem;
   font-size: 0.75rem;
   color: #6b7280;
-}
-
-.message-row--self {
-  flex-direction: row-reverse;
 }
 
 .message-row__handle {
@@ -5275,13 +5353,14 @@ onBeforeUnmount(() => {
   }
 }
 
+
 .typing-preview-item {
   display: flex;
   align-items: flex-end;
   gap: 0.75rem;
   margin-top: 0.75rem;
   font-size: 0.9375rem;
-  color: #4b5563;
+  color: var(--chat-text-secondary);
 }
 
 .typing-preview-viewport {
@@ -5294,19 +5373,18 @@ onBeforeUnmount(() => {
 }
 
 .typing-preview-bubble {
-  max-width: 28rem;
-  padding: 0.6rem 0.9rem;
-  border-radius: 1rem;
-  border: 1px dashed rgba(107, 114, 128, 0.65);
-  background-color: rgba(243, 244, 246, 0.85);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(2px);
+  max-width: 32rem;
+  padding: var(--chat-message-padding-y) var(--chat-message-padding-x);
+  border-radius: var(--chat-message-radius);
+  border: none;
+  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-size: 6px 6px;
+  box-shadow: none;
 }
 
 .typing-preview-bubble--content {
-  border-color: rgba(59, 130, 246, 0.55);
-  background-color: rgba(219, 234, 254, 0.95);
-  color: #1d4ed8;
+  color: var(--chat-text-primary);
 }
 
 .typing-preview-bubble__footer {

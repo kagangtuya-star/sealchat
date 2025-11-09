@@ -57,9 +57,31 @@ onLongPress(
 </script>
 
 <template>
-  <div class="rounded-md w-12 h-12 border-gray-300 relative overflow-clip" ref="htmlRefHook"
-    :style="{ width: `${size}px`, height: `${size}px`, 'min-width': `${size}px`, 'min-height': `${size}px` }" :class="border ? ['border'] : []">
+  <div
+    ref="htmlRefHook"
+    class="avatar-shell"
+    :class="border ? 'avatar-shell--bordered' : 'avatar-shell--plain'"
+    :style="{ width: `${size}px`, height: `${size}px`, 'min-width': `${size}px`, 'min-height': `${size}px` }"
+  >
     <img class="w-full h-full" :src="resolvedSrc" v-if="resolvedSrc" :onload="onload" />
     <img class="absolute w-full h-full" :class="{ 'pointer-events-none': opacity === 0 }" :src="imgAvatar" style="top:0" :style="{ opacity: opacity }" />
   </div>
 </template>
+
+<style scoped>
+.avatar-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.85rem;
+}
+
+.avatar-shell--bordered {
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background-color: #ffffff;
+}
+
+.avatar-shell--plain {
+  border: none;
+  background: transparent;
+}
+</style>

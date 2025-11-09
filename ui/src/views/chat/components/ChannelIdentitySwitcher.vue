@@ -159,7 +159,7 @@ const handleSelect = async (key: string | number) => {
       :disabled="!resolvedChannelId || disabled"
     >
       <AvatarVue
-        size="small"
+        :size="28"
         :border="false"
         :src="avatarSrc"
         class="identity-switcher__avatar"
