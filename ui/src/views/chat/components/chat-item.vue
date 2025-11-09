@@ -492,7 +492,9 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .chat-item__avatar--hidden {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .chat-item > .right {
@@ -593,6 +595,14 @@ watch(() => props.item?.updatedAt, () => {
 .chat-item--layout-bubble.chat-item--self > .right > .content {
   margin-left: auto;
   text-align: left;
+}
+
+.chat-item--merged > .right {
+  margin-left: 0.4rem;
+}
+
+.chat-item--merged > .right > .content {
+  margin-left: 0;
 }
 
 .chat-item--layout-compact {

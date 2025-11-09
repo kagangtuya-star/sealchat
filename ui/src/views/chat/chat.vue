@@ -2034,7 +2034,7 @@ const finalizeDrag = async () => {
   const activeId = dragState.activeId;
   const overId = dragState.overId;
   const position = dragState.position;
-  const snapshot = dragState.snapshot.slice();
+  const originalRows = dragState.snapshot.slice();
 
   window.removeEventListener('pointermove', onDragPointerMove);
   window.removeEventListener('pointerup', onDragPointerUp);
@@ -2050,14 +2050,15 @@ const finalizeDrag = async () => {
     return;
   }
 
-  const fromIndex = snapshot.findIndex((item) => item.id === activeId);
-  const toReference = snapshot.findIndex((item) => item.id === overId);
+  const working = originalRows.slice();
+  const fromIndex = working.findIndex((item) => item.id === activeId);
+  const toReference = working.findIndex((item) => item.id === overId);
   if (fromIndex < 0 || toReference < 0) {
     resetDragState();
     return;
   }
 
-  const [moving] = snapshot.splice(fromIndex, 1);
+  const [moving] = working.splice(fromIndex, 1);
   let targetIndex = toReference;
   if (position === 'after') {
     if (fromIndex < toReference) {
@@ -2069,15 +2070,16 @@ const finalizeDrag = async () => {
   if (targetIndex < 0) {
     targetIndex = 0;
   }
-  if (targetIndex > snapshot.length) {
-    targetIndex = snapshot.length;
+  if (targetIndex > working.length) {
+    targetIndex = working.length;
   }
-  snapshot.splice(targetIndex, 0, moving);
-  rows.value = snapshot;
+  working.splice(targetIndex, 0, moving);
+  rows.value = working;
 
-  const beforeId = rows.value[targetIndex + 1]?.id || '';
-  const afterId = rows.value[targetIndex - 1]?.id || '';
+  const beforeId = working[targetIndex + 1]?.id || '';
+  const afterId = working[targetIndex - 1]?.id || '';
   const clientOpId = dragState.clientOpId || nanoid();
+  resetDragState();
   localReorderOps.add(clientOpId);
   try {
     const resp = await chat.messageReorder(channelId, {
@@ -2091,11 +2093,11 @@ const finalizeDrag = async () => {
       sortRowsByDisplayOrder();
     }
   } catch (error) {
-    rows.value = dragState.snapshot.slice();
+    rows.value = originalRows;
     message.error('消息排序失败，请稍后重试');
   } finally {
     localReorderOps.delete(clientOpId);
-    resetDragState();
+    listRevision.value += 1;
   }
 };
 
@@ -2289,6 +2291,7 @@ if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
 const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) => item.mode === 'typing'));
+const listRevision = ref(0);
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
   'typing-preview-item',
   `typing-preview-item--${preview.tone}`,
@@ -4598,7 +4601,7 @@ onBeforeUnmount(() => {
       ref="messagesListRef">
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
               @toBottom="reachBottom" @toTop="reachTop"> -->
-      <template v-for="itemData in visibleRows" :key="itemData.id">
+      <template v-for="itemData in visibleRows" :key="`${listRevision}-${itemData.id}`">
         <div
           :class="rowClass(itemData)"
           :data-message-id="itemData.id"
