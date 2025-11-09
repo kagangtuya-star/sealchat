@@ -162,6 +162,30 @@ const props = defineProps({
     type: String as PropType<'ic' | 'ooc' | 'archived'>,
     default: 'ic'
   },
+  showAvatar: {
+    type: Boolean,
+    default: true,
+  },
+  hideAvatar: {
+    type: Boolean,
+    default: false,
+  },
+  showHeader: {
+    type: Boolean,
+    default: true,
+  },
+  layout: {
+    type: String as PropType<'bubble' | 'compact'>,
+    default: 'bubble',
+  },
+  isSelf: {
+    type: Boolean,
+    default: false,
+  },
+  isMerged: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const timeText = ref(timeFormat(props.item?.createdAt));
@@ -342,17 +366,22 @@ watch(() => props.item?.updatedAt, () => {
 
 <template>
   <div v-if="item?.is_revoked" class="py-4 text-center">一条消息已被撤回</div>
-  <div v-else :id="item?.id" class="chat-item" :style="props.isRtl ? { direction: 'rtl' } : {}"
+  <div v-else :id="item?.id" class="chat-item"
     :class="[
       { 'is-rtl': props.isRtl },
       { 'is-editing': isEditing },
-      `chat-item--${props.tone}`
+      `chat-item--${props.tone}`,
+      `chat-item--layout-${props.layout}`,
+      { 'chat-item--self': props.isSelf },
+      { 'chat-item--merged': props.isMerged }
     ]">
-    <Avatar :src="props.avatar" :border="false" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
+    <div v-if="props.showAvatar" class="chat-item__avatar" :class="{ 'chat-item__avatar--hidden': props.hideAvatar }">
+      <Avatar :src="props.avatar" :border="false" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
+    </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->
-    <div class="right">
-      <span class="title">
+    <div class="right" :class="{ 'right--hidden-header': !props.showHeader }">
+      <span class="title" v-if="props.showHeader">
         <!-- 右侧 -->
         <n-popover trigger="hover" placement="bottom" v-if="props.isRtl">
           <template #trigger>
@@ -450,103 +479,118 @@ watch(() => props.item?.updatedAt, () => {
 
 <style lang="scss">
 .chat-item {
-  @apply flex;
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
 
-  >.n-avatar {
-    @apply rounded-md;
-  }
+.chat-item__avatar {
+  flex-shrink: 0;
+  width: 3rem;
+  height: 3rem;
+}
 
-  &.is-rtl {
-    >.right {
-      @apply mr-4;
+.chat-item__avatar--hidden {
+  display: none;
+}
 
-      >.title {
-        @apply justify-end;
-      }
+.chat-item > .right {
+  margin-left: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
 
-      >.content {
-        &>.failed {
-          left: -2rem;
-          right: auto;
-          top: 0;
-        }
+.right--hidden-header {
+  gap: 0;
+}
 
-        &:before {
-          display: none;
-        }
-
-        &::after {
-          position: absolute;
-          top: 0.5rem;
-          height: 0.75rem;
-          width: 0.75rem;
-          background-color: inherit;
-          content: "";
-          right: -0.75rem;
-          transform: scaleY(-1) scaleX(-1);
-          mask-size: contain;
-          mask-image: url("data:image/svg+xml,%3csvg width='3' height='3' xmlns='http://www.w3.org/2000/svg'%3e%3cpath fill='black' d='m 0 3 L 3 3 L 3 0 C 3 1 1 3 0 3'/%3e%3c/svg%3e");
-        }
-      }
-    }
-  }
-
-  >.right {
-    @apply ml-4;
-
-    >.title {
-      display: flex;
-      gap: 0.5rem;
-      direction: ltr;
-
-      >.name {
-        @apply font-semibold;
-      }
-
-      >.time {
-        @apply text-gray-400;
-      }
-    }
-
-    >.content {
-      &>.failed {
-        right: -2rem;
-        top: 0;
-      }
-
-      &:before {
-        position: absolute;
-        top: 0.5rem;
-        height: 0.75rem;
-        width: 0.75rem;
-        background-color: inherit;
-        content: "";
-        left: -0.75rem;
-        transform: scaleY(-1);
-        mask-size: contain;
-        mask-image: url("data:image/svg+xml,%3csvg width='3' height='3' xmlns='http://www.w3.org/2000/svg'%3e%3cpath fill='black' d='m 0 3 L 3 3 L 3 0 C 3 1 1 3 0 3'/%3e%3c/svg%3e");
-      }
-
-  width: fit-content;
+.chat-item > .right > .title {
+  display: flex;
+  gap: 0.4rem;
   direction: ltr;
-  @apply text-base mt-1 px-4 py-2 relative;
-  @apply rounded bg-gray-200 text-gray-900;
-      min-width: 0;
-        transition: box-shadow 0.2s ease, border-color 0.2s ease;
-      }
+}
 
-      >.content.whisper-content {
-        background: #eef2ff;
-        color: #1f2937;
-        border: 1px solid rgba(99, 102, 241, 0.35);
-        box-shadow: 0 6px 18px rgba(79, 70, 229, 0.08);
-      }
+.chat-item > .right > .title > .name {
+  font-weight: 600;
+}
 
-      >.content.whisper-content .text-gray-500 {
-        color: #4c1d95;
-      }
+.chat-item > .right > .title > .time {
+  color: #94a3b8;
+}
 
-  }
+.chat-item > .right > .content {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
+  border-radius: var(--chat-message-radius, 0.85rem);
+  background: var(--chat-ic-bg, #f5f5f5);
+  color: var(--chat-text-primary, #111827);
+  text-align: left;
+  border: none;
+}
+
+.chat-item > .right > .content .failed {
+  right: -2rem;
+  top: 0;
+}
+
+.chat-item > .right > .content.whisper-content {
+  background: #eef2ff;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: #1f2937;
+}
+
+.chat-item--layout-bubble > .right {
+  margin-left: 0.5rem;
+  max-width: calc(100% - 3.5rem);
+}
+
+.chat-item--layout-bubble .chat-item__avatar {
+  width: 2.75rem;
+  margin-right: 0.5rem;
+}
+
+.chat-item--layout-bubble .right > .content {
+  background: #e6e7eb;
+  border-radius: 0.85rem;
+  padding: 0.8rem 1rem;
+}
+
+.chat-item--layout-bubble.chat-item--self {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+
+.chat-item--layout-bubble.chat-item--self .chat-item__avatar {
+  margin-left: 0.5rem;
+  margin-right: 0;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right {
+  margin-left: 0;
+  margin-right: 0.5rem;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right > .title {
+  justify-content: flex-end;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right > .content {
+  margin-left: auto;
+  text-align: left;
+}
+
+.chat-item--layout-compact > .right > .content {
+  background: var(--chat-ic-bg);
+  box-shadow: var(--chat-message-shadow);
+}
 
 .content img {
   max-width: min(36vw, 200px);
@@ -673,44 +717,9 @@ watch(() => props.item?.updatedAt, () => {
 .content p + p {
   margin-top: 0.5rem;
 }
-}
-
-
 .chat-item.is-editing > .right > .content {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
   border: 1px dashed rgba(37, 99, 235, 0.65);
-}
-
-.chat-item--layout-bubble > .right {
-  margin-left: 0.5rem;
-}
-
-.chat-item--layout-bubble .chat-item__avatar {
-  margin-right: 0.5rem;
-}
-
-.chat-item--layout-bubble.chat-item--self {
-  justify-content: flex-end;
-  width: 100%;
-}
-
-.chat-item--layout-bubble.chat-item--self .chat-item__avatar {
-  margin-right: 0;
-  margin-left: 0.5rem;
-}
-
-.chat-item--layout-bubble.chat-item--self > .right {
-  margin-left: 0;
-  margin-right: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  text-align: right;
-}
-
-.chat-item--layout-bubble.chat-item--self > .right > .content {
-  margin-left: auto;
-  text-align: left;
 }
 
 .edited-label {
