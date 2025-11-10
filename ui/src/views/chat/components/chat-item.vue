@@ -10,7 +10,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
 import Avatar from '@/components/avatar.vue'
-import { Lock, Edit } from '@vicons/tabler';
+import { Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
 import { onLongPress } from '@vueuse/core';
@@ -236,6 +236,13 @@ const buildWhisperLabel = (item?: any) => {
 const whisperLabel = computed(() => buildWhisperLabel(props.item));
 const quoteWhisperLabel = computed(() => buildWhisperLabel((props.item as any)?.quote));
 
+const selfEditingPreview = computed(() => (
+  props.editingPreview && props.editingPreview.isSelf ? props.editingPreview : null
+));
+const otherEditingPreview = computed(() => (
+  props.editingPreview && !props.editingPreview.isSelf ? props.editingPreview : null
+));
+
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const canEdit = computed(() => props.item?.user?.id === user.info.id);
 
@@ -416,8 +423,8 @@ watch(() => props.item?.updatedAt, () => {
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
       <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)"
-        :class="[{ 'whisper-content': props.item?.isWhisper }, { 'content--editing-preview': !!props.editingPreview }]">
-        <div v-if="canEdit && !(props.editingPreview && props.editingPreview.isSelf)" class="message-action-bar"
+        :class="[{ 'whisper-content': props.item?.isWhisper }, { 'content--editing-preview': !!otherEditingPreview }]">
+        <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -428,7 +435,7 @@ watch(() => props.item?.updatedAt, () => {
             编辑消息
           </n-tooltip>
         </div>
-        <template v-if="!props.editingPreview">
+        <template v-if="!otherEditingPreview">
           <div>
             <div v-if="whisperLabel" class="whisper-label">
               <n-icon :component="Lock" size="16" />
@@ -450,30 +457,36 @@ watch(() => props.item?.updatedAt, () => {
             </div>
             <component :is="parseContent(props, displayContent)" />
           </div>
+          <div v-if="selfEditingPreview" class="editing-self-actions">
+            <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" @click.stop="handleEditSave">
+              <n-icon :component="Check" size="14" class="editing-self-actions__btn-icon" />
+              保存
+            </n-button>
+            <n-button text size="tiny" class="editing-self-actions__btn editing-self-actions__btn--cancel" @click.stop="handleEditCancel">
+              <n-icon :component="X" size="12" class="editing-self-actions__btn-icon" />
+              取消
+            </n-button>
+          </div>
         </template>
         <template v-else>
           <div class="editing-preview__bubble editing-preview__bubble--inline">
             <div class="editing-preview__header">
-              <span class="editing-preview__name">{{ props.editingPreview.displayName || '未知成员' }}</span>
+              <span class="editing-preview__name">{{ otherEditingPreview?.displayName || '未知成员' }}</span>
               <span class="editing-preview__tag">正在编辑</span>
             </div>
-          <div class="editing-preview__body" :class="{ 'is-placeholder': props.editingPreview.indicatorOnly }">
-            <template v-if="props.editingPreview.indicatorOnly">
+          <div class="editing-preview__body" :class="{ 'is-placeholder': otherEditingPreview?.indicatorOnly }">
+            <template v-if="otherEditingPreview?.indicatorOnly">
               正在更新内容...
             </template>
             <template v-else>
               <div
-                v-if="props.editingPreview.previewHtml"
+                v-if="otherEditingPreview?.previewHtml"
                 class="editing-preview__rich"
-                v-html="props.editingPreview.previewHtml"
+                v-html="otherEditingPreview?.previewHtml"
               ></div>
-              <span v-else>{{ props.editingPreview.summary || '[图片]' }}</span>
+              <span v-else>{{ otherEditingPreview?.summary || '[图片]' }}</span>
             </template>
           </div>
-          <div v-if="props.editingPreview.isSelf" class="editing-preview__actions">
-            <n-button size="tiny" type="primary" @click.stop="handleEditSave">保存</n-button>
-            <n-button size="tiny" text @click.stop="handleEditCancel">取消</n-button>
-            </div>
           </div>
         </template>
         <div v-if="props.item?.failed" class="failed absolute bg-red-600 rounded-md px-2 text-white">!</div>
@@ -488,6 +501,10 @@ watch(() => props.item?.updatedAt, () => {
   width: 100%;
   align-items: flex-start;
   gap: 0.4rem;
+  --editing-preview-border: rgba(59, 130, 246, 0.55);
+  --editing-preview-bg: rgba(219, 234, 254, 0.92);
+  --editing-preview-text: #1d4ed8;
+  --editing-preview-shadow: rgba(59, 130, 246, 0.12);
 }
 
 .chat-item__avatar {
@@ -558,6 +575,10 @@ watch(() => props.item?.updatedAt, () => {
   background: #eef2ff;
   border: 1px solid rgba(99, 102, 241, 0.35);
   color: #1f2937;
+  --editing-preview-border: rgba(109, 40, 217, 0.55);
+  --editing-preview-bg: rgba(233, 213, 255, 0.92);
+  --editing-preview-text: #5b21b6;
+  --editing-preview-shadow: rgba(109, 40, 217, 0.15);
 }
 
 .chat-item--layout-bubble > .right {
@@ -771,11 +792,6 @@ watch(() => props.item?.updatedAt, () => {
 .content p + p {
   margin-top: 0.5rem;
 }
-.chat-item.is-editing > .right > .content {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
-  border: 1px dashed rgba(37, 99, 235, 0.65);
-}
-
 .edited-label {
   @apply text-xs text-blue-500 font-medium;
   margin-left: 0.2rem;
@@ -794,6 +810,11 @@ watch(() => props.item?.updatedAt, () => {
 
 .message-action-bar__btn {
   pointer-events: auto;
+  color: rgba(15, 23, 42, 0.75);
+}
+
+:root[data-display-palette='night'] .message-action-bar__btn {
+  color: #c5cfd9;
 }
 
 .chat-item .content:hover .message-action-bar,
@@ -815,23 +836,23 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .content--editing-preview .editing-preview__bubble--inline {
-  border: 1px dashed rgba(59, 130, 246, 0.55);
-  background-color: rgba(219, 234, 254, 0.92);
-  color: #1d4ed8;
+  border: 1px dashed var(--editing-preview-border);
+  background-color: var(--editing-preview-bg);
+  color: var(--editing-preview-text);
   border-radius: 0.75rem;
   padding: 0.55rem 0.75rem;
   max-width: 32rem;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+  box-shadow: 0 4px 10px var(--editing-preview-shadow);
 }
 
 .editing-preview__bubble {
-  border: 1px dashed rgba(59, 130, 246, 0.55);
-  background-color: rgba(219, 234, 254, 0.9);
-  color: #1d4ed8;
+  border: 1px dashed var(--editing-preview-border);
+  background-color: var(--editing-preview-bg);
+  color: var(--editing-preview-text);
   border-radius: 0.75rem;
   padding: 0.55rem 0.75rem;
   max-width: 32rem;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.12);
+  box-shadow: 0 4px 10px var(--editing-preview-shadow);
 }
 
 .editing-preview__header {
@@ -857,7 +878,7 @@ watch(() => props.item?.updatedAt, () => {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.9rem;
-  color: #1e3a8a;
+  color: var(--editing-preview-text);
 }
 
 .editing-preview__rich {
@@ -869,11 +890,34 @@ watch(() => props.item?.updatedAt, () => {
   color: #4b5563;
 }
 
-.editing-preview__actions {
+.editing-self-actions {
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
-  margin-top: 0.45rem;
+  align-items: center;
+  margin-top: 0.3rem;
+}
+
+.editing-self-actions__btn {
+  color: #111827 !important;
+  --n-text-color: currentColor;
+  --n-text-color-hover: color-mix(in srgb, currentColor 80%, transparent);
+  padding: 0 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+:root[data-display-palette='day'] .editing-self-actions__btn {
+  color: #111827 !important;
+}
+
+:root[data-display-palette='night'] .editing-self-actions__btn {
+  color: #C5CFD9 !important;
+}
+
+.editing-self-actions__btn-icon {
+  color: currentColor;
 }
 
 .whisper-label {
@@ -926,6 +970,10 @@ watch(() => props.item?.updatedAt, () => {
   background: rgba(156, 163, 175, 0.1);
   border: 1px dashed rgba(156, 163, 175, 0.3);
   color: #6b7280;
+  --editing-preview-border: rgba(156, 163, 175, 0.55);
+  --editing-preview-bg: rgba(243, 244, 246, 0.95);
+  --editing-preview-text: #4b5563;
+  --editing-preview-shadow: rgba(107, 114, 128, 0.15);
 }
 
 .chat-item--archived {

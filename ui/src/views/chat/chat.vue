@@ -1958,10 +1958,16 @@ const rowClass = (item: Message) => ({
   [`message-row--tone-${getMessageTone(item)}`]: true,
 });
 
-const rowSurfaceClass = (item: Message) => [
-  'message-row__surface',
-  `message-row__surface--tone-${getMessageTone(item)}`,
-];
+const rowSurfaceClass = (item: Message) => {
+  const classes = [
+    'message-row__surface',
+    `message-row__surface--tone-${getMessageTone(item)}`,
+  ];
+  if (chat.isEditingMessage(item.id || '')) {
+    classes.push('message-row__surface--editing');
+  }
+  return classes;
+};
 
 const inheritChatContextClasses = (ghostEl: HTMLElement) => {
   const container = messagesListRef.value;
@@ -5338,6 +5344,33 @@ onBeforeUnmount(() => {
 .message-row__surface > * {
   position: relative;
   z-index: 1;
+}
+
+.message-row__surface--editing::before {
+  content: '';
+  position: absolute;
+  inset: -0.15rem 0;
+  border-radius: 1rem;
+  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-size: 6px 6px;
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.message-row__surface--tone-ic.message-row__surface--editing::before {
+  background-color: var(--chat-ic-bg);
+  background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
+}
+
+.message-row__surface--tone-ooc.message-row__surface--editing::before {
+  background-color: var(--chat-ooc-bg);
+  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+}
+
+.chat--layout-compact .message-row__surface--editing::before {
+  inset: -0.05rem;
+  border-radius: 0.85rem;
 }
 
 .cloud-upload-result {
