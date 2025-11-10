@@ -566,6 +566,9 @@ watch(() => props.item?.updatedAt, () => {
   border: 1px solid var(--chat-bubble-border, transparent);
   box-shadow: var(--chat-message-shadow, none);
   transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+  font-size: var(--chat-font-size, 0.95rem);
+  line-height: var(--chat-line-height, 1.6);
+  letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
 .chat-item > .right > .content .failed {
@@ -693,6 +696,12 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 /* 富文本内容样式 */
+.content {
+  font-size: var(--chat-font-size, 0.95rem);
+  line-height: var(--chat-line-height, 1.6);
+  letter-spacing: var(--chat-letter-spacing, 0px);
+}
+
 .content h1,
 .content h2,
 .content h3 {
@@ -792,7 +801,7 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .content p + p {
-  margin-top: 0.5rem;
+  margin-top: var(--chat-paragraph-spacing, 0.5rem);
 }
 .edited-label {
   @apply text-xs text-blue-500 font-medium;

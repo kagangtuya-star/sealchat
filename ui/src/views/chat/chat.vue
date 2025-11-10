@@ -5445,6 +5445,10 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.message-row + .message-row {
+  margin-top: var(--chat-bubble-gap, 0.85rem);
+}
+
 .message-row__surface {
   display: flex;
   align-items: flex-start;
@@ -5503,6 +5507,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
   scrollbar-color: var(--sc-border-mute) transparent;
+  font-size: var(--chat-font-size, 0.95rem);
+  line-height: var(--chat-line-height, 1.6);
+  letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
 .chat.chat--palette-night {
@@ -5882,7 +5889,7 @@ onBeforeUnmount(() => {
 .typing-preview-bubble {
   flex: 1;
   max-width: 32rem;
-  padding: var(--chat-message-padding-y) var(--chat-message-padding-x);
+  padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
   border-radius: var(--chat-message-radius);
   border: none;
   background-color: var(--chat-preview-bg);
@@ -5915,7 +5922,7 @@ onBeforeUnmount(() => {
   color: var(--chat-text-primary);
   width: 100%;
   min-width: 0;
-  padding: var(--chat-message-padding-y) var(--chat-message-padding-x);
+  padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
   border-radius: var(--chat-message-radius);
   background-color: var(--chat-preview-bg);
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
@@ -5998,8 +6005,9 @@ onBeforeUnmount(() => {
 .typing-preview-bubble__body {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.5;
-  font-size: 0.9375rem;
+  line-height: var(--chat-line-height, 1.6);
+  font-size: var(--chat-font-size, 0.95rem);
+  letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
 .typing-preview-bubble__placeholder {
