@@ -6,11 +6,13 @@ import { i18n, setLocale, setLocaleByNavigatorWithStorage } from './lang'
 
 import App from './App.vue'
 import router from './router'
+import { useDisplayStore } from './stores/display'
 
 const app = createApp(App)
+const pinia = createPinia()
 
 app.use(i18n)
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
 
 import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
@@ -62,5 +64,8 @@ router.beforeEach(async (to, from, next) => {
 const meta = document.createElement('meta')
 meta.name = 'naive-ui-style'
 document.head.appendChild(meta)
+
+const displayStore = useDisplayStore(pinia)
+displayStore.applyTheme()
 
 app.mount('#app')

@@ -4877,7 +4877,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- flex-grow -->
-    <div class="edit-area flex justify-between space-x-2 my-2 px-2 relative">
+    <div class="edit-area flex justify-between space-x-2 my-2 relative">
 
       <!-- 左下，快捷指令栏 -->
       <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
@@ -4894,7 +4894,7 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
 
-      <div class="absolute bg-sky-300 rounded px-4 py-2" style="top: -4rem; right: 1rem" v-if="chat.curReplyTo">
+      <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; right: 1rem" v-if="chat.curReplyTo">
         正在回复: {{ chat.curReplyTo.member?.nick }}
         <n-button @click="chat.curReplyTo = null">取消</n-button>
       </div>
@@ -5454,6 +5454,11 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
+.chat {
+  background-color: var(--sc-bg-surface);
+  transition: background-color 0.25s ease;
+}
+
 .chat--layout-compact {
   background-color: var(--chat-stage-bg);
   transition: background-color 0.25s ease;
@@ -5742,10 +5747,13 @@ onBeforeUnmount(() => {
   left: 0.5rem;
   z-index: 40;
   pointer-events: auto;
+  background-color: var(--sc-chip-bg);
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 999px;
 }
 
 .channel-switch-trigger .n-button {
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+  color: var(--sc-text-primary);
 }
 
 @media (min-width: 1024px) {
@@ -6049,6 +6057,23 @@ onBeforeUnmount(() => {
   color: #d97706;
 }
 
+.edit-area {
+  width: 100%;
+  background-color: var(--sc-bg-surface);
+  border-top: 1px solid var(--sc-border-mute);
+  border-bottom: 1px solid var(--sc-border-mute);
+  border-radius: 1.25rem;
+  padding: 1.25rem;
+  gap: 1rem;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.reply-banner {
+  background-color: var(--sc-chip-bg);
+  color: var(--sc-text-primary);
+  border: 1px solid var(--sc-border-mute);
+}
+
 .chat-input-container {
   width: 100%;
 }
@@ -6057,6 +6082,11 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
+  background-color: var(--sc-bg-input);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 1.25rem;
+  padding: 1.5rem 1.25rem 1rem;
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .chat-input-area :deep(.n-input) {
@@ -6263,10 +6293,9 @@ onBeforeUnmount(() => {
   right: 0;
   margin: 0 auto;
   max-width: 340px;
-  background: #ffffff;
+  background: var(--sc-bg-elevated);
   border-radius: 0.75rem;
-  border: 1px solid rgba(124, 58, 237, 0.22);
-  box-shadow: 0 18px 40px rgba(99, 102, 241, 0.18);
+  border: 1px solid var(--sc-border-strong);
   padding: 0.75rem;
   z-index: 6;
 }
@@ -6614,8 +6643,10 @@ onBeforeUnmount(() => {
 }
 
 .chat-text>.n-input>.n-input-wrapper {
-  @apply bg-gray-100;
+  background-color: var(--sc-bg-input);
+  border: 1px solid var(--sc-border-mute);
   padding: 0.75rem 1.25rem;
   border-radius: 0.85rem;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 </style>

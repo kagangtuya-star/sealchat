@@ -16,6 +16,28 @@
   --chat-message-padding-y: 0.9rem;
   --chat-message-padding-x: 1.1rem;
   --chat-avatar-size: 3rem;
+  --chat-bubble-border: rgba(15, 23, 42, 0.08);
+  --chat-ooc-border: rgba(148, 163, 184, 0.35);
+  --chat-archived-bg: rgba(248, 250, 252, 0.82);
+  --chat-archived-border: rgba(203, 213, 225, 0.45);
+  --chat-whisper-bg: #eef2ff;
+  --chat-whisper-border: rgba(99, 102, 241, 0.35);
+
+  --sc-bg-page: #f5f5f7;
+  --sc-bg-surface: #ffffff;
+  --sc-bg-header: #fafafa;
+  --sc-bg-sidebar: #fafafa;
+  --sc-bg-input: #ffffff;
+  --sc-bg-elevated: #ffffff;
+  --sc-border-strong: rgba(15, 23, 42, 0.12);
+  --sc-border-mute: rgba(15, 23, 42, 0.06);
+  --sc-text-primary: #0f172a;
+  --sc-text-secondary: #475569;
+  --sc-badge-bg: #ffffff;
+  --sc-badge-text: #0f172a;
+  --sc-sidebar-hover: #f0f0f0;
+  --sc-sidebar-active: #e4e4e7;
+  --sc-chip-bg: rgba(15, 23, 42, 0.04);
 }
 
 :root[data-display-palette='night'] {
@@ -30,6 +52,28 @@
   --chat-text-secondary: #b5b5c5;
   --chat-border-mute: rgba(255, 255, 255, 0.12);
   --chat-message-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  --chat-bubble-border: rgba(255, 255, 255, 0.08);
+  --chat-ooc-border: rgba(255, 255, 255, 0.16);
+  --chat-archived-bg: rgba(63, 63, 70, 0.45);
+  --chat-archived-border: rgba(255, 255, 255, 0.12);
+  --chat-whisper-bg: #3b3248;
+  --chat-whisper-border: rgba(210, 197, 255, 0.35);
+
+  --sc-bg-page: #141418;
+  --sc-bg-surface: #1b1b20;
+  --sc-bg-header: #262626;
+  --sc-bg-sidebar: #262626;
+  --sc-bg-input: #3f3f46;
+  --sc-bg-elevated: #26262c;
+  --sc-border-strong: rgba(255, 255, 255, 0.16);
+  --sc-border-mute: rgba(255, 255, 255, 0.08);
+  --sc-text-primary: #f4f4f5;
+  --sc-text-secondary: #b5b5c5;
+  --sc-badge-bg: #4c4c56;
+  --sc-badge-text: #f4f4f5;
+  --sc-sidebar-hover: #313138;
+  --sc-sidebar-active: #3a3a42;
+  --sc-chip-bg: rgba(244, 244, 245, 0.08);
 }
 
 :root[data-display-layout='compact'] {
@@ -43,18 +87,47 @@
   height: 100%;
 }
 
-html, body {
+html,
+body {
   height: 100%;
   overflow: hidden;
 }
 
 body {
-  background-color: #ffffff;
-  color: #0f172a;
+  background-color: var(--sc-bg-page);
+  color: var(--sc-text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .n-scrollbar-content {
   height: 100%;
+}
+
+.sc-app-shell {
+  background-color: var(--sc-bg-page);
+  color: var(--sc-text-primary);
+}
+
+.sc-layout-header {
+  background-color: var(--sc-bg-header);
+  border-bottom: 1px solid var(--sc-border-strong);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.sc-layout-root {
+  background-color: var(--sc-bg-page);
+  transition: background-color 0.25s ease;
+}
+
+.sc-layout-sider {
+  background-color: var(--sc-bg-sidebar);
+  border-right: 1px solid var(--sc-border-strong);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.sc-layout-content {
+  background-color: var(--sc-bg-surface);
+  transition: background-color 0.25s ease;
 }
 
 .text-more {
@@ -62,17 +135,47 @@ body {
 }
 
 .sc-sidebar-fill {
-  @apply bg-gray-100;
+  background-color: var(--sc-bg-sidebar);
+  color: var(--sc-text-primary);
 }
 
 .sc-sidebar {
-  .n-tabs-rail {
-    @apply bg-gray-100 !important;
-  }  
+  background-color: var(--sc-bg-sidebar);
+  color: var(--sc-text-primary);
 }
 
-/* .sc-header {} */
+.sc-sidebar .n-tabs-rail {
+  background-color: var(--sc-bg-sidebar) !important;
+  border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.sc-sidebar .n-tabs-tab {
+  color: var(--sc-text-secondary);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sc-sidebar .n-tabs-tab:hover {
+  background-color: var(--sc-sidebar-hover);
+  color: var(--sc-text-primary);
+}
+
+.sc-sidebar .n-tabs-tab.n-tabs-tab--active {
+  background-color: var(--sc-sidebar-active);
+  color: var(--sc-text-primary);
+  box-shadow: inset 0 0 0 1px var(--sc-border-mute);
+}
+
+.sc-sidebar .n-tabs-tab__label {
+  font-weight: 600;
+}
 
 .label-unread {
-  @apply rounded-full bg-red-500 text-white text-xs px-1 py-0;
+  border-radius: 9999px;
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  background-color: var(--sc-badge-bg);
+  color: var(--sc-badge-text);
+  border: 1px solid var(--sc-border-mute);
 }
