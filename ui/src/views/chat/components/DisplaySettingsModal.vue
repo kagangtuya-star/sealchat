@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch, computed } from 'vue'
-import type { DisplaySettings } from '@/stores/display'
+import { createDefaultDisplaySettings, type DisplaySettings } from '@/stores/display'
 
 interface Props {
   visible: boolean
@@ -13,21 +13,7 @@ const emit = defineEmits<{
   (e: 'save', value: DisplaySettings): void
 }>()
 
-const draft = reactive<DisplaySettings>({
-  layout: 'bubble',
-  palette: 'day',
-  showAvatar: true,
-  mergeNeighbors: true,
-  maxExportMessages: 5000,
-  maxExportConcurrency: 2,
-  fontSize: 15,
-  lineHeight: 1.6,
-  letterSpacing: 0,
-  bubbleGap: 12,
-  paragraphSpacing: 8,
-  messagePaddingX: 18,
-  messagePaddingY: 14,
-})
+const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 
 watch(
   () => props.settings,
@@ -80,6 +66,11 @@ type NumericSettingKey =
 const handleNumericInput = (key: NumericSettingKey) => (value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
+}
+
+const handleRestoreDefaults = () => {
+  const defaults = createDefaultDisplaySettings()
+  Object.assign(draft, defaults)
 }
 
 const handleClose = () => emit('update:visible', false)
@@ -357,7 +348,10 @@ const handleConfirm = () => emit('save', { ...draft })
       </section>
 
       <n-space justify="space-between" align="center" class="display-settings__footer">
-        <n-button quaternary size="small" @click="handleClose">取消</n-button>
+        <n-space size="small">
+          <n-button quaternary size="small" text-color="#fff" @click="handleClose">取消</n-button>
+          <n-button tertiary size="small" text-color="#fff" @click="handleRestoreDefaults">恢复默认</n-button>
+        </n-space>
         <n-button type="primary" size="small" @click="handleConfirm">应用设置</n-button>
       </n-space>
     </div>

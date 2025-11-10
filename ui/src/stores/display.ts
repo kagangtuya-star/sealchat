@@ -68,7 +68,7 @@ const coerceFloatInRange = (value: any, fallback: number, min: number, max: numb
   return num
 }
 
-const defaultSettings = (): DisplaySettings => ({
+export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'bubble',
   palette: 'day',
   showAvatar: true,
@@ -83,6 +83,7 @@ const defaultSettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
 })
+const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
 const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
