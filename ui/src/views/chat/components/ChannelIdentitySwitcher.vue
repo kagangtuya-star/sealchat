@@ -186,15 +186,17 @@ const handleSelect = async (key: string | number) => {
   gap: 0.5rem;
   padding: 0.25rem 0.6rem;
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background-color: rgba(248, 250, 252, 0.9);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.35));
+  background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.9));
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  color: var(--sc-text-primary, #374151);
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
 }
 
 .identity-switcher__label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: #374151;
+  color: inherit;
   max-width: 6.5rem;
   white-space: nowrap;
   overflow: hidden;
@@ -210,7 +212,7 @@ const handleSelect = async (key: string | number) => {
   width: 10px;
   height: 10px;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.45);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.45));
 }
 
 .identity-option {
@@ -234,7 +236,7 @@ const handleSelect = async (key: string | number) => {
   width: 12px;
   height: 12px;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.45);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.45));
 }
 
 .identity-option__name {

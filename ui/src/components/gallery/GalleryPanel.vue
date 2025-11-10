@@ -1,5 +1,11 @@
 <template>
-  <n-drawer :show="visible" placement="right" :width="drawerWidth" @update:show="handleShow">
+  <n-drawer
+    class="gallery-drawer"
+    :show="visible"
+    placement="right"
+    :width="drawerWidth"
+    @update:show="handleShow"
+  >
     <n-drawer-content title="快捷画廊" closable>
       <div class="gallery-panel">
         <GalleryCollectionTree
@@ -444,6 +450,13 @@ function toggleEmojiLink() {
 </script>
 
 <style scoped>
+.gallery-drawer :deep(.n-drawer),
+.gallery-drawer :deep(.n-drawer-body) {
+  background-color: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
 .gallery-panel {
   display: grid;
   grid-template-columns: 220px 1fr;

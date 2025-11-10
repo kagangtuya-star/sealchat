@@ -31,6 +31,14 @@ function handleChange(options: { fileList: UploadFileInfo[] }) {
 .gallery-upload-zone {
   padding: 24px 16px;
   text-align: center;
-  color: var(--text-color-3);
+  color: var(--sc-text-secondary, var(--text-color-3));
+  background-color: var(--sc-bg-input, #f9fafb);
+  border: 1px dashed var(--sc-border-strong, rgba(148, 163, 184, 0.6));
+  border-radius: 0.75rem;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.gallery-upload-zone:hover {
+  background-color: var(--sc-chip-bg, rgba(15, 23, 42, 0.08));
 }
 </style>

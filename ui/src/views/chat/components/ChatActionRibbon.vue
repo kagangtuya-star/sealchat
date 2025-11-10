@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Palette } from '@vicons/tabler'
+import {
+  Archive as ArchiveIcon,
+  Download as DownloadIcon,
+  MoodSmile as EmojiIcon,
+  Palette,
+  Users as UsersIcon,
+} from '@vicons/tabler'
 
 interface FilterState {
   icOnly: boolean
@@ -114,7 +120,7 @@ const clearAllFilters = () => {
           @click="emit('open-archive')"
         >
           <template #icon>
-            <n-icon component="ArchiveOutlined" />
+            <n-icon :component="ArchiveIcon" />
           </template>
           消息归档
         </n-button>
@@ -126,7 +132,7 @@ const clearAllFilters = () => {
           @click="emit('open-export')"
         >
           <template #icon>
-            <n-icon component="DownloadOutlined" />
+            <n-icon :component="DownloadIcon" />
           </template>
           导出记录
         </n-button>
@@ -138,7 +144,7 @@ const clearAllFilters = () => {
           @click="emit('open-identity-manager')"
         >
           <template #icon>
-            <n-icon component="UserOutlined" />
+            <n-icon :component="UsersIcon" />
           </template>
           角色管理
         </n-button>
@@ -162,7 +168,7 @@ const clearAllFilters = () => {
           @click="emit('open-gallery')"
         >
           <template #icon>
-            <n-icon component="PictureOutlined" />
+            <n-icon :component="EmojiIcon" />
           </template>
           表情资源
         </n-button>
@@ -197,6 +203,12 @@ const clearAllFilters = () => {
   border: 1px solid var(--sc-border-strong);
   border-radius: 0.75rem;
   color: var(--sc-text-primary);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+:root[data-display-palette='night'] .action-ribbon {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
 }
 
 .ribbon-section {
@@ -236,15 +248,39 @@ const clearAllFilters = () => {
   border-radius: 999px;
   padding: 0 0.85rem;
   color: var(--sc-text-primary);
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background-color: transparent;
+}
+
+.ribbon-action-button:hover {
+  background-color: var(--sc-chip-bg);
+}
+
+:root[data-display-palette='night'] .ribbon-action-button:hover {
+  background-color: rgba(244, 244, 245, 0.08);
 }
 
 .ribbon-action-button.is-active {
   background-color: rgba(59, 130, 246, 0.18);
   color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.35);
 }
 
 .ribbon-action-button.is-active :deep(.n-icon) {
   color: #2563eb;
+}
+
+:root[data-display-palette='night'] .ribbon-action-button.is-active {
+  background-color: rgba(96, 165, 250, 0.25);
+  color: #cfe0ff;
+  border-color: rgba(147, 197, 253, 0.45);
+}
+
+:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon) {
+  color: #e0edff;
 }
 
 @media (max-width: 768px) {

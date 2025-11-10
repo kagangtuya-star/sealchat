@@ -407,8 +407,44 @@ const shortcuts = {
   max-width: 90vw;
 }
 
+.export-dialog :deep(.n-input),
+.export-dialog :deep(.n-input-wrapper),
+.export-dialog :deep(.n-select),
+.export-dialog :deep(.n-date-picker),
+.export-dialog :deep(.n-base-selection),
+.export-dialog :deep(.n-input__content) {
+  background-color: var(--sc-bg-input, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.export-dialog :deep(.n-input__state-border),
+.export-dialog :deep(.n-input),
+.export-dialog :deep(.n-base-selection),
+.export-dialog :deep(.n-date-picker),
+.export-dialog :deep(.n-select) {
+  border-color: var(--sc-border-mute, rgba(15, 23, 42, 0.1));
+}
+
+.export-dialog :deep(.n-select .n-base-selection-label),
+.export-dialog :deep(.n-input__placeholder),
+.export-dialog :deep(.n-date-picker .n-input__input-el) {
+  color: var(--sc-text-primary, #0f172a);
+}
+
 .export-notice {
   margin-bottom: 1.5rem;
+}
+
+:deep(.n-modal.export-dialog .n-card),
+.export-dialog :deep(.n-card) {
+  background-color: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+  border: 1px solid var(--sc-border-strong, rgba(15, 23, 42, 0.12));
+}
+
+:deep(.n-modal.export-dialog .n-card__segmented),
+.export-dialog :deep(.n-card__segmented) {
+  background-color: transparent;
 }
 
 :deep(.n-alert) {

@@ -5329,8 +5329,13 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
-  <n-drawer v-model:show="identityManageVisible" placement="right" :width="360">
-    <n-drawer-content>
+  <n-drawer
+    class="identity-manage-shell"
+    v-model:show="identityManageVisible"
+    placement="right"
+    :width="360"
+  >
+    <n-drawer-content class="identity-manage-drawer">
       <template #header>
         <div class="identity-drawer__header">
           <div>
@@ -5493,7 +5498,30 @@ onBeforeUnmount(() => {
 
 .chat {
   background-color: var(--sc-bg-surface);
-  transition: background-color 0.25s ease;
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 1rem;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  scrollbar-color: var(--sc-border-mute) transparent;
+}
+
+.chat.chat--palette-night {
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 22px 42px rgba(0, 0, 0, 0.6);
+}
+
+.chat::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat::-webkit-scrollbar-thumb {
+  background-color: var(--sc-border-mute);
+  border-radius: 999px;
 }
 
 .chat--layout-compact {
@@ -5571,13 +5599,13 @@ onBeforeUnmount(() => {
 .identity-drawer__title {
   font-size: 1rem;
   font-weight: 600;
-  color: #111827;
+  color: var(--sc-text-primary, #111827);
 }
 
 .identity-drawer__subtitle {
   margin-top: 0.15rem;
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .message-row__handle {
@@ -6113,6 +6141,17 @@ onBeforeUnmount(() => {
 
 .chat-input-container {
   width: 100%;
+  background-color: var(--sc-bg-elevated);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.08);
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+:root[data-display-palette='night'] .chat-input-container {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
 .chat-input-area {
@@ -6121,7 +6160,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background-color: var(--sc-bg-input);
   border: 1px solid var(--sc-border-strong);
-  border-radius: 0;
+  border-radius: 0.75rem;
   padding: 0.75rem;
   gap: 0.75rem;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
@@ -6225,6 +6264,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
   min-width: 18rem;
   max-width: 22rem;
+  background-color: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+  border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.1));
 }
 
 .history-panel {
@@ -6232,6 +6274,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.75rem;
   padding: 0.9rem 1rem 1rem;
+  background-color: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
 }
 
 .history-panel__header {
@@ -6244,7 +6288,7 @@ onBeforeUnmount(() => {
 .history-panel__title {
   font-size: 0.95rem;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
 }
 
 .history-panel__body {
@@ -6254,6 +6298,7 @@ onBeforeUnmount(() => {
   max-height: 14rem;
   overflow-y: auto;
   padding-right: 0.2rem;
+  color: var(--sc-text-primary, #0f172a);
 }
 
 .history-entry {
@@ -6472,6 +6517,12 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+:root[data-display-palette='night'] .input-floating-toolbar :deep(.n-button:not([disabled]) .n-icon),
+:root[data-display-palette='night'] .input-floating-toolbar :deep(.n-button:not([disabled]) .n-button__icon > svg),
+:root[data-display-palette='night'] .input-floating-toolbar :deep(.n-button:not([disabled]) .n-button__icon) {
+  color: rgba(255, 255, 255, 0.88);
+}
+
 @media (max-width: 600px) {
   .input-floating-toolbar {
     flex-wrap: wrap;
@@ -6653,7 +6704,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  border-bottom: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
 }
 
 .identity-list__meta {
@@ -6672,7 +6723,7 @@ onBeforeUnmount(() => {
   width: 12px;
   height: 12px;
   border-radius: 9999px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.4));
 }
 
 .identity-list__actions {
@@ -6682,7 +6733,7 @@ onBeforeUnmount(() => {
 
 .identity-list__hint {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
   margin-top: 0.25rem;
 }
 
@@ -6749,3 +6800,34 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 </style>
+.identity-dialog :deep(.n-card) {
+  background: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+  border: 1px solid var(--sc-border-strong, rgba(15, 23, 42, 0.12));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.15);
+}
+
+.identity-dialog :deep(.n-card__header),
+.identity-dialog :deep(.n-card__content),
+.identity-dialog :deep(.n-card__footer) {
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.identity-dialog :deep(.n-form-item-label__text) {
+  color: var(--sc-text-secondary, #475569);
+}
+
+.identity-manage-shell :deep(.n-drawer),
+.identity-manage-shell :deep(.n-drawer-body) {
+  background-color: var(--sc-bg-elevated, #1b1b20);
+  color: var(--sc-text-primary, #f4f4f5);
+}
+
+.identity-manage-shell :deep(.n-drawer-body) {
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.identity-manage-drawer {
+  background: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+}

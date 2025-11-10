@@ -120,6 +120,7 @@ const handleClose = () => {
 
 <template>
   <n-drawer
+    class="archive-drawer"
     :show="visible"
     @update:show="emit('update:visible', $event)"
     placement="right"
@@ -244,10 +245,22 @@ const handleClose = () => {
   width: 100%;
 }
 
+.archive-drawer :deep(.n-drawer) {
+  background-color: var(--sc-bg-elevated, #ffffff);
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.archive-drawer :deep(.n-drawer-body) {
+  background-color: var(--sc-bg-elevated, #ffffff);
+}
+
 .archive-content {
   height: 100%;
   display: flex;
   flex-direction: column;
+  color: var(--sc-text-primary, #0f172a);
+  background-color: var(--sc-bg-elevated, #ffffff);
+  padding-bottom: 0.25rem;
 }
 
 .archive-toolbar {
@@ -256,6 +269,7 @@ const handleClose = () => {
   justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
+  color: var(--sc-text-secondary, #475569);
 }
 
 .archive-loading {
@@ -286,9 +300,10 @@ const handleClose = () => {
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem;
-  background: rgba(248, 250, 252, 0.8);
+  background: var(--sc-chip-bg, rgba(15, 23, 42, 0.04));
   border-radius: 0.5rem;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.2));
+  color: var(--sc-text-primary, #0f172a);
 }
 
 .control-actions {
@@ -309,20 +324,22 @@ const handleClose = () => {
   align-items: flex-start;
   gap: 0.75rem;
   padding: 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.2));
   border-radius: 0.5rem;
-  background: #ffffff;
+  background: var(--sc-bg-surface, #ffffff);
   transition: all 0.2s ease;
+  color: var(--sc-text-primary, #0f172a);
 }
 
 .message-item:hover {
-  border-color: rgba(59, 130, 246, 0.3);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+  border-color: var(--sc-border-strong, rgba(59, 130, 246, 0.3));
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  background: var(--sc-bg-elevated, #ffffff);
 }
 
 .message-item.selected {
-  border-color: rgba(59, 130, 246, 0.5);
-  background: rgba(59, 130, 246, 0.05);
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .message-content {
@@ -339,16 +356,16 @@ const handleClose = () => {
 
 .sender-name {
   font-weight: 600;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
 }
 
 .message-date {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .message-text {
-  color: #374151;
+  color: var(--sc-text-primary, #374151);
   line-height: 1.5;
   margin-bottom: 0.5rem;
   word-break: break-word;
@@ -359,7 +376,7 @@ const handleClose = () => {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
-  color: #9ca3af;
+  color: var(--sc-text-secondary, #9ca3af);
 }
 
 .archive-date {
@@ -367,7 +384,7 @@ const handleClose = () => {
 }
 
 .archive-by {
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .archive-pagination {

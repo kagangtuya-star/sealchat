@@ -710,21 +710,22 @@ defineExpose({
   max-height: 12rem;
   overflow-y: auto;
   padding: 0.5rem 0.75rem;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
   border-radius: 0.5rem;
-  background-color: #ffffff;
+  background-color: var(--sc-bg-input, #ffffff);
   font-size: 0.875rem;
   line-height: 1.5;
   outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
   word-wrap: break-word;
   word-break: break-word;
   position: relative;
+  color: var(--sc-text-primary, #0f172a);
 
   // 使用 CSS 实现占位符
   &:empty::before {
     content: attr(data-placeholder);
-    color: #9ca3af;
+    color: var(--sc-text-secondary, #9ca3af);
     pointer-events: none;
     position: absolute;
     left: 0.75rem;
@@ -732,25 +733,25 @@ defineExpose({
   }
 
   &.is-focused {
-    border-color: #3b82f6;
+    border-color: rgba(59, 130, 246, 0.7);
     box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
   }
 
   &.whisper-mode {
-    border-color: #7c3aed;
+    border-color: rgba(124, 58, 237, 0.8);
     box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35);
-    background-color: rgba(250, 245, 255, 0.92);
+    background-color: rgba(124, 58, 237, 0.08);
   }
 
   &.is-disabled {
-    background-color: #f3f4f6;
+    background-color: var(--sc-bg-surface, #f3f4f6);
     cursor: not-allowed;
     opacity: 0.6;
   }
 }
 
 .hybrid-input__placeholder {
-  color: #9ca3af;
+  color: var(--sc-text-secondary, #9ca3af);
   pointer-events: none;
   position: absolute;
 }
@@ -766,8 +767,8 @@ defineExpose({
   position: relative;
   margin: 0 0.125rem;
   padding: 0.125rem 0.375rem;
-  background-color: #f3f4f6;
-  border: 1px solid #e5e7eb;
+  background-color: var(--sc-chip-bg, rgba(15, 23, 42, 0.04));
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
   border-radius: 0.375rem;
   font-size: 0.75rem;
   vertical-align: middle;
@@ -785,7 +786,7 @@ defineExpose({
   }
 
   .image-status {
-    color: #6b7280;
+    color: var(--sc-text-secondary, #6b7280);
     font-size: 0.75rem;
 
     &.error {
