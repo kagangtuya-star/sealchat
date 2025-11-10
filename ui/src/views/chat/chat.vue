@@ -5048,6 +5048,135 @@ onBeforeUnmount(() => {
                 </n-popover>
               </div>
               <GalleryButton />
+            <div class="chat-input-actions flex flex-1 items-center justify-between gap-2">
+              <div class="chat-input-actions__group chat-input-actions__group--addons">
+                <div class="chat-input-actions__cell">
+                  <ChatIcOocToggle
+                    v-model="chat.icMode"
+                    :disabled="isEditing"
+                  />
+                </div>
+
+               <div class="chat-input-actions__cell">
+                 <n-tooltip trigger="hover">
+                   <template #trigger>
+                     <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
+                       @click="startWhisperSelection" :disabled="!canOpenWhisperPanel || isEditing">
+                        <span class="chat-input-actions__icon">W</span>
+                      </n-button>
+                    </template>
+                    {{ t('inputBox.whisperTooltip') }}
+                  </n-tooltip>
+                </div>
+
+                <div class="chat-input-actions__cell">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button quaternary circle class="typing-toggle" :class="typingToggleClass"
+                        @click="toggleTypingPreview" :disabled="isEditing">
+                        <span class="chat-input-actions__icon">👁</span>
+                      </n-button>
+                    </template>
+                    {{ typingPreviewTooltip }}
+                  </n-tooltip>
+                </div>
+                <div class="chat-input-actions__cell">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button quaternary circle @click="doUpload" :disabled="isEditing">
+                        <template #icon>
+                          <n-icon :component="Upload" size="18" />
+                        </template>
+                      </n-button>
+                    </template>
+                    上传图片
+                  </n-tooltip>
+                </div>
+
+                <div class="chat-input-actions__cell">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button
+                        quaternary
+                        circle
+                        :type="inputMode === 'rich' ? 'primary' : 'default'"
+                        @click="toggleInputMode"
+                        :disabled="isEditing"
+                      >
+                        <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
+                      </n-button>
+                    </template>
+                    {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
+                  </n-tooltip>
+                </div>
+
+                <div class="chat-input-actions__cell">
+                  <n-popover
+                    trigger="click"
+                    placement="top"
+                    :show="historyPopoverVisible"
+                    :show-arrow="false"
+                    class="history-popover"
+                    @update:show="handleHistoryPopoverShow"
+                  >
+                    <template #trigger>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button quaternary circle>
+                            <template #icon>
+                              <n-icon :component="ArrowBackUp" size="18" />
+                            </template>
+                          </n-button>
+                        </template>
+                        输入历史 / 保存当前
+                      </n-tooltip>
+                    </template>
+                    <div class="history-panel" @click.stop>
+                      <div class="history-panel__header">
+                        <span class="history-panel__title">输入回溯</span>
+                        <n-button
+                          size="tiny"
+                          tertiary
+                          round
+                          :disabled="!canManuallySaveHistory"
+                          @click.stop="handleManualHistoryRecord"
+                        >保存当前</n-button>
+                      </div>
+                      <div v-if="historyEntryViews.length" class="history-panel__body">
+                        <button
+                          v-for="entry in historyEntryViews"
+                          :key="entry.id"
+                          type="button"
+                          class="history-entry"
+                          @click="restoreHistoryEntry(entry.id)"
+                        >
+                          <div class="history-entry__meta">
+                            <span class="history-entry__tag" :class="{ 'history-entry__tag--rich': entry.mode === 'rich' }">
+                              {{ entry.mode === 'rich' ? '富文本' : '纯文本' }}
+                            </span>
+                            <span class="history-entry__time">{{ entry.timeLabel }}</span>
+                          </div>
+                          <div class="history-entry__preview" :title="entry.fullPreview">{{ entry.preview }}</div>
+                        </button>
+                      </div>
+                      <div v-else class="history-panel__empty">
+                        <p>暂无历史记录</p>
+                        <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
+                      </div>
+                    </div>
+                  </n-popover>
+                </div>
+              </div>
+
+              <div class="chat-input-actions__cell chat-input-actions__send">
+                <n-button type="primary" circle size="large" @click="send"
+                  :disabled="chat.connectState !== 'connected' || isEditing">
+                  <template #icon>
+                    <n-icon :component="Send" size="20" />
+                  </template>
+                </n-button>
+              </div>
+            </div>
             </div>
 
 
@@ -5084,135 +5213,6 @@ onBeforeUnmount(() => {
               multiple
               @change="handleInlineFileChange"
             />
-        </div>
-        <div class="chat-input-actions flex items-center justify-between gap-2 mt-2">
-          <div class="chat-input-actions__group chat-input-actions__group--addons">
-            <div class="chat-input-actions__cell">
-              <ChatIcOocToggle
-                v-model="chat.icMode"
-                :disabled="isEditing"
-              />
-            </div>
-
-           <div class="chat-input-actions__cell">
-             <n-tooltip trigger="hover">
-               <template #trigger>
-                 <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
-                   @click="startWhisperSelection" :disabled="!canOpenWhisperPanel || isEditing">
-                    <span class="chat-input-actions__icon">W</span>
-                  </n-button>
-                </template>
-                {{ t('inputBox.whisperTooltip') }}
-              </n-tooltip>
-            </div>
-
-            <div class="chat-input-actions__cell">
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-button quaternary circle class="typing-toggle" :class="typingToggleClass"
-                    @click="toggleTypingPreview" :disabled="isEditing">
-                    <span class="chat-input-actions__icon">👁</span>
-                  </n-button>
-                </template>
-                {{ typingPreviewTooltip }}
-              </n-tooltip>
-            </div>
-            <div class="chat-input-actions__cell">
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-button quaternary circle @click="doUpload" :disabled="isEditing">
-                    <template #icon>
-                      <n-icon :component="Upload" size="18" />
-                    </template>
-                  </n-button>
-                </template>
-                上传图片
-              </n-tooltip>
-            </div>
-
-            <div class="chat-input-actions__cell">
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-button
-                    quaternary
-                    circle
-                    :type="inputMode === 'rich' ? 'primary' : 'default'"
-                    @click="toggleInputMode"
-                    :disabled="isEditing"
-                  >
-                    <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
-                  </n-button>
-                </template>
-                {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
-              </n-tooltip>
-            </div>
-
-            <div class="chat-input-actions__cell">
-              <n-popover
-                trigger="click"
-                placement="top"
-                :show="historyPopoverVisible"
-                :show-arrow="false"
-                class="history-popover"
-                @update:show="handleHistoryPopoverShow"
-              >
-                <template #trigger>
-                  <n-tooltip trigger="hover">
-                    <template #trigger>
-                      <n-button quaternary circle>
-                        <template #icon>
-                          <n-icon :component="ArrowBackUp" size="18" />
-                        </template>
-                      </n-button>
-                    </template>
-                    输入历史 / 保存当前
-                  </n-tooltip>
-                </template>
-                <div class="history-panel" @click.stop>
-                  <div class="history-panel__header">
-                    <span class="history-panel__title">输入回溯</span>
-                    <n-button
-                      size="tiny"
-                      tertiary
-                      round
-                      :disabled="!canManuallySaveHistory"
-                      @click.stop="handleManualHistoryRecord"
-                    >保存当前</n-button>
-                  </div>
-                  <div v-if="historyEntryViews.length" class="history-panel__body">
-                    <button
-                      v-for="entry in historyEntryViews"
-                      :key="entry.id"
-                      type="button"
-                      class="history-entry"
-                      @click="restoreHistoryEntry(entry.id)"
-                    >
-                      <div class="history-entry__meta">
-                        <span class="history-entry__tag" :class="{ 'history-entry__tag--rich': entry.mode === 'rich' }">
-                          {{ entry.mode === 'rich' ? '富文本' : '纯文本' }}
-                        </span>
-                        <span class="history-entry__time">{{ entry.timeLabel }}</span>
-                      </div>
-                      <div class="history-entry__preview" :title="entry.fullPreview">{{ entry.preview }}</div>
-                    </button>
-                  </div>
-                  <div v-else class="history-panel__empty">
-                    <p>暂无历史记录</p>
-                    <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
-                  </div>
-                </div>
-              </n-popover>
-            </div>
-          </div>
-
-          <div class="chat-input-actions__cell chat-input-actions__send">
-            <n-button type="primary" circle size="large" @click="send"
-              :disabled="chat.connectState !== 'connected' || isEditing">
-              <template #icon>
-                <n-icon :component="Send" size="20" />
-              </template>
-            </n-button>
-          </div>
         </div>
       </div>
     </div>
@@ -6062,9 +6062,9 @@ onBeforeUnmount(() => {
   background-color: var(--sc-bg-surface);
   border-top: 1px solid var(--sc-border-mute);
   border-bottom: 1px solid var(--sc-border-mute);
-  border-radius: 1.25rem;
-  padding: 1.25rem;
-  gap: 1rem;
+  border-radius: 0;
+  padding: 0.75rem 0.85rem;
+  gap: 0.75rem;
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
@@ -6084,8 +6084,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background-color: var(--sc-bg-input);
   border: 1px solid var(--sc-border-strong);
-  border-radius: 1.25rem;
-  padding: 1.5rem 1.25rem 1rem;
+  border-radius: 0;
+  padding: 0.75rem;
+  gap: 0.75rem;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
@@ -6097,22 +6098,33 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
+  gap: 0.5rem;
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .chat-input-actions__group {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 .chat-input-actions__cell .n-button {
-  width: 42px;
-  height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+  width: 36px;
+  height: 36px;
+}
+
+.chat-input-actions__cell.chat-input-actions__send .n-button {
+  width: 44px;
+  height: 44px;
 }
 
 .chat-input-actions__cell .n-button:disabled {
@@ -6359,23 +6371,22 @@ onBeforeUnmount(() => {
 }
 
 .chat-input-area {
-  padding-top: 3.4rem;
+  padding-top: 0.75rem;
 }
 
 .input-floating-toolbar {
-  position: absolute;
-  top: 0.25rem;
-  left: 0.5rem;
-  z-index: 6;
+  position: static;
+  width: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 768px) {
   .input-floating-toolbar {
-    position: static;
-    margin-bottom: 0.5rem;
+    gap: 0.4rem;
   }
 }
 
