@@ -2324,8 +2324,15 @@ const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) 
 const listRevision = ref(0);
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
   'typing-preview-item',
+  'message-row',
+  `message-row--tone-${preview.tone}`,
   `typing-preview-item--${preview.tone}`,
   { 'typing-preview-item--indicator': preview.indicatorOnly },
+];
+const typingPreviewSurfaceClass = (preview: TypingPreviewItem) => [
+  'typing-preview-surface',
+  'message-row__surface',
+  `message-row__surface--tone-${preview.tone}`,
 ];
 let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
@@ -4753,33 +4760,76 @@ onBeforeUnmount(() => {
           :key="`${preview.userId}-typing`"
           :class="typingPreviewItemClass(preview)"
         >
-          <AvatarVue :border="false" :size="40" :src="preview.avatar" />
-          <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
-            <div class="typing-preview-bubble__header">
-              <div class="typing-preview-bubble__meta">
-                <span
-                  class="typing-preview-bubble__name"
-                  :style="preview.color ? { color: preview.color } : undefined"
-                >{{ preview.displayName }}</span>
-                <span class="typing-preview-bubble__tag">
-                  {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
-                </span>
+          <div :class="typingPreviewSurfaceClass(preview)">
+            <template v-if="!display.showAvatar && compactInlineGridLayout">
+              <div class="message-row__grid typing-preview-grid">
+                <div class="message-row__grid-handle typing-preview-grid__handle"></div>
+                <div class="message-row__grid-name">
+                  <span
+                    class="message-row__name"
+                    :style="preview.color ? { color: preview.color } : undefined"
+                  >{{ preview.displayName }}</span>
+                </div>
+                <div class="message-row__grid-colon">
+                  <span class="message-row__colon">：</span>
+                </div>
+                <div class="message-row__grid-content">
+                  <div
+                    class="typing-preview-inline-body"
+                    :class="{ 'typing-preview-inline-body--placeholder': preview.indicatorOnly }"
+                  >
+                    <template v-if="preview.indicatorOnly">
+                      <span>正在输入</span>
+                    </template>
+                    <template v-else>
+                      <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
+                    </template>
+                    <span class="typing-preview-inline-tag">
+                      {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
+                    </span>
+                    <span class="typing-dots typing-dots--inline">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </span>
+                  </div>
+                </div>
               </div>
-              <span class="typing-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-              </span>
-            </div>
-            <div class="typing-preview-bubble__body"
-              :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }">
-              <template v-if="preview.indicatorOnly">
-                正在输入
-              </template>
-              <template v-else>
-                <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
-              </template>
-            </div>
+            </template>
+            <template v-else>
+              <div v-if="display.showAvatar" class="typing-preview-avatar">
+                <AvatarVue :border="false" :size="40" :src="preview.avatar" />
+              </div>
+              <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
+                <div class="typing-preview-bubble__header">
+                  <div class="typing-preview-bubble__meta">
+                    <span
+                      class="typing-preview-bubble__name"
+                      :style="preview.color ? { color: preview.color } : undefined"
+                    >{{ preview.displayName }}</span>
+                    <span class="typing-preview-bubble__tag">
+                      {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
+                    </span>
+                  </div>
+                  <span class="typing-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                </div>
+                <div
+                  class="typing-preview-bubble__body"
+                  :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }"
+                >
+                  <template v-if="preview.indicatorOnly">
+                    正在输入
+                  </template>
+                  <template v-else>
+                    <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
+                  </template>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -5423,7 +5473,7 @@ onBeforeUnmount(() => {
   width: 1rem;
 }
 
-.chat--layout-compact .typing-preview-item {
+.chat--layout-compact .typing-preview-surface {
   width: 100%;
   padding: 0.5rem 0.75rem;
   border-radius: 0.9rem;
@@ -5432,7 +5482,7 @@ onBeforeUnmount(() => {
   background-size: 6px 6px;
 }
 
-.chat--layout-compact .typing-preview-item--ooc {
+.chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
   background-color: var(--chat-ooc-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
 }
@@ -5684,12 +5734,20 @@ onBeforeUnmount(() => {
 
 
 .typing-preview-item {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.75rem;
   margin-top: 0.75rem;
   font-size: 0.9375rem;
   color: var(--chat-text-secondary);
+}
+
+.typing-preview-surface {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.typing-preview-avatar {
+  flex-shrink: 0;
 }
 
 .typing-preview-viewport {
@@ -5702,6 +5760,7 @@ onBeforeUnmount(() => {
 }
 
 .typing-preview-bubble {
+  flex: 1;
   max-width: 32rem;
   padding: var(--chat-message-padding-y) var(--chat-message-padding-x);
   border-radius: var(--chat-message-radius);
@@ -5714,6 +5773,45 @@ onBeforeUnmount(() => {
 
 .typing-preview-bubble--content {
   color: var(--chat-text-primary);
+}
+
+.typing-preview-grid {
+  width: 100%;
+}
+
+.typing-preview-grid__handle {
+  min-height: 2rem;
+}
+
+.typing-preview-inline-body {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  line-height: 1.5;
+  font-size: 0.9375rem;
+  color: var(--chat-text-primary);
+}
+
+.typing-preview-inline-body .preview-content {
+  flex: 1 1 auto;
+}
+
+.typing-preview-inline-body--placeholder {
+  color: #6b7280;
+}
+
+.typing-preview-inline-tag {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background-color: rgba(156, 163, 175, 0.18);
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.typing-preview-inline-body--placeholder .typing-preview-inline-tag {
+  background-color: rgba(156, 163, 175, 0.24);
 }
 
 .typing-preview-bubble__footer {
@@ -5838,6 +5936,10 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   background-color: rgba(107, 114, 128, 0.9);
   animation: typing-dots 1.2s infinite ease-in-out;
+}
+
+.typing-dots--inline {
+  margin-left: 0.25rem;
 }
 
 .typing-preview-bubble--content .typing-dots span {
