@@ -6098,17 +6098,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: clamp(0.3rem, 0.9vw, 0.5rem);
   margin-top: 0;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  flex-wrap: nowrap;
+  overflow: visible;
 }
 
 .chat-input-actions__group {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
+  gap: clamp(0.2rem, 0.7vw, 0.35rem);
+  flex-wrap: nowrap;
+}
+
+.chat-input-actions__cell {
+  flex: 0 1 auto;
 }
 
 .chat-input-actions__cell .n-button {
@@ -6118,13 +6124,57 @@ onBeforeUnmount(() => {
 }
 
 .chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
-  width: 36px;
-  height: 36px;
+  width: clamp(24px, 2.8vw, 32px);
+  height: clamp(24px, 2.8vw, 32px);
 }
 
 .chat-input-actions__cell.chat-input-actions__send .n-button {
-  width: 36px;
-  height: 36px;
+  width: clamp(32px, 3.2vw, 40px);
+  height: clamp(32px, 3.2vw, 40px);
+}
+
+@media (max-width: 520px) {
+  .chat-input-actions {
+    gap: 0.25rem;
+  }
+
+  .chat-input-actions__group {
+    gap: 0.2rem;
+  }
+
+  .chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+    width: 24px;
+    height: 24px;
+  }
+
+  .chat-input-actions__cell.chat-input-actions__send .n-button {
+    width: 32px;
+    height: 32px;
+  }
+
+  .chat-input-actions__icon {
+    font-size: 0.75rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .chat-input-actions {
+    gap: 0.2rem;
+  }
+
+  .chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+    width: 22px;
+    height: 22px;
+  }
+
+  .chat-input-actions__cell.chat-input-actions__send .n-button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .chat-input-actions__icon {
+    font-size: 0.65rem;
+  }
 }
 
 .chat-input-actions__cell .n-button:disabled {
@@ -6380,13 +6430,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: clamp(0.3rem, 1vw, 0.5rem);
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 600px) {
   .input-floating-toolbar {
-    gap: 0.4rem;
+    flex-wrap: wrap;
   }
 }
 
