@@ -69,6 +69,24 @@ const compactInlineGridLayout = computed(
   () => compactInlineLayout.value && !compactInlineStackLayout.value,
 );
 
+const defaultPageTitle = typeof document !== 'undefined' ? document.title : '海豹尬聊 SealChat';
+const syncPageTitle = (channelName?: string | null) => {
+  if (typeof document === 'undefined') return;
+  document.title = channelName && channelName.trim().length > 0 ? channelName : defaultPageTitle;
+};
+
+watch(
+  () => [chat.curChannel?.id, chat.curChannel?.name] as const,
+  ([, name]) => {
+    syncPageTitle(name);
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  syncPageTitle();
+});
+
 watch(
   () => display.settings,
   (value) => {
