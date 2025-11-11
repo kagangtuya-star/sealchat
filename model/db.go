@@ -100,6 +100,7 @@ func DBInit(dsn string) {
 	db.AutoMigrate(&TimelineUserLastRecordModel{})
 	db.AutoMigrate(&UserEmojiModel{})
 	db.AutoMigrate(&BotTokenModel{})
+	db.AutoMigrate(&BotProfileModel{}, &BotChannelBindingModel{}, &BotMessageMappingModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})

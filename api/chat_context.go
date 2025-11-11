@@ -106,6 +106,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 		}
 	}
+	service.ForwardOneBotEvent(channelId, data)
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelExcept(channelId string, ignoredUserIds []string, data *protocol.Event) {

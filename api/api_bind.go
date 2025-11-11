@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 
 	"sealchat/pm"
+	onebot "sealchat/service/onebot"
 	"sealchat/utils"
 )
 
@@ -54,6 +55,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := *appConfig
 		ret.LogUpload.Token = ""
+		ret.OneBot.Auth.AccessToken = ""
 		u := getCurUser(c)
 		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
 			ret.ServeAt = ""
@@ -114,6 +116,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	})
 	v1Auth.Static("/attachments", "./data/upload")
 	v1Auth.Static("/gallery/thumbs", "./data/gallery/thumbs")
+	if config.OneBot.Enabled {
+		onebot.AttachRoutes(app, &config.OneBot)
+	}
+	v1Auth.Get("/channels/:channelId/bot-settings", ChannelBotSettingsGet)
+	v1Auth.Patch("/channels/:channelId/bot-settings", ChannelBotSettingsUpdate)
+	v1Auth.Get("/bot-profiles", BotProfileOptions)
 
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)
@@ -138,6 +146,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Get("/admin/bot-token-list", BotTokenList)
 	v1AuthAdmin.Post("/admin/bot-token-add", BotTokenAdd)
 	v1AuthAdmin.Post("/admin/bot-token-delete", BotTokenDelete)
+	v1AuthAdmin.Get("/admin/bots", AdminBotProfileList)
+	v1AuthAdmin.Post("/admin/bots", AdminBotProfileCreate)
+	v1AuthAdmin.Patch("/admin/bots/:id", AdminBotProfileUpdate)
+	v1AuthAdmin.Delete("/admin/bots/:id", AdminBotProfileDelete)
+	v1AuthAdmin.Post("/admin/bots/:id/test", AdminBotProfileTest)
 	v1AuthAdmin.Get("/admin/user-list", AdminUserList)
 	v1AuthAdmin.Post("/admin/user-disable", AdminUserDisable)
 	v1AuthAdmin.Post("/admin/user-enable", AdminUserEnable)

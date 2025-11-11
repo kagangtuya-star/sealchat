@@ -14,6 +14,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
+	"sealchat/service/onebot"
 	"sealchat/utils"
 )
 
@@ -71,6 +72,7 @@ func main() {
 	}()
 
 	pm.Init()
+	onebot.Init(&config.OneBot)
 
 	service.StartMessageExportWorker(service.MessageExportWorkerConfig{
 		StorageDir: "./data/exports",

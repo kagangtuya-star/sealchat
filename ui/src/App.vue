@@ -43,16 +43,23 @@ watch(i18n.global.locale, (newVal) => {
 </script>
 
 <template>
-  <n-config-provider :locale="locale" :date-locale="dateLocale" :theme-overrides="themeOverrides" style="height: 100%;">
-    <n-message-provider>
-      <n-dialog-provider>
-        <RouterView />
-      </n-dialog-provider>
-    </n-message-provider>
-  </n-config-provider>
+  <div class="app-shell">
+    <n-config-provider :locale="locale" :date-locale="dateLocale" :theme-overrides="themeOverrides" style="height: 100%;">
+      <n-message-provider>
+        <n-dialog-provider>
+          <RouterView />
+        </n-dialog-provider>
+      </n-message-provider>
+    </n-config-provider>
+  </div>
 </template>
 
 <style scoped>
+.app-shell {
+  position: relative;
+  height: 100%;
+}
+
 header {
   line-height: 1.5;
   max-height: 100vh;

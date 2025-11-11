@@ -15,6 +15,7 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import RobotChannelSettingsModal from './components/RobotChannelSettingsModal.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
@@ -56,6 +57,7 @@ const utils = useUtilsStore();
 const display = useDisplayStore();
 const isEditing = computed(() => !!chat.editing);
 const displaySettingsVisible = ref(false);
+const robotSettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
@@ -68,6 +70,18 @@ const compactInlineStackLayout = computed(() => {
 const compactInlineGridLayout = computed(
   () => compactInlineLayout.value && !compactInlineStackLayout.value,
 );
+
+const DEFAULT_PAGE_TITLE = 'Sealchat';
+if (typeof document !== 'undefined') {
+  watch(
+    () => chat.curChannel?.name,
+    (channelName) => {
+      const nextTitle = channelName?.trim() || DEFAULT_PAGE_TITLE;
+      document.title = nextTitle;
+    },
+    { immediate: true },
+  );
+}
 
 watch(
   () => display.settings,
@@ -4672,12 +4686,14 @@ onBeforeUnmount(() => {
         :identity-active="identityDialogVisible"
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
+        :bot-active="robotSettingsVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportDialogVisible = true"
         @open-identity-manager="openIdentityManager"
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
+        @open-bot-settings="robotSettingsVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, userIds: [] })"
       />
     </transition>
@@ -5457,6 +5473,13 @@ onBeforeUnmount(() => {
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
     @export="handleExportMessages"
+  />
+
+  <RobotChannelSettingsModal
+    :show="robotSettingsVisible"
+    :channel-id="chat.curChannel?.id || ''"
+    :channel-name="chat.curChannel?.name || ''"
+    @update:show="val => (robotSettingsVisible = val)"
   />
 
   <DisplaySettingsModal

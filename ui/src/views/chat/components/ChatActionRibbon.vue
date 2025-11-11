@@ -5,6 +5,7 @@ import {
   Download as DownloadIcon,
   MoodSmile as EmojiIcon,
   Palette,
+  Robot,
   Users as UsersIcon,
 } from '@vicons/tabler'
 
@@ -28,6 +29,7 @@ interface Props {
   identityActive?: boolean
   galleryActive?: boolean
   displayActive?: boolean
+  botActive?: boolean
 }
 
 interface Emits {
@@ -37,6 +39,7 @@ interface Emits {
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
+  (e: 'open-bot-settings'): void
   (e: 'clear-filters'): void
 }
 
@@ -171,6 +174,18 @@ const clearAllFilters = () => {
             <n-icon :component="EmojiIcon" />
           </template>
           表情资源
+        </n-button>
+
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.botActive }"
+          @click="emit('open-bot-settings')"
+        >
+          <template #icon>
+            <n-icon :component="Robot" />
+          </template>
+          机器人
         </n-button>
       </n-button-group>
     </div>

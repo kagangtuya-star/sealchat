@@ -96,6 +96,62 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async adminBotList() {
+      const user = useUserStore();
+      return api.get('api/v1/admin/bots', {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async adminBotCreate(payload: any) {
+      const user = useUserStore();
+      return api.post('api/v1/admin/bots', payload, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async adminBotUpdate(id: string, payload: any) {
+      const user = useUserStore();
+      return api.patch(`api/v1/admin/bots/${id}`, payload, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async adminBotDelete(id: string) {
+      const user = useUserStore();
+      return api.delete(`api/v1/admin/bots/${id}`, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async adminBotTest(id: string) {
+      const user = useUserStore();
+      return api.post(`api/v1/admin/bots/${id}/test`, null, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async botProfileOptions() {
+      const user = useUserStore();
+      return api.get('api/v1/bot-profiles', {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async channelBotSettingsGet(channelId: string) {
+      const user = useUserStore();
+      return api.get(`api/v1/channels/${channelId}/bot-settings`, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
+    async channelBotSettingsSave(channelId: string, payload: any) {
+      const user = useUserStore();
+      return api.patch(`api/v1/channels/${channelId}/bot-settings`, payload, {
+        headers: { 'Authorization': user.token }
+      })
+    },
+
     async configSet(data: ServerConfig) {
       const user = useUserStore();
       const resp = await api.put('api/v1/config', data, {

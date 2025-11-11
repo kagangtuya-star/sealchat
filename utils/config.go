@@ -24,6 +24,37 @@ type LogUploadConfig struct {
 	Note           string `json:"note" yaml:"note"`
 }
 
+type OneBotForwardWSConfig struct {
+	Host          string `json:"host" yaml:"host"`
+	Port          int    `json:"port" yaml:"port"`
+	APIPath       string `json:"apiPath" yaml:"apiPath"`
+	EventPath     string `json:"eventPath" yaml:"eventPath"`
+	UniversalPath string `json:"universalPath" yaml:"universalPath"`
+}
+
+type OneBotReverseWSConfig struct {
+	Enabled                   bool     `json:"enabled" yaml:"enabled"`
+	APIEndpoints              []string `json:"apiEndpoints" yaml:"apiEndpoints"`
+	EventEndpoints            []string `json:"eventEndpoints" yaml:"eventEndpoints"`
+	UniversalEndpoints        []string `json:"universalEndpoints" yaml:"universalEndpoints"`
+	UseUniversalEndpointFirst bool     `json:"useUniversalEndpointFirst" yaml:"useUniversalEndpointFirst"`
+	ReconnectIntervalSeconds  int      `json:"reconnectIntervalSeconds" yaml:"reconnectIntervalSeconds"`
+}
+
+type OneBotAuthConfig struct {
+	AccessToken string `json:"accessToken" yaml:"accessToken"`
+}
+
+type OneBotConfig struct {
+	Enabled         bool                   `json:"enabled" yaml:"enabled"`
+	Version         string                 `json:"version" yaml:"version"`
+	DefaultConnMode string                 `json:"defaultConnMode" yaml:"defaultConnMode"`
+	Auth            OneBotAuthConfig       `json:"auth" yaml:"auth"`
+	WS              OneBotForwardWSConfig  `json:"ws" yaml:"ws"`
+	WSReverse       OneBotReverseWSConfig  `json:"wsReverse" yaml:"wsReverse"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty" yaml:"metadata"`
+}
+
 type AppConfig struct {
 	ServeAt                   string          `json:"serveAt" yaml:"serveAt"`
 	Domain                    string          `json:"domain" yaml:"domain"`
@@ -39,6 +70,7 @@ type AppConfig struct {
 	Version                   int             `json:"version" yaml:"version"`
 	GalleryQuotaMB            int64           `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig `json:"logUpload" yaml:"logUpload"`
+	OneBot                    OneBotConfig    `json:"oneBot" yaml:"oneBot"`
 }
 
 // 注: 实验型使用koanf，其实从需求上讲目前并无必要
@@ -73,6 +105,28 @@ func ReadConfig() *AppConfig {
 			UniformID:      "Sealchat",
 			Version:        105,
 			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
+		},
+		OneBot: OneBotConfig{
+			Enabled:         false,
+			Version:         "v11",
+			DefaultConnMode: "forward_ws",
+			Auth: OneBotAuthConfig{
+				AccessToken: "",
+			},
+			WS: OneBotForwardWSConfig{
+				Host:          "0.0.0.0",
+				Port:          33212,
+				APIPath:       "/onebot/ws/api",
+				EventPath:     "/onebot/ws/event",
+				UniversalPath: "/onebot/ws/",
+			},
+			WSReverse: OneBotReverseWSConfig{
+				Enabled:                  false,
+				ReconnectIntervalSeconds: 10,
+			},
+			Metadata: map[string]interface{}{
+				"description": "OneBot v11 基础配置，wsReverse 可按需启用",
+			},
 		},
 	}
 
@@ -153,6 +207,22 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("logUpload.uniformId", config.LogUpload.UniformID)
 		_ = k.Set("logUpload.version", config.LogUpload.Version)
 		_ = k.Set("logUpload.note", config.LogUpload.Note)
+		_ = k.Set("oneBot.enabled", config.OneBot.Enabled)
+		_ = k.Set("oneBot.version", config.OneBot.Version)
+		_ = k.Set("oneBot.defaultConnMode", config.OneBot.DefaultConnMode)
+		_ = k.Set("oneBot.auth.accessToken", config.OneBot.Auth.AccessToken)
+		_ = k.Set("oneBot.ws.host", config.OneBot.WS.Host)
+		_ = k.Set("oneBot.ws.port", config.OneBot.WS.Port)
+		_ = k.Set("oneBot.ws.apiPath", config.OneBot.WS.APIPath)
+		_ = k.Set("oneBot.ws.eventPath", config.OneBot.WS.EventPath)
+		_ = k.Set("oneBot.ws.universalPath", config.OneBot.WS.UniversalPath)
+		_ = k.Set("oneBot.wsReverse.enabled", config.OneBot.WSReverse.Enabled)
+		_ = k.Set("oneBot.wsReverse.apiEndpoints", config.OneBot.WSReverse.APIEndpoints)
+		_ = k.Set("oneBot.wsReverse.eventEndpoints", config.OneBot.WSReverse.EventEndpoints)
+		_ = k.Set("oneBot.wsReverse.universalEndpoints", config.OneBot.WSReverse.UniversalEndpoints)
+		_ = k.Set("oneBot.wsReverse.useUniversalEndpointFirst", config.OneBot.WSReverse.UseUniversalEndpointFirst)
+		_ = k.Set("oneBot.wsReverse.reconnectIntervalSeconds", config.OneBot.WSReverse.ReconnectIntervalSeconds)
+		_ = k.Set("oneBot.metadata", config.OneBot.Metadata)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

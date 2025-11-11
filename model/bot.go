@@ -12,6 +12,7 @@ type BotTokenModel struct {
 	Token        string `json:"token" gorm:"index"`
 	ExpiresAt    int64  `json:"expiresAt"`
 	RecentUsedAt int64  `json:"recentUsedAt"`
+	BotProfileID string `json:"botProfileId,omitempty" gorm:"index"`
 }
 
 func (*BotTokenModel) TableName() string {

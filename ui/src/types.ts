@@ -59,6 +59,89 @@ export interface ServerConfig {
   imageCompressQuality: number;
   builtInSealBotEnable: boolean;
   logUpload?: LogUploadConfig;
+  oneBot?: OneBotConfig;
+}
+
+export interface OneBotForwardWSConfig {
+  host?: string;
+  port?: number;
+  apiPath?: string;
+  eventPath?: string;
+  universalPath?: string;
+}
+
+export interface OneBotReverseWSConfig {
+  enabled?: boolean;
+  apiEndpoints?: string[];
+  eventEndpoints?: string[];
+  universalEndpoints?: string[];
+  useUniversalEndpointFirst?: boolean;
+  reconnectIntervalSeconds?: number;
+}
+
+export interface OneBotAuthConfig {
+  accessToken?: string;
+}
+
+export interface OneBotConfig {
+  enabled?: boolean;
+  version?: string;
+  defaultConnMode?: string;
+  auth?: OneBotAuthConfig;
+  ws?: OneBotForwardWSConfig;
+  wsReverse?: OneBotReverseWSConfig;
+}
+
+export interface OneBotRuntimeState {
+  botId?: string;
+  status?: 'disabled' | 'disconnected' | 'connecting' | 'connected';
+  lastError?: string;
+  updatedAt?: string | number;
+}
+
+export interface BotProfileView {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  channelRoleName?: string;
+  connMode: 'forward_ws' | 'reverse_ws';
+  remoteSelfId?: string;
+  forwardHost?: string;
+  forwardPort?: number;
+  forwardApiPath?: string;
+  forwardEventPath?: string;
+  forwardUniversal?: string;
+  reverseApiEndpoints?: string[];
+  reverseEventUrls?: string[];
+  reverseUniversalUrls?: string[];
+  reverseUseUniversal?: boolean;
+  reverseReconnectSec?: number;
+  accessToken?: string;
+  defaultChannelId?: string;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  runtime?: OneBotRuntimeState;
+}
+
+export interface BotProfileOption {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  connMode?: string;
+  userId?: string;
+  remoteSelfId?: string;
+}
+
+export interface ChannelBotSettings {
+  channelId: string;
+  bindingId?: string;
+  botId?: string;
+  remoteChannelId?: string;
+  remoteGroupId?: string;
+  remoteNumericId?: string;
+  enabled: boolean;
+  updatedAt?: number;
 }
 
 export interface UserInfo {
