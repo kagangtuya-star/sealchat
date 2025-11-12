@@ -69,9 +69,20 @@ export interface AudioScene {
   tags: string[];
   order: number;
   channelScope?: string | null;
+  folderId?: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AudioSceneInput {
+  name: string;
+  description?: string;
+  tags?: string[];
+  tracks: AudioSceneTrack[];
+  order?: number;
+  channelScope?: string | null;
+  folderId?: string | null;
 }
 
 export interface AudioSearchFilters {

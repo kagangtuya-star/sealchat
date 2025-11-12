@@ -11,6 +11,7 @@ import type {
   AudioFolder,
   AudioFolderPayload,
   AudioScene,
+  AudioSceneInput,
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
@@ -40,6 +41,13 @@ interface AudioStudioState {
   activeTab: 'player' | 'playlist' | 'library';
   scenes: AudioScene[];
   scenesLoading: boolean;
+  sceneFilters: {
+    query: string;
+    tags: string[];
+    folderId: string | null;
+  };
+  scenePagination: PaginationState;
+  selectedSceneId: string | null;
   currentSceneId: string | null;
   tracks: Record<AudioTrackType, TrackRuntime>;
   assets: AudioAsset[];
@@ -66,7 +74,7 @@ interface AudioStudioState {
   pendingSyncHandle: number | null;
 }
 
-const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
+export const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
 if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
   const desiredPool = 18;
   if ((Howler as typeof Howler & { html5PoolSize?: number }).html5PoolSize < desiredPool) {
@@ -102,6 +110,19 @@ function startProgressWatcher(store: ReturnType<typeof useAudioStudioStore>) {
   progressTimer = window.setInterval(() => {
     store.updateProgressFromPlayers();
   }, 500);
+}
+
+function serializeRuntimeTracks(tracks: Record<AudioTrackType, TrackRuntime>): AudioSceneTrack[] {
+  return DEFAULT_TRACK_TYPES.map((type) => {
+    const runtime = tracks[type] || createEmptyTrack(type);
+    return {
+      type,
+      assetId: runtime.assetId || null,
+      volume: typeof runtime.volume === 'number' ? runtime.volume : 0.8,
+      fadeIn: runtime.fadeIn ?? 2000,
+      fadeOut: runtime.fadeOut ?? 2000,
+    } as AudioSceneTrack;
+  });
 }
 
 function stopProgressWatcher() {
@@ -188,6 +209,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     activeTab: 'player',
     scenes: [],
     scenesLoading: false,
+    sceneFilters: {
+      query: '',
+      tags: [],
+      folderId: null,
+    },
+    scenePagination: { page: 1, pageSize: 10, total: 0 },
+    selectedSceneId: null,
     currentSceneId: null,
     tracks: DEFAULT_TRACK_TYPES.reduce((acc, type) => {
       acc[type] = createEmptyTrack(type);
@@ -227,6 +255,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
   getters: {
     currentScene(state): AudioScene | null {
       return state.scenes.find((scene) => scene.id === state.currentSceneId) || null;
+    },
+
+    selectedScene(state): AudioScene | null {
+      if (!state.selectedSceneId) return null;
+      return state.scenes.find((scene) => scene.id === state.selectedSceneId) || null;
     },
 
     selectedAsset(state): AudioAsset | null {
@@ -438,17 +471,160 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async fetchScenes() {
+    async fetchScenes(filters?: Partial<AudioStudioState['sceneFilters']>) {
       try {
         this.scenesLoading = true;
-        const resp = await api.get('/api/v1/audio/scenes');
-        this.scenes = resp.data?.items || [];
+        if (filters) {
+          this.sceneFilters = {
+            ...this.sceneFilters,
+            ...filters,
+            folderId: normalizeFolderId(filters.folderId) ?? null,
+          };
+        }
+        if (filters && filters.query !== undefined) {
+          this.scenePagination.page = 1;
+        }
+        const params: Record<string, unknown> = {
+          ...this.sceneFilters,
+          page: this.scenePagination.page,
+          pageSize: this.scenePagination.pageSize,
+        };
+        if (!params.folderId) {
+          delete params.folderId;
+        }
+        if (!params.query) {
+          delete params.query;
+        }
+        if (!this.canManage) {
+          params.channelScope = this.currentChannelId || undefined;
+        }
+        const resp = await api.get('/api/v1/audio/scenes', { params });
+        const raw = resp.data as PaginatedResult<AudioScene> | AudioScene[] | undefined;
+        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        this.scenes = items;
+        if (!Array.isArray(raw) && raw) {
+          this.scenePagination = {
+            page: raw.page ?? this.scenePagination.page,
+            pageSize: raw.pageSize ?? this.scenePagination.pageSize,
+            total: raw.total ?? items.length,
+          };
+        } else {
+          this.scenePagination = {
+            ...this.scenePagination,
+            total: items.length,
+          };
+        }
+        if (!this.selectedSceneId && items.length) {
+          this.selectedSceneId = items[0].id;
+        } else if (this.selectedSceneId && !items.some((scene) => scene.id === this.selectedSceneId)) {
+          this.selectedSceneId = items[0]?.id ?? null;
+        }
       } catch (err) {
         console.error('fetchScenes failed', err);
         this.error = '无法加载音频场景';
       } finally {
         this.scenesLoading = false;
       }
+    },
+
+    setScenePage(page: number) {
+      if (page <= 0) return;
+      this.scenePagination.page = page;
+      this.fetchScenes();
+    },
+
+    setScenePageSize(pageSize: number) {
+      if (pageSize <= 0) return;
+      this.scenePagination.pageSize = pageSize;
+      this.scenePagination.page = 1;
+      this.fetchScenes();
+    },
+
+    setSelectedScene(sceneId: string | null) {
+      this.selectedSceneId = sceneId;
+    },
+
+
+    async createSceneFromCurrentTracks(payload: Omit<AudioSceneInput, 'tracks'> & { autoPlayAfterSave?: boolean }) {
+      if (!this.canManage) {
+        throw new Error('无权限创建播放列表');
+      }
+      const scenePayload: AudioSceneInput = {
+        name: payload.name,
+        description: payload.description,
+        tags: payload.tags || [],
+        tracks: serializeRuntimeTracks(this.tracks),
+        folderId: normalizeFolderId(payload.folderId) ?? null,
+        channelScope: payload.channelScope ?? this.currentChannelId ?? null,
+        order: payload.order,
+      };
+      const resp = await api.post('/api/v1/audio/scenes', scenePayload);
+      const created = resp.data?.item as AudioScene | undefined;
+      if (created) {
+        this.scenes.unshift(created);
+        this.scenePagination.total += 1;
+        this.selectedSceneId = created.id;
+        await this.fetchScenes();
+      }
+      if (payload.autoPlayAfterSave && created) {
+        await this.applyScene(created.id, { autoPlay: true });
+      }
+      return created;
+    },
+
+    async updateScene(sceneId: string, payload: Partial<AudioSceneInput>) {
+      if (!this.canManage || !sceneId) return null;
+      const existing = this.scenes.find((scene) => scene.id === sceneId);
+      const normalized: AudioSceneInput = {
+        name: payload.name || existing?.name || '无标题',
+        description: payload.description,
+        tags: payload.tags,
+        tracks: payload.tracks || [],
+        folderId: normalizeFolderId(payload.folderId) ?? null,
+        channelScope: payload.channelScope ?? existing?.channelScope ?? null,
+        order: payload.order ?? existing?.order,
+      };
+      if (!normalized.tracks.length) {
+        normalized.tracks = existing ? existing.tracks : serializeRuntimeTracks(this.tracks);
+      }
+      const resp = await api.patch(`/api/v1/audio/scenes/${sceneId}`, normalized);
+      const updated = resp.data?.item as AudioScene | undefined;
+      if (updated) {
+        const index = this.scenes.findIndex((scene) => scene.id === sceneId);
+        if (index >= 0) {
+          this.scenes[index] = updated;
+        } else {
+          this.scenes.unshift(updated);
+        }
+        if (this.currentSceneId === sceneId) {
+          this.applyScene(sceneId, { skipSync: true });
+          this.queuePlaybackSync();
+        }
+        await this.fetchScenes();
+      }
+      return updated;
+    },
+
+    async deleteScenes(sceneIds: string[]) {
+      if (!this.canManage || !sceneIds.length) return { success: 0, failed: 0 };
+      let success = 0;
+      for (const id of sceneIds) {
+        try {
+          await api.delete(`/api/v1/audio/scenes/${id}`);
+          success += 1;
+          this.scenes = this.scenes.filter((scene) => scene.id !== id);
+        } catch (err) {
+          console.error('delete scene failed', err);
+        }
+      }
+      if (success) {
+        this.scenePagination.total = Math.max(0, this.scenePagination.total - success);
+        await this.fetchScenes();
+      }
+      if (sceneIds.includes(this.currentSceneId || '')) {
+        this.currentSceneId = this.scenes[0]?.id ?? null;
+      }
+      return { success, failed: sceneIds.length - success };
     },
 
     async fetchAssets(options?: FetchAssetsOptions) {
@@ -591,7 +767,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.activeTab = tab;
     },
 
-    async applyScene(sceneId: string) {
+    async applyScene(sceneId: string | null, options?: { autoPlay?: boolean; force?: boolean; skipSync?: boolean }) {
+      if (!sceneId) return;
       const scene = this.scenes.find((item) => item.id === sceneId);
       if (!scene) return;
       this.currentSceneId = sceneId;
@@ -599,8 +776,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const trackMeta = scene.tracks.find((t) => t.type === type) || createEmptyTrack(type);
         this.assignTrack(type, trackMeta);
       });
-      if (this.isPlaying) {
-        await this.playAll();
+      if (options?.autoPlay ?? this.isPlaying) {
+        await this.playAll({ force: options?.force });
+      } else {
+        this.pauseAll({ force: true });
+      }
+      if (!options?.force && !options?.skipSync) {
+        this.queuePlaybackSync();
       }
     },
 

@@ -56,7 +56,7 @@ const updateWidth = () => {
   viewportWidth.value = window.innerWidth;
 };
 const drawerWidth = computed(() => {
-  const preferred = audio.activeTab === 'library' ? 960 : 420;
+  const preferred = audio.activeTab === 'player' ? 420 : 960;
   if (!viewportWidth.value) return preferred;
   const margin = audio.activeTab === 'library' ? 48 : 24;
   const maxAllow = Math.max(320, viewportWidth.value - margin);
