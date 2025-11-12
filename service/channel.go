@@ -172,6 +172,8 @@ func ChannelNew(channelID, channelType, channelName string, creatorId string, pa
 			pm.PermFuncChannelReadAll,
 			pm.PermFuncChannelTextSendAll,
 			pm.PermFuncChannelManageGallery,
+			pm.PermFuncChannelIFormManage,
+			pm.PermFuncChannelIFormBroadcast,
 		}
 	})
 
@@ -192,6 +194,8 @@ func ChannelNew(channelID, channelType, channelName string, creatorId string, pa
 			pm.PermFuncChannelManageMute,
 			pm.PermFuncChannelTextSendAll,
 			pm.PermFuncChannelManageGallery,
+			pm.PermFuncChannelIFormManage,
+			pm.PermFuncChannelIFormBroadcast,
 		}
 	})
 

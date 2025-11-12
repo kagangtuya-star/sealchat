@@ -76,6 +76,7 @@ interface ChatState {
   channelRoleCache: Record<string, string[]>;
   channelMemberRoleMap: Record<string, Record<string, string[]>>;
   channelAdminMap: Record<string, Record<string, boolean>>;
+  channelMemberPermMap: Record<string, Record<string, string[]>>;
 }
 
 const apiMap = new Map<string, any>();
@@ -166,6 +167,7 @@ export const useChatStore = defineStore({
     channelRoleCache: {},
     channelMemberRoleMap: {},
     channelAdminMap: {},
+    channelMemberPermMap: {},
   }),
 
   getters: {
@@ -580,6 +582,10 @@ export const useChatStore = defineStore({
         ...this.channelMemberRoleMap,
         [channelId]: aggregated,
       };
+      this.channelMemberPermMap = {
+        ...this.channelMemberPermMap,
+        [channelId]: {},
+      };
       return aggregated;
     },
 
@@ -634,6 +640,30 @@ export const useChatStore = defineStore({
         [channelId]: adminMap,
       };
       return adminMap;
+    },
+
+    async hasChannelPermission(channelId: string, permKey: string, userId?: string) {
+      if (!channelId || !permKey) {
+        return false;
+      }
+      const targetUser = userId || useUserStore().info.id;
+      if (!targetUser) {
+        return false;
+      }
+      await this.ensureChannelPermissionCache(channelId);
+      if (!this.channelMemberPermMap[channelId]) {
+        this.channelMemberPermMap[channelId] = {};
+      }
+      if (!this.channelMemberPermMap[channelId][targetUser]) {
+        const roleIds = this.channelMemberRoleMap[channelId]?.[targetUser] || [];
+        const permSet = new Set<string>();
+        await Promise.all(roleIds.map(async (roleId) => {
+          const perms = await this.ensureRolePermissions(roleId);
+          perms.forEach((perm) => permSet.add(perm));
+        }));
+        this.channelMemberPermMap[channelId][targetUser] = Array.from(permSet);
+      }
+      return this.channelMemberPermMap[channelId][targetUser]?.includes(permKey) ?? false;
     },
 
     async ensureChannelPermissionCache(channelId: string) {

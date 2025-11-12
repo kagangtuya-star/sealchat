@@ -159,6 +159,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
 
+	iform := v1Auth.Group("/channels/:channelId/iforms")
+	iform.Get("/", ChannelIFormList)
+	iform.Post("/", ChannelIFormCreate)
+	iform.Patch("/:formId", ChannelIFormUpdate)
+	iform.Delete("/:formId", ChannelIFormDelete)
+	iform.Post("/push", ChannelIFormPush)
+	iform.Post("/migrate", ChannelIFormMigrate)
+
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)
 	v1Auth.Get("/friend-list", FriendList)

@@ -2,7 +2,7 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle } from '@vicons/tabler';
-import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline } from '@vicons/ionicons5';
+import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import Notif from '../notif.vue'
@@ -14,6 +14,7 @@ import UserPresencePopover from '../chat/components/UserPresencePopover.vue';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { useIFormStore } from '@/stores/iform';
 
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
@@ -36,12 +37,17 @@ const chat = useChatStore();
 const user = useUserStore();
 const channelSearch = useChannelSearchStore();
 const audioStudio = useAudioStudioStore();
+const iFormStore = useIFormStore();
+iFormStore.bootstrap();
 
 const channelTitle = computed(() => {
   const raw = chat.curChannel?.name;
   const name = typeof raw === 'string' ? raw.trim() : '';
   return name ? `# ${name}` : t('headText');
 });
+
+const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
+const iFormHasAttention = computed(() => iFormStore.hasAttention);
 
 const options = computed(() => [
   {
@@ -269,6 +275,14 @@ const openAudioStudio = () => {
   audioStudio.toggleDrawer(true);
 };
 
+const handleIFormButtonClick = () => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  iFormStore.ensureForms(chat.curChannel.id);
+  iFormStore.openDrawer();
+};
+
 watch(
   () => chat.curChannel?.id,
   (channelId) => {
@@ -399,6 +413,23 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <span>搜索频道消息</span>
       </n-tooltip>
 
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': iFormButtonActive }"
+            aria-label="频道嵌入窗"
+            :disabled="!chat.curChannel?.id"
+            @click="handleIFormButtonClick"
+          >
+            <span v-if="iFormHasAttention" class="sc-icon-button__badge"></span>
+            <n-icon :component="BrowsersOutline" size="16" />
+          </button>
+        </template>
+        <span>频道嵌入窗</span>
+      </n-tooltip>
+
       <button type="button" class="sc-icon-button action-toggle-button" :class="{ 'is-active': actionRibbonActive }"
         @click="toggleActionRibbon" :aria-pressed="actionRibbonActive" aria-label="切换功能面板">
         <n-icon :component="AppsOutline" size="18" />
@@ -503,6 +534,17 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   color: #0369a1;
   background-color: rgba(14, 165, 233, 0.2);
   box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.35);
+}
+
+.sc-icon-button__badge {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.15rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background-color: #f97316;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
 }
 
 

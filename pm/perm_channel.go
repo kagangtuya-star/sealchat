@@ -30,6 +30,9 @@ var (
 	PermFuncChannelManageGallery  = gorbac.NewStdPermission("func_channel_manage_gallery")   // 频道 - 频道设置 - 快捷表情资源管理
 	PermFuncChannelMessageArchive = gorbac.NewStdPermission("func_channel_message_archive")  // 频道 - 消息 - 归档
 
+	PermFuncChannelIFormManage    = gorbac.NewStdPermission("func_channel_iform_manage")    // 频道 - iForm - 配置管理
+	PermFuncChannelIFormBroadcast = gorbac.NewStdPermission("func_channel_iform_broadcast") // 频道 - iForm - 同步推送
+
 	// 准备加一个at权限
 
 	PermFuncChannelReadAll     = gorbac.NewStdPermission("func_channel_read_all")      // 频道 - 特殊 - 查看所有子频道

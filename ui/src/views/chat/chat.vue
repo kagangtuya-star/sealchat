@@ -21,6 +21,10 @@ import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
+import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
+import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
+import IFormDrawer from '@/components/iform/IFormDrawer.vue';
+import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
@@ -46,6 +50,7 @@ import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings } from '@/stores/display';
+import { useIFormStore } from '@/stores/iform';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -56,6 +61,8 @@ const user = useUserStore();
 const gallery = useGalleryStore();
 const utils = useUtilsStore();
 const display = useDisplayStore();
+const iFormStore = useIFormStore();
+iFormStore.bootstrap();
 const isEditing = computed(() => !!chat.editing);
 const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
@@ -4709,6 +4716,9 @@ onBeforeUnmount(() => {
       <ChannelFavoriteBar @manage="channelFavoritesVisible = true" />
     </div>
 
+    <IFormEmbedInstances />
+    <IFormPanelHost />
+
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
       :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
@@ -5485,6 +5495,8 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel?.id"
     @export="handleExportMessages"
   />
+  <IFormFloatingWindows />
+  <IFormDrawer />
 
   <DisplaySettingsModal
     v-model:visible="displaySettingsVisible"

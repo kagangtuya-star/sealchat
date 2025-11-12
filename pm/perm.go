@@ -7,6 +7,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm/gen"
 	"sealchat/utils"
+	"strings"
 
 	"github.com/mikespook/gorbac"
 	"github.com/samber/lo"
@@ -107,6 +108,8 @@ func Init() {
 	sysRoles, num, _ := model.SystemRoleList(0, -1)
 	chRoles, _, _ := model.ChannelRoleAllList(0, -1)
 
+	ensureChannelIFormPerms(chRoles)
+
 	if num == 0 {
 		// 目前system roles表还未实用，每次创建是设计的一部分而不是bug
 		sysRolesInit()
@@ -130,6 +133,49 @@ func Init() {
 			_ = role.Assign(gorbac.NewStdPermission(j))
 		}
 		_ = perm.Add(role)
+	}
+}
+
+func ensureChannelIFormPerms(chRoles []*model.ChannelRoleModel) {
+	targetPerms := []gorbac.Permission{
+		PermFuncChannelIFormManage,
+		PermFuncChannelIFormBroadcast,
+	}
+	for _, role := range chRoles {
+		if role == nil {
+			continue
+		}
+		if !(strings.HasSuffix(role.ID, "-owner") || strings.HasSuffix(role.ID, "-admin")) {
+			continue
+		}
+		ensureRoleHasPermissions(role.ID, targetPerms)
+	}
+}
+
+func ensureRoleHasPermissions(roleID string, perms []gorbac.Permission) {
+	if roleID == "" || len(perms) == 0 {
+		return
+	}
+	existing, err := model.RolePermissionList(roleID)
+	if err != nil {
+		log.Printf("查询角色权限失败 role=%s err=%v", roleID, err)
+		return
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, permID := range existing {
+		existingSet[permID] = struct{}{}
+	}
+	var missing []string
+	for _, perm := range perms {
+		if _, ok := existingSet[perm.ID()]; !ok {
+			missing = append(missing, perm.ID())
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	if err := model.RolePermissionBatchCreate(roleID, missing); err != nil {
+		log.Printf("回填角色权限失败 role=%s err=%v", roleID, err)
 	}
 }
 

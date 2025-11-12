@@ -147,6 +147,56 @@ type AudioPlaybackStatePayload struct {
 	UpdatedAt    int64             `json:"updatedAt"`
 }
 
+type ChannelIForm struct {
+	ID               string                    `json:"id"`
+	ChannelID        string                    `json:"channelId"`
+	Name             string                    `json:"name"`
+	Url              string                    `json:"url"`
+	EmbedCode        string                    `json:"embedCode"`
+	DefaultWidth     int                       `json:"defaultWidth"`
+	DefaultHeight    int                       `json:"defaultHeight"`
+	DefaultCollapsed bool                      `json:"defaultCollapsed"`
+	DefaultFloating  bool                      `json:"defaultFloating"`
+	AllowPopout      bool                      `json:"allowPopout"`
+	OrderIndex       int                       `json:"orderIndex"`
+	MediaOptions     *ChannelIFormMediaOptions `json:"mediaOptions,omitempty"`
+	CreatedBy        string                    `json:"createdBy,omitempty"`
+	UpdatedBy        string                    `json:"updatedBy,omitempty"`
+	CreatedAt        int64                     `json:"createdAt,omitempty"`
+	UpdatedAt        int64                     `json:"updatedAt,omitempty"`
+}
+
+type ChannelIFormMediaOptions struct {
+	AutoPlay   bool `json:"autoPlay"`
+	AutoUnmute bool `json:"autoUnmute"`
+	AutoExpand bool `json:"autoExpand"`
+	AllowAudio bool `json:"allowAudio"`
+	AllowVideo bool `json:"allowVideo"`
+}
+
+type ChannelIFormStatePayload struct {
+	FormID     string  `json:"formId"`
+	Floating   bool    `json:"floating"`
+	Collapsed  bool    `json:"collapsed"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	X          float64 `json:"x"`
+	Y          float64 `json:"y"`
+	Minimized  bool    `json:"minimized"`
+	Force      bool    `json:"force"`
+	AutoPlay   bool    `json:"autoPlay"`
+	AutoUnmute bool    `json:"autoUnmute"`
+}
+
+type ChannelIFormEventPayload struct {
+	Forms         []*ChannelIForm            `json:"forms,omitempty"`
+	Form          *ChannelIForm              `json:"form,omitempty"`
+	States        []ChannelIFormStatePayload `json:"states,omitempty"`
+	State         *ChannelIFormStatePayload  `json:"state,omitempty"`
+	Action        string                     `json:"action,omitempty"`
+	TargetUserIDs []string                   `json:"targetUserIds,omitempty"`
+}
+
 type WhisperMeta struct {
 	SenderMemberID   string `json:"senderMemberId,omitempty"`
 	SenderMemberName string `json:"senderMemberName,omitempty"`
@@ -221,6 +271,8 @@ const (
 	EventTypingPreview          EventName = "typing-preview"
 	EventChannelPresenceUpdated EventName = "channel-presence-updated"
 	EventAudioStateUpdated      EventName = "audio-state-updated"
+	EventChannelIFormUpdated    EventName = "channel-iform-updated"
+	EventChannelIFormPushed     EventName = "channel-iform-pushed"
 )
 
 type Event struct {
@@ -243,6 +295,7 @@ type Event struct {
 	Reorder    *MessageReorder            `json:"reorder"`
 	Presence   []*ChannelPresence         `json:"presence"`
 	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
+	IForm      *ChannelIFormEventPayload  `json:"iform,omitempty"`
 }
 
 type TypingState string
