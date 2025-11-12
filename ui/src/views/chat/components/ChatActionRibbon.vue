@@ -5,6 +5,7 @@ import {
   Download as DownloadIcon,
   MoodSmile as EmojiIcon,
   Palette,
+  Star as StarIcon,
   Users as UsersIcon,
 } from '@vicons/tabler'
 
@@ -28,6 +29,7 @@ interface Props {
   identityActive?: boolean
   galleryActive?: boolean
   displayActive?: boolean
+  favoriteActive?: boolean
 }
 
 interface Emits {
@@ -37,6 +39,7 @@ interface Emits {
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
+  (e: 'open-favorites'): void
   (e: 'clear-filters'): void
 }
 
@@ -159,6 +162,18 @@ const clearAllFilters = () => {
             <n-icon :component="Palette" />
           </template>
           显示模式
+        </n-button>
+
+        <n-button
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.favoriteActive }"
+          @click="emit('open-favorites')"
+        >
+          <template #icon>
+            <n-icon :component="StarIcon" />
+          </template>
+          频道收藏
         </n-button>
 
         <n-button

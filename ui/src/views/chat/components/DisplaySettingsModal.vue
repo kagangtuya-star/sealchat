@@ -15,6 +15,12 @@ const emit = defineEmits<{
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 
+const syncFavorites = (source?: DisplaySettings) => {
+  if (!source) return
+  draft.favoriteChannelBarEnabled = source.favoriteChannelBarEnabled
+  draft.favoriteChannelIds = [...source.favoriteChannelIds]
+}
+
 watch(
   () => props.settings,
   (value) => {
@@ -32,6 +38,7 @@ watch(
     draft.paragraphSpacing = value.paragraphSpacing
     draft.messagePaddingX = value.messagePaddingX
     draft.messagePaddingY = value.messagePaddingY
+    syncFavorites(value)
   },
   { deep: true, immediate: true },
 )
@@ -71,6 +78,7 @@ const handleNumericInput = (key: NumericSettingKey) => (value: number | null) =>
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
   Object.assign(draft, defaults)
+  syncFavorites(props.settings)
 }
 
 const handleClose = () => emit('update:visible', false)

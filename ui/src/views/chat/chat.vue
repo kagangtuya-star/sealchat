@@ -15,6 +15,8 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
+import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
@@ -99,6 +101,7 @@ watch(
 const showActionRibbon = ref(false);
 const archiveDrawerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const channelFavoritesVisible = ref(false);
 
 const syncActionRibbonState = () => {
   chatEvent.emit('action-ribbon-state', showActionRibbon.value);
@@ -4690,15 +4693,21 @@ onBeforeUnmount(() => {
         :identity-active="identityDialogVisible"
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
+        :favorite-active="display.favoriteBarEnabled"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportDialogVisible = true"
         @open-identity-manager="openIdentityManager"
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
+        @open-favorites="channelFavoritesVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, userIds: [] })"
       />
     </transition>
+
+    <div v-if="display.favoriteBarEnabled" class="favorite-bar-wrapper px-4">
+      <ChannelFavoriteBar @manage="channelFavoritesVisible = true" />
+    </div>
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
@@ -5482,6 +5491,8 @@ onBeforeUnmount(() => {
     :settings="display.settings"
     @save="handleDisplaySettingsSave"
   />
+
+  <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
 </template>
 
 <style lang="scss" scoped>
@@ -5554,6 +5565,11 @@ onBeforeUnmount(() => {
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
+}
+
+.favorite-bar-wrapper {
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .chat.chat--palette-night {

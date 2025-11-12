@@ -17,7 +17,11 @@ export interface DisplaySettings {
   paragraphSpacing: number
   messagePaddingX: number
   messagePaddingY: number
+  favoriteChannelBarEnabled: boolean
+  favoriteChannelIds: string[]
 }
+
+export const FAVORITE_CHANNEL_LIMIT = 4
 
 const STORAGE_KEY = 'sealchat_display_settings'
 
@@ -67,6 +71,26 @@ const coerceFloatInRange = (value: any, fallback: number, min: number, max: numb
   if (num > max) return max
   return num
 }
+const normalizeFavoriteIds = (value: any): string[] => {
+  if (!Array.isArray(value)) return []
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    let id = ''
+    if (typeof entry === 'string') {
+      id = entry.trim()
+    } else if (entry != null && typeof entry.toString === 'function') {
+      id = String(entry).trim()
+    }
+    if (!id || seen.has(id)) {
+      continue
+    }
+    normalized.push(id)
+    seen.add(id)
+    if (normalized.length >= FAVORITE_CHANNEL_LIMIT) break
+  }
+  return normalized
+}
 
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'bubble',
@@ -82,6 +106,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
+  favoriteChannelBarEnabled: false,
+  favoriteChannelIds: [],
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -139,6 +165,8 @@ const loadSettings = (): DisplaySettings => {
         MESSAGE_PADDING_Y_MIN,
         MESSAGE_PADDING_Y_MAX,
       ),
+      favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
+      favoriteChannelIds: normalizeFavoriteIds(parsed.favoriteChannelIds),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -218,6 +246,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
           MESSAGE_PADDING_Y_MAX,
         )
       : base.messagePaddingY,
+  favoriteChannelBarEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelBarEnabled')
+      ? coerceBoolean(patch.favoriteChannelBarEnabled)
+      : base.favoriteChannelBarEnabled,
+  favoriteChannelIds:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelIds')
+      ? normalizeFavoriteIds(patch.favoriteChannelIds)
+      : base.favoriteChannelIds.slice(),
 })
 
 export const useDisplayStore = defineStore('display', {
@@ -228,6 +264,8 @@ export const useDisplayStore = defineStore('display', {
     layout: (state) => state.settings.layout,
     palette: (state) => state.settings.palette,
     showAvatar: (state) => state.settings.showAvatar,
+    favoriteBarEnabled: (state) => state.settings.favoriteChannelBarEnabled,
+    favoriteChannelIds: (state) => state.settings.favoriteChannelIds,
   },
   actions: {
     updateSettings(patch: Partial<DisplaySettings>) {
@@ -239,6 +277,37 @@ export const useDisplayStore = defineStore('display', {
       this.settings = defaultSettings()
       this.persist()
       this.applyTheme()
+    },
+    setFavoriteBarEnabled(enabled: boolean) {
+      const normalized = !!enabled
+      if (this.settings.favoriteChannelBarEnabled === normalized) return
+      this.settings.favoriteChannelBarEnabled = normalized
+      this.persist()
+    },
+    setFavoriteChannelIds(ids: string[]) {
+      const normalized = normalizeFavoriteIds(ids)
+      const current = this.settings.favoriteChannelIds
+      if (normalized.length === current.length && normalized.every((id, index) => id === current[index])) {
+        return
+      }
+      this.settings.favoriteChannelIds = normalized
+      this.persist()
+    },
+    addFavoriteChannel(channelId: string) {
+      const id = typeof channelId === 'string' ? channelId.trim() : ''
+      if (!id || this.settings.favoriteChannelIds.includes(id)) return
+      if (this.settings.favoriteChannelIds.length >= FAVORITE_CHANNEL_LIMIT) return
+      this.settings.favoriteChannelIds = [...this.settings.favoriteChannelIds, id]
+      this.persist()
+    },
+    removeFavoriteChannel(channelId: string) {
+      const id = typeof channelId === 'string' ? channelId.trim() : ''
+      if (!id) return
+      const next = this.settings.favoriteChannelIds.filter(existing => existing !== id)
+      this.setFavoriteChannelIds(next)
+    },
+    reorderFavoriteChannels(nextOrder: string[]) {
+      this.setFavoriteChannelIds(nextOrder)
     },
     persist() {
       if (typeof window === 'undefined') return
