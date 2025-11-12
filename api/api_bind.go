@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -34,7 +35,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	appFs = afero.NewOsFs()
 
-	bodyLimit := int(config.ImageSizeLimit * 1024)
+	imageLimitBytes := int(config.ImageSizeLimit * 1024)
+	audioLimitBytes := int(config.Audio.MaxUploadSizeMB * 1024 * 1024)
+	bodyLimit := imageLimitBytes
+	if audioLimitBytes > bodyLimit {
+		bodyLimit = audioLimitBytes
+	}
 	if bodyLimit < 32*1024*1024 {
 		bodyLimit = 32 * 1024 * 1024
 	}
@@ -45,7 +51,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(compress.New())
+	app.Use(compress.New(compress.Config{
+		Next: func(c *fiber.Ctx) bool {
+			path := c.Path()
+			return strings.HasPrefix(path, "/api/v1/audio/stream")
+		},
+	}))
 
 	v1 := app.Group("/api/v1")
 	v1.Post("/user-signup", UserSignup)
@@ -114,6 +125,23 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	})
 	v1Auth.Static("/attachments", "./data/upload")
 	v1Auth.Static("/gallery/thumbs", "./data/gallery/thumbs")
+
+	audio := v1Auth.Group("/audio")
+	audio.Get("/assets", AudioAssetList)
+	audio.Get("/assets/:id", AudioAssetGet)
+	audio.Get("/folders", AudioFolderList)
+	audio.Get("/scenes", AudioSceneList)
+	audio.Get("/stream/:id", AudioAssetStream)
+	audioAdmin := audio.Group("", UserRoleAdminMiddleware)
+	audioAdmin.Post("/assets/upload", AudioAssetUpload)
+	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
+	audioAdmin.Delete("/assets/:id", AudioAssetDelete)
+	audioAdmin.Post("/folders", AudioFolderCreate)
+	audioAdmin.Patch("/folders/:id", AudioFolderUpdate)
+	audioAdmin.Delete("/folders/:id", AudioFolderDelete)
+	audioAdmin.Post("/scenes", AudioSceneCreate)
+	audioAdmin.Patch("/scenes/:id", AudioSceneUpdate)
+	audioAdmin.Delete("/scenes/:id", AudioSceneDelete)
 
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)

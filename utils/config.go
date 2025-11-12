@@ -24,6 +24,17 @@ type LogUploadConfig struct {
 	Note           string `json:"note" yaml:"note"`
 }
 
+type AudioConfig struct {
+	StorageDir         string   `json:"storageDir" yaml:"storageDir"`
+	TempDir            string   `json:"tempDir" yaml:"tempDir"`
+	MaxUploadSizeMB    int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	AllowedMimeTypes   []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode    bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates  []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath         string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+}
+
 type AppConfig struct {
 	ServeAt                   string          `json:"serveAt" yaml:"serveAt"`
 	Domain                    string          `json:"domain" yaml:"domain"`
@@ -39,6 +50,7 @@ type AppConfig struct {
 	Version                   int             `json:"version" yaml:"version"`
 	GalleryQuotaMB            int64           `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig `json:"logUpload" yaml:"logUpload"`
+	Audio                     AudioConfig     `json:"audio" yaml:"audio"`
 }
 
 // 注: 实验型使用koanf，其实从需求上讲目前并无必要
@@ -73,6 +85,16 @@ func ReadConfig() *AppConfig {
 			UniformID:      "Sealchat",
 			Version:        105,
 			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
+		},
+		Audio: AudioConfig{
+			StorageDir:         "./static/audio",
+			TempDir:            "./data/audio-temp",
+			MaxUploadSizeMB:    80,
+			AllowedMimeTypes:   []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
+			EnableTranscode:    true,
+			DefaultBitrateKbps: 96,
+			AlternateBitrates:  []int{64, 128},
+			FFmpegPath:         "",
 		},
 	}
 
@@ -153,6 +175,14 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("logUpload.uniformId", config.LogUpload.UniformID)
 		_ = k.Set("logUpload.version", config.LogUpload.Version)
 		_ = k.Set("logUpload.note", config.LogUpload.Note)
+		_ = k.Set("audio.storageDir", config.Audio.StorageDir)
+		_ = k.Set("audio.tempDir", config.Audio.TempDir)
+		_ = k.Set("audio.maxUploadSizeMB", config.Audio.MaxUploadSizeMB)
+		_ = k.Set("audio.allowedMimeTypes", config.Audio.AllowedMimeTypes)
+		_ = k.Set("audio.enableTranscode", config.Audio.EnableTranscode)
+		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)
+		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
+		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

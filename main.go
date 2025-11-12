@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"time"
@@ -71,6 +72,10 @@ func main() {
 	}()
 
 	pm.Init()
+
+	if err := service.InitAudioService(config.Audio); err != nil {
+		log.Fatalf("初始化音频子系统失败: %v", err)
+	}
 
 	service.StartMessageExportWorker(service.MessageExportWorkerConfig{
 		StorageDir: "./data/exports",

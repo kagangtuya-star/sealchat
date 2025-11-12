@@ -2,7 +2,7 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh } from '@vicons/tabler';
-import { AppsOutline, UnlinkOutline, SearchOutline } from '@vicons/ionicons5';
+import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import Notif from '../notif.vue'
@@ -12,6 +12,8 @@ import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import UserPresencePopover from '../chat/components/UserPresencePopover.vue';
 import { useChannelSearchStore } from '@/stores/channelSearch';
+import AudioDrawer from '@/components/audio/AudioDrawer.vue';
+import { useAudioStudioStore } from '@/stores/audioStudio';
 
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
@@ -33,6 +35,7 @@ const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
 const channelSearch = useChannelSearchStore();
+const audioStudio = useAudioStudioStore();
 
 const channelTitle = computed(() => {
   const raw = chat.curChannel?.name;
@@ -260,6 +263,10 @@ const toggleChannelSearch = () => {
   channelSearch.togglePanel();
 };
 
+const openAudioStudio = () => {
+  audioStudio.toggleDrawer(true);
+};
+
 watch(presencePopoverVisible, (visible, oldVisible) => {
   if (visible && !oldVisible) {
     handlePresenceRefresh({ silent: true });
@@ -357,6 +364,21 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           <button
             type="button"
             class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': audioStudio.drawerVisible }"
+            aria-label="音频工作台"
+            @click="openAudioStudio"
+          >
+            <n-icon :component="MusicalNotesOutline" size="18" />
+          </button>
+        </template>
+        <span>音频工作台</span>
+      </n-tooltip>
+
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button sc-search-button sc-search-button--channel"
             :class="{ 'is-active': searchPanelActive }"
             aria-label="搜索频道消息"
             @click="toggleChannelSearch"
@@ -394,6 +416,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     <AdminSettings @close="adminShow = false" />
   </div>
   <notif v-show="notifShow" />
+  <AudioDrawer />
 </template>
 
 <style scoped lang="scss">
@@ -421,6 +444,10 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   position: relative;
   color: var(--sc-text-secondary);
   transition: color 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+
+.sc-search-button--channel {
+  border: 1px solid transparent;
 }
 
 .sc-icon-button:hover,

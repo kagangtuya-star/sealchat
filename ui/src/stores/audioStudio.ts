@@ -1,0 +1,609 @@
+import { defineStore } from 'pinia';
+import { Howl, Howler } from 'howler';
+import { nanoid } from 'nanoid';
+import { api, urlBase } from './_config';
+import { useUserStore } from './user';
+import { audioDb, toCachedMeta } from '@/models/audio-cache';
+import type {
+  AudioAsset,
+  AudioFolder,
+  AudioScene,
+  AudioSceneTrack,
+  AudioSearchFilters,
+  AudioTrackType,
+  UploadTaskState,
+} from '@/types/audio';
+
+export interface TrackRuntime extends AudioSceneTrack {
+  id: string;
+  asset?: AudioAsset | null;
+  howl?: Howl | null;
+  status: 'idle' | 'loading' | 'ready' | 'playing' | 'paused' | 'error';
+  progress: number;
+  buffered: number;
+  duration: number;
+  muted: boolean;
+  solo: boolean;
+  error?: string;
+}
+
+interface AudioStudioState {
+  drawerVisible: boolean;
+  initialized: boolean;
+  activeTab: 'player' | 'playlist' | 'library';
+  scenes: AudioScene[];
+  scenesLoading: boolean;
+  currentSceneId: string | null;
+  tracks: Record<AudioTrackType, TrackRuntime>;
+  assets: AudioAsset[];
+  filteredAssets: AudioAsset[];
+  assetsLoading: boolean;
+  folders: AudioFolder[];
+  folderPathLookup: Record<string, string>;
+  filters: AudioSearchFilters;
+  uploadTasks: UploadTaskState[];
+  networkMode: 'normal' | 'constrained' | 'minimal';
+  bufferMessage: string;
+  isPlaying: boolean;
+  loopEnabled: boolean;
+  playbackRate: number;
+  error: string | null;
+}
+
+const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
+if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
+  const desiredPool = 18;
+  if ((Howler as typeof Howler & { html5PoolSize?: number }).html5PoolSize < desiredPool) {
+    (Howler as typeof Howler & { html5PoolSize?: number }).html5PoolSize = desiredPool;
+  }
+}
+let progressTimer: number | null = null;
+
+function createEmptyTrack(type: AudioTrackType): TrackRuntime {
+  return {
+    id: nanoid(),
+    type,
+    assetId: null,
+    asset: null,
+    volume: 0.8,
+    fadeIn: 2000,
+    fadeOut: 2000,
+    howl: null,
+    status: 'idle',
+    progress: 0,
+    buffered: 0,
+    duration: 0,
+    muted: false,
+    solo: false,
+  };
+}
+
+function startProgressWatcher(store: ReturnType<typeof useAudioStudioStore>) {
+  if (typeof window === 'undefined') return;
+  if (progressTimer) return;
+  progressTimer = window.setInterval(() => {
+    store.updateProgressFromPlayers();
+  }, 500);
+}
+
+function stopProgressWatcher() {
+  if (typeof window === 'undefined') return;
+  if (!progressTimer) return;
+  window.clearInterval(progressTimer);
+  progressTimer = null;
+}
+
+function buildFolderPathLookup(folders: AudioFolder[]): Record<string, string> {
+  const lookup: Record<string, string> = {};
+  const walk = (items: AudioFolder[], parentPath: string) => {
+    items.forEach((folder) => {
+      const path = folder.path || (parentPath ? `${parentPath}/${folder.name}` : folder.name);
+      lookup[folder.id] = path;
+      if (folder.children?.length) {
+        walk(folder.children, path);
+      }
+    });
+  };
+  walk(folders, '');
+  return lookup;
+}
+
+function normalizeFolderId(input: string | null | undefined): string | null {
+  if (input === undefined || input === null) return null;
+  const trimmed = String(input).trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') {
+    return null;
+  }
+  return trimmed;
+}
+
+export const useAudioStudioStore = defineStore('audioStudio', {
+  state: (): AudioStudioState => ({
+    drawerVisible: false,
+    initialized: false,
+    activeTab: 'player',
+    scenes: [],
+    scenesLoading: false,
+    currentSceneId: null,
+    tracks: DEFAULT_TRACK_TYPES.reduce((acc, type) => {
+      acc[type] = createEmptyTrack(type);
+      return acc;
+    }, {} as Record<AudioTrackType, TrackRuntime>),
+    assets: [],
+    filteredAssets: [],
+    assetsLoading: false,
+    folders: [],
+    folderPathLookup: {},
+    filters: {
+      query: '',
+      tags: [],
+      folderId: null,
+      creatorIds: [],
+      durationRange: null,
+      hasSceneOnly: false,
+    },
+    uploadTasks: [],
+    networkMode: 'normal',
+    bufferMessage: '',
+    isPlaying: false,
+    loopEnabled: false,
+    playbackRate: 1,
+    error: null,
+  }),
+
+  getters: {
+    currentScene(state): AudioScene | null {
+      return state.scenes.find((scene) => scene.id === state.currentSceneId) || null;
+    },
+
+    canManage(): boolean {
+      const user = useUserStore();
+      return Boolean(user.checkPerm?.('mod_admin'));
+    },
+  },
+
+  actions: {
+    async toggleDrawer(next?: boolean) {
+      const target = typeof next === 'boolean' ? next : !this.drawerVisible;
+      this.drawerVisible = target;
+      if (target) {
+        await this.ensureInitialized();
+      }
+    },
+
+    async ensureInitialized() {
+      if (this.initialized) return;
+      await Promise.all([this.fetchScenes(), this.fetchFolders()]);
+      await this.fetchAssets();
+      this.initialized = true;
+      if (!this.currentSceneId && this.scenes.length) {
+        this.applyScene(this.scenes[0].id);
+      }
+    },
+
+    async fetchScenes() {
+      try {
+        this.scenesLoading = true;
+        const resp = await api.get('/api/v1/audio/scenes');
+        this.scenes = resp.data?.items || [];
+      } catch (err) {
+        console.error('fetchScenes failed', err);
+        this.error = '无法加载音频场景';
+      } finally {
+        this.scenesLoading = false;
+      }
+    },
+
+    async fetchAssets(payload?: Partial<AudioSearchFilters>) {
+      this.assetsLoading = true;
+      try {
+        const params: Record<string, unknown> = { ...this.filters, ...(payload || {}) };
+        const normalizedFolderId = normalizeFolderId(params.folderId as string | null | undefined);
+        if (normalizedFolderId) {
+          params.folderId = normalizedFolderId;
+        } else {
+          delete params.folderId;
+        }
+        const resp = await api.get('/api/v1/audio/assets', { params });
+        this.assets = resp.data?.items || [];
+        this.filteredAssets = this.assets;
+        await this.persistAssetsToCache();
+      } catch (err) {
+        console.warn('fetchAssets failed, fallback to cache', err);
+        const query = (payload?.query ?? this.filters.query ?? '').trim().toLowerCase();
+        const cached = query
+          ? await audioDb.assets.where('searchIndex').startsWith(query).toArray()
+          : await audioDb.assets.orderBy('updatedAt').reverse().toArray();
+        const fallback = cached.map((meta) => ({
+          id: meta.id,
+          name: meta.name,
+          folderId: meta.folderId,
+          tags: meta.tags,
+          createdBy: meta.creator,
+          duration: meta.duration,
+          updatedAt: new Date(meta.updatedAt).toISOString(),
+          updatedBy: meta.creator,
+          size: 0,
+          bitrate: 0,
+          storageType: 'local',
+          objectKey: '',
+          visibility: 'public',
+          createdAt: new Date(meta.updatedAt).toISOString(),
+          description: meta.description,
+        } as AudioAsset));
+        this.assets = fallback;
+        this.filteredAssets = fallback;
+      } finally {
+        this.assetsLoading = false;
+      }
+    },
+
+    async fetchFolders() {
+      try {
+        const resp = await api.get('/api/v1/audio/folders');
+        this.folders = resp.data?.items || [];
+        this.folderPathLookup = buildFolderPathLookup(this.folders);
+        await this.refreshLocalCacheWithFolderPaths();
+      } catch (err) {
+        console.error('fetchFolders failed', err);
+      }
+    },
+
+    selectTab(tab: AudioStudioState['activeTab']) {
+      this.activeTab = tab;
+    },
+
+    async applyScene(sceneId: string) {
+      const scene = this.scenes.find((item) => item.id === sceneId);
+      if (!scene) return;
+      this.currentSceneId = sceneId;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const trackMeta = scene.tracks.find((t) => t.type === type) || createEmptyTrack(type);
+        this.assignTrack(type, trackMeta);
+      });
+      if (this.isPlaying) {
+        await this.playAll();
+      }
+    },
+
+    assignTrack(type: AudioTrackType, payload: AudioSceneTrack) {
+      const prev = this.tracks[type];
+      if (prev?.howl) {
+        prev.howl.unload();
+      }
+      this.tracks[type] = {
+        ...createEmptyTrack(type),
+        ...payload,
+        id: prev?.id || nanoid(),
+        status: payload.assetId ? 'loading' : 'idle',
+      };
+      if (payload.assetId) {
+        this.loadTrackAsset(type, payload.assetId);
+      }
+    },
+
+    async assignAssetToTrack(type: AudioTrackType, asset: AudioAsset) {
+      const track = this.tracks[type];
+      if (!track) return;
+      if (track.howl) {
+        track.howl.unload();
+      }
+      track.assetId = asset.id;
+      track.asset = asset;
+      track.status = 'loading';
+      track.howl = this.createHowlInstance(track, asset);
+      track.status = 'ready';
+      if (this.isPlaying && track.howl && !track.muted) {
+        track.howl.play();
+      }
+    },
+
+    async loadTrackAsset(type: AudioTrackType, assetId: string) {
+      const track = this.tracks[type];
+      if (!track) return;
+      try {
+        track.status = 'loading';
+        const asset = this.assets.find((item) => item.id === assetId) || (await this.fetchSingleAsset(assetId));
+        track.asset = asset;
+        track.assetId = asset.id;
+        track.howl = this.createHowlInstance(track, asset);
+        track.status = 'ready';
+      } catch (err) {
+        console.error('loadTrackAsset error', err);
+        track.status = 'error';
+        track.error = '资源加载失败';
+      }
+    },
+
+    async fetchSingleAsset(assetId: string) {
+      const resp = await api.get(`/api/v1/audio/assets/${assetId}`);
+      const asset = resp.data as AudioAsset;
+      this.assets = [...this.assets.filter((item) => item.id !== asset.id), asset];
+      await audioDb.assets.put(toCachedMeta(asset));
+      return asset;
+    },
+
+    buildStreamUrl(assetId: string) {
+      return `${urlBase}/api/v1/audio/stream/${assetId}`;
+    },
+
+    createHowlInstance(track: TrackRuntime, asset: AudioAsset) {
+      const src = this.buildStreamUrl(asset.id);
+      const howl = new Howl({
+        src: [src],
+        html5: true,
+        preload: false,
+        volume: track.volume,
+        onplay: () => {
+          track.status = 'playing';
+          this.isPlaying = true;
+          startProgressWatcher(this);
+        },
+        onpause: () => {
+          track.status = 'paused';
+        },
+        onstop: () => {
+          track.status = 'ready';
+        },
+        onend: () => {
+          track.status = 'ready';
+          if (this.allTracksIdle()) {
+            this.isPlaying = false;
+            stopProgressWatcher();
+          }
+        },
+        onload: () => {
+          track.duration = howl.duration();
+        },
+        onloaderror: (_, err) => {
+          track.status = 'error';
+          track.error = String(err);
+        },
+        onplayerror: (_, err) => {
+          track.status = 'error';
+          track.error = String(err);
+        },
+      });
+      return howl;
+    },
+
+    async playAll() {
+      this.isPlaying = true;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (track?.howl && track.assetId && !track.muted) {
+          track.howl.loop(this.loopEnabled);
+          track.howl.rate(this.playbackRate);
+          const alreadyPlaying = track.howl.playing();
+          if (!alreadyPlaying) {
+            track.howl.play();
+          }
+        }
+      });
+      startProgressWatcher(this);
+    },
+
+    pauseAll() {
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (track?.howl && track.howl.playing()) {
+          track.howl.pause();
+        }
+      });
+      this.isPlaying = false;
+      stopProgressWatcher();
+    },
+
+    togglePlay() {
+      if (this.isPlaying) {
+        this.pauseAll();
+      } else {
+        this.playAll();
+      }
+    },
+
+    seekAll(deltaSeconds: number) {
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (!track?.howl) return;
+        const current = track.howl.seek() as number;
+        track.howl.seek(Math.max(0, current + deltaSeconds));
+      });
+      this.updateProgressFromPlayers();
+    },
+
+    seekToSeconds(position: number) {
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (!track?.howl) return;
+        track.howl.seek(Math.max(0, position));
+      });
+      this.updateProgressFromPlayers();
+    },
+
+    setTrackVolume(type: AudioTrackType, value: number) {
+      const track = this.tracks[type];
+      if (!track) return;
+      track.volume = value;
+      this.applyEffectiveVolume(type);
+    },
+
+    toggleTrackMute(type: AudioTrackType) {
+      const track = this.tracks[type];
+      if (!track) return;
+      track.muted = !track.muted;
+      track.solo = false;
+      this.applyEffectiveVolume(type);
+    },
+
+    toggleTrackSolo(type: AudioTrackType) {
+      const target = this.tracks[type];
+      if (!target) return;
+      const nextState = !target.solo;
+      DEFAULT_TRACK_TYPES.forEach((key) => {
+        const track = this.tracks[key];
+        if (!track) return;
+        track.solo = key === type ? nextState : false;
+        track.muted = nextState ? key !== type : track.muted;
+        this.applyEffectiveVolume(key);
+      });
+    },
+
+    applyEffectiveVolume(type: AudioTrackType) {
+      const track = this.tracks[type];
+      if (!track?.howl) return;
+      const effectiveVolume = track.muted ? 0 : track.volume;
+      track.howl.volume(effectiveVolume);
+    },
+
+    setPlaybackRate(rate: number) {
+      this.playbackRate = rate;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        track?.howl?.rate(rate);
+      });
+    },
+
+    toggleLoop() {
+      this.loopEnabled = !this.loopEnabled;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (track?.howl) {
+          track.howl.loop(this.loopEnabled);
+        }
+      });
+    },
+
+    updateProgressFromPlayers() {
+      let anyBuffering = false;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (!track?.howl) return;
+        const duration = track.howl.duration();
+        if (duration > 0) {
+          track.progress = (track.howl.seek() as number) / duration;
+        }
+        const sound = (track.howl as any)?._sounds?.[0]?._node as HTMLAudioElement | undefined;
+        if (sound && sound.buffered.length) {
+          const end = sound.buffered.end(sound.buffered.length - 1);
+          track.buffered = Math.min(1, end / duration);
+          anyBuffering = track.buffered < 1;
+        }
+      });
+      this.bufferMessage = anyBuffering ? '正在边下边播' : '已缓存全部音频';
+    },
+
+    allTracksIdle() {
+      return DEFAULT_TRACK_TYPES.every((type) => {
+        const track = this.tracks[type];
+        return !track || track.status === 'idle' || track.status === 'ready';
+      });
+    },
+
+    async applyFilters(filters: Partial<AudioSearchFilters>) {
+      const nextFolderId =
+        filters.folderId !== undefined ? filters.folderId : this.filters.folderId;
+      const mergedFilters: AudioSearchFilters = {
+        ...this.filters,
+        ...filters,
+        folderId: normalizeFolderId(nextFolderId) ?? null,
+      };
+      this.filters = mergedFilters;
+      await this.fetchAssets();
+    },
+
+    async searchAssetsLocally(keyword: string) {
+      this.filters.query = keyword;
+      if (!keyword.trim()) {
+        this.filteredAssets = this.assets;
+        return;
+      }
+      const lower = keyword.toLowerCase();
+      const lookup = this.folderPathLookup;
+      this.filteredAssets = this.assets.filter((asset) => {
+        const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
+        const description = asset.description ?? '';
+        const joined = `${asset.name} ${asset.tags.join(' ')} ${asset.createdBy} ${folderPath} ${description}`.toLowerCase();
+        return joined.includes(lower);
+      });
+      if (this.filteredAssets.length === 0) {
+        try {
+          await this.fetchAssets({ query: keyword });
+        } catch (err) {
+          console.warn('远程搜索失败', err);
+        }
+      }
+    },
+
+    async persistAssetsToCache() {
+      if (!this.assets.length) return;
+      const lookup = this.folderPathLookup;
+      try {
+        const metas = this.assets.map((asset) => {
+          const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
+          return toCachedMeta(asset, folderPath);
+        });
+        await audioDb.assets.bulkPut(metas);
+      } catch (cacheErr) {
+        console.warn('audio cache write skipped', cacheErr);
+      }
+    },
+
+    async refreshLocalCacheWithFolderPaths() {
+      await this.persistAssetsToCache();
+    },
+
+    async handleUpload(files: FileList | File[]) {
+      const list = Array.from(files);
+      for (const file of list) {
+        const task: UploadTaskState = {
+          id: nanoid(),
+          filename: file.name,
+          size: file.size,
+          progress: 0,
+          status: 'pending',
+        };
+        this.uploadTasks.push(task);
+        await this.uploadSingleFile(file, task);
+      }
+      try {
+        await this.fetchAssets();
+      } catch (err) {
+        console.warn('refresh assets after upload failed', err);
+      }
+    },
+
+    async uploadSingleFile(file: File, task: UploadTaskState) {
+      try {
+        task.status = 'uploading';
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await api.post('/api/v1/audio/assets/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (e) => {
+            if (e.total) {
+              task.progress = Math.round((e.loaded / e.total) * 100);
+            }
+          },
+        });
+        task.status = resp.data?.needsTranscode ? 'transcoding' : 'success';
+        task.progress = 100;
+      } catch (err: any) {
+        task.status = 'error';
+        task.error = err?.response?.data?.message || '上传失败';
+      }
+    },
+
+    removeUploadTask(taskId: string) {
+      this.uploadTasks = this.uploadTasks.filter((task) => task.id !== taskId);
+    },
+
+    setNetworkMode(mode: AudioStudioState['networkMode']) {
+      this.networkMode = mode;
+    },
+
+    setError(message: string | null) {
+      this.error = message;
+    },
+  },
+});

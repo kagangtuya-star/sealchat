@@ -7,6 +7,9 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    AudioAssetManager: typeof import('./src/components/audio/AudioAssetManager.vue')['default']
+    AudioDrawer: typeof import('./src/components/audio/AudioDrawer.vue')['default']
+    AudioSearchBar: typeof import('./src/components/audio/AudioSearchBar.vue')['default']
     Avatar: typeof import('./src/components/avatar.vue')['default']
     GalleryButton: typeof import('./src/components/gallery/GalleryButton.vue')['default']
     GalleryCollectionTree: typeof import('./src/components/gallery/GalleryCollectionTree.vue')['default']
@@ -46,10 +49,12 @@ declare module 'vue' {
     NModal: typeof import('naive-ui')['NModal']
     NPagination: typeof import('naive-ui')['NPagination']
     NPopover: typeof import('naive-ui')['NPopover']
+    NProgress: typeof import('naive-ui')['NProgress']
     NRadio: typeof import('naive-ui')['NRadio']
     NRadioButton: typeof import('naive-ui')['NRadioButton']
     NRadioGroup: typeof import('naive-ui')['NRadioGroup']
     NRow: typeof import('naive-ui')['NRow']
+    NScrollbar: typeof import('naive-ui')['NScrollbar']
     NSelect: typeof import('naive-ui')['NSelect']
     NSlider: typeof import('naive-ui')['NSlider']
     NSpace: typeof import('naive-ui')['NSpace']
@@ -62,9 +67,14 @@ declare module 'vue' {
     NText: typeof import('naive-ui')['NText']
     NThing: typeof import('naive-ui')['NThing']
     NTooltip: typeof import('naive-ui')['NTooltip']
+    NTree: typeof import('naive-ui')['NTree']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    ScenePlaylist: typeof import('./src/components/audio/ScenePlaylist.vue')['default']
     SlashSuggestPanel: typeof import('./src/components/chat/SlashSuggestPanel.vue')['default']
+    TrackMixerCard: typeof import('./src/components/audio/TrackMixerCard.vue')['default']
+    TransportBar: typeof import('./src/components/audio/TransportBar.vue')['default']
+    UploadPanel: typeof import('./src/components/audio/UploadPanel.vue')['default']
     UserLabel: typeof import('./src/components/UserLabel.vue')['default']
     UserLabelV: typeof import('./src/components/UserLabelV.vue')['default']
   }
