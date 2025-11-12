@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
@@ -295,6 +296,60 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	return streamFileWithRange(c, file, info.Size(), contentType)
 }
 
+func AudioPlaybackStateGet(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Query("channelId"))
+	if channelID == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少频道ID")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	if err := ensureChannelMembership(user.ID, channelID); err != nil {
+		return wrapErrorStatus(c, fiber.StatusForbidden, err, "仅频道成员可查看播放状态")
+	}
+	state, err := service.AudioGetPlaybackState(channelID)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取播放状态失败")
+	}
+	return c.JSON(fiber.Map{"state": buildAudioPlaybackResponse(state)})
+}
+
+func AudioPlaybackStateSet(c *fiber.Ctx) error {
+	var req audioPlaybackStateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
+	}
+	req.ChannelID = strings.TrimSpace(req.ChannelID)
+	if req.ChannelID == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少频道ID")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	if err := ensureChannelMembership(user.ID, req.ChannelID); err != nil {
+		return wrapErrorStatus(c, fiber.StatusForbidden, err, "仅频道成员可更新播放状态")
+	}
+	state, err := service.AudioUpsertPlaybackState(service.AudioPlaybackUpdateInput{
+		ChannelID:    req.ChannelID,
+		SceneID:      req.SceneID,
+		Tracks:       req.Tracks,
+		IsPlaying:    req.IsPlaying,
+		Position:     req.Position,
+		LoopEnabled:  req.LoopEnabled,
+		PlaybackRate: req.PlaybackRate,
+		ActorID:      user.ID,
+	})
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新播放状态失败")
+	}
+	if state != nil {
+		broadcastAudioPlaybackState(user, state)
+	}
+	return c.JSON(fiber.Map{"state": buildAudioPlaybackResponse(state)})
+}
+
 type audioSceneRequest struct {
 	Name         string                  `json:"name"`
 	Description  string                  `json:"description"`
@@ -399,6 +454,100 @@ func splitCSV(value string) []string {
 func strPtr(value string) *string {
 	v := value
 	return &v
+}
+
+type audioPlaybackStateRequest struct {
+	ChannelID    string                    `json:"channelId"`
+	SceneID      *string                   `json:"sceneId"`
+	Tracks       []service.AudioTrackState `json:"tracks"`
+	IsPlaying    bool                      `json:"isPlaying"`
+	Position     float64                   `json:"position"`
+	LoopEnabled  bool                      `json:"loopEnabled"`
+	PlaybackRate float64                   `json:"playbackRate"`
+}
+
+func ensureChannelMembership(userID, channelID string) error {
+	member, err := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false)
+	if err != nil {
+		return err
+	}
+	if member == nil {
+		return fmt.Errorf("channel membership required")
+	}
+	return nil
+}
+
+func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
+	if state == nil {
+		return nil
+	}
+	tracks := []model.AudioTrackState(state.Tracks)
+	return fiber.Map{
+		"channelId":    state.ChannelID,
+		"sceneId":      state.SceneID,
+		"tracks":       tracks,
+		"isPlaying":    state.IsPlaying,
+		"position":     state.Position,
+		"loopEnabled":  state.LoopEnabled,
+		"playbackRate": state.PlaybackRate,
+		"updatedBy":    state.UpdatedBy,
+		"updatedAt":    state.UpdatedAt,
+	}
+}
+
+func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPlaybackState) {
+	if operator == nil || state == nil {
+		return
+	}
+	if channelUsersMapGlobal == nil || userId2ConnInfoGlobal == nil {
+		return
+	}
+	payload := &protocol.AudioPlaybackStatePayload{
+		ChannelID:    state.ChannelID,
+		SceneID:      state.SceneID,
+		Tracks:       convertTrackStates(state.Tracks),
+		IsPlaying:    state.IsPlaying,
+		Position:     state.Position,
+		LoopEnabled:  state.LoopEnabled,
+		PlaybackRate: state.PlaybackRate,
+		UpdatedBy:    state.UpdatedBy,
+		UpdatedAt:    state.UpdatedAt.Unix(),
+	}
+	event := &protocol.Event{
+		Type: protocol.EventAudioStateUpdated,
+		Channel: &protocol.Channel{
+			ID: state.ChannelID,
+		},
+		User: &protocol.User{
+			ID:     operator.ID,
+			Nick:   operator.Nickname,
+			Name:   operator.Username,
+			Avatar: operator.Avatar,
+		},
+		AudioState: payload,
+	}
+	ctx := &ChatContext{
+		User:            operator,
+		ChannelUsersMap: channelUsersMapGlobal,
+		UserId2ConnInfo: userId2ConnInfoGlobal,
+	}
+	ctx.BroadcastEventInChannel(state.ChannelID, event)
+}
+
+func convertTrackStates(list model.JSONList[model.AudioTrackState]) []protocol.AudioTrackState {
+	result := make([]protocol.AudioTrackState, 0, len(list))
+	for _, item := range list {
+		result = append(result, protocol.AudioTrackState{
+			Type:    item.Type,
+			AssetID: item.AssetID,
+			Volume:  item.Volume,
+			Muted:   item.Muted,
+			Solo:    item.Solo,
+			FadeIn:  item.FadeIn,
+			FadeOut: item.FadeOut,
+		})
+	}
+	return result
 }
 
 func guessContentType(objectKey string) string {

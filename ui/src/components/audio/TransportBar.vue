@@ -2,13 +2,19 @@
   <div class="transport-bar">
     <div class="transport-bar__controls">
       <n-button-group>
-        <n-button quaternary size="small" @click="seekBackward">-5s</n-button>
-        <n-button type="primary" size="small" @click="togglePlay">
+        <n-button quaternary size="small" @click="seekBackward" :disabled="isReadOnly">-5s</n-button>
+        <n-button type="primary" size="small" @click="togglePlay" :disabled="isReadOnly">
           {{ audio.isPlaying ? '暂停' : '播放' }}
         </n-button>
-        <n-button quaternary size="small" @click="seekForward">+5s</n-button>
+        <n-button quaternary size="small" @click="seekForward" :disabled="isReadOnly">+5s</n-button>
       </n-button-group>
-      <n-button quaternary size="small" @click="audio.toggleLoop()" :type="audio.loopEnabled ? 'info' : 'default'">
+      <n-button
+        quaternary
+        size="small"
+        @click="audio.toggleLoop()"
+        :type="audio.loopEnabled ? 'info' : 'default'"
+        :disabled="isReadOnly"
+      >
         {{ audio.loopEnabled ? '循环中' : '循环关闭' }}
       </n-button>
     </div>
@@ -19,6 +25,7 @@
         :step="0.5"
         :format-tooltip="formatProgressTooltip"
         @update:value="handleProgress"
+        :disabled="isReadOnly"
       />
       <div class="transport-bar__progress-meta">
         <span>{{ formatTime(currentSeconds) }}</span>
@@ -33,6 +40,7 @@
         size="small"
         :options="speedOptions"
         @update:value="handleRateChange"
+        :disabled="isReadOnly"
       />
       <span class="transport-bar__buffer">{{ audio.bufferMessage }}</span>
     </div>
@@ -44,6 +52,7 @@ import { computed } from 'vue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 
 const audio = useAudioStudioStore();
+const isReadOnly = computed(() => !audio.canManage);
 
 const speedOptions = [0.75, 1, 1.25, 1.5].map((value) => ({ label: `${value}x`, value }));
 

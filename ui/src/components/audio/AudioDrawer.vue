@@ -26,10 +26,10 @@
             </div>
           </div>
         </n-tab-pane>
-        <n-tab-pane name="playlist" tab="播放列表">
+        <n-tab-pane v-if="audio.canManage" name="playlist" tab="播放列表">
           <ScenePlaylist />
         </n-tab-pane>
-        <n-tab-pane name="library" tab="素材库">
+        <n-tab-pane v-if="audio.canManage" name="library" tab="素材库">
           <AudioAssetManager />
         </n-tab-pane>
       </n-tabs>

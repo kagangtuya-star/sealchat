@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type AudioStorageType string
@@ -79,53 +80,78 @@ func (jl *JSONList[T]) Scan(value interface{}) error {
 
 type AudioAsset struct {
 	StringPKBaseModel
-	Name            string               `json:"name"`
-	FolderID        *string              `json:"folderId" gorm:"index"`
-	Size            int64                `json:"size"`
-	DurationSeconds float64              `json:"duration" gorm:"column:duration"`
-	BitrateKbps     int                  `json:"bitrate"`
-	StorageType     AudioStorageType     `json:"storageType" gorm:"type:varchar(16)"`
-	ObjectKey       string               `json:"objectKey"`
-	Description     string               `json:"description"`
-	Tags            JSONList[string]     `json:"tags" gorm:"type:json"`
-	Visibility      AudioAssetVisibility `json:"visibility" gorm:"type:varchar(16)"`
-	CreatedBy       string               `json:"createdBy" gorm:"index"`
-	UpdatedBy       string               `json:"updatedBy"`
+	Name            string                      `json:"name"`
+	FolderID        *string                     `json:"folderId" gorm:"index"`
+	Size            int64                       `json:"size"`
+	DurationSeconds float64                     `json:"duration" gorm:"column:duration"`
+	BitrateKbps     int                         `json:"bitrate"`
+	StorageType     AudioStorageType            `json:"storageType" gorm:"type:varchar(16)"`
+	ObjectKey       string                      `json:"objectKey"`
+	Description     string                      `json:"description"`
+	Tags            JSONList[string]            `json:"tags" gorm:"type:json"`
+	Visibility      AudioAssetVisibility        `json:"visibility" gorm:"type:varchar(16)"`
+	CreatedBy       string                      `json:"createdBy" gorm:"index"`
+	UpdatedBy       string                      `json:"updatedBy"`
 	Variants        JSONList[AudioAssetVariant] `json:"variants" gorm:"type:json"`
-	TranscodeStatus AudioTranscodeStatus       `json:"transcodeStatus" gorm:"type:varchar(16);default:'ready'"`
+	TranscodeStatus AudioTranscodeStatus        `json:"transcodeStatus" gorm:"type:varchar(16);default:'ready'"`
 }
 
 func (*AudioAsset) TableName() string { return "audio_assets" }
 
 type AudioFolder struct {
 	StringPKBaseModel
-	ParentID *string `json:"parentId" gorm:"index"`
-	Name     string  `json:"name"`
-	Path     string  `json:"path" gorm:"uniqueIndex"`
-	CreatedBy string `json:"createdBy"`
-	UpdatedBy string `json:"updatedBy"`
+	ParentID  *string `json:"parentId" gorm:"index"`
+	Name      string  `json:"name"`
+	Path      string  `json:"path" gorm:"uniqueIndex"`
+	CreatedBy string  `json:"createdBy"`
+	UpdatedBy string  `json:"updatedBy"`
 }
 
 func (*AudioFolder) TableName() string { return "audio_folders" }
 
 type AudioSceneTrack struct {
-	Type    string   `json:"type"`
-	AssetID *string  `json:"assetId"`
-	Volume  float64  `json:"volume"`
-	FadeIn  int      `json:"fadeIn"`
-	FadeOut int      `json:"fadeOut"`
+	Type    string  `json:"type"`
+	AssetID *string `json:"assetId"`
+	Volume  float64 `json:"volume"`
+	FadeIn  int     `json:"fadeIn"`
+	FadeOut int     `json:"fadeOut"`
 }
 
 type AudioScene struct {
 	StringPKBaseModel
-	Name         string                   `json:"name"`
-	Description  string                   `json:"description"`
+	Name         string                    `json:"name"`
+	Description  string                    `json:"description"`
 	Tracks       JSONList[AudioSceneTrack] `json:"tracks" gorm:"type:json"`
-	Tags         JSONList[string]         `json:"tags" gorm:"type:json"`
-	Order        int                      `json:"order" gorm:"index"`
-	ChannelScope *string                  `json:"channelScope" gorm:"index"`
-	CreatedBy    string                   `json:"createdBy"`
-	UpdatedBy    string                   `json:"updatedBy"`
+	Tags         JSONList[string]          `json:"tags" gorm:"type:json"`
+	Order        int                       `json:"order" gorm:"index"`
+	ChannelScope *string                   `json:"channelScope" gorm:"index"`
+	CreatedBy    string                    `json:"createdBy"`
+	UpdatedBy    string                    `json:"updatedBy"`
 }
 
 func (*AudioScene) TableName() string { return "audio_scenes" }
+
+type AudioTrackState struct {
+	Type    string  `json:"type"`
+	AssetID *string `json:"assetId"`
+	Volume  float64 `json:"volume"`
+	Muted   bool    `json:"muted"`
+	Solo    bool    `json:"solo"`
+	FadeIn  int     `json:"fadeIn"`
+	FadeOut int     `json:"fadeOut"`
+}
+
+type AudioPlaybackState struct {
+	ChannelID    string                    `json:"channelId" gorm:"primaryKey"`
+	SceneID      *string                   `json:"sceneId"`
+	Tracks       JSONList[AudioTrackState] `json:"tracks" gorm:"type:json"`
+	IsPlaying    bool                      `json:"isPlaying"`
+	Position     float64                   `json:"position"`
+	LoopEnabled  bool                      `json:"loopEnabled"`
+	PlaybackRate float64                   `json:"playbackRate"`
+	UpdatedBy    string                    `json:"updatedBy"`
+	UpdatedAt    time.Time                 `json:"updatedAt"`
+	CreatedAt    time.Time                 `json:"createdAt"`
+}
+
+func (*AudioPlaybackState) TableName() string { return "audio_playback_states" }

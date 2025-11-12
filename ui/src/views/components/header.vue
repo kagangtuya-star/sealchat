@@ -267,6 +267,14 @@ const openAudioStudio = () => {
   audioStudio.toggleDrawer(true);
 };
 
+watch(
+  () => chat.curChannel?.id,
+  (channelId) => {
+    audioStudio.setActiveChannel(channelId || null);
+  },
+  { immediate: true },
+);
+
 watch(presencePopoverVisible, (visible, oldVisible) => {
   if (visible && !oldVisible) {
     handlePresenceRefresh({ silent: true });

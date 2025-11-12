@@ -132,6 +132,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	audio.Get("/folders", AudioFolderList)
 	audio.Get("/scenes", AudioSceneList)
 	audio.Get("/stream/:id", AudioAssetStream)
+	audio.Get("/state", AudioPlaybackStateGet)
 	audioAdmin := audio.Group("", UserRoleAdminMiddleware)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
 	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
@@ -142,6 +143,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	audioAdmin.Post("/scenes", AudioSceneCreate)
 	audioAdmin.Patch("/scenes/:id", AudioSceneUpdate)
 	audioAdmin.Delete("/scenes/:id", AudioSceneDelete)
+	audioAdmin.Post("/state", AudioPlaybackStateSet)
 
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)

@@ -125,6 +125,28 @@ type ChannelPresence struct {
 	LastSeen int64 `json:"lastSeen"`
 }
 
+type AudioTrackState struct {
+	Type    string  `json:"type"`
+	AssetID *string `json:"assetId"`
+	Volume  float64 `json:"volume"`
+	Muted   bool    `json:"muted"`
+	Solo    bool    `json:"solo"`
+	FadeIn  int     `json:"fadeIn"`
+	FadeOut int     `json:"fadeOut"`
+}
+
+type AudioPlaybackStatePayload struct {
+	ChannelID    string            `json:"channelId"`
+	SceneID      *string           `json:"sceneId"`
+	Tracks       []AudioTrackState `json:"tracks"`
+	IsPlaying    bool              `json:"isPlaying"`
+	Position     float64           `json:"position"`
+	LoopEnabled  bool              `json:"loopEnabled"`
+	PlaybackRate float64           `json:"playbackRate"`
+	UpdatedBy    string            `json:"updatedBy"`
+	UpdatedAt    int64             `json:"updatedAt"`
+}
+
 type WhisperMeta struct {
 	SenderMemberID   string `json:"senderMemberId,omitempty"`
 	SenderMemberName string `json:"senderMemberName,omitempty"`
@@ -198,27 +220,29 @@ const (
 	EventGuildMemberRequest     EventName = "guild-member-request"
 	EventTypingPreview          EventName = "typing-preview"
 	EventChannelPresenceUpdated EventName = "channel-presence-updated"
+	EventAudioStateUpdated      EventName = "audio-state-updated"
 )
 
 type Event struct {
-	ID        int64              `json:"id"`
-	Type      EventName          `json:"type"`
-	SelfID    string             `json:"selfID"`
-	Platform  string             `json:"platform"`
-	Timestamp int64              `json:"timestamp"`
-	Argv      *Argv              `json:"argv"`
-	Channel   *Channel           `json:"channel"`
-	Guild     *Guild             `json:"guild"`
-	Login     *Login             `json:"login"`
-	Member    *GuildMember       `json:"member"`
-	Message   *Message           `json:"message"`
-	Operator  *User              `json:"operator"`
-	Role      *GuildRole         `json:"role"`
-	User      *User              `json:"user"`
-	Button    *Button            `json:"button"`
-	Typing    *TypingPreview     `json:"typing"`
-	Reorder   *MessageReorder    `json:"reorder"`
-	Presence  []*ChannelPresence `json:"presence"`
+	ID         int64                      `json:"id"`
+	Type       EventName                  `json:"type"`
+	SelfID     string                     `json:"selfID"`
+	Platform   string                     `json:"platform"`
+	Timestamp  int64                      `json:"timestamp"`
+	Argv       *Argv                      `json:"argv"`
+	Channel    *Channel                   `json:"channel"`
+	Guild      *Guild                     `json:"guild"`
+	Login      *Login                     `json:"login"`
+	Member     *GuildMember               `json:"member"`
+	Message    *Message                   `json:"message"`
+	Operator   *User                      `json:"operator"`
+	Role       *GuildRole                 `json:"role"`
+	User       *User                      `json:"user"`
+	Button     *Button                    `json:"button"`
+	Typing     *TypingPreview             `json:"typing"`
+	Reorder    *MessageReorder            `json:"reorder"`
+	Presence   []*ChannelPresence         `json:"presence"`
+	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
 }
 
 type TypingState string

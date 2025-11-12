@@ -14,13 +14,13 @@
           :options="assetOptions"
           filterable
           clearable
-          :disabled="!assetsAvailable"
+          :disabled="!assetsAvailable || isReadOnly"
           @update:value="handleSelect"
         />
-        <n-button text size="tiny" @click="toggleSolo" :type="track.solo ? 'info' : 'primary'">
+        <n-button text size="tiny" @click="toggleSolo" :type="track.solo ? 'info' : 'primary'" :disabled="isReadOnly">
           {{ track.solo ? '取消独奏' : '独奏' }}
         </n-button>
-        <n-button text size="tiny" @click="toggleMute">
+        <n-button text size="tiny" @click="toggleMute" :disabled="isReadOnly">
           {{ track.muted ? '取消静音' : '静音' }}
         </n-button>
       </div>
@@ -37,7 +37,14 @@
 
       <div class="track-card__volume">
         <span>音量</span>
-        <n-slider :value="track.volume" :step="0.01" @update:value="setVolume" :min="0" :max="1"></n-slider>
+        <n-slider
+          :value="track.volume"
+          :step="0.01"
+          @update:value="setVolume"
+          :min="0"
+          :max="1"
+          :disabled="isReadOnly"
+        ></n-slider>
       </div>
     </section>
 
@@ -71,6 +78,7 @@ const trackLabels: Record<string, string> = {
 };
 
 const audio = useAudioStudioStore();
+const isReadOnly = computed(() => !audio.canManage);
 const progressPercent = computed(() => Math.round(props.track.progress * 100));
 const currentSeconds = computed(() => {
   const duration = props.track.duration || 0;

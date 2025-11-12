@@ -64,3 +64,25 @@ export interface UploadTaskState {
   status: 'pending' | 'uploading' | 'transcoding' | 'success' | 'error';
   error?: string;
 }
+
+export interface AudioTrackStatePayload {
+  type: AudioTrackType;
+  assetId: string | null;
+  volume: number;
+  muted: boolean;
+  solo: boolean;
+  fadeIn: number;
+  fadeOut: number;
+}
+
+export interface AudioPlaybackStatePayload {
+  channelId: string;
+  sceneId: string | null;
+  tracks: AudioTrackStatePayload[];
+  isPlaying: boolean;
+  position: number;
+  loopEnabled: boolean;
+  playbackRate: number;
+  updatedBy?: string;
+  updatedAt?: string;
+}

@@ -56,6 +56,19 @@ type AudioSceneInput struct {
 	ActorID      string
 }
 
+type AudioTrackState = model.AudioTrackState
+
+type AudioPlaybackUpdateInput struct {
+	ChannelID    string
+	SceneID      *string
+	Tracks       []AudioTrackState
+	IsPlaying    bool
+	Position     float64
+	LoopEnabled  bool
+	PlaybackRate float64
+	ActorID      string
+}
+
 func (f *AudioAssetFilters) normalize() {
 	f.Query = strings.TrimSpace(f.Query)
 	if f.Page <= 0 {
@@ -143,6 +156,91 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 		}
 		return q.Order("updated_at DESC")
 	})
+}
+
+func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
+	if items == nil {
+		return nil
+	}
+	result := make([]AudioTrackState, 0, len(items))
+	for _, item := range items {
+		t := AudioTrackState{
+			Type:    strings.TrimSpace(item.Type),
+			Volume:  item.Volume,
+			Muted:   item.Muted,
+			Solo:    item.Solo,
+			FadeIn:  item.FadeIn,
+			FadeOut: item.FadeOut,
+		}
+		if item.AssetID != nil {
+			trimmed := strings.TrimSpace(*item.AssetID)
+			if trimmed != "" {
+				val := trimmed
+				t.AssetID = &val
+			}
+		}
+		result = append(result, t)
+	}
+	return result
+}
+
+func AudioGetPlaybackState(channelID string) (*model.AudioPlaybackState, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return nil, errors.New("channelId 必填")
+	}
+	var state model.AudioPlaybackState
+	err := model.GetDB().Where("channel_id = ?", channelID).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlaybackState, error) {
+	if strings.TrimSpace(input.ChannelID) == "" {
+		return nil, errors.New("channelId 必填")
+	}
+	if input.PlaybackRate <= 0 {
+		input.PlaybackRate = 1
+	}
+	if input.Position < 0 {
+		input.Position = 0
+	}
+	db := model.GetDB()
+	var state model.AudioPlaybackState
+	err := db.Where("channel_id = ?", input.ChannelID).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		state = model.AudioPlaybackState{
+			ChannelID: input.ChannelID,
+			CreatedAt: time.Now(),
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	state.SceneID = input.SceneID
+	if state.SceneID != nil {
+		trimmed := strings.TrimSpace(*state.SceneID)
+		if trimmed == "" {
+			state.SceneID = nil
+		} else {
+			val := trimmed
+			state.SceneID = &val
+		}
+	}
+	state.Tracks = model.JSONList[AudioTrackState](normalizeTrackStates(input.Tracks))
+	state.IsPlaying = input.IsPlaying
+	state.Position = input.Position
+	state.LoopEnabled = input.LoopEnabled
+	state.PlaybackRate = input.PlaybackRate
+	state.UpdatedBy = input.ActorID
+	state.UpdatedAt = time.Now()
+	if err := db.Save(&state).Error; err != nil {
+		return nil, err
+	}
+	return &state, nil
 }
 
 func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset, error) {

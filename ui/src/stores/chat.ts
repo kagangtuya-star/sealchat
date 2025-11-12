@@ -3,11 +3,13 @@ import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
 import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
 import { Emitter } from '@/utils/event';
 import { useUserStore } from './user';
 import { api, urlBase } from './_config';
+import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useMessage } from 'naive-ui';
 import { memoizeWithTimeout } from '@/utils/tools';
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
@@ -1058,6 +1060,13 @@ export const useChatStore = defineStore({
     },
 
     async eventDispatch(e: Event) {
+      if (e.type === 'audio-state-updated') {
+        const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;
+        if (audioPayload) {
+          const audioStudio = useAudioStudioStore();
+          await audioStudio.applyRemotePlayback(audioPayload);
+        }
+      }
       chatEvent.emit(e.type as any, e);
     },
 
