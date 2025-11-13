@@ -1,0 +1,54 @@
+  builtInSealBotEnable: true
+  chatHistoryPersistentDays: -1
+  dbUrl: ./data/chat.db
+  domain: 127.0.0.1:3212 # 这里需要填写服务器IP或者域名地址，外置图片显示
+  imageCompress: true
+  imageCompressQuality: 85
+  imageSizeLimit: 8192
+  galleryQuotaMB: 100
+  registerOpen: true
+  serveAt: :3212
+  version: 1
+  webUrl: /
+
+  audio:
+    storageDir: ./static/audio
+    tempDir: ./data/audio-temp
+    maxUploadSizeMB: 80
+    allowedMimeTypes:
+      - audio/mpeg
+      - audio/ogg
+      - audio/wav
+      - audio/x-wav
+      - audio/webm
+      - audio/aac
+      - audio/flac
+    enableTranscode: true
+    defaultBitrateKbps: 96
+    alternateBitrates: [64, 128]
+    ffmpegPath: ""
+
+  storage:
+    mode: local        # local / s3 / auto，默认本地
+    presignTTL: 900
+    maxSizeMB: 64
+    local:
+      uploadDir: ./sealchat-data/upload
+      audioDir: ./sealchat-data/static/audio
+      tempDir: ./data/temp
+      baseUrl: ""   # 若通过 Nginx 暴露本地附件，可填例如 https://files.example.com
+    s3:
+      enabled: true
+      endpoint: https://cos.ap-region.myqcloud.com
+      region: ap-region
+      bucket: your-bucket-name
+      accessKey: ""       # 留空，改用环境变量 SEALCHAT_S3_ACCESS_KEY
+      secret: ""          # 留空，改用环境变量 SEALCHAT_S3_SECRET_KEY
+      sessionToken: ""
+      pathStyle: false
+      baseUrl: ""         # 可留空，由 endpoint 推导
+      publicBaseUrl: https://cdn.example.com   # 若已绑定 CDN/自定义域，填最终访问域名
+      useSSL: true
+      presignTTL: 900
+      maxSizeMB: 64
+      logLevel: warn
