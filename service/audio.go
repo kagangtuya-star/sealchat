@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"os/exec"
@@ -20,12 +21,14 @@ import (
 	"github.com/gabriel-vasile/mimetype"
 
 	"sealchat/model"
+	"sealchat/service/storage"
 	"sealchat/utils"
 )
 
 type audioService struct {
 	cfg          utils.AudioConfig
 	storage      *localAudioStorage
+	objectStore  *storage.Manager
 	allowedMimes map[string]struct{}
 	ffmpegPath   string
 	ffprobePath  string
@@ -55,7 +58,7 @@ type AudioUploadOptions struct {
 	CreatedBy   string
 }
 
-func InitAudioService(cfg utils.AudioConfig) error {
+func InitAudioService(cfg utils.AudioConfig, store *storage.Manager) error {
 	audioSvcOnce.Do(func() {
 		if strings.TrimSpace(cfg.StorageDir) == "" {
 			cfg.StorageDir = "./static/audio"
@@ -71,6 +74,7 @@ func InitAudioService(cfg utils.AudioConfig) error {
 		audioSvc = &audioService{
 			cfg:          cfg,
 			storage:      storage,
+			objectStore:  store,
 			allowedMimes: buildMimeMap(cfg.AllowedMimeTypes),
 		}
 
@@ -260,6 +264,18 @@ func (svc *audioService) Upload(fileHeader *multipart.FileHeader, opts AudioUplo
 }
 
 func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string, opts AudioUploadOptions) (*model.AudioAsset, error) {
+	asset := svc.newAssetRecord(originalName, opts)
+	if svc.shouldUseObjectStore() {
+		if remote, err := svc.persistWithObjectStore(asset, tempPath, mimeType, originalName); err == nil {
+			return remote, nil
+		} else {
+			log.Printf("[audio] 上传对象存储失败，使用本地存储: %v", err)
+		}
+	}
+	return svc.persistLocalAsset(asset, tempPath, mimeType)
+}
+
+func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOptions) *model.AudioAsset {
 	asset := &model.AudioAsset{}
 	asset.StringPKBaseModel.Init()
 	asset.Name = chooseName(opts.Name, originalName)
@@ -272,19 +288,51 @@ func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string
 	asset.UpdatedBy = opts.CreatedBy
 	asset.Tags = model.JSONList[string](normalizeTags(opts.Tags))
 	asset.FolderID = cloneStringPtr(opts.FolderID)
-	asset.StorageType = model.AudioStorageLocal
+	asset.StorageType = model.StorageLocal
+	return asset
+}
 
+func (svc *audioService) shouldUseObjectStore() bool {
+	return svc.objectStore != nil && svc.objectStore.ActiveBackend() == storage.BackendS3
+}
+
+func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mimeType string) (*model.AudioAsset, error) {
 	result, err := svc.generateVariants(tempPath, asset.ID, mimeType)
 	if err != nil {
 		return nil, err
 	}
+	asset.StorageType = model.StorageLocal
 	asset.ObjectKey = result.Primary.ObjectKey
 	asset.BitrateKbps = result.Primary.BitrateKbps
 	asset.DurationSeconds = result.Primary.Duration
 	asset.Size = result.Primary.Size
 	asset.Variants = model.JSONList[model.AudioAssetVariant](result.Extras)
 	asset.TranscodeStatus = result.TranscodeStatus
+	return asset, nil
+}
 
+func (svc *audioService) persistWithObjectStore(asset *model.AudioAsset, tempPath, mimeType, originalName string) (*model.AudioAsset, error) {
+	if svc.objectStore == nil {
+		return nil, errors.New("对象存储未配置")
+	}
+	objectKey := storage.BuildAudioObjectKey(asset.ID, originalName)
+	duration, _ := svc.probeDurationFromFile(tempPath)
+	result, err := svc.objectStore.Upload(context.Background(), storage.UploadInput{
+		ObjectKey:   objectKey,
+		LocalPath:   tempPath,
+		ContentType: mimeType,
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = os.Remove(tempPath)
+	asset.StorageType = model.StorageS3
+	asset.ObjectKey = result.ObjectKey
+	asset.Size = result.Size
+	asset.DurationSeconds = duration
+	asset.BitrateKbps = svc.cfg.DefaultBitrateKbps
+	asset.Variants = nil
+	asset.TranscodeStatus = model.AudioTranscodeReady
 	return asset, nil
 }
 
@@ -298,7 +346,7 @@ func (svc *audioService) generateVariants(tempPath, assetID, mimeType string) (*
 	primary := model.AudioAssetVariant{
 		Label:       "default",
 		BitrateKbps: svc.cfg.DefaultBitrateKbps,
-		StorageType: model.AudioStorageLocal,
+		StorageType: model.StorageLocal,
 	}
 	result := &variantResult{TranscodeStatus: model.AudioTranscodeReady}
 	transcoded := false
@@ -330,7 +378,7 @@ func (svc *audioService) generateVariants(tempPath, assetID, mimeType string) (*
 					BitrateKbps: bitrate,
 					ObjectKey:   objectKey,
 					Size:        size,
-					StorageType: model.AudioStorageLocal,
+					StorageType: model.StorageLocal,
 				}
 				duration, err := svc.probeDuration(objectKey)
 				if err == nil {
@@ -384,14 +432,18 @@ func (svc *audioService) runFFmpeg(srcPath, dstPath string, bitrate int) error {
 }
 
 func (svc *audioService) probeDuration(objectKey string) (float64, error) {
-	if svc.ffprobePath == "" {
-		return 0, errors.New("ffprobe not available")
-	}
 	full, err := svc.storage.fullPath(objectKey)
 	if err != nil {
 		return 0, err
 	}
-	args := []string{"-v", "error", "-show_entries", "format=duration", "-of", "default=nokey=1:noprint_wrappers=1", full}
+	return svc.probeDurationFromFile(full)
+}
+
+func (svc *audioService) probeDurationFromFile(path string) (float64, error) {
+	if svc.ffprobePath == "" {
+		return 0, errors.New("ffprobe not available")
+	}
+	args := []string{"-v", "error", "-show_entries", "format=duration", "-of", "default=nokey=1:noprint_wrappers=1", path}
 	cmd := exec.CommandContext(context.Background(), svc.ffprobePath, args...)
 	output, err := cmd.Output()
 	if err != nil {
@@ -490,7 +542,7 @@ func AudioProcessUpload(fileHeader *multipart.FileHeader, opts AudioUploadOption
 
 func (svc *audioService) ResolveLocalFile(asset *model.AudioAsset, variantLabel string) (*os.File, os.FileInfo, model.AudioAssetVariant, error) {
 	variant := selectVariant(asset, variantLabel)
-	if variant.StorageType != model.AudioStorageLocal {
+	if variant.StorageType != model.StorageLocal {
 		return nil, nil, variant, errors.New("variant is not local")
 	}
 	f, info, err := svc.storage.open(variant.ObjectKey)
@@ -550,6 +602,20 @@ func (svc *audioService) RemoveLocalAsset(objectKey string) error {
 	}
 	trashPath := filepath.Join(svc.storage.trashDir(), filepath.Base(objectKey)+fmt.Sprintf("-%d", time.Now().Unix()))
 	return os.Rename(full, trashPath)
+}
+
+func (svc *audioService) removeAssetObject(storageType model.StorageType, objectKey string) {
+	if strings.TrimSpace(objectKey) == "" {
+		return
+	}
+	switch storageType {
+	case model.StorageS3:
+		if svc.objectStore != nil {
+			_ = svc.objectStore.Delete(context.Background(), storage.BackendS3, objectKey)
+		}
+	default:
+		_ = svc.RemoveLocalAsset(objectKey)
+	}
 }
 
 func (svc *audioService) FFmpegAvailable() bool {

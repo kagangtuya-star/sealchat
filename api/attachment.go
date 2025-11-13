@@ -14,6 +14,7 @@ import (
 	"modernc.org/libc/limits"
 
 	"sealchat/model"
+	"sealchat/service"
 )
 
 // UploadQuick 上传前检查哈希，如果文件已存在，则使用快速上传
@@ -40,11 +41,14 @@ func UploadQuick(c *fiber.Ctx) error {
 	}
 
 	tx, newItem := model.AttachmentCreate(&model.AttachmentModel{
-		Filename:  item.Filename,
-		Size:      item.Size,
-		Hash:      hashBytes,
-		ChannelID: body.ChannelID,
-		UserID:    getCurUser(c).ID,
+		Filename:    item.Filename,
+		Size:        item.Size,
+		Hash:        hashBytes,
+		ChannelID:   body.ChannelID,
+		UserID:      getCurUser(c).ID,
+		StorageType: item.StorageType,
+		ObjectKey:   item.ObjectKey,
+		ExternalURL: item.ExternalURL,
 	})
 	if tx.Error != nil {
 		return wrapError(c, tx.Error, "上传失败，请重试")
@@ -77,17 +81,14 @@ func Upload(c *fiber.Ctx) error {
 	filenames := []string{}
 	ids := []string{}
 
-	tmpDir := "./data/temp/"
-	uploadDir := "./data/upload/"
+	tmpDir := appConfig.Storage.Local.TempDir
+	if strings.TrimSpace(tmpDir) == "" {
+		tmpDir = "./data/temp/"
+	}
 
 	// 遍历每个文件
 	for _, file := range files {
-		// f, err := appFs.Open("./assets/" + file.Filename + ".upload")
-		// if err != nil {
-		//	return err
-		// }
 		_ = appFs.MkdirAll(tmpDir, 0755)
-		_ = appFs.MkdirAll(uploadDir, 0755)
 
 		tempFile, err := afero.TempFile(appFs, tmpDir, "*.upload")
 		if err != nil {
@@ -106,21 +107,20 @@ func Upload(c *fiber.Ctx) error {
 		fn := fmt.Sprintf("%s_%d", hexString, savedSize)
 		_ = tempFile.Close()
 
-		if _, err := os.Stat(fn); errors.Is(err, os.ErrNotExist) {
-			if err = appFs.Rename(tempFile.Name(), uploadDir+fn); err != nil {
-				return wrapError(c, err, "上传失败，请重试")
-			}
-		} else {
-			// 文件已存在，复用并删除临时文件
-			_ = appFs.Remove(tempFile.Name())
+		location, err := service.PersistAttachmentFile(hashCode, savedSize, tempFile.Name(), file.Header.Get("Content-Type"))
+		if err != nil {
+			return wrapError(c, err, "上传失败，请重试")
 		}
 
 		tx, newItem := model.AttachmentCreate(&model.AttachmentModel{
-			Filename:  file.Filename,
-			Size:      savedSize,
-			Hash:      hashCode,
-			ChannelID: channelId,
-			UserID:    getCurUser(c).ID,
+			Filename:    file.Filename,
+			Size:        savedSize,
+			Hash:        hashCode,
+			ChannelID:   channelId,
+			UserID:      getCurUser(c).ID,
+			StorageType: location.StorageType,
+			ObjectKey:   location.ObjectKey,
+			ExternalURL: location.ExternalURL,
 		})
 		if tx.Error != nil {
 			return wrapError(c, tx.Error, "上传失败，请重试")
@@ -174,9 +174,29 @@ func AttachmentGet(c *fiber.Ctx) error {
 			"message": "附件不存在",
 		})
 	}
+	if att.StorageType == model.StorageS3 {
+		if redirected := redirectAttachmentToRemote(c, &att); redirected {
+			return nil
+		}
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "附件文件不存在",
+		})
+	}
+
+	if strings.TrimSpace(att.ObjectKey) != "" {
+		if path, err := service.ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
+			if _, err := os.Stat(path); err == nil {
+				return c.SendFile(path)
+			}
+		}
+	}
+
 	filename := fmt.Sprintf("%s_%d", hex.EncodeToString([]byte(att.Hash)), att.Size)
-	fullPath := filepath.Join("./data/upload", filename)
-	// 先检查文件是否存在，保证 SendFile 能返回正确的错误码
+	uploadRoot := appConfig.Storage.Local.UploadDir
+	if strings.TrimSpace(uploadRoot) == "" {
+		uploadRoot = "./data/upload"
+	}
+	fullPath := filepath.Join(uploadRoot, filename)
 	if _, err := os.Stat(fullPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -185,7 +205,6 @@ func AttachmentGet(c *fiber.Ctx) error {
 		}
 		return wrapError(c, err, "读取附件失败")
 	}
-
 	return c.SendFile(fullPath)
 }
 
@@ -207,13 +226,18 @@ func AttachmentMeta(c *fiber.Ctx) error {
 		})
 	}
 
+	publicURL := service.AttachmentPublicURL(&att)
 	return c.JSON(fiber.Map{
 		"message": "ok",
 		"item": fiber.Map{
-			"id":       att.ID,
-			"filename": att.Filename,
-			"size":     att.Size,
-			"hash":     att.Hash,
+			"id":          att.ID,
+			"filename":    att.Filename,
+			"size":        att.Size,
+			"hash":        att.Hash,
+			"storageType": att.StorageType,
+			"objectKey":   att.ObjectKey,
+			"externalUrl": att.ExternalURL,
+			"publicUrl":   publicURL,
 		},
 	})
 }
@@ -245,7 +269,11 @@ func trySendUploadFile(c *fiber.Ctx, token string) (bool, error) {
 	if !attachmentFileTokenPattern.MatchString(token) {
 		return false, nil
 	}
-	fullPath := filepath.Join("./data/upload", token)
+	uploadRoot := appConfig.Storage.Local.UploadDir
+	if strings.TrimSpace(uploadRoot) == "" {
+		uploadRoot = "./data/upload"
+	}
+	fullPath := filepath.Join(uploadRoot, token)
 	if _, err := os.Stat(fullPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -267,4 +295,16 @@ func getHeader(c *fiber.Ctx, name string) string {
 		value = items[0]
 	}
 	return value
+}
+
+func redirectAttachmentToRemote(c *fiber.Ctx, att *model.AttachmentModel) bool {
+	if att == nil {
+		return false
+	}
+	target := service.AttachmentPublicURL(att)
+	if target == "" {
+		return false
+	}
+	_ = c.Redirect(target, fiber.StatusTemporaryRedirect)
+	return true
 }

@@ -295,9 +295,9 @@ func AudioDeleteAsset(id string, hard bool) error {
 	}
 	svc := GetAudioService()
 	if svc != nil {
-		_ = svc.RemoveLocalAsset(asset.ObjectKey)
+		svc.removeAssetObject(asset.StorageType, asset.ObjectKey)
 		for _, variant := range asset.Variants {
-			_ = svc.RemoveLocalAsset(variant.ObjectKey)
+			svc.removeAssetObject(variant.StorageType, variant.ObjectKey)
 		}
 	}
 	if hard {

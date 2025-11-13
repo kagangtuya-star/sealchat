@@ -7,13 +7,6 @@ import (
 	"time"
 )
 
-type AudioStorageType string
-
-const (
-	AudioStorageLocal AudioStorageType = "local"
-	AudioStorageS3    AudioStorageType = "s3"
-)
-
 type AudioAssetVisibility string
 
 const (
@@ -32,7 +25,7 @@ const (
 type AudioAssetVariant struct {
 	Label       string            `json:"label"`
 	BitrateKbps int               `json:"bitrateKbps"`
-	StorageType AudioStorageType  `json:"storageType"`
+	StorageType StorageType       `json:"storageType"`
 	ObjectKey   string            `json:"objectKey"`
 	Size        int64             `json:"size"`
 	Duration    float64           `json:"duration"`
@@ -85,7 +78,7 @@ type AudioAsset struct {
 	Size            int64                       `json:"size"`
 	DurationSeconds float64                     `json:"duration" gorm:"column:duration"`
 	BitrateKbps     int                         `json:"bitrate"`
-	StorageType     AudioStorageType            `json:"storageType" gorm:"type:varchar(16)"`
+	StorageType     StorageType                 `json:"storageType" gorm:"type:varchar(16)"`
 	ObjectKey       string                      `json:"objectKey"`
 	Description     string                      `json:"description"`
 	Tags            JSONList[string]            `json:"tags" gorm:"type:json"`

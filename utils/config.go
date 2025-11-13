@@ -35,6 +35,48 @@ type AudioConfig struct {
 	FFmpegPath         string   `json:"ffmpegPath" yaml:"ffmpegPath"`
 }
 
+type StorageMode string
+
+const (
+	StorageModeAuto  StorageMode = "auto"
+	StorageModeLocal StorageMode = "local"
+	StorageModeS3    StorageMode = "s3"
+)
+
+type StorageConfig struct {
+	Mode       StorageMode        `json:"mode" yaml:"mode"`
+	BaseURL    string             `json:"baseUrl" yaml:"baseUrl"`
+	PresignTTL int                `json:"presignTTL" yaml:"presignTTL"`
+	MaxSizeMB  int64              `json:"maxSizeMB" yaml:"maxSizeMB"`
+	LogLevel   string             `json:"logLevel" yaml:"logLevel"`
+	Local      LocalStorageConfig `json:"local" yaml:"local"`
+	S3         S3StorageConfig    `json:"s3" yaml:"s3"`
+}
+
+type LocalStorageConfig struct {
+	UploadDir string `json:"uploadDir" yaml:"uploadDir"`
+	AudioDir  string `json:"audioDir" yaml:"audioDir"`
+	TempDir   string `json:"tempDir" yaml:"tempDir"`
+	BaseURL   string `json:"baseUrl" yaml:"baseUrl"`
+}
+
+type S3StorageConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	Endpoint       string `json:"endpoint" yaml:"endpoint"`
+	Region         string `json:"region" yaml:"region"`
+	Bucket         string `json:"bucket" yaml:"bucket"`
+	AccessKey      string `json:"accessKey" yaml:"accessKey"`
+	SecretKey      string `json:"secretKey" yaml:"secret" koanf:"secret"`
+	SessionToken   string `json:"sessionToken" yaml:"sessionToken"`
+	ForcePathStyle bool   `json:"forcePathStyle" yaml:"pathStyle"`
+	BaseURL        string `json:"baseUrl" yaml:"baseUrl"`
+	PublicBaseURL  string `json:"publicBaseUrl" yaml:"publicBaseUrl"`
+	UseSSL         bool   `json:"useSSL" yaml:"useSSL"`
+	PresignTTL     int    `json:"presignTTL" yaml:"presignTTL"`
+	MaxSizeMB      int64  `json:"maxSizeMB" yaml:"maxSizeMB"`
+	LogLevel       string `json:"logLevel" yaml:"logLevel"`
+}
+
 type AppConfig struct {
 	ServeAt                   string          `json:"serveAt" yaml:"serveAt"`
 	Domain                    string          `json:"domain" yaml:"domain"`
@@ -51,6 +93,7 @@ type AppConfig struct {
 	GalleryQuotaMB            int64           `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig `json:"logUpload" yaml:"logUpload"`
 	Audio                     AudioConfig     `json:"audio" yaml:"audio"`
+	Storage                   StorageConfig   `json:"storage" yaml:"storage"`
 }
 
 // 注: 实验型使用koanf，其实从需求上讲目前并无必要
@@ -95,6 +138,22 @@ func ReadConfig() *AppConfig {
 			DefaultBitrateKbps: 96,
 			AlternateBitrates:  []int{64, 128},
 			FFmpegPath:         "",
+		},
+		Storage: StorageConfig{
+			Mode:       StorageModeLocal,
+			PresignTTL: 900,
+			MaxSizeMB:  64,
+			Local: LocalStorageConfig{
+				UploadDir: "./data/upload",
+				AudioDir:  "./static/audio",
+				TempDir:   "./data/temp",
+			},
+			S3: S3StorageConfig{
+				UseSSL:     true,
+				BaseURL:    "",
+				MaxSizeMB:  64,
+				PresignTTL: 900,
+			},
 		},
 	}
 
@@ -143,6 +202,11 @@ func ReadConfig() *AppConfig {
 	}
 
 	config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
+	config.Storage.normalize()
+	applyStorageEnvOverrides(&config.Storage)
+	if strings.TrimSpace(config.Storage.Local.AudioDir) == "" {
+		config.Storage.Local.AudioDir = config.Audio.StorageDir
+	}
 
 	k.Print()
 	currentConfig = &config
@@ -183,6 +247,29 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
+		_ = k.Set("storage.mode", config.Storage.Mode)
+		_ = k.Set("storage.baseUrl", config.Storage.BaseURL)
+		_ = k.Set("storage.presignTTL", config.Storage.PresignTTL)
+		_ = k.Set("storage.maxSizeMB", config.Storage.MaxSizeMB)
+		_ = k.Set("storage.logLevel", config.Storage.LogLevel)
+		_ = k.Set("storage.local.uploadDir", config.Storage.Local.UploadDir)
+		_ = k.Set("storage.local.audioDir", config.Storage.Local.AudioDir)
+		_ = k.Set("storage.local.tempDir", config.Storage.Local.TempDir)
+		_ = k.Set("storage.local.baseUrl", config.Storage.Local.BaseURL)
+		_ = k.Set("storage.s3.enabled", config.Storage.S3.Enabled)
+		_ = k.Set("storage.s3.endpoint", config.Storage.S3.Endpoint)
+		_ = k.Set("storage.s3.region", config.Storage.S3.Region)
+		_ = k.Set("storage.s3.bucket", config.Storage.S3.Bucket)
+		_ = k.Set("storage.s3.accessKey", config.Storage.S3.AccessKey)
+		_ = k.Set("storage.s3.secret", config.Storage.S3.SecretKey)
+		_ = k.Set("storage.s3.sessionToken", config.Storage.S3.SessionToken)
+		_ = k.Set("storage.s3.pathStyle", config.Storage.S3.ForcePathStyle)
+		_ = k.Set("storage.s3.baseUrl", config.Storage.S3.BaseURL)
+		_ = k.Set("storage.s3.publicBaseUrl", config.Storage.S3.PublicBaseURL)
+		_ = k.Set("storage.s3.useSSL", config.Storage.S3.UseSSL)
+		_ = k.Set("storage.s3.presignTTL", config.Storage.S3.PresignTTL)
+		_ = k.Set("storage.s3.maxSizeMB", config.Storage.S3.MaxSizeMB)
+		_ = k.Set("storage.s3.logLevel", config.Storage.S3.LogLevel)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)
@@ -267,4 +354,52 @@ func normalizeImageCompressQuality(val int) int {
 		return 85
 	}
 	return val
+}
+
+func (cfg *StorageConfig) normalize() {
+	if cfg == nil {
+		return
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = StorageModeLocal
+	}
+	if strings.TrimSpace(cfg.Local.UploadDir) == "" {
+		cfg.Local.UploadDir = "./data/upload"
+	}
+	if strings.TrimSpace(cfg.Local.AudioDir) == "" {
+		cfg.Local.AudioDir = "./static/audio"
+	}
+	if strings.TrimSpace(cfg.Local.TempDir) == "" {
+		cfg.Local.TempDir = "./data/temp"
+	}
+	if cfg.S3.PublicBaseURL == "" {
+		cfg.S3.PublicBaseURL = cfg.S3.BaseURL
+	}
+	if !cfg.S3.Enabled && strings.TrimSpace(cfg.S3.Bucket) != "" {
+		cfg.S3.Enabled = true
+	}
+	if cfg.PresignTTL <= 0 {
+		cfg.PresignTTL = 900
+	}
+	if cfg.S3.PresignTTL <= 0 {
+		cfg.S3.PresignTTL = cfg.PresignTTL
+	}
+	if cfg.MaxSizeMB <= 0 {
+		cfg.MaxSizeMB = 64
+	}
+	if cfg.S3.MaxSizeMB <= 0 {
+		cfg.S3.MaxSizeMB = cfg.MaxSizeMB
+	}
+}
+
+func applyStorageEnvOverrides(cfg *StorageConfig) {
+	if cfg == nil {
+		return
+	}
+	if ak := strings.TrimSpace(os.Getenv("SEALCHAT_S3_ACCESS_KEY")); ak != "" {
+		cfg.S3.AccessKey = ak
+	}
+	if sk := strings.TrimSpace(os.Getenv("SEALCHAT_S3_SECRET_KEY")); sk != "" {
+		cfg.S3.SecretKey = sk
+	}
 }

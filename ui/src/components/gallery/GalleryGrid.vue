@@ -28,7 +28,7 @@
 <script setup lang="ts">
 import { NButton, NImage } from 'naive-ui';
 import type { GalleryItem } from '@/types';
-import { urlBase } from '@/stores/_config';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 defineProps<{ items: GalleryItem[]; loading?: boolean; editable?: boolean }>();
 const emit = defineEmits<{
@@ -39,7 +39,7 @@ const emit = defineEmits<{
 }>();
 
 function buildAttachmentUrl(attachmentId: string) {
-  return `${urlBase}/api/v1/attachment/${attachmentId}`;
+  return resolveAttachmentUrl(attachmentId);
 }
 
 function handleDragStart(item: GalleryItem, evt: DragEvent) {

@@ -3,7 +3,7 @@ import { computed, cloneVNode } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import AvatarVue from '@/components/avatar.vue';
-import { urlBase } from '@/stores/_config';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
 import { NDropdown, NButton, NIcon } from 'naive-ui';
 import { Plus } from '@vicons/tabler';
@@ -39,20 +39,7 @@ const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.v
 const fallbackName = computed(() => chat.curMember?.nick || user.info.nick || user.info.username || '默认身份');
 const fallbackAvatar = computed(() => user.info.avatar || '');
 
-const buildAttachmentUrl = (token?: string) => {
-  const raw = (token || '').trim();
-  if (!raw) {
-    return '';
-  }
-  if (/^(https?:|blob:|data:|\/\/)/i.test(raw)) {
-    return raw;
-  }
-  const normalized = raw.startsWith('id:') ? raw.slice(3) : raw;
-  if (!normalized) {
-    return '';
-  }
-  return `${urlBase}/api/v1/attachment/${normalized}`;
-};
+const buildAttachmentUrl = (token?: string) => resolveAttachmentUrl(token);
 
 const displayName = computed(() => activeIdentity.value?.displayName || fallbackName.value);
 const displayColor = computed(() => activeIdentity.value?.color || '');

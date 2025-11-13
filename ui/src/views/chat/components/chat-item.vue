@@ -13,6 +13,7 @@ import Avatar from '@/components/avatar.vue'
 import { Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
 
 type EditingPreviewInfo = {
@@ -58,6 +59,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
         baseUrl: urlBase,
         imageClass: 'inline-image',
         linkClass: 'text-blue-500',
+        attachmentResolver: resolveAttachmentUrl,
       });
       const sanitizedHtml = DOMPurify.sanitize(html);
       hasImage.value = html.includes('<img');
@@ -77,8 +79,8 @@ const parseContent = (payload: any, overrideContent?: string) => {
   for (const item of items) {
     switch (item.type) {
       case 'img':
-        if (item.attrs.src && item.attrs.src.startsWith('id:')) {
-          item.attrs.src = item.attrs.src.replace('id:', `${urlBase}/api/v1/attachment/`);
+        if (item.attrs.src) {
+          item.attrs.src = resolveAttachmentUrl(item.attrs.src);
         }
         textItems.push(DOMPurify.sanitize(item.toString()));
         hasImage.value = true;
@@ -88,9 +90,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
         if (!item.attrs.src) break;
 
         src = item.attrs.src;
-        if (item.attrs.src.startsWith('id:')) {
-          src = item.attrs.src.replace('id:', `${urlBase}/api/v1/attachment/`);
-        }
+        src = resolveAttachmentUrl(item.attrs.src);
 
         let info = utils.sounds.get(src);
 

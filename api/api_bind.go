@@ -123,7 +123,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		})
 		return c.Status(http.StatusOK).JSON(m)
 	})
-	v1Auth.Static("/attachments", "./data/upload")
+	uploadRoot := strings.TrimSpace(config.Storage.Local.UploadDir)
+	if uploadRoot == "" {
+		uploadRoot = "./data/upload"
+	}
+	v1Auth.Static("/attachments", uploadRoot)
 	v1Auth.Static("/gallery/thumbs", "./data/gallery/thumbs")
 
 	audio := v1Auth.Group("/audio")

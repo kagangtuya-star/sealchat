@@ -2,20 +2,25 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	htmlnode "golang.org/x/net/html"
 
 	"sealchat/model"
+	"sealchat/service/storage"
+	"sealchat/utils"
 )
 
 const maxInlineImageSize = 5 * 1024 * 1024
@@ -183,7 +188,11 @@ func loadAttachmentBytes(token string) ([]byte, string, string, error) {
 			return data, mimeType, hashKey, nil
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join("data/upload", normalized)); err == nil {
+	uploadRoot := utils.GetConfig().Storage.Local.UploadDir
+	if strings.TrimSpace(uploadRoot) == "" {
+		uploadRoot = "data/upload"
+	}
+	if data, err := os.ReadFile(filepath.Join(uploadRoot, normalized)); err == nil {
 		mimeType := http.DetectContentType(data)
 		if !strings.HasPrefix(mimeType, "image/") {
 			return nil, "", "", fmt.Errorf("unsupported mime %s", mimeType)
@@ -202,13 +211,67 @@ func readAttachmentFile(att *model.AttachmentModel) ([]byte, string, string, err
 	if len(hashBytes) == 0 {
 		return nil, "", "", fmt.Errorf("missing hash for attachment %s", att.ID)
 	}
+
+	if att.StorageType == model.StorageS3 {
+		if data, mimeType, err := fetchRemoteAttachment(att); err == nil {
+			digest := sha256.Sum256(data)
+			return data, mimeType, hex.EncodeToString(digest[:]), nil
+		}
+	}
+
+	if strings.TrimSpace(att.ObjectKey) != "" {
+		if path, err := ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
+			if data, err := os.ReadFile(path); err == nil {
+				return finalizeAttachmentData(data, att.Filename)
+			}
+		}
+	}
+
 	fileName := fmt.Sprintf("%s_%d", hex.EncodeToString(hashBytes), att.Size)
 	fullPath := filepath.Join("data/upload", fileName)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, "", "", err
 	}
-	ext := strings.ToLower(filepath.Ext(att.Filename))
+	return finalizeAttachmentData(data, att.Filename)
+}
+
+func fetchRemoteAttachment(att *model.AttachmentModel) ([]byte, string, error) {
+	target := strings.TrimSpace(att.ExternalURL)
+	manager := GetStorageManager()
+	if target == "" && manager != nil && strings.TrimSpace(att.ObjectKey) != "" {
+		target = manager.PublicURL(storage.BackendS3, att.ObjectKey)
+	}
+	if target == "" {
+		return nil, "", fmt.Errorf("missing remote url")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, "", fmt.Errorf("remote fetch failed: %s", resp.Status)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	return data, contentType, nil
+}
+
+func finalizeAttachmentData(data []byte, fallbackName string) ([]byte, string, string, error) {
+	ext := strings.ToLower(filepath.Ext(fallbackName))
 	mimeType := mime.TypeByExtension(ext)
 	if mimeType == "" {
 		mimeType = http.DetectContentType(data)

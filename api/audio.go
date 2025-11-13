@@ -17,6 +17,7 @@ import (
 	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/service"
+	"sealchat/service/storage"
 )
 
 func AudioAssetList(c *fiber.Ctx) error {
@@ -278,8 +279,17 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	}
 	variantLabel := c.Query("variant")
 	variant := service.AudioVariantFor(asset, variantLabel)
-	if variant.StorageType == model.AudioStorageS3 {
-		return c.Redirect(variant.ObjectKey, fiber.StatusTemporaryRedirect)
+	if variant.StorageType == model.StorageS3 {
+		target := strings.TrimSpace(variant.ObjectKey)
+		if manager := service.GetStorageManager(); manager != nil && target != "" && !strings.HasPrefix(strings.ToLower(target), "http") {
+			if resolved := manager.PublicURL(storage.BackendS3, variant.ObjectKey); resolved != "" {
+				target = resolved
+			}
+		}
+		if target == "" || !strings.HasPrefix(strings.ToLower(target), "http") {
+			return wrapErrorStatus(c, fiber.StatusNotFound, nil, "音频文件不存在或已失效")
+		}
+		return c.Redirect(target, fiber.StatusTemporaryRedirect)
 	}
 	file, info, resolved, err := service.AudioOpenLocalVariant(asset, variantLabel)
 	if err != nil {

@@ -48,6 +48,7 @@ import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
@@ -318,12 +319,7 @@ const inlineImagePreviewMap = computed<Record<string, { status: 'uploading' | 'u
   inlineImages.forEach((draft, key) => {
     let previewUrl = draft.objectUrl;
     if (!previewUrl && draft.attachmentId) {
-      if (/^https?:/i.test(draft.attachmentId)) {
-        previewUrl = draft.attachmentId;
-      } else {
-        const attachmentToken = draft.attachmentId.startsWith('id:') ? draft.attachmentId.slice(3) : draft.attachmentId;
-        previewUrl = `${urlBase}/api/v1/attachment/${attachmentToken}`;
-      }
+      previewUrl = resolveAttachmentUrl(draft.attachmentId);
     }
     result[key] = {
       status: draft.status,
@@ -531,36 +527,6 @@ interface IdentityExportFile {
   items: IdentityExportItem[];
 }
 
-interface AttachmentMeta {
-  id: string;
-  filename: string;
-  size: number;
-  hash: string;
-}
-
-const attachmentMetaCache = new Map<string, AttachmentMeta>();
-
-const fetchAttachmentMeta = async (attachmentId: string): Promise<AttachmentMeta | null> => {
-  const normalized = normalizeAttachmentId(attachmentId);
-  if (!normalized) {
-    return null;
-  }
-  if (attachmentMetaCache.has(normalized)) {
-    return attachmentMetaCache.get(normalized)!;
-  }
-  try {
-    const resp = await api.get<{ item: AttachmentMeta }>(`api/v1/attachment/${normalized}/meta`);
-    const meta = resp.data?.item;
-    if (meta) {
-      attachmentMetaCache.set(normalized, meta);
-      return meta;
-    }
-  } catch (error) {
-    console.warn('获取附件信息失败', error);
-  }
-  return null;
-};
-
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
 
 const handleIdentityExport = async () => {
@@ -590,7 +556,7 @@ const handleIdentityExport = async () => {
       if (identity.avatarAttachmentId) {
         const normalizedId = normalizeAttachmentId(identity.avatarAttachmentId);
         if (normalizedId) {
-          const meta = await fetchAttachmentMeta(identity.avatarAttachmentId);
+          const meta = await fetchAttachmentMetaById(identity.avatarAttachmentId);
           if (meta) {
             const resp = await fetch(`${urlBase}/api/v1/attachment/${normalizedId}`, {
               headers: { Authorization: user.token || '' },
@@ -755,28 +721,6 @@ const handleIdentityImportChange = async (event: Event) => {
   } finally {
     identityImporting.value = false;
   }
-};
-
-const normalizeAttachmentId = (value: string) => {
-  if (!value) {
-    return '';
-  }
-  return value.startsWith('id:') ? value.slice(3) : value;
-};
-
-const resolveAttachmentUrl = (value?: string) => {
-  const raw = (value || '').trim();
-  if (!raw) {
-    return '';
-  }
-  if (/^(https?:|blob:|data:|\/\/)/i.test(raw)) {
-    return raw;
-  }
-  const normalized = raw.startsWith('id:') ? raw.slice(3) : raw;
-  if (!normalized) {
-    return '';
-  }
-  return `${urlBase}/api/v1/attachment/${normalized}`;
 };
 
 const normalizeHexColor = (value: string) => {
@@ -3396,6 +3340,7 @@ const renderPreviewContent = (value: string) => {
         baseUrl: urlBase,
         imageClass: 'preview-inline-image',
         linkClass: 'text-blue-500',
+        attachmentResolver: resolveAttachmentUrl,
       });
       return DOMPurify.sanitize(html);
     } catch {
@@ -3428,7 +3373,8 @@ const renderPreviewContent = (value: string) => {
     } else if (match[2]) {
       // [[img:id:attachmentId]] 格式
       const attachmentId = match[2];
-      result += `<img src="${urlBase}/api/v1/attachment/${attachmentId}" class="preview-inline-image" alt="图片" />`;
+      const resolved = resolveAttachmentUrl(`id:${attachmentId}`);
+      result += `<img src="${resolved}" class="preview-inline-image" alt="图片" />`;
     }
 
     lastIndex = match.index + match[0].length;
@@ -4624,7 +4570,7 @@ const insertGalleryInline = (attachmentId: string) => {
   ensureInputFocus();
 };
 
-const getGalleryItemThumb = (item: GalleryItem) => item.thumbUrl || `${urlBase}/api/v1/attachment/${item.attachmentId}`;
+const getGalleryItemThumb = (item: GalleryItem) => item.thumbUrl || resolveAttachmentUrl(item.attachmentId);
 
 const handleGalleryEmojiClick = (item: GalleryItem) => {
   recordEmojiUsage(item.id);

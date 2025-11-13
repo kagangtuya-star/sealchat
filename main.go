@@ -73,7 +73,12 @@ func main() {
 
 	pm.Init()
 
-	if err := service.InitAudioService(config.Audio); err != nil {
+	storageManager, err := service.InitStorageManager(config.Storage)
+	if err != nil {
+		log.Fatalf("初始化存储系统失败: %v", err)
+	}
+
+	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
 		log.Fatalf("初始化音频子系统失败: %v", err)
 	}
 

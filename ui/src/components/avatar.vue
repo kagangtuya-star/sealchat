@@ -1,9 +1,8 @@
 <script setup lang="tsx">
 import imgAvatar from '@/assets/head3.png'
-import { urlBase } from '@/stores/_config';
-import { useUserStore } from '@/stores/user';
 import { computed, onMounted, ref } from 'vue';
 import { onLongPress } from '@vueuse/core'
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 const props = defineProps({
   src: String,
@@ -26,20 +25,11 @@ onMounted(() => {
 })
 
 const resolvedSrc = computed(() => {
-  const source = (props.src || '').trim();
-  if (!source) {
+  const url = resolveAttachmentUrl(props.src);
+  if (!url) {
     opacity.value = 1;
-    return '';
   }
-  if (/^(https?:|blob:|data:|\/\/)/i.test(source)) {
-    return source;
-  }
-  const normalized = source.startsWith('id:') ? source.slice(3) : source;
-  if (!normalized) {
-    opacity.value = 1;
-    return '';
-  }
-  return `${urlBase}/api/v1/attachment/${normalized}`;
+  return url;
 })
 
 const emit = defineEmits(['longpress']);

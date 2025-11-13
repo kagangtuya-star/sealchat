@@ -17,6 +17,7 @@ interface RenderOptions {
   baseUrl?: string;
   imageClass?: string;
   linkClass?: string;
+  attachmentResolver?: (value: string) => string;
 }
 
 /**
@@ -115,13 +116,16 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
     case 'image':
       let src = node.attrs?.src || '';
-
-      // 处理 id: 协议
-      if (src.startsWith('id:')) {
-        const attachmentId = src.slice(3);
-        src = `${baseUrl}/api/v1/attachment/${attachmentId}`;
-      } else if (/^[0-9A-Za-z_-]+$/.test(src)) {
-        src = `${baseUrl}/api/v1/attachment/${src}`;
+      const resolver = options.attachmentResolver;
+      if (resolver) {
+        const resolved = resolver(src);
+        if (resolved) {
+          src = resolved;
+        } else {
+          src = buildFallbackAttachmentUrl(src, baseUrl);
+        }
+      } else {
+        src = buildFallbackAttachmentUrl(src, baseUrl);
       }
 
       const alt = node.attrs?.alt || '';
@@ -146,6 +150,23 @@ export function tiptapJsonToHtml(json: TipTapNode | string, options: RenderOptio
     console.error('TipTap JSON 渲染失败:', error);
     return '';
   }
+}
+
+function buildFallbackAttachmentUrl(value: string, baseUrl: string): string {
+  if (!value) {
+    return value;
+  }
+  if (/^(https?:|blob:|data:|\/\/)/i.test(value)) {
+    return value;
+  }
+  if (value.startsWith('id:')) {
+    const attachmentId = value.slice(3);
+    return `${baseUrl}/api/v1/attachment/${attachmentId}`;
+  }
+  if (/^[0-9A-Za-z_-]+$/.test(value)) {
+    return `${baseUrl}/api/v1/attachment/${value}`;
+  }
+  return value;
 }
 
 /**

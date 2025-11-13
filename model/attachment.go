@@ -17,11 +17,14 @@ func (m ByteArray) MarshalJSON() ([]byte, error) {
 
 type AttachmentModel struct {
 	StringPKBaseModel
-	Hash      ByteArray `gorm:"index,size:100" json:"hash"` // hash是32byte
-	Filename  string    `json:"filename"`
-	Size      int64     `gorm:"index" json:"size"`
-	UserID    string    `json:"userId" gorm:"index"`
-	ChannelID string    `json:"channel_id"` // 上传的频道ID
+	Hash        ByteArray   `gorm:"index,size:100" json:"hash"` // hash是32byte
+	Filename    string      `json:"filename"`
+	Size        int64       `gorm:"index" json:"size"`
+	UserID      string      `json:"userId" gorm:"index"`
+	ChannelID   string      `json:"channel_id"` // 上传的频道ID
+	StorageType StorageType `json:"storageType" gorm:"type:varchar(16);default:'local'"`
+	ObjectKey   string      `json:"objectKey"`
+	ExternalURL string      `json:"externalUrl"`
 
 	Extra string `json:"extra,omitempty"` // 额外标记
 	Note  string `json:"note"`            // 另一个额外标记
@@ -43,7 +46,26 @@ func (*AttachmentModel) TableName() string {
 func AttachmentCreate(at *AttachmentModel) (tx *gorm.DB, item *AttachmentModel) {
 	db := GetDB()
 	at.ID = utils.NewID()
+	if at.StorageType == "" {
+		at.StorageType = StorageLocal
+	}
 	return db.Create(at), at
+}
+
+func AttachmentFindByHashAndSize(hash []byte, size int64) (*AttachmentModel, error) {
+	var att AttachmentModel
+	err := GetDB().
+		Where("hash = ? AND size = ?", hash, size).
+		Order("created_at ASC").
+		Limit(1).
+		Find(&att).Error
+	if err != nil {
+		return nil, err
+	}
+	if att.ID == "" {
+		return nil, nil
+	}
+	return &att, nil
 }
 
 func AttachmentSetConfirm(ids []string, data map[string]any) (tx *gorm.DB) {

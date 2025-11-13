@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import type { GalleryCollection, GalleryItem } from '@/types';
-import { urlBase } from '@/stores/_config';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 const props = defineProps<{
   items: GalleryItem[];
@@ -34,7 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'select', item: GalleryItem): void }>();
 
 function buildAttachmentUrl(attachmentId: string) {
-  return `${urlBase}/api/v1/attachment/${attachmentId}`;
+  return resolveAttachmentUrl(attachmentId);
 }
 
 const resolveCollectionName = (collectionId: string) => props.collections[collectionId]?.name ?? '';

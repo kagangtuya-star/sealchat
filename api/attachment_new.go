@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"mime/multipart"
+	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gofiber/fiber/v2"
@@ -11,6 +12,7 @@ import (
 	"modernc.org/libc/limits"
 
 	"sealchat/model"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -21,9 +23,11 @@ func uploadFiles(
 	mimeMatcher []string,
 	mimeCheckResult func(file *multipart.FileHeader, contentType string, allowed bool) int, // 返回0继续上传 返回-1跳过，返回-2中止
 ) (err error, ids []string, filenames []string) {
-	// 创键上传路径
-	_ = appFs.MkdirAll("./data/temp/", 0755)
-	_ = appFs.MkdirAll("./data/upload/", 0755)
+	tmpDir := appConfig.Storage.Local.TempDir
+	if strings.TrimSpace(tmpDir) == "" {
+		tmpDir = "./data/temp/"
+	}
+	_ = appFs.MkdirAll(tmpDir, 0755)
 
 	// 遍历每个文件
 	for _, file := range files {
@@ -45,7 +49,7 @@ func uploadFiles(
 			}
 		}
 
-		tempFile, err := afero.TempFile(appFs, "./data/temp/", "*.upload")
+		tempFile, err := afero.TempFile(appFs, tmpDir, "*.upload")
 		if err != nil {
 			return err, nil, nil
 		}
@@ -62,16 +66,19 @@ func uploadFiles(
 		fn := fmt.Sprintf("%s_%d", hexString, savedSize)
 
 		_ = tempFile.Close()
-		err = appFs.Rename(tempFile.Name(), "./data/upload/"+fn)
+		location, err := service.PersistAttachmentFile(hashCode, savedSize, tempFile.Name(), file.Header.Get("Content-Type"))
 		if err != nil {
 			return err, nil, nil
 		}
 
 		attachment := &model.AttachmentModel{
-			Filename: file.Filename,
-			Size:     savedSize,
-			Hash:     hashCode,
-			UserID:   uid,
+			Filename:    file.Filename,
+			Size:        savedSize,
+			Hash:        hashCode,
+			UserID:      uid,
+			StorageType: location.StorageType,
+			ObjectKey:   location.ObjectKey,
+			ExternalURL: location.ExternalURL,
 		}
 
 		attachment.ID = utils.NewID()
@@ -191,9 +198,12 @@ func AttachmentUploadQuick(c *fiber.Ctx) error {
 	}
 
 	_, newItem := model.AttachmentCreate(&model.AttachmentModel{
-		Filename: item.Filename,
-		Size:     item.Size,
-		Hash:     hashBytes,
+		Filename:    item.Filename,
+		Size:        item.Size,
+		Hash:        hashBytes,
+		StorageType: item.StorageType,
+		ObjectKey:   item.ObjectKey,
+		ExternalURL: item.ExternalURL,
 
 		ParentID:     body.ParentId,
 		ParentIDType: body.ParentIdType,
