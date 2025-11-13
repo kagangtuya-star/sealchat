@@ -5492,6 +5492,16 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+.message-row--self.message-row--tone-ic:not(:first-child),
+.message-row--self.message-row--tone-ooc:not(:first-child) {
+  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.35);
+}
+
+.chat--layout-compact .message-row--self.message-row--tone-ic:not(:first-child),
+.chat--layout-compact .message-row--self.message-row--tone-ooc:not(:first-child) {
+  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.15);
+}
+
 .message-row__surface {
   display: flex;
   align-items: flex-start;
@@ -5867,6 +5877,11 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .chat-item {
   padding-bottom: 0.4rem;
+}
+
+.chat--layout-compact .chat-item--merged.chat-item--ic,
+.chat--layout-compact .chat-item--merged.chat-item--ooc {
+  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.15);
 }
 
 .channel-switch-trigger {
