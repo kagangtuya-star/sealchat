@@ -160,6 +160,18 @@ export interface UserEmojiModel {
   order?: number;
 }
 
+export interface DiceMacro {
+  id: string;
+  channelId: string;
+  digits: string;
+  label: string;
+  expr: string;
+  note?: string;
+  favorite?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface GalleryCollection extends ModelDataBase {
   ownerType: 'user' | 'channel';
   ownerId: string;

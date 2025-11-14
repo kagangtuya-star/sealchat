@@ -113,6 +113,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 
+	diceMacros := v1Auth.Group("/channels/:channelId/dice-macros")
+	diceMacros.Get("/", ChannelDiceMacroList)
+	diceMacros.Post("/", ChannelDiceMacroCreate)
+	diceMacros.Put("/:macroId", ChannelDiceMacroUpdate)
+	diceMacros.Delete("/:macroId", ChannelDiceMacroDelete)
+	diceMacros.Post("/import", ChannelDiceMacroImport)
+
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {

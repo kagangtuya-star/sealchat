@@ -30,6 +30,54 @@
             <n-button text size="tiny" @click="clearQuickSelection">清空</n-button>
           </div>
         </div>
+        <div class="dice-tray__macro-panel">
+          <div class="dice-tray__macro-header">
+            <div>
+              <span class="dice-tray__macro-title">数字指令</span>
+              <span class="dice-tray__macro-sequence" :class="{ 'is-active': digitSequence }">
+                {{ digitSequence || '待输入' }}
+              </span>
+            </div>
+            <div class="dice-tray__macro-actions">
+              <n-button text size="tiny" :disabled="!digitSequence" @click="resetDigitSequence">清空</n-button>
+              <n-button text size="tiny" :disabled="!currentChannelId" @click="openMacroManager()">管理</n-button>
+            </div>
+          </div>
+          <div class="dice-tray__macro-keypad">
+            <button
+              v-for="digit in keypadDigits"
+              :key="digit"
+              type="button"
+              class="dice-tray__macro-key"
+              @click="handleDigitInput(digit)"
+            >
+              {{ digit }}
+            </button>
+          </div>
+          <div v-if="digitSequence && macroResults.length" class="dice-tray__macro-results">
+            <div
+              v-for="entry in macroResults"
+              :key="entry.id"
+              class="dice-tray__macro-result"
+              :class="{ 'dice-tray__macro-result--message': entry.kind === 'message' }"
+            >
+              <template v-if="entry.kind === 'macro'">
+                <button type="button" class="dice-tray__macro-result-btn" @click="handleMacroExecute(entry.macro)">
+                  <span class="dice-tray__macro-result-label">{{ entry.macro.label }}</span>
+                  <span class="dice-tray__macro-result-expr">{{ formatHistoryLabel(entry.macro.expr) }}</span>
+                </button>
+                <n-button size="tiny" quaternary @click="openAdjustModal(entry.macro)">微调</n-button>
+              </template>
+              <template v-else>
+                <div class="dice-tray__macro-result-message">{{ entry.message }}</div>
+              </template>
+            </div>
+          </div>
+          <div v-else-if="digitSequence" class="dice-tray__macro-empty">
+            <p>暂无匹配指令</p>
+            <n-button text size="tiny" @click="openMacroManager()">新建指令</n-button>
+          </div>
+        </div>
       </div>
       <div class="dice-tray__column dice-tray__column--form">
         <div class="dice-tray__section-title">自定义</div>
@@ -57,7 +105,7 @@
         </div>
       </div>
     </div>
-    <div v-if="hasHistory" class="dice-tray__history">
+    <div v-if="!digitSequence && hasHistory" class="dice-tray__history">
       <div class="dice-tray__section-title">最近检定</div>
       <div class="dice-tray__history-list">
         <div v-for="item in displayedHistory" :key="item.id" class="dice-tray__history-entry">
@@ -100,11 +148,91 @@
       </div>
     </n-form>
   </n-modal>
+
+  <n-modal
+    v-model:show="macroManagerVisible"
+    preset="card"
+    class="dice-macro-modal"
+    :bordered="false"
+    title="管理数字指令"
+    @after-leave="resetMacroForm(null)"
+  >
+    <div class="dice-macro-modal__body">
+      <div class="dice-macro-modal__toolbar">
+        <span class="dice-macro-modal__channel">当前频道：{{ currentChannelId || '未选择' }}</span>
+        <div class="dice-macro-modal__toolbar-actions">
+          <n-button text size="tiny" :disabled="!macroList.length" @click="handleMacroExport">导出</n-button>
+          <n-button text size="tiny" :disabled="!currentChannelId" @click="triggerMacroImport">导入</n-button>
+          <input ref="importInputRef" class="dice-macro-import-input" type="file" accept="application/json" @change="handleMacroImportFile" />
+        </div>
+      </div>
+      <div v-if="macroList.length" class="dice-macro-list">
+        <div v-for="item in macroList" :key="item.id" class="dice-macro-item">
+          <div class="dice-macro-item__head">
+            <span class="dice-macro-item__digits">{{ item.digits }}</span>
+            <span class="dice-macro-item__label">{{ item.label }}</span>
+            <button type="button" class="dice-macro-item__fav" @click="toggleMacroFavorite(item.id)">
+              <span v-if="item.favorite">★</span>
+              <span v-else>☆</span>
+            </button>
+          </div>
+          <div class="dice-macro-item__expr">{{ formatHistoryLabel(item.expr) }}</div>
+          <div v-if="item.note" class="dice-macro-item__note">{{ item.note }}</div>
+          <div class="dice-macro-item__actions">
+            <n-button text size="tiny" @click="editMacro(item)">编辑</n-button>
+            <n-button text size="tiny" type="error" @click="deleteMacro(item.id)">删除</n-button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="dice-macro-empty">暂无指令，立即创建</div>
+      <n-form size="small" label-placement="left" :show-feedback="false">
+        <n-form-item label="数字">
+          <n-input v-model:value="macroForm.digits" placeholder="例如 12" maxlength="8" />
+        </n-form-item>
+        <n-form-item label="名称">
+          <n-input v-model:value="macroForm.label" placeholder="例如 攻击" />
+        </n-form-item>
+        <n-form-item label="表达式">
+          <n-input v-model:value="macroForm.expr" placeholder="例如 .r2d6+3" />
+        </n-form-item>
+        <n-form-item label="备注">
+          <n-input v-model:value="macroForm.note" placeholder="可选" />
+        </n-form-item>
+        <n-alert v-if="macroFormError" type="warning" :show-icon="false">{{ macroFormError }}</n-alert>
+        <div class="dice-macro-modal__actions">
+          <n-button @click="resetMacroForm(null)">重置</n-button>
+          <n-button type="primary" @click="saveMacro">{{ editingMacroId ? '保存修改' : '添加指令' }}</n-button>
+        </div>
+      </n-form>
+    </div>
+  </n-modal>
+
+  <n-modal
+    v-model:show="adjustModalVisible"
+    preset="card"
+    class="dice-adjust-modal"
+    :bordered="false"
+    :title="`调整：${adjustMacroLabel || '指令'}`"
+  >
+    <n-form size="small" label-placement="left" :show-feedback="false">
+      <n-form-item label="掷骰表达式">
+        <n-input v-model:value="adjustExpression" type="textarea" :rows="3" placeholder="直接修改表达式，如 .r2d6+1" />
+      </n-form-item>
+      <div class="dice-adjust-modal__actions">
+        <n-button @click="cancelAdjustRoll">取消</n-button>
+        <n-button type="primary" @click="confirmAdjustRoll">掷骰</n-button>
+      </div>
+    </n-form>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, watch, onMounted, reactive } from 'vue';
 import { ensureDefaultDiceExpr, isValidDefaultDiceExpr } from '@/utils/dice';
+import { api } from '@/stores/_config';
+import { useChatStore } from '@/stores/chat';
+import { useMessage } from 'naive-ui';
+import type { DiceMacro } from '@/types';
 
 const props = withDefaults(defineProps<{
   defaultDice?: string
@@ -119,6 +247,9 @@ const emit = defineEmits<{
   (event: 'roll', expr: string): void
   (event: 'update-default', expr: string): void
 }>();
+
+const chat = useChatStore();
+const message = useMessage();
 
 const quickFaces = [2, 4, 6, 8, 10, 12, 20, 100];
 const quickSelections = ref<Record<number, number>>({});
@@ -143,6 +274,356 @@ const HISTORY_STORAGE_LIMIT = 12;
 const historyItems = ref<DiceHistoryItem[]>([]);
 
 const isClient = typeof window !== 'undefined';
+
+type MacroResultEntry =
+  | { id: string; kind: 'macro'; macro: DiceMacro }
+  | { id: string; kind: 'message'; message: string };
+
+const MACRO_RESULTS_LIMIT = 5;
+const keypadDigits = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+const macrosByChannel = ref<Record<string, DiceMacro[]>>({});
+const macrosLoading = ref(false);
+const digitSequence = ref('');
+const macroManagerVisible = ref(false);
+const macroForm = reactive({ digits: '', label: '', expr: '', note: '' });
+const macroFormError = ref('');
+const editingMacroId = ref<string | null>(null);
+const adjustModalVisible = ref(false);
+const adjustExpression = ref('');
+const adjustMacroLabel = ref('');
+const importInputRef = ref<HTMLInputElement | null>(null);
+
+const currentChannelId = computed(() => chat.curChannel?.id || '');
+
+const resetMacroForm = (macro?: DiceMacro | null) => {
+  if (macro) {
+    macroForm.digits = macro.digits;
+    macroForm.label = macro.label;
+    macroForm.expr = macro.expr;
+    macroForm.note = macro.note || '';
+    editingMacroId.value = macro.id;
+  } else {
+    macroForm.digits = '';
+    macroForm.label = '';
+    macroForm.expr = '';
+    macroForm.note = '';
+    editingMacroId.value = null;
+  }
+  macroFormError.value = '';
+};
+
+const openMacroManager = (macro?: DiceMacro | null) => {
+  resetMacroForm(macro ?? null);
+  macroManagerVisible.value = true;
+};
+
+const validateMacroForm = () => {
+  if (!macroForm.digits) {
+    macroFormError.value = '请输入数字序列';
+    return false;
+  }
+  if (!/^[1-9]+$/.test(macroForm.digits)) {
+    macroFormError.value = '只支持数字 1-9';
+    return false;
+  }
+  if (!macroForm.label.trim()) {
+    macroFormError.value = '请输入名称';
+    return false;
+  }
+  if (!macroForm.expr.trim()) {
+    macroFormError.value = '请输入掷骰表达式';
+    return false;
+  }
+  macroFormError.value = '';
+  return true;
+};
+
+const setMacrosForChannel = (channelId: string, items: DiceMacro[]) => {
+  macrosByChannel.value = {
+    ...macrosByChannel.value,
+    [channelId]: items,
+  };
+};
+
+const upsertMacroForChannel = (channelId: string, macro: DiceMacro) => {
+  const list = (macrosByChannel.value[channelId] || []).slice();
+  const idx = list.findIndex((item) => item.id === macro.id);
+  if (idx !== -1) {
+    list[idx] = macro;
+  } else {
+    list.unshift(macro);
+  }
+  setMacrosForChannel(channelId, list);
+};
+
+const removeMacroForChannel = (channelId: string, macroId: string) => {
+  const list = (macrosByChannel.value[channelId] || []).filter((item) => item.id !== macroId);
+  setMacrosForChannel(channelId, list);
+};
+
+const loadChannelMacros = async (channelId: string, force = false) => {
+  if (!channelId) return;
+  if (!force && macrosByChannel.value[channelId]) {
+    return;
+  }
+  macrosLoading.value = true;
+  try {
+    const resp = await api.get<{ items: DiceMacro[] }>(`api/v1/channels/${channelId}/dice-macros`);
+    setMacrosForChannel(channelId, resp.data.items || []);
+  } catch (error) {
+    console.error(error);
+    message.error('加载数字指令失败');
+  } finally {
+    macrosLoading.value = false;
+  }
+};
+
+watch(currentChannelId, (channelId) => {
+  digitSequence.value = '';
+  if (channelId) {
+    loadChannelMacros(channelId);
+  }
+}, { immediate: true });
+
+const macroList = computed(() => {
+  const items = macrosByChannel.value[currentChannelId.value] || [];
+  return [...items].sort((a, b) => {
+    if (!!b.favorite !== !!a.favorite) {
+      return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0);
+    }
+    const bTs = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    const aTs = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    return (bTs || 0) - (aTs || 0);
+  });
+});
+
+const saveMacro = async () => {
+  if (!validateMacroForm()) {
+    return;
+  }
+  const channelId = currentChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const existing = editingMacroId.value ? macroList.value.find(item => item.id === editingMacroId.value) : null;
+  const payload = {
+    digits: macroForm.digits,
+    label: macroForm.label.trim(),
+    expr: macroForm.expr.trim(),
+    note: macroForm.note.trim(),
+    favorite: existing?.favorite ?? false,
+  };
+  try {
+    const baseUrl = `api/v1/channels/${channelId}/dice-macros`;
+    let resp;
+    if (editingMacroId.value) {
+      resp = await api.put<{ item: DiceMacro }>(`${baseUrl}/${editingMacroId.value}`, payload);
+    } else {
+      resp = await api.post<{ item: DiceMacro }>(baseUrl, payload);
+    }
+    upsertMacroForChannel(channelId, resp.data.item);
+    message.success(editingMacroId.value ? '已更新指令' : '已添加指令');
+    resetMacroForm(null);
+  } catch (error) {
+    console.error(error);
+    message.error('保存指令失败');
+  }
+};
+
+const editMacro = (macro: DiceMacro) => {
+  openMacroManager(macro);
+};
+
+const deleteMacro = async (macroId: string) => {
+  const channelId = currentChannelId.value;
+  if (!channelId) return;
+  try {
+    await api.delete(`api/v1/channels/${channelId}/dice-macros/${macroId}`);
+    removeMacroForChannel(channelId, macroId);
+    if (editingMacroId.value === macroId) {
+      resetMacroForm(null);
+    }
+    message.success('已删除指令');
+  } catch (error) {
+    console.error(error);
+    message.error('删除指令失败');
+  }
+};
+
+const toggleMacroFavorite = async (macroId: string) => {
+  const channelId = currentChannelId.value;
+  if (!channelId) return;
+  const target = macroList.value.find(item => item.id === macroId);
+  if (!target) return;
+  const payload = {
+    digits: target.digits,
+    label: target.label,
+    expr: target.expr,
+    note: target.note,
+    favorite: !target.favorite,
+  };
+  try {
+    const resp = await api.put<{ item: DiceMacro }>(`api/v1/channels/${channelId}/dice-macros/${macroId}`, payload);
+    upsertMacroForChannel(channelId, resp.data.item);
+  } catch (error) {
+    console.error(error);
+    message.error('更新收藏状态失败');
+  }
+};
+
+const baseMacroResults = computed(() => {
+  const seq = digitSequence.value.trim();
+  if (!seq) return [] as DiceMacro[];
+  const starts = macroList.value.filter((item) => item.digits.startsWith(seq));
+  const contains = macroList.value.filter(
+    (item) => !item.digits.startsWith(seq) && item.digits.includes(seq),
+  );
+  return [...starts, ...contains];
+});
+
+const macroResults = computed<MacroResultEntry[]>(() => {
+  const seq = digitSequence.value.trim();
+  if (!seq) return [];
+  const matched = baseMacroResults.value.slice(0, MACRO_RESULTS_LIMIT).map((macro) => ({
+    id: macro.id,
+    kind: 'macro' as const,
+    macro,
+  }));
+  if (seq === '555') {
+    matched.push({
+      id: 'macro-easter-555',
+      kind: 'message',
+      message: 'Standing by! Complete!',
+    });
+  }
+  return matched;
+});
+
+const handleDigitInput = (digit: string) => {
+  digitSequence.value += digit;
+};
+
+const resetDigitSequence = () => {
+  digitSequence.value = '';
+};
+
+const handleMacroExecute = (macro: DiceMacro) => {
+  emit('roll', macro.expr);
+  recordHistory(macro.expr);
+  resetDigitSequence();
+};
+
+const openAdjustModal = (macro: DiceMacro) => {
+  adjustExpression.value = macro.expr;
+  adjustMacroLabel.value = macro.label;
+  adjustModalVisible.value = true;
+};
+
+const confirmAdjustRoll = () => {
+  const expr = adjustExpression.value.trim();
+  if (!expr) {
+    return;
+  }
+  emit('roll', expr);
+  recordHistory(expr);
+  adjustModalVisible.value = false;
+  resetDigitSequence();
+};
+
+const cancelAdjustRoll = () => {
+  adjustModalVisible.value = false;
+};
+
+const triggerMacroImport = () => {
+  if (!currentChannelId.value) {
+    message.warning('请先选择频道');
+    return;
+  }
+  importInputRef.value?.click();
+};
+
+const handleMacroImportFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input?.files?.[0];
+  if (!file) {
+    return;
+  }
+  const channelId = currentChannelId.value;
+  if (!channelId) {
+    input.value = '';
+    return;
+  }
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const rawList = Array.isArray(parsed?.macros) ? parsed.macros : (Array.isArray(parsed) ? parsed : []);
+    if (!Array.isArray(rawList)) {
+      throw new Error('invalid format');
+    }
+    const sanitized = rawList
+      .map((item: any) => ({
+        digits: String(item?.digits || '').replace(/[^1-9]/g, ''),
+        label: String(item?.label || '').trim(),
+        expr: String(item?.expr || '').trim(),
+        note: String(item?.note || '').trim(),
+        favorite: !!item?.favorite,
+      }))
+      .filter(entry => entry.digits && entry.label && entry.expr);
+    if (!sanitized.length) {
+      throw new Error('empty list');
+    }
+    const resp = await api.post<{ items: DiceMacro[] }>(`api/v1/channels/${channelId}/dice-macros/import`, { macros: sanitized });
+    setMacrosForChannel(channelId, resp.data.items || []);
+    message.success('导入指令成功');
+  } catch (error) {
+    console.error(error);
+    message.error('导入失败，请检查文件格式');
+  } finally {
+    if (input) {
+      input.value = '';
+    }
+  }
+};
+
+const handleMacroExport = async () => {
+  if (!macroList.value.length) {
+    message.info('暂无指令可导出');
+    return;
+  }
+  const data = {
+    channelId: currentChannelId.value,
+    macros: macroList.value.map(item => ({
+      digits: item.digits,
+      label: item.label,
+      expr: item.expr,
+      note: item.note,
+      favorite: item.favorite,
+    })),
+  };
+  const text = JSON.stringify(data, null, 2);
+  try {
+    if (navigator?.clipboard) {
+      await navigator.clipboard.writeText(text);
+      message.success('已复制指令到剪贴板');
+      return;
+    }
+    throw new Error('clipboard unavailable');
+  } catch (error) {
+    console.warn('clipboard copy failed', error);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `dice-macros-${currentChannelId.value || 'channel'}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    message.success('已下载指令文件');
+  }
+};
 
 const sortByTimestampDesc = (a: DiceHistoryItem, b: DiceHistoryItem) => b.timestamp - a.timestamp;
 
@@ -433,6 +914,125 @@ const handleSaveDefault = () => {
   font-size: 0.8rem;
 }
 
+.dice-tray__macro-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--sc-border-mute, #d1d5db);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dice-tray__macro-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.dice-tray__macro-title {
+  font-weight: 600;
+  margin-right: 0.4rem;
+}
+
+.dice-tray__macro-sequence {
+  font-family: var(--sc-code-font, 'SFMono-Regular', Menlo, Consolas, monospace);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--sc-fg-primary, #111);
+}
+
+.dice-tray__macro-sequence.is-active {
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--sc-accent, #2563eb);
+}
+
+.dice-tray__macro-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.dice-tray__macro-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.dice-tray__macro-key {
+  border: 1px solid var(--sc-border-mute, #d1d5db);
+  border-radius: 8px;
+  padding: 0.35rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  background: var(--sc-bg-layer, #fff);
+  color: var(--sc-fg-primary, #111);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.dice-tray__macro-key:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.dice-tray__macro-results,
+.dice-tray__macro-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dice-tray__macro-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.dice-tray__macro-result-btn {
+  flex: 1;
+  border: 1px solid var(--sc-border-mute, #d1d5db);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  background: var(--sc-bg-layer, #f8fafc);
+  color: var(--sc-fg-primary, #111);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.dice-tray__macro-result-btn:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.dice-tray__macro-result-label {
+  font-weight: 600;
+}
+
+.dice-tray__macro-result-expr {
+  font-size: 0.75rem;
+  color: var(--sc-fg-muted, #6b7280);
+}
+
+.dice-tray__macro-result-message {
+  width: 100%;
+  text-align: center;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--sc-accent, #2563eb);
+  font-weight: 600;
+}
+
+.dice-tray__macro-result--message {
+  justify-content: center;
+}
+
+.dice-tray__macro-empty {
+  font-size: 0.85rem;
+  color: var(--sc-fg-muted, #6b7280);
+}
+
 .dice-tray__form :deep(.n-form-item) {
   margin-bottom: 8px;
 }
@@ -514,6 +1114,111 @@ const handleSaveDefault = () => {
   background: rgba(37, 99, 235, 0.08);
 }
 
+.dice-macro-modal :global(.n-card__content),
+.dice-adjust-modal :global(.n-card__content) {
+  padding-top: 0;
+}
+
+.dice-macro-modal :global(.n-card) {
+  width: min(520px, 90vw);
+}
+
+.dice-adjust-modal :global(.n-card) {
+  width: min(380px, 90vw);
+}
+
+.dice-macro-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dice-macro-modal__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--sc-fg-muted, #6b7280);
+}
+
+.dice-macro-modal__toolbar-actions {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.dice-macro-import-input {
+  display: none;
+}
+
+.dice-macro-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dice-macro-item {
+  border: 1px solid var(--sc-border-mute, #d1d5db);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  background: var(--sc-bg-layer, #fff);
+}
+
+.dice-macro-item__head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dice-macro-item__digits {
+  font-family: var(--sc-code-font, 'SFMono-Regular', Menlo, Consolas, monospace);
+  font-weight: 600;
+}
+
+.dice-macro-item__label {
+  font-weight: 600;
+  flex: 1;
+}
+
+.dice-macro-item__fav {
+  border: none;
+  background: transparent;
+  color: var(--sc-accent, #2563eb);
+  font-size: 1rem;
+}
+
+.dice-macro-item__expr {
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.dice-macro-item__note {
+  font-size: 0.75rem;
+  color: var(--sc-fg-muted, #6b7280);
+}
+
+.dice-macro-item__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.dice-macro-empty {
+  font-size: 0.85rem;
+  color: var(--sc-fg-muted, #6b7280);
+}
+
+.dice-macro-modal__actions,
+.dice-adjust-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 :global([data-display-palette='night']) .dice-tray {
   background: var(--sc-bg-elevated, #2a282a);
   border-color: var(--sc-border-strong, rgba(255, 255, 255, 0.12));
@@ -577,6 +1282,65 @@ const handleSaveDefault = () => {
   color: var(--sc-accent-night, #60a5fa);
   border-color: var(--sc-accent-night, #60a5fa);
   background: rgba(96, 165, 250, 0.15);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-panel {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-sequence {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sc-fg-primary, #f8fafc);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-sequence.is-active {
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--sc-accent-night, #60a5fa);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-key {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--sc-fg-primary, #f8fafc);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-key:hover {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-result-btn {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--sc-fg-primary, #f8fafc);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-result-expr {
+  color: rgba(226, 232, 240, 0.8);
+}
+
+:global([data-display-palette='night']) .dice-tray__macro-result-message {
+  background: rgba(96, 165, 250, 0.2);
+  color: var(--sc-accent-night, #60a5fa);
+}
+
+:global([data-display-palette='night']) .dice-macro-item {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(15, 23, 42, 0.4);
+}
+
+:global([data-display-palette='night']) .dice-macro-item__note {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+:global([data-display-palette='night']) .dice-macro-empty {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+:global([data-display-palette='night']) .dice-macro-modal :global(.n-card),
+:global([data-display-palette='night']) .dice-adjust-modal :global(.n-card) {
+  background: var(--sc-bg-elevated, #2a282a);
+  color: var(--sc-fg-primary, #f8fafc);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .dice-settings-modal :global(.n-card__content) {

@@ -3866,13 +3866,11 @@ const send = throttle(async () => {
 
 const handleDiceInsert = (expr: string) => {
   insertDiceExpression(expr.trim() ? `${expr.trim()} ` : expr);
-  diceTrayVisible.value = false;
   ensureInputFocus();
 };
 
 const handleDiceRollNow = (expr: string) => {
   insertDiceExpression(expr.trim());
-  diceTrayVisible.value = false;
   send();
 };
 
@@ -5339,11 +5337,11 @@ onBeforeUnmount(() => {
                   </n-popover>
                 </div>
                 <div class="chat-input-actions__cell">
-                  <n-popover trigger="click" placement="top" :show="diceTrayVisible" @update:show="(val) => (diceTrayVisible = val)">
+                  <n-popover trigger="manual" placement="top" :show="diceTrayVisible">
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button quaternary circle :disabled="isEditing">
+                          <n-button quaternary circle :disabled="isEditing" @click="diceTrayVisible = !diceTrayVisible">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
