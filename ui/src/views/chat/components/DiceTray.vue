@@ -54,29 +54,6 @@
               {{ digit }}
             </button>
           </div>
-          <div v-if="digitSequence && macroResults.length" class="dice-tray__macro-results">
-            <div
-              v-for="entry in macroResults"
-              :key="entry.id"
-              class="dice-tray__macro-result"
-              :class="{ 'dice-tray__macro-result--message': entry.kind === 'message' }"
-            >
-              <template v-if="entry.kind === 'macro'">
-                <button type="button" class="dice-tray__macro-result-btn" @click="handleMacroExecute(entry.macro)">
-                  <span class="dice-tray__macro-result-label">{{ entry.macro.label }}</span>
-                  <span class="dice-tray__macro-result-expr">{{ formatHistoryLabel(entry.macro.expr) }}</span>
-                </button>
-                <n-button size="tiny" quaternary @click="openAdjustModal(entry.macro)">微调</n-button>
-              </template>
-              <template v-else>
-                <div class="dice-tray__macro-result-message">{{ entry.message }}</div>
-              </template>
-            </div>
-          </div>
-          <div v-else-if="digitSequence" class="dice-tray__macro-empty">
-            <p>暂无匹配指令</p>
-            <n-button text size="tiny" @click="openMacroManager()">新建指令</n-button>
-          </div>
         </div>
       </div>
       <div class="dice-tray__column dice-tray__column--form">
@@ -105,25 +82,58 @@
         </div>
       </div>
     </div>
-    <div v-if="!digitSequence && hasHistory" class="dice-tray__history">
-      <div class="dice-tray__section-title">最近检定</div>
-      <div class="dice-tray__history-list">
-        <div v-for="item in displayedHistory" :key="item.id" class="dice-tray__history-entry">
-          <button type="button" class="dice-tray__history-roll" @click="handleHistoryRoll(item)">
-            <span class="dice-tray__history-label">{{ formatHistoryLabel(item.expr) }}</span>
-          </button>
-          <button
-            type="button"
-            class="dice-tray__history-fav"
-            :class="{ 'is-active': item.favorite }"
-            :aria-pressed="item.favorite"
-            @click.stop="toggleFavorite(item.id)"
+    <div class="dice-tray__history">
+      <div class="dice-tray__section-title">{{ digitSequence ? '指令匹配' : '最近检定' }}</div>
+      <template v-if="digitSequence">
+        <div v-if="macroResults.length" class="dice-tray__history-list">
+          <div
+            v-for="entry in macroResults"
+            :key="entry.id"
+            class="dice-tray__macro-result"
+            :class="{ 'dice-tray__macro-result--message': entry.kind === 'message' }"
           >
-            <span v-if="item.favorite">★</span>
-            <span v-else>☆</span>
-          </button>
+            <template v-if="entry.kind === 'macro'">
+              <button type="button" class="dice-tray__macro-result-btn" @click="handleMacroExecute(entry.macro)">
+                <span class="dice-tray__macro-result-label">{{ entry.macro.label }}</span>
+                <span class="dice-tray__macro-result-expr">{{ formatHistoryLabel(entry.macro.expr) }}</span>
+              </button>
+              <n-button size="tiny" quaternary @click="openAdjustModal(entry.macro)">微调</n-button>
+            </template>
+            <template v-else>
+              <div class="dice-tray__macro-result-message">{{ entry.message }}</div>
+            </template>
+          </div>
         </div>
-      </div>
+        <div v-else class="dice-tray__macro-empty">
+          <p>暂无匹配指令</p>
+          <n-button text size="tiny" @click="openMacroManager()">新建指令</n-button>
+        </div>
+      </template>
+      <template v-else>
+        <div v-if="hasHistory" class="dice-tray__history-list">
+          <div v-for="item in displayedHistory" :key="item.id" class="dice-tray__history-entry">
+            <button type="button" class="dice-tray__history-roll" @click="handleHistoryRoll(item)">
+              <span class="dice-tray__history-label">{{ formatHistoryLabel(item.expr) }}</span>
+            </button>
+            <div class="dice-tray__history-tools">
+              <button type="button" class="dice-tray__history-tune" @click="openAdjustModalFromHistory(item)">微调</button>
+              <button
+                type="button"
+                class="dice-tray__history-fav"
+                :class="{ 'is-active': item.favorite }"
+                :aria-pressed="item.favorite"
+                @click.stop="toggleFavorite(item.id)"
+              >
+                <span v-if="item.favorite">★</span>
+                <span v-else>☆</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-else class="dice-tray__macro-empty">
+          <p>暂无检定历史</p>
+        </div>
+      </template>
     </div>
   </div>
   <n-modal
@@ -534,6 +544,12 @@ const confirmAdjustRoll = () => {
 
 const cancelAdjustRoll = () => {
   adjustModalVisible.value = false;
+};
+
+const openAdjustModalFromHistory = (item: DiceHistoryItem) => {
+  adjustExpression.value = item.expr;
+  adjustMacroLabel.value = formatHistoryLabel(item.expr);
+  adjustModalVisible.value = true;
 };
 
 const triggerMacroImport = () => {
@@ -1284,6 +1300,16 @@ const handleSaveDefault = () => {
   background: rgba(96, 165, 250, 0.15);
 }
 
+:global([data-display-palette='night']) .dice-tray__history-tune {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--sc-fg-primary, #f8fafc);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+:global([data-display-palette='night']) .dice-tray__history-tune:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 :global([data-display-palette='night']) .dice-tray__macro-panel {
   border-top-color: rgba(255, 255, 255, 0.12);
 }
@@ -1361,3 +1387,22 @@ const handleSaveDefault = () => {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 </style>
+.dice-tray__history-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.dice-tray__history-tune {
+  border: 1px solid var(--sc-border-mute, #d1d5db);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--sc-fg-primary, #111);
+  background: var(--sc-bg-layer, #fff);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.dice-tray__history-tune:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
