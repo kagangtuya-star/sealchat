@@ -118,7 +118,7 @@ const toggleDiceTray = () => {
 watch(() => chat.curChannel, (channel) => {
   channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
   channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
-  if (!channelFeatures.builtInDiceEnabled) {
+  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
     diceTrayVisible.value = false;
   }
 }, { immediate: true });
