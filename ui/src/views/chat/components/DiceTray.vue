@@ -4,9 +4,12 @@
       <div>
         默认骰：<strong>{{ currentDefaultDice }}</strong>
       </div>
-      <n-button v-if="canEditDefault" size="tiny" text type="primary" @click="modalVisible = true">
-        修改
-      </n-button>
+      <div class="dice-tray__header-actions">
+        <n-button v-if="canEditDefault" size="tiny" text type="primary" @click="modalVisible = true">
+          修改
+        </n-button>
+        <slot name="header-actions"></slot>
+      </div>
     </div>
     <div class="dice-tray__body">
       <div class="dice-tray__column dice-tray__column--quick">
@@ -847,6 +850,12 @@ const handleSaveDefault = () => {
   justify-content: space-between;
   margin-bottom: 8px;
   font-size: 13px;
+}
+
+.dice-tray__header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .dice-tray__body {

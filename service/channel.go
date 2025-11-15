@@ -146,11 +146,13 @@ func ChannelList(userId string) ([]*model.ChannelModel, error) {
 
 func ChannelNew(channelID, channelType, channelName string, creatorId string, parentId string) *model.ChannelModel {
 	m := model.ChannelPublicNew(channelID, &model.ChannelModel{
-		Name:            channelName,
-		PermType:        channelType,
-		ParentID:        parentId,
-		RootId:          parentId, // TODO: 这个是不准的，但是目前不允许二级以上子频道
-		DefaultDiceExpr: "d20",
+		Name:               channelName,
+		PermType:           channelType,
+		ParentID:           parentId,
+		RootId:             parentId, // TODO: 这个是不准的，但是目前不允许二级以上子频道
+		DefaultDiceExpr:    "d20",
+		BuiltInDiceEnabled: true,
+		BotFeatureEnabled:  false,
 	}, creatorId)
 
 	roleCreate(channelID, "owner", "群主", func(roleId string) []gorbac.Permission {

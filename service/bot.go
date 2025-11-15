@@ -12,6 +12,9 @@ func BotListByChannelId(curUserId, channelId string) []string {
 	ids = append(ids, ids1...)
 
 	ch, _ := model.ChannelGet(channelId)
+	if ch.ID != "" && !ch.BotFeatureEnabled {
+		return []string{}
+	}
 	if ch.PermType == "private" {
 		// 私聊时获取授权
 		var otherId string

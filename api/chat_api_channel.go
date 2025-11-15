@@ -244,3 +244,70 @@ func apiChannelDefaultDiceUpdate(ctx *ChatContext, data *struct {
 		DefaultDiceExpr string `json:"default_dice_expr"`
 	}{ChannelID: channel.ID, DefaultDiceExpr: normalized}, nil
 }
+
+func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
+	ChannelID          string `json:"channel_id"`
+	BuiltInDiceEnabled *bool  `json:"built_in_dice_enabled"`
+	BotFeatureEnabled  *bool  `json:"bot_feature_enabled"`
+}) (any, error) {
+	if data.ChannelID == "" {
+		return nil, fmt.Errorf("频道ID不能为空")
+	}
+	if data.BuiltInDiceEnabled == nil && data.BotFeatureEnabled == nil {
+		return nil, fmt.Errorf("没有可更新的字段")
+	}
+	if !pm.CanWithChannelRole(ctx.User.ID, data.ChannelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
+		return nil, fmt.Errorf("您没有权限更新频道特性")
+	}
+
+	channel, err := model.ChannelGet(data.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+
+	updates := map[string]interface{}{}
+	if data.BuiltInDiceEnabled != nil {
+		channel.BuiltInDiceEnabled = *data.BuiltInDiceEnabled
+		updates["built_in_dice_enabled"] = channel.BuiltInDiceEnabled
+	}
+	if data.BotFeatureEnabled != nil {
+		channel.BotFeatureEnabled = *data.BotFeatureEnabled
+		updates["bot_feature_enabled"] = channel.BotFeatureEnabled
+	}
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("没有可更新的字段")
+	}
+
+	if !channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
+		channel.BuiltInDiceEnabled = true
+		updates["built_in_dice_enabled"] = true
+	}
+
+	if err := model.GetDB().Model(&model.ChannelModel{}).
+		Where("id = ?", channel.ID).
+		Updates(updates).Error; err != nil {
+		return nil, err
+	}
+
+	channelData := channel.ToProtocolType()
+	ev := &protocol.Event{
+		Type:    protocol.EventChannelUpdated,
+		Channel: channelData,
+		User:    ctx.User.ToProtocolType(),
+	}
+	ctx.BroadcastEventInChannel(channel.ID, ev)
+	ctx.BroadcastEventInChannelForBot(channel.ID, ev)
+
+	return &struct {
+		ChannelID          string `json:"channel_id"`
+		BuiltInDiceEnabled bool   `json:"built_in_dice_enabled"`
+		BotFeatureEnabled  bool   `json:"bot_feature_enabled"`
+	}{
+		ChannelID:          channel.ID,
+		BuiltInDiceEnabled: channel.BuiltInDiceEnabled,
+		BotFeatureEnabled:  channel.BotFeatureEnabled,
+	}, nil
+}

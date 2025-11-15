@@ -9,6 +9,8 @@ import (
 type BotTokenModel struct {
 	StringPKBaseModel
 	Name         string `json:"name"`
+	Avatar       string `json:"avatar"`
+	NickColor    string `json:"nickColor"`
 	Token        string `json:"token" gorm:"index"`
 	ExpiresAt    int64  `json:"expiresAt"`
 	RecentUsedAt int64  `json:"recentUsedAt"`

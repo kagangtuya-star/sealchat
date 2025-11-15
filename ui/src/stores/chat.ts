@@ -90,7 +90,8 @@ type myEventName =
   | 'channel-member-updated'
   | 'message-created-notice'
   | 'channel-identity-open'
-  | 'channel-identity-updated';
+  | 'channel-identity-updated'
+  | 'channel-member-settings-open';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -719,8 +720,17 @@ export const useChatStore = defineStore({
       return tree;
     },
 
-    patchChannelDefaultDice(channelId: string, expr: string) {
-      if (!channelId || !expr) {
+    patchChannelAttributes(channelId: string, attrs: Partial<SChannel>) {
+      if (!channelId) {
+        return;
+      }
+      const normalizedPatch: Partial<SChannel> = {};
+      Object.entries(attrs).forEach(([key, value]) => {
+        if (value !== undefined) {
+          (normalizedPatch as any)[key] = value;
+        }
+      });
+      if (Object.keys(normalizedPatch).length === 0) {
         return;
       }
       const apply = (items?: SChannel[]) => {
@@ -730,7 +740,7 @@ export const useChatStore = defineStore({
         items.forEach((item) => {
           if (!item) return;
           if (item.id === channelId) {
-            item.defaultDiceExpr = expr;
+            Object.assign(item, normalizedPatch);
           }
           if (item.children) {
             apply(item.children as SChannel[]);
@@ -742,9 +752,16 @@ export const useChatStore = defineStore({
       if (this.curChannel?.id === channelId) {
         this.curChannel = {
           ...this.curChannel,
-          defaultDiceExpr: expr,
+          ...normalizedPatch,
         } as Channel;
       }
+    },
+
+    patchChannelDefaultDice(channelId: string, expr: string) {
+      if (!channelId || !expr) {
+        return;
+      }
+      this.patchChannelAttributes(channelId, { defaultDiceExpr: expr });
     },
 
     async updateChannelDefaultDice(expr: string) {
@@ -759,6 +776,37 @@ export const useChatStore = defineStore({
       const channelId = payload?.channel_id || this.curChannel.id;
       const nextExpr = payload?.default_dice_expr || expr;
       this.patchChannelDefaultDice(channelId, nextExpr);
+    },
+
+    async updateChannelFeatures(channelId: string, updates: { builtInDiceEnabled?: boolean; botFeatureEnabled?: boolean }) {
+      if (!channelId) {
+        return null;
+      }
+      const body: Record<string, any> = { channel_id: channelId };
+      if (typeof updates.builtInDiceEnabled === 'boolean') {
+        body.built_in_dice_enabled = updates.builtInDiceEnabled;
+      }
+      if (typeof updates.botFeatureEnabled === 'boolean') {
+        body.bot_feature_enabled = updates.botFeatureEnabled;
+      }
+      const resp = await this.sendAPI('channel.feature.update', body) as {
+        data?: { channel_id?: string; built_in_dice_enabled?: boolean; bot_feature_enabled?: boolean };
+      };
+      const payload = resp?.data;
+      const targetId = payload?.channel_id || channelId;
+      const patch: Partial<SChannel> = {};
+      if (typeof payload?.built_in_dice_enabled === 'boolean') {
+        patch.builtInDiceEnabled = payload.built_in_dice_enabled;
+      } else if (typeof updates.builtInDiceEnabled === 'boolean') {
+        patch.builtInDiceEnabled = updates.builtInDiceEnabled;
+      }
+      if (typeof payload?.bot_feature_enabled === 'boolean') {
+        patch.botFeatureEnabled = payload.bot_feature_enabled;
+      } else if (typeof updates.botFeatureEnabled === 'boolean') {
+        patch.botFeatureEnabled = updates.botFeatureEnabled;
+      }
+      this.patchChannelAttributes(targetId, patch);
+      return payload;
     },
 
     async channelMembersCountRefresh() {
@@ -1428,8 +1476,15 @@ chatEvent.on('channel-updated', (event) => {
     return;
   }
   const chat = useChatStore();
-  const nextExpr = event.channel?.defaultDiceExpr;
-  if (nextExpr) {
-    chat.patchChannelDefaultDice(channelId, nextExpr);
+  const patch: Partial<SChannel> = {};
+  if (event.channel?.defaultDiceExpr) {
+    patch.defaultDiceExpr = event.channel.defaultDiceExpr;
   }
+  if (typeof event.channel?.builtInDiceEnabled === 'boolean') {
+    patch.builtInDiceEnabled = event.channel.builtInDiceEnabled;
+  }
+  if (typeof event.channel?.botFeatureEnabled === 'boolean') {
+    patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  chat.patchChannelAttributes(channelId, patch);
 });

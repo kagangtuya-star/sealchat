@@ -92,7 +92,7 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			return nil
 		}(),
 	}
-	if m.SenderIdentityID != "" {
+	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" {
 		msg.Identity = &protocol.MessageIdentity{
 			ID:               m.SenderIdentityID,
 			DisplayName:      m.SenderIdentityName,

@@ -5,12 +5,13 @@ import { useUserStore } from '@/stores/user';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import type { Channel } from '@satorijs/protocol';
+import type { SChannel } from '@/types';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconFluentMention24Filled from '@/components/icons/IconFluentMention24Filled.vue'
 import ChannelSettings from './ChannelSettings/ChannelSettings.vue'
@@ -55,6 +56,19 @@ const doSetting = async (i: Channel) => {
   showModal2.value = true;
 }
 
+const handleOpenMemberSettings = () => {
+  if (!chat.curChannel) {
+    return;
+  }
+  channelToSettings.value = chat.curChannel as SChannel;
+  showModal2.value = true;
+};
+
+chatEvent.on('channel-member-settings-open', handleOpenMemberSettings);
+onUnmounted(() => {
+  chatEvent.off('channel-member-settings-open', handleOpenMemberSettings as any);
+});
+
 import { useSpeechRecognition } from '@vueuse/core'
 
 // const {
@@ -93,7 +107,6 @@ const startA = () => {
 }
 
 import { useSpeechSynthesis } from '@vueuse/core'
-import type { SChannel } from '@/types';
 
 const voice = ref<SpeechSynthesisVoice>(undefined as unknown as SpeechSynthesisVoice)
 const voices = ref<SpeechSynthesisVoice[]>([])

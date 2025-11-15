@@ -17,9 +17,10 @@ import (
 // UserModel 用户表
 type UserModel struct {
 	StringPKBaseModel
-	Nickname string `gorm:"null" json:"nick"` // 昵称
-	Avatar   string `json:"avatar"`           // 头像
-	Brief    string `json:"brief"`            // 简介
+	Nickname  string `gorm:"null" json:"nick"` // 昵称
+	Avatar    string `json:"avatar"`           // 头像
+	NickColor string `json:"nick_color"`       // 昵称颜色
+	Brief     string `json:"brief"`            // 简介
 	// Role     string `json:"role"`             // 权限
 
 	Username string `gorm:"index:idx_username,unique;not null" json:"username"` // 用户名，唯一，非空

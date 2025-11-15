@@ -1,12 +1,14 @@
 package protocol
 
 type Channel struct {
-	ID              string      `json:"id"`
-	Type            ChannelType `json:"type"`
-	Name            string      `json:"name"`
-	ParentID        string      `json:"parent_id" gorm:"null"`
-	PermType        string      `json:"permType"`
-	DefaultDiceExpr string      `json:"defaultDiceExpr,omitempty"`
+	ID                 string      `json:"id"`
+	Type               ChannelType `json:"type"`
+	Name               string      `json:"name"`
+	ParentID           string      `json:"parent_id" gorm:"null"`
+	PermType           string      `json:"permType"`
+	DefaultDiceExpr    string      `json:"defaultDiceExpr,omitempty"`
+	BuiltInDiceEnabled bool        `json:"builtInDiceEnabled"`
+	BotFeatureEnabled  bool        `json:"botFeatureEnabled"`
 }
 
 type ChannelType int

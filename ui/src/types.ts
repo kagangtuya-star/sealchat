@@ -19,6 +19,8 @@ declare module '@satorijs/protocol' {
   }
   interface Channel {
     defaultDiceExpr?: string;
+    builtInDiceEnabled?: boolean;
+    botFeatureEnabled?: boolean;
   }
 }
 
@@ -72,6 +74,7 @@ export interface UserInfo {
   username: string;
   nick: string;
   avatar: string;
+  nick_color?: string;
   brief: string;
   roleIds?: string[];
   disabled: boolean;
@@ -109,6 +112,8 @@ export interface SChannel extends Channel {
   desc?: string;
 	note?: string;
 	defaultDiceExpr?: string;
+  builtInDiceEnabled?: boolean;
+  botFeatureEnabled?: boolean;
 }
 
 export type APIMessageCreateResp = Message

@@ -602,12 +602,15 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
-	renderResult, err := service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
-	if err != nil {
-		return nil, err
-	}
-	if renderResult != nil {
-		content = renderResult.Content
+	var renderResult *service.DiceRenderResult
+	if channel.BuiltInDiceEnabled {
+		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
+		if err != nil {
+			return nil, err
+		}
+		if renderResult != nil {
+			content = renderResult.Content
+		}
 	}
 
 	var whisperUser *model.UserModel
@@ -673,6 +676,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		if identity.DisplayName != "" {
 			m.SenderMemberName = identity.DisplayName
 		}
+	}
+	if identity == nil && ctx.User.IsBot && ctx.User.NickColor != "" {
+		m.SenderIdentityColor = ctx.User.NickColor
 	}
 	if whisperUser != nil {
 		m.WhisperTarget = whisperUser
@@ -748,7 +754,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
 		}
 
-		if appConfig.BuiltInSealBotEnable && whisperUser == nil {
+		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
+		if appConfig.BuiltInSealBotEnable && whisperUser == nil && channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
 			botReq := &struct {
 				ChannelID string `json:"channel_id"`
 				QuoteID   string `json:"quote_id"`
@@ -1080,12 +1087,15 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 	newContent := data.Content
-	renderResult, err := service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)
-	if err != nil {
-		return nil, err
-	}
-	if renderResult != nil {
-		newContent = renderResult.Content
+	var renderResult *service.DiceRenderResult
+	if channel.BuiltInDiceEnabled {
+		renderResult, err = service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)
+		if err != nil {
+			return nil, err
+		}
+		if renderResult != nil {
+			newContent = renderResult.Content
+		}
 	}
 
 	buildMessage := func() *protocol.Message {

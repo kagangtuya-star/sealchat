@@ -1,11 +1,10 @@
 <script setup lang="tsx">
 import { useUtilsStore } from '@/stores/utils';
-import type { ServerConfig } from '@/types';
-import { Message, Refresh } from '@vicons/tabler';
-import { cloneDeep } from 'lodash-es';
+import { api } from '@/stores/_config';
+import { useUserStore } from '@/stores/user';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useDialog, useMessage } from 'naive-ui';
-import { computed, nextTick } from 'vue';
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n()
@@ -18,6 +17,11 @@ const cancel = () => {
 
 const showModal = ref(false);
 const newTokenName = ref('bot')
+const newTokenAvatar = ref('')
+const newTokenColor = ref('#2563eb')
+const avatarFileInputRef = ref<HTMLInputElement | null>(null)
+const uploadingAvatar = ref(false)
+const userStore = useUserStore()
 // const newChannel = async () => {
 //   if (!newChannelName.value.trim()) {
 //     message.error(t('dialoChannelgNew.channelNameHint'));
@@ -29,7 +33,11 @@ const newTokenName = ref('bot')
 
 const addToken = async () => {
   try {
-    await utils.botTokenAdd(newTokenName.value);
+    await utils.botTokenAdd({
+      name: newTokenName.value,
+      avatar: newTokenAvatar.value,
+      nickColor: newTokenColor.value,
+    });
     message.success('添加成功');
     refresh();
   } catch (error) {
@@ -37,6 +45,8 @@ const addToken = async () => {
   }
 
   newTokenName.value = 'bot'
+  newTokenAvatar.value = ''
+  newTokenColor.value = '#2563eb'
   // tokens.value.push({
   //   name: newTokenName.value,
   //   value: 'KHhD0rCfVnXVQEBybZIBm5FND10s0EQE',
@@ -59,7 +69,6 @@ const dialog = useDialog()
 const refresh = async () => {
   const resp = await utils.botTokenList();
   tokens.value = resp.data;
-  console.log(222, resp.data)
 }
 
 const deleteItem = async (i: any) => {
@@ -82,6 +91,49 @@ const deleteItem = async (i: any) => {
   })
 }
 
+const resolveAvatar = (value?: string) => {
+  if (!value) {
+    return ''
+  }
+  return resolveAttachmentUrl(value)
+}
+
+const triggerAvatarUpload = () => {
+  avatarFileInputRef.value?.click()
+}
+
+const handleAvatarFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) {
+    return
+  }
+  uploadingAvatar.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const resp = await api.post('/api/v1/upload', formData, {
+      headers: {
+        Authorization: userStore.token,
+        ChannelId: 'bot-avatar',
+      },
+    })
+    const attachmentId = resp.data?.ids?.[0]
+    if (!attachmentId) {
+      throw new Error('上传失败')
+    }
+    newTokenAvatar.value = `id:${attachmentId}`
+    message.success('头像上传成功')
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '头像上传失败')
+  } finally {
+    if (input) {
+      input.value = ''
+    }
+    uploadingAvatar.value = false
+  }
+}
+
 onMounted(async () => {
   refresh()
 })
@@ -94,7 +146,7 @@ onMounted(async () => {
         当前token列表
       </template>
 
-      <n-list-item v-for="i in tokens.items">
+      <n-list-item v-for="i in tokens.items" :key="i.id">
         <template #suffix>
           <div class="flex items-center space-x-2">
             <div style="width: 9rem;">
@@ -108,7 +160,20 @@ onMounted(async () => {
             </div>
           </div>
         </template>
-        <n-thing :title="i.name" :description="i.token"></n-thing>
+        <n-thing :title="i.name" :description="i.token">
+          <template #avatar>
+            <n-avatar size="small" :src="resolveAvatar(i.avatar)">
+              {{ i.name?.slice(0, 1) || 'B' }}
+            </n-avatar>
+          </template>
+          <template #header-extra>
+            <div class="flex items-center space-x-1 text-xs text-gray-500">
+              <span>昵称色彩</span>
+              <span class="bot-color-chip" :style="i.nickColor ? { backgroundColor: i.nickColor } : undefined"></span>
+              <span>{{ i.nickColor || '默认' }}</span>
+            </div>
+          </template>
+        </n-thing>
       </n-list-item>
 
       <template #footer>
@@ -120,8 +185,68 @@ onMounted(async () => {
     <n-button @click="cancel">关闭</n-button>
     <!-- <n-button type="primary" :disabled="!modified" @click="save">保存</n-button> -->
   </div>
-  <n-modal v-model:show="showModal" preset="dialog" :title="'起个名字'" :positive-text="$t('dialoChannelgNew.positiveText')"
+  <n-modal v-model:show="showModal" preset="dialog" :title="'配置机器人外观'" :positive-text="$t('dialoChannelgNew.positiveText')"
     :negative-text="$t('dialoChannelgNew.negativeText')" @positive-click="addToken">
-    <n-input v-model:value="newTokenName"></n-input>
+    <n-form label-placement="top">
+      <n-form-item label="机器人名称">
+        <n-input v-model:value="newTokenName" placeholder="机器人名称" />
+      </n-form-item>
+      <n-form-item label="机器人头像">
+        <input ref="avatarFileInputRef" type="file" accept="image/*" class="hidden" @change="handleAvatarFileChange">
+        <div class="bot-avatar-uploader">
+          <n-avatar size="large" :src="resolveAvatar(newTokenAvatar)">
+            {{ newTokenName.slice(0, 1) || 'B' }}
+          </n-avatar>
+          <div class="bot-avatar-uploader__actions">
+            <div class="bot-avatar-uploader__buttons">
+              <n-button size="tiny" :loading="uploadingAvatar" @click="triggerAvatarUpload">上传图片</n-button>
+              <n-button size="tiny" quaternary :disabled="!newTokenAvatar" @click="newTokenAvatar = ''">清除</n-button>
+            </div>
+            <n-input v-model:value="newTokenAvatar" size="small" placeholder="也可粘贴图片地址或附件ID" />
+            <p class="bot-avatar-uploader__hint">支持本地上传，系统会返回附件ID，以 <code>id:xxxxx</code> 开头。</p>
+          </div>
+        </div>
+      </n-form-item>
+      <n-form-item label="昵称色彩">
+        <div class="flex items-center space-x-3 w-full">
+          <n-color-picker v-model:value="newTokenColor" :modes="['hex']" :show-alpha="false" size="small" />
+          <span class="text-xs text-gray-500">用于频道中展示机器人昵称颜色</span>
+        </div>
+      </n-form-item>
+    </n-form>
   </n-modal>
 </template>
+
+<style scoped>
+.bot-color-chip {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  display: inline-block;
+}
+
+.bot-avatar-uploader {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.bot-avatar-uploader__actions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.bot-avatar-uploader__buttons {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.bot-avatar-uploader__hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0;
+}
+</style>

@@ -30,6 +30,7 @@ declare module 'vue' {
     IFormFloatingWindows: typeof import('./src/components/iform/IFormFloatingWindows.vue')['default']
     IFormPanelHost: typeof import('./src/components/iform/IFormPanelHost.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
+    NAvatar: typeof import('naive-ui')['NAvatar']
     NButton: typeof import('naive-ui')['NButton']
     NButtonGroup: typeof import('naive-ui')['NButtonGroup']
     NCheckbox: typeof import('naive-ui')['NCheckbox']

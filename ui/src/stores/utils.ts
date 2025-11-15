@@ -79,9 +79,10 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenAdd(name: string) {
+    async botTokenAdd(input: string | { name: string; avatar?: string; nickColor?: string }) {
       const user = useUserStore();
-      const resp = await api.post('api/v1/admin/bot-token-add', { name }, {
+      const payload = typeof input === 'string' ? { name: input } : input;
+      const resp = await api.post('api/v1/admin/bot-token-add', payload, {
         headers: { 'Authorization': user.token }
       })
       return resp

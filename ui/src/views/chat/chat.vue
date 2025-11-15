@@ -4,7 +4,7 @@ import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTi
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
-import type { ChannelIdentity, GalleryItem } from '@/types'
+import type { ChannelIdentity, GalleryItem, UserInfo } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
@@ -73,7 +73,26 @@ const compactInlineLayout = computed(() => display.layout === 'compact' && !disp
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
 const diceTrayVisible = ref(false);
+const diceSettingsVisible = ref(false);
+const diceFeatureUpdating = ref(false);
+const botOptions = ref<UserInfo[]>([]);
+const botOptionsLoading = ref(false);
+const channelBotSelection = ref('');
+const channelBotsLoading = ref(false);
+const syncingChannelBot = ref(false);
+const channelFeatures = reactive({
+  builtInDiceEnabled: true,
+  botFeatureEnabled: false,
+});
+const canUseBuiltInDice = computed(() => channelFeatures.builtInDiceEnabled);
 const defaultDiceExpr = computed(() => ensureDefaultDiceExpr(chat.curChannel?.defaultDiceExpr));
+const botRoleId = computed(() => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    return '';
+  }
+  return `ch-${channelId}-bot`;
+});
 const canEditDefaultDice = computed(() => {
   const channelId = chat.curChannel?.id;
   if (!channelId) {
@@ -81,6 +100,205 @@ const canEditDefaultDice = computed(() => {
   }
   return chat.isChannelAdmin(channelId, user.info.id);
 });
+const canManageChannelFeatures = computed(() => canEditDefaultDice.value);
+const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
+  label: bot.nick || bot.username || 'Bot',
+  value: bot.id,
+})));
+const hasBotOptions = computed(() => botOptions.value.length > 0);
+const toggleDiceTray = () => {
+  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+    message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
+    diceTrayVisible.value = false;
+    return;
+  }
+  diceTrayVisible.value = !diceTrayVisible.value;
+};
+watch(() => chat.curChannel, (channel) => {
+  channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
+  channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
+  if (!channelFeatures.builtInDiceEnabled) {
+    diceTrayVisible.value = false;
+  }
+}, { immediate: true });
+watch(() => chat.curChannel?.id, () => {
+	diceSettingsVisible.value = false;
+	channelBotSelection.value = '';
+	botOptions.value = [];
+});
+watch(canManageChannelFeatures, (canManage) => {
+  if (!canManage) {
+    diceSettingsVisible.value = false;
+  }
+});
+watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
+	if (!enabled && !channelFeatures.botFeatureEnabled && !diceSettingsVisible.value) {
+		diceTrayVisible.value = false;
+	}
+});
+watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
+	if (!enabled && !channelFeatures.builtInDiceEnabled && !diceSettingsVisible.value) {
+		diceTrayVisible.value = false;
+	}
+});
+watch(diceTrayVisible, (visible) => {
+  if (!visible) {
+    diceSettingsVisible.value = false;
+  }
+});
+watch(diceSettingsVisible, (visible) => {
+  if (visible) {
+    ensureBotOptionsLoaded();
+    refreshChannelBotSelection();
+  } else if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+    diceTrayVisible.value = false;
+  }
+});
+
+const ensureBotOptionsLoaded = async () => {
+	if (botOptionsLoading.value) {
+		return;
+	}
+	botOptionsLoading.value = true;
+	try {
+		const resp = await chat.botList();
+		botOptions.value = resp?.items || [];
+	} catch (error: any) {
+		message.error(error?.response?.data?.message || '获取机器人列表失败');
+	} finally {
+		botOptionsLoading.value = false;
+	}
+};
+
+const refreshChannelBotSelection = async () => {
+  const channelId = chat.curChannel?.id;
+  const roleId = botRoleId.value;
+  if (!channelId || !roleId) {
+    channelBotSelection.value = '';
+    return;
+  }
+  channelBotsLoading.value = true;
+  try {
+    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const items = resp?.data?.items || [];
+    const current = items.find((item: any) => item.roleId === roleId && item.user?.id);
+    channelBotSelection.value = current?.user?.id || '';
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || '加载频道机器人失败');
+  } finally {
+    channelBotsLoading.value = false;
+  }
+};
+
+const syncChannelBotSelection = async (nextBotId: string) => {
+  const channelId = chat.curChannel?.id;
+  const roleId = botRoleId.value;
+  if (!channelId || !roleId) {
+    return;
+  }
+  syncingChannelBot.value = true;
+  try {
+    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const items = resp?.data?.items || [];
+    const existingIds = items
+      .filter((item: any) => item.roleId === roleId && item.user?.id)
+      .map((item: any) => item.user.id as string);
+    if (nextBotId && !existingIds.includes(nextBotId)) {
+      await chat.userRoleLink(roleId, [nextBotId]);
+    }
+    const toRemove = nextBotId ? existingIds.filter(id => id !== nextBotId) : existingIds;
+    if (toRemove.length) {
+      await chat.userRoleUnlink(roleId, toRemove);
+    }
+    channelBotSelection.value = nextBotId;
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || '配置机器人失败');
+    throw error;
+  } finally {
+    syncingChannelBot.value = false;
+  }
+};
+
+const handleBotSelectionChange = async (value: string | null) => {
+	const normalized = value || '';
+	channelBotSelection.value = normalized;
+	try {
+		await syncChannelBotSelection(normalized);
+	} catch {
+		// 已提示
+	}
+};
+
+const clearChannelBots = async () => {
+  try {
+    await syncChannelBotSelection('');
+  } catch {
+    // ignore
+  }
+};
+
+const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean; botFeatureEnabled?: boolean }) => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  diceFeatureUpdating.value = true;
+  try {
+    await chat.updateChannelFeatures(chat.curChannel.id, updates);
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || '更新频道特性失败');
+    throw error;
+  } finally {
+    diceFeatureUpdating.value = false;
+  }
+};
+
+const handleDiceFeatureToggle = async (value: boolean) => {
+  if (!canManageChannelFeatures.value) {
+    return;
+  }
+  try {
+    const updates: { builtInDiceEnabled?: boolean; botFeatureEnabled?: boolean } = { builtInDiceEnabled: value };
+    if (value && channelFeatures.botFeatureEnabled) {
+      updates.botFeatureEnabled = false;
+    }
+    await updateChannelFeatureFlags(updates);
+  } catch {
+    // no-op
+  }
+};
+
+const handleBotFeatureToggle = async (value: boolean) => {
+  if (!canManageChannelFeatures.value || !botRoleId.value) {
+    return;
+  }
+  try {
+    if (value) {
+      await ensureBotOptionsLoaded();
+      if (!hasBotOptions.value) {
+        message.error('暂无可用机器人令牌，请先在后台创建。');
+        return;
+      }
+      if (!channelBotSelection.value) {
+        channelBotSelection.value = botOptions.value[0]?.id || '';
+      }
+      if (!channelBotSelection.value) {
+        return;
+      }
+      await syncChannelBotSelection(channelBotSelection.value);
+      await updateChannelFeatureFlags({ botFeatureEnabled: true, builtInDiceEnabled: false });
+    } else {
+      await clearChannelBots();
+      await updateChannelFeatureFlags({ botFeatureEnabled: false });
+    }
+  } catch {
+    // 已提示
+  }
+};
+
+const openChannelMemberSettings = () => {
+  diceSettingsVisible.value = false;
+  chatEvent.emit('channel-member-settings-open');
+};
 watch(() => chat.curChannel?.id, (id) => {
   if (id) {
     chat.ensureChannelPermissionCache(id);
@@ -5399,7 +5617,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button quaternary circle :disabled="isEditing" @click="diceTrayVisible = !diceTrayVisible">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="isEditing || (!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
@@ -5417,7 +5635,62 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
-                    />
+                    >
+                      <template v-if="canManageChannelFeatures" #header-actions>
+                        <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                          <template #trigger>
+                            <n-button
+                              quaternary
+                              size="tiny"
+                              circle
+                              class="dice-tray-settings-trigger"
+                              :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                              @click.stop="diceSettingsVisible = !diceSettingsVisible"
+                            >
+                              <n-icon :component="Settings" size="14" />
+                            </n-button>
+                          </template>
+                          <div class="dice-settings-panel">
+                            <div class="dice-settings-panel__section">
+                              <div class="dice-settings-panel__row">
+                                <div>
+                                  <p class="dice-settings-panel__title">内置骰点</p>
+                                  <p class="dice-settings-panel__desc">自动解析输入并生成骰点结果。</p>
+                                </div>
+                                <n-switch size="small" :value="channelFeatures.builtInDiceEnabled" :disabled="diceFeatureUpdating" @update:value="handleDiceFeatureToggle" />
+                              </div>
+                            </div>
+                            <div class="dice-settings-panel__section">
+                              <div class="dice-settings-panel__row">
+                                <div>
+                                  <p class="dice-settings-panel__title">机器人骰点</p>
+                                  <p class="dice-settings-panel__desc">交由机器人处理掷骰，避免与内置功能冲突。</p>
+                                </div>
+                                <n-switch size="small" :value="channelFeatures.botFeatureEnabled" :disabled="diceFeatureUpdating" @update:value="handleBotFeatureToggle" />
+                              </div>
+                              <div class="dice-settings-panel__body" v-if="channelFeatures.botFeatureEnabled">
+                                <n-select
+                                  :value="channelBotSelection"
+                                  class="dice-settings-panel__select"
+                                  :options="botSelectOptions"
+                                  :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
+                                  :disabled="syncingChannelBot || !hasBotOptions"
+                                  placeholder="选择要启用的机器人"
+                                  clearable
+                                  @update:value="handleBotSelectionChange"
+                                />
+                                <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
+                                  暂无可用机器人，请先在后台创建令牌。
+                                </div>
+                              </div>
+                              <div class="dice-settings-panel__footer">
+                                <n-button text size="tiny" @click="openChannelMemberSettings">前往成员管理</n-button>
+                              </div>
+                            </div>
+                          </div>
+                        </n-popover>
+                      </template>
+                    </DiceTray>
                   </n-popover>
                 </div>
               </div>
@@ -6573,6 +6846,100 @@ onBeforeUnmount(() => {
 
 .chat-input-actions__cell .n-button:disabled {
   opacity: 0.55;
+}
+
+.chat-dice-button {
+  color: var(--sc-text-primary);
+}
+
+:root[data-display-palette='night'] .chat-dice-button {
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.dice-tray-settings-trigger {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--sc-text-secondary);
+  border: 1px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+:root[data-display-palette='night'] .dice-tray-settings-trigger {
+  color: rgba(226, 232, 240, 0.8);
+}
+
+.dice-tray-settings-trigger--active {
+  color: var(--sc-primary-color, #2563eb);
+  border-color: rgba(37, 99, 235, 0.4);
+  background-color: rgba(37, 99, 235, 0.08);
+}
+
+:root[data-display-palette='night'] .dice-tray-settings-trigger--active {
+  color: rgba(147, 197, 253, 0.95);
+  border-color: rgba(147, 197, 253, 0.35);
+  background-color: rgba(59, 130, 246, 0.18);
+}
+
+.dice-settings-panel {
+  min-width: 260px;
+  max-width: 320px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dice-settings-panel__section {
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  background-color: var(--sc-bg-elevated);
+}
+
+.dice-settings-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.dice-settings-panel__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--sc-text-primary);
+  margin: 0;
+}
+
+.dice-settings-panel__desc {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  margin: 0.1rem 0 0;
+}
+
+.dice-settings-panel__body {
+  margin-top: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dice-settings-panel__select {
+  width: 100%;
+}
+
+.dice-settings-panel__hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+}
+
+.dice-settings-panel__footer {
+  margin-top: 0.35rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 
