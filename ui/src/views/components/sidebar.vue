@@ -246,10 +246,12 @@ const aaa = ref(false);
 
               </div>
 
-              <!-- 当前频道的用户列表 -->
+              <!-- 当前频道的用户列表（已注释：避免在侧栏重复展示在线成员） -->
+              <!--
               <div class="pl-5 mt-2 space-y-2" v-if="i.id == chat.curChannel.id && chat.curChannelUsers.length">
                 <UserLabel :name="j.nick" :src="j.avatar" v-for="j in chat.curChannelUsers" />
               </div>
+              -->
 
               <div v-if="(i.children?.length ?? 0) > 0">
                 <template v-for="child in i.children">
@@ -299,10 +301,12 @@ const aaa = ref(false);
                     </div>
                   </div>
 
-                  <!-- 当前频道的用户列表 -->
+                  <!-- 当前频道的用户列表（已注释：避免在侧栏重复展示在线成员） -->
+                  <!--
                   <div class="pl-8 mt-2 space-y-2" v-if="child.id == chat.curChannel.id && chat.curChannelUsers.length">
                     <UserLabel :name="j.nick" :src="j.avatar" v-for="j in chat.curChannelUsers" />
                   </div>
+                  -->
                 </template>
               </div>
 
