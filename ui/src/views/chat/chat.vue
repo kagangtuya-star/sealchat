@@ -770,6 +770,8 @@ const folderActionOptions = [
   { label: '删除', key: 'delete', type: 'error' as const },
 ];
 const folderAssigning = ref(false);
+const isNightPalette = computed(() => display.palette === 'night');
+const identityDrawerWidth = computed(() => (windowWidth.value <= 640 ? '100%' : Math.min(windowWidth.value * 0.95, 800)));
 
 const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
   const map: Record<string, ChannelIdentityFolder> = {};
@@ -6134,9 +6136,9 @@ onBeforeUnmount(() => {
     class="identity-manage-shell"
     v-model:show="identityManageVisible"
     placement="right"
-    :width="480"
+    :width="identityDrawerWidth"
   >
-    <n-drawer-content class="identity-manage-drawer">
+    <n-drawer-content :class="['identity-manage-drawer', { 'identity-manage-drawer--night': isNightPalette }]">
       <template #header>
         <div class="identity-drawer__header">
           <div>
@@ -7848,9 +7850,10 @@ onBeforeUnmount(() => {
 
 .identity-manager {
   display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: minmax(140px, 160px) minmax(0, 1fr);
   gap: 1rem;
   min-height: 420px;
+  overflow: hidden;
 }
 
 .identity-manager__sidebar {
@@ -7930,6 +7933,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  padding-left: 0.25rem;
 }
 
 .identity-manager__toolbar {
@@ -7947,7 +7951,9 @@ onBeforeUnmount(() => {
 }
 
 .identity-manager__folder-select {
-  min-width: 160px;
+  flex: 1 1 160px;
+  min-width: 140px;
+  max-width: 220px;
 }
 
 .identity-list {
@@ -7970,24 +7976,24 @@ onBeforeUnmount(() => {
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   border-radius: 12px;
   padding: 0.7rem;
+  width: 100%;
+  flex-wrap: wrap;
+  box-sizing: border-box;
 }
 
 .identity-list__item--selectable {
   position: relative;
+  padding-left: 2.1rem;
 }
 
 .identity-list__item-check {
   position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
+  top: 0.9rem;
+  left: 0.65rem;
 }
 
 .identity-list__item--selectable .identity-list__meta {
-  margin-left: 2rem;
-}
-
-.identity-list__item--selectable .identity-list__actions {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .identity-list__item.is-selected {
@@ -8017,6 +8023,8 @@ onBeforeUnmount(() => {
 .identity-list__actions {
   display: flex;
   gap: 0.4rem;
+  margin-left: auto;
+  flex-wrap: wrap;
 }
 
 .identity-list__hint {
@@ -8030,6 +8038,89 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.35rem;
+}
+
+.identity-manage-drawer--night .identity-folder-item__count,
+.identity-manage-drawer--night .identity-manager__selection,
+.identity-manage-drawer--night .identity-list__hint {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.identity-manage-drawer--night .identity-folder-item {
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.identity-manage-drawer--night .identity-folder-item.is-active {
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #bfdbfe;
+}
+
+.identity-manage-drawer--night .identity-list__item {
+  border-color: rgba(59, 130, 246, 0.25);
+  background-color: rgba(15, 23, 42, 0.4);
+}
+
+.identity-manage-drawer--night .identity-list__actions :deep(.n-button) {
+  color: rgba(248, 250, 252, 0.85);
+}
+
+@media (max-width: 960px) {
+  .identity-manager {
+    grid-template-columns: minmax(130px, 150px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .identity-manage-shell :deep(.n-drawer) {
+    width: 100% !important;
+  }
+
+  .identity-manager {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-manager__sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.2));
+    padding-right: 0;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .identity-manager__toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .identity-manager__folder-select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .identity-manager__selection {
+    margin-left: 0;
+  }
+
+  .identity-list--grid {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-list__item {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .identity-list__item-check {
+    position: static;
+    margin-bottom: 0.35rem;
+    align-self: flex-start;
+  }
+
+  .identity-list__item--selectable .identity-list__meta {
+    margin-left: 0;
+  }
 }
 
 .whisper-toggle-button {
@@ -8114,17 +8205,24 @@ onBeforeUnmount(() => {
 
 .identity-manage-shell :deep(.n-drawer),
 .identity-manage-shell :deep(.n-drawer-body) {
-  background-color: var(--sc-bg-elevated, #1b1b20);
-  color: var(--sc-text-primary, #f4f4f5);
+  background-color: transparent;
 }
 
 .identity-manage-shell :deep(.n-drawer-body) {
   transition: background-color 0.25s ease, color 0.25s ease;
+  padding: 0;
+  overflow-x: hidden;
 }
 
 .identity-manage-drawer {
   background: var(--sc-bg-elevated, #ffffff);
   color: var(--sc-text-primary, #0f172a);
+  min-height: 100%;
+}
+
+.identity-manage-drawer--night {
+  background: #0f172a;
+  color: rgba(248, 250, 252, 0.95);
 }
 
 .dice-chip {

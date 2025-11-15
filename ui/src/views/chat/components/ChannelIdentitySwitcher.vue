@@ -2,6 +2,7 @@
 import { computed, cloneVNode, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 
 const chat = useChatStore();
 const user = useUserStore();
+const display = useDisplayStore();
 
 const resolvedChannelId = computed(() => props.channelId || chat.curChannel?.id || '');
 
@@ -200,6 +202,7 @@ const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && fav
     placement="top-start"
     :disabled="!resolvedChannelId || disabled"
     :render-option="renderOption"
+    :overlay-class="isNightPalette ? 'identity-dropdown--night' : undefined"
     @select="handleSelect"
   >
     <n-button
@@ -324,4 +327,24 @@ const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && fav
 .identity-option-node--action {
   font-weight: 500;
 }
+
+:global(.identity-dropdown--night .n-dropdown-menu) {
+  background-color: #0f172a;
+  color: rgba(248, 250, 252, 0.95);
+}
+
+:global(.identity-dropdown--night .n-dropdown-option) {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+:global(.identity-dropdown--night .n-dropdown-option:hover),
+:global(.identity-dropdown--night .n-dropdown-option.n-dropdown-option--active) {
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #fff;
+}
+
+:global(.identity-dropdown--night .n-dropdown-divider) {
+  background-color: rgba(148, 163, 184, 0.35);
+}
 </style>
+const isNightPalette = computed(() => display.palette === 'night');
