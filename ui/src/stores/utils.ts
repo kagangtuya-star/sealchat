@@ -11,6 +11,13 @@ import { api } from "./_config";
 import { useChatStore } from "./chat";
 import { useUserStore } from "./user";
 
+const DEFAULT_PAGE_TITLE = '海豹尬聊 SealChat';
+const applyPageTitle = (title?: string | null) => {
+  if (typeof document === 'undefined') return;
+  const trimmed = title?.trim() || '';
+  document.title = trimmed.length > 0 ? trimmed : DEFAULT_PAGE_TITLE;
+};
+
 interface SoundItem {
   sound: Howl;
   time: number;
@@ -68,6 +75,7 @@ export const useUtilsStore = defineStore({
         headers: { 'Authorization': user.token }
       })
       this.config = resp.data as ServerConfig;
+      applyPageTitle(this.config?.pageTitle);
       return resp
     },
 
@@ -110,6 +118,8 @@ export const useUtilsStore = defineStore({
       const resp = await api.put('api/v1/config', data, {
         headers: { 'Authorization': user.token }
       })
+      this.config = cloneDeep(data);
+      applyPageTitle(this.config?.pageTitle);
       return resp
     },
 

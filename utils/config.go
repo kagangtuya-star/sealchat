@@ -43,6 +43,8 @@ const (
 	StorageModeS3    StorageMode = "s3"
 )
 
+const defaultPageTitle = "海豹尬聊 SealChat"
+
 type StorageConfig struct {
 	Mode       StorageMode        `json:"mode" yaml:"mode"`
 	BaseURL    string             `json:"baseUrl" yaml:"baseUrl"`
@@ -83,6 +85,7 @@ type AppConfig struct {
 	ImageBaseURL              string          `json:"imageBaseUrl" yaml:"imageBaseUrl"`
 	RegisterOpen              bool            `json:"registerOpen" yaml:"registerOpen"`
 	WebUrl                    string          `json:"webUrl" yaml:"webUrl"`
+	PageTitle                 string          `json:"pageTitle" yaml:"pageTitle"`
 	ChatHistoryPersistentDays int64           `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
 	ImageSizeLimit            int64           `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
 	ImageCompress             bool            `json:"imageCompress" yaml:"imageCompress"`
@@ -112,6 +115,7 @@ func ReadConfig() *AppConfig {
 		Domain:                    "127.0.0.1:3212",
 		RegisterOpen:              true,
 		WebUrl:                    "/",
+		PageTitle:                 defaultPageTitle,
 		ChatHistoryPersistentDays: -1,
 		ImageSizeLimit:            8192,
 		ImageCompress:             true,
@@ -200,6 +204,9 @@ func ReadConfig() *AppConfig {
 	if strings.TrimSpace(config.ImageBaseURL) == "" {
 		config.ImageBaseURL = defaultImageBaseURL(config.ServeAt)
 	}
+	if strings.TrimSpace(config.PageTitle) == "" {
+		config.PageTitle = defaultPageTitle
+	}
 
 	config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 	config.Storage.normalize()
@@ -216,6 +223,9 @@ func ReadConfig() *AppConfig {
 func WriteConfig(config *AppConfig) {
 	if config != nil {
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
+		if strings.TrimSpace(config.PageTitle) == "" {
+			config.PageTitle = defaultPageTitle
+		}
 		if config.ServeAt != "" {
 			_ = k.Set("serveAt", config.ServeAt)
 		}
@@ -224,6 +234,7 @@ func WriteConfig(config *AppConfig) {
 		}
 		_ = k.Set("registerOpen", config.RegisterOpen)
 		_ = k.Set("webUrl", config.WebUrl)
+		_ = k.Set("pageTitle", config.PageTitle)
 		_ = k.Set("chatHistoryPersistentDays", config.ChatHistoryPersistentDays)
 		_ = k.Set("imageSizeLimit", config.ImageSizeLimit)
 		_ = k.Set("imageCompress", config.ImageCompress)

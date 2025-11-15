@@ -10,6 +10,7 @@
   serveAt: :3212
   version: 1
   webUrl: /
+  pageTitle: "海豹尬聊 SealChat"
 
   audio:
     storageDir: ./static/audio

@@ -8,6 +8,41 @@
   <meta name=viewport
     content="width=device-width, initial-scale=1.0, minimum-scale=1.0 maximum-scale=1.0, user-scalable=no">
   <title>海豹尬聊 SealChat</title>
+  <script>
+    (function () {
+      var applyTitle = function (title) {
+        if (typeof title !== 'string') return;
+        var trimmed = title.trim();
+        if (!trimmed) return;
+        document.title = trimmed;
+        window.__SEALCHAT_PAGE_TITLE__ = trimmed;
+      };
+      var requestConfig = function (base) {
+        return fetch(base.replace(/\/$/, '') + '/api/v1/config', { credentials: 'include' }).then(function (resp) {
+          if (!resp.ok) throw new Error('fetch failed');
+          return resp.json();
+        });
+      };
+      var origins = [window.location.origin];
+      var devFallback = window.location.protocol + '//' + window.location.hostname + ':3212';
+      if (origins.indexOf(devFallback) === -1) {
+        origins.push(devFallback);
+      }
+      var idx = 0;
+      var next = function () {
+        if (idx >= origins.length) return;
+        requestConfig(origins[idx]).then(function (config) {
+          if (config && typeof config.pageTitle === 'string') {
+            applyTitle(config.pageTitle);
+          }
+        }).catch(function () {
+          idx += 1;
+          next();
+        });
+      };
+      next();
+    })();
+  </script>
   <!-- <script src="//cdn.jsdelivr.net/npm/eruda"></script>
   <script>eruda.init();</script> -->
 </head>

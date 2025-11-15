@@ -58,6 +58,7 @@ export interface ServerConfig {
   domain: string;
   registerOpen: boolean;
   webUrl: string;
+  pageTitle?: string;
   chatHistoryPersistentDays: number;
   imageSizeLimit: number;
   imageCompress: boolean;

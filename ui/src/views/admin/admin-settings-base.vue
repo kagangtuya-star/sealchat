@@ -16,6 +16,7 @@ const model = ref<ServerConfig>({
   registerOpen: true,
   // VisitorOpen: true,
   webUrl: '/',
+  pageTitle: '海豹尬聊 SealChat',
   chatHistoryPersistentDays: 0,
   imageSizeLimit: 2 * 1024,
   imageCompress: true,
@@ -98,6 +99,9 @@ const feedbackWeburlShow = ref(false)
             </n-form-item> -->
       <n-form-item label="子路径设置" :feedback="feedbackWeburlShow ? '慎重填写，重启后生效' : ''">
         <n-input v-model:value="model.webUrl" @focus="feedbackWeburlShow = true" @blur="feedbackWeburlShow = false" />
+      </n-form-item>
+      <n-form-item label="网页标题" :feedback="'留空将回退至“海豹尬聊 SealChat”'">
+        <n-input v-model:value="model.pageTitle" />
       </n-form-item>
       <n-form-item label="可翻阅聊天记录">
         <n-input-number v-model:value="model.chatHistoryPersistentDays" type="number">
