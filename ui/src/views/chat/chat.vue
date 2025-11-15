@@ -5375,132 +5375,139 @@ onBeforeUnmount(() => {
         </transition>
 
           <div class="chat-input-area relative flex-1">
-            <div class="input-floating-toolbar">
-              <ChannelIdentitySwitcher
-                v-if="chat.curChannel"
-                :disabled="isEditing"
-                @create="openIdentityCreate"
-                @manage="openIdentityManager"
-                @identity-changed="emitTypingPreview"
-              />
-              <div class="emoji-trigger">
-                <n-button
-                  quaternary
-                  circle
-                  :disabled="isEditing"
-                  ref="emojiTriggerButtonRef"
-                  @click="handleEmojiTriggerClick"
-                >
-                  <template #icon>
-                    <n-icon :component="Plus" size="18" />
-                  </template>
-                </n-button>
+            <div class="chat-input-actions input-floating-toolbar flex flex-1 items-center justify-between gap-2">
+              <div class="chat-input-actions__group chat-input-actions__group--leading">
+                <div class="chat-input-actions__cell identity-switcher-cell">
+                  <ChannelIdentitySwitcher
+                    v-if="chat.curChannel"
+                    :disabled="isEditing"
+                    @create="openIdentityCreate"
+                    @manage="openIdentityManager"
+                    @identity-changed="emitTypingPreview"
+                  />
+                </div>
+                <div class="chat-input-actions__cell">
+                  <div class="emoji-trigger">
+                    <n-button
+                      quaternary
+                      circle
+                      :disabled="isEditing"
+                      ref="emojiTriggerButtonRef"
+                      @click="handleEmojiTriggerClick"
+                    >
+                      <template #icon>
+                        <n-icon :component="Plus" size="18" />
+                      </template>
+                    </n-button>
 
-                <n-popover
-                  v-model:show="emojiPopoverShow"
-                  trigger="click"
-                  placement="bottom-start"
-                  :x="emojiPopoverXCoord"
-                  :y="emojiPopoverYCoord"
-                >
-                  <div class="emoji-panel">
-                    <div class="emoji-panel__header">
-                      <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
-                      <n-tooltip trigger="hover">
-                        <template #trigger>
-                          <n-button text size="small" @click="handleEmojiManageClick">
-                            <template #icon>
-                              <n-icon :component="Settings" />
+                    <n-popover
+                      v-model:show="emojiPopoverShow"
+                      trigger="click"
+                      placement="bottom-start"
+                      :x="emojiPopoverXCoord"
+                      :y="emojiPopoverYCoord"
+                    >
+                      <div class="emoji-panel">
+                        <div class="emoji-panel__header">
+                          <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <n-button text size="small" @click="handleEmojiManageClick">
+                                <template #icon>
+                                  <n-icon :component="Settings" />
+                                </template>
+                              </n-button>
                             </template>
-                          </n-button>
-                        </template>
-                        表情管理
-                      </n-tooltip>
-                    </div>
+                            表情管理
+                          </n-tooltip>
+                        </div>
 
-                    <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
-                      <n-input
-                        v-model:value="emojiSearchQuery"
-                        size="small"
-                        placeholder="搜索表情..."
-                        clearable
-                      />
-                    </div>
+                        <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
+                          <n-input
+                            v-model:value="emojiSearchQuery"
+                            size="small"
+                            placeholder="搜索表情..."
+                            clearable
+                          />
+                        </div>
 
-                    <div v-if="!hasUserEmoji && !hasGalleryEmoji" class="emoji-panel__empty">
-                      当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
-                    </div>
+                        <div v-if="!hasUserEmoji && !hasGalleryEmoji" class="emoji-panel__empty">
+                          当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
+                        </div>
 
-                    <div v-else class="emoji-panel__content">
-                    <template v-if="true">
-                      <template v-if="hasUserEmoji && !emojiSearchQuery">
-                        <template v-if="isManagingEmoji">
-                          <n-checkbox-group v-model:value="selectedEmojiIds">
-                            <div class="emoji-grid">
-                              <div class="emoji-manage-item" v-for="(item, idx) in uploadImages" :key="item.id">
-                                <div class="emoji-manage-item__content">
-                                  <n-checkbox :value="item.id">
-                                    <div class="emoji-item">
-                                      <img :src="getSrc(item)" alt="表情" />
-                                      <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">
-                                        {{ resolveEmojiRemark(item, idx) }}
-                                      </div>
+                        <div v-else class="emoji-panel__content">
+                        <template v-if="true">
+                          <template v-if="hasUserEmoji && !emojiSearchQuery">
+                            <template v-if="isManagingEmoji">
+                              <n-checkbox-group v-model:value="selectedEmojiIds">
+                                <div class="emoji-grid">
+                                  <div class="emoji-manage-item" v-for="(item, idx) in uploadImages" :key="item.id">
+                                    <div class="emoji-manage-item__content">
+                                      <n-checkbox :value="item.id">
+                                        <div class="emoji-item">
+                                          <img :src="getSrc(item)" alt="表情" />
+                                          <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">
+                                            {{ resolveEmojiRemark(item, idx) }}
+                                          </div>
+                                        </div>
+                                      </n-checkbox>
+                                      <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">编辑备注</n-button>
                                     </div>
-                                  </n-checkbox>
-                                  <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">编辑备注</n-button>
+                                  </div>
+                                </div>
+                              </n-checkbox-group>
+
+                              <div class="emoji-panel__actions">
+                                <n-button type="info" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
+                                  删除选中
+                                </n-button>
+                                <n-button type="default" size="small" @click="exitEmojiManage">
+                                  退出管理
+                                </n-button>
+                              </div>
+                            </template>
+                            <template v-else>
+                              <div class="emoji-grid">
+                                <div class="emoji-item" v-for="(item, idx) in filteredUserEmojis" :key="item.id" @click="sendEmoji(item)">
+                                  <img :src="getSrc(item)" alt="表情" />
+                                  <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
+                                  <div class="emoji-item__actions">
+                                    <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </n-checkbox-group>
+                            </template>
+                          </template>
 
-                          <div class="emoji-panel__actions">
-                            <n-button type="info" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
-                              删除选中
-                            </n-button>
-                            <n-button type="default" size="small" @click="exitEmojiManage">
-                              退出管理
-                            </n-button>
-                          </div>
-                        </template>
-                        <template v-else>
-                          <div class="emoji-grid">
-                            <div class="emoji-item" v-for="(item, idx) in filteredUserEmojis" :key="item.id" @click="sendEmoji(item)">
-                              <img :src="getSrc(item)" alt="表情" />
-                              <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
-                              <div class="emoji-item__actions">
-                                <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                          <template v-if="!isManagingEmoji && (hasGalleryEmoji || emojiSearchQuery)">
+                            <div class="emoji-section__title">联动分类：{{ galleryEmojiName || '未命名分类' }}</div>
+                            <div v-if="filteredGalleryEmojis.length === 0" class="emoji-panel__empty">
+                              没有匹配的表情
+                            </div>
+                            <div v-else class="emoji-grid">
+                              <div
+                                class="emoji-item"
+                                v-for="item in filteredGalleryEmojis"
+                                :key="item.id"
+                                draggable="true"
+                                @dragstart="handleGalleryEmojiDragStart(item, $event)"
+                                @click="handleGalleryEmojiClick(item)"
+                              >
+                                <img :src="getGalleryItemThumb(item)" alt="表情" />
+                                <div class="emoji-caption">{{ item.remark || '未命名表情' }}</div>
                               </div>
                             </div>
-                          </div>
+                          </template>
                         </template>
-                      </template>
-
-                      <template v-if="!isManagingEmoji && (hasGalleryEmoji || emojiSearchQuery)">
-                        <div class="emoji-section__title">联动分类：{{ galleryEmojiName || '未命名分类' }}</div>
-                        <div v-if="filteredGalleryEmojis.length === 0" class="emoji-panel__empty">
-                          没有匹配的表情
                         </div>
-                        <div v-else class="emoji-grid">
-                          <div
-                            class="emoji-item"
-                            v-for="item in filteredGalleryEmojis"
-                            :key="item.id"
-                            draggable="true"
-                            @dragstart="handleGalleryEmojiDragStart(item, $event)"
-                            @click="handleGalleryEmojiClick(item)"
-                          >
-                            <img :src="getGalleryItemThumb(item)" alt="表情" />
-                            <div class="emoji-caption">{{ item.remark || '未命名表情' }}</div>
-                          </div>
-                        </div>
-                      </template>
-                    </template>
-                    </div>
+                      </div>
+                    </n-popover>
                   </div>
-                </n-popover>
+                </div>
+                <div class="chat-input-actions__cell">
+                  <GalleryButton />
+                </div>
               </div>
-              <GalleryButton />
-            <div class="chat-input-actions flex flex-1 items-center justify-between gap-2">
               <div class="chat-input-actions__group chat-input-actions__group--addons">
                 <div class="chat-input-actions__cell">
                   <ChatIcOocToggle
@@ -5732,9 +5739,6 @@ onBeforeUnmount(() => {
                 </n-button>
               </div>
             </div>
-            </div>
-
-
             <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
               <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
               <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
