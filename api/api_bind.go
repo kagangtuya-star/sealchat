@@ -115,6 +115,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
+	v1Auth.Get("/channel-identity-folders", ChannelIdentityFolderList)
+	v1Auth.Post("/channel-identity-folders", ChannelIdentityFolderCreate)
+	v1Auth.Put("/channel-identity-folders/:id", ChannelIdentityFolderUpdate)
+	v1Auth.Delete("/channel-identity-folders/:id", ChannelIdentityFolderDelete)
+	v1Auth.Post("/channel-identity-folders/:id/favorite", ChannelIdentityFolderToggleFavorite)
+	v1Auth.Post("/channel-identity-folders/assign", ChannelIdentityFolderAssign)
 
 	diceMacros := v1Auth.Group("/channels/:channelId/dice-macros")
 	diceMacros.Get("/", ChannelDiceMacroList)

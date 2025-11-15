@@ -9,11 +9,12 @@ import (
 )
 
 type channelIdentityPayload struct {
-	ChannelID          string `json:"channelId"`
-	DisplayName        string `json:"displayName"`
-	Color              string `json:"color"`
-	AvatarAttachmentID string `json:"avatarAttachmentId"`
-	IsDefault          bool   `json:"isDefault"`
+	ChannelID          string   `json:"channelId"`
+	DisplayName        string   `json:"displayName"`
+	Color              string   `json:"color"`
+	AvatarAttachmentID string   `json:"avatarAttachmentId"`
+	IsDefault          bool     `json:"isDefault"`
+	FolderIDs          []string `json:"folderIds"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -24,7 +25,7 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 		})
 	}
 	user := getCurUser(c)
-	items, err := service.ChannelIdentityListByUser(channelID, user.ID)
+	result, err := service.ChannelIdentityListByUser(channelID, user.ID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -32,7 +33,10 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"items": items,
+		"items":      result.Items,
+		"folders":    result.Folders,
+		"favorites":  result.Favorites,
+		"membership": result.Membership,
 	})
 }
 
@@ -55,6 +59,7 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
+		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -92,6 +97,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
+		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{

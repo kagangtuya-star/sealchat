@@ -16,6 +16,7 @@ type ChannelIdentityInput struct {
 	Color              string
 	AvatarAttachmentID string
 	IsDefault          bool
+	FolderIDs          []string
 }
 
 func validateIdentityInput(input *ChannelIdentityInput) error {
@@ -32,6 +33,9 @@ func validateIdentityInput(input *ChannelIdentityInput) error {
 		}
 		input.Color = color
 	}
+	if len(input.FolderIDs) > 20 {
+		return errors.New("文件夹数量过多")
+	}
 	return nil
 }
 
@@ -47,10 +51,6 @@ func ensureAttachmentOwnership(userID string, attachmentID string) error {
 		return err
 	}
 	return nil
-}
-
-func ChannelIdentityListByUser(channelID string, userID string) ([]*model.ChannelIdentityModel, error) {
-	return model.ChannelIdentityList(channelID, userID)
 }
 
 func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
@@ -92,6 +92,16 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 	if err := model.ChannelIdentityUpsert(item); err != nil {
 		return nil, err
 	}
+
+	folderIDs := input.FolderIDs
+	if folderIDs == nil {
+		folderIDs = []string{}
+	}
+	membership, err := ChannelIdentityFolderAssign(userID, input.ChannelID, []string{item.ID}, folderIDs, "replace")
+	if err != nil {
+		return nil, err
+	}
+	item.FolderIDs = membership[item.ID]
 
 	// 如果当前无默认身份，则自动设置为默认
 	if !item.IsDefault {
@@ -147,6 +157,18 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	if err != nil {
 		return nil, err
 	}
+	if input.FolderIDs != nil {
+		membership, err := ChannelIdentityFolderAssign(userID, input.ChannelID, []string{identity.ID}, input.FolderIDs, "replace")
+		if err != nil {
+			return nil, err
+		}
+		updated.FolderIDs = membership[identity.ID]
+	} else {
+		membership, err := loadIdentityFolderMembership([]string{identity.ID})
+		if err == nil {
+			updated.FolderIDs = membership[identity.ID]
+		}
+	}
 	return updated, nil
 }
 
@@ -158,6 +180,7 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
 	}
+	_ = model.ChannelIdentityFolderMemberDeleteByIdentityIDs([]string{identity.ID})
 
 	if identity.IsDefault {
 		// 重新指定一个默认身份
@@ -220,6 +243,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"avatarAttachmentId": item.AvatarAttachmentID,
 		"isDefault":          item.IsDefault,
 		"sortOrder":          item.SortOrder,
+		"folderIds":          item.FolderIDs,
 	}
 }
 

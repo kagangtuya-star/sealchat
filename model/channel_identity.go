@@ -10,13 +10,14 @@ import (
 
 type ChannelIdentityModel struct {
 	StringPKBaseModel
-	ChannelID          string `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1"`
-	UserID             string `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
-	DisplayName        string `json:"displayName"`
-	Color              string `json:"color"`
-	AvatarAttachmentID string `json:"avatarAttachmentId"`
-	IsDefault          bool   `json:"isDefault" gorm:"default:false"`
-	SortOrder          int    `json:"sortOrder" gorm:"index"`
+	ChannelID          string   `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1"`
+	UserID             string   `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
+	DisplayName        string   `json:"displayName"`
+	Color              string   `json:"color"`
+	AvatarAttachmentID string   `json:"avatarAttachmentId"`
+	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
+	SortOrder          int      `json:"sortOrder" gorm:"index"`
+	FolderIDs          []string `json:"folderIds,omitempty" gorm:"-"`
 }
 
 func (*ChannelIdentityModel) TableName() string {
@@ -125,6 +126,18 @@ func ChannelIdentityValidateOwnership(identityID string, userID string, channelI
 		return nil, errors.New("身份不属于该用户或频道")
 	}
 	return identity, nil
+}
+
+func ChannelIdentityListByIDs(channelID string, userID string, ids []string) ([]*ChannelIdentityModel, error) {
+	if len(ids) == 0 {
+		return []*ChannelIdentityModel{}, nil
+	}
+	var items []*ChannelIdentityModel
+	err := db.Where("channel_id = ? AND user_id = ?", channelID, userID).
+		Where("id IN ?", ids).
+		Order("sort_order ASC, created_at ASC").
+		Find(&items).Error
+	return items, err
 }
 
 type ChannelIdentityOption struct {

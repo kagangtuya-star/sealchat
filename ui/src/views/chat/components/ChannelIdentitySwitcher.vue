@@ -1,12 +1,12 @@
 <script setup lang="tsx">
-import { computed, cloneVNode } from 'vue';
+import { computed, cloneVNode, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
 import { NDropdown, NButton, NIcon } from 'naive-ui';
-import { Plus } from '@vicons/tabler';
+import { Plus, Star } from '@vicons/tabler';
 
 const props = withDefaults(defineProps<{
   channelId?: string;
@@ -34,6 +34,41 @@ const identities = computed(() => {
   return chat.channelIdentities[id] || [];
 });
 
+const favoriteFolderIds = computed(() => {
+  const id = resolvedChannelId.value;
+  if (!id) {
+    return [] as string[];
+  }
+  return chat.channelIdentityFavorites[id] || [];
+});
+
+const identityMembership = computed<Record<string, string[]>>(() => {
+  const id = resolvedChannelId.value;
+  if (!id) {
+    return {};
+  }
+  return chat.channelIdentityMembership[id] || {};
+});
+
+const filterMode = ref<'all' | 'favorites'>(favoriteFolderIds.value.length ? 'favorites' : 'all');
+
+watch([favoriteFolderIds, resolvedChannelId], () => {
+  if (!favoriteFolderIds.value.length) {
+    filterMode.value = 'all';
+  }
+});
+
+const filteredIdentities = computed(() => {
+  if (!favoriteFolderIds.value.length || filterMode.value === 'all') {
+    return identities.value;
+  }
+  const favoriteSet = new Set(favoriteFolderIds.value);
+  return identities.value.filter(identity => {
+    const folders = identity.folderIds && identity.folderIds.length ? identity.folderIds : identityMembership.value[identity.id] || [];
+    return folders.some(folderId => favoriteSet.has(folderId));
+  });
+});
+
 const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.value));
 
 const fallbackName = computed(() => chat.curMember?.nick || user.info.nick || user.info.username || '默认身份');
@@ -48,7 +83,7 @@ const avatarSrc = computed(() => {
 });
 
 const options = computed<DropdownOption[]>(() => {
-  const list = identities.value.map<DropdownOption>((item) => ({
+  const list = filteredIdentities.value.map<DropdownOption>((item) => ({
     key: item.id,
     label: item.displayName,
     icon: () => (
@@ -61,9 +96,21 @@ const options = computed<DropdownOption[]>(() => {
     class: item.id === activeIdentity.value?.id ? 'identity-option identity-option--active' : 'identity-option',
     extra: item.color,
   }));
+  if (!list.length) {
+    list.push({
+      key: '__placeholder',
+      label: filterMode.value === 'favorites' ? '收藏文件夹暂无角色' : '暂无频道角色',
+      disabled: true,
+    });
+  }
+  const actionLabel = filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色';
   return [
     ...list,
     { type: 'divider', key: '__divider' },
+    {
+      key: '__toggle',
+      label: actionLabel,
+    },
     {
       key: '__create',
       label: '创建新角色',
@@ -84,7 +131,10 @@ const renderOption: DropdownRenderOption = ({ node, option }) => {
   if (option.key === '__divider') {
     return node;
   }
-  if (option.key === '__create' || option.key === '__manage') {
+  if (option.key === '__divider') {
+    return node;
+  }
+  if (option.key === '__create' || option.key === '__manage' || option.key === '__toggle' || option.key === '__placeholder') {
     return cloneVNode(node, {
       class: [node.props?.class, 'identity-option-node', 'identity-option-node--action'],
     });
@@ -120,6 +170,17 @@ const handleSelect = async (key: string | number) => {
     emit('manage');
     return;
   }
+  if (key === '__toggle') {
+    if (favoriteFolderIds.value.length) {
+      filterMode.value = filterMode.value === 'favorites' ? 'all' : 'favorites';
+    } else {
+      filterMode.value = 'all';
+    }
+    return;
+  }
+  if (key === '__placeholder') {
+    return;
+  }
   const channelId = resolvedChannelId.value;
   if (!channelId || props.disabled) {
     return;
@@ -127,6 +188,8 @@ const handleSelect = async (key: string | number) => {
   chat.setActiveIdentity(channelId, String(key));
   emit('identity-changed' as any);
 };
+
+const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && favoriteFolderIds.value.length > 0);
 </script>
 
 <template>
@@ -162,6 +225,7 @@ const handleSelect = async (key: string | number) => {
       >
         {{ displayName }}
       </span>
+      <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
     </n-button>
   </n-dropdown>
 </template>
@@ -200,6 +264,11 @@ const handleSelect = async (key: string | number) => {
   height: 10px;
   border-radius: 9999px;
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.45));
+}
+
+.identity-switcher__favorite {
+  color: #fbbf24;
+  margin-left: 0.15rem;
 }
 
 .identity-option {

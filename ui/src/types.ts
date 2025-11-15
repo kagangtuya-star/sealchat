@@ -261,6 +261,15 @@ export interface ChannelIdentity {
   avatarAttachmentId: string;
   isDefault: boolean;
   sortOrder: number;
+  folderIds?: string[];
+}
+
+export interface ChannelIdentityFolder {
+  id: string;
+  channelId: string;
+  userId: string;
+  name: string;
+  sortOrder: number;
 }
 
 export interface MessageIdentity {

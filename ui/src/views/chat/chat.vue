@@ -4,9 +4,9 @@ import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTi
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
-import type { ChannelIdentity, GalleryItem, UserInfo } from '@/types'
+import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -748,11 +748,284 @@ const identityForm = reactive({
   color: '',
   avatarAttachmentId: '',
   isDefault: false,
+  folderIds: [] as string[],
 });
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
 const editingIdentity = ref<ChannelIdentity | null>(null);
 const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
+const identityFavoriteFolderIds = computed(() => chat.channelIdentityFavorites[chat.curChannel?.id || ''] || []);
+const identityFolderMembership = computed<Record<string, string[]>>(() => chat.channelIdentityMembership[chat.curChannel?.id || ''] || {});
+const activeIdentityFolderId = ref<'all' | 'favorites' | 'ungrouped' | string>('all');
+const identitySelection = ref<string[]>([]);
+const folderActionTarget = ref<string[]>([]);
+const folderDialogVisible = ref(false);
+const folderDialogMode = ref<'create' | 'rename'>('create');
+const folderFormName = ref('');
+const folderSubmitting = ref(false);
+const editingFolder = ref<ChannelIdentityFolder | null>(null);
+const folderActionOptions = [
+  { label: '重命名', key: 'rename' },
+  { label: '删除', key: 'delete', type: 'error' as const },
+];
+const folderAssigning = ref(false);
+
+const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
+  const map: Record<string, ChannelIdentityFolder> = {};
+  identityFolders.value.forEach(folder => {
+    map[folder.id] = folder;
+  });
+  return map;
+});
+
+const folderSelectOptions = computed(() => identityFolders.value.map(folder => ({ label: folder.name, value: folder.id })));
+
+const favoriteFolderSet = computed(() => new Set(identityFavoriteFolderIds.value));
+
+const identityCountsByFolder = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {
+    __all: currentChannelIdentities.value.length,
+    __ungrouped: 0,
+    __favorites: 0,
+  };
+  currentChannelIdentities.value.forEach(identity => {
+    const folders = identityFolderMembership.value[identity.id] || [];
+    if (!folders.length) {
+      counts.__ungrouped += 1;
+    }
+    let inFavorites = false;
+    folders.forEach(folderId => {
+      counts[folderId] = (counts[folderId] || 0) + 1;
+      if (!inFavorites && favoriteFolderSet.value.has(folderId)) {
+        inFavorites = true;
+      }
+    });
+    if (inFavorites) {
+      counts.__favorites += 1;
+    }
+  });
+  return counts;
+});
+
+const composedIdentityFolders = computed(() => {
+  const entries: Array<{ id: string; label: string; count: number; folder?: ChannelIdentityFolder; isFavorite?: boolean; disabled?: boolean }> = [
+    { id: 'all', label: '全部角色', count: identityCountsByFolder.value.__all || 0 },
+    { id: 'favorites', label: '收藏文件夹', count: identityCountsByFolder.value.__favorites || 0, disabled: !identityFavoriteFolderIds.value.length },
+    { id: 'ungrouped', label: '未分组', count: identityCountsByFolder.value.__ungrouped || 0 },
+  ];
+  identityFolders.value.forEach(folder => {
+    entries.push({
+      id: folder.id,
+      label: folder.name,
+      count: identityCountsByFolder.value[folder.id] || 0,
+      folder,
+      isFavorite: favoriteFolderSet.value.has(folder.id),
+    });
+  });
+  return entries;
+});
+
+const filteredIdentities = computed(() => {
+  const folderId = activeIdentityFolderId.value;
+  if (folderId === 'all') {
+    return currentChannelIdentities.value;
+  }
+  if (folderId === 'ungrouped') {
+    return currentChannelIdentities.value.filter(identity => (identityFolderMembership.value[identity.id] || []).length === 0);
+  }
+  if (folderId === 'favorites') {
+    if (!identityFavoriteFolderIds.value.length) {
+      return [];
+    }
+    return currentChannelIdentities.value.filter(identity => (identityFolderMembership.value[identity.id] || []).some(id => favoriteFolderSet.value.has(id)));
+  }
+  return currentChannelIdentities.value.filter(identity => (identityFolderMembership.value[identity.id] || []).includes(folderId));
+});
+
+const isAllIdentitySelected = computed(() => {
+  const ids = filteredIdentities.value.map(identity => identity.id);
+  if (!ids.length) {
+    return false;
+  }
+  return ids.every(id => identitySelection.value.includes(id));
+});
+
+const handleFolderItemClick = (item: { id: string; disabled?: boolean }) => {
+  if (item.disabled) {
+    return;
+  }
+  activeIdentityFolderId.value = item.id;
+};
+
+const toggleFolderFavorite = async (folder: ChannelIdentityFolder, next: boolean) => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  try {
+    await chat.toggleChannelIdentityFolderFavorite(folder.id, chat.curChannel.id, next);
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
+    message.error(errMsg);
+  }
+};
+
+const openFolderDialog = (mode: 'create' | 'rename', folder?: ChannelIdentityFolder) => {
+  folderDialogMode.value = mode;
+  editingFolder.value = folder || null;
+  folderFormName.value = folder?.name || '';
+  folderDialogVisible.value = true;
+};
+
+const submitFolderDialog = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const name = folderFormName.value.trim();
+  if (!name) {
+    message.warning('请输入文件夹名称');
+    return;
+  }
+  folderSubmitting.value = true;
+  try {
+    if (folderDialogMode.value === 'create') {
+      await chat.createChannelIdentityFolder(chat.curChannel.id, name);
+      message.success('文件夹已创建');
+    } else if (editingFolder.value) {
+      await chat.updateChannelIdentityFolder(editingFolder.value.id, chat.curChannel.id, { name });
+      message.success('文件夹已更新');
+    }
+    folderDialogVisible.value = false;
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    folderSubmitting.value = false;
+  }
+};
+
+const handleFolderAction = async (folder: ChannelIdentityFolder, key: string | number) => {
+  if (key === 'rename') {
+    openFolderDialog('rename', folder);
+    return;
+  }
+  if (key === 'delete') {
+    const confirmed = await dialogAskConfirm(dialog, {
+      title: '删除文件夹',
+      content: `确定删除「${folder.name}」文件夹吗？其中的角色不会被删除。`,
+    });
+    if (!confirmed || !chat.curChannel?.id) {
+      return;
+    }
+    try {
+      await chat.deleteChannelIdentityFolder(folder.id, chat.curChannel.id);
+      message.success('文件夹已删除');
+    } catch (error: any) {
+      const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
+      message.error(errMsg);
+    }
+  }
+};
+
+const handleIdentitySelection = (identityId: string, checked: boolean) => {
+  if (checked) {
+    if (!identitySelection.value.includes(identityId)) {
+      identitySelection.value = [...identitySelection.value, identityId];
+    }
+  } else {
+    identitySelection.value = identitySelection.value.filter(id => id !== identityId);
+  }
+};
+
+const toggleSelectAll = (checked: boolean) => {
+  if (checked) {
+    identitySelection.value = filteredIdentities.value.map(identity => identity.id);
+  } else {
+    identitySelection.value = [];
+  }
+};
+
+const ensureSelection = () => {
+  if (!identitySelection.value.length) {
+    message.warning('请先选择角色');
+    return false;
+  }
+  return true;
+};
+
+const ensureFolderTargets = () => {
+  if (!folderActionTarget.value.length) {
+    message.warning('请选择目标文件夹');
+    return false;
+  }
+  return true;
+};
+
+const handleIdentityFolderAssign = async (mode: 'append' | 'replace' | 'remove') => {
+  if (!chat.curChannel?.id || !ensureSelection()) {
+    return;
+  }
+  if (!folderActionTarget.value.length) {
+    if (mode === 'remove') {
+      message.warning('请选择需要移除的文件夹');
+    } else if (!ensureFolderTargets()) {
+      return;
+    }
+    return;
+  }
+  try {
+    folderAssigning.value = true;
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, folderActionTarget.value, mode);
+    message.success('角色分组已更新');
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    folderAssigning.value = false;
+  }
+};
+
+const handleIdentityFolderClear = async () => {
+  if (!chat.curChannel?.id || !ensureSelection()) {
+    return;
+  }
+  try {
+    folderAssigning.value = true;
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, [], 'replace');
+    message.success('已移除所选角色的所有文件夹');
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    folderAssigning.value = false;
+  }
+};
+
+const resolveFolderName = (folderId: string) => folderMap.value[folderId]?.name || '未命名文件夹';
+
+watch(activeIdentityFolderId, () => {
+  const visibleSet = new Set(filteredIdentities.value.map(identity => identity.id));
+  identitySelection.value = identitySelection.value.filter(id => visibleSet.has(id));
+});
+
+watch(identityFolders, (folders) => {
+  const valid = new Set(folders.map(folder => folder.id));
+  folderActionTarget.value = folderActionTarget.value.filter(id => valid.has(id));
+});
+
+watch(() => chat.curChannel?.id, () => {
+  activeIdentityFolderId.value = 'all';
+  identitySelection.value = [];
+  folderActionTarget.value = [];
+});
+
+watch(identityManageVisible, (visible) => {
+  if (!visible) {
+    identitySelection.value = [];
+    folderActionTarget.value = [];
+  }
+});
 let identityAvatarObjectURL: string | null = null;
 let identityAvatarFile: File | null = null;
 const identityAvatarDisplay = computed(() => identityAvatarPreview.value || resolveAttachmentUrl(identityForm.avatarAttachmentId));
@@ -1154,6 +1427,7 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.color = normalizeHexColor(identity?.color || '') || '';
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
+  identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
 
@@ -1240,6 +1514,7 @@ const submitIdentityForm = async () => {
     color: normalizedColor,
     avatarAttachmentId: identityForm.avatarAttachmentId,
     isDefault: identityForm.isDefault,
+    folderIds: identityForm.folderIds,
   };
   try {
     if (identityAvatarFile) {
@@ -5859,7 +6134,7 @@ onBeforeUnmount(() => {
     class="identity-manage-shell"
     v-model:show="identityManageVisible"
     placement="right"
-    :width="360"
+    :width="480"
   >
     <n-drawer-content class="identity-manage-drawer">
       <template #header>
@@ -5902,25 +6177,113 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </template>
-      <div v-if="currentChannelIdentities.length" class="identity-list">
-        <div v-for="identity in currentChannelIdentities" :key="identity.id" class="identity-list__item">
-          <AvatarVue
-            :size="40"
-            :border="false"
-            :src="resolveAttachmentUrl(identity.avatarAttachmentId) || user.info.avatar"
-          />
-          <div class="identity-list__meta">
-            <div class="identity-list__name">
-              <span v-if="identity.color" class="identity-list__color" :style="{ backgroundColor: identity.color }"></span>
-              <span :style="identity.color ? { color: identity.color } : undefined">{{ identity.displayName }}</span>
-              <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
+      <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager">
+        <div class="identity-manager__sidebar">
+          <div class="identity-folder-header">
+            <div class="identity-folder-header__title">
+              <n-icon :component="Folders" size="16" />
+              <span>角色文件夹</span>
             </div>
-            <div class="identity-list__hint">身份ID：{{ identity.id }}</div>
+            <n-button text size="tiny" @click="openFolderDialog('create')">
+              <template #icon>
+                <n-icon :component="FolderPlus" size="14" />
+              </template>
+              新建
+            </n-button>
           </div>
-          <div class="identity-list__actions">
-            <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
-            <n-button text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+          <n-scrollbar class="identity-folder-list">
+            <div
+              v-for="item in composedIdentityFolders"
+              :key="item.id"
+              class="identity-folder-item"
+              :class="{ 'is-active': activeIdentityFolderId === item.id, 'is-disabled': item.disabled }"
+              @click="handleFolderItemClick(item)"
+            >
+              <div class="identity-folder-item__label">
+                <span>{{ item.label }}</span>
+                <n-icon
+                  v-if="item.folder"
+                  class="identity-folder-item__favorite"
+                  :component="item.isFavorite ? Star : StarOff"
+                  size="14"
+                  :class="{ 'is-active': item.isFavorite }"
+                  @click.stop="toggleFolderFavorite(item.folder, !item.isFavorite)"
+                />
+              </div>
+              <div class="identity-folder-item__meta" v-if="item.folder">
+                <span class="identity-folder-item__count">{{ item.count }}</span>
+                <n-dropdown trigger="click" :options="folderActionOptions" @select="key => handleFolderAction(item.folder!, key)">
+                  <n-button quaternary text size="tiny">
+                    <n-icon :component="DotsVertical" size="14" />
+                  </n-button>
+                </n-dropdown>
+              </div>
+              <div class="identity-folder-item__count" v-else>{{ item.count }}</div>
+            </div>
+          </n-scrollbar>
+        </div>
+        <div class="identity-manager__content">
+          <div class="identity-manager__toolbar">
+            <n-checkbox :checked="isAllIdentitySelected" :indeterminate="!!identitySelection.length && !isAllIdentitySelected" @update:checked="toggleSelectAll">
+              全选
+            </n-checkbox>
+            <div class="identity-manager__selection">已选 {{ identitySelection.length }} 个角色</div>
+            <n-select
+              v-model:value="folderActionTarget"
+              class="identity-manager__folder-select"
+              size="small"
+              multiple
+              clearable
+              placeholder="选择目标文件夹"
+              :options="folderSelectOptions"
+            />
+            <n-space size="small">
+              <n-button size="small" :disabled="!identitySelection.length || !folderActionTarget.length" :loading="folderAssigning" @click="handleIdentityFolderAssign('append')">添加</n-button>
+              <n-button size="small" :disabled="!identitySelection.length || !folderActionTarget.length" :loading="folderAssigning" @click="handleIdentityFolderAssign('replace')">移动</n-button>
+              <n-button size="small" tertiary :disabled="!identitySelection.length || !folderActionTarget.length" :loading="folderAssigning" @click="handleIdentityFolderAssign('remove')">移出</n-button>
+              <n-button size="small" tertiary :disabled="!identitySelection.length" :loading="folderAssigning" @click="handleIdentityFolderClear">清除全部</n-button>
+            </n-space>
           </div>
+          <div v-if="filteredIdentities.length" class="identity-list identity-list--grid">
+            <div
+              v-for="identity in filteredIdentities"
+              :key="identity.id"
+              class="identity-list__item identity-list__item--selectable"
+              :class="{ 'is-selected': identitySelection.includes(identity.id) }"
+            >
+              <n-checkbox
+                class="identity-list__item-check"
+                :checked="identitySelection.includes(identity.id)"
+                @update:checked="val => handleIdentitySelection(identity.id, val)"
+              />
+              <AvatarVue
+                :size="40"
+                :border="false"
+                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || user.info.avatar"
+              />
+              <div class="identity-list__meta">
+                <div class="identity-list__name">
+                  <span v-if="identity.color" class="identity-list__color" :style="{ backgroundColor: identity.color }"></span>
+                  <span :style="identity.color ? { color: identity.color } : undefined">{{ identity.displayName }}</span>
+                  <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
+                </div>
+                <div class="identity-list__hint">ID：{{ identity.id }}</div>
+                <div class="identity-list__folders">
+                  <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
+                  <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
+                </div>
+              </div>
+              <div class="identity-list__actions">
+                <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
+                <n-button text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+              </div>
+            </div>
+          </div>
+          <n-empty v-else description="该分组暂无角色">
+            <template #extra>
+              <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
+            </template>
+          </n-empty>
         </div>
       </div>
       <n-empty v-else description="暂无频道角色">
@@ -5933,6 +6296,24 @@ onBeforeUnmount(() => {
       </template>
     </n-drawer-content>
   </n-drawer>
+  <n-modal
+    v-model:show="folderDialogVisible"
+    preset="dialog"
+    :title="folderDialogMode === 'create' ? '新建文件夹' : '重命名文件夹'"
+    :mask-closable="false"
+  >
+    <n-form label-placement="left" label-width="0">
+      <n-form-item>
+        <n-input v-model:value="folderFormName" maxlength="32" show-count placeholder="请输入文件夹名称" />
+      </n-form-item>
+    </n-form>
+    <template #action>
+      <n-space justify="end">
+        <n-button @click="folderDialogVisible = false">取消</n-button>
+        <n-button type="primary" :loading="folderSubmitting" @click="submitFolderDialog">保存</n-button>
+      </n-space>
+    </template>
+  </n-modal>
   <input ref="identityImportInputRef" class="hidden" type="file" accept="application/json" @change="handleIdentityImportChange">
 
   <!-- 新增组件 -->
@@ -7465,9 +7846,119 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
+.identity-manager {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 1rem;
+  min-height: 420px;
+}
+
+.identity-manager__sidebar {
+  border-right: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.2));
+  padding-right: 0.75rem;
+}
+
+.identity-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.identity-folder-header__title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.identity-folder-list {
+  max-height: 360px;
+}
+
+.identity-folder-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.identity-folder-item + .identity-folder-item {
+  margin-top: 0.25rem;
+}
+
+.identity-folder-item.is-active {
+  background-color: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+.identity-folder-item.is-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.identity-folder-item__label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 500;
+}
+
+.identity-folder-item__favorite {
+  color: var(--sc-text-secondary, #94a3b8);
+}
+
+.identity-folder-item__favorite.is-active {
+  color: #fbbf24;
+}
+
+.identity-folder-item__count {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary, #94a3b8);
+}
+
+.identity-folder-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.identity-manager__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.identity-manager__toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+}
+
+.identity-manager__selection {
+  font-size: 0.85rem;
+  color: var(--sc-text-secondary, #6b7280);
+}
+
+.identity-manager__folder-select {
+  min-width: 160px;
+}
+
 .identity-list {
   display: flex;
   flex-direction: column;
+  gap: 0.75rem;
+}
+
+.identity-list--grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  display: grid;
   gap: 0.75rem;
 }
 
@@ -7476,7 +7967,32 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0;
-  border-bottom: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.identity-list__item--selectable {
+  position: relative;
+}
+
+.identity-list__item-check {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+}
+
+.identity-list__item--selectable .identity-list__meta {
+  margin-left: 2rem;
+}
+
+.identity-list__item--selectable .identity-list__actions {
+  margin-left: auto;
+}
+
+.identity-list__item.is-selected {
+  border-color: rgba(59, 130, 246, 0.45);
+  background-color: rgba(59, 130, 246, 0.08);
 }
 
 .identity-list__meta {
@@ -7507,6 +8023,13 @@ onBeforeUnmount(() => {
   font-size: 0.75rem;
   color: var(--sc-text-secondary, #6b7280);
   margin-top: 0.25rem;
+}
+
+.identity-list__folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
 }
 
 .whisper-toggle-button {

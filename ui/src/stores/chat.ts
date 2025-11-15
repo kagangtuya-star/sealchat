@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -62,6 +62,9 @@ interface ChatState {
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
   activeChannelIdentity: Record<string, string>;
+  channelIdentityFolders: Record<string, ChannelIdentityFolder[]>;
+  channelIdentityFavorites: Record<string, string[]>;
+  channelIdentityMembership: Record<string, Record<string, string[]>>;
 
   // 新增状态
   icMode: 'ic' | 'ooc';
@@ -158,6 +161,9 @@ export const useChatStore = defineStore({
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
+    channelIdentityFolders: {},
+    channelIdentityFavorites: {},
+    channelIdentityMembership: {},
 
     // 新增状态初始值
     icMode: 'ic',
@@ -435,6 +441,16 @@ export const useChatStore = defineStore({
       if (identity.isDefault || !this.activeChannelIdentity[identity.channelId]) {
         this.setActiveIdentity(identity.channelId, identity.id);
       }
+      if (identity.folderIds) {
+        const membership = {
+          ...(this.channelIdentityMembership[identity.channelId] || {}),
+          [identity.id]: [...identity.folderIds],
+        };
+        this.channelIdentityMembership = {
+          ...this.channelIdentityMembership,
+          [identity.channelId]: membership,
+        };
+      }
       chatEvent.emit('channel-identity-updated', { identity, channelId: identity.channelId });
     },
 
@@ -447,6 +463,14 @@ export const useChatStore = defineStore({
       if (this.activeChannelIdentity[channelId] === identityId) {
         const fallback = list.find(item => item.isDefault) || list[0];
         this.setActiveIdentity(channelId, fallback?.id || '');
+      }
+      if (this.channelIdentityMembership[channelId]) {
+        const membership = { ...this.channelIdentityMembership[channelId] };
+        delete membership[identityId];
+        this.channelIdentityMembership = {
+          ...this.channelIdentityMembership,
+          [channelId]: membership,
+        };
       }
     },
 
@@ -464,11 +488,27 @@ export const useChatStore = defineStore({
         }
         return this.channelIdentities[channelId];
       }
-      const resp = await api.get<{ items: ChannelIdentity[] }>('api/v1/channel-identities', { params: { channelId } });
+      const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
+      const membership = resp.data.membership || {};
       const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+      items.forEach(item => {
+        item.folderIds = membership[item.id] ? [...membership[item.id]] : [];
+      });
       this.channelIdentities = {
         ...this.channelIdentities,
         [channelId]: items,
+      };
+      this.channelIdentityFolders = {
+        ...this.channelIdentityFolders,
+        [channelId]: resp.data.folders || [],
+      };
+      this.channelIdentityFavorites = {
+        ...this.channelIdentityFavorites,
+        [channelId]: resp.data.favorites || [],
+      };
+      this.channelIdentityMembership = {
+        ...this.channelIdentityMembership,
+        [channelId]: membership,
       };
       const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
       const defaultItem = items.find(item => item.isDefault) || items[0];
@@ -480,7 +520,7 @@ export const useChatStore = defineStore({
       return items;
     },
 
-    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; }) {
+    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
@@ -488,7 +528,7 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
@@ -499,6 +539,131 @@ export const useChatStore = defineStore({
       await api.delete('api/v1/channel-identities/' + identityId, { params: { channelId } });
       this.removeChannelIdentity(channelId, identityId);
       chatEvent.emit('channel-identity-updated', { channelId, removedId: identityId });
+    },
+
+    async createChannelIdentityFolder(channelId: string, name: string) {
+      const resp = await api.post<{ item: ChannelIdentityFolder }>('api/v1/channel-identity-folders', {
+        channelId,
+        name,
+      });
+      const list = [...(this.channelIdentityFolders[channelId] || []), resp.data.item].sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentityFolders = {
+        ...this.channelIdentityFolders,
+        [channelId]: list,
+      };
+      return resp.data.item;
+    },
+
+    async updateChannelIdentityFolder(folderId: string, channelId: string, payload: { name?: string; sortOrder?: number }) {
+      const resp = await api.put<{ item: ChannelIdentityFolder }>(`api/v1/channel-identity-folders/${folderId}`, {
+        channelId,
+        name: payload.name,
+        sortOrder: payload.sortOrder,
+      });
+      const list = (this.channelIdentityFolders[channelId] || []).map(folder => (folder.id === folderId ? resp.data.item : folder)).sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentityFolders = {
+        ...this.channelIdentityFolders,
+        [channelId]: list,
+      };
+      return resp.data.item;
+    },
+
+    async deleteChannelIdentityFolder(folderId: string, channelId: string) {
+      await api.delete(`api/v1/channel-identity-folders/${folderId}`, { params: { channelId } });
+      const list = (this.channelIdentityFolders[channelId] || []).filter(folder => folder.id !== folderId);
+      this.channelIdentityFolders = {
+        ...this.channelIdentityFolders,
+        [channelId]: list,
+      };
+      const favorites = (this.channelIdentityFavorites[channelId] || []).filter(id => id !== folderId);
+      this.channelIdentityFavorites = {
+        ...this.channelIdentityFavorites,
+        [channelId]: favorites,
+      };
+      this.removeFolderFromIdentityMembership(channelId, folderId);
+    },
+
+    async toggleChannelIdentityFolderFavorite(folderId: string, channelId: string, favorite: boolean) {
+      const resp = await api.post<{ favorites: string[] }>(`api/v1/channel-identity-folders/${folderId}/favorite`, {
+        channelId,
+        favorite,
+      });
+      this.channelIdentityFavorites = {
+        ...this.channelIdentityFavorites,
+        [channelId]: resp.data.favorites || [],
+      };
+    },
+
+    async assignIdentitiesToFolders(channelId: string, identityIds: string[], folderIds: string[], mode: 'replace' | 'append' | 'remove') {
+      const resp = await api.post<{ membership: Record<string, string[]> }>('api/v1/channel-identity-folders/assign', {
+        channelId,
+        identityIds,
+        folderIds,
+        mode,
+      });
+      this.applyIdentityMembershipUpdate(channelId, resp.data.membership || {});
+    },
+
+    applyIdentityMembershipUpdate(channelId: string, updates: Record<string, string[]>) {
+      if (!updates || Object.keys(updates).length === 0) {
+        return;
+      }
+      const currentMembership = { ...(this.channelIdentityMembership[channelId] || {}) };
+      const list = (this.channelIdentities[channelId] || []).map(identity => {
+        if (updates[identity.id]) {
+          const folders = updates[identity.id] || [];
+          currentMembership[identity.id] = folders;
+          return { ...identity, folderIds: folders } as ChannelIdentity;
+        }
+        return identity;
+      });
+      Object.entries(updates).forEach(([id, folders]) => {
+        if (!currentMembership[id]) {
+          currentMembership[id] = folders || [];
+        }
+      });
+      if (list.length) {
+        this.channelIdentities = {
+          ...this.channelIdentities,
+          [channelId]: list,
+        };
+      }
+      this.channelIdentityMembership = {
+        ...this.channelIdentityMembership,
+        [channelId]: currentMembership,
+      };
+    },
+
+    removeFolderFromIdentityMembership(channelId: string, folderId: string) {
+      const currentMembership = { ...(this.channelIdentityMembership[channelId] || {}) };
+      let changed = false;
+      const list = (this.channelIdentities[channelId] || []).map(identity => {
+        if (identity.folderIds && identity.folderIds.includes(folderId)) {
+          const folders = identity.folderIds.filter(id => id !== folderId);
+          currentMembership[identity.id] = folders;
+          changed = true;
+          return { ...identity, folderIds: folders } as ChannelIdentity;
+        }
+        return identity;
+      });
+      Object.keys(currentMembership).forEach(key => {
+        const folders = currentMembership[key] || [];
+        const filtered = folders.filter(id => id !== folderId);
+        if (filtered.length !== folders.length) {
+          currentMembership[key] = filtered;
+          changed = true;
+        }
+      });
+      if (changed) {
+        this.channelIdentities = {
+          ...this.channelIdentities,
+          [channelId]: list,
+        };
+        this.channelIdentityMembership = {
+          ...this.channelIdentityMembership,
+          [channelId]: currentMembership,
+        };
+      }
     },
 
     findChannelById(channelId: string): SChannel | null {
