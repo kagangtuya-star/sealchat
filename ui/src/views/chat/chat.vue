@@ -5729,8 +5729,45 @@ onBeforeUnmount(() => {
                   </n-popover>
                 </div>
               </div>
-
-              <div class="chat-input-actions__cell chat-input-actions__send">
+            </div>
+            <div class="chat-input-editor-row">
+              <div class="chat-input-editor-main">
+                <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
+                  <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
+                  <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
+                </div>
+                <ChatInputSwitcher
+                  ref="textInputRef"
+                  v-model="textToSend"
+                  v-model:mode="inputMode"
+                  :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
+                  :whisper-mode="whisperMode"
+                  :mention-options="atOptions"
+                  :mention-loading="atLoading"
+                  :mention-prefix="atPrefix"
+                  :mention-render-label="atRenderLabel"
+                  :rows="1"
+                  :input-class="chatInputClassList"
+                  :inline-images="inlineImagePreviewMap"
+                  @mention-search="atHandleSearch"
+                  @mention-select="handleMentionSelect"
+                  @keydown="keyDown"
+                  @input="handleSlashInput"
+                  @paste-image="handlePlainPasteImage"
+                  @drop-files="handlePlainDropFiles"
+                  @upload-button-click="handleRichUploadButtonClick"
+                  @remove-image="removeInlineImage"
+                />
+                <input
+                  ref="inlineImageInputRef"
+                  class="hidden"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  @change="handleInlineFileChange"
+                />
+              </div>
+              <div class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline">
                 <n-button type="primary" circle size="medium" @click="send"
                   :disabled="chat.connectState !== 'connected' || isEditing">
                   <template #icon>
@@ -5739,40 +5776,6 @@ onBeforeUnmount(() => {
                 </n-button>
               </div>
             </div>
-            <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
-              <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
-              <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
-            </div>
-            <ChatInputSwitcher
-              ref="textInputRef"
-              v-model="textToSend"
-              v-model:mode="inputMode"
-              :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
-              :whisper-mode="whisperMode"
-              :mention-options="atOptions"
-              :mention-loading="atLoading"
-              :mention-prefix="atPrefix"
-              :mention-render-label="atRenderLabel"
-              :rows="1"
-              :input-class="chatInputClassList"
-          :inline-images="inlineImagePreviewMap"
-          @mention-search="atHandleSearch"
-          @mention-select="handleMentionSelect"
-          @keydown="keyDown"
-          @input="handleSlashInput"
-          @paste-image="handlePlainPasteImage"
-          @drop-files="handlePlainDropFiles"
-          @upload-button-click="handleRichUploadButtonClick"
-          @remove-image="removeInlineImage"
-        />
-            <input
-              ref="inlineImageInputRef"
-              class="hidden"
-              type="file"
-              accept="image/*"
-              multiple
-              @change="handleInlineFileChange"
-            />
         </div>
       </div>
     </div>
@@ -6811,7 +6814,7 @@ onBeforeUnmount(() => {
 .chat-input-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: clamp(0.3rem, 0.9vw, 0.5rem);
   margin-top: 0;
   flex: 1 1 auto;
@@ -6825,6 +6828,37 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: clamp(0.2rem, 0.7vw, 0.35rem);
   flex-wrap: nowrap;
+}
+
+.chat-input-editor-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.chat-input-editor-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.chat-input-editor-main :deep(.hybrid-input) {
+  width: 100%;
+}
+
+.chat-input-send-inline {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+}
+
+.chat-input-send-inline .n-button {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
 }
 
 .chat-input-actions__cell {
@@ -6858,6 +6892,15 @@ onBeforeUnmount(() => {
 
   .chat-input-actions__icon {
     font-size: 0.75rem;
+  }
+
+  .chat-input-editor-row {
+    gap: 0.5rem;
+  }
+
+  .chat-input-send-inline .n-button {
+    width: 40px;
+    height: 40px;
   }
 }
 
