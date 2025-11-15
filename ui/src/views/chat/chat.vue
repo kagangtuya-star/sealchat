@@ -1036,7 +1036,7 @@ const identityImportInputRef = ref<HTMLInputElement | null>(null);
 const identityExporting = ref(false);
 const identityImporting = ref(false);
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v1';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v2';
 
 interface IdentityAvatarPayload {
   attachmentId?: string;
@@ -1053,7 +1053,15 @@ interface IdentityExportItem {
   color: string;
   isDefault: boolean;
   sortOrder: number;
+  folderIds?: string[];
   avatar?: IdentityAvatarPayload;
+}
+
+interface IdentityExportFolder {
+  sourceId: string;
+  name: string;
+  sortOrder: number;
+  isFavorite?: boolean;
 }
 
 interface IdentityExportFile {
@@ -1065,6 +1073,7 @@ interface IdentityExportFile {
     guildId?: string;
   };
   items: IdentityExportItem[];
+  folders?: IdentityExportFolder[];
 }
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
@@ -1082,6 +1091,9 @@ const handleIdentityExport = async () => {
     message.warning('当前频道暂无可导出的角色');
     return;
   }
+  const membershipMap = identityFolderMembership.value;
+  const folderList = identityFolders.value;
+  const favoriteSet = new Set(identityFavoriteFolderIds.value);
   identityExporting.value = true;
   try {
     const items: IdentityExportItem[] = [];
@@ -1093,6 +1105,10 @@ const handleIdentityExport = async () => {
         isDefault: identity.isDefault,
         sortOrder: identity.sortOrder,
       };
+      const folderIds = identity.folderIds?.length ? identity.folderIds : (membershipMap[identity.id] || []);
+      if (folderIds.length) {
+        item.folderIds = [...folderIds];
+      }
       if (identity.avatarAttachmentId) {
         const normalizedId = normalizeAttachmentId(identity.avatarAttachmentId);
         if (normalizedId) {
@@ -1128,6 +1144,12 @@ const handleIdentityExport = async () => {
         guildId: (chat.curChannel as any)?.guildId || '',
       },
       items,
+      folders: folderList.map(folder => ({
+        sourceId: folder.id,
+        name: folder.name,
+        sortOrder: folder.sortOrder,
+        isFavorite: favoriteSet.has(folder.id),
+      })),
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -1215,7 +1237,8 @@ const handleIdentityImportChange = async (event: Event) => {
   try {
     const text = await file.text();
     const payload = JSON.parse(text) as IdentityExportFile;
-    if (payload.version !== IDENTITY_EXPORT_VERSION) {
+    const compatibleVersions = [IDENTITY_EXPORT_VERSION, 'sealchat.channel-identity/v1'];
+    if (!compatibleVersions.includes(payload.version)) {
       throw new Error('无法识别的导入文件版本');
     }
     const items = payload.items || [];
@@ -1232,16 +1255,39 @@ const handleIdentityImportChange = async (event: Event) => {
     }
 
     identityImporting.value = true;
+    const folderIdMap = new Map<string, string>();
+    if (Array.isArray(payload.folders) && payload.folders.length && chat.curChannel?.id) {
+      const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      for (const folder of sortedFolders) {
+        if (!folder?.name) continue;
+        try {
+          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder);
+          if (folder.sourceId) {
+            folderIdMap.set(folder.sourceId, created.id);
+          }
+          if (folder.isFavorite) {
+            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true);
+          }
+        } catch (error) {
+          console.warn('导入文件夹失败', error);
+        }
+      }
+    }
+
     let successCount = 0;
     for (const item of items) {
       try {
         const avatarId = await ensureImportAttachment(item.avatar);
+        const mappedFolderIds = (item.folderIds || [])
+          .map(id => folderIdMap.get(id) || '')
+          .filter((id): id is string => !!id);
         await chat.channelIdentityCreate({
           channelId: chat.curChannel.id,
           displayName: item.displayName || '',
           color: item.color || '',
           avatarAttachmentId: avatarId,
           isDefault: !!item.isDefault,
+          folderIds: mappedFolderIds,
         });
         successCount += 1;
       } catch (error) {

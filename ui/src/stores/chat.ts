@@ -541,10 +541,11 @@ export const useChatStore = defineStore({
       chatEvent.emit('channel-identity-updated', { channelId, removedId: identityId });
     },
 
-    async createChannelIdentityFolder(channelId: string, name: string) {
+    async createChannelIdentityFolder(channelId: string, name: string, sortOrder?: number) {
       const resp = await api.post<{ item: ChannelIdentityFolder }>('api/v1/channel-identity-folders', {
         channelId,
         name,
+        sortOrder,
       });
       const list = [...(this.channelIdentityFolders[channelId] || []), resp.data.item].sort((a, b) => a.sortOrder - b.sortOrder);
       this.channelIdentityFolders = {
