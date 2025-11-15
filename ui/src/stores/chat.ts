@@ -1156,7 +1156,7 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string) {
+    async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string, identityId?: string) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
         content,
@@ -1172,9 +1172,9 @@ export const useChatStore = defineStore({
       if (clientId) {
         payload.client_id = clientId;
       }
-      const identityId = this.getActiveIdentityId(this.curChannel?.id);
-      if (identityId) {
-        payload.identity_id = identityId;
+      const resolvedIdentityId = identityId || this.getActiveIdentityId(this.curChannel?.id);
+      if (resolvedIdentityId) {
+        payload.identity_id = resolvedIdentityId;
       }
       const resp = await this.sendAPI('message.create', payload);
       const message = resp?.data;

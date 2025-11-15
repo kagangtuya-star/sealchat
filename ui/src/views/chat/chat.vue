@@ -4378,6 +4378,25 @@ const send = throttle(async () => {
     return;
   }
   let draft = textToSend.value;
+  let identityIdOverride: string | undefined;
+
+  // 仅纯文本模式支持 `/角色名 内容` 快捷切换
+  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
+    const shortcutMatch = /^\/(\S+)\s+([\s\S]*)$/.exec(draft);
+    if (shortcutMatch) {
+      const targetName = shortcutMatch[1];
+      const restContent = shortcutMatch[2] || '';
+      const identities = chat.channelIdentities[chat.curChannel.id] || [];
+      const matched = identities.find(item => item.displayName === targetName);
+      if (matched) {
+        chat.setActiveIdentity(chat.curChannel.id, matched.id);
+        draft = restContent;
+        textToSend.value = restContent;
+        emitTypingPreview();
+        identityIdOverride = matched.id;
+      }
+    }
+  }
 
   // 检查是否为富文本模式
   const isRichMode = inputMode.value === 'rich';
@@ -4459,7 +4478,7 @@ const send = throttle(async () => {
     }
 
     tmpMsg.content = finalContent;
-    const newMsg = await chat.messageCreate(finalContent, replyTo?.id, whisperTargetForSend?.id, clientId);
+    const newMsg = await chat.messageCreate(finalContent, replyTo?.id, whisperTargetForSend?.id, clientId, identityIdOverride);
     if (!newMsg) {
       throw new Error('message.create returned empty result');
     }
