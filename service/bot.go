@@ -67,3 +67,17 @@ func SyncBotUserProfile(token *model.BotTokenModel) error {
 	}
 	return model.GetDB().Model(user).Updates(updates).Error
 }
+
+// SyncBotMembers updates all channel member records to reflect the latest bot nickname.
+func SyncBotMembers(token *model.BotTokenModel) error {
+	if token == nil || token.ID == "" {
+		return nil
+	}
+	name := strings.TrimSpace(token.Name)
+	if name == "" {
+		return nil
+	}
+	return model.GetDB().Model(&model.MemberModel{}).
+		Where("user_id = ?", token.ID).
+		Update("nickname", name).Error
+}

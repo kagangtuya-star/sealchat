@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,20 @@ type BotTokenModel struct {
 
 func (*BotTokenModel) TableName() string {
 	return "bot_tokens"
+}
+
+func BotTokenGet(id string) (*BotTokenModel, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, nil
+	}
+	var botToken BotTokenModel
+	if err := db.Where("id = ?", id).Limit(1).Find(&botToken).Error; err != nil {
+		return nil, err
+	}
+	if botToken.ID == "" {
+		return nil, nil
+	}
+	return &botToken, nil
 }
 
 func BotVerifyAccessToken(tokenString string) (*UserModel, error) {

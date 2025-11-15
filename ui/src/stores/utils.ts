@@ -88,6 +88,14 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async botTokenUpdate(payload: { id: string; name?: string; avatar?: string; nickColor?: string }) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/bot-token-update', payload, {
+        headers: { 'Authorization': user.token }
+      })
+      return resp
+    },
+
     async botTokenDelete(id: string) {
       const user = useUserStore();
       const resp = await api.post(`api/v1/admin/bot-token-delete`, {}, {

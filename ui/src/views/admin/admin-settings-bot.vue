@@ -17,6 +17,7 @@ const cancel = () => {
 }
 
 const showModal = ref(false);
+const editingToken = ref<any | null>(null);
 const newTokenName = ref('bot')
 const newTokenAvatar = ref('')
 const newTokenColor = ref('#2563eb')
@@ -32,30 +33,54 @@ const userStore = useUserStore()
 //   await chat.channelList();
 // }
 
-const addToken = async () => {
+const resetForm = () => {
+  newTokenName.value = 'bot';
+  newTokenAvatar.value = '';
+  newTokenColor.value = '#2563eb';
+};
+
+const openCreateModal = () => {
+  editingToken.value = null;
+  resetForm();
+  showModal.value = true;
+};
+
+const openEditModal = (token: any) => {
+  editingToken.value = token;
+  newTokenName.value = token.name || 'bot';
+  newTokenAvatar.value = token.avatar || '';
+  newTokenColor.value = token.nickColor || '#2563eb';
+  showModal.value = true;
+};
+
+const submitToken = async () => {
+  const payload = {
+    name: newTokenName.value.trim() || 'bot',
+    avatar: newTokenAvatar.value.trim(),
+    nickColor: newTokenColor.value,
+  };
   try {
-    await utils.botTokenAdd({
-      name: newTokenName.value,
-      avatar: newTokenAvatar.value,
-      nickColor: newTokenColor.value,
-    });
-    message.success('添加成功');
+    if (editingToken.value) {
+      await utils.botTokenUpdate({
+        id: editingToken.value.id,
+        ...payload,
+      });
+      message.success('更新成功');
+    } else {
+      await utils.botTokenAdd(payload);
+      message.success('添加成功');
+    }
     refresh();
     chat.invalidateBotListCache();
     chatEvent.emit('bot-list-updated');
+    showModal.value = false;
+    if (!editingToken.value) {
+      resetForm();
+    }
   } catch (error) {
-    message.error('添加失败: ' + (error as any).response?.data?.message || '未知错误');
+    message.error((editingToken.value ? '更新失败: ' : '添加失败: ') + ((error as any).response?.data?.message || '未知错误'));
   }
-
-  newTokenName.value = 'bot'
-  newTokenAvatar.value = ''
-  newTokenColor.value = '#2563eb'
-  // tokens.value.push({
-  //   name: newTokenName.value,
-  //   value: 'KHhD0rCfVnXVQEBybZIBm5FND10s0EQE',
-  //   expireAt: 123
-  // })
-}
+};
 
 // const tokens = ref([
 //   { name: '海豹', value: 'KHhD0rCfVnXVQEBybZIBm5FND10s0EQE', expireAt: 123 }
@@ -160,9 +185,12 @@ onMounted(async () => {
               <n-date-picker v-model:value="i.expiresAt" type="date" />
               <!-- <div v-else>无期限</div> -->
             </div>
-            <div>
+            <div class="flex flex-col space-y-1">
               <span>操作</span>
-              <n-button @click="deleteItem(i)">删除</n-button>
+              <div class="space-x-2">
+                <n-button size="small" @click="openEditModal(i)">编辑</n-button>
+                <n-button size="small" @click="deleteItem(i)">删除</n-button>
+              </div>
             </div>
           </div>
         </template>
@@ -183,7 +211,7 @@ onMounted(async () => {
       </n-list-item>
 
       <template #footer>
-        <n-button @click="showModal = true">添加</n-button>
+        <n-button @click="openCreateModal">添加</n-button>
       </template>
     </n-list>
   </div>
@@ -191,8 +219,8 @@ onMounted(async () => {
     <n-button @click="cancel">关闭</n-button>
     <!-- <n-button type="primary" :disabled="!modified" @click="save">保存</n-button> -->
   </div>
-  <n-modal v-model:show="showModal" preset="dialog" :title="'配置机器人外观'" :positive-text="$t('dialoChannelgNew.positiveText')"
-    :negative-text="$t('dialoChannelgNew.negativeText')" @positive-click="addToken">
+  <n-modal v-model:show="showModal" preset="dialog" :title="editingToken ? '编辑机器人' : '配置机器人外观'" :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
+    :negative-text="$t('dialoChannelgNew.negativeText')" @positive-click="submitToken">
     <n-form label-placement="top">
       <n-form-item label="机器人名称">
         <n-input v-model:value="newTokenName" placeholder="机器人名称" />

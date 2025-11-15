@@ -94,8 +94,53 @@ func BotTokenAdd(c *fiber.Ctx) error {
 	if err := service.SyncBotUserProfile(item); err != nil {
 		return err
 	}
+	_ = service.SyncBotMembers(item)
 
 	return c.JSON(item)
+}
+
+func BotTokenUpdate(c *fiber.Ctx) error {
+	type RequestBody struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Avatar    string `json:"avatar"`
+		NickColor string `json:"nickColor"`
+	}
+	var data RequestBody
+	if err := c.BodyParser(&data); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请求参数错误"})
+	}
+	if strings.TrimSpace(data.ID) == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "缺少机器人ID"})
+	}
+	db := model.GetDB()
+	var token model.BotTokenModel
+	if err := db.Where("id = ?", data.ID).Limit(1).Find(&token).Error; err != nil {
+		return err
+	}
+	if token.ID == "" {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "机器人令牌不存在"})
+	}
+
+	nickColor := model.ChannelIdentityNormalizeColor(data.NickColor)
+	update := map[string]any{}
+	if strings.TrimSpace(data.Name) != "" {
+		update["name"] = data.Name
+		token.Name = data.Name
+	}
+	update["avatar"] = strings.TrimSpace(data.Avatar)
+	update["nick_color"] = nickColor
+	token.Avatar = strings.TrimSpace(data.Avatar)
+	token.NickColor = nickColor
+
+	if err := db.Model(&model.BotTokenModel{}).Where("id = ?", data.ID).Updates(update).Error; err != nil {
+		return err
+	}
+	if err := service.SyncBotUserProfile(&token); err != nil {
+		return err
+	}
+	_ = service.SyncBotMembers(&token)
+	return c.JSON(token)
 }
 
 func BotTokenDelete(c *fiber.Ctx) error {

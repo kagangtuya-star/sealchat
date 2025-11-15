@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -99,11 +100,24 @@ func apiBotInfoSetName(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	ctx.User.Nickname = data.Data.Name
+	name := strings.TrimSpace(data.Data.Name)
+	if ctx.User.IsBot {
+		if token, err := model.BotTokenGet(ctx.User.ID); err == nil && token != nil {
+			if trimmed := strings.TrimSpace(token.Name); trimmed != "" {
+				name = trimmed
+			}
+		}
+	}
+	if name == "" {
+		name = ctx.User.Nickname
+	}
+	data.Data.Name = name
+
+	ctx.User.Nickname = name
 	ctx.User.Brief = data.Data.Brief
 	ctx.User.SaveInfo()
 	for _, i := range ctx.Members {
-		i.Nickname = data.Data.Name
+		i.Nickname = name
 		i.SaveInfo()
 		// 广播事件，名字更新了
 		ctx.BroadcastEventInChannel(i.ChannelID, &protocol.Event{
