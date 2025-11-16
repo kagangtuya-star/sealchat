@@ -3,9 +3,9 @@ import router from '@/router';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, ChevronDown, ChevronForward, Star, StarOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -19,6 +19,8 @@ import ChannelCreate from './ChannelCreate.vue'
 import UserLabel from '@/components/UserLabel.vue'
 import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
+import ChannelManagerPanel from './ChannelManager/ChannelManagerPanel.vue'
+import { useChannelFolderStore } from '@/stores/channelFolders'
 
 const { t } = useI18n()
 
@@ -27,6 +29,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const folderStore = useChannelFolderStore();
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -188,6 +191,54 @@ const handleCollapseAllChannels = () => {
 const handleChannelSortEntry = () => {
   message.info('频道排序功能建设中');
 };
+
+const managerVisible = computed({
+  get: () => folderStore.managerVisible,
+  set: (v: boolean) => folderStore.setManagerVisible(v),
+});
+
+const toggleFavoritesOnly = async () => {
+  const next = !chat.folderFilter.favoritesOnly;
+  chat.setFolderFavoritesOnly(next);
+  if (next) {
+    await folderStore.ensureLoaded();
+  }
+};
+
+const handleSearchInput = async (value: string) => {
+  chat.setFolderSearchKeyword(value);
+  if (value && !folderStore.folders.length) {
+    await folderStore.ensureLoaded();
+  }
+};
+
+const filterChannelTree = (items: SChannel[] = []) => {
+  const keyword = chat.folderFilter.keyword.trim().toLowerCase();
+  const favoritesOnly = chat.folderFilter.favoritesOnly;
+  const favoriteChannels = folderStore.favoriteChannelSet;
+
+  const traverse = (nodes: SChannel[] = []): SChannel[] => {
+    return nodes.map((node) => {
+      const children = traverse((node.children || []) as SChannel[]);
+      const keywordMatch = !keyword || node.name.toLowerCase().includes(keyword);
+      const favoriteMatch = !favoritesOnly || favoriteChannels.has(node.id);
+      const shouldKeep = (keywordMatch || children.length > 0) && (favoriteMatch || children.length > 0 || !favoritesOnly);
+      if (!shouldKeep) {
+        return null;
+      }
+      return {
+        ...node,
+        children,
+      } as SChannel;
+    }).filter((item): item is SChannel => Boolean(item));
+  };
+
+  return traverse(items);
+};
+
+const visibleChannelTree = computed(() => {
+  return filterChannelTree(chat.channelTree as SChannel[]);
+});
 </script>
 
 <template>
@@ -203,11 +254,45 @@ const handleChannelSortEntry = () => {
           </div>
         </template>
 
+        <div class="sidebar-toolbar px-3 py-2">
+          <div class="flex items-center space-x-2">
+            <n-tooltip placement="bottom">
+              <template #trigger>
+                <n-button quaternary circle size="tiny" @click="toggleFavoritesOnly" :type="chat.folderFilter.favoritesOnly ? 'primary' : 'default'">
+                  <template #icon>
+                    <n-icon :component="chat.folderFilter.favoritesOnly ? Star : StarOutline" />
+                  </template>
+                </n-button>
+              </template>
+              <span>仅显示收藏文件夹</span>
+            </n-tooltip>
+            <n-tooltip placement="bottom">
+              <template #trigger>
+                <n-button quaternary size="tiny" @click="managerVisible = true">
+                  <template #icon>
+                    <n-icon :component="Setting" />
+                  </template>
+                </n-button>
+              </template>
+              <span>频道管理</span>
+            </n-tooltip>
+            <n-input
+              size="small"
+              round
+              clearable
+              placeholder="搜索频道/文件夹"
+              style="width: 180px"
+              :value="chat.folderFilter.keyword"
+              @update:value="handleSearchInput"
+            />
+          </div>
+        </div>
+
         <!-- 频道列表内容将在这里显示 -->
         <div class="space-y-1 flex flex-col px-2">
           <template v-if="chat.curChannel?.name">
             <!-- <template v-if="false"> -->
-            <template v-for="i in chat.channelTree">
+            <template v-for="i in visibleChannelTree">
               <div class="sider-item" :class="i.id === chat.curChannel?.id ? ['active'] : []"
                 @click="doChannelSwitch(i)">
 
@@ -420,6 +505,7 @@ const handleChannelSortEntry = () => {
     </div> -->
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
+  <ChannelManagerPanel v-model:show="managerVisible" />
 </template>
 
 <style lang="scss">
@@ -474,5 +560,13 @@ const handleChannelSortEntry = () => {
 
 .sidebar-footer-actions .n-button {
   justify-content: center;
+}
+
+.sidebar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.4);
+  margin-bottom: 0.4rem;
 }
 </style>

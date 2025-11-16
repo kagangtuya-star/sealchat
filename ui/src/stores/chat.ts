@@ -161,9 +161,13 @@ export const useChatStore = defineStore({
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
-    channelIdentityFolders: {},
-    channelIdentityFavorites: {},
-    channelIdentityMembership: {},
+  channelIdentityFolders: {},
+  channelIdentityFavorites: {},
+  channelIdentityMembership: {},
+  folderFilter: {
+    favoritesOnly: false,
+    keyword: '',
+  },
 
     // 新增状态初始值
     icMode: 'ic',
@@ -278,6 +282,12 @@ export const useChatStore = defineStore({
       });
 
       this.subject = subject;
+    },
+    setFolderFavoritesOnly(value: boolean) {
+      this.folderFilter.favoritesOnly = value;
+    },
+    setFolderSearchKeyword(keyword: string) {
+      this.folderFilter.keyword = keyword;
     },
 
     async reconnectAfter(secs: number, beforeConnect?: Function) {

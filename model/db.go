@@ -104,6 +104,7 @@ func DBInit(dsn string) {
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
+	db.AutoMigrate(&ChannelFolderModel{}, &ChannelFolderMemberModel{}, &ChannelFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{})
 	db.AutoMigrate(&DiceMacroModel{})

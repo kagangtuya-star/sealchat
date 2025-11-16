@@ -109,6 +109,13 @@ func ChannelRoleList(id string, page, pageSize int) ([]*ChannelRoleModel, int64,
 	})
 }
 
+// ChannelRoleListByChannelID 获取频道的全部角色列表
+func ChannelRoleListByChannelID(channelID string) ([]*ChannelRoleModel, error) {
+	var roles []*ChannelRoleModel
+	err := db.Where("channel_id = ?", channelID).Find(&roles).Error
+	return roles, err
+}
+
 // ChannelRoleAllList 获取频道角色列表（带分页）
 func ChannelRoleAllList(page, pageSize int) ([]*ChannelRoleModel, int64, error) {
 	return utils.QueryPaginatedList(db, page, pageSize, &ChannelRoleModel{}, func(q *gorm.DB) *gorm.DB {
@@ -144,6 +151,11 @@ func RolePermissionGet(id string) (*RolePermissionModel, error) {
 // RolePermissionDeleteById 删除角色权限
 func RolePermissionDeleteById(id string) error {
 	return db.Unscoped().Delete(&RolePermissionModel{}, "id = ?", id).Error
+}
+
+// RolePermissionDeleteByRole 删除指定角色的全部权限
+func RolePermissionDeleteByRole(roleID string) error {
+	return db.Unscoped().Where("role_id = ?", roleID).Delete(&RolePermissionModel{}).Error
 }
 
 // RolePermissionList 根据RoleID获取PermissionID的集合

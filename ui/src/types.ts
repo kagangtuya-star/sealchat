@@ -120,6 +120,38 @@ export interface SChannel extends Channel {
   botFeatureEnabled?: boolean;
 }
 
+export interface ChannelFolder {
+	id: string
+	name: string
+	parentId?: string
+	sortOrder?: number
+	description?: string
+	createdBy?: string
+	updatedBy?: string
+}
+
+export interface ChannelFolderNode extends ChannelFolder {
+	children?: ChannelFolderNode[]
+}
+
+export interface ChannelFolderMember {
+  id: string
+  folderId: string
+  channelId: string
+  sortOrder: number
+}
+
+export interface ChannelFolderListPayload {
+	folders: ChannelFolder[]
+	members: ChannelFolderMember[]
+	favorites: string[]
+}
+
+export interface ChannelConfigSyncResult {
+  source: string
+  targets: Array<{ channelId: string; scopes: string[]; error?: string }>
+}
+
 export type APIMessageCreateResp = Message
 
 interface APIMessageGet {
