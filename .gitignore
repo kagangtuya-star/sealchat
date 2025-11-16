@@ -33,3 +33,7 @@ data.db
 chat.db
 static/
 /已经实现的需求
+/.cache
+/.gocache
+/.gomodcache
+/docs
