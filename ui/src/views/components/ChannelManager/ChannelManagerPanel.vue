@@ -4,6 +4,7 @@ import { useChannelFolderStore } from '@/stores/channelFolders'
 import { useChatStore } from '@/stores/chat'
 import type { SChannel, ChannelConfigSyncResult } from '@/types'
 import { useDialog, useMessage } from 'naive-ui'
+import { useWindowSize } from '@vueuse/core'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (e: 'update:show', value: boolean): void }>()
@@ -12,6 +13,9 @@ const folderStore = useChannelFolderStore()
 const chat = useChatStore()
 const message = useMessage()
 const dialog = useDialog()
+const { width } = useWindowSize()
+const isMobile = computed(() => width.value < 768)
+const drawerWidth = computed(() => (isMobile.value ? '100vw' : 960))
 
 const visible = computed({
   get: () => props.show,
@@ -230,7 +234,12 @@ const handleSync = async () => {
 </script>
 
 <template>
-  <n-drawer v-model:show="visible" placement="left" :width="960" class="channel-manager-panel">
+  <n-drawer
+    v-model:show="visible"
+    placement="left"
+    :width="drawerWidth"
+    class="channel-manager-panel"
+  >
     <template #header>
       <div class="flex items-center justify-between w-full">
         <span>频道管理</span>
@@ -368,7 +377,8 @@ const handleSync = async () => {
     border: 1px solid var(--sc-border-color, #e5e7eb);
     border-radius: 0.5rem;
     padding: 1rem;
-    background: var(--sc-panel-bg, #fff);
+    background: var(--sc-bg-surface, #fff);
+    color: var(--sc-text-primary, #0f172a);
   }
 
   .section-header {
@@ -378,6 +388,7 @@ const handleSync = async () => {
     margin-bottom: 0.5rem;
     .title {
       font-weight: 600;
+      color: var(--sc-text-primary, #0f172a);
     }
     .actions {
       display: inline-flex;
@@ -388,14 +399,14 @@ const handleSync = async () => {
   .folder-editor {
     margin-top: 0.75rem;
     padding-top: 0.75rem;
-    border-top: 1px solid rgba(226, 232, 240, 0.8);
+    border-top: 1px solid var(--sc-border-mute, rgba(226, 232, 240, 0.8));
     .editor-row {
       display: flex;
       flex-direction: column;
       margin-bottom: 0.5rem;
       span {
         font-size: 0.78rem;
-        color: #94a3b8;
+        color: var(--sc-text-secondary, #94a3b8);
         margin-bottom: 0.2rem;
       }
     }
@@ -422,7 +433,7 @@ const handleSync = async () => {
     align-items: center;
     justify-content: space-between;
     padding: 0.35rem 0;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.5);
+    border-bottom: 1px solid var(--sc-border-mute, rgba(226, 232, 240, 0.5));
     .left {
       display: flex;
       flex-direction: column;
@@ -447,6 +458,17 @@ const handleSync = async () => {
 
   .sync-result {
     margin-top: 1rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .channel-manager-panel {
+    .manager-grid {
+      grid-template-columns: 1fr;
+    }
+    .channel-column {
+      margin-top: 1rem;
+    }
   }
 }
 </style>
