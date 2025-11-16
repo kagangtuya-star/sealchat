@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/protocol"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -43,6 +46,7 @@ type ConnInfo struct {
 	TypingWhisperTo string
 	TypingUpdatedAt int64
 	Focused         bool
+	WorldID         string
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -66,54 +70,79 @@ func websocketWorks(app *fiber.App) {
 	channelUsersMapGlobal = channelUsersMap
 	userId2ConnInfoGlobal = userId2ConnInfo
 
-	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
-		if body != nil {
-			// 有身份信息
-			m, ok := body.(map[string]any)
-			if !ok {
-				return nil, nil
-			}
-			tokenAny, exists := m["token"]
-			if !exists {
-				return nil, nil
-			}
-			token, ok := tokenAny.(string)
-			if !ok {
-				return nil, nil
-			}
-
-			var user *model.UserModel
-			var err error
-
-			if len(token) == 32 {
-				user, err = model.BotVerifyAccessToken(token)
-			} else {
-				user, err = model.UserVerifyAccessToken(token)
-			}
-
-			if err == nil {
-				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
-				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().UnixMilli(), User: user, TypingState: protocol.TypingStateSilent, Focused: true}
-				m.Store(c, curConnInfo)
-
-				curUser = user
-				_ = c.WriteJSON(protocol.GatewayPayloadStructure{
-					Op: protocol.OpReady,
-					Body: map[string]any{
-						"user": curUser,
-					},
-				})
-				return
-			}
+	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo, err error) {
+		payload, _ := body.(map[string]any)
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		tokenAny, exists := payload["token"]
+		if !exists {
+			_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+				Op: protocol.OpReady,
+				Body: map[string]any{
+					"errorMsg": "no auth",
+				},
+			})
+			return nil, nil, nil
+		}
+		token, ok := tokenAny.(string)
+		if !ok {
+			_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+				Op: protocol.OpReady,
+				Body: map[string]any{
+					"errorMsg": "no auth",
+				},
+			})
+			return nil, nil, nil
 		}
 
+		var user *model.UserModel
+		if len(token) == 32 {
+			user, err = model.BotVerifyAccessToken(token)
+		} else {
+			user, err = model.UserVerifyAccessToken(token)
+		}
+		if err != nil || user == nil {
+			_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+				Op: protocol.OpReady,
+				Body: map[string]any{
+					"errorMsg": "no auth",
+				},
+			})
+			return nil, nil, err
+		}
+
+		worldID, worldErr := resolveConnWorldID(payload, user)
+		if worldErr != nil {
+			_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+				Op: protocol.OpReady,
+				Body: map[string]any{
+					"errorMsg": worldErr.Error(),
+				},
+			})
+			return nil, nil, worldErr
+		}
+
+		m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
+		curConnInfo = &ConnInfo{
+			Conn:         c,
+			LastPingTime: time.Now().UnixMilli(),
+			User:         user,
+			TypingState:  protocol.TypingStateSilent,
+			Focused:      true,
+			WorldID:      worldID,
+		}
+		m.Store(c, curConnInfo)
+
+		curUser = user
 		_ = c.WriteJSON(protocol.GatewayPayloadStructure{
 			Op: protocol.OpReady,
 			Body: map[string]any{
-				"errorMsg": "no auth",
+				"user":    curUser,
+				"worldId": worldID,
 			},
 		})
-		return nil, nil
+		return curUser, curConnInfo, nil
 	}
 
 	go func() {
@@ -183,8 +212,9 @@ func websocketWorks(app *fiber.App) {
 				switch gatewayMsg.Op {
 				case protocol.OpIdentify:
 					fmt.Println("新客户端接入")
-					curUser, curConnInfo = clientEnter(c, gatewayMsg.Body)
-					if curUser == nil {
+					var enterErr error
+					curUser, curConnInfo, enterErr = clientEnter(c, gatewayMsg.Body)
+					if curUser == nil || enterErr != nil {
 						_ = c.Close()
 						return
 					}
@@ -461,4 +491,32 @@ func websocketWorks(app *fiber.App) {
 			return true
 		})
 	}))
+}
+
+func resolveConnWorldID(payload map[string]any, user *model.UserModel) (string, error) {
+	var candidate string
+	if raw, ok := payload["world_id"]; ok {
+		if val, ok := raw.(string); ok {
+			candidate = val
+		}
+	} else if raw, ok := payload["worldId"]; ok {
+		if val, ok := raw.(string); ok {
+			candidate = val
+		}
+	}
+	candidate = strings.TrimSpace(candidate)
+	worldID, err := service.ResolveWorldID(candidate)
+	if err != nil {
+		return "", err
+	}
+	if worldID == "" {
+		return "", service.ErrWorldNotFound
+	}
+	if err := service.EnsureWorldMemberActive(worldID, user.ID); err != nil {
+		if errors.Is(err, service.ErrWorldJoinApproval) {
+			return worldID, err
+		}
+		return "", err
+	}
+	return worldID, nil
 }

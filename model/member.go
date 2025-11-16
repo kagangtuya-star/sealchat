@@ -13,7 +13,8 @@ type MemberModel struct {
 	Nickname     string `gorm:"null" json:"nick"`           // 昵称
 	ChannelID    string `gorm:"not null" json:"channel_id"` // 频道ID
 	UserID       string `json:"user_id" gorm:"index,null"`  // 用户ID
-	RecentSentAt int64  `json:"recentSentAt"`               // 最近发送消息的时间
+	WorldID      string `json:"world_id,omitempty" gorm:"index"`
+	RecentSentAt int64  `json:"recentSentAt"` // 最近发送消息的时间
 }
 
 func (u *MemberModel) SaveInfo() {
@@ -45,7 +46,11 @@ func MemberGetByUserIDAndChannelIDBase(userId string, channelId string, defaultN
 	if member.ID == "" {
 		// 未找到记录，尝试创建新的记录
 		if createIfNotExists {
-			x := MemberModel{UserID: userId, ChannelID: channelId, Nickname: defaultName}
+			worldId := ""
+			if ch, chErr := ChannelGet(channelId); chErr == nil && ch != nil {
+				worldId = ch.WorldID
+			}
+			x := MemberModel{UserID: userId, ChannelID: channelId, Nickname: defaultName, WorldID: worldId}
 			err = db.Create(&x).Error
 			return &x, err
 		}
@@ -56,6 +61,25 @@ func MemberGetByUserIDAndChannelIDBase(userId string, channelId string, defaultN
 
 func MemberGetByUserIDAndChannelID(userId string, channelId string, defaultName string) (*MemberModel, error) {
 	return MemberGetByUserIDAndChannelIDBase(userId, channelId, defaultName, true)
+}
+
+// MemberExistsInWorld 判断用户是否已经在某个世界的频道中出现（用于兼容旧数据）
+func MemberExistsInWorld(worldID, userID string) (bool, error) {
+	worldID = strings.TrimSpace(worldID)
+	userID = strings.TrimSpace(userID)
+	if worldID == "" || userID == "" {
+		return false, nil
+	}
+	var count int64
+	err := db.Table("members AS m").
+		Joins("JOIN channels AS c ON c.id = m.channel_id").
+		Where("m.user_id = ? AND c.world_id = ?", userID, worldID).
+		Limit(1).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 type ChannelMemberOption struct {

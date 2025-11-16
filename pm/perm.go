@@ -83,6 +83,8 @@ func sysRolesInit() {
 	roleAdmin := gorbac.NewStdRole("sys-admin")
 	_ = roleAdmin.Assign(PermModAdmin)
 	_ = roleAdmin.Assign(PermFuncAdminServeConfig)
+	_ = roleAdmin.Assign(PermFuncWorldCreate)
+	_ = roleAdmin.Assign(PermFuncWorldManage)
 	_ = roleAdmin.Assign(PermFuncAdminBotTokenView)
 	_ = roleAdmin.Assign(PermFuncAdminBotTokenCreate)
 	_ = roleAdmin.Assign(PermFuncAdminBotTokenEdit)
@@ -95,6 +97,7 @@ func sysRolesInit() {
 
 	roleUser := gorbac.NewStdRole("sys-user")
 	_ = roleUser.Assign(PermFuncChannelCreateNonPublic)
+	_ = roleUser.Assign(PermFuncWorldCreate)
 
 	roleVisitor := gorbac.NewStdRole("sys-visitor")
 

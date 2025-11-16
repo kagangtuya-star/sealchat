@@ -9,6 +9,8 @@ import "github.com/mikespook/gorbac"
 var (
 	PermModAdmin             = gorbac.NewStdPermission("mod_admin")               // 系统 - 查看管理界面 - 查看管理界面
 	PermFuncAdminServeConfig = gorbac.NewStdPermission("func_admin_serve_config") // 系统 - 设置 - 修改serve配置
+	PermFuncWorldCreate      = gorbac.NewStdPermission("func_world_create")       // 系统 - 世界 - 创建世界
+	PermFuncWorldManage      = gorbac.NewStdPermission("func_world_manage")       // 系统 - 世界 - 管理世界
 
 	PermFuncAdminBotTokenView   = gorbac.NewStdPermission("func_admin_bot_token_view")   // 系统 - 机器人 - 令牌查看
 	PermFuncAdminBotTokenCreate = gorbac.NewStdPermission("func_admin_bot_token_create") // 系统 - 机器人 - 令牌创建

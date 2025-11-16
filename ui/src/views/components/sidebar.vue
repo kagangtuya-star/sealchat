@@ -2,10 +2,11 @@
 import router from '@/router';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useWorldStore } from '@/stores/world';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -27,6 +28,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const worldStore = useWorldStore();
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -141,6 +143,40 @@ const speak = () => {
 
 const parentId = ref('');
 
+const goWorldHall = () => router.push('/worlds');
+const goWorldAdd = () => router.push('/worlds/new');
+const goCurrentWorld = () => {
+  if (worldStore.currentWorld?.slug) {
+    router.push(`/worlds/${worldStore.currentWorld.slug}`);
+  } else {
+    goWorldHall();
+  }
+};
+const goWorldManage = () => {
+  if (worldStore.currentWorld?.slug) {
+    router.push(`/worlds/${worldStore.currentWorld.slug}/manage`);
+  }
+};
+
+const worldDropdownOptions = computed(() => worldStore.list.map(world => ({
+  label: world.name,
+  key: world.id,
+})));
+
+const handleWorldSelect = async (key: string | number) => {
+  const target = worldStore.list.find(item => item.id === key);
+  if (!target) {
+    return;
+  }
+  worldStore.setCurrentWorld(target);
+  try {
+    await chat.ensureWorldSession(target.id);
+    await chat.channelList();
+  } catch (error) {
+    console.warn('切换世界失败', error);
+  }
+};
+
 const handleSelect = (key: string, data: any) => {
   switch (key) {
     case 'enter':
@@ -205,6 +241,40 @@ const handleChannelSortEntry = () => {
 
         <!-- 频道列表内容将在这里显示 -->
         <div class="space-y-1 flex flex-col px-2">
+          <div class="rounded-md bg-slate-100/70 dark:bg-slate-800/60 p-3 mb-2">
+            <div class="flex items-center justify-between gap-2">
+              <div>
+                <div class="text-xs text-gray-500">当前世界</div>
+                <div class="font-semibold">{{ worldStore.currentWorld?.name || '默认世界' }}</div>
+              </div>
+              <n-dropdown trigger="click" :options="worldDropdownOptions" @select="handleWorldSelect">
+                <n-button size="tiny" tertiary :disabled="worldDropdownOptions.length === 0">
+                  切换
+                  <n-icon :component="ChevronDown" size="14" class="ml-1" />
+                </n-button>
+              </n-dropdown>
+            </div>
+            <div class="flex flex-wrap gap-2 mt-2">
+              <n-button size="tiny" tertiary @click="goCurrentWorld">进入</n-button>
+              <n-button size="tiny" text @click="goWorldHall">世界大厅</n-button>
+              <n-button
+                v-if="user.checkPerm('func_world_create')"
+                size="tiny"
+                text
+                @click="goWorldAdd"
+              >
+                创建世界
+              </n-button>
+              <n-button
+                v-if="user.checkPerm('func_world_manage')"
+                size="tiny"
+                text
+                @click="goWorldManage"
+              >
+                世界管理
+              </n-button>
+            </div>
+          </div>
           <template v-if="chat.curChannel?.name">
             <!-- <template v-if="false"> -->
             <template v-for="i in chat.channelTree">

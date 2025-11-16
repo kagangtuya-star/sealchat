@@ -1,9 +1,14 @@
 <script setup lang="tsx">
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import Chat from './chat/chat.vue'
 import ChatHeader from './components/header.vue'
 import ChatSidebar from './components/sidebar.vue'
 import { useWindowSize } from '@vueuse/core'
+import { useWorldStore } from '@/stores/world';
+import { useChatStore } from '@/stores/chat';
+
+const worldStore = useWorldStore();
+const chatStore = useChatStore();
 
 const { width } = useWindowSize()
 
@@ -21,6 +26,24 @@ const toggleSidebar = () => {
   }
   isSidebarCollapsed.value = !isSidebarCollapsed.value
 }
+
+onMounted(() => {
+  worldStore.fetchWorlds().catch(() => {});
+});
+
+watch(
+  () => worldStore.currentWorldId,
+  async (newId, oldId) => {
+    if (newId && newId !== oldId) {
+      try {
+        await chatStore.ensureWorldSession(newId);
+      } catch (err) {
+        console.warn('世界切换重连失败', err);
+      }
+    }
+  },
+  { immediate: true },
+);
 
 </script>
 

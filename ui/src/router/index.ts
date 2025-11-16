@@ -1,9 +1,13 @@
-import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
-import UserSigninVue from '@/views/user/sign-in-view.vue'
-import UserSignupVue from '@/views/user/sign-up-view.vue'
-import UserPasswordResetView from '@/views/user/password-reset-view.vue'
-
+import { createRouter, createWebHashHistory } from 'vue-router';
+import HomeView from '@/views/HomeView.vue';
+import UserSigninVue from '@/views/user/sign-in-view.vue';
+import UserSignupVue from '@/views/user/sign-up-view.vue';
+import UserPasswordResetView from '@/views/user/password-reset-view.vue';
+import WorldHall from '@/views/world/WorldHall.vue';
+import WorldDetail from '@/views/world/WorldDetail.vue';
+import WorldCreate from '@/views/world/WorldCreate.vue';
+import WorldManage from '@/views/world/WorldManage.vue';
+import WorldInvite from '@/views/world/WorldInvite.vue';
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -11,32 +15,54 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: HomeView
+      component: HomeView,
     },
     {
       path: '/user/signin',
       name: 'user-signin',
-      component: UserSigninVue
+      component: UserSigninVue,
     },
     {
       path: '/user/signup',
       name: 'user-signup',
-      component: UserSignupVue
+      component: UserSignupVue,
     },
     {
       path: '/user/password-reset',
       name: 'user-password-reset',
-      component: UserPasswordResetView
+      component: UserPasswordResetView,
+    },
+    {
+      path: '/worlds',
+      name: 'world-hall',
+      component: WorldHall,
+    },
+    {
+      path: '/worlds/new',
+      name: 'world-create',
+      component: WorldCreate,
+    },
+    {
+      path: '/worlds/:slug',
+      name: 'world-detail',
+      component: WorldDetail,
+    },
+    {
+      path: '/worlds/:slug/manage',
+      name: 'world-manage',
+      component: WorldManage,
+    },
+    {
+      path: '/invite/:code',
+      name: 'world-invite',
+      component: WorldInvite,
     },
     {
       path: '/about',
       name: 'about',
-      // route level code-splitting
-      // this generates a separate chunk (About.[hash].js) for this route
-      // which is lazy-loaded when the route is visited.
-      component: () => import('../views/AboutView.vue')
-    }
-  ]
-})
+      component: () => import('@/views/AboutView.vue'),
+    },
+  ],
+});
 
-export default router
+export default router;

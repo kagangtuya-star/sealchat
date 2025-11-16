@@ -64,6 +64,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1 := app.Group("/api/v1")
 	v1.Post("/user-signup", UserSignup)
 	v1.Post("/user-signin", UserSignin)
+	v1.Get("/worlds", WorldList)
+	v1.Get("/worlds/:slug", WorldDetailBySlug)
+	v1.Get("/invites/:code", InvitePreview)
 
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := *appConfig
@@ -82,6 +85,16 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
+	v1Auth.Post("/worlds", WorldCreate)
+	v1Auth.Put("/worlds/:worldId", WorldUpdate)
+	v1Auth.Delete("/worlds/:worldId", WorldDelete)
+	v1Auth.Get("/worlds/:worldId/channels", WorldChannelList)
+	v1Auth.Post("/worlds/:worldId/channels", WorldChannelCreate)
+	v1Auth.Post("/worlds/:worldId/invites", WorldInviteCreate)
+	v1Auth.Get("/worlds/:worldId/invites", WorldInviteList)
+	v1Auth.Get("/worlds/:worldId/members", WorldMemberList)
+	v1Auth.Delete("/worlds/:worldId/members/:userId", WorldMemberRemove)
+	v1Auth.Post("/invites/:code/accept", InviteAccept)
 	v1Auth.Post("/user-emoji-add", UserEmojiAdd)
 	v1Auth.Get("/user-emoji-list", UserEmojiList)
 	v1Auth.Post("/user-emoji-delete", UserEmojiDelete)

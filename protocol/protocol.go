@@ -6,6 +6,7 @@ type Channel struct {
 	Name               string      `json:"name"`
 	ParentID           string      `json:"parent_id" gorm:"null"`
 	PermType           string      `json:"permType"`
+	WorldID            string      `json:"worldId,omitempty"`
 	DefaultDiceExpr    string      `json:"defaultDiceExpr,omitempty"`
 	BuiltInDiceEnabled bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled  bool        `json:"botFeatureEnabled"`

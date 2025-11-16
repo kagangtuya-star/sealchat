@@ -20,6 +20,13 @@ type ChatContext struct {
 	UserId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
 }
 
+func (ctx *ChatContext) CurrentWorldID() string {
+	if ctx == nil || ctx.ConnInfo == nil {
+		return ""
+	}
+	return ctx.ConnInfo.WorldID
+}
+
 func (ctx *ChatContext) BroadcastToUserJSON(userId string, data any) {
 	value, _ := ctx.UserId2ConnInfo.Load(userId)
 	if value == nil {

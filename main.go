@@ -73,6 +73,10 @@ func main() {
 
 	pm.Init()
 
+	if err := service.InitWorldContext(); err != nil {
+		log.Fatalf("初始化世界上下文失败: %v", err)
+	}
+
 	storageManager, err := service.InitStorageManager(config.Storage)
 	if err != nil {
 		log.Fatalf("初始化存储系统失败: %v", err)

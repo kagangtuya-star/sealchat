@@ -71,6 +71,12 @@ func UserSignup(c *fiber.Ctx) error {
 			"message": err.Error(),
 		})
 	}
+	worldID := service.DefaultWorldID()
+	if _, joinErr := service.JoinWorld(worldID, user.ID, user.Nickname); joinErr != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"message": "加入默认世界失败",
+		})
+	}
 
 	if count == 0 {
 		// 首个用户，设置为管理员
@@ -80,7 +86,11 @@ func UserSignup(c *fiber.Ctx) error {
 		var channelCount int64
 		model.GetDB().Model(&model.ChannelModel{}).Count(&channelCount)
 		if channelCount == 0 {
-			_ = service.ChannelNew(utils.NewID(), "public", "公共休息室", user.ID, "")
+			if _, chErr := service.ChannelNew(utils.NewID(), "public", service.DefaultWorldChannelName, user.ID, "", worldID); chErr != nil {
+				return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+					"message": "创建默认频道失败",
+				})
+			}
 		}
 	} else {
 		_, _ = service.UserRoleLink([]string{"sys-user"}, []string{user.ID})

@@ -19,7 +19,6 @@ import { useIFormStore } from '@/stores/iform';
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
 const { t } = useI18n()
-
 const props = withDefaults(defineProps<{ sidebarCollapsed?: boolean }>(), {
   sidebarCollapsed: false,
 })
@@ -94,6 +93,7 @@ const options = computed(() => [
     // icon: renderIcon(LogoutIcon)
   }
 ].filter(i => i != null))
+
 
 
 const handleSelect = async (key: string | number) => {

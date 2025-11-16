@@ -1,12 +1,14 @@
 import './assets/main.css'
 
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia } from 'pinia'
 import { i18n, setLocale, setLocaleByNavigatorWithStorage } from './lang'
 
 import App from './App.vue'
 import router from './router'
 import { useDisplayStore } from './stores/display'
+import { useWorldStore } from './stores/world'
+import { useChatStore } from './stores/chat'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -67,5 +69,27 @@ document.head.appendChild(meta)
 
 const displayStore = useDisplayStore(pinia)
 displayStore.applyTheme()
+
+const worldStore = useWorldStore(pinia)
+const chatStore = useChatStore(pinia)
+
+worldStore.fetchWorlds().catch(() => {})
+
+watch(
+  () => worldStore.currentWorldId,
+  async (newId, oldId) => {
+    if (!newId || newId === oldId) {
+      return
+    }
+    if (!worldStore.canAccessWorld(worldStore.currentWorld)) {
+      return
+    }
+    try {
+      await chatStore.ensureWorldSession(newId)
+    } catch (error) {
+      console.warn('世界上下文同步失败', error)
+    }
+  },
+)
 
 app.mount('#app')

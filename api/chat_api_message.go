@@ -1617,7 +1617,11 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 }
 
 func apiUnreadCount(ctx *ChatContext, data *struct{}) (any, error) {
-	chIds, _ := service.ChannelIdList(ctx.User.ID)
+	worldID := ctx.CurrentWorldID()
+	if worldID == "" {
+		worldID = service.DefaultWorldID()
+	}
+	chIds, _ := service.ChannelIdList(ctx.User.ID, worldID)
 	lst, err := model.ChannelUnreadFetch(chIds, ctx.User.ID)
 	if err != nil {
 		return nil, err

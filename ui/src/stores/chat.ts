@@ -9,6 +9,7 @@ import { groupBy } from 'lodash-es';
 import { Emitter } from '@/utils/event';
 import { useUserStore } from './user';
 import { api, urlBase } from './_config';
+import { useWorldStore } from './world';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useMessage } from 'naive-ui';
 import { memoizeWithTimeout } from '@/utils/tools';
@@ -26,6 +27,8 @@ interface ChatState {
   channelCollapseState: Record<string, boolean>,
   connectState: 'connecting' | 'connected' | 'disconnected' | 'reconnecting',
   iReconnectAfterTime: number,
+  connectedWorldId: string,
+  connectingWorldId: string,
   curReplyTo: SatoriMessage | null; // Message 会报错
   curChannelUsers: User[],
   sidebarTab: 'channels' | 'privateChats',
@@ -120,6 +123,8 @@ export const useChatStore = defineStore({
     channelCollapseState: {},
     connectState: 'connecting',
     iReconnectAfterTime: 0,
+    connectedWorldId: '',
+    connectingWorldId: '',
     curReplyTo: null,
     curChannelUsers: [],
 
@@ -201,8 +206,21 @@ export const useChatStore = defineStore({
   },
 
   actions: {
-    async connect() {
+    async connect(targetWorldId?: string) {
       this.stopPingLoop();
+      if (this.subject) {
+        try {
+          this.subject.complete?.();
+        } catch (e) {
+          console.warn('关闭旧连接失败', e);
+        }
+        try {
+          this.subject.unsubscribe();
+        } catch (e) {
+          console.warn('取消订阅失败', e);
+        }
+        this.subject = null;
+      }
       if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
         focusListenersBound = true;
         const updateFocusState = () => {
@@ -223,6 +241,9 @@ export const useChatStore = defineStore({
       // 'ws://localhost:3212/ws/seal'
       // const subject = webSocket(`ws:${urlBase}/ws/seal`);
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const worldStore = useWorldStore();
+      const worldId = this.resolveWorldId(targetWorldId);
+      this.connectingWorldId = worldId;
       const subject = webSocket(`${protocol}${urlBase}/ws/seal`);
 
       let isReady = false;
@@ -233,6 +254,7 @@ export const useChatStore = defineStore({
       subject.next({
         op: 3, body: {
           token: user.token,
+          world_id: worldId,
         }
       });
 
@@ -241,6 +263,14 @@ export const useChatStore = defineStore({
           // Opcode.READY
           if (msg.op === 4) {
             console.log('svr ready', msg);
+            const worldFromServer = typeof msg?.body?.worldId === 'string' ? msg.body.worldId : '';
+            const resolvedWorld = worldFromServer || worldId;
+            if (resolvedWorld) {
+              this.connectedWorldId = resolvedWorld;
+              const slug = worldStore.currentWorld?.slug || worldStore.currentWorldSlug || '';
+              worldStore.setCurrentWorld({ id: resolvedWorld, slug });
+            }
+            this.connectingWorldId = '';
             isReady = true
             this.connectReady();
           } else if (msg.op === 0) {
@@ -260,7 +290,10 @@ export const useChatStore = defineStore({
           console.log('ws error', err);
           this.subject = null;
           this.connectState = 'disconnected';
+          this.connectedWorldId = '';
+          this.connectingWorldId = '';
           this.stopPingLoop();
+          const reconnectTarget = worldId;
           this.reconnectAfter(5, () => {
             try {
               err.target?.close();
@@ -269,10 +302,14 @@ export const useChatStore = defineStore({
             } catch (e) {
               console.log('unsubscribe error', e)
             }
-          })
+          }, reconnectTarget)
         }, // Called if at any point WebSocket API signals some kind of error.
         complete: () => {
           console.log('complete');
+          this.subject = null;
+          this.connectState = 'disconnected';
+          this.connectedWorldId = '';
+          this.connectingWorldId = '';
           this.stopPingLoop();
         } // Called when connection is closed (for whatever reason).
       });
@@ -280,7 +317,7 @@ export const useChatStore = defineStore({
       this.subject = subject;
     },
 
-    async reconnectAfter(secs: number, beforeConnect?: Function) {
+    async reconnectAfter(secs: number, beforeConnect?: Function, targetWorldId?: string) {
       setTimeout(async () => {
         this.connectState = 'reconnecting';
         // alert(`连接已断开，${secs} 秒后自动重连`);
@@ -289,8 +326,106 @@ export const useChatStore = defineStore({
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
         if (beforeConnect) beforeConnect();
-        this.connect();
+        this.connect(targetWorldId);
       }, 500);
+    },
+
+    resetChannelState() {
+      this.channelTree = [];
+      this.channelTreePrivate = [];
+      this.curChannel = null;
+      this.curMember = null;
+      this.curChannelUsers = [];
+      this.curReplyTo = null;
+      this.whisperTarget = null;
+      this.unreadCountMap = {};
+      this.channelIdentities = {};
+      this.activeChannelIdentity = {};
+      this.channelIdentityFolders = {};
+      this.channelIdentityFavorites = {};
+      this.channelIdentityMembership = {};
+      this.channelRoleCache = {};
+      this.channelMemberRoleMap = {};
+      this.channelAdminMap = {};
+      this.channelMemberPermMap = {};
+      this.presenceMap = {};
+      this.channelCollapseState = {};
+    },
+
+    async disconnect() {
+      this.stopPingLoop();
+      if (this.subject) {
+        try {
+          this.subject.complete?.();
+        } catch (e) {
+          console.warn('disconnect complete error', e);
+        }
+        try {
+          this.subject.unsubscribe();
+        } catch (e) {
+          console.warn('disconnect unsubscribe error', e);
+        }
+        this.subject = null;
+      }
+      this.connectState = 'disconnected';
+      this.connectedWorldId = '';
+      this.connectingWorldId = '';
+      this.resetChannelState();
+    },
+
+    resolveWorldId(preferredId?: string) {
+      const candidate = (preferredId || '').trim();
+      if (candidate) {
+        return candidate;
+      }
+      const worldStore = useWorldStore();
+      if (worldStore.currentWorldId) {
+        return worldStore.currentWorldId;
+      }
+      if (this.connectedWorldId) {
+        return this.connectedWorldId;
+      }
+      if (worldStore.currentWorld?.id) {
+        return worldStore.currentWorld.id;
+      }
+      if (worldStore.list?.length) {
+        const first = worldStore.list[0]?.id?.trim();
+        if (first) {
+          return first;
+        }
+      }
+      return '';
+    },
+
+    async ensureWorldSession(targetWorldId?: string) {
+      const user = useUserStore();
+      if (!user.token) {
+        return;
+      }
+      const worldStore = useWorldStore();
+      const desiredId = targetWorldId ?? worldStore.currentWorldId ?? '';
+      if (!desiredId) {
+        return;
+      }
+      if (!this.subject) {
+        await this.connect(desiredId);
+        return;
+      }
+      if (this.connectState === 'connecting' && this.connectingWorldId === desiredId) {
+        return;
+      }
+      if (this.connectState === 'connected' && this.connectedWorldId === desiredId) {
+        return;
+      }
+      await this.switchToWorld(desiredId);
+    },
+
+    async switchToWorld(worldId: string) {
+      if (!worldId) {
+        return;
+      }
+      await this.disconnect();
+      await this.connect(worldId);
     },
 
     async connectReady() {
@@ -356,12 +491,16 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async channelSwitchTo(id: string) {
+    async channelSwitchTo(id: string, retried = false) {
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
 
       if (!nextChannel) {
         nextChannel = this.channelTreePrivate.find(c => c.id === id);
+      }
+      if (!nextChannel && !retried) {
+        await this.channelList();
+        return this.channelSwitchTo(id, true);
       }
       if (!nextChannel) {
         alert('频道不存在');
@@ -372,7 +511,12 @@ export const useChatStore = defineStore({
 
       let oldChannel = this.curChannel;
       this.curChannel = nextChannel;
-      const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+      const worldStore = useWorldStore();
+      if (nextChannel.worldId && nextChannel.worldId !== worldStore.currentWorldId) {
+        worldStore.setCurrentWorld({ id: nextChannel.worldId });
+      }
+      const worldIdForChannel = this.resolveWorldId(nextChannel.worldId);
+      const resp = await this.sendAPI('channel.enter', { 'channel_id': id, world_id: worldIdForChannel });
       // console.log('switch', resp, this.curChannel);
 
       if (!resp.data?.member) {
@@ -899,7 +1043,11 @@ export const useChatStore = defineStore({
     },
 
     async channelList() {
-      const resp = await this.sendAPI('channel.list', {}) as APIChannelListResp;
+      const worldId = this.resolveWorldId();
+      if (!worldId) {
+        return;
+      }
+      const resp = await this.sendAPI('channel.list', { world_id: worldId }) as APIChannelListResp;
       const d = resp.data;
       const chns = d.data ?? [];
 

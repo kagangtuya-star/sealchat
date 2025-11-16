@@ -19,6 +19,13 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 		return nil, nil
 	}
 	permType := data.PermType
+	worldID := ctx.CurrentWorldID()
+	if worldID == "" {
+		worldID = strings.TrimSpace(data.WorldID)
+	}
+	if worldID == "" {
+		worldID = service.DefaultWorldID()
+	}
 
 	if permType == "public" {
 		if !pm.CanWithSystemRole(ctx.User.ID, pm.PermFuncChannelCreatePublic) {
@@ -30,12 +37,15 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 		}
 	}
 
-	m := service.ChannelNew(utils.NewID(), permType, data.Name, ctx.User.ID, data.ParentID)
+	m, err := service.ChannelNew(utils.NewID(), permType, data.Name, ctx.User.ID, data.ParentID, worldID)
+	if err != nil {
+		return nil, err
+	}
 
 	return &struct {
 		Channel *protocol.Channel `json:"channel"`
 	}{
-		Channel: &protocol.Channel{ID: m.ID, Name: m.Name},
+		Channel: &protocol.Channel{ID: m.ID, Name: m.Name, WorldID: worldID},
 	}, nil
 }
 
@@ -70,9 +80,17 @@ func apiChannelPrivateCreate(ctx *ChatContext, data *struct {
 }
 
 func apiChannelList(ctx *ChatContext, data *struct {
-	UserId string `json:"user_id"`
+	UserId  string `json:"user_id"`
+	WorldID string `json:"world_id"`
 }) (any, error) {
-	items, err := service.ChannelList(ctx.User.ID)
+	worldID := ctx.CurrentWorldID()
+	if worldID == "" {
+		worldID = strings.TrimSpace(data.WorldID)
+		if worldID == "" {
+			worldID = service.DefaultWorldID()
+		}
+	}
+	items, err := service.ChannelList(ctx.User.ID, worldID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +138,26 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	ChannelId string `json:"channel_id"`
 }) (any, error) {
 	channelId := data.ChannelId
+
+	ch, err := model.ChannelGet(channelId)
+	if err != nil {
+		return nil, err
+	}
+	if ch == nil || ch.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	if !ch.IsPrivate && ch.WorldID != "" {
+		worldID := ctx.CurrentWorldID()
+		if worldID == "" {
+			worldID = service.DefaultWorldID()
+		}
+		if worldID != "" && worldID != ch.WorldID {
+			return nil, fmt.Errorf("频道不属于当前世界")
+		}
+		if err := service.EnsureWorldMemberActive(ch.WorldID, ctx.User.ID); err != nil {
+			return nil, err
+		}
+	}
 
 	// 权限检查
 	if len(channelId) < 30 { // 注意，这不是一个好的区分方式

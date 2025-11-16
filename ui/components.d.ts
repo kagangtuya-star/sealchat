@@ -87,5 +87,8 @@ declare module 'vue' {
     UploadPanel: typeof import('./src/components/audio/UploadPanel.vue')['default']
     UserLabel: typeof import('./src/components/UserLabel.vue')['default']
     UserLabelV: typeof import('./src/components/UserLabelV.vue')['default']
+    WorldInvitesPanel: typeof import('./src/components/world/WorldInvitesPanel.vue')['default']
+    WorldMembersPanel: typeof import('./src/components/world/WorldMembersPanel.vue')['default']
+    WorldRolesPanel: typeof import('./src/components/world/WorldRolesPanel.vue')['default']
   }
 }
