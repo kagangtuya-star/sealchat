@@ -258,9 +258,15 @@ const otherEditingPreview = computed(() => (
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const canEdit = computed(() => props.item?.user?.id === user.info.id);
 
+const inlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
+
 const displayContent = computed(() => {
   if (isEditing.value && chat.editing) {
-    return chat.editing.draft;
+    const draft = chat.editing.draft || '';
+    if (isTipTapJson(draft)) {
+      return draft;
+    }
+    return draft.replace(inlineImageTokenPattern, '[图片]');
   }
   return props.item?.content ?? props.content ?? '';
 });
