@@ -49,6 +49,7 @@ func (m *StringPKBaseModel) BeforeCreate(tx *gorm.DB) error {
 
 func DBInit(dsn string) {
 	resetSQLiteFTSState()
+	resetPostgresFTSState()
 	var err error
 	var dialector gorm.Dialector
 	const sqliteBusyTimeoutMS = 5000 // 处理偶发高并发时的等待时长，避免频繁 busy 错误
@@ -75,6 +76,8 @@ func DBInit(dsn string) {
 		// WAL 模式 + busy_timeout，提升并发场景下的可用性
 		db.Exec("PRAGMA journal_mode=WAL")
 		db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", sqliteBusyTimeoutMS))
+	case *postgres.Dialector:
+		dbDriver = "postgres"
 	}
 
 	if err != nil {
@@ -139,6 +142,13 @@ func DBInit(dsn string) {
 			}
 		}()
 	}
+	if IsPostgres() {
+		go func() {
+			if err := ensurePostgresFTSManager(db); err != nil {
+				log.Printf("初始化 Postgres FTS 失败: %v", err)
+			}
+		}()
+	}
 }
 
 func GetDB() *gorm.DB {
@@ -151,6 +161,10 @@ func DBDriver() string {
 
 func IsSQLite() bool {
 	return strings.EqualFold(dbDriver, "sqlite")
+}
+
+func IsPostgres() bool {
+	return strings.EqualFold(dbDriver, "postgres")
 }
 
 func SQLiteFTSReady() bool {

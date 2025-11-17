@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/samber/lo"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/service"
@@ -190,16 +191,17 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 
 	var tokens []string
 	var usedFTS bool
+	var backendName string
 
-	query, tokens, usedFTS := buildKeywordQuery(buildBaseQuery, keyword, matchMode)
+	query, tokens, usedFTS, backendName := buildKeywordQuery(buildBaseQuery, keyword, matchMode)
 
 	countQuery := query.Session(&gorm.Session{})
 	var total int64
 	if err := countQuery.Count(&total).Error; err != nil {
 		if usedFTS {
-			model.ReportSQLiteFTSFailure(err)
-			log.Printf("SQLite FTS 统计失败，降级重试: %v", err)
-			query, tokens, usedFTS = buildKeywordQuery(buildBaseQuery, keyword, matchMode, forceFallbackOption(true))
+			reportFTSError(backendName, err)
+			log.Printf("消息搜索(%s)统计失败，降级重试: %v", backendName, err)
+			query, tokens, usedFTS, backendName = buildKeywordQuery(buildBaseQuery, keyword, matchMode, forceFallbackOption(true))
 			countQuery = query.Session(&gorm.Session{})
 			if retryErr := countQuery.Count(&total).Error; retryErr != nil {
 				log.Printf("消息搜索降级后仍失败: %v", retryErr)
@@ -240,7 +242,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		Find(&messages).Error
 	if err != nil {
 		if usedFTS {
-			model.ReportSQLiteFTSFailure(err)
+			reportFTSError(backendName, err)
 		}
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"message": "查询失败",
@@ -274,19 +276,15 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 			"sort":            sortMode,
 		},
 		Metadata: map[string]any{
-			"search_mode": func() string {
-				if usedFTS {
-					return "sqlite_fts"
-				}
-				return "fallback_like"
-			}(),
-			"fts_ready": model.SQLiteFTSReady(),
-			"fts_last_error": func() string {
-				if usedFTS {
-					return ""
-				}
-				return model.LastFTSError()
-			}(),
+			"search_backend": backendName,
+			"sqlite": map[string]any{
+				"ready":      model.SQLiteFTSReady(),
+				"last_error": model.LastFTSError(),
+			},
+			"postgres": map[string]any{
+				"ready":      model.PostgresFTSReady(),
+				"last_error": model.LastPostgresFTSError(),
+			},
 		},
 	}
 
@@ -420,24 +418,45 @@ type keywordOptions struct {
 	forceFallback bool
 }
 
+const (
+	backendSQLiteFTS   = "sqlite_fts"
+	backendPostgresFTS = "postgres_fts"
+	backendFallback    = "fallback_like"
+)
+
 func forceFallbackOption(force bool) keywordOptions {
 	return keywordOptions{forceFallback: force}
 }
 
-func buildKeywordQuery(base func() *gorm.DB, keyword, matchMode string, opts ...keywordOptions) (*gorm.DB, []string, bool) {
+func buildKeywordQuery(base func() *gorm.DB, keyword, matchMode string, opts ...keywordOptions) (*gorm.DB, []string, bool, string) {
 	forcedFallback := false
 	if len(opts) > 0 {
 		forcedFallback = opts[0].forceFallback
 	}
-	if !forcedFallback && model.IsSQLite() && model.SQLiteFTSReady() {
-		if q, tokens, err := trySQLiteFTSFilter(base(), keyword, matchMode); err == nil {
-			return q, tokens, true
-		} else {
-			log.Printf("SQLite FTS 构建查询失败，降级: %v", err)
+	if !forcedFallback {
+		if model.IsSQLite() && model.SQLiteFTSReady() {
+			if q, tokens, err := trySQLiteFTSFilter(base(), keyword, matchMode); err == nil {
+				return q, tokens, true, backendSQLiteFTS
+			} else {
+				model.ReportSQLiteFTSFailure(err)
+				log.Printf("SQLite FTS 构建查询失败，降级: %v", err)
+			}
+		}
+		if model.IsPostgres() && model.PostgresFTSReady() {
+			if q, tokens, err := tryPostgresFTSFilter(base(), keyword, matchMode); err == nil {
+				return q, tokens, true, backendPostgresFTS
+			} else {
+				model.ReportPostgresFTSFailure(err)
+				log.Printf("Postgres FTS 构建查询失败，降级: %v", err)
+			}
 		}
 	}
 	q, tokens := applyDefaultKeywordFilter(base(), keyword, matchMode)
-	return q, tokens, false
+	fallback := backendFallback
+	if drv := strings.TrimSpace(model.DBDriver()); drv != "" {
+		fallback = fmt.Sprintf("%s_%s", backendFallback, drv)
+	}
+	return q, tokens, false, fallback
 }
 
 func tokenizeKeyword(keyword string) []string {
@@ -514,6 +533,86 @@ func buildFuzzyPattern(token string) string {
 		builder.WriteRune('%')
 	}
 	return builder.String()
+}
+
+func reportFTSError(backend string, err error) {
+	if err == nil {
+		return
+	}
+	switch backend {
+	case backendSQLiteFTS:
+		model.ReportSQLiteFTSFailure(err)
+	case backendPostgresFTS:
+		model.ReportPostgresFTSFailure(err)
+	}
+}
+
+func tryPostgresFTSFilter(q *gorm.DB, keyword, mode string) (*gorm.DB, []string, error) {
+	tokens := tokenizeKeyword(keyword)
+	tsQuery := buildPostgresTSQuery(tokens, mode)
+	if tsQuery.SQL == "" {
+		return q, tokens, nil
+	}
+	whereExpr := clause.Expr{
+		SQL:  "content_tsv @@ " + tsQuery.SQL,
+		Vars: tsQuery.Vars,
+	}
+	orderExpr := clause.Expr{
+		SQL:  "ts_rank_cd(content_tsv, " + tsQuery.SQL + ") DESC",
+		Vars: tsQuery.Vars,
+	}
+	q = q.Where(whereExpr)
+	q = q.Order(orderExpr)
+	return q, tokens, nil
+}
+
+func buildPostgresTSQuery(tokens []string, mode string) clause.Expr {
+	clean := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		token = strings.TrimSpace(token)
+		if token != "" {
+			clean = append(clean, token)
+		}
+	}
+	if len(clean) == 0 {
+		return clause.Expr{}
+	}
+	config := model.PostgresTextSearchConfig()
+	if mode == "exact" && len(clean) == 1 {
+		return clause.Expr{
+			SQL:  fmt.Sprintf("plainto_tsquery('%s', ?)", config),
+			Vars: []any{clean[0]},
+		}
+	}
+	var parts []string
+	for _, token := range clean {
+		escaped := escapePostgresToken(token)
+		if escaped == "" {
+			continue
+		}
+		parts = append(parts, escaped+":*")
+	}
+	if len(parts) == 0 {
+		return clause.Expr{}
+	}
+	return clause.Expr{
+		SQL:  fmt.Sprintf("to_tsquery('%s', ?)", config),
+		Vars: []any{strings.Join(parts, " & ")},
+	}
+}
+
+func escapePostgresToken(token string) string {
+	replacer := strings.NewReplacer(
+		"'", " ",
+		":", " ",
+		"&", " ",
+		"|", " ",
+		"!", " ",
+		"(", " ",
+		")", " ",
+		"*", " ",
+	)
+	return strings.TrimSpace(replacer.Replace(token))
 }
 
 func buildMessageSearchItem(msg *model.MessageModel) messageSearchItem {
