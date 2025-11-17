@@ -457,6 +457,50 @@ const setCursorPosition = (position: number) => {
   setSelectionRange(position, position);
 };
 
+const insertPlainTextAtCursor = (text: string) => {
+  if (!editorRef.value) return;
+  const normalized = text.replace(/\r\n?/g, '\n');
+  if (!normalized) {
+    return;
+  }
+  if (!isFocused.value) {
+    editorRef.value.focus();
+  }
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+
+  const fragment = document.createDocumentFragment();
+  const lines = normalized.split('\n');
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      fragment.appendChild(document.createElement('br'));
+    }
+    if (line.length) {
+      fragment.appendChild(document.createTextNode(line));
+    }
+  });
+
+  const lastNode = fragment.lastChild;
+  range.insertNode(fragment);
+
+  if (lastNode) {
+    const cursorRange = document.createRange();
+    if (lastNode.nodeType === Node.TEXT_NODE) {
+      const textNode = lastNode as Text;
+      cursorRange.setStart(textNode, textNode.textContent?.length ?? 0);
+    } else {
+      cursorRange.setStartAfter(lastNode);
+    }
+    cursorRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(cursorRange);
+  }
+};
+
 // 处理输入事件
 const handleInput = () => {
   if (!editorRef.value) return;
@@ -551,16 +595,19 @@ const endsWithLineBreak = (chunks: string[]) => {
 
 // 处理粘贴事件
 const handlePaste = (event: ClipboardEvent) => {
-  const items = event.clipboardData?.items;
-  if (!items) return;
+  const clipboard = event.clipboardData;
+  if (!clipboard) return;
 
   const files: File[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      const file = item.getAsFile();
-      if (file) {
-        files.push(file);
+  const items = clipboard.items;
+  if (items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          files.push(file);
+        }
       }
     }
   }
@@ -569,6 +616,14 @@ const handlePaste = (event: ClipboardEvent) => {
     event.preventDefault();
     const position = getCursorPosition();
     emit('paste-image', { files, selectionStart: position, selectionEnd: position });
+    return;
+  }
+
+  const plainText = clipboard.getData('text/plain') || clipboard.getData('text') || '';
+  if (plainText) {
+    event.preventDefault();
+    insertPlainTextAtCursor(plainText);
+    handleInput();
   }
 };
 
