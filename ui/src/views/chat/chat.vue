@@ -2948,6 +2948,7 @@ interface TypingPreviewItem {
   mode: 'typing' | 'editing';
   messageId?: string;
   tone: 'ic' | 'ooc';
+  orderKey: number;
 }
 
 const resolveTypingTone = (typing?: { icMode?: string; ic_mode?: string; tone?: string }): 'ic' | 'ooc' => {
@@ -2999,7 +3000,17 @@ if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
 }
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
-const typingPreviewItems = computed(() => typingPreviewList.value.filter((item) => item.mode === 'typing'));
+let typingPreviewOrderSeq = 0;
+const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
+  const existing = typingPreviewList.value.find((item) => item.userId === userId && item.mode === mode);
+  if (existing) {
+    return existing.orderKey;
+  }
+  return typingPreviewOrderSeq++;
+};
+const typingPreviewItems = computed(() =>
+  typingPreviewList.value.filter((item) => item.mode === 'typing').sort((a, b) => a.orderKey - b.orderKey),
+);
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
   'typing-preview-item',
   'message-row',
@@ -3026,8 +3037,13 @@ let lastTypingWhisperTargetId: string | null = null;
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
   const shouldStick = visibleRows.value.length === rows.value.length && isNearBottom();
-  typingPreviewList.value = typingPreviewList.value.filter((i) => !(i.userId === item.userId && i.mode === item.mode));
-  typingPreviewList.value.push(item);
+  const orderKey = getTypingOrderKey(item.userId, item.mode);
+  const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
+  if (existingIndex >= 0) {
+    typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
+  } else {
+    typingPreviewList.value.push({ ...item, orderKey });
+  }
   if (shouldStick) {
     toBottom();
   }
@@ -3042,6 +3058,7 @@ const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typi
 
 const resetTypingPreview = () => {
   typingPreviewList.value = [];
+  typingPreviewOrderSeq = 0;
 };
 
 const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.id || null;
