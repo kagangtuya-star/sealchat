@@ -1,5 +1,6 @@
 <template>
   <n-upload
+    v-model:file-list="fileList"
     :show-file-list="false"
     multiple
     :max="12"
@@ -16,14 +17,35 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick, ref } from 'vue';
 import type { UploadFileInfo } from 'naive-ui';
 import { NUpload, NUploadDragger } from 'naive-ui';
 
-const props = defineProps<{ disabled?: boolean }>();
+defineProps<{ disabled?: boolean }>();
 const emit = defineEmits<{ (e: 'select', files: UploadFileInfo[]): void }>();
 
+const fileList = ref<UploadFileInfo[]>([]);
+const processedFileIds = new Set<string>();
+
 function handleChange(options: { fileList: UploadFileInfo[] }) {
-  emit('select', options.fileList);
+  const latestFiles = options.fileList.filter((item) => {
+    if (!item.id) return false;
+    return !processedFileIds.has(item.id);
+  });
+  if (!latestFiles.length) {
+    return;
+  }
+  latestFiles.forEach((item) => {
+    if (item.id) {
+      processedFileIds.add(item.id);
+    }
+  });
+  emit('select', latestFiles);
+  // 上传处理完成后清空上传列表，避免后续事件重复触发
+  nextTick(() => {
+    fileList.value = [];
+    processedFileIds.clear();
+  });
 }
 </script>
 

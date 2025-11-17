@@ -200,8 +200,23 @@ func GalleryItemsUpload(c *fiber.Ctx) error {
 		return att.ID, att
 	})
 
+	uniqueAttachmentIDs := lo.Uniq(attachmentIDs)
+	existingAttachments := map[string]struct{}{}
+	if len(uniqueAttachmentIDs) > 0 {
+		var existingItems []*model.GalleryItem
+		if err := model.GetDB().
+			Where("collection_id = ? AND attachment_id IN ?", col.ID, uniqueAttachmentIDs).
+			Find(&existingItems).Error; err != nil {
+			return wrapError(c, err, "校验重复资源失败")
+		}
+		for _, item := range existingItems {
+			existingAttachments[item.AttachmentID] = struct{}{}
+		}
+	}
+
 	var totalSize int64
 	items := make([]*model.GalleryItem, 0, len(req.Items))
+	requestSeen := map[string]struct{}{}
 	for _, payload := range req.Items {
 		att, ok := attMap[payload.AttachmentID]
 		if !ok {
@@ -210,6 +225,14 @@ func GalleryItemsUpload(c *fiber.Ctx) error {
 		if att.UserID != user.ID {
 			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "无法使用他人的附件")
 		}
+		if _, dup := requestSeen[att.ID]; dup {
+			continue
+		}
+		if _, exists := existingAttachments[att.ID]; exists {
+			continue
+		}
+		requestSeen[att.ID] = struct{}{}
+
 		remark := strings.TrimSpace(payload.Remark)
 		if !service.GalleryValidateRemark(remark) {
 			remark = service.NormalizeRemark(remark, att.Filename)
@@ -228,6 +251,10 @@ func GalleryItemsUpload(c *fiber.Ctx) error {
 			Size:         att.Size,
 		})
 		totalSize += att.Size
+	}
+
+	if len(items) == 0 {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "所选资源已存在，无需重复上传")
 	}
 
 	limitBytes := int64(appConfig.GalleryQuotaMB) * 1024 * 1024
