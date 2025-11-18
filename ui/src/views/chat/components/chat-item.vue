@@ -1025,7 +1025,8 @@ watch(() => props.item?.updatedAt, () => {
 .chat-item--ooc .right .content {
   background: var(--chat-ooc-bg, rgba(156, 163, 175, 0.1));
   border: none;
-  color: var(--chat-text-secondary, #6b7280);
+  color: var(--chat-ooc-text, var(--chat-text-secondary, #6b7280));
+  font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
 }
 
 .chat-item--archived {
@@ -1048,7 +1049,8 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .chat--layout-compact .chat-item--ooc .right .content {
-  color: var(--chat-text-secondary);
+  color: var(--chat-ooc-text, var(--chat-text-secondary, #6b7280));
+  font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
 }
 
 .chat--layout-compact .chat-item > .right > .content.whisper-content {
