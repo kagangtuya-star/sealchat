@@ -192,7 +192,8 @@ export const useChannelSearchStore = defineStore('channelSearch', {
         const payload = resp?.data ?? {}
         const items: ChannelSearchResult[] = Array.isArray(payload.items)
           ? payload.items.map((item: any) => ({
-              id: item.id || item.message_id || '',
+              // 统一 key，避免搜索结果缺少 id 时后续跳转、合并出现重复
+              id: String(item.id || item.message_id || item.messageId || item._id || ''),
               contentSnippet: item.snippet || item.content_snippet || item.content || '',
               senderName: item.sender_name || item.user?.nick || item.user?.name || '未知成员',
               senderAvatar: item.user?.avatar,

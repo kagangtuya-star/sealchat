@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import dayjs from 'dayjs'
-import { useDraggable } from '@vueuse/core'
+import { useDraggable, useWindowSize } from '@vueuse/core'
 import { SearchOutline, CloseOutline, ChevronDownOutline, ChevronUpOutline } from '@vicons/ionicons5'
 import { useChannelSearchStore } from '@/stores/channelSearch'
 import { useChatStore } from '@/stores/chat'
@@ -72,24 +72,52 @@ const selectedSpeakerCount = computed(() => filters.value.speakerIds.length)
 
 channelSearch.bindChannel(chat.curChannel?.id || null)
 
+const isMobileUa = typeof navigator !== 'undefined'
+  ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  : false
+
+const { width: viewportWidth, height: viewportHeight } = useWindowSize()
+
 const { x, y } = useDraggable(panelRef, {
   handle: dragHandleRef,
+  disabled: isMobileUa,
   initialValue: channelSearch.panelPosition,
 })
 
-const panelStyle = computed(() => ({
-  left: `${x.value}px`,
-  top: `${y.value}px`,
-  width: `${PANEL_WIDTH}px`,
-  zIndex: PANEL_Z_INDEX,
-}))
+const desktopPanelWidth = computed(() => {
+  const width = viewportWidth.value || PANEL_WIDTH
+  return Math.max(320, Math.min(PANEL_WIDTH, width - 32))
+})
+
+const panelStyle = computed(() => {
+  if (isMobileUa) {
+    const mobileWidth = Math.max(260, Math.min((viewportWidth.value || PANEL_WIDTH) - 24, 420))
+    return {
+      left: '50%',
+      top: '10vh',
+      transform: 'translateX(-50%)',
+      width: `${mobileWidth}px`,
+      zIndex: PANEL_Z_INDEX,
+      maxHeight: '80vh',
+    }
+  }
+  return {
+    left: `${x.value}px`,
+    top: `${y.value}px`,
+    width: `${desktopPanelWidth.value}px`,
+    zIndex: PANEL_Z_INDEX,
+  }
+})
 
 const clampPosition = (nx: number, ny: number) => {
   if (typeof window === 'undefined') {
     return { x: nx, y: ny }
   }
-  const maxX = Math.max(16, window.innerWidth - PANEL_WIDTH - 16)
-  const maxY = Math.max(100, window.innerHeight - 160)
+  const width = desktopPanelWidth.value
+  const viewportW = viewportWidth.value || width
+  const viewportH = viewportHeight.value || window.innerHeight
+  const maxX = Math.max(16, viewportW - width - 16)
+  const maxY = Math.max(80, viewportH - 160)
   return {
     x: Math.min(Math.max(16, nx), maxX),
     y: Math.min(Math.max(80, ny), maxY),
@@ -331,7 +359,13 @@ const shortContent = (text: string) => {
 <template>
   <Teleport to="body">
     <transition name="fade">
-      <div v-if="panelVisible" ref="panelRef" class="chat-search-panel" :style="panelStyle">
+      <div
+        v-if="panelVisible"
+        ref="panelRef"
+        class="chat-search-panel"
+        :class="{ 'chat-search-panel--mobile': isMobileUa }"
+        :style="panelStyle"
+      >
         <div ref="dragHandleRef" class="chat-search-panel__header">
           <div>
             <div class="chat-search-panel__title">频道搜索</div>
@@ -575,12 +609,32 @@ const shortContent = (text: string) => {
   overflow: hidden;
 }
 
+.chat-search-panel--mobile {
+  position: fixed;
+  top: 10vh;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(92vw, 420px);
+  padding: 0.85rem;
+  max-height: 80vh;
+  z-index: 2100;
+}
+
+.chat-search-panel--mobile .chat-search-panel__body {
+  overflow-y: auto;
+}
+
 .chat-search-panel__header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   cursor: grab;
   gap: 0.75rem;
+}
+
+.chat-search-panel--mobile .chat-search-panel__header {
+  cursor: default;
 }
 
 .chat-search-panel__title {
@@ -627,6 +681,11 @@ const shortContent = (text: string) => {
   margin-top: 1rem;
   flex: 1;
   min-height: 0;
+}
+
+.chat-search-panel--mobile .chat-search-panel__body {
+  max-height: 65vh;
+  overflow-y: auto;
 }
 
 .chat-search-panel__input-group {
