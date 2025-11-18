@@ -45,6 +45,10 @@ const joinWorld = async () => {
   await load();
 };
 
+const goWorldLobby = () => {
+  router.push({ name: 'world-lobby' });
+};
+
 const worldManagerVisible = ref(false);
 const memberManagerVisible = ref(false);
 
@@ -84,15 +88,26 @@ const handleLeaveWorld = () => {
   <div class="p-4 space-y-4" v-if="detail?.world">
     <n-card :title="detail.world.name">
       <p class="text-gray-600">{{ detail.world.description }}</p>
+      <div class="mt-3 world-action-grid">
+        <div class="world-action-item">
+          <n-button block type="primary" @click="enterWorld">进入</n-button>
+        </div>
+        <div class="world-action-item">
+          <n-button block :disabled="!canManageWorld" @click="worldManagerVisible = true">
+            世界管理
+          </n-button>
+        </div>
+        <div class="world-action-item">
+          <n-button block @click="goWorldLobby">大厅</n-button>
+        </div>
+        <div class="world-action-item">
+          <n-button block :disabled="!canManageWorld" @click="memberManagerVisible = true">
+            成员管理
+          </n-button>
+        </div>
+      </div>
       <div class="mt-3 flex flex-wrap gap-2">
-        <n-button type="primary" @click="enterWorld">进入</n-button>
         <n-button v-if="!detail.isMember" @click="joinWorld">加入世界</n-button>
-        <n-button v-if="canManageWorld" @click="memberManagerVisible = true">
-          成员管理
-        </n-button>
-        <n-button v-if="canManageWorld" @click="worldManagerVisible = true">
-          世界管理
-        </n-button>
         <n-button v-if="canLeaveWorld" type="error" @click="handleLeaveWorld">
           退出世界
         </n-button>
@@ -118,5 +133,20 @@ const handleLeaveWorld = () => {
   max-height: 300px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.world-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.world-action-item :deep(.n-button) {
+  height: 44px;
+}
+
+.world-action-item {
+  display: flex;
+  align-items: stretch;
 }
 </style>
