@@ -118,6 +118,23 @@ export const chatEvent = new Emitter<{
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
+const pendingLatencyProbes: Record<string, number> = {};
+const LATENCY_PROBE_TIMEOUT = 8000;
+
+const clearPendingLatencyProbes = () => {
+  Object.keys(pendingLatencyProbes).forEach((key) => {
+    delete pendingLatencyProbes[key];
+  });
+};
+
+const cleanupPendingLatencyProbes = () => {
+  const now = Date.now();
+  Object.entries(pendingLatencyProbes).forEach(([key, sentAt]) => {
+    if (now - sentAt > LATENCY_PROBE_TIMEOUT) {
+      delete pendingLatencyProbes[key];
+    }
+  });
+};
 
 export const useChatStore = defineStore({
   id: 'chat',
@@ -1848,18 +1865,24 @@ export const useChatStore = defineStore({
         clearInterval(latencyTimer);
         latencyTimer = null;
       }
+      clearPendingLatencyProbes();
     },
 
     measureLatency() {
       if (!this.subject) {
         return;
       }
+      cleanupPendingLatencyProbes();
       const now = Date.now();
+      const probeId = nanoid();
+      const body = {
+        id: probeId,
+        clientSentAt: now,
+      };
+      pendingLatencyProbes[probeId] = now;
       this.subject.next({
         op: 5,
-        body: {
-          probeSentAt: now,
-        },
+        body,
       });
     },
 
@@ -1867,17 +1890,22 @@ export const useChatStore = defineStore({
       if (!payload) {
         return;
       }
-      const sentAt = typeof payload?.probeSentAt === 'number' ? payload.probeSentAt : undefined;
-      if (typeof sentAt !== 'number') {
+      const probeId = typeof payload?.id === 'string' ? payload.id : undefined;
+      const sentAtFromPending = probeId ? pendingLatencyProbes[probeId] : undefined;
+      const fallbackSentAt = typeof payload?.clientSentAt === 'number' ? payload.clientSentAt : undefined;
+      const sentAt = typeof sentAtFromPending === 'number' ? sentAtFromPending : fallbackSentAt;
+      if (typeof sentAt !== 'number' || sentAt <= 0) {
         return;
+      }
+      if (probeId) {
+        delete pendingLatencyProbes[probeId];
       }
       const now = Date.now();
       const rtt = now - sentAt;
       if (rtt <= 0) {
         return;
       }
-      const latency = rtt / 2;
-      this.lastLatencyMs = Math.round(latency);
+      this.lastLatencyMs = Math.round(rtt);
       if (this.curChannel?.id) {
         this.updatePresence(useUserStore().info.id, {
           lastPing: Date.now(),

@@ -258,18 +258,34 @@ func websocketWorks(app *fiber.App) {
 						ctx.BroadcastChannelPresence(activeChannel)
 					}
 					solved = true
-				case protocol.OpLatencyProbe:
-					if curUser == nil {
-						solved = true
-						continue
-					}
-					payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult}
-					if gatewayMsg.Body != nil {
-						payload.Body = gatewayMsg.Body
-					}
-					_ = c.WriteJSON(payload)
+			case protocol.OpLatencyProbe:
+				if curUser == nil {
 					solved = true
+					continue
 				}
+				latencyBody := protocol.LatencyPayload{}
+				if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
+					if idRaw, exists := bodyMap["id"]; exists {
+						if v, ok := idRaw.(string); ok {
+							latencyBody.ID = v
+						}
+					}
+					if sentRaw, exists := bodyMap["clientSentAt"]; exists {
+						switch v := sentRaw.(type) {
+						case float64:
+							latencyBody.ClientSentAt = int64(v)
+						case int64:
+							latencyBody.ClientSentAt = v
+						case int:
+							latencyBody.ClientSentAt = int64(v)
+						}
+					}
+				}
+				latencyBody.ServerSentAt = time.Now().UnixMilli()
+				payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult, Body: latencyBody}
+				_ = c.WriteJSON(payload)
+				solved = true
+			}
 			}
 
 			if !solved {

@@ -329,6 +329,14 @@ type GatewayPayloadStructure struct {
 	Body interface{} `json:"body"`
 }
 
+// LatencyPayload 用于延迟探测的请求/响应体
+// 客户端发送唯一 id 与客户端发送时间，服务端只需回显并可附带 serverSentAt 便于排查
+type LatencyPayload struct {
+	ID           string `json:"id"`
+	ClientSentAt int64  `json:"clientSentAt"`
+	ServerSentAt int64  `json:"serverSentAt,omitempty"`
+}
+
 type Opcode int
 
 const (

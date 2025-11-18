@@ -255,6 +255,7 @@ const connectionStatus = computed(() => {
 
 const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
   const silent = !!options?.silent;
+  const selfId = user.info?.id || '';
   try {
     const data = await chat.getChannelPresence();
     if (Array.isArray(data?.data)) {
@@ -263,13 +264,16 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
         if (!userId) {
           return;
         }
+        const isSelf = selfId && userId === selfId;
         chat.updatePresence(userId, {
-          lastPing: item?.lastSeen ?? item?.last_seen ?? Date.now(),
-          latencyMs: item?.latency ?? item?.latency_ms ?? 0,
-          isFocused: item?.focused ?? item?.is_focused ?? false,
+          lastPing: isSelf ? Date.now() : (item?.lastSeen ?? item?.last_seen ?? Date.now()),
+          latencyMs: isSelf ? chat.lastLatencyMs : (item?.latency ?? item?.latency_ms ?? 0),
+          isFocused: isSelf ? chat.isAppFocused : (item?.focused ?? item?.is_focused ?? false),
         });
       });
     }
+    // 立即触发一次新的延迟探测以刷新本端值，避免旧值累加
+    chat.measureLatency();
     if (!silent) {
       message.success('状态已刷新');
     }
