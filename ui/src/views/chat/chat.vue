@@ -6596,8 +6596,11 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row__surface--editing::before {
-  inset: -0.05rem;
-  border-radius: 0.85rem;
+  /* 紧凑模式：编辑态需要铺满整行（含两列网格/句柄），并沿用编辑蒙版色 */
+  inset: 0;
+  border-radius: 0.95rem;
+  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
 }
 
 /* 气泡模式下移除编辑蒙版的网点纹理，仅保留纯色背景 */
@@ -6613,6 +6616,23 @@ onBeforeUnmount(() => {
 
 .chat--layout-bubble .message-row__surface--tone-ooc.message-row__surface--editing::before {
   background-color: transparent;
+  background-image: none;
+}
+
+/* 紧凑模式下按 tone 细分颜色/网点，保持与本人编辑一致 */
+.chat--layout-compact .message-row__surface--tone-ic.message-row__surface--editing::before {
+  background-color: var(--chat-ic-bg);
+  background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
+}
+
+.chat--layout-compact .message-row__surface--tone-ooc.message-row__surface--editing::before {
+  background-color: var(--chat-ooc-bg);
+  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+}
+
+/* 夜间紧凑模式编辑场外消息需保持纯黑底，避免灰色噪点 */
+.chat--layout-compact.chat--palette-night .message-row__surface--tone-ooc.message-row__surface--editing::before {
+  background-color: #000000;
   background-image: none;
 }
 
