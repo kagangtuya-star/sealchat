@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useDisplayStore } from '@/stores/display'
 import type { SChannel } from '@/types'
@@ -35,7 +35,11 @@ const flattenChannels = (channels?: SChannel[]): SChannel[] => {
 }
 
 const allChannels = computed<SChannel[]>(() => {
-  const publicChannels = flattenChannels(chat.channelTree)
+  const worldId = chat.currentWorldId
+  const tree = (worldId && chat.channelTreeByWorld?.[worldId]) || []
+  // 若当前世界频道尚未加载，避免使用上一个世界的频道列表，返回空以等待后续同步
+  if (!Array.isArray(tree) || tree.length === 0) return []
+  const publicChannels = flattenChannels(tree)
   const privateChannels = flattenChannels(chat.channelTreePrivate)
   return [...publicChannels, ...privateChannels]
 })
@@ -50,8 +54,11 @@ const channelMap = computed(() => {
   return map
 })
 
+const currentWorldId = computed(() => chat.currentWorldId || undefined)
+const currentFavoriteIds = computed(() => display.getFavoriteChannelIds(currentWorldId.value))
+
 const favoriteEntries = computed<FavoriteEntry[]>(() =>
-  display.favoriteChannelIds.map((id) => ({
+  currentFavoriteIds.value.map((id) => ({
     id,
     channel: channelMap.value.get(id) ?? null,
   })),
@@ -63,7 +70,7 @@ const missingCount = computed(() => favoriteEntries.value.filter((entry) => !ent
 
 const handleFavoriteClick = async (entry: FavoriteEntry) => {
   if (!entry.channel) {
-    display.removeFavoriteChannel(entry.id)
+    display.removeFavoriteChannel(entry.id, currentWorldId.value)
     message.warning('频道不可用，已自动移除')
     return
   }
@@ -77,6 +84,16 @@ const handleFavoriteClick = async (entry: FavoriteEntry) => {
 }
 
 const handleManageClick = () => emit('manage')
+
+watch(
+  () => [channelMap.value, currentWorldId.value],
+  () => {
+    const ids = Array.from(channelMap.value.keys())
+    if (!ids.length) return
+    display.syncFavoritesWithChannels(ids, currentWorldId.value)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

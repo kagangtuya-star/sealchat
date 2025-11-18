@@ -37,28 +37,34 @@ const flattenChannels = (channels?: SChannel[]): SChannel[] => {
 }
 
 const allChannels = computed<SChannel[]>(() => {
-  const publicChannels = flattenChannels(chat.channelTree)
+  const worldId = chat.currentWorldId
+  const tree = (worldId && chat.channelTreeByWorld?.[worldId]) || []
+  if (!Array.isArray(tree) || tree.length === 0) return []
+  const publicChannels = flattenChannels(tree)
   const privateChannels = flattenChannels(chat.channelTreePrivate)
   return [...publicChannels, ...privateChannels]
 })
+
+const currentWorldId = computed(() => chat.currentWorldId || undefined)
+const favoriteIds = computed(() => display.getFavoriteChannelIds(currentWorldId.value))
 
 const channelOptions = computed(() =>
   allChannels.value.map((channel) => ({
     label: channel.name,
     value: channel.id,
-    disabled: display.favoriteChannelIds.includes(channel.id),
+    disabled: favoriteIds.value.includes(channel.id),
   })),
 )
 
 const favoriteDetails = computed(() =>
-  display.favoriteChannelIds.map((id) => ({
+  favoriteIds.value.map((id) => ({
     id,
     channel: allChannels.value.find((channel) => channel.id === id) ?? null,
   })),
 )
 
-const remainingSlots = computed(() => Math.max(FAVORITE_CHANNEL_LIMIT - display.favoriteChannelIds.length, 0))
-const canAddMore = computed(() => display.favoriteChannelIds.length < FAVORITE_CHANNEL_LIMIT)
+const remainingSlots = computed(() => Math.max(FAVORITE_CHANNEL_LIMIT - favoriteIds.value.length, 0))
+const canAddMore = computed(() => favoriteIds.value.length < FAVORITE_CHANNEL_LIMIT)
 const hasChannelsAvailable = computed(() =>
   channelOptions.value.some((option) => !option.disabled),
 )
@@ -72,13 +78,13 @@ const handleAddFavorite = () => {
     message.error('已达到收藏上限')
     return
   }
-  display.addFavoriteChannel(selectedChannelId.value)
+  display.addFavoriteChannel(selectedChannelId.value, currentWorldId.value)
   selectedChannelId.value = null
   message.success('已添加到收藏')
 }
 
 const handleRemoveFavorite = (id: string) => {
-  display.removeFavoriteChannel(id)
+  display.removeFavoriteChannel(id, currentWorldId.value)
   message.success('已从收藏中移除')
 }
 
@@ -87,6 +93,16 @@ const handleToggleBar = (value: boolean) => {
 }
 
 const handleClose = () => emit('update:show', false)
+
+watch(
+  () => [allChannels.value, currentWorldId.value],
+  () => {
+    const ids = allChannels.value.map((c) => c.id).filter(Boolean)
+    if (!ids.length) return
+    display.syncFavoritesWithChannels(ids, currentWorldId.value)
+  },
+  { immediate: true },
+)
 
 watch(
   () => props.show,

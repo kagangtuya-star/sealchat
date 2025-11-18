@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useChatStore } from './chat'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
@@ -18,7 +19,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   favoriteChannelBarEnabled: boolean
-  favoriteChannelIds: string[]
+  favoriteChannelIdsByWorld: Record<string, string[]>
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -92,6 +93,20 @@ const normalizeFavoriteIds = (value: any): string[] => {
   return normalized
 }
 
+const normalizeFavoriteMap = (value: any): Record<string, string[]> => {
+  if (!value || typeof value !== 'object') return {}
+  const result: Record<string, string[]> = {}
+  Object.entries(value as Record<string, unknown>).forEach(([key, ids]) => {
+    const normalized = normalizeFavoriteIds(ids)
+    if (normalized.length) {
+      result[key] = normalized.slice(0, FAVORITE_CHANNEL_LIMIT)
+    }
+  })
+  return result
+}
+
+const WORLD_FALLBACK_KEY = '__global__'
+
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'day',
@@ -107,7 +122,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   favoriteChannelBarEnabled: false,
-  favoriteChannelIds: [],
+  favoriteChannelIdsByWorld: {},
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -121,6 +136,13 @@ const loadSettings = (): DisplaySettings => {
       return defaultSettings()
     }
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
+    const favoriteChannelIdsByWorld = normalizeFavoriteMap((parsed as any)?.favoriteChannelIdsByWorld)
+    if (Object.keys(favoriteChannelIdsByWorld).length === 0 && Array.isArray((parsed as any)?.favoriteChannelIds)) {
+      const legacyIds = normalizeFavoriteIds((parsed as any)?.favoriteChannelIds)
+      if (legacyIds.length) {
+        favoriteChannelIdsByWorld[WORLD_FALLBACK_KEY] = legacyIds.slice(0, FAVORITE_CHANNEL_LIMIT)
+      }
+    }
     return {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
@@ -166,7 +188,7 @@ const loadSettings = (): DisplaySettings => {
         MESSAGE_PADDING_Y_MAX,
       ),
       favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
-      favoriteChannelIds: normalizeFavoriteIds(parsed.favoriteChannelIds),
+      favoriteChannelIdsByWorld,
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -250,10 +272,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelBarEnabled')
       ? coerceBoolean(patch.favoriteChannelBarEnabled)
       : base.favoriteChannelBarEnabled,
-  favoriteChannelIds:
-    patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelIds')
-      ? normalizeFavoriteIds(patch.favoriteChannelIds)
-      : base.favoriteChannelIds.slice(),
+  favoriteChannelIdsByWorld:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelIdsByWorld')
+      ? normalizeFavoriteMap((patch as any).favoriteChannelIdsByWorld)
+      : { ...base.favoriteChannelIdsByWorld },
 })
 
 export const useDisplayStore = defineStore('display', {
@@ -265,9 +287,77 @@ export const useDisplayStore = defineStore('display', {
     palette: (state) => state.settings.palette,
     showAvatar: (state) => state.settings.showAvatar,
     favoriteBarEnabled: (state) => state.settings.favoriteChannelBarEnabled,
-    favoriteChannelIds: (state) => state.settings.favoriteChannelIds,
   },
   actions: {
+    getCurrentWorldKey(worldId?: string) {
+      const chat = useChatStore();
+      const key = worldId || chat.currentWorldId || WORLD_FALLBACK_KEY;
+      return key;
+    },
+    getFavoriteChannelIds(worldId?: string) {
+      const key = this.getCurrentWorldKey(worldId);
+      return this.settings.favoriteChannelIdsByWorld[key] || [];
+    },
+    setFavoriteChannelIds(ids: string[], worldId?: string) {
+      const key = this.getCurrentWorldKey(worldId);
+      const normalized = normalizeFavoriteIds(ids).slice(0, FAVORITE_CHANNEL_LIMIT);
+      const current = this.settings.favoriteChannelIdsByWorld[key] || [];
+      if (normalized.length === current.length && normalized.every((id, index) => id === current[index])) {
+        return;
+      }
+      this.settings.favoriteChannelIdsByWorld = {
+        ...this.settings.favoriteChannelIdsByWorld,
+        [key]: normalized,
+      };
+      this.persist();
+    },
+    addFavoriteChannel(channelId: string, worldId?: string) {
+      const id = typeof channelId === 'string' ? channelId.trim() : '';
+      if (!id) return;
+      const key = this.getCurrentWorldKey(worldId);
+      const current = this.settings.favoriteChannelIdsByWorld[key] || [];
+      if (current.includes(id) || current.length >= FAVORITE_CHANNEL_LIMIT) return;
+      this.settings.favoriteChannelIdsByWorld = {
+        ...this.settings.favoriteChannelIdsByWorld,
+        [key]: [...current, id],
+      };
+      this.persist();
+    },
+    removeFavoriteChannel(channelId: string, worldId?: string) {
+      const id = typeof channelId === 'string' ? channelId.trim() : '';
+      if (!id) return;
+      const key = this.getCurrentWorldKey(worldId);
+      const current = this.settings.favoriteChannelIdsByWorld[key] || [];
+      const next = current.filter(existing => existing !== id);
+      this.settings.favoriteChannelIdsByWorld = {
+        ...this.settings.favoriteChannelIdsByWorld,
+        [key]: next,
+      };
+      this.persist();
+    },
+    reorderFavoriteChannels(nextOrder: string[], worldId?: string) {
+      this.setFavoriteChannelIds(nextOrder, worldId);
+    },
+    syncFavoritesWithChannels(availableIds: string[], worldId?: string) {
+      const key = this.getCurrentWorldKey(worldId);
+      const current = this.settings.favoriteChannelIdsByWorld[key] || [];
+      if (!current.length) return;
+      if (!Array.isArray(availableIds) || !availableIds.length) {
+        this.settings.favoriteChannelIdsByWorld = {
+          ...this.settings.favoriteChannelIdsByWorld,
+          [key]: current,
+        };
+        return;
+      }
+      const availableSet = new Set(availableIds);
+      const filtered = current.filter(id => availableSet.has(id));
+      if (filtered.length === current.length) return;
+      this.settings.favoriteChannelIdsByWorld = {
+        ...this.settings.favoriteChannelIdsByWorld,
+        [key]: filtered,
+      };
+      this.persist();
+    },
     updateSettings(patch: Partial<DisplaySettings>) {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
@@ -283,31 +373,6 @@ export const useDisplayStore = defineStore('display', {
       if (this.settings.favoriteChannelBarEnabled === normalized) return
       this.settings.favoriteChannelBarEnabled = normalized
       this.persist()
-    },
-    setFavoriteChannelIds(ids: string[]) {
-      const normalized = normalizeFavoriteIds(ids)
-      const current = this.settings.favoriteChannelIds
-      if (normalized.length === current.length && normalized.every((id, index) => id === current[index])) {
-        return
-      }
-      this.settings.favoriteChannelIds = normalized
-      this.persist()
-    },
-    addFavoriteChannel(channelId: string) {
-      const id = typeof channelId === 'string' ? channelId.trim() : ''
-      if (!id || this.settings.favoriteChannelIds.includes(id)) return
-      if (this.settings.favoriteChannelIds.length >= FAVORITE_CHANNEL_LIMIT) return
-      this.settings.favoriteChannelIds = [...this.settings.favoriteChannelIds, id]
-      this.persist()
-    },
-    removeFavoriteChannel(channelId: string) {
-      const id = typeof channelId === 'string' ? channelId.trim() : ''
-      if (!id) return
-      const next = this.settings.favoriteChannelIds.filter(existing => existing !== id)
-      this.setFavoriteChannelIds(next)
-    },
-    reorderFavoriteChannels(nextOrder: string[]) {
-      this.setFavoriteChannelIds(nextOrder)
     },
     persist() {
       if (typeof window === 'undefined') return
