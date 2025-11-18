@@ -6740,6 +6740,14 @@ onBeforeUnmount(() => {
   border-radius: 999px;
 }
 
+:global(.chat.chat--palette-night) {
+  scrollbar-color: #9f9f9f transparent;
+}
+
+:global(.chat.chat--palette-night::-webkit-scrollbar-thumb) {
+  background-color: #9f9f9f;
+}
+
 .chat--layout-compact {
   background-color: var(--chat-stage-bg);
   transition: background-color 0.25s ease;
