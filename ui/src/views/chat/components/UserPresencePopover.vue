@@ -194,10 +194,14 @@ const handleRefresh = () => {
 .presence-name {
   font-size: 0.875rem;
   font-weight: 500;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+:global([data-display-palette='night']) .presence-popover .presence-name {
+  color: #fff;
 }
 
 .presence-meta {
