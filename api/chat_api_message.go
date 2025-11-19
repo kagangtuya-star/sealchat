@@ -1534,15 +1534,25 @@ func normalizeTypingState(raw string, enabled *bool) protocol.TypingState {
 	return protocol.TypingStateIndicator
 }
 
+func normalizeIcMode(raw string) string {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "ooc" {
+		return "ooc"
+	}
+	return "ic"
+}
+
 func apiMessageTyping(ctx *ChatContext, data *struct {
-	ChannelID  string `json:"channel_id"`
-	State      string `json:"state"`
-	Content    string `json:"content"`
-	MessageID  string `json:"message_id"`
-	Mode       string `json:"mode"`
-	Enabled    *bool  `json:"enabled"`
-	IdentityID string `json:"identity_id"`
-	WhisperTo  string `json:"whisper_to"`
+	ChannelID   string `json:"channel_id"`
+	State       string `json:"state"`
+	Content     string `json:"content"`
+	MessageID   string `json:"message_id"`
+	Mode        string `json:"mode"`
+	Enabled     *bool  `json:"enabled"`
+	IdentityID  string `json:"identity_id"`
+	WhisperTo   string `json:"whisper_to"`
+	ICModeSnake string `json:"ic_mode"`
+	ICModeCamel string `json:"icMode"`
 }) (any, error) {
 	channelId := data.ChannelID
 	var privateOtherUser string
@@ -1576,6 +1586,11 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	const typingThrottleGap int64 = 250
 
 	state := normalizeTypingState(data.State, data.Enabled)
+	rawIcMode := data.ICModeSnake
+	if rawIcMode == "" {
+		rawIcMode = data.ICModeCamel
+	}
+	typingTone := normalizeIcMode(rawIcMode)
 
 	isActive := state != protocol.TypingStateSilent
 
@@ -1584,7 +1599,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			ctx.ConnInfo.TypingState == state &&
 			now-ctx.ConnInfo.TypingUpdatedAt < typingThrottleGap &&
 			ctx.ConnInfo.TypingContent == data.Content &&
-			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo {
+			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo &&
+			ctx.ConnInfo.TypingIcMode == typingTone {
 			return &struct {
 				Success bool `json:"success"`
 			}{Success: true}, nil
@@ -1594,12 +1610,14 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingContent = data.Content
 		ctx.ConnInfo.TypingWhisperTo = data.WhisperTo
 		ctx.ConnInfo.TypingUpdatedAt = now
+		ctx.ConnInfo.TypingIcMode = typingTone
 	} else {
 		ctx.ConnInfo.TypingEnabled = false
 		ctx.ConnInfo.TypingState = protocol.TypingStateSilent
 		ctx.ConnInfo.TypingContent = ""
 		ctx.ConnInfo.TypingWhisperTo = ""
 		ctx.ConnInfo.TypingUpdatedAt = 0
+		ctx.ConnInfo.TypingIcMode = "ic"
 	}
 
 	channel, _ := model.ChannelGet(channelId)
@@ -1645,6 +1663,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			MessageID: data.MessageID,
 		},
 	}
+	event.Typing.ICMode = typingTone
+	event.Typing.Tone = typingTone
 	if member != nil {
 		event.Member = member.ToProtocolType()
 	}

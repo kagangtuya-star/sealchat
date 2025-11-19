@@ -3038,6 +3038,7 @@ interface EditingPreviewInfo {
   isSelf: boolean;
   summary: string;
   previewHtml: string;
+  tone: 'ic' | 'ooc';
 }
 
 type TypingBroadcastState = 'indicator' | 'content' | 'silent';
@@ -3135,7 +3136,11 @@ const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.i
 
 const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string, channelId: string, whisperTo?: string | null) => {
   const targetId = whisperTo ?? resolveCurrentWhisperTargetId();
-  const extra = targetId ? { whisperTo: targetId } : undefined;
+  const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
+  const extra: { whisperTo?: string; icMode: 'ic' | 'ooc' } = { icMode };
+  if (targetId) {
+    extra.whisperTo = targetId;
+  }
   lastTypingWhisperTargetId = targetId ?? null;
   chat.messageTyping(state, content, channelId, extra);
 }, 400, { leading: true, trailing: true });
@@ -3143,7 +3148,8 @@ const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string,
 const stopTypingPreviewNow = () => {
   sendTypingUpdate.cancel();
   if (typingPreviewActive.value && lastTypingChannelId) {
-    const extra = lastTypingWhisperTargetId ? { whisperTo: lastTypingWhisperTargetId } : undefined;
+    const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
+    const extra = lastTypingWhisperTargetId ? { whisperTo: lastTypingWhisperTargetId, icMode } : { icMode };
     chat.messageTyping('silent', '', lastTypingChannelId, extra);
   }
   typingPreviewActive.value = false;
@@ -3162,7 +3168,12 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
     return;
   }
   const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
-  const extra: Record<string, any> = { mode: 'editing', messageId };
+  const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
+  const extra: { mode: 'editing'; messageId: string; whisperTo?: string; icMode: 'ic' | 'ooc' } = {
+    mode: 'editing',
+    messageId,
+    icMode,
+  };
   if (whisperTargetId) {
     extra.whisperTo = whisperTargetId;
   }
@@ -3176,7 +3187,8 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
 const stopEditingPreviewNow = () => {
   sendEditingPreview.cancel();
   if (editingPreviewActive.value && lastEditingChannelId && lastEditingMessageId) {
-    const extra: Record<string, any> = { mode: 'editing', messageId: lastEditingMessageId };
+    const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
+    const extra: Record<string, any> = { mode: 'editing', messageId: lastEditingMessageId, icMode };
     if (lastEditingWhisperTargetId) {
       extra.whisperTo = lastEditingWhisperTargetId;
     }
@@ -3622,6 +3634,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
         isSelf: item.userId === user.info.id,
         summary,
         previewHtml,
+        tone: item.tone ?? 'ic',
       };
     }
   });
@@ -3638,10 +3651,35 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
       isSelf: true,
       summary,
       previewHtml,
+      tone: chat.editing.icMode === 'ooc' ? 'ooc' : 'ic',
     };
   }
   return map;
 });
+
+watch(
+  () => chat.icMode,
+  (mode, previous) => {
+    if (mode === previous) {
+      return;
+    }
+    if (isEditing.value) {
+      emitEditingPreview();
+    } else {
+      emitTypingPreview();
+    }
+  },
+);
+
+watch(
+  () => chat.editing?.icMode,
+  (mode, previous) => {
+    if (!chat.editing || mode === previous) {
+      return;
+    }
+    emitEditingPreview();
+  },
+);
 const whisperPanelVisible = ref(false);
 const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
@@ -5757,7 +5795,7 @@ onBeforeUnmount(() => {
           :key="`${preview.userId}-typing`"
           :class="typingPreviewItemClass(preview)"
         >
-          <div :class="typingPreviewSurfaceClass(preview)">
+          <div :class="typingPreviewSurfaceClass(preview)" :data-tone="preview.tone">
             <div
               v-if="shouldShowTypingHandle(preview)"
               class="message-row__handle message-row__handle--placeholder"
@@ -5782,6 +5820,7 @@ onBeforeUnmount(() => {
                     <div
                       class="typing-preview-inline-body"
                       :class="{ 'typing-preview-inline-body--placeholder': preview.indicatorOnly }"
+                      :data-tone="preview.tone"
                     >
                       <template v-if="preview.indicatorOnly">
                         <span>正在输入</span>
@@ -5816,10 +5855,12 @@ onBeforeUnmount(() => {
                       'typing-preview-bubble',
                       preview.indicatorOnly ? '' : 'typing-preview-bubble--content',
                     ]"
+                    :data-tone="preview.tone"
                   >
                     <div
                       class="typing-preview-bubble__body"
                       :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }"
+                      :data-tone="preview.tone"
                     >
                       <template v-if="preview.indicatorOnly">
                         正在输入
@@ -6882,15 +6923,23 @@ onBeforeUnmount(() => {
   padding: 0;
   border-radius: 0;
   border: none;
-  background-color: var(--chat-ic-bg);
-  background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
+  --typing-preview-bg: var(--chat-ic-bg);
+  --typing-preview-dot: var(--chat-preview-dot-ic);
+  background-color: var(--typing-preview-bg);
+  background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
+.chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  background-color: var(--chat-ooc-bg);
-  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
-  background-size: 10px 10px;
+  --typing-preview-bg: var(--chat-ooc-bg);
+  --typing-preview-dot: var(--chat-preview-dot-ooc);
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ic'],
+.chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
+  --typing-preview-bg: var(--chat-ic-bg);
+  --typing-preview-dot: var(--chat-preview-dot-ic);
 }
 
 .identity-drawer__header {

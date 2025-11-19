@@ -25,6 +25,7 @@ type EditingPreviewInfo = {
   isSelf: boolean;
   summary: string;
   previewHtml: string;
+  tone: 'ic' | 'ooc';
 };
 
 const user = useUserStore();
@@ -532,7 +533,9 @@ watch(() => props.item?.updatedAt, () => {
             :class="[
               'editing-preview__bubble',
               'editing-preview__bubble--inline',
+              otherEditingPreview?.tone ? `editing-preview__bubble--tone-${otherEditingPreview.tone}` : '',
             ]"
+            :data-tone="otherEditingPreview?.tone || null"
           >
             <div class="editing-preview__body" :class="{ 'is-placeholder': otherEditingPreview?.indicatorOnly }">
             <template v-if="otherEditingPreview?.indicatorOnly">
@@ -915,14 +918,26 @@ watch(() => props.item?.updatedAt, () => {
   border-radius: var(--chat-message-radius, 0.85rem);
   padding: 0.6rem 0.9rem;
   max-width: 32rem;
-  background-color: var(--chat-preview-bg, #f6f7fb);
+  --editing-preview-bg: var(--chat-preview-bg, #f6f7fb);
+  --editing-preview-dot: var(--chat-preview-dot, rgba(148, 163, 184, 0.45));
+  background-color: var(--editing-preview-bg);
   border: none;
   box-shadow: none;
   color: var(--chat-text-primary, #1f2937);
 }
 
+.editing-preview__bubble[data-tone='ic'] {
+  --editing-preview-bg: var(--chat-ic-bg);
+  --editing-preview-dot: var(--chat-preview-dot-ic);
+}
+
+.editing-preview__bubble[data-tone='ooc'] {
+  --editing-preview-bg: var(--chat-ooc-bg);
+  --editing-preview-dot: var(--chat-preview-dot-ooc);
+}
+
 .chat-item--layout-compact .content--editing-preview .editing-preview__bubble {
-  background-image: radial-gradient(var(--chat-preview-dot, rgba(148, 163, 184, 0.45)) 1px, transparent 1px);
+  background-image: radial-gradient(var(--editing-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 

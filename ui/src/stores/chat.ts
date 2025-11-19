@@ -1610,7 +1610,12 @@ export const useChatStore = defineStore({
       return message;
     },
 
-    async messageTyping(state: 'indicator' | 'content' | 'silent', content: string, channelId?: string, extra?: { mode?: string; messageId?: string; whisperTo?: string }) {
+    async messageTyping(
+      state: 'indicator' | 'content' | 'silent',
+      content: string,
+      channelId?: string,
+      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc' },
+    ) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
         return;
@@ -1627,6 +1632,9 @@ export const useChatStore = defineStore({
         }
         if (extra?.messageId) {
           payload.message_id = extra.messageId;
+        }
+        if (extra?.icMode) {
+          payload.ic_mode = extra.icMode;
         }
         let whisperTargetId: string | null | undefined = extra?.whisperTo;
         if (!whisperTargetId && this.whisperTarget?.id) {

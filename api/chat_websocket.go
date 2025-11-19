@@ -42,6 +42,7 @@ type ConnInfo struct {
 	TypingContent   string
 	TypingWhisperTo string
 	TypingUpdatedAt int64
+	TypingIcMode    string
 	Focused         bool
 }
 
@@ -93,7 +94,14 @@ func websocketWorks(app *fiber.App) {
 
 			if err == nil {
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
-				curConnInfo = &ConnInfo{Conn: c, LastPingTime: time.Now().UnixMilli(), User: user, TypingState: protocol.TypingStateSilent, Focused: true}
+				curConnInfo = &ConnInfo{
+					Conn:         c,
+					LastPingTime: time.Now().UnixMilli(),
+					User:         user,
+					TypingState:  protocol.TypingStateSilent,
+					TypingIcMode: "ic",
+					Focused:      true,
+				}
 				m.Store(c, curConnInfo)
 
 				curUser = user
@@ -258,34 +266,34 @@ func websocketWorks(app *fiber.App) {
 						ctx.BroadcastChannelPresence(activeChannel)
 					}
 					solved = true
-			case protocol.OpLatencyProbe:
-				if curUser == nil {
+				case protocol.OpLatencyProbe:
+					if curUser == nil {
+						solved = true
+						continue
+					}
+					latencyBody := protocol.LatencyPayload{}
+					if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
+						if idRaw, exists := bodyMap["id"]; exists {
+							if v, ok := idRaw.(string); ok {
+								latencyBody.ID = v
+							}
+						}
+						if sentRaw, exists := bodyMap["clientSentAt"]; exists {
+							switch v := sentRaw.(type) {
+							case float64:
+								latencyBody.ClientSentAt = int64(v)
+							case int64:
+								latencyBody.ClientSentAt = v
+							case int:
+								latencyBody.ClientSentAt = int64(v)
+							}
+						}
+					}
+					latencyBody.ServerSentAt = time.Now().UnixMilli()
+					payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult, Body: latencyBody}
+					_ = c.WriteJSON(payload)
 					solved = true
-					continue
 				}
-				latencyBody := protocol.LatencyPayload{}
-				if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
-					if idRaw, exists := bodyMap["id"]; exists {
-						if v, ok := idRaw.(string); ok {
-							latencyBody.ID = v
-						}
-					}
-					if sentRaw, exists := bodyMap["clientSentAt"]; exists {
-						switch v := sentRaw.(type) {
-						case float64:
-							latencyBody.ClientSentAt = int64(v)
-						case int64:
-							latencyBody.ClientSentAt = v
-						case int:
-							latencyBody.ClientSentAt = int64(v)
-						}
-					}
-				}
-				latencyBody.ServerSentAt = time.Now().UnixMilli()
-				payload := protocol.GatewayPayloadStructure{Op: protocol.OpLatencyResult, Body: latencyBody}
-				_ = c.WriteJSON(payload)
-				solved = true
-			}
 			}
 
 			if !solved {
@@ -447,6 +455,12 @@ func websocketWorks(app *fiber.App) {
 						Content: "",
 					},
 				}
+				tone := curConnInfo.TypingIcMode
+				if tone == "" {
+					tone = "ic"
+				}
+				event.Typing.ICMode = tone
+				event.Typing.Tone = tone
 				if member != nil {
 					event.Member = member.ToProtocolType()
 				}
@@ -458,6 +472,7 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo.TypingState = protocol.TypingStateSilent
 			curConnInfo.TypingContent = ""
 			curConnInfo.TypingUpdatedAt = 0
+			curConnInfo.TypingIcMode = "ic"
 		}
 
 		// 连接断开，后续封装成函数
