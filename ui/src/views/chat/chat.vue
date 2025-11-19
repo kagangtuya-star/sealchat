@@ -5849,6 +5849,11 @@ onBeforeUnmount(() => {
                       class="typing-preview-bubble-name"
                       :style="preview.color ? { color: preview.color } : undefined"
                     >{{ preview.displayName }}</span>
+                    <span class="typing-dots typing-dots--header">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </span>
                   </div>
                   <div
                     :class="[
@@ -5869,11 +5874,6 @@ onBeforeUnmount(() => {
                         <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
                       </template>
                     </div>
-                    <span class="typing-dots typing-dots--bubble">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                    </span>
                   </div>
                 </div>
               </div>
@@ -7255,12 +7255,12 @@ onBeforeUnmount(() => {
 .typing-preview-bubble {
   flex: 1;
   max-width: 32rem;
-  padding: 0.4rem 0.6rem;
+  padding: 0 0.6rem;
   border-radius: 0;
   border: none;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0;
   background-color: transparent;
   color: var(--chat-text-primary, #1f2937);
   box-shadow: none;
@@ -7308,8 +7308,9 @@ onBeforeUnmount(() => {
 
 .typing-preview-bubble-header {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.1rem;
 }
 
 .typing-preview-bubble-name {
@@ -7433,6 +7434,16 @@ onBeforeUnmount(() => {
 .typing-dots--bubble {
   align-self: flex-end;
   margin-top: 0.15rem;
+}
+
+.typing-dots--header {
+  margin-left: auto;
+  gap: 0.2rem;
+}
+
+.typing-dots--header span {
+  width: 0.25rem;
+  height: 0.25rem;
 }
 
 .typing-preview-bubble--content .typing-dots span {
