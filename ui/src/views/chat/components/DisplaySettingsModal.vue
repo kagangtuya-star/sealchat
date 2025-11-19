@@ -27,6 +27,7 @@ watch(
     draft.layout = value.layout
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
+    draft.showInputPreview = value.showInputPreview
     draft.mergeNeighbors = value.mergeNeighbors
     draft.maxExportMessages = value.maxExportMessages
     draft.maxExportConcurrency = value.maxExportConcurrency
@@ -144,6 +145,19 @@ const handleConfirm = () => emit('save', { ...draft })
         <n-switch v-model:value="draft.mergeNeighbors">
           <template #checked>已启用</template>
           <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">实时预览</p>
+            <p class="section-desc">开启后，输入内容会在聊天框上方即时渲染成消息预览</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.showInputPreview">
+          <template #checked>预览开启</template>
+          <template #unchecked>预览关闭</template>
         </n-switch>
       </section>
 

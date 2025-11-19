@@ -409,6 +409,7 @@ watch(defaultPageTitle, () => {
 
 onBeforeUnmount(() => {
   syncPageTitle();
+  removeSelfTypingPreview();
 });
 
 watch(
@@ -3079,9 +3080,6 @@ const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
   }
   return typingPreviewOrderSeq++;
 };
-const typingPreviewItems = computed(() =>
-  typingPreviewList.value.filter((item) => item.mode === 'typing').sort((a, b) => a.orderKey - b.orderKey),
-);
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
   'typing-preview-item',
   'message-row',
@@ -3103,6 +3101,86 @@ const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
   }
   return canReorderAll.value;
 };
+const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
+const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const selfPreviewUserId = computed(() => user.info?.id || '__self__');
+const typingPreviewItems = computed(() => {
+  const selfId = selfPreviewUserId.value;
+  return typingPreviewList.value
+    .filter((item) => item.mode === 'typing')
+    .slice()
+    .sort((a, b) => {
+      if (selfId) {
+        if (a.userId === selfId && b.userId !== selfId) {
+          return 1;
+        }
+        if (b.userId === selfId && a.userId !== selfId) {
+          return -1;
+        }
+      }
+      return a.orderKey - b.orderKey;
+    });
+});
+const resolveSelfPreviewDisplayName = () => {
+  const identity = activeIdentityForPreview.value;
+  if (identity?.displayName) {
+    return identity.displayName;
+  }
+  return user.info?.nick || user.info?.name || '我';
+};
+const resolveSelfPreviewAvatar = () => {
+  const identity = activeIdentityForPreview.value;
+  if (identity?.avatarAttachmentId) {
+    return resolveAttachmentUrl(identity.avatarAttachmentId);
+  }
+  return chat.curMember?.avatar || user.info?.avatar || '';
+};
+const removeSelfTypingPreview = () => {
+  const userId = selfPreviewUserId.value;
+  if (userId) {
+    removeTypingPreview(userId, 'typing');
+  }
+};
+const syncSelfTypingPreview = () => {
+  if (!inputPreviewEnabled.value) {
+    removeSelfTypingPreview();
+    return;
+  }
+  const draft = textToSend.value;
+  if (!isContentMeaningful(inputMode.value, draft)) {
+    removeSelfTypingPreview();
+    return;
+  }
+  const identity = activeIdentityForPreview.value;
+  const displayName = resolveSelfPreviewDisplayName();
+  const avatar = resolveSelfPreviewAvatar();
+  const normalizedColor = identity?.color ? normalizeHexColor(identity.color || '') || undefined : undefined;
+  const tone = inputIcMode.value || 'ic';
+  let previewContent = draft;
+  if (inputMode.value !== 'rich') {
+    const normalized = replaceEmojiRemarksForPreview(draft);
+    previewContent = normalized.length > 500 ? normalized.slice(0, 500) : normalized;
+  }
+  const payload: TypingPreviewItem = {
+    userId: selfPreviewUserId.value,
+    displayName,
+    avatar,
+    color: normalizedColor,
+    content: previewContent,
+    indicatorOnly: false,
+    mode: 'typing',
+    tone,
+    messageId: undefined,
+    orderKey: 0,
+  };
+  upsertTypingPreview(payload);
+};
+watch(selfPreviewUserId, (next, prev) => {
+  if (prev && prev !== next) {
+    removeTypingPreview(prev, 'typing');
+  }
+  syncSelfTypingPreview();
+});
 let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
 
@@ -3155,6 +3233,7 @@ const stopTypingPreviewNow = () => {
   typingPreviewActive.value = false;
   lastTypingChannelId = '';
   lastTypingWhisperTargetId = null;
+  removeSelfTypingPreview();
 };
 
 const editingPreviewActive = ref(false);
@@ -4701,6 +4780,7 @@ watch(textToSend, (value) => {
   } else {
     emitTypingPreview();
   }
+  syncSelfTypingPreview();
 });
 
 watch(filteredWhisperCandidates, (list) => {
@@ -4722,6 +4802,16 @@ watch(canOpenWhisperPanel, (canOpen) => {
   if (!canOpen && whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
     closeWhisperPanel();
   }
+});
+
+watch([
+  inputPreviewEnabled,
+  inputMode,
+  inputIcMode,
+  () => chat.curChannel?.id,
+  () => activeIdentityForPreview.value?.id,
+], () => {
+  syncSelfTypingPreview();
 });
 
 watch(() => chat.whisperTarget?.id, (targetId, prevId) => {
@@ -7266,6 +7356,14 @@ onBeforeUnmount(() => {
   color: var(--chat-text-primary, #1f2937);
   box-shadow: none;
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.chat--layout-compact .typing-preview-bubble,
+.chat--layout-compact .typing-preview-bubble[data-tone],
+.chat--layout-compact .typing-preview-bubble--content {
+  border-color: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none;
 }
 
 .chat--layout-bubble .typing-preview-bubble {

@@ -8,6 +8,7 @@ export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
   showAvatar: boolean
+  showInputPreview: boolean
   mergeNeighbors: boolean
   maxExportMessages: number
   maxExportConcurrency: number
@@ -114,6 +115,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'day',
   showAvatar: true,
+  showInputPreview: true,
   mergeNeighbors: true,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
   maxExportConcurrency: CONCURRENCY_DEFAULT,
@@ -151,6 +153,7 @@ const loadSettings = (): DisplaySettings => {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      showInputPreview: coerceBoolean(parsed.showInputPreview),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       maxExportMessages: coerceNumberInRange(
         parsed.maxExportMessages,
@@ -208,6 +211,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  showInputPreview:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
+      ? coerceBoolean(patch.showInputPreview)
+      : base.showInputPreview,
   mergeNeighbors:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
