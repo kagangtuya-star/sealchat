@@ -2564,6 +2564,7 @@ const dragState = reactive({
   startY: 0,
   ghostEl: null as HTMLElement | null,
   originEl: null as HTMLElement | null,
+  handleEl: null as HTMLElement | null,
   autoScrollDirection: 0 as -1 | 0 | 1,
   autoScrollSpeed: 0,
   autoScrollRafId: null as number | null,
@@ -2644,9 +2645,21 @@ const clearGhost = () => {
   dragState.ghostEl = null;
 };
 
+const releaseHandlePointerCapture = () => {
+  if (dragState.handleEl && dragState.pointerId !== null) {
+    try {
+      dragState.handleEl.releasePointerCapture?.(dragState.pointerId);
+    } catch {
+      // ignore capture release errors
+    }
+  }
+  dragState.handleEl = null;
+};
+
 const resetDragState = () => {
   clearGhost();
   stopAutoScroll();
+  releaseHandlePointerCapture();
   dragState.snapshot = [];
   dragState.clientOpId = null;
   dragState.overId = null;
@@ -2916,9 +2929,18 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   if (event.pointerType === 'mouse' && event.button !== 0) {
     return;
   }
+  const handleEl = event.currentTarget as HTMLElement | null;
   const rowEl = messageRowRefs.get(item.id);
   if (!rowEl) {
     return;
+  }
+  if (handleEl) {
+    dragState.handleEl = handleEl;
+    try {
+      handleEl.setPointerCapture?.(event.pointerId);
+    } catch {
+      // ignore capture failure
+    }
   }
   rowEl.classList.add('message-row--drag-source');
   dragState.snapshot = rows.value.slice();
@@ -5538,6 +5560,9 @@ const sendEmoji = throttle(async (i: UserEmojiModel) => {
 }, 1000);
 
 const avatarLongpress = (data: any) => {
+  if (isMobileUa) {
+    return;
+  }
   if (data.user) {
     textToSend.value += `@${data.user.nick} `;
     textInputRef.value?.focus();
@@ -7056,6 +7081,7 @@ onBeforeUnmount(() => {
   align-self: center;
   height: 100%;
   pointer-events: none;
+  touch-action: none;
 }
 
 .message-row.draggable-item .message-row__handle {

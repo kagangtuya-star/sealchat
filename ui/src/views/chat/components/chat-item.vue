@@ -334,6 +334,9 @@ const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item:
 
 const message = useMessage()
 const doAvatarClick = (e: MouseEvent) => {
+  if (isMobileUa) {
+    return;
+  }
   if (!props.item?.member?.nick) {
     message.warning('此用户无法查看')
     return;
@@ -365,6 +368,13 @@ const handleEditCancel = (e: MouseEvent) => {
 }
 
 const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel']);
+
+const handleAvatarLongpress = () => {
+  if (isMobileUa) {
+    return;
+  }
+  emit('avatar-longpress');
+};
 
 onMounted(() => {
   stopMessageLongPress = onLongPress(
@@ -445,7 +455,7 @@ watch(() => props.item?.updatedAt, () => {
       { 'chat-item--body-only': props.bodyOnly }
     ]">
     <div v-if="props.showAvatar" class="chat-item__avatar" :class="{ 'chat-item__avatar--hidden': props.hideAvatar }">
-      <Avatar :src="props.avatar" :border="false" @longpress="emit('avatar-longpress')" @click="doAvatarClick" />
+      <Avatar :src="props.avatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->
