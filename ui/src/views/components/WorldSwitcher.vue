@@ -98,7 +98,13 @@ const handleWorldJump = async () => {
         <n-input v-model:value="worldForm.name" placeholder="输入世界名称" />
       </n-form-item>
       <n-form-item label="简介">
-        <n-input v-model:value="worldForm.description" type="textarea" placeholder="简单描述" />
+        <n-input
+          v-model:value="worldForm.description"
+          type="textarea"
+          placeholder="简单描述"
+          maxlength="30"
+          show-count
+        />
       </n-form-item>
       <n-form-item label="可见性">
         <n-select

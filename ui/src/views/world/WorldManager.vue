@@ -57,7 +57,12 @@ const remove = async () => {
           <n-input v-model:value="form.name" />
         </n-form-item>
         <n-form-item label="简介">
-          <n-input type="textarea" v-model:value="form.description" />
+          <n-input
+            type="textarea"
+            v-model:value="form.description"
+            maxlength="30"
+            show-count
+          />
         </n-form-item>
         <n-form-item label="可见性">
           <n-select v-model:value="form.visibility" :options="[

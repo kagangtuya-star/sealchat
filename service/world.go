@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -13,12 +14,15 @@ import (
 )
 
 var (
-	ErrWorldNotFound       = errors.New("world not found")
-	ErrWorldPermission     = errors.New("world permission denied")
-	ErrWorldInviteInvalid  = errors.New("world invite invalid")
-	ErrWorldMemberInvalid  = errors.New("world member invalid")
-	ErrWorldOwnerImmutable = errors.New("world owner immutable")
+	ErrWorldNotFound           = errors.New("world not found")
+	ErrWorldPermission         = errors.New("world permission denied")
+	ErrWorldInviteInvalid      = errors.New("world invite invalid")
+	ErrWorldMemberInvalid      = errors.New("world member invalid")
+	ErrWorldOwnerImmutable     = errors.New("world owner immutable")
+	ErrWorldDescriptionTooLong = errors.New("世界简介不能超过30字")
 )
+
+const worldDescriptionMaxLength = 30
 
 type WorldCreateParams struct {
 	Name        string
@@ -33,6 +37,14 @@ type WorldUpdateParams struct {
 	Visibility        string
 	Avatar            string
 	EnforceMembership *bool
+}
+
+func normalizeWorldDescription(desc string) (string, error) {
+	desc = strings.TrimSpace(desc)
+	if utf8.RuneCountInString(desc) > worldDescriptionMaxLength {
+		return "", ErrWorldDescriptionTooLong
+	}
+	return desc, nil
 }
 
 func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
@@ -75,13 +87,17 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 	if name == "" {
 		return nil, nil, errors.New("世界名称不能为空")
 	}
+	description, err := normalizeWorldDescription(params.Description)
+	if err != nil {
+		return nil, nil, err
+	}
 	visibility := params.Visibility
 	if visibility == "" {
 		visibility = model.WorldVisibilityPublic
 	}
 	world := &model.WorldModel{
 		Name:              name,
-		Description:       params.Description,
+		Description:       description,
 		Avatar:            params.Avatar,
 		Visibility:        visibility,
 		OwnerID:           ownerID,
@@ -89,7 +105,7 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 		Status:            "active",
 	}
 	db := model.GetDB()
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(world).Error; err != nil {
 			return err
 		}
@@ -133,7 +149,11 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 		updates["name"] = name
 	}
 	if params.Description != "" {
-		updates["description"] = params.Description
+		description, err := normalizeWorldDescription(params.Description)
+		if err != nil {
+			return nil, err
+		}
+		updates["description"] = description
 	}
 	if params.Avatar != "" {
 		updates["avatar"] = params.Avatar

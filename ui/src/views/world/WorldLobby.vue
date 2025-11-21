@@ -401,6 +401,8 @@ const switchLobbyMode = async () => {
             v-model:value="createForm.description"
             type="textarea"
             placeholder="简单介绍这个世界"
+            maxlength="30"
+            show-count
           />
         </n-form-item>
         <n-form-item label="可见性">

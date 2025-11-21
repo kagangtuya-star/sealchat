@@ -202,6 +202,8 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
 		case errors.Is(err, service.ErrWorldPermission):
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权编辑世界"})
+		case errors.Is(err, service.ErrWorldDescriptionTooLong):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		default:
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新世界失败"})
 		}
