@@ -349,6 +349,14 @@ const doAvatarClick = (e: MouseEvent) => {
   emit('avatar-click')
 }
 
+const preventAvatarNativeMenu = (event: Event) => {
+  if (!isMobileUa) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+};
+
 const handleEditClick = (e: MouseEvent) => {
   e.stopPropagation();
   if (!canEdit.value) {
@@ -454,7 +462,12 @@ watch(() => props.item?.updatedAt, () => {
       { 'chat-item--merged': props.isMerged },
       { 'chat-item--body-only': props.bodyOnly }
     ]">
-    <div v-if="props.showAvatar" class="chat-item__avatar" :class="{ 'chat-item__avatar--hidden': props.hideAvatar }">
+    <div
+      v-if="props.showAvatar"
+      class="chat-item__avatar"
+      :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
+      @contextmenu="preventAvatarNativeMenu"
+    >
       <Avatar :src="props.avatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
@@ -580,6 +593,13 @@ watch(() => props.item?.updatedAt, () => {
   flex-shrink: 0;
   width: 3rem;
   height: 3rem;
+}
+
+@media (pointer: coarse) {
+  .chat-item__avatar {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
 }
 
 .chat-item__avatar--hidden {
