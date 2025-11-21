@@ -7447,6 +7447,18 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
+.chat--layout-compact .typing-preview-bubble.typing-preview-bubble--content {
+  padding: 0;
+  margin: 0;
+}
+
+.chat--layout-compact
+  .typing-preview-bubble.typing-preview-bubble--content
+  .typing-preview-bubble__body {
+  padding: 0;
+  margin: 0;
+}
+
 .typing-preview-bubble--content {
   color: inherit;
 }
