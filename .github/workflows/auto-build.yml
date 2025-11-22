@@ -28,7 +28,7 @@ jobs:
         run: |
           cd ui
           yarn install
-          yarn build
+          yarn build-only
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
