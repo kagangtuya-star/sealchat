@@ -43,7 +43,7 @@ import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
-import { computedAsync, useDebounceFn, useEventListener, useWindowSize } from '@vueuse/core';
+import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
 import { Settings } from '@vicons/ionicons5';
@@ -607,6 +607,8 @@ const { t } = useI18n();
 
 // const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
+const topSentinelRef = ref<HTMLElement | null>(null);
+const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 const inputMode = ref<'plain' | 'rich'>('plain');
 const wideInputMode = ref(false);
@@ -1860,7 +1862,7 @@ const handleArchiveMessages = async (messageIds: string[]) => {
     if (archiveDrawerVisible.value) {
       await fetchArchivedMessages();
     }
-    await loadMessages();
+    await fetchLatestMessages();
   } catch (error) {
     const errMsg = (error as Error)?.message || '归档失败';
     message.error(errMsg);
@@ -1874,7 +1876,7 @@ const handleUnarchiveMessages = async (messageIds: string[]) => {
     if (archiveDrawerVisible.value) {
       await fetchArchivedMessages();
     }
-    await loadMessages();
+    await fetchLatestMessages();
   } catch (error) {
     const errMsg = (error as Error)?.message || '恢复失败';
     message.error(errMsg);
@@ -2094,11 +2096,101 @@ watch(() => chat.curChannel?.id, () => {
 });
 
 const SCROLL_STICKY_THRESHOLD = 200;
-const INITIAL_MESSAGE_LOAD_LIMIT = 10;
-const PAGINATED_MESSAGE_LOAD_LIMIT = 15;
+const INITIAL_MESSAGE_LOAD_LIMIT = 30;
+const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
+const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
+const HISTORY_PAGINATION_WINDOW_MS = 5 * 60 * 1000;
+const HISTORY_WINDOW_EXPANSION_LIMIT = 5;
+
+type ViewMode = 'live' | 'history';
 
 const rows = ref<Message[]>([]);
 const listRevision = ref(0);
+const messageWindow = reactive({
+  viewMode: 'live' as ViewMode,
+  anchorMessageId: null as string | null,
+  beforeCursor: '',
+  afterCursor: '',
+  loadingLatest: false,
+  loadingBefore: false,
+  loadingAfter: false,
+  autoFillPending: false,
+  earliestTimestamp: null as number | null,
+  latestTimestamp: null as number | null,
+  hasReachedStart: false,
+  hasReachedLatest: false,
+});
+const viewMode = computed(() => messageWindow.viewMode);
+const inHistoryMode = computed(() => viewMode.value === 'history');
+const anchorMessageId = computed(() => messageWindow.anchorMessageId);
+
+const resetWindowState = (mode: ViewMode = 'live') => {
+  rows.value = [];
+  messageWindow.viewMode = mode;
+  messageWindow.anchorMessageId = null;
+  messageWindow.beforeCursor = '';
+  messageWindow.afterCursor = '';
+  messageWindow.autoFillPending = false;
+  messageWindow.earliestTimestamp = null;
+  messageWindow.latestTimestamp = null;
+  messageWindow.hasReachedStart = false;
+  messageWindow.hasReachedLatest = false;
+};
+
+const updateViewMode = (mode: ViewMode) => {
+  if (messageWindow.viewMode !== mode) {
+    messageWindow.viewMode = mode;
+  }
+};
+
+const updateAnchorMessage = (id: string | null) => {
+  messageWindow.anchorMessageId = id || null;
+};
+
+const applyCursorUpdate = (cursor?: { before?: string | null; after?: string | null }) => {
+  if (!cursor) return;
+  if (cursor.before !== undefined) {
+    messageWindow.beforeCursor = cursor.before || '';
+    if (!messageWindow.beforeCursor) {
+      messageWindow.hasReachedStart = true;
+    }
+  }
+  if (cursor.after !== undefined) {
+    messageWindow.afterCursor = cursor.after || '';
+    if (!messageWindow.afterCursor) {
+      messageWindow.hasReachedLatest = false;
+    }
+  }
+};
+
+watch(viewMode, (mode) => {
+  if (mode === 'live') {
+    updateAnchorMessage(null);
+  }
+});
+
+const updateWindowAnchorsFromRows = () => {
+  if (!rows.value.length) {
+    messageWindow.earliestTimestamp = null;
+    messageWindow.latestTimestamp = null;
+    messageWindow.afterCursor = '';
+    return;
+  }
+  const firstTs = normalizeTimestamp(rows.value[0]?.createdAt);
+  const lastTs = normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
+  if (firstTs !== null) {
+    messageWindow.earliestTimestamp = firstTs;
+  }
+  if (lastTs !== null) {
+    if (messageWindow.latestTimestamp === null || lastTs > messageWindow.latestTimestamp) {
+      messageWindow.hasReachedLatest = false;
+    }
+    messageWindow.latestTimestamp = lastTs;
+    messageWindow.afterCursor = String(lastTs);
+  } else {
+    messageWindow.afterCursor = '';
+  }
+};
 interface VisibleRowEntry {
   message: Message;
   mergedWithPrev: boolean;
@@ -2393,7 +2485,7 @@ const deriveLocalDisplayOrder = (list: Message[], index: number, fallback: numbe
 const localReorderOps = new Set<string>();
 
 const messageRowRefs = new Map<string, HTMLElement>();
-const SEARCH_JUMP_WINDOWS_MS = [5, 30, 180, 720, 1440, 10080].map((minutes) => minutes * 60 * 1000);
+const SEARCH_JUMP_WINDOWS_MS = [30, 120, 360, 1440, 10080].map((minutes) => minutes * 60 * 1000);
 const searchJumping = ref(false);
 
 const searchHighlightIds = ref(new Set<string>());
@@ -2428,7 +2520,7 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
 
-const mergeIncomingMessages = (items: Message[], nextCursor?: string | null) => {
+const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | null; after?: string | null }) => {
   if (!Array.isArray(items) || items.length === 0) {
     return;
   }
@@ -2450,17 +2542,80 @@ const mergeIncomingMessages = (items: Message[], nextCursor?: string | null) => 
     }
     mutated = true;
   });
-  if (mutated) {
-    const sorted = nextRows.sort(compareByDisplayOrder);
-    rows.value = sorted;
-    if (nextCursor !== undefined) {
-      const nextValue = nextCursor || '';
+  if (!mutated) {
+    return;
+  }
+  const sorted = nextRows.sort(compareByDisplayOrder);
+  rows.value = sorted;
+  computeAfterCursorFromRows();
+  if (cursor) {
+    if (cursor.before !== undefined) {
       const newFirst = sorted[0];
-      if (!prevFirst || (newFirst && compareByDisplayOrder(newFirst, prevFirst) < 0)) {
-        messagesNextFlag.value = nextValue;
+      const prevFirstOrder = prevFirst ? compareByDisplayOrder(newFirst, prevFirst) : -1;
+      if (!prevFirst || prevFirstOrder < 0) {
+        messageWindow.beforeCursor = cursor.before || '';
       }
     }
+    if (cursor.after !== undefined) {
+      messageWindow.afterCursor = cursor.after || '';
+    }
   }
+};
+
+const mountHistoricalWindowWithSpan = async (
+  payload: { messageId: string; createdAt?: number },
+  spanMs: number,
+) => {
+  if (!chat.curChannel?.id || !payload.createdAt || spanMs <= 0) {
+    return false;
+  }
+  const center = Number(payload.createdAt);
+  if (!Number.isFinite(center)) {
+    return false;
+  }
+  const from = Math.max(0, Math.floor(center - spanMs));
+  const to = Math.max(from + 1, Math.floor(center + spanMs));
+  try {
+    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
+      includeArchived: true,
+      includeOoc: true,
+    });
+    const normalized = normalizeMessageList(resp?.data || []);
+    if (!normalized.length) {
+      return false;
+    }
+    const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (!containsTarget) {
+      return false;
+    }
+    const targetIndex = normalized.findIndex((msg) => msg.id === payload.messageId);
+    const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
+    const end = Math.min(normalized.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
+    const windowMessages = normalized.slice(start, end);
+    resetWindowState('history');
+    rows.value = windowMessages;
+    sortRowsByDisplayOrder();
+    applyCursorUpdate({ before: resp?.next ?? '' });
+    computeAfterCursorFromRows();
+    messageWindow.hasReachedStart = !resp?.next && from === 0;
+    messageWindow.hasReachedLatest = false;
+    updateAnchorMessage(payload.messageId);
+    showButton.value = true;
+    return true;
+  } catch (error) {
+    console.warn('加载历史视图失败', error);
+    return false;
+  }
+};
+
+const mountHistoricalWindow = async (payload: { messageId: string; createdAt?: number }) => {
+  for (const span of SEARCH_JUMP_WINDOWS_MS) {
+    const mounted = await mountHistoricalWindowWithSpan(payload, span);
+    if (mounted) {
+      return true;
+    }
+  }
+  return false;
 };
 
 const loadMessagesWithinWindow = async (
@@ -2485,7 +2640,7 @@ const loadMessagesWithinWindow = async (
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? resp.next ?? '' : undefined);
+    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
@@ -2513,7 +2668,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? resp.next ?? '' : undefined);
+    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
@@ -2542,6 +2697,10 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
   searchJumping.value = true;
   const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
   try {
+    const mounted = await mountHistoricalWindow(payload);
+    if (mounted) {
+      return true;
+    }
     const located = await locateMessageForJump(payload);
     if (!located) {
       message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
@@ -2578,6 +2737,9 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     }
   }
   if (messagesListRef.value) {
+    updateViewMode('history');
+    updateAnchorMessage(targetId);
+    computeAfterCursorFromRows();
     VueScrollTo.scrollTo(target, {
       container: messagesListRef.value,
       duration: 350,
@@ -2585,6 +2747,8 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       easing: 'ease-in-out',
     });
     setMessageHighlight(targetId);
+    showButton.value = true;
+    void autoFillIfNeeded();
   }
 };
 
@@ -3230,7 +3394,7 @@ let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
-  const shouldStick = visibleRows.value.length === rows.value.length && isNearBottom();
+  const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const isSelfPreview = item.userId === selfPreviewUserId.value;
   const orderKey = isSelfPreview ? Number.MAX_SAFE_INTEGER : getTypingOrderKey(item.userId, item.mode);
   const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
@@ -4990,7 +5154,9 @@ const isNearBottom = () => {
 const toBottom = () => {
   scrollToBottom();
   showButton.value = false;
-}
+  updateViewMode('live');
+  updateAnchorMessage(null);
+};
 
 const doUpload = () => {
   pendingInlineSelection = captureSelectionRange();
@@ -5092,7 +5258,7 @@ chatEvent.on('message-created', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
-    const shouldStick = visibleRows.value.length === rows.value.length && isNearBottom();
+    const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const incoming = normalizeMessageShape(e.message);
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
@@ -5331,31 +5497,34 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       console.log('相关数据', messages)
       if (messages.next) {
         //  如果大于30个，那么基本上清除历史
-        messagesNextFlag.value = messages.next || "";
-        rows.value = rows.value.filter((i) => i.createdAt || now > lastCreatedAt);
+        messageWindow.beforeCursor = messages.next || '';
+        rows.value = rows.value.filter((i) => (i.createdAt || now) > lastCreatedAt);
       }
       // 插入新数据
       rows.value.push(...normalizeMessageList(messages.data));
       sortRowsByDisplayOrder();
+      computeAfterCursorFromRows();
 
       // 滚动到最下方
       nextTick(() => {
         scrollToBottom();
         showButton.value = false;
+        updateViewMode('live');
+        updateAnchorMessage(null);
       })
     } else {
-      await loadMessages();
+      await fetchLatestMessages();
     }
   })
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
-    stopTypingPreviewNow();
-    resetTypingPreview();
-    stopEditingPreviewNow();
+  stopTypingPreviewNow();
+  resetTypingPreview();
+  stopEditingPreviewNow();
   chat.cancelEditing();
   textToSend.value = '';
-  rows.value = []
+  resetWindowState('live');
   resetDragState();
   localReorderOps.clear();
   showButton.value = false;
@@ -5363,10 +5532,10 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
-    loadMessages();
+    fetchLatestMessages();
   })
 
-  await loadMessages();
+  await fetchLatestMessages();
   firstLoad = true;
 })
 
@@ -5375,49 +5544,258 @@ onBeforeUnmount(() => {
   stopEditingPreviewNow();
   resetTypingPreview();
   cancelDrag();
+  stopTopObserver();
+  stopBottomObserver();
 });
 
-const messagesNextFlag = ref("");
+const showButton = ref(false);
+const historyHintVisible = computed(() => inHistoryMode.value);
+const historyHintLabel = computed(() => (isMobileUa ? '历史' : '当前浏览历史消息'));
 
-const loadMessages = async () => {
-  resetTypingPreview();
-  const messages = await chat.messageList(chat.curChannel?.id || '', undefined, {
-    includeArchived: chat.filterState.showArchived,
-    limit: INITIAL_MESSAGE_LOAD_LIMIT,
-  });
-  messagesNextFlag.value = messages.next || "";
-  rows.value = normalizeMessageList(messages.data);
-  sortRowsByDisplayOrder();
+const computeAfterCursorFromRows = () => {
+  updateWindowAnchorsFromRows();
+};
 
-  nextTick(() => {
-    scrollToBottom();
-    showButton.value = false;
-  });
+const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
+  let span = HISTORY_PAGINATION_WINDOW_MS;
+  let attempts = 0;
+  while (attempts < HISTORY_WINDOW_EXPANSION_LIMIT) {
+    const from = Math.max(0, anchorTimestamp - span);
+    const to = Math.max(from + 1, anchorTimestamp - 1);
+    if (to <= from) {
+      break;
+    }
+    try {
+      const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
+        includeArchived: true,
+        includeOoc: true,
+      });
+      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
+        const created = normalizeTimestamp(msg.createdAt) ?? 0;
+        return created < anchorTimestamp;
+      });
+      if (normalized.length) {
+        const reachedStart = from === 0 && !resp?.next;
+        return { messages: normalized, cursor: resp?.next ?? '', reachedStart };
+      }
+      if (from === 0) {
+        return { messages: [], cursor: '', reachedStart: true };
+      }
+    } catch (error) {
+      console.warn('按时间窗口加载旧消息失败', error);
+      return { messages: [], cursor: '', reachedStart: false };
+    }
+    span *= 2;
+    attempts += 1;
+  }
+  return { messages: [] as Message[], cursor: '', reachedStart: false };
+};
 
-  tryAutoRestoreHistory();
-}
+const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
+  let span = HISTORY_PAGINATION_WINDOW_MS;
+  let attempts = 0;
+  while (attempts < HISTORY_WINDOW_EXPANSION_LIMIT) {
+    const from = Math.max(0, anchorTimestamp + 1);
+    const to = anchorTimestamp + span;
+    try {
+      const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
+        includeArchived: true,
+        includeOoc: true,
+      });
+      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
+        const created = normalizeTimestamp(msg.createdAt) ?? 0;
+        return created > anchorTimestamp;
+      });
+      if (normalized.length) {
+        return {
+          messages: normalized,
+          reachedLatest: false,
+        };
+      }
+      if (to >= Date.now()) {
+        return { messages: [], reachedLatest: true };
+      }
+    } catch (error) {
+      console.warn('按时间窗口加载新消息失败', error);
+      return { messages: [], reachedLatest: false };
+    }
+    span *= 2;
+    attempts += 1;
+  }
+  return { messages: [], reachedLatest: false };
+};
 
-const showButton = ref(false)
-const onScroll = (evt: any) => {
-  // 会打断输入，不要blur
-  // if (textInputRef.value?.blur) {
-  //   (textInputRef.value as any).blur()
-  // }
-  // console.log(222, messagesListRef.value?.scrollTop, messagesListRef.value?.scrollHeight)
-  if (messagesListRef.value) {
-    const elLst = messagesListRef.value;
-    const offset = elLst.scrollHeight - (elLst.clientHeight + elLst.scrollTop);
-    showButton.value = offset > SCROLL_STICKY_THRESHOLD;
-
-    if (elLst.scrollTop <= 80) {
-      //  首次加载前不触发
-      if (!firstLoad) return;
-      reachTop(evt);
+const autoFillIfNeeded = async () => {
+  await nextTick();
+  const container = messagesListRef.value;
+  if (!container) {
+    return;
+  }
+  const shouldFill = container.scrollHeight <= container.clientHeight + 40;
+  if (
+    shouldFill &&
+    !messageWindow.hasReachedStart &&
+    !messageWindow.loadingBefore &&
+    !messageWindow.autoFillPending
+  ) {
+    messageWindow.autoFillPending = true;
+    const loaded = await loadOlderMessages();
+    messageWindow.autoFillPending = false;
+    if (loaded) {
+      await autoFillIfNeeded();
     }
   }
-  // const vl = virtualListRef.value;
-  // showButton.value = vl.clientRef.itemRefEl.clientHeight - vl.getOffset() > vl.clientRef.itemRefEl.clientHeight / 2
-}
+};
+
+const fetchLatestMessages = async () => {
+  if (!chat.curChannel?.id || messageWindow.loadingLatest) {
+    return;
+  }
+  resetWindowState('live');
+  resetTypingPreview();
+  messageWindow.loadingLatest = true;
+  try {
+    const resp = await chat.messageList(chat.curChannel.id, undefined, {
+      includeArchived: chat.filterState.showArchived,
+      limit: INITIAL_MESSAGE_LOAD_LIMIT,
+    });
+    rows.value = normalizeMessageList(resp.data);
+    sortRowsByDisplayOrder();
+    applyCursorUpdate({ before: resp?.next ?? '' });
+    computeAfterCursorFromRows();
+    await nextTick();
+    scrollToBottom();
+    showButton.value = false;
+    await autoFillIfNeeded();
+    tryAutoRestoreHistory();
+  } finally {
+    messageWindow.loadingLatest = false;
+  }
+};
+
+const loadOlderMessages = async () => {
+  if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart) {
+    return false;
+  }
+  const useCursor = Boolean(messageWindow.beforeCursor);
+  messageWindow.loadingBefore = true;
+  try {
+    const container = messagesListRef.value;
+    const prevScrollHeight = container?.scrollHeight ?? 0;
+    const prevScrollTop = container?.scrollTop ?? 0;
+    let normalized: Message[] = [];
+    let nextCursor: string | undefined;
+    let reachedStart = false;
+    if (useCursor) {
+      const resp = await chat.messageList(chat.curChannel.id, messageWindow.beforeCursor, {
+        includeArchived: chat.filterState.showArchived,
+        limit: PAGINATED_MESSAGE_LOAD_LIMIT,
+      });
+      normalized = normalizeMessageList(resp.data);
+      nextCursor = resp?.next ?? '';
+      if (!nextCursor && normalized.length === 0) {
+        reachedStart = true;
+      }
+    } else {
+      const first = rows.value[0];
+      const boundary = normalizeTimestamp(first?.createdAt);
+      if (boundary === null || boundary === undefined) {
+        return false;
+      }
+      const result = await fetchOlderThanTimestamp(boundary);
+      normalized = result.messages;
+      nextCursor = result.cursor;
+      reachedStart = result.reachedStart;
+    }
+    if (normalized.length) {
+      const cursorPayload = nextCursor !== undefined ? { before: nextCursor ?? '' } : undefined;
+      mergeIncomingMessages(normalized, cursorPayload);
+      updateWindowAnchorsFromRows();
+      if (!reachedStart) {
+        messageWindow.hasReachedStart = false;
+      }
+    } else if (useCursor && nextCursor !== undefined) {
+      applyCursorUpdate({ before: nextCursor ?? '' });
+    }
+    if (reachedStart) {
+      messageWindow.hasReachedStart = true;
+      messageWindow.beforeCursor = '';
+    }
+    await nextTick();
+    if (container) {
+      const nextHeight = container.scrollHeight;
+      const diff = nextHeight - prevScrollHeight;
+      container.scrollTop = prevScrollTop + diff;
+    }
+    return normalized.length > 0;
+  } finally {
+    messageWindow.loadingBefore = false;
+  }
+};
+
+const loadNewerMessages = async () => {
+  if (
+    !chat.curChannel?.id ||
+    messageWindow.loadingAfter ||
+    messageWindow.hasReachedLatest
+  ) {
+    return false;
+  }
+  const anchor =
+    messageWindow.latestTimestamp ??
+    normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
+  if (anchor === null || anchor === undefined) {
+    return false;
+  }
+  messageWindow.loadingAfter = true;
+  try {
+    const result = await fetchNewerThanTimestamp(anchor);
+    if (result.messages.length) {
+      mergeIncomingMessages(result.messages);
+      updateWindowAnchorsFromRows();
+      messageWindow.hasReachedLatest = false;
+      return true;
+    }
+    if (result.reachedLatest) {
+      messageWindow.hasReachedLatest = true;
+      messageWindow.afterCursor = '';
+      if (isNearBottom()) {
+        updateViewMode('live');
+      }
+    }
+    return false;
+  } catch (error) {
+    console.warn('加载较新消息失败', error);
+    return false;
+  } finally {
+    messageWindow.loadingAfter = false;
+  }
+};
+
+const handleBackToLatest = async () => {
+  await fetchLatestMessages();
+  updateAnchorMessage(null);
+  updateViewMode('live');
+};
+
+const onScroll = () => {
+  const container = messagesListRef.value;
+  if (!container) {
+    return;
+  }
+  const offset = container.scrollHeight - (container.clientHeight + container.scrollTop);
+  const stuckToBottom = offset <= SCROLL_STICKY_THRESHOLD;
+  showButton.value = !stuckToBottom;
+  if (!stuckToBottom) {
+    updateViewMode('history');
+    computeAfterCursorFromRows();
+  } else {
+    updateViewMode('live');
+  }
+  if (container.scrollTop <= 80 && firstLoad && !messageWindow.loadingBefore) {
+    void loadOlderMessages();
+  }
+};
 
 const pauseKeydown = ref(false);
 
@@ -5572,46 +5950,49 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
   atLoading.value = false;
 }
 
-let recentReachTopNext = '';
+const reachTop = throttle(async () => {
+  await loadOlderMessages();
+}, 800);
 
-const reachTop = throttle(async (evt: any) => {
-  console.log('reachTop', messagesNextFlag.value)
-  if (recentReachTopNext === messagesNextFlag.value) return;
-  recentReachTopNext = messagesNextFlag.value;
-
-  if (messagesNextFlag.value) {
-    const messages = await chat.messageList(chat.curChannel?.id || '', messagesNextFlag.value, {
-      includeArchived: chat.filterState.showArchived,
-      limit: PAGINATED_MESSAGE_LOAD_LIMIT,
-    });
-    messagesNextFlag.value = messages.next || "";
-
-    let oldId = '';
-    if (rows.value.length) {
-      oldId = rows.value[0].id || '';
+const { stop: stopTopObserver } = useIntersectionObserver(
+  topSentinelRef,
+  ([entry]) => {
+    if (
+      !entry?.isIntersecting ||
+      !firstLoad ||
+      messageWindow.loadingBefore ||
+      messageWindow.hasReachedStart
+    ) {
+      return;
     }
+    void loadOlderMessages();
+  },
+  {
+    root: messagesListRef,
+    threshold: 0.2,
+  },
+);
 
-    rows.value.unshift(...normalizeMessageList(messages.data));
-    sortRowsByDisplayOrder();
-
-    nextTick(() => {
-      if (!oldId) {
-        return;
-      }
-      const selector = `[data-message-id="${oldId.replace(/"/g, '\\"')}"]`;
-      const target = messageRowRefs.get(oldId) || messagesListRef.value?.querySelector(selector);
-      if (!target) {
-        return;
-      }
-      VueScrollTo.scrollTo(target as HTMLElement, {
-        container: messagesListRef.value,
-        duration: 0,
-        offset: 0,
-      })
-    })
-    // virtualListRef.value?.scrollToIndex(messages.data.length);
-  }
-}, 1000)
+const { stop: stopBottomObserver } = useIntersectionObserver(
+  bottomSentinelRef,
+  ([entry]) => {
+    if (
+      !entry?.isIntersecting ||
+      messageWindow.loadingAfter ||
+      messageWindow.hasReachedLatest
+    ) {
+      return;
+    }
+    if (!inHistoryMode.value) {
+      return;
+    }
+    void loadNewerMessages();
+  },
+  {
+    root: messagesListRef,
+    threshold: 0.2,
+  },
+);
 
 const sendImageMessage = async (attachmentId: string) => {
   if (spectatorInputDisabled.value) {
@@ -5859,6 +6240,7 @@ onBeforeUnmount(() => {
       ref="messagesListRef">
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
               @toBottom="reachBottom" @toTop="reachTop"> -->
+      <div ref="topSentinelRef" class="message-sentinel message-sentinel--top"></div>
       <template v-for="(entry, index) in visibleRowEntries" :key="`${listRevision}-${entry.entryKey}`">
         <div
           :class="rowClass(entry.message)"
@@ -6067,6 +6449,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+      <div
+        ref="bottomSentinelRef"
+        class="message-sentinel message-sentinel--bottom"
+        v-show="inHistoryMode"
+      ></div>
 
       <!-- <VirtualList itemKey="id" :list="rows" :minSize="50" ref="virtualListRef" @scroll="onScroll"
               @toBottom="reachBottom" @toTop="reachTop">
@@ -6078,25 +6465,37 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="rows.length === 0" class="flex h-full items-center text-2xl justify-center text-gray-400">说点什么吧</div>
 
-    <div style="right: 20px ;bottom: 70px;" class=" fixed" v-if="showButton">
-      <n-button
-        class="scroll-bottom-button"
-        size="large"
-        circle
-        :color="scrollButtonColor"
-        :text-color="scrollButtonTextColor"
-        @click="toBottom"
-      >
-        <template #icon>
-          <n-icon>
-            <ArrowBarToDown />
-          </n-icon>
-        </template>
-      </n-button>
-    </div>
-
     <!-- flex-grow -->
     <div class="edit-area flex justify-between relative">
+      <div class="history-floating space-y-3 flex flex-col items-end">
+        <div
+          v-if="historyHintVisible"
+          class="history-mode-hint"
+          :class="{ 'history-mode-hint--mobile': isMobileUa }"
+        >
+          <template v-if="isMobileUa">
+            <span class="history-mode-hint__label">历史</span>
+          </template>
+          <template v-else>
+            <span class="history-mode-hint__label">{{ historyHintLabel }}</span>
+          </template>
+        </div>
+        <n-button
+          v-if="showButton"
+          class="scroll-bottom-button history-floating__button"
+          size="large"
+          :circle="isMobileUa"
+          :color="scrollButtonColor"
+          :text-color="scrollButtonTextColor"
+          @click="inHistoryMode ? handleBackToLatest() : toBottom"
+        >
+          <template #icon>
+            <n-icon>
+              <ArrowBarToDown />
+            </n-icon>
+          </template>
+        </n-button>
+      </div>
 
       <!-- 左下，快捷指令栏 -->
       <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
@@ -7754,6 +8153,56 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .scroll-bottom-button {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+}
+
+.message-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+.history-floating {
+  position: absolute;
+  right: 20px;
+  bottom: calc(100% + 16px);
+  z-index: 50;
+}
+
+@media (max-width: 768px) {
+  .history-floating {
+    right: 12px;
+    bottom: calc(100% + 12px);
+  }
+}
+
+.history-floating__button {
+  align-self: flex-end;
+}
+
+.history-mode-hint {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  background-color: rgba(15, 23, 42, 0.75);
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+:root[data-display-palette='day'] .history-mode-hint {
+  background-color: rgba(255, 255, 255, 0.9);
+  color: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+.history-mode-hint--mobile {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.history-mode-hint__label {
+  font-weight: 600;
 }
 
 .chat-input-container {
