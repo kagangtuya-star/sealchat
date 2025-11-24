@@ -3681,6 +3681,14 @@ const MAX_HISTORY_PER_CHANNEL = 5;
 const HISTORY_PREVIEW_MAX = 120;
 const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
 const pendingHistoryRestoreChannelKey = ref<string | null>(null);
+const HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
+
+interface HistoryAutoRestoreEntry {
+  entryId: string;
+  updatedAt: number;
+}
+
+type HistoryAutoRestoreStore = Record<string, HistoryAutoRestoreEntry>;
 
 const scheduleHistoryAutoRestore = () => {
   const channelId = chat.curChannel?.id;
@@ -3736,6 +3744,61 @@ const writeHistoryStore = (store: HistoryStore) => {
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(store));
   } catch (e) {
     console.error('写入输入历史失败', e);
+  }
+};
+
+const readHistoryAutoRestoreStore = (): HistoryAutoRestoreStore => {
+  try {
+    const raw = localStorage.getItem(HISTORY_AUTORESTORE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as HistoryAutoRestoreStore;
+    }
+  } catch (e) {
+    console.error('读取自动恢复状态失败', e);
+  }
+  return {};
+};
+
+const writeHistoryAutoRestoreStore = (store: HistoryAutoRestoreStore) => {
+  try {
+    localStorage.setItem(HISTORY_AUTORESTORE_STORAGE_KEY, JSON.stringify(store));
+  } catch (e) {
+    console.error('写入自动恢复状态失败', e);
+  }
+};
+
+const getAutoRestoreEntryForChannel = (channelKey: string): HistoryAutoRestoreEntry | null => {
+  if (!channelKey) {
+    return null;
+  }
+  const store = readHistoryAutoRestoreStore();
+  return store[channelKey] || null;
+};
+
+const markAutoRestoreEntry = (channelKey: string, entryId: string) => {
+  if (!channelKey) {
+    return;
+  }
+  const store = readHistoryAutoRestoreStore();
+  store[channelKey] = {
+    entryId,
+    updatedAt: Date.now(),
+  };
+  writeHistoryAutoRestoreStore(store);
+};
+
+const clearAutoRestoreEntry = (channelKey: string) => {
+  if (!channelKey) {
+    return;
+  }
+  const store = readHistoryAutoRestoreStore();
+  if (store[channelKey]) {
+    delete store[channelKey];
+    writeHistoryAutoRestoreStore(store);
   }
 };
 
@@ -3814,6 +3877,12 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   }
   const signature = buildHistorySignature(mode, content);
   if (!options.force && signature === lastHistorySignature.value) {
+    const existingEntry = historyEntries.value.find(
+      (entry) => buildHistorySignature(entry.mode, entry.content) === signature,
+    );
+    if (existingEntry) {
+      markAutoRestoreEntry(currentChannelKey.value, existingEntry.id);
+    }
     return false;
   }
   const channelKey = currentChannelKey.value;
@@ -3830,6 +3899,9 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
   lastHistorySignature.value = signature;
+  if (!options.force) {
+    markAutoRestoreEntry(channelKey, newEntry.id);
+  }
   return true;
 };
 
@@ -3901,6 +3973,7 @@ const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolea
     textToSend.value = entry.content;
     suspendInlineSync = false;
     syncInlineMarkersWithText(entry.content);
+    markAutoRestoreEntry(currentChannelKey.value, entry.id);
     if (!options?.silent) {
       message.success('已恢复历史输入');
     }
@@ -3941,15 +4014,21 @@ const tryAutoRestoreHistory = () => {
   if (textToSend.value.trim().length > 0) {
     return;
   }
-  const latestEntry = historyEntries.value[0];
-  if (!latestEntry) {
+  const autoRestoreEntry = getAutoRestoreEntryForChannel(channelKey);
+  if (!autoRestoreEntry) {
     return;
   }
-  const withinWindow = Date.now() - latestEntry.createdAt <= HISTORY_AUTO_RESTORE_WINDOW;
+  const target = historyEntries.value.find((entry) => entry.id === autoRestoreEntry.entryId);
+  if (!target) {
+    clearAutoRestoreEntry(channelKey);
+    return;
+  }
+  const withinWindow = Date.now() - autoRestoreEntry.updatedAt <= HISTORY_AUTO_RESTORE_WINDOW;
   if (!withinWindow) {
+    clearAutoRestoreEntry(channelKey);
     return;
   }
-  applyHistoryEntry(latestEntry, { silent: true });
+  applyHistoryEntry(target, { silent: true });
   message.info('已自动恢复上次输入');
 };
 
@@ -4908,6 +4987,8 @@ const send = throttle(async () => {
     message.error('尚未连接，请稍等');
     return;
   }
+  const sendMode = inputMode.value;
+  const channelKey = currentChannelKey.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
 
@@ -4930,7 +5011,7 @@ const send = throttle(async () => {
   }
 
   // 检查是否为富文本模式
-  const isRichMode = inputMode.value === 'rich';
+  const isRichMode = sendMode === 'rich';
 
   // 替换表情备注为图片标记
   if (!isRichMode) {
@@ -4961,7 +5042,7 @@ const send = throttle(async () => {
   }
 
   // 记录发送前的输入历史，便于失败后回溯
-  appendHistoryEntry(inputMode.value, draft);
+  appendHistoryEntry(sendMode, draft);
 
   const replyTo = chat.curReplyTo || undefined;
   stopTypingPreviewNow();
@@ -5038,6 +5119,9 @@ const send = throttle(async () => {
     resetInlineImages();
     pendingInlineSelection = null;
 
+    if (channelKey) {
+      clearAutoRestoreEntry(channelKey);
+    }
     textToSend.value = '';
     ensureInputFocus();
   } catch (e) {
