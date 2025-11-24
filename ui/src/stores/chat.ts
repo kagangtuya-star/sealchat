@@ -21,7 +21,9 @@ interface ChatState {
   // user: User,
   channelTree: SChannel[],
   channelTreeByWorld: Record<string, SChannel[]>,
+  channelTreeReady: Record<string, boolean>,
   channelTreePrivate: SChannel[],
+  channelTreePrivateReady: boolean,
   curChannel: Channel | null,
   currentWorldId: string,
   joinedWorldIds: string[],
@@ -144,7 +146,9 @@ export const useChatStore = defineStore({
     subject: null,
     channelTree: [] as any,
     channelTreeByWorld: {},
+    channelTreeReady: {},
     channelTreePrivate: [] as any,
+    channelTreePrivateReady: false,
     curChannel: null,
     currentWorldId: localStorage.getItem('currentWorldId') || '',
     joinedWorldIds: [],
@@ -715,6 +719,10 @@ export const useChatStore = defineStore({
       this.channelTreeByWorld = {
         ...this.channelTreeByWorld,
         [worldId]: tree,
+      };
+      this.channelTreeReady = {
+        ...this.channelTreeReady,
+        [worldId]: true,
       };
       if (this.currentWorldId === worldId) {
         this.channelTree = tree;
@@ -1318,6 +1326,12 @@ export const useChatStore = defineStore({
       await this.ensureConnectionReady();
       if (!force && this.channelTreeByWorld[finalWorld]) {
         this.channelTree = this.channelTreeByWorld[finalWorld];
+        if (!this.channelTreeReady[finalWorld]) {
+          this.channelTreeReady = {
+            ...this.channelTreeReady,
+            [finalWorld]: true,
+          };
+        }
         return this.channelTree;
       }
       const resp = await this.sendAPI('channel.list', { world_id: finalWorld, worldId: finalWorld }) as APIChannelListResp;
@@ -1694,9 +1708,13 @@ export const useChatStore = defineStore({
     // friend
 
     async ChannelPrivateList() {
-      const resp = await this.sendAPI<{ data: { data: SChannel[] } }>('channel.private.list', {});
-      this.channelTreePrivate = resp?.data.data;
-      return resp?.data.data;
+      try {
+        const resp = await this.sendAPI<{ data: { data: SChannel[] } }>('channel.private.list', {});
+        this.channelTreePrivate = resp?.data.data || [];
+        return this.channelTreePrivate;
+      } finally {
+        this.channelTreePrivateReady = true;
+      }
     },
 
     // 好友相关的API

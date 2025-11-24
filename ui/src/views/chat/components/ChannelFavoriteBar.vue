@@ -57,6 +57,12 @@ const channelMap = computed(() => {
 const currentWorldId = computed(() => chat.currentWorldId || undefined)
 const currentFavoriteIds = computed(() => display.getFavoriteChannelIds(currentWorldId.value))
 
+const favoriteDataReady = computed(() => {
+  const worldId = currentWorldId.value
+  const worldReady = worldId ? !!chat.channelTreeReady?.[worldId] : chat.channelTree.length > 0
+  return Boolean(worldReady && chat.channelTreePrivateReady)
+})
+
 const favoriteEntries = computed<FavoriteEntry[]>(() =>
   currentFavoriteIds.value.map((id) => ({
     id,
@@ -86,11 +92,14 @@ const handleFavoriteClick = async (entry: FavoriteEntry) => {
 const handleManageClick = () => emit('manage')
 
 watch(
-  () => [channelMap.value, currentWorldId.value],
-  () => {
-    const ids = Array.from(channelMap.value.keys())
-    if (!ids.length) return
-    display.syncFavoritesWithChannels(ids, currentWorldId.value)
+  () => ({
+    ready: favoriteDataReady.value,
+    worldId: currentWorldId.value,
+    ids: Array.from(channelMap.value.keys()),
+  }),
+  ({ ready, worldId, ids }) => {
+    if (!ready || !ids.length) return
+    display.syncFavoritesWithChannels(ids, worldId)
   },
   { immediate: true },
 )
