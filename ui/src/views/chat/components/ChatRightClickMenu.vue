@@ -18,6 +18,14 @@ const display = useDisplayStore()
 const { t } = useI18n();
 const user = useUserStore()
 
+const contextMenuClass = computed(() => (display.palette === 'night' ? 'chat-menu--night' : 'chat-menu--day'))
+const contextMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
+const contextMenuOptions = computed<MenuOptions>(() => ({
+  ...chat.messageMenu.optionsComponent,
+  theme: contextMenuTheme.value,
+  customClass: contextMenuClass.value,
+}))
+
 const menuMessage = computed(() => {
   const raw = chat.messageMenu.item as any;
   if (!raw) {
@@ -394,12 +402,7 @@ const clickWhisper = () => {
 <template>
   <context-menu
     v-model:show="chat.messageMenu.show"
-    :options="{
-      ...chat.messageMenu.optionsComponent,
-      theme: 'dark',
-      // 结合夜间模式使用半透明背景与浅色边框，避免默认亮色影响
-      customClass: display.palette === 'night' ? 'chat-menu--night' : 'chat-menu--day'
-    } as MenuOptions">
+    :options="contextMenuOptions">
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
@@ -425,5 +428,19 @@ const clickWhisper = () => {
 
 :deep(.context-menu.chat-menu--night .context-menu-item:hover) {
   background: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.context-menu.chat-menu--day) {
+  background: rgba(248, 250, 252, 0.98);
+  border-color: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+:deep(.context-menu.chat-menu--day .context-menu-item) {
+  color: inherit;
+}
+
+:deep(.context-menu.chat-menu--day .context-menu-item:hover) {
+  background: rgba(15, 23, 42, 0.06);
 }
 </style>
