@@ -70,6 +70,9 @@ interface ChatState {
     isWhisper?: boolean;
     whisperTargetId?: string | null;
     icMode?: 'ic' | 'ooc';
+    identityId?: string | null;
+    initialIdentityId?: string | null;
+    activeIdentityBackup?: string | null;
   } | null
 
   canReorderAllMessages: boolean;
@@ -1573,10 +1576,13 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc' }) {
+    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
       const payload: Record<string, any> = { channel_id, message_id, content };
       if (options?.icMode) {
         payload.ic_mode = options.icMode;
+      }
+      if (options && 'identityId' in options) {
+        payload.identity_id = options.identityId ?? '';
       }
       const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', payload);
       if ((resp as any)?.err) {
@@ -1667,6 +1673,21 @@ export const useChatStore = defineStore({
         if (activeIdentity) {
           payload.identity_id = activeIdentity.id;
         }
+        const debugEnabled =
+          typeof window !== 'undefined' &&
+          (window as any).__SC_DEBUG_TYPING__ === true;
+        if (debugEnabled) {
+          console.debug(
+            '[chat:messageTyping]',
+            'state=', payload.state,
+            'mode=', payload.mode,
+            'channel=', payload.channel_id,
+            'messageId=', payload.message_id,
+            'identityId=', payload.identity_id || '(none)',
+            'contentSample=',
+            typeof payload.content === 'string' ? payload.content.slice(0, 20) : payload.content,
+          );
+        }
         await this.sendAPI('message.typing', payload as APIMessage);
       } catch (error) {
         console.warn('message.typing 调用失败', error);
@@ -1681,8 +1702,18 @@ export const useChatStore = defineStore({
       this.whisperTarget = null;
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc' }) {
-      this.editing = { ...payload };
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
+      const normalizedIdentityId = typeof payload.identityId === 'undefined' ? null : (payload.identityId || null);
+      const previousActiveIdentity = payload.channelId ? this.getActiveIdentityId(payload.channelId) : '';
+      this.editing = {
+        ...payload,
+        identityId: normalizedIdentityId,
+        initialIdentityId: normalizedIdentityId,
+        activeIdentityBackup: previousActiveIdentity || null,
+      };
+      if (payload.channelId && normalizedIdentityId) {
+        this.setActiveIdentity(payload.channelId, normalizedIdentityId);
+      }
     },
 
     updateEditingDraft(draft: string) {
@@ -1697,7 +1728,24 @@ export const useChatStore = defineStore({
       }
     },
 
+    updateEditingIdentity(identityId?: string | null) {
+      if (this.editing) {
+        this.editing.identityId = identityId || null;
+      }
+    },
+
+    restoreEditingIdentity() {
+      if (!this.editing?.channelId) {
+        return;
+      }
+      const fallback = this.editing.activeIdentityBackup ?? '';
+      this.setActiveIdentity(this.editing.channelId, fallback);
+    },
+
     cancelEditing() {
+      if (this.editing) {
+        this.restoreEditingIdentity();
+      }
       this.editing = null;
     },
 

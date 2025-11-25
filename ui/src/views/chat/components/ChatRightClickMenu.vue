@@ -83,6 +83,29 @@ const resolveWhisperTargetId = (msg?: any): string | null => {
   return null;
 };
 
+const resolveIdentityId = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const direct = msg.identity || msg.identity_info || msg.identityData;
+  if (direct && typeof direct === 'object' && direct.id) {
+    return direct.id;
+  }
+  const camelRole = msg?.senderRoleId || msg?.senderRoleID;
+  if (typeof camelRole === 'string' && camelRole.trim().length > 0) {
+    return camelRole;
+  }
+  const snakeRole = msg?.sender_role_id;
+  if (typeof snakeRole === 'string' && snakeRole.trim().length > 0) {
+    return snakeRole;
+  }
+  const memberIdentity = msg?.member?.identity;
+  if (memberIdentity && typeof memberIdentity === 'object' && memberIdentity.id) {
+    return memberIdentity.id;
+  }
+  return null;
+};
+
 const isSelfMessage = computed(() => {
   const authorId = menuMessage.value.author?.id;
   if (!authorId) {
@@ -282,6 +305,7 @@ const clickEdit = () => {
   const target = menuMessage.value.raw;
   const mode = detectContentMode(target.content || target.originalContent || '');
   const whisperTargetId = resolveWhisperTargetId(target);
+  const identityId = resolveIdentityId(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
@@ -292,6 +316,7 @@ const clickEdit = () => {
     isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
     whisperTargetId,
     icMode,
+    identityId: identityId || null,
   });
   chat.messageMenu.show = false;
 }

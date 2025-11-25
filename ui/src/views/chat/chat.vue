@@ -4091,10 +4091,21 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     const draft = textToSend.value;
     const indicatorOnly = draft.trim().length === 0;
     const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(draft);
+    let previewDisplayName = chat.curMember?.nick || user.info.nick || user.info.name || '我';
+    let previewAvatar = chat.curMember?.avatar || user.info.avatar || '';
+    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId);
+    if (identityPreview) {
+      if (identityPreview.displayName) {
+        previewDisplayName = identityPreview.displayName;
+      }
+      if (identityPreview.avatar) {
+        previewAvatar = identityPreview.avatar;
+      }
+    }
     map[chat.editing.messageId] = {
       userId: user.info.id,
-      displayName: chat.curMember?.nick || user.info.nick || user.info.name || '我',
-      avatar: chat.curMember?.avatar || user.info.avatar || '',
+      displayName: previewDisplayName,
+      avatar: previewAvatar,
       content: draft,
       indicatorOnly,
       isSelf: true,
@@ -4285,6 +4296,49 @@ const resolveMessageWhisperTargetId = (msg?: any): string | null => {
   return null;
 };
 
+const resolveMessageIdentityId = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const directIdentity = msg.identity || msg.identity_info || msg.identityData;
+  if (directIdentity && typeof directIdentity === 'object' && directIdentity.id) {
+    return directIdentity.id;
+  }
+  const camelRole = msg?.senderRoleId || msg?.senderRoleID;
+  if (typeof camelRole === 'string' && camelRole.trim().length > 0) {
+    return camelRole;
+  }
+  const snakeRole = msg?.sender_role_id;
+  if (typeof snakeRole === 'string' && snakeRole.trim().length > 0) {
+    return snakeRole;
+  }
+  const memberIdentity = msg?.member?.identity;
+  if (memberIdentity && typeof memberIdentity === 'object' && memberIdentity.id) {
+    return memberIdentity.id;
+  }
+  return null;
+};
+
+const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
+  if (!channelId || !identityId) {
+    return null;
+  }
+  const list = chat.channelIdentities[channelId] || [];
+  return list.find((item) => item.id === identityId) || null;
+};
+
+const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null) => {
+  const identity = findIdentityMeta(channelId, identityId);
+  if (!identity) {
+    return null;
+  }
+  return {
+    displayName: identity.displayName,
+    avatar: identity.avatarAttachmentId ? resolveAttachmentUrl(identity.avatarAttachmentId) : '',
+    color: identity.color,
+  };
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
@@ -4299,6 +4353,7 @@ const beginEdit = (target?: Message) => {
   chat.clearWhisperTarget();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
+  const identityId = resolveMessageIdentityId(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
@@ -4309,6 +4364,7 @@ const beginEdit = (target?: Message) => {
     isWhisper: Boolean(target.isWhisper),
     whisperTargetId,
     icMode,
+    identityId: identityId || null,
   });
   inputMode.value = detectedMode;
 };
@@ -4370,8 +4426,20 @@ const saveEdit = async () => {
       return;
     }
     const updateIcMode = chat.editing.icMode;
-    const payload = updateIcMode ? { icMode: updateIcMode } : undefined;
-    const updated = await chat.messageUpdate(chat.editing.channelId, chat.editing.messageId, finalContent, payload);
+    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null } = {};
+    if (updateIcMode) {
+      updateOptions.icMode = updateIcMode;
+    }
+    if (chat.editing.identityId !== chat.editing.initialIdentityId) {
+      updateOptions.identityId = chat.editing.identityId ?? null;
+    }
+    const hasOptions = Object.keys(updateOptions).length > 0;
+    const updated = await chat.messageUpdate(
+      chat.editing.channelId,
+      chat.editing.messageId,
+      finalContent,
+      hasOptions ? updateOptions : undefined,
+    );
     if (updated) {
       upsertMessage(updated as unknown as Message);
     }
@@ -5204,6 +5272,17 @@ watch([
   syncSelfTypingPreview();
 });
 
+watch(
+  () => activeIdentityForPreview.value?.id,
+  (identityId, previous) => {
+    if (!chat.editing || chat.editing.channelId !== chat.curChannel?.id || identityId === previous) {
+      return;
+    }
+    chat.updateEditingIdentity(identityId || null);
+    emitEditingPreview();
+  },
+);
+
 watch(() => chat.whisperTarget?.id, (targetId, prevId) => {
   if (chat.whisperTarget && targetId) {
     closeWhisperPanel();
@@ -5512,6 +5591,20 @@ chatEvent.on('typing-preview', (e?: Event) => {
   const identityAvatar = identity?.avatarAttachmentId
     ? resolveAttachmentUrl(identity.avatarAttachmentId)
     : '';
+  const debugEnabled =
+    typeof window !== 'undefined' &&
+    (window as any).__SC_DEBUG_TYPING__ === true;
+  if (debugEnabled) {
+    console.debug(
+      '[typing-preview]',
+      'user=', typingUserId,
+      'mode=', mode,
+      'state=', typingState,
+      'messageId=', e.typing?.messageId,
+      'identityId=', identity?.id || '(none)',
+      'identityName=', identity?.displayName || '(none)',
+    );
+  }
   const typingState: TypingBroadcastState = (() => {
     const candidate = (e.typing?.state || '').toLowerCase();
     switch (candidate) {

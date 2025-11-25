@@ -33,18 +33,19 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 type ConnInfo struct {
-	User            *model.UserModel
-	Conn            *WsSyncConn
-	LastPingTime    int64
-	LatencyMs       int64
-	ChannelId       string
-	TypingEnabled   bool
-	TypingState     protocol.TypingState
-	TypingContent   string
-	TypingWhisperTo string
-	TypingUpdatedAt int64
-	TypingIcMode    string
-	Focused         bool
+	User             *model.UserModel
+	Conn             *WsSyncConn
+	LastPingTime     int64
+	LatencyMs        int64
+	ChannelId        string
+	TypingEnabled    bool
+	TypingState      protocol.TypingState
+	TypingContent    string
+	TypingWhisperTo  string
+	TypingUpdatedAt  int64
+	TypingIcMode     string
+	TypingIdentityID string
+	Focused          bool
 }
 
 var commandTips utils.SyncMap[string, map[string]string]

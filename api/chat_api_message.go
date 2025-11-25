@@ -1140,10 +1140,11 @@ func apiMessageList(ctx *ChatContext, data *struct {
 }
 
 func apiMessageUpdate(ctx *ChatContext, data *struct {
-	ChannelID string `json:"channel_id"`
-	MessageID string `json:"message_id"`
-	Content   string `json:"content"`
-	ICMode    string `json:"ic_mode"`
+	ChannelID  string  `json:"channel_id"`
+	MessageID  string  `json:"message_id"`
+	Content    string  `json:"content"`
+	ICMode     string  `json:"ic_mode"`
+	IdentityID *string `json:"identity_id"`
 }) (any, error) {
 	if strings.TrimSpace(data.Content) == "" {
 		return nil, fmt.Errorf("消息内容不能为空")
@@ -1175,6 +1176,42 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	channelData := channel.ToProtocolType()
 
 	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
+
+	identityChanged := false
+	var resolvedIdentityProto *protocol.ChannelIdentity
+	if data.IdentityID != nil {
+		identityChanged = true
+		rawIdentityID := strings.TrimSpace(*data.IdentityID)
+		identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, rawIdentityID)
+		if err != nil {
+			return nil, err
+		}
+		if identity != nil {
+			msg.SenderIdentityID = identity.ID
+			msg.SenderIdentityName = identity.DisplayName
+			msg.SenderIdentityColor = identity.Color
+			msg.SenderIdentityAvatarID = identity.AvatarAttachmentID
+			msg.SenderRoleID = identity.ID
+			resolvedIdentityProto = identity.ToProtocolType()
+			if identity.DisplayName != "" {
+				msg.SenderMemberName = identity.DisplayName
+			}
+		} else {
+			msg.SenderIdentityID = ""
+			msg.SenderIdentityName = ""
+			msg.SenderIdentityColor = ""
+			msg.SenderIdentityAvatarID = ""
+			msg.SenderRoleID = ""
+			resolvedIdentityProto = nil
+			if member != nil && member.Nickname != "" {
+				msg.SenderMemberName = member.Nickname
+			} else if ctx.User.Nickname != "" {
+				msg.SenderMemberName = ctx.User.Nickname
+			} else {
+				msg.SenderMemberName = ctx.User.Username
+			}
+		}
+	}
 
 	var quote model.MessageModel
 	if msg.QuoteID != "" {
@@ -1274,6 +1311,14 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if icModeChanged {
 		updates["ic_mode"] = msg.ICMode
 	}
+	if identityChanged {
+		updates["sender_identity_id"] = msg.SenderIdentityID
+		updates["sender_identity_name"] = msg.SenderIdentityName
+		updates["sender_identity_color"] = msg.SenderIdentityColor
+		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
+		updates["sender_member_name"] = msg.SenderMemberName
+		updates["sender_role_id"] = msg.SenderRoleID
+	}
 	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(updates).Error
 	if err != nil {
 		return nil, err
@@ -1285,6 +1330,21 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 
 	messageData := buildMessage()
+	if identityChanged {
+		if messageData.Member == nil {
+			messageData.Member = &protocol.GuildMember{
+				ID:   msg.MemberID,
+				User: ctx.User.ToProtocolType(),
+			}
+		}
+		if messageData.Member.User == nil {
+			messageData.Member.User = ctx.User.ToProtocolType()
+		}
+		if msg.SenderMemberName != "" {
+			messageData.Member.Nick = msg.SenderMemberName
+		}
+		messageData.Member.Identity = resolvedIdentityProto
+	}
 
 	ev := &protocol.Event{
 		Type:    protocol.EventMessageUpdated,
@@ -1604,7 +1664,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			now-ctx.ConnInfo.TypingUpdatedAt < typingThrottleGap &&
 			ctx.ConnInfo.TypingContent == data.Content &&
 			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo &&
-			ctx.ConnInfo.TypingIcMode == typingTone {
+			ctx.ConnInfo.TypingIcMode == typingTone &&
+			ctx.ConnInfo.TypingIdentityID == data.IdentityID {
 			return &struct {
 				Success bool `json:"success"`
 			}{Success: true}, nil
@@ -1615,6 +1676,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingWhisperTo = data.WhisperTo
 		ctx.ConnInfo.TypingUpdatedAt = now
 		ctx.ConnInfo.TypingIcMode = typingTone
+		ctx.ConnInfo.TypingIdentityID = data.IdentityID
 	} else {
 		ctx.ConnInfo.TypingEnabled = false
 		ctx.ConnInfo.TypingState = protocol.TypingStateSilent
@@ -1622,6 +1684,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingWhisperTo = ""
 		ctx.ConnInfo.TypingUpdatedAt = 0
 		ctx.ConnInfo.TypingIcMode = "ic"
+		ctx.ConnInfo.TypingIdentityID = ""
 	}
 
 	channel, _ := model.ChannelGet(channelId)
