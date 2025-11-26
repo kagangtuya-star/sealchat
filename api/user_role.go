@@ -79,6 +79,17 @@ func UserRoleUnlink(c *fiber.Ctx) error {
 		if !CanWithChannelRole(c, chId, pm.PermFuncChannelRoleLinkRoot) {
 			return nil
 		}
+
+		curUser := getCurUser(c)
+		if curUser != nil {
+			for _, uid := range body.UserIds {
+				if uid == curUser.ID {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+						"error": "群主不能移除自己的身份",
+					})
+				}
+			}
+		}
 	}
 
 	_, err := service.UserRoleUnlink([]string{body.RoleId}, body.UserIds)

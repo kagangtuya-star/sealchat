@@ -9,11 +9,14 @@ import useRequest from 'vue-hooks-plus/es/useRequest';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { dialogAskConfirm } from '@/utils/dialog';
 import MemberSelector from './MemberSelector.vue';
+import { useUserStore } from '@/stores/user';
 
 const message = useMessage();
 const dialog = useDialog();
 
 const chat = useChatStore();
+const userStore = useUserStore();
+const currentUserId = computed(() => userStore.info.id);
 
 
 const props = defineProps({
@@ -77,6 +80,11 @@ const filterMembersByChannelId = (roleId: string) => {
 const removeUserRole = async (userId: string | undefined, roleId: string) => {
   if (!userId) {
     message.error('用户ID不存在');
+    return;
+  }
+
+  if (!canRemoveMember(roleId, userId)) {
+    message.error('无法移除自己的群主身份');
     return;
   }
 
@@ -158,6 +166,14 @@ const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst:
   const toRemove = oldLst.filter(id => !lst.includes(id));
   const toAdd = lst.filter(id => !oldLst.includes(id));
 
+  if (role.id.endsWith('-owner')) {
+    const selfId = currentUserId.value;
+    if (selfId && toRemove.includes(selfId)) {
+      message.error('无法移除自己的群主身份');
+      return;
+    }
+  }
+
   console.log('需要移除的成员:', toRemove);
   console.log('需要添加的成员:', toAdd);
 
@@ -175,6 +191,16 @@ const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst:
 const getFilteredMemberList = (lst?: UserRoleModel[]) => {
   const retLst = (lst ?? []).map(i => i.user).filter(i => i != undefined);
   return uniqBy(retLst, 'id') as any as UserInfo[]; // 部分版本中编译器对类型有误判
+};
+
+const canRemoveMember = (roleId: string, userId?: string) => {
+  if (!userId) {
+    return true;
+  }
+  if (!currentUserId.value) {
+    return true;
+  }
+  return !(roleId.endsWith('-owner') && userId === currentUserId.value);
 };
 </script>
 
@@ -199,6 +225,7 @@ const getFilteredMemberList = (lst?: UserRoleModel[]) => {
           <UserLabelV :name="j.user?.nick ?? j.user?.username" :src="j.user?.avatar" />
           <div class="flex justify-center">
             <n-button class=" opacity-0 group-hover:opacity-100 transition-opacity" size="tiny" type="error"
+              :disabled="!canRemoveMember(j.roleId, j.user?.id)"
               @click="removeUserRole(j.user?.id, j.roleId)">
               移除
             </n-button>
