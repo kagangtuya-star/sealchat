@@ -46,6 +46,14 @@
     alternateBitrates: [64, 128]
     ffmpegPath: ""
 
+  export:
+    storageDir: ./data/exports
+    downloadBandwidthKBps: 0     # 0 表示不限速
+    downloadBurstKB: 0           # 0 表示使用与带宽相同的突发窗口
+    htmlPageSizeDefault: 100
+    htmlPageSizeMax: 500
+    htmlMaxConcurrency: 2
+
   storage:
     mode: local        # local / s3 / auto，默认本地
     presignTTL: 900
