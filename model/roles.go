@@ -34,6 +34,61 @@ func (*ChannelRoleModel) TableName() string {
 	return "perm_channel_roles"
 }
 
+type ChannelRoleOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+func ChannelRoleOptionListActive(channelID string) ([]*ChannelRoleOption, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return []*ChannelRoleOption{}, nil
+	}
+	var roleIDs []string
+	err := db.Model(&MessageModel{}).
+		Distinct("sender_role_id").
+		Where("channel_id = ?", channelID).
+		Where("sender_role_id IS NOT NULL AND sender_role_id <> ''").
+		Pluck("sender_role_id", &roleIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(roleIDs) == 0 {
+		return []*ChannelRoleOption{}, nil
+	}
+	roleSet := make(map[string]struct{}, len(roleIDs))
+	for _, id := range roleIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			roleSet[trimmed] = struct{}{}
+		}
+	}
+	if len(roleSet) == 0 {
+		return []*ChannelRoleOption{}, nil
+	}
+	var roles []ChannelRoleModel
+	err = db.Where("channel_id = ?", channelID).
+		Order("created_at ASC").
+		Find(&roles).Error
+	if err != nil {
+		return nil, err
+	}
+	options := make([]*ChannelRoleOption, 0, len(roleSet))
+	for _, role := range roles {
+		if _, ok := roleSet[role.ID]; !ok {
+			continue
+		}
+		label := strings.TrimSpace(role.Name)
+		if label == "" {
+			label = "未命名角色"
+		}
+		options = append(options, &ChannelRoleOption{
+			ID:    role.ID,
+			Label: label,
+		})
+	}
+	return options, nil
+}
+
 // UserRoleMappingModel 定义用户-角色关系，即用户拥有什么角色
 type UserRoleMappingModel struct {
 	StringPKBaseModel

@@ -169,3 +169,51 @@ func ChannelIdentityOptionList(channelID string) ([]*ChannelIdentityOption, erro
 	}
 	return options, nil
 }
+
+func ChannelIdentityOptionListActive(channelID string) ([]*ChannelIdentityOption, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return []*ChannelIdentityOption{}, nil
+	}
+	var identityIDs []string
+	err := db.Model(&MessageModel{}).
+		Distinct("sender_identity_id").
+		Where("channel_id = ?", channelID).
+		Where("sender_identity_id IS NOT NULL AND sender_identity_id <> ''").
+		Pluck("sender_identity_id", &identityIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(identityIDs) == 0 {
+		return []*ChannelIdentityOption{}, nil
+	}
+	identitySet := make(map[string]struct{}, len(identityIDs))
+	for _, id := range identityIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			identitySet[trimmed] = struct{}{}
+		}
+	}
+	if len(identitySet) == 0 {
+		return []*ChannelIdentityOption{}, nil
+	}
+	items, err := ChannelIdentityList(channelID, "")
+	if err != nil {
+		return nil, err
+	}
+	options := make([]*ChannelIdentityOption, 0, len(identitySet))
+	for _, item := range items {
+		if _, ok := identitySet[item.ID]; !ok {
+			continue
+		}
+		label := strings.TrimSpace(item.DisplayName)
+		if label == "" {
+			label = "未命名身份"
+		}
+		options = append(options, &ChannelIdentityOption{
+			ID:    item.ID,
+			Label: label,
+			Color: item.Color,
+		})
+	}
+	return options, nil
+}

@@ -171,6 +171,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)
 	v1Auth.Get("/channels/:channelId/member-options", ChannelMemberOptions)
+	v1Auth.Get("/channels/:channelId/speaker-options", ChannelSpeakerOptions)
+	v1Auth.Get("/channels/:channelId/speaker-role-options", ChannelSpeakerRoleOptions)
 	v1Auth.Delete("/channels/:channelId", ChannelDissolve)
 	v1Auth.Post("/channel-info-edit", ChannelInfoEdit)
 	v1Auth.Get("/channel-info", ChannelInfoGet)
