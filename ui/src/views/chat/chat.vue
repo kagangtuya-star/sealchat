@@ -2781,11 +2781,19 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
   }
 };
 
-const handleSearchJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+const handleSearchJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number; channelId?: string }) => {
   const targetId = payload?.messageId;
   if (!targetId) {
     message.warning('未找到要跳转的消息');
     return;
+  }
+  const targetChannelId = payload?.channelId;
+  if (targetChannelId && targetChannelId !== chat.curChannel?.id) {
+    const switched = await chat.channelSwitchTo(targetChannelId);
+    if (!switched) {
+      message.error('无法切换到目标频道，跳转已取消');
+      return;
+    }
   }
   await nextTick();
   let target = messageRowRefs.get(targetId);

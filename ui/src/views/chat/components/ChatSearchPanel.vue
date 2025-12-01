@@ -11,6 +11,7 @@ interface JumpPayload {
   messageId: string
   displayOrder?: number
   createdAt?: number
+  channelId?: string
 }
 
 const emit = defineEmits<{
@@ -232,6 +233,7 @@ const activeFilterCount = computed(() => {
   if (current.icMode !== 'all') count++
   if (current.includeOutside === false) count++
   if (current.timeRange) count++
+  if (current.worldScope) count++
   return count
 })
 
@@ -264,6 +266,13 @@ const matchModeValue = computed({
   get: () => matchMode.value,
   set: (val: 'fuzzy' | 'exact') => channelSearch.setMatchMode(val),
 })
+
+const worldScopeFilter = computed({
+  get: () => filters.value.worldScope,
+  set: (val: boolean) => channelSearch.updateFilters({ worldScope: val }),
+})
+
+const worldScopeEnabled = computed(() => filters.value.worldScope === true)
 
 const handleClose = () => {
   channelSearch.closePanel()
@@ -491,6 +500,14 @@ const shortContent = (text: string) => {
                 </n-switch>
               </div>
 
+              <div class="filter-group filter-group--inline">
+                <span class="filter-label">搜索当前世界所有频道</span>
+                <n-switch v-model:value="worldScopeFilter" size="small">
+                  <template #checked>开启</template>
+                  <template #unchecked>关闭</template>
+                </n-switch>
+              </div>
+
               <n-button v-if="filterActive" size="tiny" tertiary @click="channelSearch.resetFilters">
                 重置筛选
               </n-button>
@@ -515,6 +532,9 @@ const shortContent = (text: string) => {
                       <div class="search-result__title">
                         <span class="search-result__author" :title="item.senderName">{{ item.senderName }}</span>
                         <div class="search-result__badges">
+                          <n-tag v-if="worldScopeEnabled && item.channelName" size="small" type="info" round>
+                            {{ item.channelName }}
+                          </n-tag>
                           <n-tag size="small" :type="item.icMode === 'ic' ? 'success' : 'default'" round>
                             {{ item.icMode === 'ic' ? '场内' : '场外' }}
                           </n-tag>
@@ -529,7 +549,7 @@ const shortContent = (text: string) => {
                           size="tiny"
                           type="primary"
                           quaternary
-                          @click="handleResultClick({ messageId: item.id, displayOrder: item.displayOrder, createdAt: item.createdAt })"
+                          @click="handleResultClick({ messageId: item.id, displayOrder: item.displayOrder, createdAt: item.createdAt, channelId: item.channelId })"
                         >
                           跳转
                         </n-button>
