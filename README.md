@@ -40,7 +40,6 @@ SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务�
 - `go run main.go`：启动服务端并自动托管静态资源。
 - `go test ./...`：执行后端单元测试（导出/骰子等模块含示例测试）。
 - `./sealchat_server -i` / `./sealchat_server --uninstall`：在 Windows 上注册/卸载系统服务。
-- `./sealchat_server -d`：下载最新 release 压缩包。
 
 ## 目录导览
 | 目录 | 说明 |
@@ -53,19 +52,5 @@ SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务�
 | `specs/` & `plans/` | 需求与实现规划文档 |
 | `docs/` | 产品/部署等补充文档，新增的《产品介绍》位于 `docs/product-introduction.md` |
 | `deploy_zh.md` | 官方部署指南（含数据库切换、系统兼容性） |
-
-## 关键配置摘录
-- `domain` / `imageBaseUrl`：对外访问域名与图片引用地址。
-- `registerOpen`：控制注册开放与否，关闭后仅管理员可邀请。
-- `storage.mode`：`local` / `s3` / `auto`，并可分别指定上传目录与 CDN。
-- `audio.*`：音频库上传限制、转码、缓存目录。
-- `export.*`：导出文件目录、下载限速、HTML 分片大小与并发。
-- `sqlite.*`：WAL、busyTimeout、cacheSize 等性能参数。
-
-## 文档与资源
-- [docs/product-introduction.md](docs/product-introduction.md)：面向产品/运营的功能介绍与操作流程。
-- [deploy_zh.md](deploy_zh.md)：部署与数据库配置说明。
-- `specs/`：历史需求文档（如服务状态监控、锚点加载、导出管理等）。
-- [GitHub Releases](https://github.com/sealdice/sealchat/releases)：预编译二进制与开发版。
 
 > 本项目仍处于持续迭代阶段（WIP），欢迎根据实际场景扩展世界/频道权限、Bot 能力与前端组件。
