@@ -454,15 +454,19 @@ func parseKeywordLine(line string) (string, string, bool) {
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return "", "", false
 	}
-	separators := []string{"\t", ",", "，", "|", ";", "、"}
-	for _, sep := range separators {
-		if strings.Contains(trimmed, sep) {
-			parts := strings.SplitN(trimmed, sep, 2)
-			if len(parts) < 2 {
-				return "", "", false
-			}
-			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+	if strings.Contains(trimmed, "|") {
+		parts := strings.SplitN(trimmed, "|", 2)
+		if len(parts) < 2 {
+			return "", "", false
 		}
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+	}
+	if strings.Contains(trimmed, ",") {
+		parts := strings.SplitN(trimmed, ",", 2)
+		if len(parts) < 2 {
+			return "", "", false
+		}
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 	}
 	fields := strings.Fields(trimmed)
 	if len(fields) < 2 {

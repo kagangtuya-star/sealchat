@@ -36,6 +36,8 @@ const form = reactive({
 })
 const searchKeyword = ref('')
 const selectedIds = ref<string[]>([])
+const currentPage = ref(1)
+const pageSize = 10
 
 const keywordList = computed(() => {
   if (!props.worldId) return []
@@ -52,6 +54,16 @@ const filteredKeywordList = computed(() => {
   })
 })
 
+const pageCount = computed(() => {
+  if (!filteredKeywordList.value.length) return 1
+  return Math.max(1, Math.ceil(filteredKeywordList.value.length / pageSize))
+})
+
+const pagedKeywordList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize
+  return filteredKeywordList.value.slice(start, start + pageSize)
+})
+
 const loading = computed(() => {
   if (!props.worldId) return false
   return keywordStore.loadingMap[props.worldId] ?? false
@@ -60,8 +72,8 @@ const loading = computed(() => {
 const hasSelection = computed(() => selectedIds.value.length > 0)
 const selectedCount = computed(() => selectedIds.value.length)
 const isAllSelected = computed(() => {
-  if (!filteredKeywordList.value.length) return false
-  return filteredKeywordList.value.every((item) => selectedIds.value.includes(item.id))
+  if (!pagedKeywordList.value.length) return false
+  return pagedKeywordList.value.every((item) => selectedIds.value.includes(item.id))
 })
 const isIndeterminate = computed(() => hasSelection.value && !isAllSelected.value)
 
@@ -88,7 +100,9 @@ const toggleSelectAll = (checked: boolean) => {
     clearSelection()
     return
   }
-  selectedIds.value = filteredKeywordList.value.map((item) => item.id)
+  const union = new Set(selectedIds.value)
+  pagedKeywordList.value.forEach((item) => union.add(item.id))
+  selectedIds.value = Array.from(union)
 }
 
 watch(
@@ -107,17 +121,42 @@ watch(
   () => props.worldId,
   () => {
     clearSelection()
+    currentPage.value = 1
   },
 )
+
+watch(searchKeyword, () => {
+  currentPage.value = 1
+})
+
+watch(filteredKeywordList, () => {
+  if (filteredKeywordList.value.length === 0) {
+    currentPage.value = 1
+    return
+  }
+  if (currentPage.value > pageCount.value) {
+    currentPage.value = pageCount.value
+  }
+})
 
 watch(keywordList, (list) => {
   if (!list?.length) {
     clearSelection()
+    currentPage.value = 1
     return
   }
   const allowed = new Set(list.map((item) => item.id))
   selectedIds.value = selectedIds.value.filter((id) => allowed.has(id))
 })
+
+watch(
+  () => props.canEdit,
+  (val) => {
+    if (!val) {
+      clearSelection()
+    }
+  },
+)
 
 const resetForm = (payload?: WorldKeyword | null, overrides?: { keyword?: string; description?: string }) => {
   editing.value = payload ?? null
@@ -317,51 +356,62 @@ defineExpose({
     </div>
     <n-spin :show="loading">
       <n-empty v-if="!filteredKeywordList.length && !loading" description="暂无关键词" />
-      <n-table v-else :single-line="false" size="small">
-        <thead>
-          <tr>
-            <th style="width: 48px">
-              <n-checkbox
-                :checked="isAllSelected"
-                :indeterminate="isIndeterminate"
-                :disabled="!canEdit || !filteredKeywordList.length"
-                @update:checked="toggleSelectAll"
-              />
-            </th>
-            <th style="width: 180px">关键词</th>
-            <th>描述</th>
-            <th style="width: 180px">更新</th>
-            <th style="width: 120px">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in filteredKeywordList" :key="item.id">
-            <td>
-              <n-checkbox
-                :checked="selectedIds.includes(item.id)"
-                :disabled="!canEdit"
-                @update:checked="(val) => toggleSelect(item.id, val)"
-              />
-            </td>
-            <td class="keyword-cell">
-              <strong>{{ item.keyword }}</strong>
-            </td>
-            <td>{{ item.description }}</td>
-            <td>
-              <div class="meta-text">
-                <p>{{ formatTime(item.updatedAt) }}</p>
-                <p class="meta-id" v-if="item.updatedBy || item.updatedByName">由 {{ item.updatedByName || item.updatedBy }}</p>
-              </div>
-            </td>
-            <td>
-              <n-space size="small" justify="center">
-                <n-button text size="small" @click="resetForm(item)" :disabled="!canEdit">编辑</n-button>
-                <n-button text size="small" type="error" @click="handleDelete(item)" :disabled="!canEdit">删除</n-button>
-              </n-space>
-            </td>
-          </tr>
-        </tbody>
-      </n-table>
+      <template v-else>
+        <n-table :single-line="false" size="small">
+          <thead>
+            <tr>
+              <th style="width: 48px">
+                <n-checkbox
+                  :checked="isAllSelected"
+                  :indeterminate="isIndeterminate"
+                  :disabled="!canEdit || !pagedKeywordList.length"
+                  @update:checked="toggleSelectAll"
+                />
+              </th>
+              <th style="width: 180px">关键词</th>
+              <th>描述</th>
+              <th style="width: 180px">更新</th>
+              <th style="width: 120px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in pagedKeywordList" :key="item.id">
+              <td>
+                <n-checkbox
+                  :checked="selectedIds.includes(item.id)"
+                  :disabled="!canEdit"
+                  @update:checked="(val) => toggleSelect(item.id, val)"
+                />
+              </td>
+              <td class="keyword-cell">
+                <strong>{{ item.keyword }}</strong>
+              </td>
+              <td>{{ item.description }}</td>
+              <td>
+                <div class="meta-text">
+                  <p>{{ formatTime(item.updatedAt) }}</p>
+                  <p class="meta-id" v-if="item.updatedBy || item.updatedByName">由 {{ item.updatedByName || item.updatedBy }}</p>
+                </div>
+              </td>
+              <td>
+                <n-space size="small" justify="center">
+                  <n-button text size="small" @click="resetForm(item)" :disabled="!canEdit">编辑</n-button>
+                  <n-button text size="small" type="error" @click="handleDelete(item)" :disabled="!canEdit">删除</n-button>
+                </n-space>
+              </td>
+            </tr>
+          </tbody>
+        </n-table>
+        <div class="keyword-pagination" v-if="filteredKeywordList.length > pageSize">
+          <n-pagination
+            size="small"
+            :item-count="filteredKeywordList.length"
+            :page-size="pageSize"
+            v-model:page="currentPage"
+            simple
+          />
+        </div>
+      </template>
     </n-spin>
     <template #action>
       <n-space>
@@ -426,8 +476,8 @@ defineExpose({
       <n-alert type="info" :show-icon="false">
         支持：<br />
         1）系统导出的 JSON（包含 keywords 字段）；<br />
-        2）每行 “关键词,描述” 或 “关键词&lt;tab&gt;描述” 的表格文本；<br />
-        3）使用中文逗号、竖线等分隔符的简表。重复关键词会覆盖描述。
+        2）英文逗号分隔的表格文本 “关键词,描述”；<br />
+        3）竖线分隔的文本 “关键词|描述”（若同一行同时存在竖线与逗号，将优先按竖线切分）。重复关键词会覆盖描述。
       </n-alert>
     </n-space>
     <template #action>
@@ -482,12 +532,10 @@ defineExpose({
 .meta-id {
   margin-top: 2px;
 }
+
+.keyword-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
 </style>
-watch(
-  () => props.canEdit,
-  (val) => {
-    if (!val) {
-      clearSelection()
-    }
-  },
-)
