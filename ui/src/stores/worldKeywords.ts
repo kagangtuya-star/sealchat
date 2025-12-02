@@ -97,6 +97,21 @@ export const useWorldKeywordStore = defineStore('worldKeywords', {
       await api.delete(`/api/v1/worlds/${worldId}/keywords/${keywordId}`)
       this.removeKeyword(worldId, keywordId)
     },
+    async deleteKeywords(worldId: string, keywordIds: string[]) {
+      if (!worldId || !keywordIds?.length) return
+      const uniqueIds = Array.from(new Set(keywordIds.filter(Boolean)))
+      if (!uniqueIds.length) return
+      const results = await Promise.allSettled(
+        uniqueIds.map(async (id) => {
+          await api.delete(`/api/v1/worlds/${worldId}/keywords/${id}`)
+          this.removeKeyword(worldId, id)
+        }),
+      )
+      const failed = results.filter((item) => item.status === 'rejected')
+      if (failed.length) {
+        throw new Error(`部分关键词删除失败（${failed.length}/${uniqueIds.length}）`)
+      }
+    },
     async exportKeywords(worldId: string) {
       if (!worldId) return
       const resp = await api.get(`/api/v1/worlds/${worldId}/keywords/export`, { responseType: 'blob' })

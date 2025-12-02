@@ -25,6 +25,7 @@ const formLoading = ref(false)
 const exporting = ref(false)
 const importVisible = ref(false)
 const importLoading = ref(false)
+const batchDeleting = ref(false)
 const importForm = reactive({
   content: '',
 })
@@ -34,6 +35,7 @@ const form = reactive({
   description: '',
 })
 const searchKeyword = ref('')
+const selectedIds = ref<string[]>([])
 
 const keywordList = computed(() => {
   if (!props.worldId) return []
@@ -55,15 +57,67 @@ const loading = computed(() => {
   return keywordStore.loadingMap[props.worldId] ?? false
 })
 
+const hasSelection = computed(() => selectedIds.value.length > 0)
+const selectedCount = computed(() => selectedIds.value.length)
+const isAllSelected = computed(() => {
+  if (!filteredKeywordList.value.length) return false
+  return filteredKeywordList.value.every((item) => selectedIds.value.includes(item.id))
+})
+const isIndeterminate = computed(() => hasSelection.value && !isAllSelected.value)
+
+const clearSelection = () => {
+  selectedIds.value = []
+}
+
+const removeFromSelection = (keywordId: string) => {
+  selectedIds.value = selectedIds.value.filter((id) => id !== keywordId)
+}
+
+const toggleSelect = (keywordId: string, checked: boolean) => {
+  if (!checked) {
+    removeFromSelection(keywordId)
+    return
+  }
+  if (!selectedIds.value.includes(keywordId)) {
+    selectedIds.value = [...selectedIds.value, keywordId]
+  }
+}
+
+const toggleSelectAll = (checked: boolean) => {
+  if (!checked) {
+    clearSelection()
+    return
+  }
+  selectedIds.value = filteredKeywordList.value.map((item) => item.id)
+}
+
 watch(
   () => props.visible,
   (visible) => {
     if (visible && props.worldId) {
       void keywordStore.ensure(props.worldId)
+    } else if (!visible) {
+      clearSelection()
     }
   },
   { immediate: false },
 )
+
+watch(
+  () => props.worldId,
+  () => {
+    clearSelection()
+  },
+)
+
+watch(keywordList, (list) => {
+  if (!list?.length) {
+    clearSelection()
+    return
+  }
+  const allowed = new Set(list.map((item) => item.id))
+  selectedIds.value = selectedIds.value.filter((id) => allowed.has(id))
+})
 
 const resetForm = (payload?: WorldKeyword | null, overrides?: { keyword?: string; description?: string }) => {
   editing.value = payload ?? null
@@ -111,9 +165,34 @@ const handleDelete = (item: WorldKeyword) => {
     onPositiveClick: async () => {
       try {
         await keywordStore.deleteKeyword(props.worldId, item.id)
+        removeFromSelection(item.id)
         message.success('已删除关键词')
       } catch (error: any) {
         message.error(error?.response?.data?.message || '删除失败')
+      }
+    },
+  })
+}
+
+const handleBatchDelete = () => {
+  if (!props.canEdit || !props.worldId || !selectedIds.value.length) return
+  const ids = [...selectedIds.value]
+  dialog.warning({
+    title: '批量删除关键词',
+    content: `确认要删除选中的 ${ids.length} 个关键词吗？该操作不可恢复。`,
+    positiveText: '批量删除',
+    negativeText: '取消',
+    maskClosable: false,
+    onPositiveClick: async () => {
+      batchDeleting.value = true
+      try {
+        await keywordStore.deleteKeywords(props.worldId, ids)
+        message.success(`已删除 ${ids.length} 个关键词`)
+        clearSelection()
+      } catch (error: any) {
+        message.error(error?.message || '批量删除失败，请重试')
+      } finally {
+        batchDeleting.value = false
       }
     },
   })
@@ -214,6 +293,15 @@ defineExpose({
           <n-button type="primary" @click="resetForm()" :disabled="!canEdit">新增关键词</n-button>
           <n-button secondary :disabled="!canEdit" @click="importVisible = true">导入</n-button>
           <n-button secondary @click="handleExport" :loading="exporting">导出 JSON</n-button>
+          <n-button
+            type="error"
+            secondary
+            :disabled="!canEdit || !hasSelection"
+            :loading="batchDeleting"
+            @click="handleBatchDelete"
+          >
+            批量删除<span v-if="hasSelection">（{{ selectedCount }}）</span>
+          </n-button>
         </div>
         <n-input
           v-model:value="searchKeyword"
@@ -232,6 +320,14 @@ defineExpose({
       <n-table v-else :single-line="false" size="small">
         <thead>
           <tr>
+            <th style="width: 48px">
+              <n-checkbox
+                :checked="isAllSelected"
+                :indeterminate="isIndeterminate"
+                :disabled="!canEdit || !filteredKeywordList.length"
+                @update:checked="toggleSelectAll"
+              />
+            </th>
             <th style="width: 180px">关键词</th>
             <th>描述</th>
             <th style="width: 180px">更新</th>
@@ -240,6 +336,13 @@ defineExpose({
         </thead>
         <tbody>
           <tr v-for="item in filteredKeywordList" :key="item.id">
+            <td>
+              <n-checkbox
+                :checked="selectedIds.includes(item.id)"
+                :disabled="!canEdit"
+                @update:checked="(val) => toggleSelect(item.id, val)"
+              />
+            </td>
             <td class="keyword-cell">
               <strong>{{ item.keyword }}</strong>
             </td>
@@ -380,3 +483,11 @@ defineExpose({
   margin-top: 2px;
 }
 </style>
+watch(
+  () => props.canEdit,
+  (val) => {
+    if (!val) {
+      clearSelection()
+    }
+  },
+)
