@@ -39,6 +39,8 @@ watch(
     draft.paragraphSpacing = value.paragraphSpacing
     draft.messagePaddingX = value.messagePaddingX
     draft.messagePaddingY = value.messagePaddingY
+    draft.keywordBadgeEnabled = value.keywordBadgeEnabled
+    draft.keywordTooltipEnabled = value.keywordTooltipEnabled
     draft.sendShortcut = value.sendShortcut
     syncFavoriteBar(value)
   },
@@ -162,6 +164,31 @@ const handleConfirm = () => emit('save', { ...draft })
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
         </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">关键词提示</p>
+            <p class="section-desc">可控显示命中角标与悬浮说明，避免阅读干扰</p>
+          </div>
+        </header>
+        <div class="keyword-settings">
+          <div class="keyword-settings__item">
+            <p class="control-title">高亮关键词</p>
+            <n-switch v-model:value="draft.keywordBadgeEnabled">
+              <template #checked>高亮开启</template>
+              <template #unchecked>高亮关闭</template>
+            </n-switch>
+          </div>
+          <div class="keyword-settings__item">
+            <p class="control-title">悬浮说明</p>
+            <n-switch v-model:value="draft.keywordTooltipEnabled">
+              <template #checked>展示说明</template>
+              <template #unchecked>关闭说明</template>
+            </n-switch>
+          </div>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -486,6 +513,18 @@ const handleConfirm = () => emit('save', { ...draft })
 
 .control-input :deep(.n-input-number) {
   min-width: 120px;
+}
+
+.keyword-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.keyword-settings__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .display-settings__section header {

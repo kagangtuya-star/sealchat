@@ -134,7 +134,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
-	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{})
+	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{})
 	db.AutoMigrate(&ServiceMetricSample{})
 
 	if err := db.Model(&ChannelModel{}).

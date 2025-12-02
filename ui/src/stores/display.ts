@@ -9,6 +9,8 @@ export interface DisplaySettings {
   palette: DisplayPalette
   showAvatar: boolean
   showInputPreview: boolean
+  keywordBadgeEnabled: boolean
+  keywordTooltipEnabled: boolean
   mergeNeighbors: boolean
   maxExportMessages: number
   maxExportConcurrency: number
@@ -120,6 +122,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   palette: 'day',
   showAvatar: true,
   showInputPreview: true,
+  keywordBadgeEnabled: true,
+  keywordTooltipEnabled: true,
   mergeNeighbors: true,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
   maxExportConcurrency: CONCURRENCY_DEFAULT,
@@ -159,6 +163,8 @@ const loadSettings = (): DisplaySettings => {
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
+      keywordBadgeEnabled: coerceBoolean((parsed as any)?.keywordBadgeEnabled ?? true),
+      keywordTooltipEnabled: coerceBoolean((parsed as any)?.keywordTooltipEnabled ?? true),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       maxExportMessages: coerceNumberInRange(
         parsed.maxExportMessages,
@@ -226,6 +232,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
       ? coerceBoolean(patch.showInputPreview)
       : base.showInputPreview,
+  keywordBadgeEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'keywordBadgeEnabled')
+      ? coerceBoolean((patch as any).keywordBadgeEnabled)
+      : base.keywordBadgeEnabled,
+  keywordTooltipEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'keywordTooltipEnabled')
+      ? coerceBoolean((patch as any).keywordTooltipEnabled)
+      : base.keywordTooltipEnabled,
   mergeNeighbors:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)

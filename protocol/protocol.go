@@ -283,29 +283,44 @@ const (
 	EventAudioStateUpdated      EventName = "audio-state-updated"
 	EventChannelIFormUpdated    EventName = "channel-iform-updated"
 	EventChannelIFormPushed     EventName = "channel-iform-pushed"
+	EventWorldKeywordsUpdated   EventName = "world-keywords-updated"
 )
 
 type Event struct {
-	ID         int64                      `json:"id"`
-	Type       EventName                  `json:"type"`
-	SelfID     string                     `json:"selfID"`
-	Platform   string                     `json:"platform"`
-	Timestamp  int64                      `json:"timestamp"`
-	Argv       *Argv                      `json:"argv"`
-	Channel    *Channel                   `json:"channel"`
-	Guild      *Guild                     `json:"guild"`
-	Login      *Login                     `json:"login"`
-	Member     *GuildMember               `json:"member"`
-	Message    *Message                   `json:"message"`
-	Operator   *User                      `json:"operator"`
-	Role       *GuildRole                 `json:"role"`
-	User       *User                      `json:"user"`
-	Button     *Button                    `json:"button"`
-	Typing     *TypingPreview             `json:"typing"`
-	Reorder    *MessageReorder            `json:"reorder"`
-	Presence   []*ChannelPresence         `json:"presence"`
-	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
-	IForm      *ChannelIFormEventPayload  `json:"iform,omitempty"`
+	ID            int64                      `json:"id"`
+	Type          EventName                  `json:"type"`
+	SelfID        string                     `json:"selfID"`
+	Platform      string                     `json:"platform"`
+	Timestamp     int64                      `json:"timestamp"`
+	Argv          *Argv                      `json:"argv"`
+	Channel       *Channel                   `json:"channel"`
+	Guild         *Guild                     `json:"guild"`
+	Login         *Login                     `json:"login"`
+	Member        *GuildMember               `json:"member"`
+	Message       *Message                   `json:"message"`
+	Operator      *User                      `json:"operator"`
+	Role          *GuildRole                 `json:"role"`
+	User          *User                      `json:"user"`
+	Button        *Button                    `json:"button"`
+	Typing        *TypingPreview             `json:"typing"`
+	Reorder       *MessageReorder            `json:"reorder"`
+	Presence      []*ChannelPresence         `json:"presence"`
+	AudioState    *AudioPlaybackStatePayload `json:"audioState,omitempty"`
+	IForm         *ChannelIFormEventPayload  `json:"iform,omitempty"`
+	WorldKeywords *WorldKeywordPayload       `json:"worldKeywords,omitempty"`
+}
+
+type WorldKeywordPayload struct {
+	WorldID   string               `json:"worldId"`
+	UpdatedAt int64                `json:"updatedAt"`
+	Keywords  []*WorldKeywordEntry `json:"keywords"`
+}
+
+type WorldKeywordEntry struct {
+	ID          string `json:"id"`
+	Keyword     string `json:"keyword"`
+	Description string `json:"description"`
+	UpdatedAt   int64  `json:"updatedAt"`
 }
 
 type TypingState string

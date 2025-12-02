@@ -15,6 +15,9 @@ import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
+import { useWorldKeywordStore } from '@/stores/worldKeywords';
+import { useDisplayStore } from '@/stores/display';
+import { applyKeywordHighlights, clearKeywordHighlights } from '@/utils/keyword-highlighter';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -31,11 +34,55 @@ type EditingPreviewInfo = {
 const user = useUserStore();
 const chat = useChatStore();
 const utils = useUtilsStore();
+const worldKeywords = useWorldKeywordStore();
+const displayStore = useDisplayStore();
 const { t } = useI18n();
 
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
+
+const currentWorldId = computed(() => chat.currentWorldId || '');
+const shouldHighlightKeywords = computed(
+  () => displayStore.settings.keywordBadgeEnabled || displayStore.settings.keywordTooltipEnabled,
+);
+const keywordVersion = computed(() => {
+  const id = currentWorldId.value;
+  if (!id) return 0;
+  return worldKeywords.lastFetchedAt[id] || 0;
+});
+
+const ensureWorldKeywordsLoaded = (id?: string) => {
+  if (!id) return;
+  void worldKeywords.ensure(id);
+};
+
+watch(currentWorldId, (id) => ensureWorldKeywordsLoaded(id), { immediate: true });
+
+const refreshKeywordHighlights = () => {
+  nextTick(() => {
+    if (!shouldHighlightKeywords.value) {
+      clearKeywordHighlights(messageContentRef.value);
+      return;
+    }
+    const matcher = currentWorldId.value ? worldKeywords.matcher(currentWorldId.value) : undefined;
+    applyKeywordHighlights(messageContentRef.value, matcher, {
+      tooltipEnabled: displayStore.settings.keywordTooltipEnabled,
+    });
+  });
+};
+
+watch(
+  [
+    () => props.item?.content,
+    () => props.item?.updatedAt,
+    currentWorldId,
+    keywordVersion,
+    () => displayStore.settings.keywordBadgeEnabled,
+    () => displayStore.settings.keywordTooltipEnabled,
+  ],
+  () => refreshKeywordHighlights(),
+);
 
 function timeFormat(time?: string) {
   if (!time) return '未知';
@@ -402,6 +449,7 @@ onMounted(() => {
   );
 
   applyDiceTone();
+  refreshKeywordHighlights();
 
   setInterval(() => {
     timeText.value = timeFormat(props.item?.createdAt);
@@ -426,6 +474,7 @@ onBeforeUnmount(() => {
     stopMessageLongPress();
     stopMessageLongPress = null;
   }
+  clearKeywordHighlights(messageContentRef.value);
 });
 
 const nick = computed(() => {
@@ -668,6 +717,7 @@ watch(() => props.item?.updatedAt, () => {
   right: -2rem;
   top: 0;
 }
+
 
 .chat-item > .right > .content.whisper-content {
   background: var(--chat-whisper-bg, #eef2ff);

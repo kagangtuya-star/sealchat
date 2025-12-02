@@ -274,6 +274,10 @@ func IsWorldMember(worldID, userID string) bool {
 	return worldRoleEquals(worldID, userID, "")
 }
 
+func IsWorldSpectator(worldID, userID string) bool {
+	return worldRoleEquals(worldID, userID, model.WorldRoleSpectator)
+}
+
 func worldRoleEquals(worldID, userID, role string) bool {
 	var member model.WorldMemberModel
 	err := model.GetDB().Where("world_id = ? AND user_id = ?", worldID, userID).Limit(1).Find(&member).Error

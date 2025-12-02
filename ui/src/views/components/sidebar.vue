@@ -5,7 +5,7 @@ import { useUserStore } from '@/stores/user';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -20,6 +20,7 @@ import UserLabel from '@/components/UserLabel.vue'
 import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
 import ChannelSortModal from './ChannelSortModal.vue';
+import WorldKeywordManager from '../world/WorldKeywordManager.vue';
 
 const { t } = useI18n()
 
@@ -254,6 +255,7 @@ const handleChannelSortEntry = () => {
 };
 
 const showSortModal = ref(false);
+const keywordManagerVisible = ref(false);
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -264,6 +266,33 @@ const goWorldManage = () => {
     router.push({ name: 'world-detail', params: { worldId: chat.currentWorldId } });
   } else {
     router.push({ name: 'world-lobby' });
+  }
+};
+
+const currentWorldRole = computed(() => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return '';
+  const detail = chat.worldDetailMap[worldId];
+  return detail?.memberRole || '';
+});
+
+const canMaintainKeywords = computed(() => {
+  const role = currentWorldRole.value;
+  if (!role) return false;
+  if (role === 'spectator') return false;
+  return ['owner', 'admin', 'member'].includes(role);
+});
+
+const openWorldKeywords = async () => {
+  if (!chat.currentWorldId) {
+    message.warning('请选择一个世界');
+    return;
+  }
+  try {
+    await chat.worldDetail(chat.currentWorldId);
+    keywordManagerVisible.value = true;
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '加载世界信息失败');
   }
 };
 </script>
@@ -290,6 +319,9 @@ const goWorldManage = () => {
             </n-button>
             <n-button quaternary size="tiny" @click="goWorldManage">
               世界管理
+            </n-button>
+            <n-button quaternary size="tiny" :disabled="!canMaintainKeywords" @click="openWorldKeywords">
+              关键词管理
             </n-button>
           </div>
         </div>
@@ -520,6 +552,11 @@ const goWorldManage = () => {
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
   <ChannelSortModal v-model:show="showSortModal" />
+  <WorldKeywordManager
+    :world-id="chat.currentWorldId || ''"
+    v-model:visible="keywordManagerVisible"
+    :can-edit="canMaintainKeywords"
+  />
 
 </template>
 

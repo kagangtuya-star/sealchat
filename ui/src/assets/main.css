@@ -188,6 +188,44 @@ body {
   @apply text-ellipsis whitespace-nowrap overflow-hidden;
 }
 
+.keyword-highlight {
+  background-color: rgba(250, 204, 21, 0.15);
+  border-bottom: 1px dashed rgba(217, 119, 6, 0.8);
+  border-radius: 4px;
+  padding: 0 2px;
+  cursor: help;
+  transition: background-color 0.2s ease;
+}
+
+:root[data-display-palette='night'] .keyword-highlight {
+  background-color: rgba(253, 224, 71, 0.18);
+  border-bottom-color: rgba(251, 191, 36, 0.85);
+}
+
+.keyword-highlight:hover {
+  background-color: rgba(251, 191, 36, 0.35);
+}
+
+.keyword-tooltip {
+  position: fixed;
+  max-width: 320px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.3);
+  pointer-events: none;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 3200;
+}
+
+.keyword-tooltip[data-visible='true'] {
+  opacity: 1;
+}
+
 .sc-sidebar-fill {
   background-color: var(--sc-bg-sidebar);
   color: var(--sc-text-primary);

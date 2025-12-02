@@ -2,6 +2,7 @@
 import WorldInviteList from "./WorldInviteList.vue"
 import WorldManager from "./WorldManager.vue"
 import WorldMemberManager from "./WorldMemberManager.vue"
+import WorldKeywordManager from "./WorldKeywordManager.vue"
 
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -51,6 +52,7 @@ const goWorldLobby = () => {
 
 const worldManagerVisible = ref(false);
 const memberManagerVisible = ref(false);
+const keywordManagerVisible = ref(false);
 
 const isMember = computed(() => !!detail.value?.isMember);
 const memberRole = computed(() => detail.value?.memberRole || '');
@@ -69,6 +71,11 @@ const roleLabel = computed(() => {
   }
 });
 const canManageWorld = computed(() => memberRole.value === 'owner' || memberRole.value === 'admin');
+const canMaintainKeywords = computed(() => {
+  if (!isMember.value) return false
+  if (memberRole.value === 'spectator') return false
+  return ['owner', 'admin', 'member'].includes(memberRole.value)
+});
 const canLeaveWorld = computed(() => isMember.value && memberRole.value !== 'owner');
 const isSpectator = computed(() => memberRole.value === 'spectator');
 
@@ -116,6 +123,11 @@ const handleLeaveWorld = () => {
           </n-button>
         </div>
         <div class="world-action-item">
+          <n-button block :disabled="!canMaintainKeywords" @click="keywordManagerVisible = true">
+            关键词管理
+          </n-button>
+        </div>
+        <div class="world-action-item">
           <n-button block @click="goWorldLobby">大厅</n-button>
         </div>
         <div class="world-action-item">
@@ -142,6 +154,7 @@ const handleLeaveWorld = () => {
   <n-empty v-else description="世界不存在" />
   <WorldManager :world-id="worldId" v-model:visible="worldManagerVisible" />
   <WorldMemberManager :world-id="worldId" v-model:visible="memberManagerVisible" />
+  <WorldKeywordManager :world-id="worldId" v-model:visible="keywordManagerVisible" :can-edit="canMaintainKeywords" />
 </template>
 
 <style scoped>
