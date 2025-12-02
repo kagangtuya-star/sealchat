@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { computed } from 'vue';
 import Element from '@satorijs/element'
 import { useDialog, useMessage, useThemeVars } from 'naive-ui';
@@ -45,6 +45,11 @@ const menuMessage = computed(() => {
     member: raw.member,
   };
 });
+
+const closeMenu = () => {
+  chat.messageMenu.show = false
+  chat.messageMenu.selectedText = ''
+}
 
 const detectContentMode = (content?: string): 'plain' | 'rich' => {
   if (!content) {
@@ -129,6 +134,63 @@ const canWhisper = computed(() => {
   }
   return authorId !== user.info.id;
 });
+
+const currentWorldId = computed(() => chat.currentWorldId || '');
+const currentWorldDetailRole = computed(() => {
+  const id = currentWorldId.value
+  if (!id) {
+    return ''
+  }
+  const detail = chat.worldDetailMap[id]
+  return detail?.memberRole || ''
+})
+const canMaintainKeywords = computed(() => {
+  const role = (currentWorldDetailRole.value || '').toLowerCase()
+  return role === 'owner' || role === 'admin' || role === 'member'
+})
+const selectedKeywordText = computed(() => (chat.messageMenu.selectedText || '').trim())
+const canAddKeywordFromSelection = computed(
+  () => !!selectedKeywordText.value && !!currentWorldId.value && canMaintainKeywords.value,
+)
+
+const ensureWorldDetailLoaded = async () => {
+  const worldId = currentWorldId.value
+  if (!worldId) {
+    return
+  }
+  if (!chat.worldDetailMap[worldId]) {
+    try {
+      await chat.worldDetail(worldId)
+    } catch (error) {
+      console.warn('load world detail failed', error)
+    }
+  }
+}
+
+const handleAddKeywordFromSelection = async () => {
+  const text = selectedKeywordText.value
+  if (!text) {
+    message.warning('请先选中需要添加的内容')
+    closeMenu()
+    return
+  }
+  const worldId = currentWorldId.value
+  if (!worldId) {
+    message.warning('请选择世界后再添加关键词')
+    closeMenu()
+    return
+  }
+  if (!canMaintainKeywords.value) {
+    await ensureWorldDetailLoaded()
+  }
+  if (!canMaintainKeywords.value) {
+    message.warning('你没有维护关键词的权限')
+    closeMenu()
+    return
+  }
+  chatEvent.emit('world-keyword-create-request', { worldId, keyword: text })
+  closeMenu()
+}
 
 const resolveUserId = (raw: any): string => {
   return (
@@ -227,7 +289,7 @@ const clickArchive = async () => {
     const errMsg = (error as Error)?.message || '归档失败';
     message.error(errMsg);
   } finally {
-    chat.messageMenu.show = false;
+    closeMenu();
   }
 };
 
@@ -251,7 +313,7 @@ const clickUnarchive = async () => {
     const errMsg = (error as Error)?.message || '取消归档失败';
     message.error(errMsg);
   } finally {
-    chat.messageMenu.show = false;
+    closeMenu();
   }
 };
 
@@ -268,7 +330,7 @@ const clickDelete = async () => {
   }
   await chat.messageDelete(chat.curChannel.id, menuMessage.value.raw.id)
   message.success('撤回成功')
-  chat.messageMenu.show = false;
+  closeMenu();
 }
 
 const performRemove = async () => {
@@ -282,7 +344,7 @@ const performRemove = async () => {
     const errMsg = (error as Error)?.message || '删除失败';
     message.error(errMsg);
   } finally {
-    chat.messageMenu.show = false;
+    closeMenu();
   }
 };
 
@@ -326,7 +388,7 @@ const clickEdit = () => {
     icMode,
     identityId: identityId || null,
   });
-  chat.messageMenu.show = false;
+  closeMenu();
 }
 
 const clickCopy = async () => {
@@ -394,7 +456,7 @@ const clickWhisper = () => {
     is_bot: !!targetAuthor.is_bot,
   };
   chat.setWhisperTarget(targetUser);
-  chat.messageMenu.show = false;
+  closeMenu();
 };
 
 </script>
@@ -405,6 +467,7 @@ const clickWhisper = () => {
     :options="contextMenuOptions">
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
+    <context-menu-item v-if="canAddKeywordFromSelection" label="添加关键词" @click="handleAddKeywordFromSelection" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />

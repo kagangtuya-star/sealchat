@@ -53,6 +53,7 @@ interface ChatState {
     optionsComponent: MenuOptions
     item: SatoriMessage | null
     hasImage: boolean
+    selectedText: string
   },
 
   avatarMenu: {
@@ -116,7 +117,9 @@ type myEventName =
   | 'channel-identity-updated'
   | 'channel-member-settings-open'
   | 'bot-list-updated'
-  | 'world-keywords-updated';
+  | 'world-keywords-updated'
+  | 'world-keyword-create-request'
+  | 'world-keyword-edit-request';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -189,7 +192,8 @@ export const useChatStore = defineStore({
         y: 200,
       } as MenuOptions,
       item: null,
-      hasImage: false
+      hasImage: false,
+      selectedText: '',
     },
     avatarMenu: {
       show: false,

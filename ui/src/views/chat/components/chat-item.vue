@@ -5,7 +5,7 @@ import { onMounted, ref, h, computed, watch, PropType, onBeforeUnmount, nextTick
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
@@ -43,9 +43,7 @@ const isMobileUa = typeof navigator !== 'undefined'
   : false;
 
 const currentWorldId = computed(() => chat.currentWorldId || '');
-const shouldHighlightKeywords = computed(
-  () => displayStore.settings.keywordBadgeEnabled || displayStore.settings.keywordTooltipEnabled,
-);
+const shouldHighlightKeywords = computed(() => displayStore.settings.keywordBadgeEnabled);
 const keywordVersion = computed(() => {
   const id = currentWorldId.value;
   if (!id) return 0;
@@ -58,6 +56,32 @@ const ensureWorldKeywordsLoaded = (id?: string) => {
 };
 
 watch(currentWorldId, (id) => ensureWorldKeywordsLoaded(id), { immediate: true });
+
+const updateMenuSelectedText = () => {
+  if (typeof window === 'undefined') {
+    chat.messageMenu.selectedText = ''
+    return
+  }
+  const host = messageContentRef.value
+  if (!host) {
+    chat.messageMenu.selectedText = ''
+    return
+  }
+  const selection = window.getSelection?.()
+  if (!selection || selection.rangeCount === 0) {
+    chat.messageMenu.selectedText = ''
+    return
+  }
+  const range = selection.getRangeAt(0)
+  const container = range.commonAncestorContainer
+  const owner = container?.nodeType === Node.TEXT_NODE ? container.parentNode : container
+  if (owner && !host.contains(owner as Node)) {
+    chat.messageMenu.selectedText = ''
+    return
+  }
+  const raw = selection.toString().replace(/\s+/g, ' ').trim()
+  chat.messageMenu.selectedText = raw ? raw.slice(0, 32) : ''
+}
 
 const refreshKeywordHighlights = () => {
   nextTick(() => {
@@ -344,6 +368,7 @@ const applyDiceTone = () => {
 };
 
 const openContextMenu = (point: { x: number, y: number }, item: any) => {
+  updateMenuSelectedText();
   chat.avatarMenu.show = false;
   chat.messageMenu.optionsComponent.x = point.x;
   chat.messageMenu.optionsComponent.y = point.y;
@@ -403,6 +428,32 @@ const preventAvatarNativeMenu = (event: Event) => {
   event.preventDefault();
   event.stopPropagation();
 };
+
+const handleKeywordDblClick = async (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  if (!target || !target.classList?.contains('keyword-highlight')) {
+    return
+  }
+  event.stopPropagation()
+  event.preventDefault()
+  const worldId = currentWorldId.value
+  if (!worldId) {
+    return
+  }
+  await worldKeywords.ensure(worldId)
+  const list = worldKeywords.keywords(worldId) || []
+  const datasetId = target.dataset.keywordId || ''
+  const datasetKeyword = target.dataset.keyword || target.textContent || ''
+  let keyword = datasetId ? list.find((item) => item.id === datasetId) : undefined
+  if (!keyword) {
+    keyword = list.find((item) => item.keyword === datasetKeyword)
+  }
+  if (!keyword) {
+    message.warning('未找到关键词，请刷新列表后重试')
+    return
+  }
+  chatEvent.emit('world-keyword-edit-request', { worldId, keywordId: keyword.id })
+}
 
 const handleEditClick = (e: MouseEvent) => {
   e.stopPropagation();
@@ -552,6 +603,7 @@ watch(() => props.item?.updatedAt, () => {
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
       <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)"
+        @dblclick="handleKeywordDblClick"
         :class="contentClassList">
         <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">

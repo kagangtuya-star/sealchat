@@ -68,7 +68,7 @@ const clearExistingHighlights = (root: HTMLElement) => {
 const buildMatchList = (text: string, compiled: CompiledKeywordSet) => {
   if (!compiled.pattern) return []
   const regex = new RegExp(compiled.pattern.source, compiled.pattern.flags)
-  const matches: Array<{ start: number; end: number; text: string; definition: { keyword: string; description: string } }> = []
+  const matches: Array<{ start: number; end: number; text: string; definition: { keyword: string; description: string; id?: string } }> = []
   let exec: RegExpExecArray | null
   while ((exec = regex.exec(text)) !== null) {
     const hit = exec[0]
@@ -78,7 +78,7 @@ const buildMatchList = (text: string, compiled: CompiledKeywordSet) => {
       start: exec.index,
       end: exec.index + hit.length,
       text: hit,
-      definition: { keyword: def.keyword, description: def.description },
+      definition: { keyword: def.keyword, description: def.description, id: def.id },
     })
   }
   return matches
@@ -134,6 +134,9 @@ export const applyKeywordHighlights = (
       span.textContent = match.text
       span.dataset.keyword = match.definition.keyword
       span.dataset.description = match.definition.description
+      if (match.definition.id) {
+        span.dataset.keywordId = match.definition.id
+      }
       if (mergedOptions.tooltipEnabled) {
         span.addEventListener('mouseenter', () => showTooltip(span, match.definition.description))
         span.addEventListener('mouseleave', () => {

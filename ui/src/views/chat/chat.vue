@@ -5095,6 +5095,7 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
+    chat.messageMenu.selectedText = '';
    stopTypingPreviewNow();
     ensureInputFocus();
     nextTick(() => {

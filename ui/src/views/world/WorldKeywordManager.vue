@@ -65,10 +65,10 @@ watch(
   { immediate: false },
 )
 
-const resetForm = (payload?: WorldKeyword | null) => {
+const resetForm = (payload?: WorldKeyword | null, overrides?: { keyword?: string; description?: string }) => {
   editing.value = payload ?? null
-  form.keyword = payload?.keyword || ''
-  form.description = payload?.description || ''
+  form.keyword = overrides?.keyword ?? payload?.keyword ?? ''
+  form.description = overrides?.description ?? payload?.description ?? ''
   formVisible.value = true
 }
 
@@ -175,6 +175,28 @@ const formatTime = (value?: string) => {
   if (!value) return '-'
   return dayjs(value).format('YYYY-MM-DD HH:mm')
 }
+
+const normalizePresetKeyword = (value?: string) => {
+  if (!value) {
+    return ''
+  }
+  return value.replace(/\s+/g, ' ').trim().slice(0, 32)
+}
+
+const openCreateForm = (preset?: string) => {
+  const keyword = normalizePresetKeyword(preset)
+  resetForm(null, { keyword })
+}
+
+const openEditForm = (payload?: WorldKeyword | null) => {
+  if (!payload) return
+  resetForm(payload)
+}
+
+defineExpose({
+  openCreateForm,
+  openEditForm,
+})
 </script>
 
 <template>
@@ -243,74 +265,74 @@ const formatTime = (value?: string) => {
         <n-button @click="close">关闭</n-button>
       </n-space>
     </template>
+  </n-modal>
 
-    <n-modal
-      :show="formVisible"
-      preset="dialog"
-      :mask-closable="false"
-      :title="editing ? '编辑关键词' : '新增关键词'"
-      style="max-width: 520px"
-      @update:show="formVisible = $event"
-    >
-      <n-form label-placement="left" label-width="80">
-        <n-form-item label="关键词" :feedback="`${form.keyword.length}/32`">
-          <n-input v-model:value="form.keyword" :maxlength="32" placeholder="请输入关键词" />
-        </n-form-item>
-        <n-form-item label="描述" :feedback="`${form.description.length}/200`">
-          <n-input
-            v-model:value="form.description"
-            type="textarea"
-            :maxlength="200"
-            rows="4"
-            placeholder="在此填写关键词说明"
-          />
-        </n-form-item>
-      </n-form>
-      <template #action>
-        <n-space>
-          <n-button quaternary @click="formVisible = false">取消</n-button>
-          <n-button type="primary" :loading="formLoading" @click="handleSubmit">保存</n-button>
-        </n-space>
-      </template>
-    </n-modal>
-
-    <n-modal
-      :show="importVisible"
-      preset="dialog"
-      style="max-width: 640px"
-      title="导入关键词"
-      :mask-closable="false"
-      @update:show="importVisible = $event"
-    >
-      <n-space vertical size="large">
-        <n-upload
-          accept=".json,.txt,.csv"
-          :show-file-list="false"
-          :max="1"
-          :custom-request="handleImportUpload"
-        >
-          <n-button secondary>上传文件（JSON/CSV/表格）</n-button>
-        </n-upload>
+  <n-modal
+    :show="formVisible"
+    preset="dialog"
+    :mask-closable="false"
+    :title="editing ? '编辑关键词' : '新增关键词'"
+    style="max-width: 520px"
+    @update:show="formVisible = $event"
+  >
+    <n-form label-placement="left" label-width="80">
+      <n-form-item label="关键词" :feedback="`${form.keyword.length}/32`">
+        <n-input v-model:value="form.keyword" :maxlength="32" placeholder="请输入关键词" />
+      </n-form-item>
+      <n-form-item label="描述" :feedback="`${form.description.length}/200`">
         <n-input
-          v-model:value="importForm.content"
+          v-model:value="form.description"
           type="textarea"
-          rows="10"
-          placeholder="粘贴导出的 JSON，或每行以逗号/制表符分隔的“关键词,描述”"
+          :maxlength="200"
+          rows="4"
+          placeholder="在此填写关键词说明"
         />
-        <n-alert type="info" :show-icon="false">
-          支持：<br />
-          1）系统导出的 JSON（包含 keywords 字段）；<br />
-          2）每行 “关键词,描述” 或 “关键词&lt;tab&gt;描述” 的表格文本；<br />
-          3）使用中文逗号、竖线等分隔符的简表。重复关键词会覆盖描述。
-        </n-alert>
+      </n-form-item>
+    </n-form>
+    <template #action>
+      <n-space>
+        <n-button quaternary @click="formVisible = false">取消</n-button>
+        <n-button type="primary" :loading="formLoading" @click="handleSubmit">保存</n-button>
       </n-space>
-      <template #action>
-        <n-space>
-          <n-button quaternary @click="importVisible = false">取消</n-button>
-          <n-button type="primary" :loading="importLoading" @click="handleImport">开始导入</n-button>
-        </n-space>
-      </template>
-    </n-modal>
+    </template>
+  </n-modal>
+
+  <n-modal
+    :show="importVisible"
+    preset="dialog"
+    style="max-width: 640px"
+    title="导入关键词"
+    :mask-closable="false"
+    @update:show="importVisible = $event"
+  >
+    <n-space vertical size="large">
+      <n-upload
+        accept=".json,.txt,.csv"
+        :show-file-list="false"
+        :max="1"
+        :custom-request="handleImportUpload"
+      >
+        <n-button secondary>上传文件（JSON/CSV/表格）</n-button>
+      </n-upload>
+      <n-input
+        v-model:value="importForm.content"
+        type="textarea"
+        rows="10"
+        placeholder="粘贴导出的 JSON，或每行以逗号/制表符分隔的“关键词,描述”"
+      />
+      <n-alert type="info" :show-icon="false">
+        支持：<br />
+        1）系统导出的 JSON（包含 keywords 字段）；<br />
+        2）每行 “关键词,描述” 或 “关键词&lt;tab&gt;描述” 的表格文本；<br />
+        3）使用中文逗号、竖线等分隔符的简表。重复关键词会覆盖描述。
+      </n-alert>
+    </n-space>
+    <template #action>
+      <n-space>
+        <n-button quaternary @click="importVisible = false">取消</n-button>
+        <n-button type="primary" :loading="importLoading" @click="handleImport">开始导入</n-button>
+      </n-space>
+    </template>
   </n-modal>
 </template>
 

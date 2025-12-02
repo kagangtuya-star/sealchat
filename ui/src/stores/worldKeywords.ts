@@ -4,6 +4,7 @@ import { chatEvent } from './chat'
 import type { WorldKeyword, WorldKeywordEventPayload } from '@/types/world'
 
 interface KeywordEntry {
+  id: string
   keyword: string
   description: string
   normalized: string
@@ -196,6 +197,7 @@ const compileKeywordSet = (items: WorldKeyword[]): CompiledKeywordSet => {
     return { entries: [], pattern: null, map: new Map() }
   }
   const entries: KeywordEntry[] = items.map((item) => ({
+    id: item.id,
     keyword: item.keyword,
     description: item.description,
     normalized: item.keyword.toLowerCase(),

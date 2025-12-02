@@ -6,6 +6,7 @@ import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
+import { useWorldKeywordStore } from '@/stores/worldKeywords';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -29,6 +30,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const keywordStore = useWorldKeywordStore();
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -43,6 +45,8 @@ const usernameOverlap = ref(false);
 const dialog = useDialog()
 
 const showModal = ref(false);
+const keywordManagerRef = ref<InstanceType<typeof WorldKeywordManager> | null>(null);
+const keywordManagerVisible = ref(false);
 
 const doChannelSwitch = async (i: Channel) => {
   const success = await chat.channelSwitchTo(i.id);
@@ -67,8 +71,55 @@ const handleOpenMemberSettings = () => {
 };
 
 chatEvent.on('channel-member-settings-open', handleOpenMemberSettings);
+
+const ensureWorldContextMatched = (worldId: string) => {
+  if (!worldId) return false
+  if (!chat.currentWorldId) return false
+  return chat.currentWorldId === worldId
+}
+
+const handleKeywordCreateRequest = async (payload?: { worldId?: string; keyword?: string }) => {
+  const worldId = payload?.worldId || ''
+  if (!worldId || !ensureWorldContextMatched(worldId)) {
+    message.warning('请先切换到对应世界后再添加关键词')
+    return
+  }
+  await ensureWorldDetailInfo(worldId)
+  if (!canMaintainKeywords.value) {
+    message.warning('你没有维护关键词的权限')
+    return
+  }
+  keywordManagerRef.value?.openCreateForm(payload?.keyword)
+}
+
+const handleKeywordEditRequest = async (payload?: { worldId?: string; keywordId?: string }) => {
+  const worldId = payload?.worldId || ''
+  const keywordId = payload?.keywordId || ''
+  if (!worldId || !keywordId || !ensureWorldContextMatched(worldId)) {
+    message.warning('请先切换到对应世界后再编辑关键词')
+    return
+  }
+  await ensureWorldDetailInfo(worldId)
+  if (!canMaintainKeywords.value) {
+    message.warning('你没有维护关键词的权限')
+    return
+  }
+  await keywordStore.ensure(worldId, true)
+  const list = keywordStore.keywords(worldId) || []
+  const keyword = list.find((item) => item.id === keywordId)
+  if (!keyword) {
+    message.warning('未找到该关键词，列表可能尚未刷新')
+    return
+  }
+  keywordManagerRef.value?.openEditForm(keyword)
+}
+
+chatEvent.on('world-keyword-create-request', handleKeywordCreateRequest as any)
+chatEvent.on('world-keyword-edit-request', handleKeywordEditRequest as any)
 onUnmounted(() => {
   chatEvent.off('channel-member-settings-open', handleOpenMemberSettings as any);
+  chatEvent.off('world-keyword-create-request', handleKeywordCreateRequest as any)
+  chatEvent.off('world-keyword-edit-request', handleKeywordEditRequest as any)
 });
 
 import { useSpeechRecognition } from '@vueuse/core'
@@ -170,6 +221,15 @@ const ensureChannelManagePermission = async (channelId: string) => {
   return false;
 };
 
+const ensureWorldDetailInfo = async (worldId: string) => {
+  if (!worldId) return
+  try {
+    await chat.worldDetail(worldId)
+  } catch (error) {
+    console.warn('load world detail failed', error)
+  }
+}
+
 const handleChannelDissolve = async (channel: SChannel) => {
   if (!channel?.id) return;
   const allowed = await ensureChannelManagePermission(channel.id);
@@ -255,7 +315,6 @@ const handleChannelSortEntry = () => {
 };
 
 const showSortModal = ref(false);
-const keywordManagerVisible = ref(false);
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -269,18 +328,15 @@ const goWorldManage = () => {
   }
 };
 
-const currentWorldRole = computed(() => {
-  const worldId = chat.currentWorldId;
-  if (!worldId) return '';
-  const detail = chat.worldDetailMap[worldId];
-  return detail?.memberRole || '';
-});
-
 const canMaintainKeywords = computed(() => {
-  const role = currentWorldRole.value;
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  if (!detail) return true;
+  const role = (detail.memberRole || '').toLowerCase();
   if (!role) return false;
   if (role === 'spectator') return false;
-  return ['owner', 'admin', 'member'].includes(role);
+  return role === 'owner' || role === 'admin' || role === 'member';
 });
 
 const openWorldKeywords = async () => {
@@ -288,12 +344,13 @@ const openWorldKeywords = async () => {
     message.warning('请选择一个世界');
     return;
   }
-  try {
-    await chat.worldDetail(chat.currentWorldId);
-    keywordManagerVisible.value = true;
-  } catch (error: any) {
-    message.error(error?.response?.data?.message || '加载世界信息失败');
+  await ensureWorldDetailInfo(chat.currentWorldId);
+  if (!chat.currentWorldId) return;
+  if (!canMaintainKeywords.value) {
+    message.warning('你没有维护关键词的权限');
+    return;
   }
+  keywordManagerVisible.value = true;
 };
 </script>
 
@@ -553,6 +610,7 @@ const openWorldKeywords = async () => {
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
   <ChannelSortModal v-model:show="showSortModal" />
   <WorldKeywordManager
+    ref="keywordManagerRef"
     :world-id="chat.currentWorldId || ''"
     v-model:visible="keywordManagerVisible"
     :can-edit="canMaintainKeywords"
