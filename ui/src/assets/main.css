@@ -208,18 +208,26 @@ body {
 
 .keyword-tooltip {
   position: fixed;
-  max-width: 320px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #fff;
+  max-width: min(320px, 90vw);
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
   padding: 6px 10px;
   font-size: 12px;
   border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.3);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
   pointer-events: none;
   transform: translateX(-50%);
   opacity: 0;
   transition: opacity 0.15s ease;
   z-index: 3200;
+}
+
+:root[data-display-palette='night'] .keyword-tooltip {
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
 }
 
 .keyword-tooltip[data-visible='true'] {
