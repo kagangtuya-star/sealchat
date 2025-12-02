@@ -357,7 +357,8 @@ defineExpose({
     <n-spin :show="loading">
       <n-empty v-if="!filteredKeywordList.length && !loading" description="暂无关键词" />
       <template v-else>
-        <n-table :single-line="false" size="small">
+        <div class="keyword-table-wrapper">
+          <n-table :single-line="false" size="small">
           <thead>
             <tr>
               <th style="width: 48px">
@@ -368,10 +369,10 @@ defineExpose({
                   @update:checked="toggleSelectAll"
                 />
               </th>
-              <th style="width: 180px">关键词</th>
-              <th>描述</th>
-              <th style="width: 180px">更新</th>
-              <th style="width: 120px">操作</th>
+              <th style="width: 160px">关键词</th>
+              <th style="min-width: 220px">描述</th>
+              <th style="width: 140px">更新</th>
+              <th style="width: 100px">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -386,7 +387,7 @@ defineExpose({
               <td class="keyword-cell">
                 <strong>{{ item.keyword }}</strong>
               </td>
-              <td>{{ item.description }}</td>
+              <td class="description-cell">{{ item.description }}</td>
               <td>
                 <div class="meta-text">
                   <p>{{ formatTime(item.updatedAt) }}</p>
@@ -402,6 +403,7 @@ defineExpose({
             </tr>
           </tbody>
         </n-table>
+        </div>
         <div class="keyword-pagination" v-if="filteredKeywordList.length > pageSize">
           <n-pagination
             size="small"
@@ -522,6 +524,12 @@ defineExpose({
 
 .keyword-cell {
   font-size: 15px;
+  word-break: break-word;
+}
+
+.description-cell {
+  word-break: break-word;
+  white-space: normal;
 }
 
 .meta-text {
@@ -537,5 +545,20 @@ defineExpose({
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+.keyword-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.keyword-table-wrapper :deep(table) {
+  min-width: 720px;
+}
+
+@media (max-width: 640px) {
+  .keyword-table-wrapper :deep(table) {
+    min-width: 540px;
+  }
 }
 </style>
