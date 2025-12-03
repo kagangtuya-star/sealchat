@@ -4,7 +4,7 @@ import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useChatStore } from '@/stores/chat'
 import { useDialog, useMessage } from 'naive-ui'
 import { triggerBlobDownload } from '@/utils/download'
-import type { WorldKeywordItem } from '@/models/worldGlossary'
+import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
 
 const KEYWORD_MAX_LENGTH = 500
@@ -106,6 +106,102 @@ const isMinimalDisplay = computed({
 
 const clampText = (value: string) => value.slice(0, KEYWORD_MAX_LENGTH)
 
+const splitAliases = (value?: string | string[] | null) => {
+  if (!value) return []
+  const source = Array.isArray(value) ? value : String(value).split(/[，,;；\/、]/)
+  return source
+    .map((item) => clampText(String(item).trim()))
+    .filter(Boolean)
+}
+
+const normalizePayloadEntry = (entry: any): WorldKeywordPayload | null => {
+  if (!entry) return null
+  const keyword = clampText(String(entry.keyword ?? '').trim())
+  if (!keyword) return null
+  const payload: WorldKeywordPayload = { keyword }
+  const aliases = splitAliases(entry.aliases)
+  if (aliases.length) {
+    payload.aliases = aliases
+  }
+  const description = entry.description ?? entry.desc
+  if (description) {
+    const text = clampText(String(description).trim())
+    if (text) payload.description = text
+  }
+  if (entry.matchMode === 'regex' || entry.matchMode === 'plain') {
+    payload.matchMode = entry.matchMode
+  }
+  if (entry.display === 'minimal' || entry.display === 'standard') {
+    payload.display = entry.display
+  }
+  if (typeof entry.isEnabled === 'boolean') {
+    payload.isEnabled = entry.isEnabled
+  }
+  return payload
+}
+
+const parseStructuredImport = (raw: string): WorldKeywordPayload[] => {
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => normalizePayloadEntry(item)).filter((item): item is WorldKeywordPayload => Boolean(item))
+    }
+  } catch (error) {
+    // fallthrough to other formats
+  }
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (!lines.length) return []
+  const firstLine = lines[0]
+  const isMarkdownTable = firstLine.startsWith('|') && firstLine.includes('|')
+  const headerKeywords = ['关键词', 'keyword']
+  const isHeader = (value?: string | null) => {
+    if (!value) return false
+    const normalized = value.trim().toLowerCase()
+    return headerKeywords.includes(normalized)
+  }
+  const rows: string[][] = []
+  if (isMarkdownTable) {
+    lines.forEach((line) => {
+      if (!line.includes('|')) return
+      const content = line.replace(/^\|/, '').replace(/\|$/, '').trim()
+      if (!content) return
+      const columns = content.split('|').map((col) => col.trim())
+      if (!columns.length) return
+      if (columns.every((col) => /^-+$/.test(col.replace(/:/g, '')))) return
+      if (isHeader(columns[0])) return
+      rows.push(columns)
+    })
+  } else {
+    const delimiter = lines.some((line) => line.includes('|')) ? '|' : ','
+    lines.forEach((line, index) => {
+      const columns = line.split(delimiter).map((col) => col.trim())
+      if (!columns.length) return
+      if (index === 0 && isHeader(columns[0])) return
+      rows.push(columns)
+    })
+  }
+  return rows
+    .map((columns) => {
+      const keyword = clampText(columns[0] || '')
+      const descriptionRaw = clampText(columns[1] || '')
+      if (!keyword || !descriptionRaw) {
+        return null
+      }
+      const entry: Partial<WorldKeywordPayload> = {
+        keyword,
+        description: descriptionRaw,
+      }
+      if (columns[2]) {
+        const aliasList = splitAliases(columns[2])
+        if (aliasList.length) entry.aliases = aliasList
+      }
+      return normalizePayloadEntry(entry)
+    })
+    .filter((item): item is WorldKeywordPayload => Boolean(item))
+}
+
 function resetForm() {
   formModel.keyword = ''
   formModel.aliases = ''
@@ -120,6 +216,15 @@ function openCreate() {
   if (!worldId) return
   resetForm()
   glossary.openEditor(worldId)
+}
+
+function openImportModal() {
+  const worldId = currentWorldId.value
+  if (!worldId) {
+    message.warning('请选择一个世界')
+    return
+  }
+  glossary.openImport(worldId)
 }
 
 function openEdit(item: any) {
@@ -203,12 +308,12 @@ async function handleImport(replace = false) {
   const worldId = glossary.importState.worldId || currentWorldId.value
   if (!worldId) return
   try {
-    const parsed = JSON.parse(importText.content || '[]')
-    if (!Array.isArray(parsed)) {
-      message.error('JSON 格式错误，需要数组')
+    const payloads = parseStructuredImport(importText.content || '')
+    if (!payloads.length) {
+      message.error('未识别到可导入的数据，请检查格式')
       return
     }
-    await glossary.importKeywords(worldId, parsed, replace)
+    await glossary.importKeywords(worldId, payloads, replace)
     message.success('导入完成')
   } catch (error: any) {
     message.error(error?.message || '导入失败')
@@ -409,9 +514,6 @@ watch(
         </div>
         <div class="space-x-2 flex items-center">
           <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
-          <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openCreate">新增</n-button>
-          <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="glossary.openImport(currentWorldId || '')">导入</n-button>
-          <n-button size="tiny" tertiary @click="handleExport">导出</n-button>
         </div>
       </div>
     </template>
@@ -422,9 +524,6 @@ watch(
         clearable
         size="small"
       />
-      <div v-if="canEdit" class="keyword-manager__quick-actions">
-        <n-button size="small" type="primary" secondary @click="openCreate">新建术语</n-button>
-      </div>
       <div v-if="canEdit" class="keyword-manager__toolbar">
         <div class="keyword-manager__selection">
           已选 {{ selectedIds.length }} / {{ filteredKeywords.length }}
@@ -433,36 +532,49 @@ watch(
           </n-button>
         </div>
         <div class="keyword-manager__actions">
-          <n-button
-            size="tiny"
-            tertiary
-            type="primary"
-            :disabled="!hasSelection"
-            :loading="bulkToggleState === 'enable'"
-            @click="handleBulkToggle(true)"
-          >
-            批量启用
-          </n-button>
-          <n-button
-            size="tiny"
-            tertiary
-            type="warning"
-            :disabled="!hasSelection"
-            :loading="bulkToggleState === 'disable'"
-            @click="handleBulkToggle(false)"
-          >
-            批量停用
-          </n-button>
-          <n-button
-            size="tiny"
-            tertiary
-            type="error"
-            :loading="bulkDeleting"
-            :disabled="!hasSelection"
-            @click="handleBulkDeleteConfirm"
-          >
-            批量删除
-          </n-button>
+          <div class="keyword-manager__action-group keyword-manager__action-group--primary">
+            <n-button size="tiny" type="primary" secondary :disabled="!canEdit || !currentWorldId" @click="openCreate">
+              新建术语
+            </n-button>
+            <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openImportModal">
+              导入
+            </n-button>
+            <n-button size="tiny" tertiary :disabled="!currentWorldId" @click="handleExport">
+              导出 JSON
+            </n-button>
+          </div>
+          <div class="keyword-manager__action-group keyword-manager__action-group--bulk">
+            <n-button
+              size="tiny"
+              tertiary
+              type="primary"
+              :disabled="!hasSelection"
+              :loading="bulkToggleState === 'enable'"
+              @click="handleBulkToggle(true)"
+            >
+              批量启用
+            </n-button>
+            <n-button
+              size="tiny"
+              tertiary
+              type="warning"
+              :disabled="!hasSelection"
+              :loading="bulkToggleState === 'disable'"
+              @click="handleBulkToggle(false)"
+            >
+              批量停用
+            </n-button>
+            <n-button
+              size="tiny"
+              tertiary
+              type="error"
+              :loading="bulkDeleting"
+              :disabled="!hasSelection"
+              @click="handleBulkDeleteConfirm"
+            >
+              批量删除
+            </n-button>
+          </div>
         </div>
       </div>
       <n-alert v-if="!canEdit" type="info" title="仅可查看">
@@ -625,7 +737,14 @@ watch(
 
   <n-modal v-model:show="importVisible" preset="card" title="导入术语" style="width: 520px">
     <n-alert type="info" class="mb-3">
-      请输入 JSON 数组，每个元素包含 `keyword`、`aliases`、`matchMode`、`description` 等字段。
+      <p class="import-hint-title">支持以下格式：</p>
+      <ul class="import-hint-list">
+        <li>JSON 数组（推荐）：可直接粘贴导出的文件</li>
+        <li>CSV：每行 “关键词,描述[,别名]”</li>
+        <li>管道分隔：“关键词|描述[|别名]”</li>
+        <li>Markdown 表格：前三列依次为关键词、描述、别名（别名可留空）</li>
+      </ul>
+      <p class="import-hint-desc">别名为可选项，可用逗号/顿号/分号分隔，留空则忽略。</p>
     </n-alert>
     <n-input
       v-model:value="importText.content"
@@ -707,13 +826,15 @@ watch(
 .keyword-manager__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.75rem;
+  align-items: center;
 }
 
-.keyword-manager__quick-actions {
+.keyword-manager__action-group {
   display: flex;
-  justify-content: flex-start;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
 }
 
 .keyword-mobile-simple-list {
@@ -772,6 +893,29 @@ watch(
   margin-top: 0.75rem;
 }
 
+.import-hint-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.import-hint-list {
+  margin: 0.25rem 0 0.4rem;
+  padding-left: 1.1rem;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.import-hint-list li {
+  list-style: disc;
+  margin-bottom: 0.15rem;
+}
+
+.import-hint-desc {
+  margin: 0;
+  font-size: 12px;
+  color: #4b5563;
+}
+
 @media (max-width: 767px) {
   .keyword-manager__toolbar {
     flex-direction: column;
@@ -779,6 +923,11 @@ watch(
   }
 
   .keyword-manager__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .keyword-manager__action-group {
     width: 100%;
     justify-content: flex-start;
   }
