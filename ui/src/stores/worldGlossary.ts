@@ -72,6 +72,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const versionMap = ref<Record<string, number>>({})
   const managerVisible = ref(false)
   const editorState = ref<KeywordEditorState>({ visible: false, worldId: null, keyword: null, prefill: null })
+  const quickPrefill = ref<string | null>(null)
   const importState = ref<KeywordImportState>({ visible: false, processing: false, worldId: null, lastStats: null })
   const searchQuery = ref('')
 
@@ -95,6 +96,10 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   function openEditor(worldId: string, keyword?: WorldKeywordItem | null, prefill?: string | null) {
     editorState.value = { visible: true, worldId, keyword: keyword || null, prefill: prefill || null }
+  }
+
+  function setQuickPrefill(value: string | null) {
+    quickPrefill.value = value
   }
 
   function closeEditor() {
@@ -309,6 +314,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     versionMap,
     managerVisible,
     editorState,
+    quickPrefill,
     importState,
     searchQuery,
     currentKeywords,
@@ -324,6 +330,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     setKeywordEnabledBulk,
     setManagerVisible,
     openEditor,
+    setQuickPrefill,
     closeEditor,
     openImport,
     closeImport,

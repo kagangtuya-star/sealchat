@@ -810,8 +810,15 @@ const handleSelectionCopy = async () => {
 const handleSelectionAddKeyword = () => {
   const worldId = chat.currentWorldId
   if (!worldId || !selectionBar.text) return
-  worldGlossary.setManagerVisible(true)
-  worldGlossary.openEditor(worldId, null, selectionBar.text)
+  const keywordText = selectionBar.text.trim()
+  if (!keywordText) {
+    hideSelectionBar()
+    return
+  }
+  worldGlossary.openEditor(worldId, null, keywordText)
+  nextTick(() => {
+    worldGlossary.setQuickPrefill(keywordText)
+  })
   hideSelectionBar()
 }
 

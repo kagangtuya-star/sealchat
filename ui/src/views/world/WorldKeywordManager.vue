@@ -460,21 +460,27 @@ watch(
       resetForm()
       return
     }
-    if (state.keyword) {
-      const keyword = state.keyword
-      formModel.keyword = keyword.keyword
-      formModel.aliases = (keyword.aliases || []).join(', ')
-      formModel.matchMode = keyword.matchMode
-      formModel.description = keyword.description
-      formModel.display = keyword.display
-      formModel.isEnabled = keyword.isEnabled
+      if (state.keyword) {
+        const keyword = state.keyword
+        formModel.keyword = keyword.keyword
+        formModel.aliases = (keyword.aliases || []).join(', ')
+        formModel.matchMode = keyword.matchMode
+        formModel.description = keyword.description
+        formModel.display = keyword.display
+        formModel.isEnabled = keyword.isEnabled
     } else {
       resetForm()
-      if (state.prefill) {
-        formModel.keyword = state.prefill
-        glossary.editorState.prefill = null
-      }
     }
+  },
+)
+
+watch(
+  () => glossary.quickPrefill,
+  (text) => {
+    if (!text) return
+    if (!glossary.editorState.visible || glossary.editorState.keyword) return
+    formModel.keyword = text
+    glossary.setQuickPrefill(null)
   },
 )
 
