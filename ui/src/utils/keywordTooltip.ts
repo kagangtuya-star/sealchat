@@ -1,8 +1,6 @@
 interface TooltipContent {
   title: string
   description: string
-  editable?: boolean
-  onEdit?: () => void
 }
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
@@ -42,24 +40,20 @@ export function createKeywordTooltip(resolver: ContentResolver) {
       body.textContent = description
       tooltip.appendChild(body)
     }
-    if (data.editable && typeof data.onEdit === 'function') {
-      const action = document.createElement('button')
-      action.type = 'button'
-      action.className = 'keyword-tooltip__action'
-      action.textContent = '编辑'
-      action.addEventListener('click', (event) => {
-        event.stopPropagation()
-        data.onEdit?.()
-        hide()
-      })
-      tooltip.appendChild(action)
-    }
-    const rect = target.getBoundingClientRect()
-    const top = Math.max(8, rect.top - tooltip.offsetHeight - 8)
-    const left = Math.min(window.innerWidth - 260, Math.max(8, rect.left + rect.width / 2 - 130))
+    tooltip.style.visibility = 'hidden'
     tooltip.style.display = 'block'
-    tooltip.style.top = `${top + window.scrollY}px`
-    tooltip.style.left = `${left + window.scrollX}px`
+    tooltip.style.top = '0'
+    tooltip.style.left = '0'
+    const rect = target.getBoundingClientRect()
+    const { offsetWidth, offsetHeight } = tooltip
+    const gap = 12
+    const top = Math.max(8, rect.top + window.scrollY - offsetHeight - gap)
+    const maxLeft = window.innerWidth - offsetWidth - 8
+    const centered = rect.left + rect.width / 2 - offsetWidth / 2
+    const left = Math.min(maxLeft, Math.max(8, centered)) + window.scrollX
+    tooltip.style.visibility = 'visible'
+    tooltip.style.top = `${top}px`
+    tooltip.style.left = `${left}px`
   }
 
   return { show, hide }

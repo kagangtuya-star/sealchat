@@ -26,15 +26,26 @@ html[data-display-palette='night'] .keyword-highlight {
 .keyword-tooltip {
   position: absolute;
   z-index: 3200;
-  max-width: 260px;
+  min-width: 160px;
+  max-width: min(360px, calc(100vw - 32px));
+  width: max-content;
   padding: 12px 14px;
-  background: rgba(28, 28, 32, 0.95);
-  color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f2933;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.15);
   font-size: 13px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
   pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+:root[data-display-palette='night'] .keyword-tooltip {
+  background: rgba(17, 24, 39, 0.9);
+  color: rgba(248, 250, 252, 0.95);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 .keyword-tooltip__header {
@@ -45,14 +56,5 @@ html[data-display-palette='night'] .keyword-highlight {
 .keyword-tooltip__body {
   white-space: pre-line;
   line-height: 1.4;
-  margin-bottom: 4px;
-}
-
-.keyword-tooltip__action {
-  border: none;
-  background: transparent;
-  color: #ffd17a;
-  font-size: 12px;
-  cursor: pointer;
-  pointer-events: auto;
+  margin-bottom: 0;
 }

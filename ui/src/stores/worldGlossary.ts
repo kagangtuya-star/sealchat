@@ -13,6 +13,8 @@ import {
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
 
+const KEYWORD_MAX_LENGTH = 500
+
 interface KeywordPageState {
   items: WorldKeywordItem[]
   total: number
@@ -52,6 +54,15 @@ interface KeywordImportState {
 }
 
 let gatewayBound = false
+
+const clampText = (value?: string | null) => (value ? value.slice(0, KEYWORD_MAX_LENGTH) : value || '')
+
+const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => ({
+  ...item,
+  keyword: clampText(item.keyword),
+  aliases: (item.aliases || []).map((alias) => clampText(alias)),
+  description: item.description ? clampText(item.description) : '',
+})
 
 export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const pages = ref<Record<string, KeywordPageState>>({})
@@ -146,13 +157,14 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   }
 
   function updateKeywordCache(worldId: string, list: WorldKeywordItem[], meta?: { total?: number; page?: number; pageSize?: number }) {
+    const normalizedList = list.map(normalizeKeywordItem)
     const total = meta?.total ?? list.length
     const page = meta?.page ?? 1
     const pageSize = meta?.pageSize ?? list.length
     pages.value = {
       ...pages.value,
       [worldId]: {
-        items: list,
+        items: normalizedList,
         total,
         page,
         pageSize,
@@ -160,10 +172,10 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       },
     }
     const nextMap = { ...keywordById.value }
-    list.forEach((item) => {
+    normalizedList.forEach((item) => {
       nextMap[item.id] = item
     })
-    const keepIds = new Set(list.map((item) => item.id))
+    const keepIds = new Set(normalizedList.map((item) => item.id))
     Object.entries(nextMap).forEach(([id, item]) => {
       if (item.worldId === worldId && !keepIds.has(id)) {
         delete nextMap[id]
@@ -195,15 +207,15 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   async function createKeyword(worldId: string, payload: WorldKeywordPayload) {
     const item = await createWorldKeyword(worldId, payload)
-    const list = [...(pages.value[worldId]?.items || [])]
-    list.unshift(item)
-    updateKeywordCache(worldId, list)
-    return item
-  }
+      const list = [...(pages.value[worldId]?.items || [])]
+      list.unshift(normalizeKeywordItem(item))
+      updateKeywordCache(worldId, list)
+      return item
+    }
 
   async function editKeyword(worldId: string, keywordId: string, payload: WorldKeywordPayload) {
     const item = await updateWorldKeyword(worldId, keywordId, payload)
-    const list = (pages.value[worldId]?.items || []).map((existing) => (existing.id === keywordId ? item : existing))
+    const list = (pages.value[worldId]?.items || []).map((existing) => (existing.id === keywordId ? normalizeKeywordItem(item) : existing))
     updateKeywordCache(worldId, list)
     return item
   }
@@ -220,6 +232,35 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       const list = (pages.value[worldId]?.items || []).filter((item) => !ids.includes(item.id))
       updateKeywordCache(worldId, list)
     }
+  }
+
+  async function setKeywordEnabledBulk(worldId: string, ids: string[], enabled: boolean) {
+    if (!worldId || !ids?.length) return
+    const pageItems = pages.value[worldId]?.items || []
+    const targetMap = new Map(pageItems.map((item) => [item.id, item]))
+    const tasks = ids
+      .map((id) => {
+        const current = targetMap.get(id)
+        if (!current || current.isEnabled === enabled) return null
+        const payload: WorldKeywordPayload = {
+          keyword: current.keyword,
+          aliases: current.aliases,
+          matchMode: current.matchMode,
+          description: current.description,
+          display: current.display,
+          isEnabled: enabled,
+        }
+        return updateWorldKeyword(worldId, id, payload)
+      })
+      .filter((task): task is Promise<WorldKeywordItem> => Boolean(task))
+    if (!tasks.length) {
+      return
+    }
+    const updatedItems = await Promise.all(tasks)
+    const normalizedUpdates = updatedItems.map(normalizeKeywordItem)
+    const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
+    const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
+    updateKeywordCache(worldId, nextList)
   }
 
   async function importKeywords(worldId: string, items: WorldKeywordPayload[], replace = false) {
@@ -280,6 +321,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     removeKeywordBulk,
     importKeywords,
     exportKeywords,
+    setKeywordEnabledBulk,
     setManagerVisible,
     openEditor,
     closeEditor,

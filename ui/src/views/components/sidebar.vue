@@ -2,6 +2,7 @@
 import router from '@/router';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
@@ -28,6 +29,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const worldGlossary = useWorldGlossaryStore();
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -266,6 +268,16 @@ const goWorldManage = () => {
     router.push({ name: 'world-lobby' });
   }
 };
+
+const handleOpenWorldGlossary = () => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) {
+    message.warning('请选择一个世界');
+    return;
+  }
+  worldGlossary.ensureKeywords(worldId, { force: true });
+  worldGlossary.setManagerVisible(true);
+};
 </script>
 
 <template>
@@ -290,6 +302,14 @@ const goWorldManage = () => {
             </n-button>
             <n-button quaternary size="tiny" @click="goWorldManage">
               世界管理
+            </n-button>
+            <n-button
+              quaternary
+              size="tiny"
+              :type="worldGlossary.managerVisible ? 'primary' : 'default'"
+              @click="handleOpenWorldGlossary"
+            >
+              术语管理
             </n-button>
           </div>
         </div>

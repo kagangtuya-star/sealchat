@@ -377,18 +377,26 @@ const keywordTooltip = createKeywordTooltip((keywordId) => {
   if (!keyword) {
     return null
   }
-  const worldId = chat.currentWorldId
   return {
     title: keyword.keyword,
     description: keyword.description,
-    editable: props.worldKeywordEditable,
-    onEdit: () => {
-      if (!worldId) return
-      worldGlossary.setManagerVisible(true)
-      worldGlossary.openEditor(worldId, keyword)
-    },
   }
 })
+
+const handleKeywordQuickEdit = (keywordId: string) => {
+  if (!props.worldKeywordEditable) {
+    return
+  }
+  const worldId = chat.currentWorldId
+  if (!worldId) {
+    return
+  }
+  const keyword = worldGlossary.keywordById[keywordId]
+  if (!keyword) {
+    return
+  }
+  worldGlossary.openEditor(worldId, keyword)
+}
 
 const applyKeywordHighlights = async () => {
   await nextTick()
@@ -404,7 +412,10 @@ const applyKeywordHighlights = async () => {
   refreshWorldKeywordHighlights(
     host,
     compiled,
-    { underlineOnly: keywordUnderlineOnly.value },
+    {
+      underlineOnly: keywordUnderlineOnly.value,
+      onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
+    },
     keywordTooltipEnabled.value ? keywordTooltip : undefined,
   )
 }

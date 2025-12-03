@@ -2,6 +2,7 @@ import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 
 interface HighlightOptions {
   underlineOnly: boolean
+  onKeywordDoubleInvoke?: (keywordId: string) => void
 }
 
 interface TooltipEmitter {
@@ -60,6 +61,18 @@ function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
   return filtered
 }
 
+function attachTouchDoubleTap(target: HTMLElement, handler: () => void) {
+  let lastTap = 0
+  target.addEventListener('touchend', (event) => {
+    const now = Date.now()
+    if (now - lastTap <= 350) {
+      event.preventDefault()
+      handler()
+    }
+    lastTap = now
+  })
+}
+
 function wrapRanges(node: Text, ranges: ReturnType<typeof buildRanges>, options: HighlightOptions, tooltip?: TooltipEmitter) {
   if (!ranges.length) return
   const text = node.textContent || ''
@@ -77,11 +90,27 @@ function wrapRanges(node: Text, ranges: ReturnType<typeof buildRanges>, options:
     span.dataset.keywordId = range.keyword.id
     span.dataset.keywordSource = range.keyword.source
     span.textContent = text.slice(range.start, range.end)
-    span.title = range.keyword.description || range.keyword.keyword
     if (tooltip) {
       span.addEventListener('mouseenter', () => tooltip.show(span, range.keyword.id))
       span.addEventListener('mouseleave', () => tooltip.hide(span))
       span.addEventListener('click', () => tooltip.show(span, range.keyword.id))
+    }
+    if (options.onKeywordDoubleInvoke) {
+      const invokeEdit = () => options.onKeywordDoubleInvoke?.(range.keyword.id)
+      span.addEventListener('mousedown', (event) => {
+        if (event.detail === 2) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      })
+      span.addEventListener('dblclick', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        invokeEdit()
+      })
+      attachTouchDoubleTap(span, () => {
+        invokeEdit()
+      })
     }
     fragment.appendChild(span)
     lastIndex = range.end

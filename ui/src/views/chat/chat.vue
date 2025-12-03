@@ -709,6 +709,7 @@ const selectionBar = reactive({
   text: '',
   position: { x: 0, y: 0 },
 })
+const selectionBarRef = ref<HTMLElement | null>(null)
 const selectionMaxLength = 120
 
 const hideSelectionBar = () => {
@@ -719,11 +720,27 @@ const hideSelectionBar = () => {
 const updateSelectionPosition = (rect: DOMRect) => {
   const width = 220
   const padding = 12
+  const gap = 12
+  const barHeight = selectionBarRef.value?.offsetHeight ?? 46
+  const scrollTop = window.scrollY || document.documentElement.scrollTop || 0
   const x = Math.min(window.innerWidth - width - padding, Math.max(padding, rect.left + rect.width / 2 - width / 2))
-  const aboveY = rect.top - 12
-  const y = aboveY < padding ? rect.bottom + 12 : aboveY
+  const aboveY = rect.top + scrollTop - barHeight - gap
+  const belowY = rect.bottom + scrollTop + gap
+  const viewportBottom = scrollTop + window.innerHeight
+  const maxY = viewportBottom - barHeight - padding
+  const clamped = (value: number) => Math.min(maxY, Math.max(padding, value))
+  let targetY = aboveY
+  const preferBelow = isMobileUa || window.innerWidth <= 768
+  if (preferBelow) {
+    targetY = belowY
+    if (targetY + barHeight > viewportBottom - padding && aboveY >= padding) {
+      targetY = aboveY
+    }
+  } else if (aboveY < padding) {
+    targetY = belowY
+  }
   selectionBar.position.x = x
-  selectionBar.position.y = y
+  selectionBar.position.y = clamped(targetY)
 }
 
 const handleSelectionChange = () => {
@@ -761,8 +778,6 @@ const handleSelectionChange = () => {
   selectionBar.text = text
   selectionBar.visible = true
 }
-
-const selectionBarRef = ref<HTMLElement | null>(null)
 
 const handlePointerDown = (event: PointerEvent) => {
   if (!selectionBar.visible) {
@@ -818,14 +833,6 @@ if (typeof window !== 'undefined') {
   useEventListener(window, 'resize', hideSelectionBar)
 }
 
-const handleOpenWorldGlossary = () => {
-  const worldId = chat.currentWorldId
-  if (!worldId) {
-    return
-  }
-  worldGlossary.ensureKeywords(worldId, { force: true })
-  worldGlossary.setManagerVisible(true)
-}
 const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
@@ -6663,7 +6670,6 @@ onBeforeUnmount(() => {
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
         :favorite-active="display.favoriteBarEnabled"
-        :glossary-active="worldGlossary.managerVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -6671,7 +6677,6 @@ onBeforeUnmount(() => {
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
         @open-favorites="channelFavoritesVisible = true"
-        @open-world-glossary="handleOpenWorldGlossary"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -7767,10 +7772,18 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(32, 32, 36, 0.95);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.15);
   backdrop-filter: blur(8px);
-  color: #fff;
+  color: #111827;
+}
+
+:root[data-display-palette='night'] .selection-floating-bar {
+  background: rgba(20, 24, 36, 0.95);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 250, 252, 0.95);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
 }
 
 .selection-floating-bar__button {
@@ -7787,7 +7800,11 @@ onBeforeUnmount(() => {
 }
 
 .selection-floating-bar__button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.08);
+}
+
+:root[data-display-palette='night'] .selection-floating-bar__button:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .selection-floating-bar__button.is-disabled {
