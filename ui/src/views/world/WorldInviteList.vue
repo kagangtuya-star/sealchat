@@ -311,12 +311,14 @@ onMounted(loadInvites);
 }
 
 .invite-card {
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--sc-invite-border, rgba(148, 163, 184, 0.35));
   border-radius: 8px;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background-color: var(--sc-invite-surface, #f8fafc);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .invite-card-header {
@@ -327,11 +329,12 @@ onMounted(loadInvites);
 
 .invite-card-title {
   font-weight: 600;
+  color: var(--sc-invite-text, #0f172a);
 }
 
 .invite-card-desc {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--sc-invite-muted, #94a3b8);
 }
 
 .invite-card-body {
@@ -342,7 +345,7 @@ onMounted(loadInvites);
 
 .invite-meta {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--sc-invite-muted, #94a3b8);
 }
 
 .invite-status {
