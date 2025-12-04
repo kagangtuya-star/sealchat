@@ -81,11 +81,7 @@ func UserSignup(c *fiber.Ctx) error {
 	if count == 0 {
 		// 首个用户，设置为管理员
 		_, _ = service.UserRoleLink([]string{"sys-admin"}, []string{user.ID})
-		if _, _, err := service.WorldCreate(user.ID, service.WorldCreateParams{
-			Name:        "公共世界",
-			Description: "默认世界",
-			Visibility:  model.WorldVisibilityPublic,
-		}); err != nil {
+		if _, err := service.BootstrapDefaultWorldForOwner(user.ID); err != nil {
 			log.Printf("初始化默认世界失败: %v", err)
 		}
 	} else {

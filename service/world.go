@@ -50,7 +50,11 @@ func normalizeWorldDescription(desc string) (string, error) {
 func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
 	db := model.GetDB()
 	var world model.WorldModel
-	if err := db.Where("status = ?", "active").Order("created_at asc").Limit(1).Find(&world).Error; err != nil {
+	if err := db.Where("status = ?", "active").
+		Order("CASE WHEN owner_id = '' OR owner_id IS NULL THEN 1 ELSE 0 END").
+		Order("created_at asc").
+		Limit(1).
+		Find(&world).Error; err != nil {
 		return nil, err
 	}
 	if world.ID != "" {
@@ -66,6 +70,103 @@ func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
 		return nil, err
 	}
 	return w, nil
+}
+
+func BootstrapDefaultWorldForOwner(ownerID string) (*model.WorldModel, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return nil, errors.New("owner_id required")
+	}
+	world, err := GetOrCreateDefaultWorld()
+	if err != nil {
+		return nil, err
+	}
+	if err := bootstrapWorldWithOwner(world, ownerID); err != nil {
+		return nil, err
+	}
+	return world, nil
+}
+
+func bootstrapWorldWithOwner(world *model.WorldModel, ownerID string) error {
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return errors.New("invalid world")
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return errors.New("owner_id required")
+	}
+	db := model.GetDB()
+	updates := map[string]any{}
+	if strings.TrimSpace(world.OwnerID) == "" {
+		updates["owner_id"] = ownerID
+	}
+	if strings.TrimSpace(world.Name) == "" || world.Name == "默认世界" {
+		updates["name"] = "公共世界"
+	}
+	if strings.TrimSpace(world.Description) == "" {
+		updates["description"] = "系统自动创建的默认世界"
+	}
+	if strings.TrimSpace(world.Visibility) == "" {
+		updates["visibility"] = model.WorldVisibilityPublic
+	}
+	if len(updates) > 0 {
+		updates["updated_at"] = time.Now()
+		if err := db.Model(&model.WorldModel{}).Where("id = ?", world.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := db.Where("id = ?", world.ID).Limit(1).Find(world).Error; err != nil {
+			return err
+		}
+	}
+	if err := ensureWorldOwnerRole(world.ID, ownerID); err != nil {
+		return err
+	}
+	return ensureWorldDefaultChannel(world, ownerID)
+}
+
+func ensureWorldOwnerRole(worldID, ownerID string) error {
+	db := model.GetDB()
+	var member model.WorldMemberModel
+	if err := db.Where("world_id = ? AND user_id = ?", worldID, ownerID).Limit(1).Find(&member).Error; err != nil {
+		return err
+	}
+	if member.ID == "" {
+		_, err := WorldJoin(worldID, ownerID, model.WorldRoleOwner)
+		return err
+	}
+	if member.Role != model.WorldRoleOwner {
+		return db.Model(&model.WorldMemberModel{}).Where("id = ?", member.ID).Update("role", model.WorldRoleOwner).Error
+	}
+	return nil
+}
+
+func ensureWorldDefaultChannel(world *model.WorldModel, ownerID string) error {
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return errors.New("invalid world")
+	}
+	if strings.TrimSpace(world.DefaultChannelID) != "" {
+		return nil
+	}
+	db := model.GetDB()
+	var existing model.ChannelModel
+	if err := db.Where("world_id = ? AND status = ?", world.ID, "active").Order("created_at asc").Limit(1).Find(&existing).Error; err == nil && existing.ID != "" {
+		if err := db.Model(&model.WorldModel{}).Where("id = ?", world.ID).Update("default_channel_id", existing.ID).Error; err != nil {
+			return err
+		}
+		world.DefaultChannelID = existing.ID
+		return nil
+	}
+	name := strings.TrimSpace(world.Name)
+	if name == "" {
+		name = "公共世界"
+	}
+	channelName := fmt.Sprintf("%s大厅", name)
+	channel := ChannelNew(utils.NewID(), "public", channelName, world.ID, ownerID, "")
+	if channel == nil {
+		return errors.New("failed to create default channel")
+	}
+	world.DefaultChannelID = channel.ID
+	return db.Model(&model.WorldModel{}).Where("id = ?", world.ID).Update("default_channel_id", channel.ID).Error
 }
 
 func GetWorldByID(worldID string) (*model.WorldModel, error) {
