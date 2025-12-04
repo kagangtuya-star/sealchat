@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/samber/lo"
@@ -310,7 +311,12 @@ func WorldSectionsHandler(c *fiber.Ctx) error {
 		case "invites":
 			if service.IsWorldAdmin(worldID, user.ID) {
 				var invites []*model.WorldInviteModel
-				if err := model.GetDB().Where("world_id = ? AND status = ?", worldID, "active").Order("created_at DESC").Limit(20).Find(&invites).Error; err == nil {
+				now := time.Now()
+				query := model.GetDB().
+					Where("world_id = ? AND status = ?", worldID, "active").
+					Where("(expire_at IS NULL OR expire_at > ?)", now).
+					Where("(max_use = 0 OR used_count < max_use)")
+				if err := query.Order("created_at DESC").Limit(20).Find(&invites).Error; err == nil {
 					resp["invites"] = invites
 				}
 			}
