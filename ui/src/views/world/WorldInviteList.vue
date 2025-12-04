@@ -2,6 +2,7 @@
 import { computed, ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
+import dayjs from 'dayjs';
 
 const props = defineProps<{ worldId: string }>();
 const chat = useChatStore();
@@ -23,6 +24,7 @@ const loadInvites = async () => {
       }
     }
     inviteMap.value = map;
+    checkInviteHealth(map);
   } catch (e) {
     message.error('加载邀请失败');
   } finally {
@@ -38,7 +40,109 @@ const inviteCards = [
   { role: 'spectator', title: '旁观邀请', desc: '加入后可查看所有频道但不可发言' },
 ];
 
+const roleTitleMap = inviteCards.reduce((acc, cur) => {
+  acc[cur.role] = cur.title;
+  return acc;
+}, {} as Record<string, string>);
+
+const remainingUses = (invite?: any) => {
+  if (!invite || !invite.maxUse) return Infinity;
+  const used = Number(invite.usedCount) || 0;
+  return Math.max(invite.maxUse - used, 0);
+};
+
+const isInviteExpired = (invite?: any) => {
+  if (!invite?.expireAt) return false;
+  const expireAt = dayjs(invite.expireAt);
+  if (!expireAt.isValid()) return false;
+  return expireAt.isBefore(dayjs());
+};
+
+const isInviteExhausted = (invite?: any) => {
+  if (!invite) return false;
+  if (!invite.maxUse) return false;
+  return remainingUses(invite) <= 0;
+};
+
+const formatExpireText = (invite?: any) => {
+  if (!invite?.expireAt) return '永久有效';
+  const expireAt = dayjs(invite.expireAt);
+  if (!expireAt.isValid()) return invite.expireAt;
+  const diffMinutes = expireAt.diff(dayjs(), 'minute');
+  if (diffMinutes <= 0) return '已过期';
+  if (diffMinutes >= 24 * 60) {
+    return `剩余约 ${Math.ceil(diffMinutes / (24 * 60))} 天`;
+  }
+  if (diffMinutes >= 60) {
+    return `剩余约 ${Math.ceil(diffMinutes / 60)} 小时`;
+  }
+  return `剩余 ${diffMinutes} 分钟`;
+};
+
+const formatRemainingUseText = (invite?: any) => {
+  if (!invite) return '未知';
+  if (!invite.maxUse) return '无限制';
+  const remaining = remainingUses(invite);
+  if (remaining <= 0) {
+    return '已用尽';
+  }
+  return `剩余 ${remaining} 次`;
+};
+
+const getInviteStatusInfo = (invite?: any) => {
+  if (!invite) {
+    return { state: 'missing' as const, text: '未创建', tagType: 'default' as const };
+  }
+  if (isInviteExpired(invite)) {
+    return { state: 'invalid' as const, text: '已过期', tagType: 'error' as const };
+  }
+  if (isInviteExhausted(invite)) {
+    return { state: 'invalid' as const, text: '次数已用尽', tagType: 'error' as const };
+  }
+  const expireAt = invite?.expireAt ? dayjs(invite.expireAt) : null;
+  if (expireAt?.isValid()) {
+    const diffMinutes = expireAt.diff(dayjs(), 'minute');
+    if (diffMinutes <= 60) {
+      return { state: 'warning' as const, text: '1 小时内过期', tagType: 'warning' as const };
+    }
+    if (diffMinutes <= 24 * 60) {
+      const hours = Math.ceil(diffMinutes / 60);
+      return { state: 'warning' as const, text: `约 ${hours} 小时后过期`, tagType: 'warning' as const };
+    }
+  }
+  if (invite?.maxUse > 0) {
+    const remaining = remainingUses(invite);
+    if (remaining <= 2) {
+      return { state: 'warning' as const, text: `仅剩 ${remaining} 次`, tagType: 'warning' as const };
+    }
+  }
+  return { state: 'ok' as const, text: '可用', tagType: 'success' as const };
+};
+
+const checkInviteHealth = (map: Record<string, any>) => {
+  Object.entries(map).forEach(([role, invite]) => {
+    const status = getInviteStatusInfo(invite);
+    if (status.state === 'invalid') {
+      const title = roleTitleMap[role] || role;
+      message.warning(`「${title}」邀请已失效，请重新创建`);
+    }
+  });
+};
+
 const inviteByRole = computed(() => inviteMap.value);
+const inviteCardsWithData = computed(() =>
+  inviteCards.map(card => {
+    const invite = inviteByRole.value[card.role] || null;
+    const status = getInviteStatusInfo(invite);
+    return {
+      ...card,
+      invite,
+      status,
+      expireText: formatExpireText(invite),
+      remainingText: formatRemainingUseText(invite),
+    };
+  }),
+);
 
 const resetForm = (role: string = 'member') => {
   inviteForm.value = { ttlMinutes: 0, maxUse: 0, memo: '', role };
@@ -99,8 +203,6 @@ const buildInviteLink = (slug: string) => {
   return `${origin}/#/invite/${slug}`;
 };
 
-const latestInviteByRole = (role: string) => inviteByRole.value[role] || null;
-
 onMounted(loadInvites);
 </script>
 
@@ -112,7 +214,7 @@ onMounted(loadInvites);
     </div>
     <n-spin :show="loading">
       <div class="invite-grid">
-        <div v-for="card in inviteCards" :key="card.role" class="invite-card">
+        <div v-for="card in inviteCardsWithData" :key="card.role" class="invite-card">
           <div class="invite-card-header">
             <div>
               <div class="invite-card-title">{{ card.title }}</div>
@@ -120,15 +222,32 @@ onMounted(loadInvites);
             </div>
             <n-button size="tiny" type="primary" @click="openCreateModal(card.role)">创建</n-button>
           </div>
-          <div v-if="latestInviteByRole(card.role)" class="invite-card-body">
-            <n-input readonly size="small" :value="buildInviteLink(latestInviteByRole(card.role).slug)" />
-            <div class="invite-meta">邀请码：{{ latestInviteByRole(card.role).slug }}</div>
-            <div class="invite-meta">
-              使用 {{ latestInviteByRole(card.role).usedCount }} / {{ latestInviteByRole(card.role).maxUse || '∞' }}
+          <div v-if="card.invite" class="invite-card-body">
+            <div class="invite-status">
+              <n-tag size="tiny" :type="card.status.tagType">{{ card.status.text }}</n-tag>
             </div>
-            <n-button block size="tiny" secondary @click="copySlug(buildInviteLink(latestInviteByRole(card.role).slug))">
-              复制邀请链接
-            </n-button>
+            <n-input readonly size="small" :value="buildInviteLink(card.invite.slug)" />
+            <div class="invite-meta">邀请码：{{ card.invite.slug }}</div>
+            <div class="invite-meta">
+              使用 {{ card.invite.usedCount }} / {{ card.invite.maxUse || '∞' }}
+            </div>
+            <div class="invite-meta">有效期：{{ card.expireText }}</div>
+            <div class="invite-meta">可用次数：{{ card.remainingText }}</div>
+            <div class="invite-actions">
+              <n-button block size="tiny" secondary @click="copySlug(buildInviteLink(card.invite.slug))">
+                复制邀请链接
+              </n-button>
+              <n-button
+                v-if="card.status.state !== 'ok'"
+                block
+                size="tiny"
+                tertiary
+                type="warning"
+                @click="() => openCreateModal(card.role)"
+              >
+                重新生成
+              </n-button>
+            </div>
           </div>
           <n-empty v-else size="small" description="暂无有效邀请" />
         </div>
@@ -192,12 +311,14 @@ onMounted(loadInvites);
 }
 
 .invite-card {
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--sc-invite-border, rgba(148, 163, 184, 0.35));
   border-radius: 8px;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background-color: var(--sc-invite-surface, #f8fafc);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .invite-card-header {
@@ -208,11 +329,12 @@ onMounted(loadInvites);
 
 .invite-card-title {
   font-weight: 600;
+  color: var(--sc-invite-text, #0f172a);
 }
 
 .invite-card-desc {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--sc-invite-muted, #94a3b8);
 }
 
 .invite-card-body {
@@ -223,6 +345,17 @@ onMounted(loadInvites);
 
 .invite-meta {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--sc-invite-muted, #94a3b8);
+}
+
+.invite-status {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.invite-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 </style>

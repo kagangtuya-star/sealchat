@@ -667,10 +667,18 @@ func WorldInviteConsume(slug, userID string) (*model.WorldInviteModel, *model.Wo
 	if invite.ID == "" {
 		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
-	if invite.ExpireAt != nil && invite.ExpireAt.Before(time.Now()) {
+	now := time.Now()
+	markInviteArchived := func() {
+		_ = db.Model(&model.WorldInviteModel{}).
+			Where("id = ?", invite.ID).
+			Updates(map[string]any{"status": "archived", "updated_at": now}).Error
+	}
+	if invite.ExpireAt != nil && invite.ExpireAt.Before(now) {
+		markInviteArchived()
 		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	if invite.MaxUse > 0 && invite.UsedCount >= invite.MaxUse {
+		markInviteArchived()
 		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	world, err := GetWorldByID(invite.WorldID)

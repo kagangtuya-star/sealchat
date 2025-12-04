@@ -193,7 +193,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   async function ensureKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
     if (!worldId) return
     const page = pages.value[worldId]
-    if (!opts?.force && page && Date.now() - page.fetchedAt < 30 * 1000) {
+    if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000) {
       return
     }
     loadingMap.value = { ...loadingMap.value, [worldId]: true }
@@ -212,11 +212,11 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   async function createKeyword(worldId: string, payload: WorldKeywordPayload) {
     const item = await createWorldKeyword(worldId, payload)
-      const list = [...(pages.value[worldId]?.items || [])]
-      list.unshift(normalizeKeywordItem(item))
-      updateKeywordCache(worldId, list)
-      return item
-    }
+    const list = [...(pages.value[worldId]?.items || [])]
+    list.unshift(normalizeKeywordItem(item))
+    updateKeywordCache(worldId, list)
+    return item
+  }
 
   async function editKeyword(worldId: string, keywordId: string, payload: WorldKeywordPayload) {
     const item = await updateWorldKeyword(worldId, keywordId, payload)
@@ -262,7 +262,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       return
     }
     const updatedItems = await Promise.all(tasks)
-    const normalizedUpdates = updatedItems.map(normalizeKeywordItem)
+    const normalizedUpdates = updatedItems.map((item) => normalizeKeywordItem(item))
     const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
     const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
     updateKeywordCache(worldId, nextList)
@@ -285,17 +285,18 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     if (!event || event.type !== 'world-keywords-updated') {
       return
     }
-    const options = event?.argv?.options || {}
+    const rawArgv = event?.argv || {}
+    const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, any>
     const worldId = options.worldId as string | undefined
     if (!worldId) {
       return
     }
-    const currentVersion = versionMap.value[worldId] || 0
-    const nextVersion = typeof options.version === 'number' ? options.version : Date.now()
-    if (nextVersion <= currentVersion) {
+    const revision = typeof options.revision === 'number' ? options.revision : typeof options.version === 'number' ? options.version : Date.now()
+    const currentRevision = versionMap.value[worldId] || 0
+    if (revision <= currentRevision) {
       return
     }
-    versionMap.value = { ...versionMap.value, [worldId]: nextVersion }
+    versionMap.value = { ...versionMap.value, [worldId]: revision }
     void ensureKeywords(worldId, { force: true })
   }
 

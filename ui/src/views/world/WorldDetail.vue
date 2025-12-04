@@ -135,7 +135,7 @@ const handleLeaveWorld = () => {
       </n-alert>
     </n-card>
 
-    <n-card title="邀请链接">
+    <n-card title="邀请链接" class="world-invite-card">
       <WorldInviteList :world-id="worldId" />
     </n-card>
   </div>
@@ -158,5 +158,44 @@ const handleLeaveWorld = () => {
 .world-action-item {
   display: flex;
   align-items: stretch;
+}
+
+.world-invite-card {
+  --sc-invite-surface: var(--n-card-color, var(--n-color, #f8fafc));
+  --sc-invite-border: var(--n-border-color, rgba(148, 163, 184, 0.4));
+  --sc-invite-muted: var(--n-text-color-3, #94a3b8);
+  --sc-invite-text: var(--n-text-color-1, #0f172a);
+}
+
+.world-invite-card :deep(.n-card__content) {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--n-border-color) transparent;
+}
+
+.world-invite-card :deep(.n-card) {
+  background-color: var(--sc-invite-surface);
+  border-color: var(--sc-invite-border);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.world-invite-card :deep(.n-card__content),
+.world-invite-card :deep(.n-card__footer) {
+  background-color: var(--sc-invite-surface);
+}
+
+.world-invite-card :deep(.n-card__content::-webkit-scrollbar) {
+  width: 6px;
+}
+
+.world-invite-card :deep(.n-card__content::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.world-invite-card :deep(.n-card__content::-webkit-scrollbar-thumb) {
+  background-color: var(--n-border-color);
+  border-radius: 3px;
 }
 </style>

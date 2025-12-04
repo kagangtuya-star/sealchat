@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
@@ -75,8 +76,15 @@ func WorldKeywordCreateHandler(c *fiber.Ctx) error {
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
-	broadcastWorldKeywordEvent(worldID, []string{item.ID}, "created")
-	return c.Status(http.StatusCreated).JSON(fiber.Map{"item": item})
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:    worldID,
+		Operation:  "created",
+		RequestID:  requestID,
+		Keywords:   []*model.WorldKeywordModel{item},
+		KeywordIDs: []string{item.ID},
+	})
+	return c.Status(http.StatusCreated).JSON(fiber.Map{"item": item, "requestId": requestID})
 }
 
 func WorldKeywordUpdateHandler(c *fiber.Ctx) error {
@@ -103,8 +111,15 @@ func WorldKeywordUpdateHandler(c *fiber.Ctx) error {
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
-	broadcastWorldKeywordEvent(worldID, []string{item.ID}, "updated")
-	return c.JSON(fiber.Map{"item": item})
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:    worldID,
+		Operation:  "updated",
+		RequestID:  requestID,
+		Keywords:   []*model.WorldKeywordModel{item},
+		KeywordIDs: []string{item.ID},
+	})
+	return c.JSON(fiber.Map{"item": item, "requestId": requestID})
 }
 
 func WorldKeywordDeleteHandler(c *fiber.Ctx) error {
@@ -126,8 +141,15 @@ func WorldKeywordDeleteHandler(c *fiber.Ctx) error {
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
-	broadcastWorldKeywordEvent(worldID, []string{keywordID}, "deleted")
-	return c.SendStatus(fiber.StatusNoContent)
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:    worldID,
+		Operation:  "deleted",
+		RequestID:  requestID,
+		DeletedIDs: []string{keywordID},
+		KeywordIDs: []string{keywordID},
+	})
+	return c.JSON(fiber.Map{"requestId": requestID})
 }
 
 func WorldKeywordBulkDeleteHandler(c *fiber.Ctx) error {
@@ -142,6 +164,12 @@ func WorldKeywordBulkDeleteHandler(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
 	}
+	cleaned := make([]string, 0, len(payload.IDs))
+	for _, raw := range payload.IDs {
+		if trimmed := strings.TrimSpace(raw); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
 	count, err := service.WorldKeywordBulkDelete(worldID, payload.IDs, user.ID)
 	if err != nil {
 		status := fiber.StatusInternalServerError
@@ -150,10 +178,18 @@ func WorldKeywordBulkDeleteHandler(c *fiber.Ctx) error {
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
-	if count > 0 {
-		broadcastWorldKeywordEvent(worldID, payload.IDs, "deleted")
+	if count == 0 {
+		return c.JSON(fiber.Map{"deleted": count})
 	}
-	return c.JSON(fiber.Map{"deleted": count})
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:    worldID,
+		Operation:  "deleted",
+		RequestID:  requestID,
+		DeletedIDs: cleaned,
+		KeywordIDs: cleaned,
+	})
+	return c.JSON(fiber.Map{"deleted": count, "requestId": requestID})
 }
 
 func WorldKeywordImportHandler(c *fiber.Ctx) error {
@@ -177,8 +213,14 @@ func WorldKeywordImportHandler(c *fiber.Ctx) error {
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
-	broadcastWorldKeywordEvent(worldID, nil, "imported")
-	return c.JSON(fiber.Map{"stats": stats})
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "imported",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"stats": stats, "requestId": requestID})
 }
 
 func WorldKeywordExportHandler(c *fiber.Ctx) error {
@@ -198,21 +240,54 @@ func WorldKeywordExportHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"items": items})
 }
 
-func broadcastWorldKeywordEvent(worldID string, keywordIDs []string, operation string) {
-	if strings.TrimSpace(worldID) == "" {
+type worldKeywordEventPayload struct {
+	WorldID     string                     `json:"worldId"`
+	KeywordIDs  []string                   `json:"keywordIds,omitempty"`
+	Operation   string                     `json:"operation"`
+	RequestID   string                     `json:"requestId,omitempty"`
+	Keywords    []*model.WorldKeywordModel `json:"keywords,omitempty"`
+	DeletedIDs  []string                   `json:"deletedIds,omitempty"`
+	ForceReload bool                       `json:"forceReload,omitempty"`
+}
+
+func broadcastWorldKeywordEvent(payload *worldKeywordEventPayload) {
+	if payload == nil || strings.TrimSpace(payload.WorldID) == "" {
 		return
 	}
-	payload := map[string]interface{}{
-		"worldId":    worldID,
-		"keywordIds": keywordIDs,
-		"operation":  operation,
-		"version":    time.Now().UnixMilli(),
+	if len(payload.KeywordIDs) == 0 && len(payload.Keywords) > 0 {
+		ids := make([]string, 0, len(payload.Keywords))
+		for _, item := range payload.Keywords {
+			if item != nil {
+				ids = append(ids, item.ID)
+			}
+		}
+		payload.KeywordIDs = ids
+	}
+	now := time.Now().UnixMilli()
+	options := map[string]interface{}{
+		"worldId":    payload.WorldID,
+		"keywordIds": payload.KeywordIDs,
+		"operation":  payload.Operation,
+		"version":    now,
+		"revision":   now,
+	}
+	if payload.RequestID != "" {
+		options["requestId"] = payload.RequestID
+	}
+	if len(payload.Keywords) > 0 {
+		options["keywords"] = payload.Keywords
+	}
+	if len(payload.DeletedIDs) > 0 {
+		options["deletedIds"] = payload.DeletedIDs
+	}
+	if payload.ForceReload {
+		options["forceReload"] = true
 	}
 	event := &protocol.Event{
 		Type: protocol.EventWorldKeywordsUpdated,
-		Argv: &protocol.Argv{Options: payload},
+		Argv: &protocol.Argv{Options: options},
 	}
-	broadcastEventToWorld(worldID, event)
+	broadcastEventToWorld(payload.WorldID, event)
 }
 
 func broadcastEventToWorld(worldID string, event *protocol.Event) {
