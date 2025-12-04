@@ -419,14 +419,72 @@ func defaultImageBaseURL(serveAt string) string {
 		port = "3212"
 	}
 	ip := host
-	if ip == "" || ip == "0.0.0.0" || ip == "::" || ip == "[::]" {
+	if ip == "" || ip == "0.0.0.0" || ip == "::" {
 		if detected := detectLocalIPv4(); detected != "" {
 			ip = detected
 		} else {
 			ip = "127.0.0.1"
 		}
 	}
-	return fmt.Sprintf("%s:%s", ip, port)
+	return FormatHostPort(ip, port)
+}
+
+func FormatHostPort(host, port string) string {
+	formattedHost := EnsureIPv6Bracket(host)
+	if port == "" {
+		return formattedHost
+	}
+	if formattedHost == "" {
+		return ":" + port
+	}
+	return fmt.Sprintf("%s:%s", formattedHost, port)
+}
+
+func EnsureIPv6Bracket(host string) string {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]") {
+		return trimmed
+	}
+	base, zone := normalizeIPv6Reference(trimmed)
+	if base == "" {
+		return trimmed
+	}
+	if ip := net.ParseIP(base); ip != nil && ip.To4() == nil {
+		return fmt.Sprintf("[%s%s]", base, encodeIPv6Zone(zone))
+	}
+	return trimmed
+}
+
+func normalizeIPv6Reference(host string) (string, string) {
+	withoutBrackets := strings.TrimSpace(host)
+	withoutBrackets = strings.TrimPrefix(withoutBrackets, "[")
+	if idx := strings.Index(withoutBrackets, "]"); idx >= 0 {
+		withoutBrackets = withoutBrackets[:idx]
+	}
+	return splitIPv6Zone(withoutBrackets)
+}
+
+func splitIPv6Zone(host string) (string, string) {
+	if host == "" {
+		return "", ""
+	}
+	if idx := strings.LastIndex(host, "%"); idx >= 0 {
+		return host[:idx], host[idx:]
+	}
+	return host, ""
+}
+
+func encodeIPv6Zone(zone string) string {
+	if zone == "" {
+		return ""
+	}
+	if strings.HasPrefix(zone, "%25") || !strings.HasPrefix(zone, "%") {
+		return zone
+	}
+	return "%25" + zone[1:]
 }
 
 func splitHostPort(addr string) (string, string) {

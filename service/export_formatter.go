@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	htmltemplate "html/template"
 	"io"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,7 +18,6 @@ import (
 	"sealchat/utils"
 
 	htmlnode "golang.org/x/net/html"
-	"html"
 )
 
 type exportFormatter interface {
@@ -850,30 +851,74 @@ func normalizeDomainToURL(domain string) string {
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		return trimmed
 	}
+	host, port, hasPort := parseDomainHostPort(trimmed)
+	formatted := trimmed
+	if hasPort {
+		formatted = utils.FormatHostPort(host, port)
+	} else if isIPv6LiteralHost(trimmed) {
+		formatted = utils.EnsureIPv6Bracket(trimmed)
+	}
+	hostForScheme := host
+	if hostForScheme == "" {
+		hostForScheme = trimmed
+	}
 	scheme := "https"
-	if isLikelyLocalDomain(trimmed) {
+	if isLikelyLocalDomain(hostForScheme) {
 		scheme = "http"
 	}
-	return fmt.Sprintf("%s://%s", scheme, trimmed)
+	return fmt.Sprintf("%s://%s", scheme, formatted)
+}
+
+func parseDomainHostPort(addr string) (string, string, bool) {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return "", "", false
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return "", "", false
+	}
+	return host, port, true
+}
+
+func isIPv6LiteralHost(value string) bool {
+	candidate := strings.TrimSpace(value)
+	if candidate == "" {
+		return false
+	}
+	candidate = strings.Trim(candidate, "[]")
+	base := candidate
+	if idx := strings.LastIndex(base, "%"); idx >= 0 {
+		base = base[:idx]
+	}
+	ip := net.ParseIP(base)
+	return ip != nil && ip.To4() == nil
 }
 
 func isLikelyLocalDomain(host string) bool {
-	host = strings.TrimSpace(host)
-	if host == "" {
+	target := strings.TrimSpace(host)
+	if target == "" {
 		return false
 	}
-	parts := strings.Split(host, ":")
-	lower := strings.ToLower(parts[0])
+	target = strings.Trim(target, "[]")
+	lower := strings.ToLower(target)
 	if lower == "localhost" {
 		return true
 	}
-	if strings.HasPrefix(lower, "127.") || strings.HasPrefix(lower, "10.") || strings.HasPrefix(lower, "192.168.") {
-		return true
+	base := lower
+	if idx := strings.LastIndex(base, "%"); idx >= 0 {
+		base = base[:idx]
 	}
-	if strings.HasPrefix(lower, "172.") {
-		return true
+	if ip := net.ParseIP(base); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return true
+		}
+		return false
 	}
-	return false
+	return strings.HasPrefix(lower, "127.") ||
+		strings.HasPrefix(lower, "10.") ||
+		strings.HasPrefix(lower, "192.168.") ||
+		strings.HasPrefix(lower, "172.")
 }
 
 func readTagAttributes(tokenizer *htmlnode.Tokenizer) map[string]string {
