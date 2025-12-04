@@ -233,10 +233,31 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 		return ""
 	})
 
-	for index, _ := range channels {
-		id := channels[index].ID
-		friendMap[id].UserInfo = userMap[friendMap[id].getAnotherUserId(userID)]
-		channels[index].FriendInfo = friendMap[id]
+	for index := range channels {
+		ch := channels[index]
+		if ch == nil {
+			continue
+		}
+		friend := friendMap[ch.ID]
+		if friend == nil {
+			continue
+		}
+		targetUser := userMap[friend.getAnotherUserId(userID)]
+		friend.UserInfo = targetUser
+		ch.FriendInfo = friend
+		if targetUser == nil {
+			continue
+		}
+		displayName := strings.TrimSpace(targetUser.Nickname)
+		if displayName == "" {
+			displayName = strings.TrimSpace(targetUser.Username)
+		}
+		if displayName == "" {
+			displayName = strings.TrimSpace(targetUser.ID)
+		}
+		if displayName != "" {
+			ch.Name = fmt.Sprintf("@%s", displayName)
+		}
 	}
 
 	return channels, err

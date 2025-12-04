@@ -153,7 +153,8 @@ func ChannelListByWorld(worldID string) ([]*model.ChannelModel, error) {
 	if strings.TrimSpace(worldID) == "" {
 		return items, nil
 	}
-	err := model.GetDB().Where("world_id = ? AND status = ?", worldID, "active").
+	err := model.GetDB().
+		Where("world_id = ? AND status = ? AND is_private = ?", worldID, "active", false).
 		Order("sort_order DESC").
 		Order("created_at ASC").
 		Find(&items).Error
