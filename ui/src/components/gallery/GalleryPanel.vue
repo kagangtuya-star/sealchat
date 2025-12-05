@@ -6,7 +6,15 @@
     :width="drawerWidth"
     @update:show="handleShow"
   >
-    <n-drawer-content title="快捷画廊" closable>
+    <n-drawer-content closable>
+      <template #header>
+        <div class="gallery-header">
+          <n-button v-if="isMobileLayout" size="tiny" quaternary @click="gallery.closePanel()">
+            返回
+          </n-button>
+          <span>快捷画廊</span>
+        </div>
+      </template>
       <div class="gallery-panel">
         <GalleryCollectionTree
           :collections="collections"
@@ -163,6 +171,10 @@ const visible = computed(() => gallery.isPanelVisible);
 const drawerWidth = computed(() => {
   if (typeof window === 'undefined') return 720;
   return window.innerWidth < 768 ? '100%' : 720;
+});
+const isMobileLayout = computed(() => {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth < 768;
 });
 
 const userId = computed(() => gallery.activeOwner?.id || user.info.id || '');
@@ -456,6 +468,13 @@ function toggleEmojiLink() {
   color: var(--sc-text-primary, #0f172a);
   transition: background-color 0.25s ease, color 0.25s ease;
 }
+
+.gallery-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 
 .gallery-panel {
   display: grid;

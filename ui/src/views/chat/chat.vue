@@ -666,6 +666,25 @@ const allGalleryItems = computed(() =>
 const emojiUsageKey = 'sealchat_emoji_usage';
 const emojiUsageMap = ref<Record<string, number>>({});
 
+const ensureEmojiCollectionLoaded = async () => {
+  const ownerId = user.info?.id;
+  if (!ownerId) {
+    return;
+  }
+  try {
+    await gallery.loadCollections(ownerId);
+  } catch {
+    // ignore load errors for emoji collections
+  }
+  if (gallery.emojiCollectionId) {
+    try {
+      await gallery.loadItems(gallery.emojiCollectionId);
+    } catch {
+      // ignore
+    }
+  }
+};
+
 onMounted(() => {
   try {
     const stored = localStorage.getItem(emojiUsageKey);
@@ -932,10 +951,7 @@ watch(
   async (id) => {
     if (!id) return;
     gallery.loadEmojiPreference(id);
-    await gallery.loadCollections(id).catch(() => undefined);
-    if (gallery.emojiCollectionId) {
-      await gallery.loadItems(gallery.emojiCollectionId).catch(() => undefined);
-    }
+    await ensureEmojiCollectionLoaded();
   },
   { immediate: true }
 );
@@ -957,7 +973,7 @@ watch(emojiPopoverShow, (show, prevShow) => {
     nextTick(() => {
       syncEmojiPopoverPosition();
     });
-    gallery.loadEmojiCollection();
+    void ensureEmojiCollectionLoaded();
   }
   if (show) {
     chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
@@ -968,7 +984,7 @@ watch(emojiPopoverShow, (show, prevShow) => {
 
 watch(isManagingEmoji, (val) => {
   if (val) {
-    gallery.loadEmojiCollection();
+    void ensureEmojiCollectionLoaded();
   }
 });
 
@@ -1107,6 +1123,7 @@ const folderActionOptions = [
 const folderAssigning = ref(false);
 const isNightPalette = computed(() => display.palette === 'night');
 const identityDrawerWidth = computed(() => (windowWidth.value <= 640 ? '100%' : Math.min(windowWidth.value * 0.95, 800)));
+const isIdentityDrawerMobile = computed(() => windowWidth.value > 0 && windowWidth.value <= 640);
 
 const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
   const map: Record<string, ChannelIdentityFolder> = {};
@@ -7658,9 +7675,14 @@ onBeforeUnmount(() => {
     <n-drawer-content :class="['identity-manage-drawer', { 'identity-manage-drawer--night': isNightPalette }]">
       <template #header>
         <div class="identity-drawer__header">
-          <div>
-            <div class="identity-drawer__title">频道角色管理</div>
-            <div class="identity-drawer__subtitle">支持导入/导出，便于跨频道迁移</div>
+          <div class="identity-drawer__header-main">
+            <n-button v-if="isIdentityDrawerMobile" size="tiny" quaternary @click="identityManageVisible = false">
+              返回
+            </n-button>
+            <div>
+              <div class="identity-drawer__title">频道角色管理</div>
+              <div class="identity-drawer__subtitle">支持导入/导出，便于跨频道迁移</div>
+            </div>
           </div>
           <n-space>
             <n-tooltip trigger="hover">
@@ -8218,6 +8240,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.75rem;
   padding-right: 0.25rem;
+}
+
+.identity-drawer__header-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .identity-drawer__title {

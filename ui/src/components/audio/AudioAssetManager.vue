@@ -207,11 +207,19 @@
     <n-drawer
       :show="assetDrawerVisible"
       placement="right"
-      width="360"
+      :width="assetDrawerWidth"
       :mask-closable="false"
       @update:show="assetDrawerVisible = $event"
     >
-      <n-drawer-content title="编辑素材">
+      <n-drawer-content>
+        <template #header>
+          <div class="audio-asset-drawer__header">
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="assetDrawerVisible = false">
+              返回
+            </n-button>
+            <span>编辑素材</span>
+          </div>
+        </template>
         <n-form ref="assetFormRef" :model="assetForm" :rules="assetFormRules" label-placement="top">
           <n-form-item label="名称" path="name">
             <n-input v-model:value="assetForm.name" maxlength="60" show-count />
@@ -330,6 +338,7 @@ import {
   type FormRules,
   type TreeOption,
 } from 'naive-ui';
+import { useWindowSize } from '@vueuse/core';
 import type { AudioAsset, AudioFolder } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import UploadPanel from './UploadPanel.vue';
@@ -382,6 +391,10 @@ const assetForm = reactive({
 const assetFormRules: FormRules = {
   name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
 };
+
+const { width: viewportWidth } = useWindowSize();
+const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 640);
+const assetDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 360));
 
 const tableData = computed(() => audio.filteredAssets);
 const selectedAsset = computed(() => audio.selectedAsset);
@@ -1059,6 +1072,12 @@ onMounted(() => {
   margin: 0 0 0.5rem;
   font-size: 0.85rem;
   color: var(--sc-text-secondary);
+}
+
+.audio-asset-drawer__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .audio-table__name {

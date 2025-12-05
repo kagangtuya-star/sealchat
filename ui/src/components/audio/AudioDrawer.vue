@@ -8,7 +8,15 @@
     @update:show="audio.toggleDrawer"
     class="audio-drawer"
   >
-    <n-drawer-content title="音频工作台">
+    <n-drawer-content>
+      <template #header>
+        <div class="audio-drawer__title">
+          <n-button v-if="isMobileLayout" size="tiny" quaternary @click="audio.toggleDrawer(false)">
+            返回
+          </n-button>
+          <span>音频工作台</span>
+        </div>
+      </template>
       <div class="audio-drawer__header">
         <div>
           <p class="audio-drawer__subtitle">多音轨播放 / 素材管理</p>
@@ -62,6 +70,7 @@ const drawerWidth = computed(() => {
   const maxAllow = Math.max(320, viewportWidth.value - margin);
   return Math.min(preferred, maxAllow);
 });
+const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 640);
 const handleTabChange = (val: string | number) => {
   audio.selectTab((val as AudioTab) || 'player');
 };
@@ -88,6 +97,12 @@ onBeforeUnmount(() => {
 
 .audio-drawer :deep(.n-drawer-body-content-wrapper) {
   background: transparent;
+}
+
+.audio-drawer__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .audio-drawer__header {
