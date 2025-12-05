@@ -64,6 +64,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1 := app.Group("/api/v1")
 	v1.Post("/user-signup", UserSignup)
 	v1.Post("/user-signin", UserSignin)
+	v1.Get("/captcha/new", CaptchaNew)
+	v1.Get("/captcha/:id.png", CaptchaImage)
+	v1.Get("/captcha/:id/reload", CaptchaReload)
 
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := *appConfig

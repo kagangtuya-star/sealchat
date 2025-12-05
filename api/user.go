@@ -11,6 +11,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 func getCurUser(c *fiber.Ctx) *model.UserModel {
@@ -20,12 +21,38 @@ func getCurUser(c *fiber.Ctx) *model.UserModel {
 	return c.Locals("user").(*model.UserModel)
 }
 
+func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, token, remoteIP string) (bool, string) {
+	conf := appConfig.Captcha.Target(scene)
+	switch conf.Mode {
+	case utils.CaptchaModeLocal:
+		if !model.CaptchaVerify(captchaId, captchaValue) {
+			return false, "验证码错误或已过期"
+		}
+	case utils.CaptchaModeTurnstile:
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			return false, "请完成人机验证"
+		}
+		ok, err := model.TurnstileVerify(trimmed, conf.Turnstile.SecretKey, remoteIP)
+		if err != nil {
+			log.Printf("Turnstile verify failed: %v", err)
+		}
+		if !ok {
+			return false, "人机验证失败"
+		}
+	}
+	return true, ""
+}
+
 // UserSignup 注册接口
 func UserSignup(c *fiber.Ctx) error {
 	type RequestBody struct {
-		Username string `json:"username" form:"username" binding:"required"`
-		Password string `json:"password" form:"password" binding:"required"`
-		Nickname string `json:"nickname" form:"nickname" binding:"required"`
+		Username       string `json:"username" form:"username" binding:"required"`
+		Password       string `json:"password" form:"password" binding:"required"`
+		Nickname       string `json:"nickname" form:"nickname" binding:"required"`
+		CaptchaId      string `json:"captchaId" form:"captchaId"`
+		CaptchaValue   string `json:"captchaValue" form:"captchaValue"`
+		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
 	}
 
 	var requestBody RequestBody
@@ -69,6 +96,12 @@ func UserSignup(c *fiber.Ctx) error {
 		})
 	}
 
+	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignup, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, c.IP()); !ok {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": msg,
+		})
+	}
+
 	count := model.UserCount()
 
 	user, err := model.UserCreate(username, password, requestBody.Nickname)
@@ -109,8 +142,11 @@ func UserSignup(c *fiber.Ctx) error {
 // 登录接口
 func UserSignin(c *fiber.Ctx) error {
 	type RequestBody struct {
-		Username string `json:"username" form:"username" binding:"required"`
-		Password string `json:"password" form:"password" binding:"required"`
+		Username       string `json:"username" form:"username" binding:"required"`
+		Password       string `json:"password" form:"password" binding:"required"`
+		CaptchaId      string `json:"captchaId" form:"captchaId"`
+		CaptchaValue   string `json:"captchaValue" form:"captchaValue"`
+		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
 	}
 
 	var requestBody RequestBody
@@ -131,6 +167,12 @@ func UserSignin(c *fiber.Ctx) error {
 	if len(password) < 3 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": "密码长度不能小于3位",
+		})
+	}
+
+	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignin, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, c.IP()); !ok {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": msg,
 		})
 	}
 

@@ -59,6 +59,23 @@ export interface LogUploadConfig {
   note?: string;
 }
 
+export interface TurnstileConfig {
+  siteKey?: string;
+  secretKey?: string;
+}
+
+export interface CaptchaTargetConfig {
+  mode?: 'off' | 'local' | 'turnstile';
+  turnstile?: TurnstileConfig;
+}
+
+export interface CaptchaConfig {
+  signup?: CaptchaTargetConfig;
+  signin?: CaptchaTargetConfig;
+  mode?: 'off' | 'local' | 'turnstile';
+  turnstile?: TurnstileConfig;
+}
+
 export interface ExportTaskItem {
   task_id: string;
   format: string;
@@ -93,6 +110,7 @@ export interface ServerConfig {
   imageCompressQuality: number;
   builtInSealBotEnable: boolean;
   logUpload?: LogUploadConfig;
+  captcha?: CaptchaConfig;
 }
 
 export interface UserInfo {

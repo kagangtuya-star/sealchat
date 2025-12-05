@@ -5,6 +5,7 @@ go 1.22.7
 toolchain go1.22.8
 
 require (
+	github.com/dchest/captcha v1.1.0
 	github.com/gabriel-vasile/mimetype v1.4.6
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gofiber/contrib/websocket v1.2.2

@@ -52,6 +52,38 @@ const (
 	defaultExportHTMLMaxConcurrency = 2
 )
 
+type CaptchaMode string
+
+const (
+	CaptchaModeOff       CaptchaMode = "off"
+	CaptchaModeLocal     CaptchaMode = "local"
+	CaptchaModeTurnstile CaptchaMode = "turnstile"
+)
+
+type TurnstileConfig struct {
+	SiteKey   string `json:"siteKey" yaml:"siteKey"`
+	SecretKey string `json:"secretKey" yaml:"secretKey"`
+}
+
+type CaptchaTargetConfig struct {
+	Mode      CaptchaMode     `json:"mode" yaml:"mode"`
+	Turnstile TurnstileConfig `json:"turnstile" yaml:"turnstile"`
+}
+
+type CaptchaScene string
+
+const (
+	CaptchaSceneSignup CaptchaScene = "signup"
+	CaptchaSceneSignin CaptchaScene = "signin"
+)
+
+type CaptchaConfig struct {
+	Mode      CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Turnstile TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
+	Signup    CaptchaTargetConfig `json:"signup" yaml:"signup"`
+	Signin    CaptchaTargetConfig `json:"signin" yaml:"signin"`
+}
+
 type StorageConfig struct {
 	Mode       StorageMode        `json:"mode" yaml:"mode"`
 	BaseURL    string             `json:"baseUrl" yaml:"baseUrl"`
@@ -106,6 +138,7 @@ type AppConfig struct {
 	Export                    ExportConfig    `json:"export" yaml:"export"`
 	Storage                   StorageConfig   `json:"storage" yaml:"storage"`
 	SQLite                    SQLiteConfig    `json:"sqlite" yaml:"sqlite"`
+	Captcha                   CaptchaConfig   `json:"captcha" yaml:"captcha"`
 }
 
 type ExportConfig struct {
@@ -212,6 +245,10 @@ func ReadConfig() *AppConfig {
 			ReadConnections: runtime.NumCPU(),
 			OptimizeOnInit:  true,
 		},
+		Captcha: CaptchaConfig{
+			Signup: CaptchaTargetConfig{Mode: CaptchaModeLocal},
+			Signin: CaptchaTargetConfig{Mode: CaptchaModeOff},
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -263,6 +300,7 @@ func ReadConfig() *AppConfig {
 	applyImageBaseURLFallback(&config)
 	applySQLiteDefaults(&config.SQLite)
 	applyExportDefaults(&config.Export)
+	config.Captcha.normalize()
 
 	k.Print()
 	currentConfig = &config
@@ -318,8 +356,55 @@ func applyExportDefaults(cfg *ExportConfig) {
 	}
 }
 
+func (cfg *CaptchaConfig) normalize() {
+	if cfg == nil {
+		return
+	}
+	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
+	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile)
+}
+
+func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig) {
+	if target == nil {
+		return
+	}
+	if target.Mode == "" {
+		if globalMode != "" {
+			target.Mode = globalMode
+		} else {
+			target.Mode = fallbackMode
+		}
+	}
+	if target.Turnstile.SiteKey == "" {
+		target.Turnstile.SiteKey = fallbackTurnstile.SiteKey
+	}
+	if target.Turnstile.SecretKey == "" {
+		target.Turnstile.SecretKey = fallbackTurnstile.SecretKey
+	}
+}
+
+func (cfg *CaptchaConfig) Target(scene CaptchaScene) CaptchaTargetConfig {
+	if cfg == nil {
+		return CaptchaTargetConfig{}
+	}
+	switch scene {
+	case CaptchaSceneSignin:
+		return cfg.Signin
+	default:
+		return cfg.Signup
+	}
+}
+
+func (cfg *CaptchaConfig) HasLocalEnabled() bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.Signup.Mode == CaptchaModeLocal || cfg.Signin.Mode == CaptchaModeLocal
+}
+
 func WriteConfig(config *AppConfig) {
 	if config != nil {
+		config.Captcha.normalize()
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
@@ -385,6 +470,15 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("storage.s3.presignTTL", config.Storage.S3.PresignTTL)
 		_ = k.Set("storage.s3.maxSizeMB", config.Storage.S3.MaxSizeMB)
 		_ = k.Set("storage.s3.logLevel", config.Storage.S3.LogLevel)
+		_ = k.Set("captcha.mode", string(config.Captcha.Mode))
+		_ = k.Set("captcha.turnstile.siteKey", config.Captcha.Turnstile.SiteKey)
+		_ = k.Set("captcha.turnstile.secretKey", config.Captcha.Turnstile.SecretKey)
+		_ = k.Set("captcha.signup.mode", string(config.Captcha.Signup.Mode))
+		_ = k.Set("captcha.signup.turnstile.siteKey", config.Captcha.Signup.Turnstile.SiteKey)
+		_ = k.Set("captcha.signup.turnstile.secretKey", config.Captcha.Signup.Turnstile.SecretKey)
+		_ = k.Set("captcha.signin.mode", string(config.Captcha.Signin.Mode))
+		_ = k.Set("captcha.signin.turnstile.siteKey", config.Captcha.Signin.Turnstile.SiteKey)
+		_ = k.Set("captcha.signin.turnstile.secretKey", config.Captcha.Signin.Turnstile.SecretKey)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

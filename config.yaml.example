@@ -12,6 +12,18 @@
   version: 1
   webUrl: /
   pageTitle: "海豹尬聊 SealChat"
+  captcha:
+    # 验证码：off 关闭/local 本地生成/turnstile 启动cloudflare turnstile盾，需要配置对应的key
+    signup:
+      mode: local
+      turnstile:
+        siteKey: ""
+        secretKey: ""
+    signin:
+      mode: off
+      turnstile:
+        siteKey: ""
+        secretKey: ""
 
   sqlite:
     # 是否启用 WAL 日志，提高读写并发
