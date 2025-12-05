@@ -8,7 +8,15 @@
     @update:show="iform.toggleDrawer"
     class="iform-drawer"
   >
-    <n-drawer-content title="频道嵌入窗">
+    <n-drawer-content>
+      <template #header>
+        <div class="iform-drawer__title">
+          <n-button v-if="isMobileLayout" size="tiny" quaternary @click="iform.closeDrawer()">
+            返回
+          </n-button>
+          <span>频道嵌入窗</span>
+        </div>
+      </template>
       <div class="iform-drawer__header">
         <div>
           <p class="iform-drawer__subtitle">可嵌入网页/工具并同步给频道成员</p>
@@ -191,6 +199,7 @@ const drawerWidth = computed(() => {
   if (!viewportWidth.value) return 420;
   return Math.min(480, viewportWidth.value < 640 ? viewportWidth.value : 420);
 });
+const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 640);
 
 const formModalVisible = ref(false);
 const editingForm = ref<ChannelIForm | null>(null);
@@ -423,6 +432,12 @@ const handleMigration = async () => {
 .iform-drawer :deep(.n-drawer-body) {
   background: var(--sc-bg-elevated, #0f172a);
   color: var(--sc-text-primary, #e2e8f0);
+}
+
+.iform-drawer__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .iform-drawer__header {

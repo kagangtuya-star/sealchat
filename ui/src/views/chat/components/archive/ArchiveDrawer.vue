@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useWindowSize } from '@vueuse/core'
 
 interface ArchivedMessage {
   id: string
@@ -37,6 +38,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const message = useMessage()
+const { width: viewportWidth } = useWindowSize()
+const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 768)
 const selectedIds = ref<string[]>([])
 const searchValue = ref(props.searchQuery)
 
@@ -129,7 +132,12 @@ const handleClose = () => {
     <n-drawer-content>
       <template #header>
         <div class="archive-header">
-          <span>归档消息管理</span>
+          <div class="archive-header__title">
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="emit('update:visible', false)">
+              返回
+            </n-button>
+            <span>归档消息管理</span>
+          </div>
           <n-button text @click="emit('refresh')">
             <template #icon>
               <n-icon component="ReloadOutlined" />
@@ -243,6 +251,12 @@ const handleClose = () => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+}
+
+.archive-header__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .archive-drawer :deep(.n-drawer) {

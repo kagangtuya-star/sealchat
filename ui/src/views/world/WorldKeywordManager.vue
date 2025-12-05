@@ -510,179 +510,181 @@ watch(
 
 <template>
   <n-drawer v-model:show="drawerVisible" :width="drawerWidth" placement="right" :mask-closable="true">
-    <template #header>
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <n-button v-if="isMobileLayout" size="tiny" quaternary @click="drawerVisible = false">
-            返回
-          </n-button>
-          <span>术语词库</span>
-        </div>
-        <div class="space-x-2 flex items-center">
-          <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
-        </div>
-      </div>
-    </template>
-    <div class="space-y-4">
-      <n-input
-        v-model:value="filterValue"
-        placeholder="搜索关键词或描述"
-        clearable
-        size="small"
-      />
-      <div v-if="canEdit" class="keyword-manager__toolbar">
-        <div class="keyword-manager__selection">
-          已选 {{ selectedIds.length }} / {{ filteredKeywords.length }}
-          <n-button v-if="hasSelection" size="tiny" text class="ml-1" @click="clearSelection">
-            清除选择
-          </n-button>
-        </div>
-        <div class="keyword-manager__actions">
-          <div class="keyword-manager__action-group keyword-manager__action-group--primary">
-            <n-button size="tiny" type="primary" secondary :disabled="!canEdit || !currentWorldId" @click="openCreate">
-              新建术语
+    <n-drawer-content>
+      <template #header>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="drawerVisible = false">
+              返回
             </n-button>
-            <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openImportModal">
-              导入
-            </n-button>
-            <n-button size="tiny" tertiary :disabled="!currentWorldId" @click="handleExport">
-              导出 JSON
-            </n-button>
+            <span>术语词库</span>
           </div>
-          <div class="keyword-manager__action-group keyword-manager__action-group--bulk">
-            <n-button
-              size="tiny"
-              tertiary
-              type="primary"
-              :disabled="!hasSelection"
-              :loading="bulkToggleState === 'enable'"
-              @click="handleBulkToggle(true)"
-            >
-              批量启用
-            </n-button>
-            <n-button
-              size="tiny"
-              tertiary
-              type="warning"
-              :disabled="!hasSelection"
-              :loading="bulkToggleState === 'disable'"
-              @click="handleBulkToggle(false)"
-            >
-              批量停用
-            </n-button>
-            <n-button
-              size="tiny"
-              tertiary
-              type="error"
-              :loading="bulkDeleting"
-              :disabled="!hasSelection"
-              @click="handleBulkDeleteConfirm"
-            >
-              批量删除
-            </n-button>
+          <div class="space-x-2 flex items-center">
+            <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
           </div>
         </div>
-      </div>
-      <n-alert v-if="!canEdit" type="info" title="仅可查看">
-        该世界仅管理员可编辑术语，您当前没有编辑权限。
-      </n-alert>
-      <n-spin :show="glossary.loadingMap[currentWorldId || '']">
-        <template v-if="!isMobileLayout">
-          <n-table :single-line="false" size="small">
-            <thead>
-              <tr>
-                <th style="width: 42px">
-                  <n-checkbox
-                    :checked="isAllVisibleSelected"
-                    :indeterminate="isSelectionIndeterminate"
-                    :disabled="!canEdit || !pagedKeywords.length"
-                    @update:checked="handleSelectAllVisible"
-                  />
-                </th>
-                <th>关键词</th>
-                <th>匹配</th>
-                <th>显示</th>
-                <th>状态</th>
-                <th style="width: 120px;">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in pagedKeywords" :key="item.id">
-                <td>
+      </template>
+      <div class="space-y-4">
+        <n-input
+          v-model:value="filterValue"
+          placeholder="搜索关键词或描述"
+          clearable
+          size="small"
+        />
+        <div v-if="canEdit" class="keyword-manager__toolbar">
+          <div class="keyword-manager__selection">
+            已选 {{ selectedIds.length }} / {{ filteredKeywords.length }}
+            <n-button v-if="hasSelection" size="tiny" text class="ml-1" @click="clearSelection">
+              清除选择
+            </n-button>
+          </div>
+          <div class="keyword-manager__actions">
+            <div class="keyword-manager__action-group keyword-manager__action-group--primary">
+              <n-button size="tiny" type="primary" secondary :disabled="!canEdit || !currentWorldId" @click="openCreate">
+                新建术语
+              </n-button>
+              <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openImportModal">
+                导入
+              </n-button>
+              <n-button size="tiny" tertiary :disabled="!currentWorldId" @click="handleExport">
+                导出 JSON
+              </n-button>
+            </div>
+            <div class="keyword-manager__action-group keyword-manager__action-group--bulk">
+              <n-button
+                size="tiny"
+                tertiary
+                type="primary"
+                :disabled="!hasSelection"
+                :loading="bulkToggleState === 'enable'"
+                @click="handleBulkToggle(true)"
+              >
+                批量启用
+              </n-button>
+              <n-button
+                size="tiny"
+                tertiary
+                type="warning"
+                :disabled="!hasSelection"
+                :loading="bulkToggleState === 'disable'"
+                @click="handleBulkToggle(false)"
+              >
+                批量停用
+              </n-button>
+              <n-button
+                size="tiny"
+                tertiary
+                type="error"
+                :loading="bulkDeleting"
+                :disabled="!hasSelection"
+                @click="handleBulkDeleteConfirm"
+              >
+                批量删除
+              </n-button>
+            </div>
+          </div>
+        </div>
+        <n-alert v-if="!canEdit" type="info" title="仅可查看">
+          该世界仅管理员可编辑术语，您当前没有编辑权限。
+        </n-alert>
+        <n-spin :show="glossary.loadingMap[currentWorldId || '']">
+          <template v-if="!isMobileLayout">
+            <n-table :single-line="false" size="small">
+              <thead>
+                <tr>
+                  <th style="width: 42px">
+                    <n-checkbox
+                      :checked="isAllVisibleSelected"
+                      :indeterminate="isSelectionIndeterminate"
+                      :disabled="!canEdit || !pagedKeywords.length"
+                      @update:checked="handleSelectAllVisible"
+                    />
+                  </th>
+                  <th>关键词</th>
+                  <th>匹配</th>
+                  <th>显示</th>
+                  <th>状态</th>
+                  <th style="width: 120px;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in pagedKeywords" :key="item.id">
+                  <td>
+                    <n-checkbox
+                      :checked="selectedIds.includes(item.id)"
+                      :disabled="!canEdit"
+                      @update:checked="(checked) => handleRowSelection(item.id, checked)"
+                    />
+                  </td>
+                  <td>
+                    <div class="font-medium">{{ item.keyword }}</div>
+                    <div class="text-xs text-gray-500" v-if="item.aliases?.length">别名：{{ item.aliases.join(', ') }}</div>
+                    <div class="text-xs text-gray-500" v-if="item.description">{{ item.description }}</div>
+                  </td>
+                  <td>{{ item.matchMode === 'regex' ? '正则' : '文本' }}</td>
+                  <td>{{ item.display === 'minimal' ? '极简下划线' : '标准' }}</td>
+                  <td>
+                    <n-tag size="small" :type="item.isEnabled ? 'success' : 'default'">
+                      {{ item.isEnabled ? '启用' : '关闭' }}
+                    </n-tag>
+                  </td>
+                  <td>
+                    <n-space size="small">
+                      <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
+                      <n-button size="tiny" text :disabled="!canEdit" @click="handleToggle(item)">
+                        {{ item.isEnabled ? '停用' : '启用' }}
+                      </n-button>
+                      <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
+                        <template #trigger>
+                          <n-button size="tiny" text type="error">删除</n-button>
+                        </template>
+                        确认删除该术语？
+                      </n-popconfirm>
+                    </n-space>
+                  </td>
+                </tr>
+                <tr v-if="!filteredKeywords.length">
+                  <td colspan="6" class="text-center text-gray-400">暂无数据</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </template>
+          <template v-else>
+            <div class="keyword-mobile-simple-list">
+              <div v-for="item in pagedKeywords" :key="item.id" class="keyword-mobile-simple-row">
+                <div class="keyword-mobile-simple-main">
                   <n-checkbox
                     :checked="selectedIds.includes(item.id)"
                     :disabled="!canEdit"
                     @update:checked="(checked) => handleRowSelection(item.id, checked)"
                   />
-                </td>
-                <td>
-                  <div class="font-medium">{{ item.keyword }}</div>
-                  <div class="text-xs text-gray-500" v-if="item.aliases?.length">别名：{{ item.aliases.join(', ') }}</div>
-                  <div class="text-xs text-gray-500" v-if="item.description">{{ item.description }}</div>
-                </td>
-                <td>{{ item.matchMode === 'regex' ? '正则' : '文本' }}</td>
-                <td>{{ item.display === 'minimal' ? '极简下划线' : '标准' }}</td>
-                <td>
-                  <n-tag size="small" :type="item.isEnabled ? 'success' : 'default'">
-                    {{ item.isEnabled ? '启用' : '关闭' }}
-                  </n-tag>
-                </td>
-                <td>
-                  <n-space size="small">
-                    <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
-                    <n-button size="tiny" text :disabled="!canEdit" @click="handleToggle(item)">
-                      {{ item.isEnabled ? '停用' : '启用' }}
-                    </n-button>
-                    <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
-                      <template #trigger>
-                        <n-button size="tiny" text type="error">删除</n-button>
-                      </template>
-                      确认删除该术语？
-                    </n-popconfirm>
-                  </n-space>
-                </td>
-              </tr>
-              <tr v-if="!filteredKeywords.length">
-                <td colspan="6" class="text-center text-gray-400">暂无数据</td>
-              </tr>
-            </tbody>
-          </n-table>
-        </template>
-        <template v-else>
-          <div class="keyword-mobile-simple-list">
-            <div v-for="item in pagedKeywords" :key="item.id" class="keyword-mobile-simple-row">
-              <div class="keyword-mobile-simple-main">
-                <n-checkbox
-                  :checked="selectedIds.includes(item.id)"
-                  :disabled="!canEdit"
-                  @update:checked="(checked) => handleRowSelection(item.id, checked)"
-                />
-                <span class="keyword-mobile-simple-text">{{ item.keyword }}</span>
+                  <span class="keyword-mobile-simple-text">{{ item.keyword }}</span>
+                </div>
+                <div class="keyword-mobile-simple-actions">
+                  <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
+                  <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
+                    <template #trigger>
+                      <n-button size="tiny" text type="error">删除</n-button>
+                    </template>
+                    确认删除该术语？
+                  </n-popconfirm>
+                </div>
               </div>
-              <div class="keyword-mobile-simple-actions">
-                <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
-                <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
-                  <template #trigger>
-                    <n-button size="tiny" text type="error">删除</n-button>
-                  </template>
-                  确认删除该术语？
-                </n-popconfirm>
-              </div>
+              <div v-if="!filteredKeywords.length" class="keyword-mobile-empty">暂无数据</div>
             </div>
-            <div v-if="!filteredKeywords.length" class="keyword-mobile-empty">暂无数据</div>
-          </div>
-        </template>
-      </n-spin>
-      <div class="keyword-manager__pagination" v-if="filteredKeywords.length > PAGE_SIZE">
-        <n-pagination
-          size="small"
-          :item-count="filteredKeywords.length"
-          :page-size="PAGE_SIZE"
-          :page="currentPage"
-          @update:page="currentPage = $event"
-        />
+          </template>
+        </n-spin>
+        <div class="keyword-manager__pagination" v-if="filteredKeywords.length > PAGE_SIZE">
+          <n-pagination
+            size="small"
+            :item-count="filteredKeywords.length"
+            :page-size="PAGE_SIZE"
+            :page="currentPage"
+            @update:page="currentPage = $event"
+          />
+        </div>
       </div>
-    </div>
+    </n-drawer-content>
   </n-drawer>
 
   <n-modal v-model:show="editorVisible" preset="card" :title="isEditing ? '编辑术语' : '新增术语'" style="width: 520px">
