@@ -7188,16 +7188,21 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="chat-input-actions__cell">
                   <div class="emoji-trigger">
-                    <n-button
-                      quaternary
-                      circle
-                      ref="emojiTriggerButtonRef"
-                      @click="handleEmojiTriggerClick"
-                    >
-                      <template #icon>
-                        <n-icon :component="Plus" size="18" />
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button
+                          quaternary
+                          circle
+                          ref="emojiTriggerButtonRef"
+                          @click="handleEmojiTriggerClick"
+                        >
+                          <template #icon>
+                            <n-icon :component="Plus" size="18" />
+                          </template>
+                        </n-button>
                       </template>
-                    </n-button>
+                      添加表情
+                    </n-tooltip>
 
                     <n-popover
                       v-model:show="emojiPopoverShow"
@@ -7284,7 +7289,7 @@ onBeforeUnmount(() => {
                                   <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
                                   <div class="emoji-item__actions">
                                     <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
-                                  </div>
+                                  </div >
                                 </div>
                               </div>
                             </template>
