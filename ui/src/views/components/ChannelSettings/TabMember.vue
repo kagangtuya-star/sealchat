@@ -209,8 +209,8 @@ const canRemoveMember = (roleId: string, userId?: string) => {
 
     <div v-for="i in roleList?.items" class="border-b pb-1 mb-4">
       <!-- <div>{{ i }}</div> -->
-      <h3 class="text-base font-semibold mt-2  text-gray-800 ">{{ i.name }}</h3>
-      <div class="text-gray-500 dark:text-white mb-2">
+      <h3 class="text-base font-semibold mt-2 text-gray-800 role-title">{{ i.name }}</h3>
+      <div class="text-gray-500 role-desc mb-2">
         <span
           v-if="i.id.endsWith('-owner')"
           class="font-semibold"
@@ -261,4 +261,12 @@ const canRemoveMember = (roleId: string, userId?: string) => {
   </div>
 </template>
 
-<style lang="scss"></style>
+<style lang="scss">
+:root[data-display-palette='night'] .role-title {
+  color: #f4f4f5 !important;
+}
+
+:root[data-display-palette='night'] .role-desc {
+  color: #d4d4d8 !important;
+}
+</style>
