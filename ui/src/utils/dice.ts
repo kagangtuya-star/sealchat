@@ -1,4 +1,4 @@
-const COMMAND_PATTERN = /[\.。．｡]r[^\s　,，。！？!?;；:：]+/gi;
+const COMMAND_PATTERN = /[\.。．｡]r[^\s　,，。！？!?;；:：]*/gi;
 const BRACE_PATTERN = /\{([^{}]+)\}/g;
 const INCOMPLETE_PATTERN = /(\b\d*)d\b/gi;
 
@@ -107,6 +107,9 @@ const normalizeFormula = (raw: string, kind: DiceMatch['kind'], defaultDiceExpr:
   const sides = defaultDiceExpr.slice(1);
   if (sides) {
     normalized = normalized.replace(INCOMPLETE_PATTERN, (_, count: string) => `${count || ''}d${sides}`);
+  }
+  if (normalized === 'r' || normalized === 'rd') {
+    normalized = defaultDiceExpr;
   }
   return normalized;
 };
