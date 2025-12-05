@@ -93,7 +93,7 @@
         <div class="dice-tray__history dice-tray__history--compact">
           <div class="dice-tray__section-title dice-tray__section-title--compact">最近检定</div>
           <div v-if="hasHistory" class="dice-tray__history-grid">
-            <div v-for="item in displayedHistory.slice(0, 4)" :key="item.id" class="dice-tray__history-card">
+            <div v-for="item in displayedHistory" :key="item.id" class="dice-tray__history-card">
               <button type="button" class="dice-tray__history-roll" @click="handleHistoryRoll(item)">
                 <span class="dice-tray__history-label">{{ formatHistoryLabel(item.expr) }}</span>
               </button>
@@ -248,13 +248,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, reactive } from 'vue';
+import { computed, ref, watch, reactive } from 'vue';
 import { ensureDefaultDiceExpr, isValidDefaultDiceExpr } from '@/utils/dice';
 import { api } from '@/stores/_config';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
 import type { DiceMacro } from '@/types';
 import { Close as CloseIcon } from '@vicons/ionicons5';
+import { useDiceHistory, type DiceHistoryItem } from '@/views/chat/composables/useDiceHistory';
 
 const props = withDefaults(defineProps<{
   defaultDice?: string
@@ -287,20 +288,12 @@ const reason = ref('');
 const modalVisible = ref(false);
 const defaultDiceInput = ref(ensureDefaultDiceExpr(props.defaultDice));
 
-type DiceHistoryItem = {
-  id: string;
-  expr: string;
-  favorite: boolean;
-  timestamp: number;
-};
-
-const HISTORY_KEY = 'sealchat:dice-history';
-const HISTORY_DISPLAY_LIMIT = 4;
-const HISTORY_STORAGE_LIMIT = 12;
-
-const historyItems = ref<DiceHistoryItem[]>([]);
-
-const isClient = typeof window !== 'undefined';
+const {
+  displayedHistory,
+  hasHistory,
+  recordHistory,
+  toggleFavorite,
+} = useDiceHistory();
 
 type MacroResultEntry =
   | { id: string; kind: 'macro'; macro: DiceMacro }
@@ -658,87 +651,6 @@ const handleMacroExport = async () => {
   }
 };
 
-const sortByTimestampDesc = (a: DiceHistoryItem, b: DiceHistoryItem) => b.timestamp - a.timestamp;
-
-const persistHistory = () => {
-  if (!isClient) return;
-  try {
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.value));
-  } catch (error) {
-    console.warn('无法保存骰子历史', error);
-  }
-};
-
-const loadHistory = () => {
-  if (!isClient) return;
-  try {
-    const raw = window.localStorage.getItem(HISTORY_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return;
-    historyItems.value = parsed
-      .filter((item: any) => typeof item?.expr === 'string')
-      .map((item: any): DiceHistoryItem => ({
-        id: item.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        expr: item.expr,
-        favorite: !!item.favorite,
-        timestamp: typeof item.timestamp === 'number' ? item.timestamp : Date.now(),
-      }))
-      .sort(sortByTimestampDesc);
-  } catch (error) {
-    console.warn('无法加载骰子历史', error);
-  }
-};
-
-onMounted(() => {
-  loadHistory();
-});
-
-const pruneHistory = () => {
-  const favorites = historyItems.value.filter((item) => item.favorite).sort(sortByTimestampDesc);
-  const nonFavorites = historyItems.value.filter((item) => !item.favorite).sort(sortByTimestampDesc);
-  const allowedNonFavorites = Math.max(0, HISTORY_STORAGE_LIMIT - favorites.length);
-  const keptNonFavorites = nonFavorites.slice(0, allowedNonFavorites);
-  historyItems.value = [...favorites, ...keptNonFavorites].sort(sortByTimestampDesc);
-};
-
-const recordHistory = (expr: string) => {
-  const trimmed = expr.trim();
-  if (!trimmed) return;
-  const existingIndex = historyItems.value.findIndex((item) => item.expr === trimmed);
-  const favorite = existingIndex !== -1 ? historyItems.value[existingIndex].favorite : false;
-  if (existingIndex !== -1) {
-    historyItems.value.splice(existingIndex, 1);
-  }
-  const newItem: DiceHistoryItem = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    expr: trimmed,
-    favorite,
-    timestamp: Date.now(),
-  };
-  historyItems.value = [newItem, ...historyItems.value];
-  pruneHistory();
-  persistHistory();
-};
-
-const toggleFavorite = (itemId: string) => {
-  historyItems.value = historyItems.value.map((item) =>
-    item.id === itemId ? { ...item, favorite: !item.favorite } : item,
-  );
-  pruneHistory();
-  persistHistory();
-};
-
-const displayedHistory = computed(() => {
-  const favorites = historyItems.value.filter((item) => item.favorite).sort(sortByTimestampDesc);
-  const nonFavorites = historyItems.value.filter((item) => !item.favorite).sort(sortByTimestampDesc);
-  const remainingSlots = Math.max(0, HISTORY_DISPLAY_LIMIT - favorites.length);
-  const recentNonFavorites = remainingSlots > 0 ? nonFavorites.slice(0, remainingSlots) : [];
-  return [...favorites, ...recentNonFavorites];
-});
-
-const hasHistory = computed(() => displayedHistory.value.length > 0);
-
 const formatHistoryLabel = (expr: string) => expr.replace(/^\.r/, 'r').replace(/\s+/g, ' ');
 
 const currentDefaultDice = computed(() => ensureDefaultDiceExpr(props.defaultDice));
@@ -807,6 +719,7 @@ const clearQuickSelection = () => {
 const handleInsert = () => {
   if (canSubmit.value && combinedExpression.value) {
     emit('insert', combinedExpression.value);
+    recordHistory(combinedExpression.value);
     if (hasQuickSelection.value) {
       clearQuickSelection();
     }

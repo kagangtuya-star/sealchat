@@ -54,6 +54,7 @@ import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
+import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
@@ -5429,6 +5430,7 @@ const send = throttle(async () => {
 
   // 检查是否为富文本模式
   const isRichMode = sendMode === 'rich';
+  const diceMatchesInDraft = !isRichMode ? matchDiceExpressions(draft, defaultDiceExpr.value) : [];
 
   // 替换表情备注为图片标记
   if (!isRichMode) {
@@ -5530,6 +5532,9 @@ const send = throttle(async () => {
     }
     for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
       (tmpMsg as any)[k] = v;
+    }
+    if (diceMatchesInDraft.length) {
+      diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
