@@ -12,6 +12,11 @@
   version: 1
   webUrl: /
   pageTitle: "海豹尬聊 SealChat"
+  captcha:
+    mode: local # 可选 off/local/turnstile
+    turnstile:
+      siteKey: ""
+      secretKey: ""
 
   sqlite:
     # 是否启用 WAL 日志，提高读写并发

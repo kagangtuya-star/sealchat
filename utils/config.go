@@ -52,7 +52,26 @@ const (
 	defaultExportHTMLMaxConcurrency = 2
 )
 
+type CaptchaMode string
+
+const (
+	CaptchaModeOff       CaptchaMode = "off"
+	CaptchaModeLocal     CaptchaMode = "local"
+	CaptchaModeTurnstile CaptchaMode = "turnstile"
+)
+
+type TurnstileConfig struct {
+	SiteKey   string `json:"siteKey" yaml:"siteKey"`
+	SecretKey string `json:"secretKey" yaml:"secretKey"`
+}
+
+type CaptchaConfig struct {
+	Mode      CaptchaMode      `json:"mode" yaml:"mode"`
+	Turnstile TurnstileConfig `json:"turnstile" yaml:"turnstile"`
+}
+
 type StorageConfig struct {
+
 	Mode       StorageMode        `json:"mode" yaml:"mode"`
 	BaseURL    string             `json:"baseUrl" yaml:"baseUrl"`
 	PresignTTL int                `json:"presignTTL" yaml:"presignTTL"`
@@ -106,6 +125,7 @@ type AppConfig struct {
 	Export                    ExportConfig    `json:"export" yaml:"export"`
 	Storage                   StorageConfig   `json:"storage" yaml:"storage"`
 	SQLite                    SQLiteConfig    `json:"sqlite" yaml:"sqlite"`
+	Captcha                   CaptchaConfig   `json:"captcha" yaml:"captcha"`
 }
 
 type ExportConfig struct {
@@ -211,6 +231,9 @@ func ReadConfig() *AppConfig {
 			TxLockImmediate: true,
 			ReadConnections: runtime.NumCPU(),
 			OptimizeOnInit:  true,
+		},
+		Captcha: CaptchaConfig{
+			Mode: CaptchaModeLocal,
 		},
 	}
 
@@ -385,6 +408,9 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("storage.s3.presignTTL", config.Storage.S3.PresignTTL)
 		_ = k.Set("storage.s3.maxSizeMB", config.Storage.S3.MaxSizeMB)
 		_ = k.Set("storage.s3.logLevel", config.Storage.S3.LogLevel)
+		_ = k.Set("captcha.mode", string(config.Captcha.Mode))
+		_ = k.Set("captcha.turnstile.siteKey", config.Captcha.Turnstile.SiteKey)
+		_ = k.Set("captcha.turnstile.secretKey", config.Captcha.Turnstile.SecretKey)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

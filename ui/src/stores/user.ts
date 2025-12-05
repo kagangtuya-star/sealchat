@@ -153,13 +153,16 @@ export const useUserStore = defineStore({
       }
     },
 
-    async signUp(form: { username: string, password: string, nickname: string }) {
+    async signUp(form: { username: string; password: string; nickname: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
       try {
         // 在此处进行用户鉴权操作，获取 accessToken
         const resp = await api.post('api/v1/user-signup', {
           username: form.username,
           password: form.password,
           nickname: form.nickname,
+          captchaId: form.captchaId,
+          captchaValue: form.captchaValue,
+          turnstileToken: form.turnstileToken,
         })
 
         const data = resp.data as { token: string, message: string };

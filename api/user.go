@@ -11,6 +11,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 func getCurUser(c *fiber.Ctx) *model.UserModel {
@@ -26,6 +27,9 @@ func UserSignup(c *fiber.Ctx) error {
 		Username string `json:"username" form:"username" binding:"required"`
 		Password string `json:"password" form:"password" binding:"required"`
 		Nickname string `json:"nickname" form:"nickname" binding:"required"`
+		CaptchaId string `json:"captchaId" form:"captchaId"`
+		CaptchaValue string `json:"captchaValue" form:"captchaValue"`
+		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
 	}
 
 	var requestBody RequestBody
@@ -67,6 +71,30 @@ func UserSignup(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": "昵称不能为空",
 		})
+	}
+
+	switch appConfig.Captcha.Mode {
+	case utils.CaptchaModeLocal:
+		if !model.CaptchaVerify(requestBody.CaptchaId, requestBody.CaptchaValue) {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"message": "验证码错误或已过期",
+			})
+		}
+	case utils.CaptchaModeTurnstile:
+		if strings.TrimSpace(requestBody.TurnstileToken) == "" {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"message": "请完成人机验证",
+			})
+		}
+		ok, err := model.TurnstileVerify(requestBody.TurnstileToken, appConfig.Captcha.Turnstile.SecretKey, c.IP())
+		if err != nil {
+			log.Printf("Turnstile verify failed: %v", err)
+		}
+		if !ok {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"message": "人机验证失败",
+			})
+		}
 	}
 
 	count := model.UserCount()
