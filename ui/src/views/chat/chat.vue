@@ -666,6 +666,25 @@ const allGalleryItems = computed(() =>
 const emojiUsageKey = 'sealchat_emoji_usage';
 const emojiUsageMap = ref<Record<string, number>>({});
 
+const ensureEmojiCollectionLoaded = async () => {
+  const ownerId = user.info?.id;
+  if (!ownerId) {
+    return;
+  }
+  try {
+    await gallery.loadCollections(ownerId);
+  } catch {
+    // ignore load errors for emoji collections
+  }
+  if (gallery.emojiCollectionId) {
+    try {
+      await gallery.loadItems(gallery.emojiCollectionId);
+    } catch {
+      // ignore
+    }
+  }
+};
+
 onMounted(() => {
   try {
     const stored = localStorage.getItem(emojiUsageKey);
@@ -932,10 +951,7 @@ watch(
   async (id) => {
     if (!id) return;
     gallery.loadEmojiPreference(id);
-    await gallery.loadCollections(id).catch(() => undefined);
-    if (gallery.emojiCollectionId) {
-      await gallery.loadItems(gallery.emojiCollectionId).catch(() => undefined);
-    }
+    await ensureEmojiCollectionLoaded();
   },
   { immediate: true }
 );
@@ -957,7 +973,7 @@ watch(emojiPopoverShow, (show, prevShow) => {
     nextTick(() => {
       syncEmojiPopoverPosition();
     });
-    gallery.loadEmojiCollection();
+    void ensureEmojiCollectionLoaded();
   }
   if (show) {
     chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
@@ -968,7 +984,7 @@ watch(emojiPopoverShow, (show, prevShow) => {
 
 watch(isManagingEmoji, (val) => {
   if (val) {
-    gallery.loadEmojiCollection();
+    void ensureEmojiCollectionLoaded();
   }
 });
 
