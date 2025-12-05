@@ -14,7 +14,7 @@
         draggable="true"
         @dragstart="handleDragStart(item, $event)"
       >
-        <n-image :src="item.thumbUrl || buildAttachmentUrl(item.attachmentId)" :preview-src="buildAttachmentUrl(item.attachmentId)" object-fit="contain" />
+        <n-image :src="item.thumbUrl || buildAttachmentUrl(item.attachmentId)" :preview-src="buildAttachmentUrl(item.attachmentId)" object-fit="contain" preview-disabled />
         <div class="gallery-grid__caption">{{ item.remark }}</div>
         <div v-if="editable" class="gallery-grid__actions">
           <n-button quaternary size="tiny" @click.stop="emit('edit', item)">备注</n-button>
