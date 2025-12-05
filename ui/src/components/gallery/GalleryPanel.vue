@@ -9,10 +9,13 @@
     <n-drawer-content closable>
       <template #header>
         <div class="gallery-header">
-          <n-button v-if="isMobileLayout" size="tiny" quaternary @click="gallery.closePanel()">
+          <n-button v-if="isMobileLayout" text class="gallery-header__back" @click="gallery.closePanel()">
+            <template #icon>
+              <n-icon :component="ChevronBack" :size="20" />
+            </template>
             返回
           </n-button>
-          <span>快捷画廊</span>
+          <span class="gallery-header__title">快捷画廊</span>
         </div>
       </template>
       <div class="gallery-panel">
@@ -21,6 +24,7 @@
           :active-id="gallery.activeCollectionId"
           @select="handleCollectionSelect"
           @context-action="handleCollectionAction"
+          @drop-items="handleDropItems"
         >
           <template #actions>
             <n-button size="small" type="primary" block @click="emitCreateCollection">新建分类</n-button>
@@ -36,10 +40,16 @@
           </template>
         </GalleryCollectionTree>
 
-        <div class="gallery-panel__content">
+        <div class="gallery-panel__content" tabindex="0" @keydown="handleKeydown" ref="contentRef">
           <div class="gallery-panel__toolbar">
             <GalleryUploadZone :disabled="uploading" @select="handleUploadSelect" />
             <div class="gallery-panel__toolbar-actions">
+              <n-select
+                v-model:value="sortBy"
+                size="small"
+                :options="sortOptions"
+                style="width: 100px"
+              />
               <n-input
                 v-model:value="keyword"
                 size="small"
@@ -47,9 +57,33 @@
                 clearable
                 @clear="loadActiveItems"
                 @keyup.enter="loadActiveItems"
-                style="width: 200px"
+                style="width: 140px"
               />
               <n-button size="small" :loading="loading" @click="loadActiveItems">刷新</n-button>
+            </div>
+          </div>
+
+          <!-- Upload progress -->
+          <div v-if="uploadProgress.total > 0" class="gallery-panel__progress">
+            <n-progress
+              type="line"
+              :percentage="Math.round((uploadProgress.current / uploadProgress.total) * 100)"
+              :show-indicator="true"
+            />
+            <span class="gallery-panel__progress-text">
+              上传中 {{ uploadProgress.current }}/{{ uploadProgress.total }}
+            </span>
+          </div>
+
+          <!-- Batch operations toolbar -->
+          <div v-if="selectedIds.length > 0" class="gallery-panel__batch-toolbar">
+            <span class="gallery-panel__batch-count">已选中 {{ selectedIds.length }} 项</span>
+            <div class="gallery-panel__batch-actions">
+              <n-button size="small" @click="selectAll">全选</n-button>
+              <n-button size="small" @click="clearSelection">取消选择</n-button>
+              <n-button size="small" type="primary" @click="openMoveModal">移动到</n-button>
+              <n-button size="small" type="error" @click="handleBatchDelete">删除</n-button>
+              <n-button size="small" type="info" @click="handleBatchInsert">插入</n-button>
             </div>
           </div>
 
@@ -57,9 +91,14 @@
             :items="items"
             :loading="loading"
             :editable="true"
-            @select="handleItemSelect"
+            :selectable="true"
+            :selected-ids="selectedIds"
+            @toggle-select="handleToggleSelect"
+            @range-select="handleRangeSelect"
+            @insert="handleItemInsert"
             @edit="handleItemEdit"
             @delete="handleItemDelete"
+            @reorder="handleReorder"
           />
         </div>
       </div>
@@ -122,11 +161,34 @@
       </n-form-item>
     </n-form>
   </n-modal>
+
+  <!-- Move to collection modal -->
+  <n-modal
+    v-model:show="moveModalVisible"
+    preset="dialog"
+    :show-icon="false"
+    title="移动到分类"
+    :positive-text="movingItems ? '移动中…' : '移动'"
+    :positive-button-props="{ loading: movingItems }"
+    negative-text="取消"
+    @positive-click="handleMoveSubmit"
+    @negative-click="moveModalVisible = false"
+  >
+    <div class="move-modal__content">
+      <p class="move-modal__hint">将 {{ selectedIds.length }} 个项目移动到：</p>
+      <n-select
+        v-model:value="moveTargetCollectionId"
+        :options="moveCollectionOptions"
+        placeholder="选择目标分类"
+      />
+    </div>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NInput, useMessage, useDialog, NModal, NForm, NFormItem, NInputNumber } from 'naive-ui';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
+import { NDrawer, NDrawerContent, NButton, NInput, useMessage, useDialog, NModal, NForm, NFormItem, NInputNumber, NSelect, NIcon, NProgress } from 'naive-ui';
+import { ChevronBack } from '@vicons/ionicons5';
 import type { UploadFileInfo } from 'naive-ui';
 import type { GalleryItem } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
@@ -167,7 +229,47 @@ const renamingCollection = ref(false);
 const renameCollectionName = ref('');
 const renamingCollectionId = ref<string | null>(null);
 
+// Batch operations state
+const selectedIds = ref<string[]>([]);
+const moveModalVisible = ref(false);
+const movingItems = ref(false);
+const moveTargetCollectionId = ref<string | null>(null);
+
+const moveCollectionOptions = computed(() =>
+  collections.value
+    .filter(c => c.id !== gallery.activeCollectionId)
+    .map(c => ({ label: c.name, value: c.id }))
+);
+
+// Sorting
+const sortBy = ref<'time' | 'name'>('time');
+const sortOptions = [
+  { label: '按时间', value: 'time' },
+  { label: '按名称', value: 'name' }
+];
+
+// Upload progress
+const uploadProgress = ref({ current: 0, total: 0 });
+
+// Keyboard handling
+const contentRef = ref<HTMLElement | null>(null);
+
 const visible = computed(() => gallery.isPanelVisible);
+
+// Auto-refresh 1 second after panel opens to fix data fetch latency
+let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+watch(visible, (isVisible) => {
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+  if (isVisible && gallery.activeCollectionId) {
+    autoRefreshTimer = setTimeout(() => {
+      gallery.loadItems(gallery.activeCollectionId!);
+    }, 1000);
+  }
+});
+
 const drawerWidth = computed(() => {
   if (typeof window === 'undefined') return 720;
   return window.innerWidth < 768 ? '100%' : 720;
@@ -179,9 +281,55 @@ const isMobileLayout = computed(() => {
 
 const userId = computed(() => gallery.activeOwner?.id || user.info.id || '');
 const collections = computed(() => (userId.value ? gallery.getCollections(userId.value) : []));
-const items = computed(() => (gallery.activeCollectionId ? gallery.getItemsByCollection(gallery.activeCollectionId) : []));
-const loading = computed(() => (gallery.activeCollectionId ? gallery.isCollectionLoading(gallery.activeCollectionId) : false));
+const rawItems = computed(() => (gallery.activeCollectionId ? gallery.getItemsByCollection(gallery.activeCollectionId) : []));
+const items = computed(() => {
+  const list = [...rawItems.value];
+  if (sortBy.value === 'name') {
+    list.sort((a, b) => (a.remark || '').localeCompare(b.remark || ''));
+  } else {
+    // Default: sort by order (time)
+    list.sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+  }
+  return list;
+});
+const loading = computed(() => {
+  // Show loading during initialization
+  if (gallery.isInitializing) return true;
+  // Show loading if panel is visible but no active collection yet
+  if (visible.value && !gallery.activeCollectionId) return true;
+  // Show loading if active collection is loading
+  if (gallery.activeCollectionId && gallery.isCollectionLoading(gallery.activeCollectionId)) return true;
+  // Show loading if panel just opened and items haven't been loaded yet
+  if (visible.value && gallery.activeCollectionId && !gallery.items[gallery.activeCollectionId]) return true;
+  return false;
+});
 const isEmojiLinked = computed(() => gallery.emojiCollectionId === gallery.activeCollectionId);
+
+// Keyboard shortcuts handler
+function handleKeydown(evt: KeyboardEvent) {
+  // Ignore if typing in input
+  if ((evt.target as HTMLElement)?.tagName === 'INPUT') return;
+  
+  // Ctrl/Cmd + A: Select all
+  if ((evt.ctrlKey || evt.metaKey) && evt.key === 'a') {
+    evt.preventDefault();
+    selectAll();
+    return;
+  }
+  
+  // Delete/Backspace: Delete selected
+  if ((evt.key === 'Delete' || evt.key === 'Backspace') && selectedIds.value.length > 0) {
+    evt.preventDefault();
+    handleBatchDelete();
+    return;
+  }
+  
+  // Escape: Clear selection
+  if (evt.key === 'Escape') {
+    clearSelection();
+    return;
+  }
+}
 
 function handleShow(value: boolean) {
   if (!value) {
@@ -200,10 +348,10 @@ async function handleCollectionAction(action: string, collection: any) {
     renameCollectionName.value = collection.name;
     renameModalVisible.value = true;
   } else if (action === 'delete') {
-    const confirmed = await dialogAskConfirm(`确定删除分类"${collection.name}"吗？此操作不可恢复。`);
+    const confirmed = await dialogAskConfirm(dialog, `确定删除分类"${collection.name}"吗？`, '此操作不可恢复');
     if (confirmed) {
       try {
-        await gallery.deleteCollection(collection.id);
+        await gallery.deleteCollection(userId.value, collection.id);
         message.success('分类已删除');
       } catch (error: any) {
         message.error(error?.message || '删除失败');
@@ -277,9 +425,12 @@ async function handleUploadSelect(files: UploadFileInfo[]) {
     return;
   }
   uploading.value = true;
+  uploadProgress.value = { current: 0, total: candidates.length };
   try {
     const payloadItems: UploadTask[] = [];
-    for (const file of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const file = candidates[i];
+      uploadProgress.value.current = i + 1;
       const { attachmentId } = await uploadImageAttachment(file);
       const normalizedId = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
       const thumbData = await generateThumbnail(file);
@@ -290,16 +441,39 @@ async function handleUploadSelect(files: UploadFileInfo[]) {
       });
     }
     if (payloadItems.length) {
-      await gallery.upload(collectionId, {
-        collectionId,
-        items: payloadItems.map((item, index) => ({
-          attachmentId: item.attachmentId,
-          thumbData: item.thumbData,
-          remark: item.remark,
-          order: Date.now() + index,
-        })),
+      // Check for duplicates by attachmentId OR remark (filename)
+      const existingIds = new Set(items.value.map(item => item.attachmentId));
+      const existingRemarks = new Set(items.value.map(item => item.remark));
+      const skippedNames: string[] = [];
+      const uniqueItems = payloadItems.filter(item => {
+        const isDuplicate = existingIds.has(item.attachmentId) || existingRemarks.has(item.remark);
+        if (isDuplicate) {
+          skippedNames.push(item.remark);
+        }
+        return !isDuplicate;
       });
-      message.success('上传成功');
+      
+      if (uniqueItems.length > 0) {
+        await gallery.upload(collectionId, {
+          collectionId,
+          items: uniqueItems.map((item, index) => ({
+            attachmentId: item.attachmentId,
+            thumbData: item.thumbData,
+            remark: item.remark,
+            order: Date.now() + index,
+          })),
+        });
+      }
+      
+      // Show notifications
+      if (skippedNames.length > 0) {
+        skippedNames.forEach(name => {
+          message.warning(`${name} 已经存在，上传被跳过`);
+        });
+      }
+      if (uniqueItems.length > 0) {
+        message.success(`上传成功 ${uniqueItems.length} 张图片`);
+      }
       keyword.value = '';
     }
   } catch (error: any) {
@@ -307,6 +481,7 @@ async function handleUploadSelect(files: UploadFileInfo[]) {
     message.error(error?.message || '上传失败，请稍后重试');
   } finally {
     uploading.value = false;
+    uploadProgress.value = { current: 0, total: 0 };
   }
 }
 
@@ -316,10 +491,148 @@ function loadActiveItems() {
   }
 }
 
-function handleItemSelect(item: GalleryItem) {
+function handleToggleSelect(item: GalleryItem, selected: boolean) {
+  if (selected) {
+    if (!selectedIds.value.includes(item.id)) {
+      selectedIds.value = [...selectedIds.value, item.id];
+    }
+  } else {
+    selectedIds.value = selectedIds.value.filter(id => id !== item.id);
+  }
+}
+
+function handleRangeSelect(startIndex: number, endIndex: number) {
+  const start = Math.min(startIndex, endIndex);
+  const end = Math.max(startIndex, endIndex);
+  const rangeIds = items.value.slice(start, end + 1).map(item => item.id);
+  const newSelection = new Set([...selectedIds.value, ...rangeIds]);
+  selectedIds.value = Array.from(newSelection);
+}
+
+function selectAll() {
+  selectedIds.value = items.value.map(item => item.id);
+}
+
+function clearSelection() {
+  selectedIds.value = [];
+}
+
+function handleItemInsert(item: GalleryItem) {
   const src = item.attachmentId ? `id:${item.attachmentId}` : '';
   if (!src) return;
   emit('insert', src);
+}
+
+function openMoveModal() {
+  if (selectedIds.value.length === 0) return;
+  moveTargetCollectionId.value = null;
+  moveModalVisible.value = true;
+}
+
+async function handleMoveSubmit() {
+  if (!moveTargetCollectionId.value || selectedIds.value.length === 0) {
+    message.warning('请选择目标分类');
+    return false;
+  }
+  movingItems.value = true;
+  try {
+    const targetId = moveTargetCollectionId.value;
+    const currentCollectionId = gallery.activeCollectionId;
+    if (!currentCollectionId) return false;
+    
+    for (const itemId of selectedIds.value) {
+      await gallery.updateItem(currentCollectionId, itemId, { collectionId: targetId });
+    }
+    message.success(`已移动 ${selectedIds.value.length} 个项目`);
+    clearSelection();
+    moveModalVisible.value = false;
+    return true;
+  } catch (error: any) {
+    message.error(error?.message || '移动失败');
+    return false;
+  } finally {
+    movingItems.value = false;
+  }
+}
+
+async function handleDropItems(targetCollectionId: string, itemIds: string[]) {
+  const currentCollectionId = gallery.activeCollectionId;
+  if (!currentCollectionId || itemIds.length === 0) return;
+  if (targetCollectionId === currentCollectionId) return;
+  
+  try {
+    for (const itemId of itemIds) {
+      await gallery.updateItem(currentCollectionId, itemId, { collectionId: targetCollectionId });
+    }
+    message.success(`已移动 ${itemIds.length} 个项目`);
+    clearSelection();
+  } catch (error: any) {
+    message.error(error?.message || '移动失败');
+  }
+}
+
+async function handleReorder(fromIndex: number, toIndex: number) {
+  if (!gallery.activeCollectionId) return;
+  
+  // Get items in current sorted order
+  const currentItems = [...items.value];
+  if (fromIndex < 0 || fromIndex >= currentItems.length) return;
+  if (toIndex < 0 || toIndex >= currentItems.length) return;
+  
+  const item = currentItems[fromIndex];
+  const targetItem = currentItems[toIndex];
+  
+  // Calculate new order value
+  let newOrder: number;
+  if (toIndex === 0) {
+    // Move to first position
+    newOrder = (currentItems[0]?.order ?? Date.now()) + 1;
+  } else if (toIndex === currentItems.length - 1) {
+    // Move to last position
+    newOrder = (currentItems[currentItems.length - 1]?.order ?? 1) - 1;
+  } else {
+    // Move between items
+    const prevOrder = currentItems[toIndex > fromIndex ? toIndex : toIndex - 1]?.order ?? 0;
+    const nextOrder = currentItems[toIndex > fromIndex ? toIndex + 1 : toIndex]?.order ?? 0;
+    newOrder = Math.round((prevOrder + nextOrder) / 2);
+  }
+  
+  try {
+    await gallery.updateItem(gallery.activeCollectionId, item.id, { order: newOrder });
+    message.success('已调整顺序');
+  } catch (error: any) {
+    message.error(error?.message || '调整顺序失败');
+  }
+}
+
+async function handleBatchDelete() {
+  if (selectedIds.value.length === 0) return;
+  if (!gallery.activeCollectionId) return;
+  
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    `确认删除 ${selectedIds.value.length} 个资源？`,
+    '删除后无法恢复，请谨慎操作'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await gallery.deleteItems(gallery.activeCollectionId, selectedIds.value);
+    message.success(`已删除 ${selectedIds.value.length} 个项目`);
+    clearSelection();
+  } catch (error: any) {
+    message.error(error?.message || '删除失败');
+  }
+}
+
+function handleBatchInsert() {
+  if (selectedIds.value.length === 0) return;
+  const selectedItems = items.value.filter(item => selectedIds.value.includes(item.id));
+  for (const item of selectedItems) {
+    const src = item.attachmentId ? `id:${item.attachmentId}` : '';
+    if (src) emit('insert', src);
+  }
+  clearSelection();
 }
 
 function handleItemEdit(item: GalleryItem) {
@@ -358,7 +671,8 @@ async function handleEditSubmit() {
 }
 
 async function handleRenameSubmit() {
-  if (!renamingCollectionId.value) return false;
+  const collectionIdToRename = renamingCollectionId.value;
+  if (!collectionIdToRename) return false;
   const name = renameCollectionName.value.trim();
   if (!name) {
     message.warning('分类名称不能为空');
@@ -366,7 +680,7 @@ async function handleRenameSubmit() {
   }
   renamingCollection.value = true;
   try {
-    await gallery.updateCollection(renamingCollectionId.value, { name });
+    await gallery.updateCollection(userId.value, collectionIdToRename, { name });
     message.success('分类已重命名');
     renameModalVisible.value = false;
     return true;
@@ -473,8 +787,17 @@ function toggleEmojiLink() {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  width: 100%;
 }
 
+.gallery-header__back {
+  margin-right: auto;
+}
+
+.gallery-header__title {
+  font-weight: 600;
+  flex: 1;
+}
 
 .gallery-panel {
   display: grid;
@@ -505,10 +828,87 @@ function toggleEmojiLink() {
   flex-wrap: wrap;
 }
 
+/* Batch operations toolbar */
+.gallery-panel__batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--sc-chip-bg, rgba(99, 102, 241, 0.1));
+  border-radius: 8px;
+  gap: 12px;
+}
+
+.gallery-panel__batch-count {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sc-primary, var(--primary-color));
+}
+
+.gallery-panel__batch-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Upload progress */
+.gallery-panel__progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.gallery-panel__progress-text {
+  font-size: 13px;
+  color: var(--sc-text-secondary, var(--text-color-2));
+  white-space: nowrap;
+}
+
+/* Move modal */
+.move-modal__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.move-modal__hint {
+  margin: 0;
+  color: var(--sc-text-secondary, var(--text-color-2));
+}
+
 @media (max-width: 768px) {
+  .gallery-drawer :deep(.n-drawer) {
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
+
+  .gallery-drawer :deep(.n-drawer-body-content-wrapper) {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .gallery-header {
+    width: 100%;
+  }
+
+  .gallery-header__back {
+    font-size: 14px;
+  }
+
   .gallery-panel {
     grid-template-columns: 1fr;
     gap: 12px;
+    height: calc(100vh - 60px);
+    height: calc(100dvh - 60px);
+    overflow-y: auto;
+  }
+
+  .gallery-panel__content {
+    min-height: 0;
+    flex: 1;
+    overflow: hidden;
   }
 
   .gallery-panel__toolbar {
@@ -522,6 +922,22 @@ function toggleEmojiLink() {
 
   .gallery-panel__toolbar-actions > * {
     flex: 1;
+  }
+
+  .gallery-panel__batch-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 6px 10px;
+  }
+
+  .gallery-panel__batch-actions {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .gallery-panel__batch-actions .n-button {
+    flex: 1;
+    min-width: 60px;
   }
 }
 </style>

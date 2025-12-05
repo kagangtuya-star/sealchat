@@ -1,7 +1,8 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed, watch, PropType, onBeforeUnmount, nextTick } from 'vue';
+import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick } from 'vue';
+import type { PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
@@ -584,6 +585,7 @@ onBeforeUnmount(() => {
   }
   destroyImageViewer();
   keywordTooltip.hide()
+  keywordTooltip.destroy()
 });
 
 const nick = computed(() => {

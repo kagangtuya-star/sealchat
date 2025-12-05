@@ -54,6 +54,7 @@ import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
+import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
@@ -3979,12 +3980,18 @@ const scheduleHistoryAutoRestore = () => {
   pendingHistoryRestoreChannelKey.value = String(channelId);
 };
 
+interface HistoryImageInfo {
+  markerId: string;
+  attachmentId: string;
+}
+
 interface InputHistoryEntry {
   id: string;
   channelKey: string;
   mode: 'plain' | 'rich';
   content: string;
   createdAt: number;
+  images?: HistoryImageInfo[];
 }
 
 type HistoryStore = Record<string, InputHistoryEntry[]>;
@@ -4099,7 +4106,17 @@ const normalizeHistoryEntries = (entries: any[]): InputHistoryEntry[] => {
       const createdAt = typeof entry.createdAt === 'number' ? entry.createdAt : Date.now();
       const id = typeof entry.id === 'string' ? entry.id : nanoid();
       const channelKey = typeof entry.channelKey === 'string' ? entry.channelKey : currentChannelKey.value;
-      return { id, channelKey, mode, content, createdAt } as InputHistoryEntry;
+      // 解析图片信息
+      let images: HistoryImageInfo[] | undefined;
+      if (Array.isArray(entry.images)) {
+        images = entry.images
+          .filter((img: any) => img && typeof img.markerId === 'string' && typeof img.attachmentId === 'string')
+          .map((img: any) => ({ markerId: img.markerId, attachmentId: img.attachmentId }));
+        if (images.length === 0) {
+          images = undefined;
+        }
+      }
+      return { id, channelKey, mode, content, createdAt, images } as InputHistoryEntry;
     })
     .filter((entry): entry is InputHistoryEntry => !!entry);
 };
@@ -4151,6 +4168,20 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   return !isRichContentEmpty(content);
 };
 
+// 从当前 inlineImages Map 中提取图片信息用于历史保存
+const collectCurrentImageInfo = (): HistoryImageInfo[] => {
+  const images: HistoryImageInfo[] = [];
+  inlineImages.forEach((draft, markerId) => {
+    if (draft.status === 'uploaded' && draft.attachmentId) {
+      const attachmentId = draft.attachmentId.startsWith('id:')
+        ? draft.attachmentId.slice(3)
+        : draft.attachmentId;
+      images.push({ markerId, attachmentId });
+    }
+  });
+  return images;
+};
+
 const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { force?: boolean } = {}): boolean => {
   if (!isContentMeaningful(mode, content)) {
     return false;
@@ -4169,12 +4200,17 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   const store = readHistoryStore();
   const existing = normalizeHistoryEntries(store[channelKey] || []);
   const filtered = existing.filter((entry) => buildHistorySignature(entry.mode, entry.content) !== signature);
+  
+  // 提取当前图片信息
+  const images = mode === 'plain' ? collectCurrentImageInfo() : undefined;
+  
   const newEntry: InputHistoryEntry = {
     id: nanoid(),
     channelKey,
     mode,
     content,
     createdAt: Date.now(),
+    images: images?.length ? images : undefined,
   };
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
@@ -4194,9 +4230,14 @@ const getHistoryPreview = (entry: InputHistoryEntry) => {
   try {
     if (entry.mode === 'rich' && isTipTapJson(entry.content)) {
       const plain = tiptapJsonToPlainText(entry.content).replace(/\s+/g, ' ').trim();
-      return plain;
+      return plain || '[富文本内容]';
     }
-    return contentUnescape(entry.content).replace(/\s+/g, ' ').trim();
+    // 将图片标记替换为友好的显示文本
+    let preview = contentUnescape(entry.content)
+      .replace(/\[\[图片:[^\]]+\]\]/g, '[图片]')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return preview || (entry.images?.length ? '[图片]' : '[空内容]');
   } catch (e) {
     console.warn('生成历史预览失败', e);
     return entry.mode === 'rich' ? '[富文本内容]' : entry.content;
@@ -4246,13 +4287,42 @@ const restoreHistoryEntry = (entryId: string) => {
   proceed();
 };
 
+// 从历史记录中恢复图片信息到 inlineImages Map
+const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
+  if (entry.mode !== 'plain' || !entry.images?.length) {
+    return;
+  }
+  // 检查内容中包含哪些图片标记
+  const contentMarkers = collectInlineMarkerIds(entry.content);
+  
+  // 只恢复内容中存在的图片标记
+  entry.images.forEach((imageInfo) => {
+    if (contentMarkers.has(imageInfo.markerId) && !inlineImages.has(imageInfo.markerId)) {
+      const attachmentId = imageInfo.attachmentId.startsWith('id:')
+        ? imageInfo.attachmentId
+        : `id:${imageInfo.attachmentId}`;
+      const record: InlineImageDraft = reactive({
+        id: imageInfo.markerId,
+        token: `[[图片:${imageInfo.markerId}]]`,
+        status: 'uploaded',
+        attachmentId: attachmentId.slice(3), // 存储时不带 id: 前缀
+      });
+      inlineImages.set(imageInfo.markerId, record);
+    }
+  });
+};
+
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
     inputMode.value = entry.mode;
     suspendInlineSync = true;
     textToSend.value = entry.content;
     suspendInlineSync = false;
+    
+    // 恢复图片信息
+    restoreImagesFromHistory(entry);
     syncInlineMarkersWithText(entry.content);
+    
     markAutoRestoreEntry(currentChannelKey.value, entry.id);
     if (!options?.silent) {
       message.success('已恢复历史输入');
@@ -5360,6 +5430,7 @@ const send = throttle(async () => {
 
   // 检查是否为富文本模式
   const isRichMode = sendMode === 'rich';
+  const diceMatchesInDraft = !isRichMode ? matchDiceExpressions(draft, defaultDiceExpr.value) : [];
 
   // 替换表情备注为图片标记
   if (!isRichMode) {
@@ -5461,6 +5532,9 @@ const send = throttle(async () => {
     }
     for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
       (tmpMsg as any)[k] = v;
+    }
+    if (diceMatchesInDraft.length) {
+      diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
@@ -7188,16 +7262,21 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="chat-input-actions__cell">
                   <div class="emoji-trigger">
-                    <n-button
-                      quaternary
-                      circle
-                      ref="emojiTriggerButtonRef"
-                      @click="handleEmojiTriggerClick"
-                    >
-                      <template #icon>
-                        <n-icon :component="Plus" size="18" />
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button
+                          quaternary
+                          circle
+                          ref="emojiTriggerButtonRef"
+                          @click="handleEmojiTriggerClick"
+                        >
+                          <template #icon>
+                            <n-icon :component="Plus" size="18" />
+                          </template>
+                        </n-button>
                       </template>
-                    </n-button>
+                      添加表情
+                    </n-tooltip>
 
                     <n-popover
                       v-model:show="emojiPopoverShow"
@@ -7284,7 +7363,7 @@ onBeforeUnmount(() => {
                                   <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
                                   <div class="emoji-item__actions">
                                     <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
-                                  </div>
+                                  </div >
                                 </div>
                               </div>
                             </template>
@@ -9211,6 +9290,21 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   padding-right: 0.2rem;
   color: var(--sc-text-primary, #0f172a);
+
+  /* 极简滚动条 */
+  &::-webkit-scrollbar {
+    width: 3px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: rgba(148, 163, 184, 0.4);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(148, 163, 184, 0.7);
+  }
 }
 
 .history-entry {
@@ -9219,17 +9313,28 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   width: 100%;
   text-align: left;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   border-radius: 0.75rem;
   padding: 0.65rem 0.75rem;
-  background: rgba(248, 250, 252, 0.9);
+  background: var(--sc-bg-subtle, rgba(248, 250, 252, 0.9));
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+:root[data-display-palette='night'] .history-entry {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(71, 85, 105, 0.4);
+}
+
 .history-entry:hover {
-  border-color: rgba(59, 130, 246, 0.35);
-  background: rgba(239, 246, 255, 0.92);
+  border-color: var(--sc-primary-color-hover, rgba(59, 130, 246, 0.35));
+  background: var(--sc-bg-base, rgba(239, 246, 255, 0.92));
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.18);
+}
+
+:root[data-display-palette='night'] .history-entry:hover {
+  background: rgba(51, 65, 85, 0.6);
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .history-entry__meta {
@@ -9237,7 +9342,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .history-entry__tag {
@@ -9260,7 +9365,7 @@ onBeforeUnmount(() => {
 
 .history-entry__preview {
   font-size: 0.85rem;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
   line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 3;

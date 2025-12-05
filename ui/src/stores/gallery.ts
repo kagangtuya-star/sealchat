@@ -35,6 +35,7 @@ interface GalleryState {
   collections: Record<string, CollectionStateEntry>;
   items: Record<string, ItemStateEntry>;
   uploading: boolean;
+  initializing: boolean;
   searchResult: GalleryItem[];
   searchCollections: Record<string, GalleryCollection>;
   searchKeyword: string;
@@ -56,6 +57,7 @@ export const useGalleryStore = defineStore('gallery', {
     collections: {},
     items: {},
     uploading: false,
+    initializing: false,
     searchResult: [],
     searchCollections: {},
     searchKeyword: '',
@@ -84,6 +86,7 @@ export const useGalleryStore = defineStore('gallery', {
     },
     isCollectionLoading: (state) => (collectionId: string) => state.items[collectionId]?.loading ?? false,
     isPanelVisible: (state) => state.panelVisible,
+    isInitializing: (state) => state.initializing,
     emojiItems(state): GalleryItem[] {
       if (!state.emojiCollectionId) return [];
       return state.items[state.emojiCollectionId]?.items ?? [];
@@ -114,19 +117,25 @@ export const useGalleryStore = defineStore('gallery', {
     async openPanel(ownerId: string) {
       this.activeOwner = { type: 'user', id: ownerId };
       this.panelVisible = true;
-      const collections = await this.loadCollections(ownerId);
-      if (!collections.length) {
-        this.activeCollectionId = null;
-        return;
-      }
-      if (!this.activeCollectionId || !collections.some((col) => col.id === this.activeCollectionId)) {
-        this.activeCollectionId = collections[0].id;
-      }
-      if (this.activeCollectionId) {
-        await this.loadItems(this.activeCollectionId);
-      }
-      if (this.emojiCollectionId) {
-        await this.loadItems(this.emojiCollectionId);
+      this.initializing = true;
+      try {
+        // Force reload collections to ensure fresh data
+        const collections = await this.loadCollections(ownerId, true);
+        if (!collections.length) {
+          this.activeCollectionId = null;
+          return;
+        }
+        if (!this.activeCollectionId || !collections.some((col) => col.id === this.activeCollectionId)) {
+          this.activeCollectionId = collections[0].id;
+        }
+        if (this.activeCollectionId) {
+          await this.loadItems(this.activeCollectionId);
+        }
+        if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
+          await this.loadItems(this.emojiCollectionId);
+        }
+      } finally {
+        this.initializing = false;
       }
     },
 
@@ -217,13 +226,16 @@ export const useGalleryStore = defineStore('gallery', {
       entry.loading = true;
       this.items[collectionId] = entry;
 
-      const resp = await apiFetchItems(collectionId, params);
-      entry.items = resp.data.items;
-      entry.page = resp.data.page;
-      entry.pageSize = resp.data.pageSize;
-      entry.total = resp.data.total;
-      entry.loading = false;
-      return resp.data.items;
+      try {
+        const resp = await apiFetchItems(collectionId, params);
+        entry.items = resp.data.items;
+        entry.page = resp.data.page;
+        entry.pageSize = resp.data.pageSize;
+        entry.total = resp.data.total;
+        return resp.data.items;
+      } finally {
+        entry.loading = false;
+      }
     },
 
     upsertItems(collectionId: string, items: GalleryItem[]) {

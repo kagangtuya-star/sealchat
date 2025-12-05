@@ -61,6 +61,32 @@ func TestRenderDiceContentDefaultDiceDetailFallback(t *testing.T) {
 	}
 }
 
+func TestRenderDiceContentBareCommandUsesDefault(t *testing.T) {
+	result, err := RenderDiceContent(".r", "d8", nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if len(result.Rolls) != 1 {
+		t.Fatalf("expected 1 roll, got %d", len(result.Rolls))
+	}
+	if result.Rolls[0].Formula != "d8" {
+		t.Fatalf("expected default dice formula, got %s", result.Rolls[0].Formula)
+	}
+}
+
+func TestRenderDiceContentBraceCommandUsesDefault(t *testing.T) {
+	result, err := RenderDiceContent("{r}", "d10", nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if len(result.Rolls) != 1 {
+		t.Fatalf("expected 1 roll, got %d", len(result.Rolls))
+	}
+	if result.Rolls[0].Formula != "d10" {
+		t.Fatalf("expected default dice formula for brace, got %s", result.Rolls[0].Formula)
+	}
+}
+
 func TestRenderDiceContentReuse(t *testing.T) {
 	existing := []*model.MessageDiceRollModel{
 		{

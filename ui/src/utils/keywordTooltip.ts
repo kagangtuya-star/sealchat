@@ -5,17 +5,37 @@ interface TooltipContent {
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
 
+let sharedTooltip: HTMLDivElement | null = null
+let sharedTooltipRefCount = 0
+
+function acquireTooltip() {
+  if (!sharedTooltip) {
+    sharedTooltip = document.createElement('div')
+    sharedTooltip.className = 'keyword-tooltip'
+    sharedTooltip.style.display = 'none'
+    document.body.appendChild(sharedTooltip)
+  }
+  sharedTooltipRefCount += 1
+  return sharedTooltip
+}
+
+function releaseTooltip() {
+  sharedTooltipRefCount = Math.max(0, sharedTooltipRefCount - 1)
+  if (sharedTooltipRefCount === 0 && sharedTooltip) {
+    sharedTooltip.remove()
+    sharedTooltip = null
+  }
+}
+
 export function createKeywordTooltip(resolver: ContentResolver) {
   if (typeof document === 'undefined') {
     return {
       show() {},
       hide() {},
+      destroy() {},
     }
   }
-  const tooltip = document.createElement('div')
-  tooltip.className = 'keyword-tooltip'
-  tooltip.style.display = 'none'
-  document.body.appendChild(tooltip)
+  const tooltip = acquireTooltip()
 
   const hide = () => {
     tooltip.style.display = 'none'
@@ -56,5 +76,10 @@ export function createKeywordTooltip(resolver: ContentResolver) {
     tooltip.style.left = `${left}px`
   }
 
-  return { show, hide }
+  const destroy = () => {
+    hide()
+    releaseTooltip()
+  }
+
+  return { show, hide, destroy }
 }

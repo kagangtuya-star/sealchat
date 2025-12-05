@@ -4,9 +4,9 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, ChevronDown, ChevronForward } from '@vicons/ionicons5';
+import { Menu, SettingsSharp } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -231,14 +231,51 @@ const suffix = (item: SChannel) => {
 }
 
 
-const aaa = ref(false);
+const showAllSubChannels = ref(true);
 
-const toggleParentCollapse = (channelId: string) => {
-  chat.toggleChannelCollapse(channelId);
+const toggleSubChannelDisplay = () => {
+  showAllSubChannels.value = !showAllSubChannels.value;
 };
 
-const handleCollapseAllChannels = () => {
-  chat.collapseAllChannelGroups(true);
+const resolveMainChannelId = (channel?: SChannel | null): string => {
+  if (!channel) {
+    return '';
+  }
+  if (!channel.parentId) {
+    return channel.id;
+  }
+  let parentId: string | undefined = channel.parentId;
+  const visited = new Set<string>();
+  while (parentId) {
+    if (visited.has(parentId)) {
+      break;
+    }
+    visited.add(parentId);
+    const parentChannel = chat.findChannelById(parentId);
+    if (!parentChannel) {
+      return parentId;
+    }
+    if (!parentChannel.parentId) {
+      return parentChannel.id;
+    }
+    parentId = parentChannel.parentId;
+  }
+  return parentId || '';
+};
+
+const currentMainChannelId = computed(() => {
+  const current = chat.curChannel as SChannel | null;
+  return resolveMainChannelId(current) || '';
+});
+
+const shouldRenderChildren = (channel: SChannel) => {
+  if (!(channel.children?.length)) {
+    return false;
+  }
+  if (showAllSubChannels.value) {
+    return true;
+  }
+  return currentMainChannelId.value === channel.id;
 };
 
 const handleWorldSelect = async (value: string) => {
@@ -331,20 +368,6 @@ const handleOpenWorldGlossary = () => {
                 @click="doChannelSwitch(i)">
 
                 <div class="flex space-x-1 items-center">
-                  <n-button
-                    v-if="(i.children?.length ?? 0) > 0"
-                    quaternary
-                    circle
-                    size="tiny"
-                    class="channel-collapse-trigger"
-                    :aria-expanded="!chat.channelCollapseState[i.id]"
-                    :aria-label="chat.channelCollapseState[i.id] ? '展开子频道' : '折叠子频道'"
-                    @click.stop="toggleParentCollapse(i.id)"
-                  >
-                    <template #icon>
-                      <n-icon :component="chat.channelCollapseState[i.id] ? ChevronForward : ChevronDown" />
-                    </template>
-                  </n-button>
                   <template v-if="(i.type === 3 || (i as any).isPrivate)">
                     <!-- 私聊 -->
                     <n-icon :component="IconFluentMention24Filled"></n-icon>
@@ -398,25 +421,11 @@ const handleOpenWorldGlossary = () => {
               </div>
               -->
 
-              <div v-if="(i.children?.length ?? 0) > 0 && !chat.channelCollapseState[i.id]">
+              <div v-if="(i.children?.length ?? 0) > 0 && shouldRenderChildren(i as SChannel)">
                 <template v-for="child in i.children">
                   <div class="sider-item" :class="child.id === chat.curChannel?.id ? ['active'] : []"
                     @click="doChannelSwitch(child)">
                     <div class="flex space-x-1 items-center pl-4">
-                      <n-button
-                        v-if="(child.children?.length ?? 0) > 0"
-                        quaternary
-                        circle
-                        size="tiny"
-                        class="channel-collapse-trigger"
-                        :aria-expanded="!chat.channelCollapseState[child.id]"
-                        :aria-label="chat.channelCollapseState[child.id] ? '展开子频道' : '折叠子频道'"
-                        @click.stop="toggleParentCollapse(child.id)"
-                      >
-                        <template #icon>
-                          <n-icon :component="chat.channelCollapseState[child.id] ? ChevronForward : ChevronDown" />
-                        </template>
-                      </n-button>
                       <template v-if="(child.type === 3 || (child as any).isPrivate)">
                         <n-icon :component="IconFluentMention24Filled"></n-icon>
                         <span>{{ `${child.name}` }}</span>
@@ -484,9 +493,20 @@ const handleOpenWorldGlossary = () => {
           </div>
 
           <div class="sidebar-footer-actions">
-            <n-button size="tiny" quaternary block @click="handleCollapseAllChannels">
-              折叠全部
-            </n-button>
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  block
+                  :type="showAllSubChannels ? 'primary' : 'default'"
+                  ghost
+                  @click="toggleSubChannelDisplay"
+                >
+                  {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
+                </n-button>
+              </template>
+              <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
+            </n-tooltip>
             <n-button size="tiny" quaternary block @click="handleChannelSortEntry">
               频道排序
             </n-button>
@@ -578,12 +598,6 @@ const handleOpenWorldGlossary = () => {
 
 .sider-item:hover > .right-num {
   display: none;
-}
-
-.channel-collapse-trigger {
-  width: 22px;
-  height: 22px;
-  line-height: 1;
 }
 
 .sidebar-footer-actions {

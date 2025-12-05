@@ -796,40 +796,6 @@ defineExpose({
   background-color: #e5e7eb;
   margin: 0 0.25rem;
 }
-
-:global(:root[data-display-palette='night']) {
-  .tiptap-editor {
-    background-color: #3f3f46;
-    border-color: #52525b;
-  }
-
-  .tiptap-editor.is-focused {
-    border-color: #60a5fa;
-    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
-  }
-
-  .tiptap-editor.whisper-mode {
-    background-color: rgba(76, 29, 149, 0.25);
-    border-color: rgba(167, 139, 250, 0.85);
-  }
-
-  .tiptap-toolbar {
-    background-color: #27272a;
-    border-bottom-color: #52525b;
-  }
-
-  .tiptap-toolbar__divider,
-  .tiptap-bubble-menu__divider {
-    background-color: #3f3f46;
-  }
-
-  .tiptap-bubble-menu {
-    background: #27272a;
-    border-color: #3f3f46;
-    color: #f4f4f5;
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
-  }
-}
 </style>
 
 <style lang="scss">
@@ -839,6 +805,7 @@ defineExpose({
   min-height: 3rem;
   max-height: 20rem;
   overflow-y: auto;
+  color: #1f2937; /* 日间模式默认文字颜色 */
 
   /* 基础文本样式 */
   p {
@@ -1006,8 +973,48 @@ defineExpose({
   }
 }
 
-:root[data-display-palette='night'] .tiptap-content {
+/* ===== 夜间模式适配 ===== */
+
+/* 编辑器容器夜间模式 */
+:root[data-display-palette='night'] .tiptap-editor {
   background-color: #3f3f46;
+  border-color: #52525b;
+}
+
+:root[data-display-palette='night'] .tiptap-editor.is-focused {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+}
+
+:root[data-display-palette='night'] .tiptap-editor.whisper-mode {
+  background-color: rgba(76, 29, 149, 0.25);
+  border-color: rgba(167, 139, 250, 0.85);
+}
+
+/* 工具栏夜间模式 */
+:root[data-display-palette='night'] .tiptap-toolbar {
+  background-color: #27272a;
+  border-bottom-color: #52525b;
+}
+
+:root[data-display-palette='night'] .tiptap-toolbar__divider {
+  background-color: #3f3f46;
+}
+
+/* 浮动菜单夜间模式 */
+:root[data-display-palette='night'] .tiptap-bubble-menu {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #f4f4f5;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-display-palette='night'] .tiptap-bubble-menu__divider {
+  background-color: #3f3f46;
+}
+
+/* 编辑内容区夜间模式 */
+:root[data-display-palette='night'] .tiptap-content {
   color: #f4f4f5;
 }
 
@@ -1040,5 +1047,10 @@ defineExpose({
   &:hover {
     color: #bfdbfe;
   }
+}
+
+:root[data-display-palette='night'] .tiptap-content mark {
+  background-color: #854d0e;
+  color: #fef3c7;
 }
 </style>

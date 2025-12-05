@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	diceCommandPattern    = regexp.MustCompile(`(?i)(?:[\.。．｡]r[^\s　,，。！？!?;；:：]+)`)
+	diceCommandPattern    = regexp.MustCompile(`(?i)(?:[\.。．｡]r[^\s　,，。！？!?;；:：]*)`)
 	diceBracePattern      = regexp.MustCompile(`\{([^{}]+)\}`)
 	incompleteDicePattern = regexp.MustCompile(`(?i)(\b\d*)d\b`)
 )
@@ -309,6 +309,9 @@ func (r *diceRenderer) normalizeFormula(match diceTextMatch) (string, error) {
 		candidate = strings.TrimSpace(candidate)
 		if len(candidate) >= 1 && (candidate[0] == 'r') {
 			candidate = strings.TrimSpace(candidate[1:])
+			// 去掉 r 后，如果开头是非字母数字字符（如 /、空格等分隔符），继续清理
+			// 这样 .r/ 或 .r  都会变成空字符串，从而使用默认骰
+			candidate = strings.TrimLeft(candidate, "/ \t\n\r　、，。")
 		}
 	}
 	normalized := strings.TrimSpace(candidate)
@@ -331,6 +334,9 @@ func (r *diceRenderer) normalizeFormula(match diceTextMatch) (string, error) {
 		}
 		return token
 	})
+	if normalized == "r" || normalized == "rd" {
+		normalized = r.defaultDiceExpr
+	}
 	return normalized, nil
 }
 
