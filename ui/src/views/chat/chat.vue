@@ -7105,17 +7105,19 @@ onBeforeUnmount(() => {
                     >
                       <div class="emoji-panel">
                         <div class="emoji-panel__header">
-                          <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
-                          <n-tooltip trigger="hover">
-                            <template #trigger>
-                              <n-button text size="small" @click="handleEmojiManageClick">
-                                <template #icon>
-                                  <n-icon :component="Settings" />
-                                </template>
-                              </n-button>
-                            </template>
-                            表情管理
-                          </n-tooltip>
+                          <div class="emoji-panel__header-left">
+                            <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button text size="small" @click="handleEmojiManageClick">
+                                  <template #icon>
+                                    <n-icon :component="Settings" />
+                                  </template>
+                                </n-button>
+                              </template>
+                              表情管理
+                            </n-tooltip>
+                          </div>
                           <n-tooltip trigger="hover">
                             <template #trigger>
                               <n-button text size="small" @click="emojiPopoverShow = false">
@@ -9362,6 +9364,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.emoji-panel__header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .emoji-panel__title {
