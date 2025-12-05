@@ -9285,6 +9285,21 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   padding-right: 0.2rem;
   color: var(--sc-text-primary, #0f172a);
+
+  /* 极简滚动条 */
+  &::-webkit-scrollbar {
+    width: 3px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: rgba(148, 163, 184, 0.4);
+    border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(148, 163, 184, 0.7);
+  }
 }
 
 .history-entry {
@@ -9293,17 +9308,28 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   width: 100%;
   text-align: left;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   border-radius: 0.75rem;
   padding: 0.65rem 0.75rem;
-  background: rgba(248, 250, 252, 0.9);
+  background: var(--sc-bg-subtle, rgba(248, 250, 252, 0.9));
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+:root[data-display-palette='night'] .history-entry {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(71, 85, 105, 0.4);
+}
+
 .history-entry:hover {
-  border-color: rgba(59, 130, 246, 0.35);
-  background: rgba(239, 246, 255, 0.92);
+  border-color: var(--sc-primary-color-hover, rgba(59, 130, 246, 0.35));
+  background: var(--sc-bg-base, rgba(239, 246, 255, 0.92));
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.18);
+}
+
+:root[data-display-palette='night'] .history-entry:hover {
+  background: rgba(51, 65, 85, 0.6);
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .history-entry__meta {
@@ -9311,7 +9337,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .history-entry__tag {
@@ -9334,7 +9360,7 @@ onBeforeUnmount(() => {
 
 .history-entry__preview {
   font-size: 0.85rem;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
   line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 3;
