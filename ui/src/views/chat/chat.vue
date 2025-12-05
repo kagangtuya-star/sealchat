@@ -48,7 +48,7 @@ import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcast
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings } from '@vicons/ionicons5';
+import { Settings, Close as CloseIcon } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -289,6 +289,17 @@ watch(diceSettingsVisible, (visible) => {
   }
 });
 
+const handleGlobalOverlayToggle = (payload?: { source?: string; open?: boolean }) => {
+  if (!payload?.open) {
+    return;
+  }
+  diceTrayVisible.value = false;
+  diceSettingsVisible.value = false;
+  if (payload.source !== 'emoji-panel') {
+    emojiPopoverShow.value = false;
+  }
+};
+
 const ensureBotOptionsLoaded = async (force = false) => {
 	if (botOptionsLoading.value) {
 		return;
@@ -316,8 +327,10 @@ const handleBotListUpdated = async () => {
   }
 };
 chatEvent.on('bot-list-updated', handleBotListUpdated as any);
+chatEvent.on('global-overlay-toggle', handleGlobalOverlayToggle as any);
 onBeforeUnmount(() => {
   chatEvent.off('bot-list-updated', handleBotListUpdated as any);
+  chatEvent.off('global-overlay-toggle', handleGlobalOverlayToggle as any);
 });
 
 const refreshChannelBotSelection = async () => {
@@ -929,7 +942,7 @@ watch(
   }
 );
 
-watch(emojiPopoverShow, (show) => {
+watch(emojiPopoverShow, (show, prevShow) => {
   if (!show) {
     isManagingEmoji.value = false;
     emojiSearchQuery.value = '';
@@ -938,6 +951,11 @@ watch(emojiPopoverShow, (show) => {
       syncEmojiPopoverPosition();
     });
     gallery.loadEmojiCollection();
+  }
+  if (show) {
+    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
+  } else if (prevShow) {
+    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: false } as any);
   }
 });
 
@@ -7098,6 +7116,16 @@ onBeforeUnmount(() => {
                             </template>
                             表情管理
                           </n-tooltip>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <n-button text size="small" @click="emojiPopoverShow = false">
+                                <template #icon>
+                                  <n-icon :component="CloseIcon" />
+                                </template>
+                              </n-button>
+                            </template>
+                            关闭
+                          </n-tooltip>
                         </div>
 
                         <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
@@ -7346,6 +7374,7 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
+                      @close="diceTrayVisible = false"
                     >
                       <template v-if="canManageChannelFeatures" #header-actions>
                         <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">

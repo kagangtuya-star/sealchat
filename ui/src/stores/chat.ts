@@ -115,7 +115,8 @@ type myEventName =
   | 'channel-identity-open'
   | 'channel-identity-updated'
   | 'channel-member-settings-open'
-  | 'bot-list-updated';
+  | 'bot-list-updated'
+  | 'global-overlay-toggle';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;

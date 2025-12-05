@@ -9,6 +9,9 @@
           修改
         </n-button>
         <slot name="header-actions"></slot>
+        <n-button quaternary size="tiny" circle class="dice-tray__close" @click="handleTrayClose">
+          <n-icon :component="CloseIcon" size="12" />
+        </n-button>
       </div>
     </div>
     <div class="dice-tray__body">
@@ -251,6 +254,7 @@ import { api } from '@/stores/_config';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
 import type { DiceMacro } from '@/types';
+import { Close as CloseIcon } from '@vicons/ionicons5';
 
 const props = withDefaults(defineProps<{
   defaultDice?: string
@@ -264,10 +268,15 @@ const emit = defineEmits<{
   (event: 'insert', expr: string): void
   (event: 'roll', expr: string): void
   (event: 'update-default', expr: string): void
+  (event: 'close'): void
 }>();
 
 const chat = useChatStore();
 const message = useMessage();
+
+const handleTrayClose = () => {
+  emit('close');
+};
 
 const quickFaces = [2, 4, 6, 8, 10, 12, 20, 100];
 const quickSelections = ref<Record<number, number>>({});
@@ -863,6 +872,15 @@ const handleSaveDefault = () => {
   gap: 0.35rem;
 }
 
+.dice-tray__close {
+  color: var(--sc-fg-muted, #6b7280);
+}
+
+.dice-tray__close:hover {
+  color: var(--sc-fg-primary, #111);
+  background: rgba(15, 23, 42, 0.08);
+}
+
 .dice-tray__body {
   display: flex;
   gap: 4px;
@@ -1321,6 +1339,15 @@ const handleSaveDefault = () => {
 
 :global([data-display-palette='night']) .dice-tray__column--form {
   background: rgba(255, 255, 255, 0.06);
+}
+
+:global([data-display-palette='night']) .dice-tray__close {
+  color: rgba(226, 232, 240, 0.8);
+}
+
+:global([data-display-palette='night']) .dice-tray__close:hover {
+  color: var(--sc-fg-primary, #f8fafc);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 :global([data-display-palette='night']) .dice-tray__quick-btn {

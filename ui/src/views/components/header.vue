@@ -328,6 +328,18 @@ watch(
   }
 );
 
+const emitOverlayState = (source: string, visible: boolean, prevVisible?: boolean) => {
+  if (visible) {
+    chatEvent.emit('global-overlay-toggle', { source, open: true } as any);
+  } else if (prevVisible) {
+    chatEvent.emit('global-overlay-toggle', { source, open: false } as any);
+  }
+};
+
+watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', visible, prevVisible));
+watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
+watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
+
 const toggleActionRibbon = () => {
   chatEvent.emit('action-ribbon-toggle');
 };
@@ -474,11 +486,14 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   </div>
 
   <div v-if="userProfileShow" style="background-color: var(--n-color); margin-left: -1.5rem;"
-    class="absolute flex justify-center items-center w-full h-full pointer-events-none z-10">
+    class="absolute flex justify-center items-center w-full h-full sc-overlay-layer">
     <user-profile @close="userProfileShow = false" />
   </div>
-  <div v-if="adminShow" style="background-color: var(--n-color); margin-left: -1.5rem;"
-    class="absolute flex justify-center items-center w-full h-full pointer-events-none z-10">
+  <div
+    v-if="adminShow"
+    style="background-color: var(--n-color); margin-left: -1.5rem;"
+    class="absolute flex justify-center items-center w-full h-full sc-overlay-layer"
+  >
     <AdminSettings @close="adminShow = false" />
   </div>
   <notif v-show="notifShow" />
@@ -520,6 +535,11 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-icon-button:focus-visible {
   color: #0ea5e9;
   transform: translateY(-0.5px);
+}
+
+.sc-overlay-layer {
+  pointer-events: auto;
+  z-index: 4096;
 }
 
 .sc-connection-icon {
