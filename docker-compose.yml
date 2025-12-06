@@ -6,6 +6,7 @@ services:
     image: ghcr.io/kagangtuya-star/sealchat:latest
     container_name: sealchat
     restart: unless-stopped
+    user: "0:0"  # 以 root 用户运行，解决目录权限问题
     ports:
       - "3212:3212"
     volumes:
