@@ -1,7 +1,9 @@
 # SealChat
 
 SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务端使用 Go 1.22 开发，前端基于 Vue 3 + Vite。通过“世界 → 频道 → 消息”的结构以及细粒度权限控制，它既能满足跑团/同人/社区的沉浸式聊天场景，也能覆盖小型团队的内部沟通需求。
-![PixPin_2025-12-02_01-38-21](https://github.com/user-attachments/assets/a7ad086a-12c7-4e87-b8c6-20e93247ac42)
+![PixPin_2025-12-07_00-01-43](https://github.com/user-attachments/assets/2530ed53-9e95-43eb-b3ef-ed6ed659f1e0)
+![PixPin_2025-12-07_00-02-57](https://github.com/user-attachments/assets/47534f2c-6c39-4ce1-8c5d-f0fbeff4591f)
+
 
 ## 功能亮点
 - **多层组织模型**：`service/world.go` 定义公开/私有世界、默认大厅、收藏夹；频道支持子层级、身份卡、嵌入窗 (iForm)。
