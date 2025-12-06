@@ -3214,6 +3214,7 @@ const rowClass = (item: Message) => ({
   'message-row': true,
   'message-row--self': isSelfMessage(item),
   'draggable-item': canDragMessage(item),
+  'message-row--drag-source': dragState.activeId === item.id,
   'message-row--drop-before': dragState.overId === item.id && dragState.position === 'before',
   'message-row--drop-after': dragState.overId === item.id && dragState.position === 'after',
   'message-row--search-hit': searchHighlightIds.value.has(item.id || ''),
@@ -3241,20 +3242,36 @@ const inheritChatContextClasses = (ghostEl: HTMLElement) => {
   });
 };
 
-const createGhostElement = (rowEl: HTMLElement) => {
-  const rect = rowEl.getBoundingClientRect();
-  const ghost = rowEl.cloneNode(true) as HTMLElement;
-  ghost.classList.add('message-row__ghost');
-  inheritChatContextClasses(ghost);
-  ghost.style.position = 'fixed';
-  ghost.style.left = `${rect.left}px`;
-  ghost.style.top = `${rect.top}px`;
-  ghost.style.width = `${rect.width}px`;
-  ghost.style.pointerEvents = 'none';
-  ghost.style.opacity = '0.85';
-  ghost.style.zIndex = '999';
-  document.body.appendChild(ghost);
-  dragState.ghostEl = ghost;
+const createGhostElement = (_rowEl: HTMLElement) => {
+  // Ghost element disabled - using live reorder preview instead
+};
+
+// Live reorder: move the dragged item within rows in real-time
+const applyLiveReorder = () => {
+  const activeId = dragState.activeId;
+  const overId = dragState.overId;
+  const position = dragState.position;
+  if (!activeId || !overId || activeId === overId) {
+    return;
+  }
+  const currentRows = rows.value;
+  const fromIndex = currentRows.findIndex((item) => item.id === activeId);
+  const toReference = currentRows.findIndex((item) => item.id === overId);
+  if (fromIndex < 0 || toReference < 0) {
+    return;
+  }
+  let targetIndex = position === 'after' 
+    ? (fromIndex < toReference ? toReference : toReference + 1)
+    : (fromIndex < toReference ? toReference - 1 : toReference);
+  if (targetIndex < 0) targetIndex = 0;
+  if (targetIndex >= currentRows.length) targetIndex = currentRows.length - 1;
+  if (fromIndex === targetIndex) {
+    return;
+  }
+  const working = currentRows.slice();
+  const [moving] = working.splice(fromIndex, 1);
+  working.splice(targetIndex, 0, moving);
+  rows.value = working;
 };
 
 const updateOverTarget = (clientY: number) => {
@@ -3405,10 +3422,8 @@ const onDragPointerMove = (event: PointerEvent) => {
     return;
   }
   event.preventDefault();
-  if (dragState.ghostEl) {
-    dragState.ghostEl.style.transform = `translateY(${event.clientY - dragState.startY}px)`;
-  }
   updateOverTarget(event.clientY);
+  applyLiveReorder();
   updateAutoScroll(event.clientY);
 };
 
@@ -3465,7 +3480,6 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   dragState.position = 'after';
   dragState.originEl = rowEl;
   document.body.style.userSelect = 'none';
-  createGhostElement(rowEl);
   updateOverTarget(event.clientY);
   updateAutoScroll(event.clientY);
 
@@ -8468,32 +8482,58 @@ onBeforeUnmount(() => {
     var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) * 0.43
   );
 }
-.message-row--drag-source {
-  opacity: 0.4;
-}
 
 .message-row__ghost {
-  box-shadow: 0 12px 24px rgba(30, 64, 175, 0.25);
-  border-radius: 0.75rem;
+  /* Ghost element disabled - using live reorder instead */
+  display: none;
 }
 
-.message-row--drop-before::after,
-.message-row--drop-after::after {
-  content: "";
+/* Smooth transition for all message rows during drag reorder */
+.message-row {
+  transition: transform 0.2s ease;
+}
+
+/* Subtle hover highlight for message positioning - compact mode only */
+.message-row .message-row__surface {
+  position: relative;
+}
+
+.chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+  content: '';
   position: absolute;
-  left: 0.5rem;
-  right: 0.5rem;
-  border-top: 2px solid rgba(59, 130, 246, 0.8);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(128, 128, 128, 0.07);
   pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.15s ease;
 }
 
-.message-row--drop-before::after {
-  top: -0.3rem;
+:global(.dark) .chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+  background: rgba(128, 128, 128, 0.1);
 }
 
-.message-row--drop-after::after {
-  bottom: -0.3rem;
+/* Dragged message highlight during live reorder */
+.message-row--drag-source {
+  position: relative;
+  z-index: 100;
+  transform: scale(1.02);
+}
+
+.message-row--drag-source .message-row__surface {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 0.9rem;
+}
+
+/* Transparent overlay for dragged message */
+.message-row--drag-source .message-row__surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--sc-bg-base, rgba(255, 255, 255, 0.15));
+  border-radius: inherit;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .message-row--search-hit .message-row__surface::after {
