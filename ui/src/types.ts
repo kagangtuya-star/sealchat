@@ -125,6 +125,7 @@ export interface UserInfo {
   brief: string;
   roleIds?: string[];
   disabled: boolean;
+  is_bot?: boolean;
 }
 
 export interface TalkMessage {
@@ -157,8 +158,8 @@ export interface SChannel extends Channel {
   sortOrder?: number;
   typingIndicatorSetting?: boolean;
   desc?: string;
-	note?: string;
-	defaultDiceExpr?: string;
+  note?: string;
+  defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
 }
@@ -196,7 +197,7 @@ export interface APIChannelListResp {
   data: {
     data: Channel[],
     world_id?: string,
-    next?: string,  
+    next?: string,
   }
 }
 

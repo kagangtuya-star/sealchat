@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"sealchat/service"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -15,18 +16,44 @@ func AdminUserList(c *fiber.Ctx) error {
 		return nil
 	}
 
+	// 获取分页参数
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize", "20"))
+	keyword := c.Query("keyword", "")
+	userType := c.Query("type", "") // "bot", "user", "" (all)
+
+	// 参数校验
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
 	db := model.GetDB()
 	var total int64
-	db.Model(&model.UserModel{}).Count(&total)
+	query := db.Model(&model.UserModel{})
+
+	// 搜索过滤
+	if keyword != "" {
+		query = query.Where("username LIKE ? OR nickname LIKE ?",
+			"%"+keyword+"%", "%"+keyword+"%")
+	}
+
+	// 用户类型过滤
+	if userType == "bot" {
+		query = query.Where("is_bot = ?", true)
+	} else if userType == "user" {
+		query = query.Where("is_bot = ?", false)
+	}
+
+	query.Count(&total)
 
 	// 获取列表
 	var items []*model.UserModel
-	// offset := (page - 1) * pageSize
-	db.Order("created_at asc").
-		// Offset(offset).Limit(pageSize).
-		// Preload("User", func(db *gorm.DB) *gorm.DB {
-		//	return db.Select("id, username")
-		// }).
+	offset := (page - 1) * pageSize
+	query.Order("created_at desc").
+		Offset(offset).Limit(pageSize).
 		Find(&items)
 
 	for _, i := range items {
@@ -35,10 +62,10 @@ func AdminUserList(c *fiber.Ctx) error {
 
 	// 返回JSON响应
 	return c.JSON(fiber.Map{
-		// "page":     page,
-		// "pageSize": pageSize,
-		"total": total,
-		"items": items,
+		"page":     page,
+		"pageSize": pageSize,
+		"total":    total,
+		"items":    items,
 	})
 }
 

@@ -123,10 +123,16 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async adminUserList() {
+    async adminUserList(params?: {
+      page?: number;
+      pageSize?: number;
+      keyword?: string;
+      type?: string
+    }) {
       const user = useUserStore();
       const resp = await api.get('api/v1/admin/user-list', {
-        headers: { 'Authorization': user.token }
+        headers: { 'Authorization': user.token },
+        params: params
       })
       return resp
     },
