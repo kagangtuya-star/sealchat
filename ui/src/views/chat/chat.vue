@@ -8493,6 +8493,26 @@ onBeforeUnmount(() => {
   transition: transform 0.2s ease;
 }
 
+/* Subtle hover highlight for message positioning - compact mode only */
+.message-row .message-row__surface {
+  position: relative;
+}
+
+.chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(128, 128, 128, 0.07);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.15s ease;
+}
+
+:global(.dark) .chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+  background: rgba(128, 128, 128, 0.1);
+}
+
 /* Dragged message highlight during live reorder */
 .message-row--drag-source {
   position: relative;
