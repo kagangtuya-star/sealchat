@@ -8159,7 +8159,7 @@ onBeforeUnmount(() => {
 
 /* 夜间紧凑模式编辑场外消息需保持纯黑底，避免灰色噪点 */
 .chat--layout-compact.chat--palette-night .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: #000000;
+  background-color: #2D2D31;
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
   background-size: 10px 10px;
 }
@@ -8226,7 +8226,7 @@ onBeforeUnmount(() => {
 
 .chat--palette-night {
   --chat-ic-bg: #3F3F46;
-  --chat-ooc-bg: #000000;
+  --chat-ooc-bg: #2D2D31;
   --chat-preview-dot-ic: rgba(255, 255, 255, 0.25);
   --chat-preview-dot-ooc: rgba(255, 255, 255, 0.35);
 }
@@ -8690,7 +8690,7 @@ onBeforeUnmount(() => {
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
-  background-color: #000000;
+  background-color: #2D2D31;
   border-color: rgba(255, 255, 255, 0.24);
   color: #f5f3ff;
 }

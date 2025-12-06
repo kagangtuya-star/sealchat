@@ -1144,7 +1144,7 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 :root[data-display-palette='night'] .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: #000000;
+  --editing-preview-bg: #2D2D31;
   --editing-preview-dot: var(--chat-preview-dot-ooc-night, rgba(148, 163, 184, 0.2));
   border-color: rgba(255, 255, 255, 0.24);
   color: #f5f3ff;
