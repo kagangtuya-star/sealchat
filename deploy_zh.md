@@ -72,10 +72,11 @@ docker compose logs -f sealchat
 
 ```bash
 docker run -d --name sealchat --restart unless-stopped \
+  -u 0:0 \
   -p 3212:3212 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/sealchat-data:/app/sealchat-data \
-  -v $(pwd)/static:/app/static \
+  -v $(pwd)/sealchat/data:/app/data \
+  -v $(pwd)/sealchat/sealchat-data:/app/sealchat-data \
+  -v $(pwd)/sealchat/static:/app/static \
   -e TZ=Asia/Shanghai \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```
@@ -84,6 +85,7 @@ docker run -d --name sealchat --restart unless-stopped \
 - `-d` 后台运行
 - `--name sealchat` 容器名称
 - `--restart unless-stopped` 自动重启
+- `-u 0:0` 以 root 用户运行（解决目录权限问题）
 - `-p 3212:3212` 端口映射
 - `-v` 数据持久化挂载
 - `-e TZ=Asia/Shanghai` 时区设置

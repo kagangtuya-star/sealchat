@@ -46,6 +46,7 @@ docker compose pull && docker compose up -d
 
 ```bash
 docker run -d --name sealchat --restart unless-stopped \
+  -u 0:0 \
   -p 3212:3212 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/sealchat-data:/app/sealchat-data \
