@@ -679,3 +679,47 @@ func applyStorageEnvOverrides(cfg *StorageConfig) {
 		cfg.S3.SecretKey = sk
 	}
 }
+
+// EnsureDataDirs 确保所有必要的数据目录存在
+// 在启动时调用，避免目录不存在导致的错误（尤其是 Docker 环境）
+func EnsureDataDirs(cfg *AppConfig) {
+	if cfg == nil {
+		return
+	}
+
+	// 基础数据目录
+	dirs := []string{
+		"./data",
+		"./static",
+	}
+
+	// 根据配置添加目录
+	if cfg.Storage.Local.UploadDir != "" {
+		dirs = append(dirs, cfg.Storage.Local.UploadDir)
+	}
+	if cfg.Storage.Local.AudioDir != "" {
+		dirs = append(dirs, cfg.Storage.Local.AudioDir)
+	}
+	if cfg.Storage.Local.TempDir != "" {
+		dirs = append(dirs, cfg.Storage.Local.TempDir)
+	}
+	if cfg.Audio.StorageDir != "" {
+		dirs = append(dirs, cfg.Audio.StorageDir)
+	}
+	if cfg.Audio.TempDir != "" {
+		dirs = append(dirs, cfg.Audio.TempDir)
+	}
+	if cfg.Export.StorageDir != "" {
+		dirs = append(dirs, cfg.Export.StorageDir)
+	}
+
+	// 创建所有目录
+	for _, dir := range dirs {
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				fmt.Printf("创建目录 %s 失败: %v\n", dir, err)
+			}
+		}
+	}
+}
+

@@ -56,6 +56,7 @@ func main() {
 
 	lo.Must0(os.MkdirAll("./data", 0755))
 	config := utils.ReadConfig()
+	utils.EnsureDataDirs(config)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
