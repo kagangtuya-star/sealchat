@@ -1,0 +1,37 @@
+# SealChat Docker 部署配置
+# 基础版 - 使用 SQLite 数据库
+
+services:
+  sealchat:
+    image: ghcr.io/kagangtuya-star/sealchat:latest
+    container_name: sealchat
+    restart: unless-stopped
+    ports:
+      - "3212:3212"
+    volumes:
+      # 数据持久化 - 程序启动时会自动创建所需目录
+      - ./data:/app/data                      # 数据库、临时文件、导出等
+      - ./sealchat-data:/app/sealchat-data    # 上传的附件和音频文件
+      - ./static:/app/static                  # 静态资源
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3212/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# 首次启动:
+# docker compose up -d
+# 访问 http://localhost:3212/ ，第一个注册用户将成为管理员
+# 注意: 程序会自动创建所需的数据目录，无需手动创建
+
+# 更新镜像:
+# docker compose pull && docker compose up -d
+
+# 查看日志:
+# docker compose logs -f sealchat
+
+# 备份数据 (命名卷):
+# docker run --rm -v sealchat_data:/data -v $(pwd):/backup alpine tar czf /backup/sealchat_backup.tar.gz /data

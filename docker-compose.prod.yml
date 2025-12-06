@@ -1,0 +1,68 @@
+# SealChat Docker 部署配置
+# 生产环境版 - 使用 PostgreSQL 数据库
+#
+# 使用方法:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  sealchat:
+    image: ghcr.io/kagangtuya-star/sealchat:latest
+    container_name: sealchat
+    restart: unless-stopped
+    ports:
+      - "3212:3212"
+    volumes:
+      # 数据持久化
+      - ./data:/app/data                      # 临时文件、导出等 (数据库在 PostgreSQL)
+      - ./sealchat-data:/app/sealchat-data    # 上传的附件和音频文件
+      - ./static:/app/static                  # 静态资源
+      # 配置文件
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3212/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sealchat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sealchat
+      POSTGRES_USER: sealchat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sealchat_secure_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sealchat -d sealchat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    driver: local
+
+# 配置说明:
+# 1. 复制 config.docker.yaml.example 为 config.yaml
+# 2. 修改 config.yaml 中的 dbUrl 为:
+#    dbUrl: postgresql://sealchat:sealchat_secure_password@postgres:5432/sealchat
+# 3. 可选: 创建 .env 文件设置数据库密码:
+#    POSTGRES_PASSWORD=your_secure_password
+# 4. 启动服务:
+#    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 更新镜像:
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 数据库备份:
+# docker exec sealchat-postgres pg_dump -U sealchat sealchat > backup.sql

@@ -1,0 +1,106 @@
+# SealChat Docker 配置示例
+# 复制此文件为 config.yaml 并根据需要修改
+
+# 服务器配置
+domain: localhost:3212                       # 对外访问域名（影响图片等资源链接）
+serveAt: :3212                               # 监听端口
+webUrl: /                                    # 前端路径
+pageTitle: "海豹尬聊 SealChat"
+
+# 数据库配置
+# SQLite (默认)
+dbUrl: ./data/chat.db
+# PostgreSQL (生产环境推荐)
+# dbUrl: postgresql://sealchat:sealchat_secure_password@postgres:5432/sealchat
+# MySQL
+# dbUrl: sealchat:password@tcp(mysql:3306)/sealchat?charset=utf8mb4&parseTime=True&loc=Local
+
+# 功能开关
+registerOpen: true                           # 是否开放注册
+builtInSealBotEnable: true                   # 启用内置小海豹
+chatHistoryPersistentDays: -1                # 聊天记录保留天数 (-1 永久)
+
+# 图片配置
+imageBaseUrl: localhost:3212                 # 图片访问基础URL
+imageCompress: true                          # 是否压缩图片
+imageCompressQuality: 85                     # 压缩质量 (1-100)
+imageSizeLimit: 8192                         # 上传大小限制 (KB)
+galleryQuotaMB: 100                          # 图库配额 (MB)
+
+# 验证码配置
+captcha:
+  signup:
+    mode: local                              # off / local / turnstile
+    turnstile:
+      siteKey: ""
+      secretKey: ""
+  signin:
+    mode: off
+    turnstile:
+      siteKey: ""
+      secretKey: ""
+
+# SQLite 优化配置 (使用 SQLite 时生效)
+sqlite:
+  wal: true
+  busyTimeout: 10000
+  cacheSizeKB: 512000
+  synchronous: NORMAL
+  txLockImmediate: true
+  readConnections: 2
+  optimizeOnInit: true
+
+# 音频配置
+audio:
+  storageDir: ./static/audio
+  tempDir: ./data/audio-temp
+  maxUploadSizeMB: 80
+  allowedMimeTypes:
+    - audio/mpeg
+    - audio/ogg
+    - audio/wav
+    - audio/x-wav
+    - audio/webm
+    - audio/aac
+    - audio/flac
+  enableTranscode: true
+  defaultBitrateKbps: 96
+  alternateBitrates: [64, 128]
+  ffmpegPath: ""
+
+# 导出配置
+export:
+  storageDir: ./data/exports
+  downloadBandwidthKBps: 0
+  downloadBurstKB: 0
+  htmlPageSizeDefault: 100
+  htmlPageSizeMax: 500
+  htmlMaxConcurrency: 2
+
+# 存储配置
+storage:
+  mode: local                                # local / s3 / auto
+  presignTTL: 900
+  maxSizeMB: 64
+  local:
+    uploadDir: ./sealchat-data/upload
+    audioDir: ./sealchat-data/static/audio
+    tempDir: ./data/temp
+    baseUrl: ""
+  s3:
+    enabled: false
+    endpoint: https://cos.ap-region.myqcloud.com
+    region: ap-region
+    bucket: your-bucket-name
+    accessKey: ""
+    secret: ""
+    sessionToken: ""
+    pathStyle: false
+    baseUrl: ""
+    publicBaseUrl: ""
+    useSSL: true
+    presignTTL: 900
+    maxSizeMB: 64
+    logLevel: warn
+
+version: 1
