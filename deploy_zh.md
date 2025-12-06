@@ -35,6 +35,132 @@ SealChat 推荐使用以下操作系统：
 
 虽然SealChat能够兼容很旧的操作系统，但还是建议使用较新的操作系统版本以确保最佳兼容性和性能。
 
+## 0.5 Docker 部署（推荐）
+
+使用 Docker 部署是最简单快捷的方式，无需安装任何依赖。
+
+### 前置条件
+
+- 安装 [Docker](https://docs.docker.com/get-docker/) 和 Docker Compose
+- 确保 3212 端口可用
+
+### 快速开始
+
+```bash
+# 拉取最新镜像
+docker pull ghcr.io/kagangtuya-star/sealchat:latest
+
+# 创建配置文件 (可选)
+cp config.docker.yaml.example config.yaml
+
+# 启动服务
+docker compose up -d
+
+# 查看日志
+docker compose logs -f sealchat
+```
+
+访问 `http://localhost:3212/`，第一个注册的账号会成为管理员。
+
+### 使用 docker run 一键启动
+
+如果不使用 Docker Compose，可以直接使用以下命令启动：
+
+> **提示**：程序会自动创建所需的数据目录，无需手动创建。
+
+**Linux / macOS:**
+
+```bash
+docker run -d --name sealchat --restart unless-stopped \
+  -p 3212:3212 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/sealchat-data:/app/sealchat-data \
+  -v $(pwd)/static:/app/static \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/kagangtuya-star/sealchat:latest
+```
+
+参数说明：
+- `-d` 后台运行
+- `--name sealchat` 容器名称
+- `--restart unless-stopped` 自动重启
+- `-p 3212:3212` 端口映射
+- `-v` 数据持久化挂载
+- `-e TZ=Asia/Shanghai` 时区设置
+
+更新镜像时需要先停止并删除旧容器：
+
+```bash
+docker stop sealchat && docker rm sealchat
+docker pull ghcr.io/kagangtuya-star/sealchat:latest
+# 然后重新执行上面的 docker run 命令
+```
+
+### 更新镜像
+
+```bash
+# 拉取最新镜像并重启
+docker compose pull && docker compose up -d
+```
+
+### 数据持久化
+
+Docker Compose 配置默认挂载以下目录以实现数据持久化：
+
+| 容器路径 | 宿主机路径 | 说明 |
+| --- | --- | --- |
+| `/app/data` | `./data` | 数据库文件、临时文件、导出任务 |
+| `/app/sealchat-data` | `./sealchat-data` | 上传的附件和音频文件 |
+| `/app/static` | `./static` | 静态资源 |
+| `/app/config.yaml` | `./config.yaml` | 配置文件 |
+
+### 使用 PostgreSQL (生产环境推荐)
+
+对于生产环境，推荐使用 PostgreSQL 数据库：
+
+```bash
+# 1. 创建 .env 文件设置数据库密码
+echo "POSTGRES_PASSWORD=your_secure_password" > .env
+
+# 2. 修改 config.yaml 中的数据库连接
+# dbUrl: postgresql://sealchat:your_secure_password@postgres:5432/sealchat
+
+# 3. 使用生产配置启动
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### PostgreSQL 数据库备份
+
+```bash
+# 备份
+docker exec sealchat-postgres pg_dump -U sealchat sealchat > backup_$(date +%Y%m%d).sql
+
+# 恢复
+cat backup.sql | docker exec -i sealchat-postgres psql -U sealchat sealchat
+```
+
+### 常用命令
+
+```bash
+# 启动服务
+docker compose up -d
+
+# 停止服务
+docker compose down
+
+# 重启服务
+docker compose restart
+
+# 查看日志
+docker compose logs -f sealchat
+
+# 查看服务状态
+docker compose ps
+
+# 进入容器
+docker exec -it sealchat sh
+```
+
 ## 1. 下载最新开发版本
 
 1. 访问 SealChat 的 GitHub 发布页面：https://github.com/sealdice/sealchat/releases/tag/dev-release

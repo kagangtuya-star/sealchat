@@ -23,6 +23,41 @@ SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务�
 - **存储**：附件可存储在本地或 S3/兼容对象存储 (`service/storage`)，音频依赖可选 `ffmpeg`/`ffprobe`，导出与音频的缓存位置均由 `config.yaml` 配置。
 
 ## 快速开始
+
+### Docker 部署（推荐）
+
+```bash
+# 1. 拉取最新镜像
+docker pull ghcr.io/kagangtuya-star/sealchat:latest
+
+# 2. 创建配置文件 (可选，首次运行会自动生成)
+cp config.docker.yaml.example config.yaml
+
+# 3. 使用 Docker Compose 启动
+docker compose up -d
+
+# 4. 访问 http://localhost:3212/ ，首个注册账号将成为管理员
+
+# 更新到最新版本
+docker compose pull && docker compose up -d
+```
+
+**或使用 docker run 一键启动：**
+
+```bash
+docker run -d --name sealchat --restart unless-stopped \
+  -p 3212:3212 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/sealchat-data:/app/sealchat-data \
+  -v $(pwd)/static:/app/static \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/kagangtuya-star/sealchat:latest
+```
+
+> 详细的 Docker 部署说明请参考 [`deploy_zh.md`](deploy_zh.md) 中的 Docker 部署章节。
+
+### 二进制部署
+
 1. 从发行页下载或 `go build ./...` 编译，运行 `./sealchat_server`（Windows 下为 `.exe`）。
 2. 首次启动会生成 `config.yaml` 与 `data/` 目录，按照示例修改域名、端口、数据库、附件/音频/导出目录。
 3. 浏览器访问 `http://<domain>:3212/`，注册首个账号（自动成为管理员并创建默认世界）。
