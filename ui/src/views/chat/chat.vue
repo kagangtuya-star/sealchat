@@ -3916,7 +3916,7 @@ const emitTypingPreview = () => {
   lastTypingChannelId = channelId;
 
   // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
-  const truncated = inputMode.value === 'rich' ? raw : (raw.length > 500 ? raw.slice(0, 500) : raw);
+  const truncated = inputMode.value === 'rich' ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
   const content = typingPreviewMode.value === 'content' ? truncated : '';
   sendTypingUpdate(typingPreviewMode.value, content, channelId, resolveCurrentWhisperTargetId());
 };
@@ -3933,7 +3933,7 @@ const emitEditingPreview = () => {
   const raw = textToSend.value;
   // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
   const isRichMode = chat.editing.mode === 'rich' || isTipTapJson(raw);
-  const truncated = isRichMode ? raw : (raw.length > 500 ? raw.slice(0, 500) : raw);
+  const truncated = isRichMode ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
   sendEditingPreview(channelId, messageId, truncated);
 };
 
@@ -5686,7 +5686,7 @@ watch(typingPreviewMode, (mode) => {
     if (raw.trim().length > 0) {
       // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
       const isRich = inputMode.value === 'rich' || isTipTapJson(raw);
-      const truncated = isRich ? raw : (raw.length > 500 ? raw.slice(0, 500) : raw);
+      const truncated = isRich ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
       sendTypingUpdate.cancel();
       const content = mode === 'content' ? truncated : '';
       const whisperId = resolveCurrentWhisperTargetId();
