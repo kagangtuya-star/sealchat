@@ -21,7 +21,8 @@ type ChannelIdentityFolderInput struct {
 }
 
 func ChannelIdentityListByUser(channelID string, userID string) (*ChannelIdentityListResult, error) {
-	items, err := model.ChannelIdentityList(channelID, userID)
+	// 使用 ListVisible 排除隐形身份，用户无法看到自动创建的隐形默认身份
+	items, err := model.ChannelIdentityListVisible(channelID, userID)
 	if err != nil {
 		return nil, err
 	}

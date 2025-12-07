@@ -687,6 +687,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 
+	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
+	if identity == nil && len(channelId) < 30 {
+		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
+	}
+
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {
 		return nil, nil

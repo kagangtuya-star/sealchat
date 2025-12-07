@@ -16,6 +16,7 @@ type ChannelIdentityModel struct {
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
 	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
+	IsHidden           bool     `json:"isHidden" gorm:"default:false"`
 	SortOrder          int      `json:"sortOrder" gorm:"index"`
 	FolderIDs          []string `json:"folderIds,omitempty" gorm:"-"`
 }
@@ -56,9 +57,36 @@ func ChannelIdentityList(channelID string, userID string) ([]*ChannelIdentityMod
 	return items, err
 }
 
+// ChannelIdentityListVisible 返回用户可见的身份列表（排除隐形身份）
+func ChannelIdentityListVisible(channelID string, userID string) ([]*ChannelIdentityModel, error) {
+	var items []*ChannelIdentityModel
+	q := db.Where("channel_id = ? AND (is_hidden = ? OR is_hidden IS NULL)", channelID, false).
+		Order("sort_order asc, created_at asc")
+	if userID != "" {
+		q = q.Where("user_id = ?", userID)
+	}
+	err := q.Find(&items).Error
+	return items, err
+}
+
 func ChannelIdentityFindDefault(channelID string, userID string) (*ChannelIdentityModel, error) {
 	var item ChannelIdentityModel
 	err := db.Where("channel_id = ? AND user_id = ? AND is_default = ?", channelID, userID, true).
+		Limit(1).
+		Find(&item).Error
+	if err != nil {
+		return nil, err
+	}
+	if item.ID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &item, nil
+}
+
+// ChannelIdentityFindHidden 查找用户在频道中的隐形默认身份
+func ChannelIdentityFindHidden(channelID string, userID string) (*ChannelIdentityModel, error) {
+	var item ChannelIdentityModel
+	err := db.Where("channel_id = ? AND user_id = ? AND is_hidden = ?", channelID, userID, true).
 		Limit(1).
 		Find(&item).Error
 	if err != nil {
