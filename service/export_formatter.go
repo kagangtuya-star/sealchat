@@ -3,11 +3,9 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	htmltemplate "html/template"
-	"io"
 	"net"
 	"regexp"
 	"strconv"
@@ -47,6 +45,7 @@ type ExportMessage struct {
 	IsBot          bool      `json:"is_bot"`
 	CreatedAt      time.Time `json:"created_at"`
 	Content        string    `json:"content"`
+	ContentHTML    string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
 	WhisperTargets []string  `json:"whisper_targets"`
 }
 
@@ -110,9 +109,13 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		if msg == nil {
 			continue
 		}
-		content := msg.Content
-		if html, ok := convertTipTapToHTML(content); ok {
-			content = html
+		originalContent := msg.Content
+		var htmlContent string
+		if html, ok := convertTipTapToHTML(originalContent); ok {
+			htmlContent = html
+		} else {
+			// 非富文本内容，直接使用原始内容作为 HTML
+			htmlContent = originalContent
 		}
 		exportMessages = append(exportMessages, ExportMessage{
 			ID:             msg.ID,
@@ -125,7 +128,8 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			IsArchived:     msg.IsArchived,
 			IsBot:          msg.User != nil && msg.User.IsBot,
 			CreatedAt:      msg.CreatedAt,
-			Content:        content,
+			Content:        originalContent,
+			ContentHTML:    htmlContent,
 			WhisperTargets: extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
@@ -220,21 +224,16 @@ func resolveSenderAvatar(msg *model.MessageModel) string {
 
 func convertTipTapToHTML(input string) (string, bool) {
 	trimmed := strings.TrimSpace(input)
-	if trimmed == "" || trimmed[0] != '{' {
+	if trimmed == "" {
 		return "", false
 	}
-	var node tiptapNode
-	if err := json.Unmarshal([]byte(trimmed), &node); err != nil {
+
+	// 使用统一的多 JSON 块提取函数
+	result, found := extractAllTipTapJSON(trimmed, true)
+	if !found {
 		return "", false
 	}
-	if strings.ToLower(strings.TrimSpace(node.Type)) != "doc" {
-		return "", false
-	}
-	var buf strings.Builder
-	for _, child := range node.Content {
-		renderTipTapHTML(&buf, child)
-	}
-	return buf.String(), true
+	return result, true
 }
 
 func renderTipTapHTML(buf *strings.Builder, node *tiptapNode) {
@@ -566,30 +565,233 @@ func stripRichText(input string) string {
 
 func extractTipTapPlainText(input string) (string, bool) {
 	trimmed := strings.TrimSpace(input)
-	if trimmed == "" || !strings.HasPrefix(trimmed, "{") {
+	if trimmed == "" {
 		return "", false
 	}
-	decoder := json.NewDecoder(strings.NewReader(trimmed))
-	var fragments []string
+
+	// 提取所有 TipTap JSON 块及其周围文本
+	result, found := extractAllTipTapJSON(trimmed, false)
+	if !found {
+		return "", false
+	}
+	return normalizePlainText(result), true
+}
+
+// extractAllTipTapJSON 提取并处理所有 TipTap JSON 块
+// asHTML 为 true 时返回 HTML，为 false 时返回纯文本
+func extractAllTipTapJSON(input string, asHTML bool) (string, bool) {
+	if input == "" {
+		return "", false
+	}
+
+	var result strings.Builder
+	remaining := input
+	foundAny := false
+
 	for {
-		var node tiptapNode
-		if err := decoder.Decode(&node); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
+		// 查找下一个 TipTap JSON 块
+		jsonStart := findTipTapJSONStart(remaining)
+		if jsonStart < 0 {
+			// 没有更多 JSON，添加剩余文本
+			suffix := strings.TrimSpace(remaining)
+			if suffix != "" {
+				if result.Len() > 0 && !strings.HasSuffix(result.String(), "\n") {
+					result.WriteString("\n")
+				}
+				if asHTML {
+					result.WriteString(html.EscapeString(suffix))
+				} else {
+					result.WriteString(suffix)
+				}
 			}
-			return "", false
+			break
 		}
+
+		// 检查 JSON 前是否有括号（OOC 包裹）
+		prefix := remaining[:jsonStart]
+		hasChineseOpen := strings.HasSuffix(strings.TrimSpace(prefix), "（")
+		hasEnglishOpen := !hasChineseOpen && strings.HasSuffix(strings.TrimSpace(prefix), "(")
+
+		// 获取括号前的其他文本
+		prefixText := strings.TrimSpace(prefix)
+		if hasChineseOpen {
+			prefixText = strings.TrimSuffix(prefixText, "（")
+			prefixText = strings.TrimSpace(prefixText)
+		} else if hasEnglishOpen {
+			prefixText = strings.TrimSuffix(prefixText, "(")
+			prefixText = strings.TrimSpace(prefixText)
+		}
+
+		// 添加前缀文本（如果有）
+		if prefixText != "" {
+			if result.Len() > 0 && !strings.HasSuffix(result.String(), "\n") {
+				result.WriteString("\n")
+			}
+			if asHTML {
+				result.WriteString(html.EscapeString(prefixText))
+			} else {
+				result.WriteString(prefixText)
+			}
+		}
+
+		// 提取并解析 JSON 块
+		jsonPart := remaining[jsonStart:]
+		jsonEnd := findJSONEnd(jsonPart)
+		if jsonEnd < 0 {
+			// 无法找到 JSON 结束位置，跳过
+			remaining = remaining[jsonStart+1:]
+			continue
+		}
+
+		jsonBlock := jsonPart[:jsonEnd]
+		var node tiptapNode
+		if err := json.Unmarshal([]byte(jsonBlock), &node); err != nil {
+			// 解析失败，跳过这个块
+			remaining = jsonPart[jsonEnd:]
+			continue
+		}
+
 		if strings.ToLower(strings.TrimSpace(node.Type)) != "doc" {
-			return "", false
+			// 不是 doc 类型，跳过
+			remaining = jsonPart[jsonEnd:]
+			continue
 		}
-		writer := newPlainTextWriter()
-		writeTipTapNode(writer, &node)
-		fragments = append(fragments, strings.TrimRight(writer.String(), "\n"))
+
+		// 检查 JSON 后是否有闭括号
+		afterJSON := jsonPart[jsonEnd:]
+		hasChineseClose := strings.HasPrefix(strings.TrimSpace(afterJSON), "）")
+		hasEnglishClose := !hasChineseClose && strings.HasPrefix(strings.TrimSpace(afterJSON), ")")
+
+		// 决定使用哪种括号
+		useChineseParens := hasChineseOpen && hasChineseClose
+		useEnglishParens := hasEnglishOpen && hasEnglishClose
+
+		// 成功解析 - 提取内容
+		foundAny = true
+		var content string
+		if asHTML {
+			var buf strings.Builder
+			for _, child := range node.Content {
+				renderTipTapHTML(&buf, child)
+			}
+			content = strings.TrimSpace(buf.String())
+		} else {
+			writer := newPlainTextWriter()
+			writeTipTapNode(writer, &node)
+			content = strings.TrimSpace(strings.TrimRight(writer.String(), "\n"))
+		}
+
+		if content != "" {
+			if result.Len() > 0 && !strings.HasSuffix(result.String(), "\n") {
+				result.WriteString("\n")
+			}
+			// 保留括号包裹
+			if useChineseParens {
+				result.WriteString("（")
+				result.WriteString(content)
+				result.WriteString("）")
+			} else if useEnglishParens {
+				result.WriteString("(")
+				result.WriteString(content)
+				result.WriteString(")")
+			} else {
+				result.WriteString(content)
+			}
+		}
+
+		// 更新剩余内容，跳过闭括号
+		remaining = afterJSON
+		if useChineseParens {
+			idx := strings.Index(remaining, "）")
+			if idx >= 0 {
+				remaining = remaining[idx+len("）"):]
+			}
+		} else if useEnglishParens {
+			idx := strings.Index(remaining, ")")
+			if idx >= 0 {
+				remaining = remaining[idx+1:]
+			}
+		}
 	}
-	if len(fragments) == 0 {
+
+	if !foundAny {
 		return "", false
 	}
-	return strings.Join(fragments, "\n"), true
+	return result.String(), true
+}
+
+// findTipTapJSONStart 查找 TipTap JSON 的起始位置
+func findTipTapJSONStart(s string) int {
+	// 查找 {"type":"doc" 模式
+	patterns := []string{
+		`{"type":"doc"`,
+		`{ "type":"doc"`,
+		`{"type": "doc"`,
+		`{ "type": "doc"`,
+	}
+	minIndex := -1
+	for _, pattern := range patterns {
+		if idx := strings.Index(s, pattern); idx >= 0 {
+			if minIndex < 0 || idx < minIndex {
+				minIndex = idx
+			}
+		}
+	}
+	return minIndex
+}
+
+// findJSONEnd 找到 JSON 对象的结束位置（匹配的 }）
+func findJSONEnd(s string) int {
+	if len(s) == 0 || s[0] != '{' {
+		return -1
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i, ch := range s {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+// trimOOCParentheses 去除 OOC 包裹的括号
+func trimOOCParentheses(s string) string {
+	s = strings.TrimSpace(s)
+	// 去除中文括号
+	for strings.HasPrefix(s, "（") && strings.HasSuffix(s, "）") {
+		s = strings.TrimPrefix(s, "（")
+		s = strings.TrimSuffix(s, "）")
+		s = strings.TrimSpace(s)
+	}
+	// 去除英文括号
+	for strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+		s = strings.TrimPrefix(s, "(")
+		s = strings.TrimSuffix(s, ")")
+		s = strings.TrimSpace(s)
+	}
+	return s
 }
 
 type tiptapNode struct {
@@ -1305,6 +1507,9 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
 		}
 		return t.Format("2006-01-02 15:04:05")
 	},
+	"safeHTML": func(s string) htmltemplate.HTML {
+		return htmltemplate.HTML(s)
+	},
 }).Parse(`<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -1320,6 +1525,18 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .ooc { border-left: 3px solid #eab308; }
     .whisper { border-left: 3px solid #6366f1; }
     .content { margin-top: 4px; white-space: pre-wrap; line-height: 1.5; }
+    .content p { margin: 0.5em 0; }
+    .content ul, .content ol { margin: 0.5em 0; padding-left: 1.5em; }
+    .content blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid #ddd; color: #666; }
+    .content pre { background: #f4f4f4; padding: 0.5em; border-radius: 4px; overflow-x: auto; }
+    .content code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-family: monospace; }
+    .content strong { font-weight: 600; }
+    .content em { font-style: italic; }
+    .content u { text-decoration: underline; }
+    .content s { text-decoration: line-through; }
+    .content mark { background-color: #fef08a; }
+    .content a { color: #3b82f6; text-decoration: underline; }
+    .content img { max-width: 100%; height: auto; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -1331,7 +1548,7 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
   {{range .Messages}}
     <article class="message {{if eq .IcMode "ooc"}}ooc{{end}} {{if .IsWhisper}}whisper{{end}}">
       {{if not $.WithoutTimestamp}}<div class="timestamp">{{formatTime .CreatedAt}}</div>{{end}}
-      <div class="content"><span class="sender">&lt;{{.SenderName}}&gt;</span>{{.Content}}</div>
+      <div class="content"><span class="sender">&lt;{{.SenderName}}&gt;</span>{{if .ContentHTML}}{{safeHTML .ContentHTML}}{{else}}{{.Content}}{{end}}</div>
     </article>
   {{end}}
 </body>
