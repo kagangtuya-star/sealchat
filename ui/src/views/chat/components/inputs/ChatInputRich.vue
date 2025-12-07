@@ -878,6 +878,14 @@ defineExpose({
     margin: 0.75rem 0;
   }
 
+  ul {
+    list-style-type: disc;
+  }
+
+  ol {
+    list-style-type: decimal;
+  }
+
   li {
     margin: 0.25rem 0;
     line-height: 1.6;

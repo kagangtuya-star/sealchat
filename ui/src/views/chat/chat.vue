@@ -5082,7 +5082,7 @@ const renderDicePreviewSegment = (text: string) => {
 
 const renderPreviewContent = (value: string) => {
   // 检测是否为 TipTap JSON
-  if (value.trim().startsWith('{') && value.includes('"type":"doc"')) {
+  if (isTipTapJson(value)) {
     try {
       const json = JSON.parse(value);
       const html = tiptapJsonToHtml(json, {
@@ -8814,6 +8814,135 @@ onBeforeUnmount(() => {
   line-height: var(--chat-line-height, 1.6);
   font-size: var(--chat-font-size, 0.95rem);
   letter-spacing: var(--chat-letter-spacing, 0px);
+
+  /* 段落样式 */
+  p {
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  p + p {
+    margin-top: 0.5rem;
+  }
+
+  /* 标题样式 */
+  h1, h2, h3 {
+    margin: 0.5rem 0 0.25rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  h3 {
+    font-size: 1rem;
+  }
+
+  /* 列表样式 */
+  ul, ol {
+    padding-left: 1.5rem;
+    margin: 0.25rem 0;
+    list-style-position: inside;
+  }
+
+  ul {
+    list-style-type: disc !important;
+  }
+
+  ol {
+    list-style-type: decimal !important;
+  }
+
+  li {
+    margin: 0.125rem 0;
+    display: list-item !important;
+  }
+
+  /* 引用样式 */
+  blockquote {
+    border-left: 3px solid #3b82f6;
+    padding-left: 0.75rem;
+    margin: 0.25rem 0;
+    color: #6b7280;
+  }
+
+  /* 代码样式 */
+  code {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+  }
+
+  pre {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0.25rem 0;
+    overflow-x: auto;
+    font-size: 0.85em;
+
+    code {
+      background-color: transparent;
+      color: inherit;
+      padding: 0;
+    }
+  }
+
+  /* 高亮样式 */
+  mark {
+    background-color: #fef08a;
+    padding: 0.1rem 0.2rem;
+    border-radius: 0.125rem;
+  }
+
+  /* 分割线 */
+  hr {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 0.5rem 0;
+  }
+
+  /* 链接样式 */
+  a {
+    color: #3b82f6;
+    text-decoration: underline;
+  }
+
+  /* 文本样式 */
+  strong {
+    font-weight: 600;
+  }
+
+  em {
+    font-style: italic;
+  }
+
+  u {
+    text-decoration: underline;
+  }
+
+  s {
+    text-decoration: line-through;
+  }
+
+  /* 图片样式 */
+  img {
+    max-width: min(36vw, 200px);
+    max-height: 12rem;
+    height: auto;
+    border-radius: 0.5rem;
+    display: inline-block;
+    object-fit: contain;
+  }
 }
 
 .typing-preview-bubble__placeholder {
@@ -8830,6 +8959,90 @@ onBeforeUnmount(() => {
 
   p + p {
     margin-top: 0.5rem;
+  }
+
+  /* 标题样式 */
+  h1, h2, h3 {
+    margin: 0.5rem 0 0.25rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  h3 {
+    font-size: 1rem;
+  }
+
+  /* 列表样式 */
+  ul, ol {
+    padding-left: 1.5rem;
+    margin: 0.25rem 0;
+    list-style-position: inside;
+  }
+
+  ul {
+    list-style-type: disc !important;
+  }
+
+  ol {
+    list-style-type: decimal !important;
+  }
+
+  li {
+    margin: 0.125rem 0;
+    display: list-item !important;
+  }
+
+  /* 引用样式 */
+  blockquote {
+    border-left: 3px solid #3b82f6;
+    padding-left: 0.75rem;
+    margin: 0.25rem 0;
+    color: #6b7280;
+  }
+
+  /* 代码块样式 */
+  pre {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0.25rem 0;
+    overflow-x: auto;
+    font-size: 0.85em;
+
+    code {
+      background-color: transparent;
+      color: inherit;
+      padding: 0;
+    }
+  }
+
+  /* 高亮样式 */
+  mark {
+    background-color: #fef08a;
+    padding: 0.1rem 0.2rem;
+    border-radius: 0.125rem;
+  }
+
+  /* 分割线 */
+  hr {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 0.5rem 0;
+  }
+
+  /* 链接样式 */
+  a {
+    color: #3b82f6;
+    text-decoration: underline;
   }
 
   :deep(img) {
@@ -8892,7 +9105,6 @@ onBeforeUnmount(() => {
     font-size: 0.9em;
   }
 }
-
 
 .preview-image-placeholder {
   display: inline-block;
