@@ -252,4 +252,42 @@ defineExpose({
 .chat-input-plain-wrapper {
   width: 100%;
 }
+
+/* 极简滚动条样式 */
+.chat-input-plain-wrapper :deep(textarea) {
+  /* Webkit (Chrome, Safari, Edge) */
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 2px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+  }
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+/* 夜间模式滚动条样式 */
+:root[data-display-palette='night'] .chat-input-plain-wrapper :deep(textarea) {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(161, 161, 170, 0.35);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(161, 161, 170, 0.55);
+  }
+
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
+}
 </style>

@@ -978,6 +978,14 @@ watch(() => props.item?.updatedAt, () => {
   margin: 0.5rem 0;
 }
 
+.content ul {
+  list-style-type: disc;
+}
+
+.content ol {
+  list-style-type: decimal;
+}
+
 .content li {
   margin: 0.25rem 0;
 }

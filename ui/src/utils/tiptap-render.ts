@@ -53,7 +53,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             break;
           case 'highlight':
             const bgColor = mark.attrs?.color || '#fef08a';
-            text = `<mark style="background-color: ${escapeHtml(bgColor)}">${text}</mark>`;
+            text = `<mark style="background-color: ${escapeHtml(bgColor)} !important">${text}</mark>`;
             break;
           case 'link':
             const href = mark.attrs?.href || '#';
@@ -62,7 +62,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             break;
           case 'textStyle':
             if (mark.attrs?.color) {
-              text = `<span style="color: ${escapeHtml(mark.attrs.color)}">${text}</span>`;
+              text = `<span style="color: ${escapeHtml(mark.attrs.color)} !important">${text}</span>`;
             }
             break;
         }
@@ -145,11 +145,32 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 export function tiptapJsonToHtml(json: TipTapNode | string, options: RenderOptions = {}): string {
   try {
     const parsedJson = typeof json === 'string' ? JSON.parse(json) : json;
-    return renderNode(parsedJson, options);
+    let html = renderNode(parsedJson, options);
+
+    // 移除尾部的空段落（TipTap 默认会在文档末尾添加空段落）
+    html = stripTrailingEmptyParagraphs(html);
+
+    return html;
   } catch (error) {
     console.error('TipTap JSON 渲染失败:', error);
     return '';
   }
+}
+
+/**
+ * 移除 HTML 尾部的空段落
+ */
+function stripTrailingEmptyParagraphs(html: string): string {
+  // 匹配尾部的空段落: <p><br /></p> 或 <p></p> 或带样式的空段落
+  const emptyParagraphPattern = /<p(?:\s[^>]*)?>(?:<br\s*\/?>)?\s*<\/p>\s*$/i;
+
+  let result = html;
+  // 循环移除，因为可能有多个连续的空段落
+  while (emptyParagraphPattern.test(result)) {
+    result = result.replace(emptyParagraphPattern, '');
+  }
+
+  return result.trim();
 }
 
 function buildFallbackAttachmentUrl(value: string, baseUrl: string): string {

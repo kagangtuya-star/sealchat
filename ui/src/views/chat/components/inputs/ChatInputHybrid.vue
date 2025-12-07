@@ -841,6 +841,28 @@ defineExpose({
   position: relative;
   color: var(--sc-text-primary, #0f172a);
 
+  /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 2px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+  }
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+
   // 使用 CSS 实现占位符
   &:empty::before {
     content: attr(data-placeholder);
@@ -955,5 +977,18 @@ defineExpose({
     border-color: #ef4444;
     background-color: rgba(239, 68, 68, 0.05);
   }
+}
+
+/* 夜间模式滚动条样式 */
+:root[data-display-palette='night'] .hybrid-input {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(161, 161, 170, 0.35);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(161, 161, 170, 0.55);
+  }
+
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
 }
 </style>

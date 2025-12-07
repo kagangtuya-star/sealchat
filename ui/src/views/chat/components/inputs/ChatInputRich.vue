@@ -50,6 +50,44 @@ const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
 
+// 颜色选择器状态
+const highlightColorPopoverShow = ref(false);
+const textColorPopoverShow = ref(false);
+
+// 预设高亮颜色色板 (7个预设 + 1个自定义)
+const highlightColors = [
+  '#fef08a', // 黄色（默认）
+  '#bbf7d0', // 绿色
+  '#bfdbfe', // 蓝色
+  '#fecaca', // 红色
+  '#e9d5ff', // 紫色
+  '#fed7aa', // 橙色
+  '#99f6e4', // 青色
+];
+
+// 预设文字颜色色板 (7个预设 + 1个自定义)
+const textColors = [
+  '#dc2626', // 红色
+  '#ea580c', // 橙色
+  '#ca8a04', // 黄色
+  '#16a34a', // 绿色
+  '#0284c7', // 蓝色
+  '#7c3aed', // 紫色
+  '#db2777', // 粉色
+];
+
+// 自定义颜色输入
+const customHighlightColor = ref('#fce7f3');
+const customTextColor = ref('#1f2937');
+
+const applyCustomHighlightColor = () => {
+  setHighlightColor(customHighlightColor.value);
+};
+
+const applyCustomTextColor = () => {
+  setTextColor(customTextColor.value);
+};
+
 const EMPTY_DOC = {
   type: 'doc',
   content: [
@@ -113,8 +151,8 @@ const initEditor = async () => {
       import('@tiptap/vue-3'),
       import('@tiptap/starter-kit'),
       import('@tiptap/extension-link'),
-      import('@tiptap/extension-text-style'),
-      import('@tiptap/extension-color'),
+      import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
+      import('@tiptap/extension-color').then(m => ({ default: m.Color })),
       import('@tiptap/extension-image'),
       import('@tiptap/extension-underline'),
       import('@tiptap/extension-highlight'),
@@ -361,6 +399,40 @@ const toggleHighlight = () => editor.value?.chain().focus().toggleHighlight().ru
 const insertHorizontalRule = () => editor.value?.chain().focus().setHorizontalRule().run();
 const clearFormatting = () => editor.value?.chain().focus().clearNodes().unsetAllMarks().run();
 
+// 高亮颜色操作
+const setHighlightColor = (color: string) => {
+  editor.value?.chain().focus().setHighlight({ color }).run();
+  highlightColorPopoverShow.value = false;
+};
+
+const removeHighlight = () => {
+  editor.value?.chain().focus().unsetHighlight().run();
+  highlightColorPopoverShow.value = false;
+};
+
+const getActiveHighlightColor = () => {
+  if (!editor.value) return null;
+  const attrs = editor.value.getAttributes('highlight');
+  return attrs?.color || null;
+};
+
+// 文字颜色操作
+const setTextColor = (color: string) => {
+  editor.value?.chain().focus().setColor(color).run();
+  textColorPopoverShow.value = false;
+};
+
+const removeTextColor = () => {
+  editor.value?.chain().focus().unsetColor().run();
+  textColorPopoverShow.value = false;
+};
+
+const getActiveTextColor = () => {
+  if (!editor.value) return null;
+  const attrs = editor.value.getAttributes('textStyle');
+  return attrs?.color || null;
+};
+
 const setLink = () => {
   const url = window.prompt('输入链接地址:');
   if (url) {
@@ -503,15 +575,90 @@ defineExpose({
           >
             <span class="font-mono text-xs">&lt;/&gt;</span>
           </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('highlight') ? 'primary' : 'default'"
-            @click="toggleHighlight"
-            title="高亮"
+          <!-- 高亮颜色选择器 -->
+          <n-popover
+            trigger="click"
+            placement="bottom"
+            v-model:show="highlightColorPopoverShow"
           >
-            H
-          </n-button>
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                :type="isActive('highlight') ? 'primary' : 'default'"
+                title="高亮颜色"
+                class="tiptap-toolbar-btn"
+              >
+                <span class="tiptap-highlight-icon">H</span>
+              </n-button>
+            </template>
+            <div class="tiptap-color-picker">
+              <div
+                v-for="color in highlightColors"
+                :key="color"
+                class="tiptap-color-swatch"
+                :class="{ 'is-active': getActiveHighlightColor() === color }"
+                :style="{ backgroundColor: color }"
+                @click="setHighlightColor(color)"
+                :title="color"
+              ></div>
+              <!-- 自定义颜色选择器 -->
+              <label class="tiptap-color-swatch tiptap-color-custom" title="自定义颜色">
+                <input
+                  type="color"
+                  v-model="customHighlightColor"
+                  @change="applyCustomHighlightColor"
+                  class="tiptap-color-input"
+                />
+                <span class="tiptap-color-custom__icon">+</span>
+              </label>
+              <div class="tiptap-color-picker__clear" @click="removeHighlight">
+                清除高亮
+              </div>
+            </div>
+          </n-popover>
+          <!-- 文字颜色选择器 -->
+          <n-popover
+            trigger="click"
+            placement="bottom"
+            v-model:show="textColorPopoverShow"
+          >
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                :type="getActiveTextColor() ? 'primary' : 'default'"
+                title="文字颜色"
+                class="tiptap-toolbar-btn"
+              >
+                <span class="tiptap-textcolor-icon">A</span>
+              </n-button>
+            </template>
+            <div class="tiptap-color-picker">
+              <div
+                v-for="color in textColors"
+                :key="color"
+                class="tiptap-color-swatch"
+                :class="{ 'is-active': getActiveTextColor() === color }"
+                :style="{ backgroundColor: color }"
+                @click="setTextColor(color)"
+                :title="color"
+              ></div>
+              <!-- 自定义颜色选择器 -->
+              <label class="tiptap-color-swatch tiptap-color-custom" title="自定义颜色">
+                <input
+                  type="color"
+                  v-model="customTextColor"
+                  @change="applyCustomTextColor"
+                  class="tiptap-color-input"
+                />
+                <span class="tiptap-color-custom__icon">+</span>
+              </label>
+              <div class="tiptap-color-picker__clear" @click="removeTextColor">
+                清除颜色
+              </div>
+            </div>
+          </n-popover>
         </div>
 
         <div class="tiptap-toolbar__divider"></div>
@@ -777,6 +924,28 @@ defineExpose({
   min-height: 3rem;
   max-height: 12rem;
   overflow-y: auto;
+
+  /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 2px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+  }
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
 
 .tiptap-bubble-menu {
@@ -796,6 +965,128 @@ defineExpose({
   background-color: #e5e7eb;
   margin: 0 0.25rem;
 }
+
+/* 颜色选择器样式 */
+.tiptap-color-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.375rem;
+  padding: 0.5rem;
+  min-width: 8rem;
+}
+
+.tiptap-color-swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+
+  &:hover {
+    transform: scale(1.15);
+  }
+
+  &.is-active {
+    box-shadow: 0 0 0 2px #3b82f6;
+  }
+}
+
+.tiptap-color-picker__clear {
+  grid-column: span 4;
+  padding: 0.375rem 0.25rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #6b7280;
+  cursor: pointer;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 0.25rem;
+
+  &:hover {
+    color: #dc2626;
+  }
+}
+
+/* 工具栏颜色图标样式 - 与其他图标一致 */
+.tiptap-highlight-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.25rem;
+  font-weight: 600;
+  font-size: 0.75rem;
+  background-color: rgba(254, 240, 138, 0.6);
+  color: #4b5563;
+}
+
+.tiptap-textcolor-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #4b5563;
+  border-bottom: 2px solid #3b82f6;
+}
+
+/* 自定义颜色选择器 */
+.tiptap-color-custom {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f87171 0%, #fbbf24 25%, #34d399 50%, #60a5fa 75%, #a78bfa 100%);
+  cursor: pointer;
+}
+
+.tiptap-color-input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tiptap-color-custom__icon {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+/* 夜间模式颜色选择器 */
+:root[data-display-palette='night'] .tiptap-color-picker {
+  background-color: #2D2D31;
+  border-radius: 0.375rem;
+}
+
+:root[data-display-palette='night'] .tiptap-color-swatch {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+:root[data-display-palette='night'] .tiptap-color-picker__clear {
+  border-top-color: #52525b;
+  color: #a1a1aa;
+
+  &:hover {
+    color: #f87171;
+  }
+}
+
+:root[data-display-palette='night'] .tiptap-highlight-icon {
+  background-color: rgba(254, 240, 138, 0.3);
+  color: #e5e7eb;
+}
+
+:root[data-display-palette='night'] .tiptap-textcolor-icon {
+  color: #e5e7eb;
+  border-bottom-color: #60a5fa;
+}
 </style>
 
 <style lang="scss">
@@ -803,8 +1094,6 @@ defineExpose({
   padding: 0.75rem 1rem;
   outline: none;
   min-height: 3rem;
-  max-height: 20rem;
-  overflow-y: auto;
   color: #1f2937; /* 日间模式默认文字颜色 */
 
   /* 基础文本样式 */
@@ -856,6 +1145,14 @@ defineExpose({
   ol {
     padding-left: 1.75rem;
     margin: 0.75rem 0;
+  }
+
+  ul {
+    list-style-type: disc;
+  }
+
+  ol {
+    list-style-type: decimal;
   }
 
   li {
@@ -1039,6 +1336,19 @@ defineExpose({
 
 :root[data-display-palette='night'] .tiptap-content hr {
   border-top-color: #52525b;
+}
+
+/* 夜间模式滚动条样式 */
+:root[data-display-palette='night'] .tiptap-editor-wrapper {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(161, 161, 170, 0.35);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(161, 161, 170, 0.55);
+  }
+
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
 }
 
 :root[data-display-palette='night'] .tiptap-content a {

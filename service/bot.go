@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/samber/lo"
+
 	"sealchat/model"
 )
 
@@ -40,7 +42,7 @@ func BotListByChannelId(curUserId, channelId string) []string {
 		}
 	}
 
-	return ids
+	return lo.Uniq(ids)
 }
 
 // SyncBotUserProfile keeps the bot user's public profile aligned with the token metadata.

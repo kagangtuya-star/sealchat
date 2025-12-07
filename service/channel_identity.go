@@ -265,3 +265,54 @@ func ChannelIdentityValidateMessageIdentity(userID string, channelID string, ide
 	}
 	return identity, nil
 }
+
+// EnsureHiddenDefaultIdentity 确保用户在频道内有一个隐形默认身份
+// 如果不存在则根据用户主页信息自动创建
+func EnsureHiddenDefaultIdentity(userID string, channelID string) (*model.ChannelIdentityModel, error) {
+	userID = strings.TrimSpace(userID)
+	channelID = strings.TrimSpace(channelID)
+	if userID == "" || channelID == "" {
+		return nil, nil
+	}
+
+	// 检查是否已存在隐形身份
+	identity, err := model.ChannelIdentityFindHidden(channelID, userID)
+	if err == nil && identity != nil {
+		return identity, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// 获取用户信息
+	user := model.UserGet(userID)
+	if user == nil {
+		return nil, fmt.Errorf("用户不存在")
+	}
+
+	// 创建隐形默认身份
+	displayName := strings.TrimSpace(user.Nickname)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	if displayName == "" {
+		displayName = "未知用户"
+	}
+
+	item := &model.ChannelIdentityModel{
+		ChannelID:          channelID,
+		UserID:             userID,
+		DisplayName:        displayName,
+		Color:              model.ChannelIdentityNormalizeColor(user.NickColor),
+		AvatarAttachmentID: user.Avatar,
+		IsDefault:          false,
+		IsHidden:           true,
+		SortOrder:          0,
+	}
+
+	if err := model.ChannelIdentityUpsert(item); err != nil {
+		return nil, err
+	}
+
+	return item, nil
+}

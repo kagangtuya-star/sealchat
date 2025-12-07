@@ -158,16 +158,14 @@
       const idx = payload.part_index || 1
       const total = payload.part_total || 1
       nav.innerHTML = `
-        ${
-          idx > 1
-            ? `<a href="part-${String(idx - 1).padStart(3, '0')}.html">上一分片</a>`
-            : '<span></span>'
+        ${idx > 1
+          ? `<a href="part-${String(idx - 1).padStart(3, '0')}.html">上一分片</a>`
+          : '<span></span>'
         }
         <a href="../index.html">返回索引</a>
-        ${
-          idx < total
-            ? `<a href="part-${String(idx + 1).padStart(3, '0')}.html">下一分片</a>`
-            : '<span></span>'
+        ${idx < total
+          ? `<a href="part-${String(idx + 1).padStart(3, '0')}.html">下一分片</a>`
+          : '<span></span>'
         }
       `
       shell.appendChild(nav)
@@ -292,7 +290,9 @@
     article.className = 'viewer-message'
     article.dataset.messageId = msg.id
     article.dataset.icMode = (msg.ic_mode || 'ic').toLowerCase()
-    article.dataset.searchText = (stripHTML(msg.content) + ' ' + name).toLowerCase()
+    // 使用 content_html 进行渲染，fallback 到 content
+    const displayContent = msg.content_html || msg.content || ''
+    article.dataset.searchText = (stripHTML(displayContent) + ' ' + name).toLowerCase()
 
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
@@ -323,7 +323,7 @@
 
     const body = document.createElement('div')
     body.className = 'viewer-message__body'
-    body.innerHTML = msg.content || ''
+    body.innerHTML = displayContent
     main.appendChild(body)
 
     article.appendChild(main)

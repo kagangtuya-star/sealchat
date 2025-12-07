@@ -178,6 +178,12 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	if err != nil {
 		return nil, err
 	}
+
+	// 确保用户有隐形默认身份（群内频道才需要）
+	if len(channelId) < 30 {
+		_, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
+	}
+
 	memberPT := member.ToProtocolType()
 
 	// 然后添加新的

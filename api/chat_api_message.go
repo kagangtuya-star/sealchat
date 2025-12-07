@@ -687,6 +687,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 
+	// 如果未选择身份，使用隐形默认身份（群内频道才需要）
+	if identity == nil && len(channelId) < 30 {
+		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
+	}
+
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {
 		return nil, nil
@@ -1641,9 +1646,12 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		}{Success: false}, nil
 	}
 
-	runes := []rune(data.Content)
-	if len(runes) > 500 {
-		data.Content = string(runes[:500])
+	// 富文本 JSON 不截断，否则会破坏 JSON 结构导致无法渲染
+	if !service.LooksLikeTipTapJSON(data.Content) {
+		runes := []rune(data.Content)
+		if len(runes) > 3000 {
+			data.Content = string(runes[:3000])
+		}
 	}
 
 	now := time.Now().UnixMilli()
