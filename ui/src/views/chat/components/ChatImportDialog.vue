@@ -257,6 +257,30 @@ const onUserChange = async (role: string, userId: string) => {
   await loadReusableIdentities(userId)
 }
 
+// 当选择复用身份时，自动更新显示名称、颜色和头像
+const onIdentityChange = (role: string, identityId: string) => {
+  form.roleMapping[role].reuseIdentityId = identityId
+  
+  if (!identityId) {
+    // 清空时不做处理
+    return
+  }
+  
+  // 查找选中的身份
+  const userId = form.roleMapping[role].bindToUserId
+  const identities = reusableIdentities.value[userId] || []
+  const selectedIdentity = identities.find(i => i.id === identityId)
+  
+  if (selectedIdentity) {
+    // 自动更新显示名称
+    form.roleMapping[role].displayName = selectedIdentity.displayName
+    // 自动更新颜色
+    form.roleMapping[role].color = selectedIdentity.color || ''
+    // 自动更新头像
+    form.roleMapping[role].avatarAttachmentId = selectedIdentity.avatarAttachmentId || ''
+  }
+}
+
 // 头像上传状态
 const avatarUploading = ref<Record<string, boolean>>({})
 
@@ -705,6 +729,7 @@ const importConfig = async (e: Event) => {
                 v-model:value="form.roleMapping[role].reuseIdentityId"
                 :options="getIdentityOptions(form.roleMapping[role].bindToUserId)"
                 placeholder="选择复用已有身份"
+                @update:value="onIdentityChange(role, $event)"
               />
               <template
                 v-if="isIdentityFilteredOut(form.roleMapping[role].bindToUserId)"
