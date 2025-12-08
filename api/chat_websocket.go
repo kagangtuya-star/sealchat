@@ -12,6 +12,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/protocol"
+	"sealchat/service"
 	"sealchat/service/metrics"
 	"sealchat/utils"
 )
@@ -132,34 +133,29 @@ func websocketWorks(app *fiber.App) {
 	}
 
 	go func() {
-		// 持续删除超时连接
-		// for {
-		//	time.Sleep(5 * time.Second)
-		//	now := time.Now().Unix()
-		//	oldLen := connMap.Len()
-		//	connMap.Range(func(key string, value *ConnInfo) bool {
-		//		if now-value.LastPingTime > 20 {
-		//			_ = value.Conn.Close()
-		//			connMap.Delete(key)
-		//
-		//			channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
-		//				value.Delete(key)
-		//				return true
-		//			})
-		//		}
-		//		return true
-		//	})
-		//
-		//	if connMap.Len()-oldLen != 0 {
-		//		ctx := &ChatContext{
-		//			ConnMap:         connMap,
-		//			ChannelUsersMap: channelUsersMap,
-		//		}
-		//		ctx.BroadcastEvent(&protocol.Event{
-		//			Type: "channel-updated",
-		//		})
-		//	}
-		// }
+		// 导入进度广播
+		progressCh := service.SubscribeImportProgress()
+		defer service.UnsubscribeImportProgress(progressCh)
+
+		for event := range progressCh {
+			// 广播到频道内的所有连接
+			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+					if info.ChannelId == event.ChannelID {
+						_ = conn.WriteJSON(protocol.GatewayPayloadStructure{
+							Op: protocol.OpEvent,
+							Body: map[string]any{
+								"type":      "chat-import-progress",
+								"channelId": event.ChannelID,
+								"progress":  event,
+							},
+						})
+					}
+					return true
+				})
+				return true
+			})
+		}
 	}()
 
 	app.Use("/ws", func(c *fiber.Ctx) error {

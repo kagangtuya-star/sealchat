@@ -136,6 +136,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelIFormModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{})
 	db.AutoMigrate(&ServiceMetricSample{})
+	db.AutoMigrate(&ChatImportJobModel{})
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").

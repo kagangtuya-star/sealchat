@@ -290,6 +290,7 @@ const editedTimeText2 = ref(props.item?.isEdited ? timeFormat2(props.item?.updat
 
 const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
   || item?.identity?.displayName
+  || item?.sender_identity_name
   || item?.sender_member_name
   || item?.member?.nick
   || item?.user?.nick
@@ -592,13 +593,17 @@ const nick = computed(() => {
   if (props.item?.identity?.displayName) {
     return props.item.identity.displayName;
   }
+  // 检查后端直接设置的 sender_identity_name（导入的消息）
+  if (props.item?.sender_identity_name) {
+    return props.item.sender_identity_name;
+  }
   if (props.item?.sender_member_name) {
     return props.item.sender_member_name;
   }
   return props.item?.member?.nick || props.item?.user?.name || '未知';
 });
 
-const nameColor = computed(() => props.item?.identity?.color || props.identityColor || '');
+const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
 
 watch(() => props.item?.updatedAt, () => {
   if (props.item?.isEdited) {

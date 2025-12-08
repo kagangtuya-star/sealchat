@@ -22,6 +22,8 @@ import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
 import ExportManagerModal from './components/export/ExportManagerModal.vue'
+import ChatImportDialog from './components/ChatImportDialog.vue'
+import ChatImportProgress from './components/ChatImportProgress.vue'
 import DiceTray from './components/DiceTray.vue'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
@@ -525,6 +527,9 @@ const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
 const channelFavoritesVisible = ref(false);
+const importDialogVisible = ref(false);
+const importProgressVisible = ref(false);
+const importJobId = ref('');
 const ribbonRoleOptions = ref<Array<{ id: string; label: string }>>([]);
 let ribbonRoleOptionsSeq = 0;
 
@@ -6915,9 +6920,12 @@ onBeforeUnmount(() => {
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
         :favorite-active="display.favoriteBarEnabled"
+        :can-import="canManageWorldKeywords"
+        :import-active="importDialogVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
+        @open-import="importDialogVisible = true"
         @open-identity-manager="openIdentityManager"
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
@@ -7990,6 +7998,18 @@ onBeforeUnmount(() => {
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
     @export="handleExportMessages"
+  />
+  <ChatImportDialog
+    v-model:visible="importDialogVisible"
+    :channel-id="chat.curChannel?.id"
+    :world-id="chat.currentWorldId"
+    @import-started="(jobId: string) => { importJobId = jobId; importProgressVisible = true; }"
+  />
+  <ChatImportProgress
+    v-model:visible="importProgressVisible"
+    :channel-id="chat.curChannel?.id || ''"
+    :job-id="importJobId"
+    @complete="() => { chat.fetchMessages(chat.curChannel?.id); }"
   />
   <IFormFloatingWindows />
   <IFormDrawer />

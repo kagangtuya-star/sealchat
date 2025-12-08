@@ -216,6 +216,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
 
+	// 聊天记录导入
+	chatImport := v1Auth.Group("/channels/:channelId/import")
+	chatImport.Get("/templates", ChatImportTemplates)
+	chatImport.Post("/preview", ChatImportPreview)
+	chatImport.Post("/execute", ChatImportExecute)
+	chatImport.Get("/jobs/:jobId", ChatImportJobStatus)
+	chatImport.Get("/reusable-identities", ChatImportReusableIdentities)
+
 	iform := v1Auth.Group("/channels/:channelId/iforms")
 	iform.Get("/", ChannelIFormList)
 	iform.Post("/", ChannelIFormCreate)

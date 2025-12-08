@@ -6,6 +6,7 @@ import {
   MoodSmile as EmojiIcon,
   Palette,
   Star as StarIcon,
+  Upload as UploadIcon,
   Users as UsersIcon,
 } from '@vicons/tabler'
 
@@ -30,12 +31,15 @@ interface Props {
   galleryActive?: boolean
   displayActive?: boolean
   favoriteActive?: boolean
+  canImport?: boolean
+  importActive?: boolean
 }
 
 interface Emits {
   (e: 'update:filters', filters: FilterState): void
   (e: 'open-archive'): void
   (e: 'open-export'): void
+  (e: 'open-import'): void
   (e: 'open-identity-manager'): void
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
@@ -150,6 +154,19 @@ const clearAllFilters = () => {
             <n-icon :component="UsersIcon" />
           </template>
           角色管理
+        </n-button>
+
+        <n-button
+          v-if="props.canImport"
+          type="tertiary"
+          class="ribbon-action-button"
+          :class="{ 'is-active': props.importActive }"
+          @click="emit('open-import')"
+        >
+          <template #icon>
+            <n-icon :component="UploadIcon" />
+          </template>
+          导入记录
         </n-button>
 
         <n-button
