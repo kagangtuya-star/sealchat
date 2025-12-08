@@ -409,6 +409,8 @@ func batchInsertImportedMessages(channelID string, entries []*model.ParsedLogEnt
 			SenderIdentityID:    identity.ID,
 			SenderIdentityName:  identity.DisplayName,
 			SenderIdentityColor: identity.Color,
+			SenderMemberName:    identity.DisplayName,
+			SenderRoleID:        identity.ID,
 		}
 
 		if identity.AvatarAttachmentID != "" {
