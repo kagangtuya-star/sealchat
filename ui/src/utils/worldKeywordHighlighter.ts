@@ -31,21 +31,68 @@ function canProcessNode(node: Node) {
 
 function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
   const ranges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
-  compiled.forEach((entry) => {
-    const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
+
+  if (!compiled.length || !text) {
+    return ranges
+  }
+
+  // Build merged regex with capturing groups for O(n) matching
+  // Each keyword gets its own capturing group, allowing identification via match indices
+  try {
+    const patterns = compiled.map((entry) => `(${entry.regex.source})`)
+    const mergedPattern = patterns.join('|')
+    const mergedRegex = new RegExp(mergedPattern, 'gi')
+
     let match: RegExpExecArray | null
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = mergedRegex.exec(text)) !== null) {
       if (!match[0]) {
-        regex.lastIndex += 1
+        mergedRegex.lastIndex += 1
         continue
       }
-      ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
-      if (match.index === regex.lastIndex) {
-        regex.lastIndex += 1
+
+      // Find which capturing group matched (index 1 to N corresponds to compiled[0] to compiled[N-1])
+      let keywordIndex = -1
+      for (let i = 1; i < match.length; i++) {
+        if (match[i] !== undefined) {
+          keywordIndex = i - 1
+          break
+        }
+      }
+
+      if (keywordIndex >= 0 && keywordIndex < compiled.length) {
+        ranges.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          keyword: compiled[keywordIndex]
+        })
+      }
+
+      if (match.index === mergedRegex.lastIndex) {
+        mergedRegex.lastIndex += 1
       }
     }
-  })
+  } catch {
+    // Fallback to original approach if regex merge fails
+    compiled.forEach((entry) => {
+      const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
+      let match: RegExpExecArray | null
+      while ((match = regex.exec(text)) !== null) {
+        if (!match[0]) {
+          regex.lastIndex += 1
+          continue
+        }
+        ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
+        if (match.index === regex.lastIndex) {
+          regex.lastIndex += 1
+        }
+      }
+    })
+  }
+
+  // Sort by start position, prefer longer matches
   ranges.sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start))
+
+  // Filter overlapping ranges
   const filtered: typeof ranges = []
   let cursor = -1
   ranges.forEach((range) => {
