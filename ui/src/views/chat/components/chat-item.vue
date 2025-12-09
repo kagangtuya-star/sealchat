@@ -437,7 +437,7 @@ const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywor
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
 
-const keywordTooltip = createKeywordTooltip((keywordId) => {
+const keywordTooltipResolver = (keywordId: string) => {
   const keyword = worldGlossary.keywordById[keywordId]
   if (!keyword) {
     return null
@@ -446,7 +446,7 @@ const keywordTooltip = createKeywordTooltip((keywordId) => {
     title: keyword.keyword,
     description: keyword.description,
   }
-})
+}
 
 const handleKeywordQuickEdit = (keywordId: string) => {
   if (!props.worldKeywordEditable) {
@@ -462,6 +462,14 @@ const handleKeywordQuickEdit = (keywordId: string) => {
   }
   worldGlossary.openEditor(worldId, keyword)
 }
+
+let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
+  level: 0,
+  compiledKeywords: compiledKeywords.value,
+  onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
+  underlineOnly: keywordUnderlineOnly.value,
+})
+
 
 const applyKeywordHighlights = async () => {
   await nextTick()
@@ -481,7 +489,7 @@ const applyKeywordHighlights = async () => {
       underlineOnly: keywordUnderlineOnly.value,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
     },
-    keywordTooltipEnabled.value ? keywordTooltip : undefined,
+    keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
   )
 }
 
@@ -632,6 +640,14 @@ watch(
     () => displayContent.value,
   ],
   () => {
+    // Recreate tooltip instance when settings change
+    keywordTooltipInstance.destroy()
+    keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
+      level: 0,
+      compiledKeywords: compiledKeywords.value,
+      onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
+      underlineOnly: keywordUnderlineOnly.value,
+    })
     void applyKeywordHighlights()
   },
   { flush: 'post' },
@@ -648,8 +664,8 @@ onBeforeUnmount(() => {
     timestampInterval = null;
   }
   destroyImageViewer();
-  keywordTooltip.hide()
-  keywordTooltip.destroy()
+  keywordTooltipInstance.hideAll()
+  keywordTooltipInstance.destroy()
 });
 
 const nick = computed(() => {

@@ -1,13 +1,9 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
+import type { KeywordTooltipController } from './keywordTooltip'
 
 interface HighlightOptions {
   underlineOnly: boolean
   onKeywordDoubleInvoke?: (keywordId: string) => void
-}
-
-interface TooltipEmitter {
-  show: (target: HTMLElement, keywordId: string) => void
-  hide: (target?: HTMLElement) => void
 }
 
 const HIGHLIGHT_CLASS = 'keyword-highlight'
@@ -73,11 +69,32 @@ function attachTouchDoubleTap(target: HTMLElement, handler: () => void) {
   })
 }
 
-function wrapRanges(node: Text, ranges: ReturnType<typeof buildRanges>, options: HighlightOptions, tooltip?: TooltipEmitter) {
+// Track click timing for distinguishing single vs double click
+interface ClickState {
+  timer: ReturnType<typeof setTimeout> | null
+  target: HTMLElement | null
+  keywordId: string | null
+}
+
+const clickState: ClickState = {
+  timer: null,
+  target: null,
+  keywordId: null
+}
+
+const DOUBLE_CLICK_DELAY = 300
+
+function wrapRanges(
+  node: Text,
+  ranges: ReturnType<typeof buildRanges>,
+  options: HighlightOptions,
+  tooltip?: KeywordTooltipController
+) {
   if (!ranges.length) return
   const text = node.textContent || ''
   const fragment = document.createDocumentFragment()
   let lastIndex = 0
+
   ranges.forEach((range) => {
     if (range.start > lastIndex) {
       fragment.appendChild(document.createTextNode(text.slice(lastIndex, range.start)))
@@ -90,31 +107,86 @@ function wrapRanges(node: Text, ranges: ReturnType<typeof buildRanges>, options:
     span.dataset.keywordId = range.keyword.id
     span.dataset.keywordSource = range.keyword.source
     span.textContent = text.slice(range.start, range.end)
+
     if (tooltip) {
-      span.addEventListener('mouseenter', () => tooltip.show(span, range.keyword.id))
-      span.addEventListener('mouseleave', () => tooltip.hide(span))
-      span.addEventListener('click', () => tooltip.show(span, range.keyword.id))
+      // Hover behavior
+      span.addEventListener('mouseenter', () => {
+        tooltip.show(span, range.keyword.id)
+      })
+
+      span.addEventListener('mouseleave', () => {
+        tooltip.hide(span)
+      })
+
+      // Click behavior - differentiate single click (pin) from double click (edit)
+      span.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+
+        // If we have a pending click on the same target, this is a double click
+        if (clickState.timer && clickState.target === span && clickState.keywordId === range.keyword.id) {
+          clearTimeout(clickState.timer)
+          clickState.timer = null
+          clickState.target = null
+          clickState.keywordId = null
+
+          // Double click - invoke edit if available
+          if (options.onKeywordDoubleInvoke) {
+            options.onKeywordDoubleInvoke(range.keyword.id)
+          }
+          return
+        }
+
+        // Clear any existing timer
+        if (clickState.timer) {
+          clearTimeout(clickState.timer)
+        }
+
+        // Set up for potential double click
+        clickState.target = span
+        clickState.keywordId = range.keyword.id
+        clickState.timer = setTimeout(() => {
+          // Single click - pin the tooltip
+          tooltip.pin(span, range.keyword.id)
+          clickState.timer = null
+          clickState.target = null
+          clickState.keywordId = null
+        }, DOUBLE_CLICK_DELAY)
+      })
     }
+
+    // Double click handler for editing (mouse)
     if (options.onKeywordDoubleInvoke) {
-      const invokeEdit = () => options.onKeywordDoubleInvoke?.(range.keyword.id)
       span.addEventListener('mousedown', (event) => {
         if (event.detail === 2) {
           event.preventDefault()
           event.stopPropagation()
         }
       })
+
       span.addEventListener('dblclick', (event) => {
         event.preventDefault()
         event.stopPropagation()
-        invokeEdit()
+        // Clear any pending single click
+        if (clickState.timer) {
+          clearTimeout(clickState.timer)
+          clickState.timer = null
+          clickState.target = null
+          clickState.keywordId = null
+        }
+        options.onKeywordDoubleInvoke?.(range.keyword.id)
       })
+
+      // Touch double tap for editing
       attachTouchDoubleTap(span, () => {
-        invokeEdit()
+        options.onKeywordDoubleInvoke?.(range.keyword.id)
       })
     }
+
     fragment.appendChild(span)
     lastIndex = range.end
   })
+
   if (lastIndex < text.length) {
     fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
   }
@@ -125,7 +197,7 @@ export function refreshWorldKeywordHighlights(
   root: HTMLElement | null,
   compiled: CompiledKeywordSpan[],
   options: HighlightOptions,
-  tooltip?: TooltipEmitter,
+  tooltip?: KeywordTooltipController,
 ) {
   if (!root) return
   if (!compiled?.length) {
