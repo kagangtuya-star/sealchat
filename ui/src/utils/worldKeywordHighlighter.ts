@@ -195,9 +195,12 @@ function setupEventDelegation(
 
   // Hover events (using capture for mouseenter/leave)
   if (tooltip) {
+    let currentHoveredSpan: HTMLElement | null = null
+
     root.addEventListener('mouseover', (e) => {
       const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
       if (span && root.contains(span)) {
+        currentHoveredSpan = span
         const keywordId = span.dataset.keywordId
         if (keywordId) {
           tooltip.show(span, keywordId)
@@ -207,15 +210,36 @@ function setupEventDelegation(
 
     root.addEventListener('mouseout', (e) => {
       const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-      if (span && root.contains(span)) {
+      if (!span || !root.contains(span)) return
+
+      // Check if mouse moved to another highlight or outside
+      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
+      const movedToHighlight = relatedTarget?.closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
+
+      // Only hide if not moving to another highlight
+      if (!movedToHighlight || !root.contains(movedToHighlight)) {
         tooltip.hide(span)
+        currentHoveredSpan = null
       }
     })
 
-    // Click for pin
+    // Fallback: hide tooltip when mouse leaves root entirely
+    root.addEventListener('mouseleave', () => {
+      if (currentHoveredSpan) {
+        tooltip.hide(currentHoveredSpan)
+        currentHoveredSpan = null
+      }
+    })
+
+    // Click for pin (on highlight) or hide all (on non-highlight)
     root.addEventListener('click', (e) => {
       const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-      if (!span || !root.contains(span)) return
+
+      // If clicking outside highlight area, hide all tooltips as fallback
+      if (!span || !root.contains(span)) {
+        tooltip.hideAll()
+        return
+      }
 
       const keywordId = span.dataset.keywordId
       if (!keywordId) return

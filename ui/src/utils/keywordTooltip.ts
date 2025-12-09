@@ -31,14 +31,21 @@ function clearPendingHide() {
 }
 
 // Clean up any orphaned tooltip elements that aren't tracked in the stack
-function cleanupOrphanedTooltips() {
+function cleanupOrphanedTooltips(includeHoverTooltips = false) {
   const allTooltips = document.querySelectorAll('.keyword-tooltip')
   const trackedElements = new Set(tooltipStack.map(t => t.element))
 
   allTooltips.forEach(tooltip => {
     if (!trackedElements.has(tooltip as HTMLDivElement)) {
-      // Check if it's a hover tooltip (those are managed separately)
-      if (!tooltip.classList.contains('keyword-tooltip--hover')) {
+      const isHover = tooltip.classList.contains('keyword-tooltip--hover')
+      if (isHover) {
+        // Only hide hover tooltips (don't remove - controllers manage their lifecycle)
+        if (includeHoverTooltips) {
+          ; (tooltip as HTMLElement).style.display = 'none'
+        }
+      } else {
+        // Remove non-hover orphaned tooltips
+        ; (tooltip as HTMLElement).style.display = 'none'
         tooltip.remove()
       }
     }
@@ -238,8 +245,15 @@ function updateParentHasChildClass() {
 function hideAllTooltips() {
   clearPendingHide()
   hideTooltipsFromLevel(0)
-  // Also clean up any orphaned tooltips
-  cleanupOrphanedTooltips()
+
+  // Also hide all hover tooltips
+  const hoverTooltips = document.querySelectorAll('.keyword-tooltip--hover')
+  hoverTooltips.forEach(tooltip => {
+    ; (tooltip as HTMLElement).style.display = 'none'
+  })
+
+  // Also clean up any orphaned tooltips (including hover)
+  cleanupOrphanedTooltips(true)
 }
 
 export interface KeywordTooltipOptions {
