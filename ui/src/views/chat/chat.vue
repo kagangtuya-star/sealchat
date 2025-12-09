@@ -6409,9 +6409,7 @@ const onScroll = () => {
   } else if (!historyLocked.value) {
     updateViewMode('live');
   }
-  if (container.scrollTop <= 80 && firstLoad && !messageWindow.loadingBefore) {
-    void loadOlderMessages();
-  }
+  // Removed duplicate trigger - IntersectionObserver on topSentinelRef handles loading older messages
 };
 
 const pauseKeydown = ref(false);
@@ -6660,10 +6658,6 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
 
   atLoading.value = false;
 }
-
-const reachTop = throttle(async () => {
-  await loadOlderMessages();
-}, 800);
 
 const { stop: stopTopObserver } = useIntersectionObserver(
   topSentinelRef,
