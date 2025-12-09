@@ -93,7 +93,7 @@ const formModel = reactive({
   aliases: '',
   matchMode: 'plain' as 'plain' | 'regex',
   description: '',
-  display: 'standard' as 'standard' | 'minimal',
+  display: 'minimal' as 'standard' | 'minimal',
   isEnabled: true,
 })
 
