@@ -471,6 +471,10 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   underlineOnly: keywordUnderlineOnly.value,
 })
 
+// Lazy rendering state
+let isVisible = false
+let keywordObserver: IntersectionObserver | null = null
+let pendingHighlights = false
 
 const applyKeywordHighlights = async () => {
   await nextTick()
@@ -478,6 +482,14 @@ const applyKeywordHighlights = async () => {
   if (!host) {
     return
   }
+  
+  // If not visible yet, mark as pending and skip
+  if (!isVisible) {
+    pendingHighlights = true
+    return
+  }
+  
+  pendingHighlights = false
   const compiled = compiledKeywords.value
   if (!keywordHighlightEnabled.value || !compiled.length) {
     refreshWorldKeywordHighlights(host, [], { underlineOnly: false })
@@ -493,6 +505,29 @@ const applyKeywordHighlights = async () => {
     },
     keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
   )
+}
+
+// Setup IntersectionObserver for lazy rendering
+const setupVisibilityObserver = () => {
+  const host = messageContentRef.value
+  if (!host || keywordObserver) return
+  
+  keywordObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const wasVisible = isVisible
+      isVisible = entry.isIntersecting
+      
+      // Apply highlights when becoming visible with pending updates
+      if (isVisible && !wasVisible && pendingHighlights) {
+        void applyKeywordHighlights()
+      }
+    })
+  }, {
+    rootMargin: '100px', // Pre-load 100px before visible
+    threshold: 0
+  })
+  
+  keywordObserver.observe(host)
 }
 
 const applyDiceTone = () => {
@@ -620,6 +655,8 @@ onMounted(() => {
     timestampTicker.value = Date.now();
   }, 10000);
 
+  // Setup lazy rendering observer
+  setupVisibilityObserver()
   void applyKeywordHighlights()
 })
 
@@ -665,6 +702,11 @@ onBeforeUnmount(() => {
   if (timestampInterval) {
     clearInterval(timestampInterval);
     timestampInterval = null;
+  }
+  // Cleanup visibility observer
+  if (keywordObserver) {
+    keywordObserver.disconnect();
+    keywordObserver = null;
   }
   destroyImageViewer();
   keywordTooltipInstance.hideAll()
