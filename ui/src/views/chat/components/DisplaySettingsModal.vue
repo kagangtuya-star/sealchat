@@ -208,6 +208,119 @@ const handleConfirm = () => emit('save', { ...draft })
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">快捷键管理</p>
+            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、悄悄话、上传等</p>
+          </div>
+        </header>
+        <n-button secondary size="small" @click="shortcutPanelVisible = true">
+          配置快捷键
+        </n-button>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入与发送</p>
+            <p class="section-desc">选择回车发送方式，另一组合则换行</p>
+          </div>
+        </header>
+        <n-radio-group v-model:value="draft.sendShortcut" size="large">
+          <n-radio-button value="enter">Enter 直接发送</n-radio-button>
+          <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
+        </n-radio-group>
+        <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">场内场外自动切换</p>
+            <p class="section-desc">切换IC/OOC模式时，自动切换到预设的频道角色</p>
+          </div>
+        </header>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <n-switch v-model:value="draft.autoSwitchRoleOnIcOocToggle">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                circle
+                size="tiny"
+                quaternary
+                @click="roleConfigPanelVisible = true"
+              >
+                <template #icon>
+                  <n-icon size="16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"></path>
+                      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path>
+                      <path d="M12 2v2"></path>
+                      <path d="M12 22v-2"></path>
+                      <path d="m17 20.66-1-1.73"></path>
+                      <path d="M11 10.27 7 3.34"></path>
+                      <path d="m20.66 17-1.73-1"></path>
+                      <path d="m3.34 7 1.73 1"></path>
+                      <path d="M14 12h8"></path>
+                      <path d="M2 12h2"></path>
+                      <path d="m20.66 7-1.73 1"></path>
+                      <path d="m3.34 17 1.73-1"></path>
+                      <path d="m17 3.34-1 1.73"></path>
+                      <path d="m11 13.73-4 6.93"></path>
+                    </svg>
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            配置默认场内/场外角色
+          </n-tooltip>
+        </div>
+        <p class="control-desc control-desc--hint">频道角色配置独立保存，切换频道时自动加载对应配置</p>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">术语高亮</p>
+            <p class="section-desc">控制世界术语的高亮样式与释义气泡</p>
+          </div>
+        </header>
+        <div class="keyword-settings">
+          <n-switch v-model:value="draft.worldKeywordHighlightEnabled">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <n-switch v-model:value="draft.worldKeywordUnderlineOnly" :disabled="!draft.worldKeywordHighlightEnabled">
+            <template #checked>仅下划线</template>
+            <template #unchecked>背景 + 下划线</template>
+          </n-switch>
+          <n-switch v-model:value="draft.worldKeywordTooltipEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
+            <template #checked>启用释义气泡</template>
+            <template #unchecked>禁用释义气泡</template>
+          </n-switch>
+          <n-switch v-model:value="draft.worldKeywordDeduplicateEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
+            <template #checked>术语去重</template>
+            <template #unchecked>允许重复</template>
+          </n-switch>
+        </div>
+        <div class="keyword-preview">
+          <span
+            class="keyword-preview__text"
+            :class="{
+              'keyword-preview__text--underline': draft.worldKeywordUnderlineOnly,
+              'keyword-preview__text--disabled': !draft.worldKeywordHighlightEnabled,
+            }"
+          >
+            阿瓦隆勇者
+          </span>
+          <span> 穿越黑森林。</span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">排版（字号 / 行距 / 字距）</p>
             <p class="section-desc">控制阅读密度，满足不同屏幕与视力偏好</p>
           </div>
@@ -406,118 +519,7 @@ const handleConfirm = () => emit('save', { ...draft })
         </div>
       </section>
 
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">快捷键管理</p>
-            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、悄悄话、上传等</p>
-          </div>
-        </header>
-        <n-button secondary size="small" @click="shortcutPanelVisible = true">
-          配置快捷键
-        </n-button>
-      </section>
 
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">术语高亮</p>
-            <p class="section-desc">控制世界术语的高亮样式与释义气泡</p>
-          </div>
-        </header>
-        <div class="keyword-settings">
-          <n-switch v-model:value="draft.worldKeywordHighlightEnabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
-          <n-switch v-model:value="draft.worldKeywordUnderlineOnly" :disabled="!draft.worldKeywordHighlightEnabled">
-            <template #checked>仅下划线</template>
-            <template #unchecked>背景 + 下划线</template>
-          </n-switch>
-          <n-switch v-model:value="draft.worldKeywordTooltipEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
-            <template #checked>启用释义气泡</template>
-            <template #unchecked>禁用释义气泡</template>
-          </n-switch>
-          <n-switch v-model:value="draft.worldKeywordDeduplicateEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
-            <template #checked>术语去重</template>
-            <template #unchecked>允许重复</template>
-          </n-switch>
-        </div>
-        <div class="keyword-preview">
-          <span
-            class="keyword-preview__text"
-            :class="{
-              'keyword-preview__text--underline': draft.worldKeywordUnderlineOnly,
-              'keyword-preview__text--disabled': !draft.worldKeywordHighlightEnabled,
-            }"
-          >
-            阿瓦隆勇者
-          </span>
-          <span> 穿越黑森林。</span>
-        </div>
-      </section>
-
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">输入与发送</p>
-            <p class="section-desc">选择回车发送方式，另一组合则换行</p>
-          </div>
-        </header>
-        <n-radio-group v-model:value="draft.sendShortcut" size="large">
-          <n-radio-button value="enter">Enter 直接发送</n-radio-button>
-          <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
-        </n-radio-group>
-        <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
-      </section>
-
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">场内场外自动切换</p>
-            <p class="section-desc">切换IC/OOC模式时，自动切换到预设的频道角色</p>
-          </div>
-        </header>
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <n-switch v-model:value="draft.autoSwitchRoleOnIcOocToggle">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <n-button
-                circle
-                size="tiny"
-                quaternary
-                @click="roleConfigPanelVisible = true"
-              >
-                <template #icon>
-                  <n-icon size="16">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"></path>
-                      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path>
-                      <path d="M12 2v2"></path>
-                      <path d="M12 22v-2"></path>
-                      <path d="m17 20.66-1-1.73"></path>
-                      <path d="M11 10.27 7 3.34"></path>
-                      <path d="m20.66 17-1.73-1"></path>
-                      <path d="m3.34 7 1.73 1"></path>
-                      <path d="M14 12h8"></path>
-                      <path d="M2 12h2"></path>
-                      <path d="m20.66 7-1.73 1"></path>
-                      <path d="m3.34 17 1.73-1"></path>
-                      <path d="m17 3.34-1 1.73"></path>
-                      <path d="m11 13.73-4 6.93"></path>
-                    </svg>
-                  </n-icon>
-                </template>
-              </n-button>
-            </template>
-            配置默认场内/场外角色
-          </n-tooltip>
-        </div>
-        <p class="control-desc control-desc--hint">频道角色配置独立保存，切换频道时自动加载对应配置</p>
-      </section>
 
       <section class="display-settings__section">
         <header class="preview-header">
