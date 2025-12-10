@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
-import { createDefaultDisplaySettings, type DisplaySettings } from '@/stores/display'
+import { createDefaultDisplaySettings, useDisplayStore, type DisplaySettings } from '@/stores/display'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
+import CustomThemePanel from './CustomThemePanel.vue'
 
 interface Props {
   visible: boolean
@@ -18,6 +19,8 @@ const emit = defineEmits<{
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 const shortcutPanelVisible = ref(false)
 const roleConfigPanelVisible = ref(false)
+const customThemePanelVisible = ref(false)
+const display = useDisplayStore()
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
@@ -59,6 +62,7 @@ watch(
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+  // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },
 )
@@ -141,6 +145,59 @@ const handleConfirm = () => emit('save', { ...draft })
           <n-radio-button value="day">日间模式</n-radio-button>
           <n-radio-button value="night">夜间模式</n-radio-button>
         </n-radio-group>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">自定义主题</p>
+            <p class="section-desc">创建个性化配色方案，覆盖系统日夜主题</p>
+          </div>
+        </header>
+        <div class="custom-theme-row">
+          <n-switch
+            :value="display.settings.customThemeEnabled"
+            @update:value="display.setCustomThemeEnabled">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                circle
+                size="tiny"
+                quaternary
+                :disabled="!display.settings.customThemeEnabled"
+                @click="customThemePanelVisible = true"
+              >
+                <template #icon>
+                  <n-icon size="16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"></path>
+                      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path>
+                      <path d="M12 2v2"></path>
+                      <path d="M12 22v-2"></path>
+                      <path d="m17 20.66-1-1.73"></path>
+                      <path d="M11 10.27 7 3.34"></path>
+                      <path d="m20.66 17-1.73-1"></path>
+                      <path d="m3.34 7 1.73 1"></path>
+                      <path d="M14 12h8"></path>
+                      <path d="M2 12h2"></path>
+                      <path d="m20.66 7-1.73 1"></path>
+                      <path d="m3.34 17 1.73-1"></path>
+                      <path d="m17 3.34-1 1.73"></path>
+                      <path d="m11 13.73-4 6.93"></path>
+                    </svg>
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            配置自定义主题颜色
+          </n-tooltip>
+          <span v-if="display.settings.customThemeEnabled && display.getActiveCustomTheme()" class="active-theme-name">
+            当前：{{ display.getActiveCustomTheme()?.name }}
+          </span>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -563,6 +620,7 @@ const handleConfirm = () => emit('save', { ...draft })
   </n-modal>
   <ShortcutSettingsPanel v-model:show="shortcutPanelVisible" />
   <IcOocRoleConfigPanel v-model:show="roleConfigPanelVisible" />
+  <CustomThemePanel v-model:show="customThemePanelVisible" />
 </template>
 
 <style scoped lang="scss">
@@ -774,6 +832,20 @@ const handleConfirm = () => emit('save', { ...draft })
 
 .keyword-preview__text--disabled {
   opacity: 0.5;
+}
+
+.custom-theme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.active-theme-name {
+  font-size: 0.8rem;
+  color: var(--sc-text-secondary);
+  padding: 0.2rem 0.5rem;
+  background: rgba(51, 136, 222, 0.1);
+  border-radius: 4px;
 }
 
 .display-settings__footer {

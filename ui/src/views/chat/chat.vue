@@ -8643,6 +8643,16 @@ onBeforeUnmount(() => {
   --chat-preview-dot-ooc: rgba(255, 255, 255, 0.35);
 }
 
+/* Custom theme override - when custom theme is active, use CSS variables from :root */
+:root[data-custom-theme='true'] .chat--palette-day,
+:root[data-custom-theme='true'] .chat--palette-night {
+  --chat-ic-bg: var(--custom-chat-ic-bg, var(--chat-ic-bg));
+  --chat-ooc-bg: var(--custom-chat-ooc-bg, var(--chat-ooc-bg));
+  --chat-stage-bg: var(--custom-chat-stage-bg, var(--chat-stage-bg));
+  --chat-preview-bg: var(--custom-chat-preview-bg, var(--chat-preview-bg));
+  --chat-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot));
+}
+
 .chat--layout-compact {
   background-color: var(--chat-stage-bg);
   transition: background-color 0.25s ease;

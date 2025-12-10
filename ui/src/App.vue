@@ -125,3 +125,1008 @@ nav a:first-of-type {
   }
 }
 </style>
+
+<!-- Global unscoped styles for custom theme override -->
+<style>
+/* ==========================================================================
+   CUSTOM THEME GLOBAL OVERRIDES
+   When custom theme is active (data-custom-theme='true' on :root),
+   these styles ensure ALL UI components use custom theme colors.
+   ========================================================================== */
+
+/* Base root text color */
+:root[data-custom-theme='true'] {
+  color: var(--sc-text-primary);
+}
+
+/* --------------------------------------------------------------------------
+   BACKGROUNDS - Surfaces, Cards, Panels
+   -------------------------------------------------------------------------- */
+
+/* Main surfaces */
+:root[data-custom-theme='true'] body,
+:root[data-custom-theme='true'] .chat,
+:root[data-custom-theme='true'] .world-panel,
+:root[data-custom-theme='true'] .channel-list,
+:root[data-custom-theme='true'] .sidebar,
+:root[data-custom-theme='true'] .sc-sidebar,
+:root[data-custom-theme='true'] .panel,
+:root[data-custom-theme='true'] .view-container {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Elevated surfaces */
+:root[data-custom-theme='true'] .n-card,
+:root[data-custom-theme='true'] .n-modal,
+:root[data-custom-theme='true'] .n-drawer,
+:root[data-custom-theme='true'] .n-drawer-content,
+:root[data-custom-theme='true'] .n-popover,
+:root[data-custom-theme='true'] .n-tooltip,
+:root[data-custom-theme='true'] .n-dialog,
+:root[data-custom-theme='true'] .n-message,
+:root[data-custom-theme='true'] .n-notification {
+  --n-color: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Header bar */
+:root[data-custom-theme='true'] .sc-header,
+:root[data-custom-theme='true'] .header,
+:root[data-custom-theme='true'] .app-header,
+:root[data-custom-theme='true'] .toolbar-header {
+  background-color: var(--sc-bg-header) !important;
+}
+
+/* --------------------------------------------------------------------------
+   NAIVE UI COMPONENTS - Comprehensive Coverage
+   -------------------------------------------------------------------------- */
+
+/* Dropdown menus */
+:root[data-custom-theme='true'] .n-dropdown-menu,
+:root[data-custom-theme='true'] .n-dropdown,
+:root[data-custom-theme='true'] .n-dropdown-option,
+:root[data-custom-theme='true'] .n-base-select-menu,
+:root[data-custom-theme='true'] .n-base-select-option {
+  --n-color: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Tabs */
+:root[data-custom-theme='true'] .n-tabs,
+:root[data-custom-theme='true'] .n-tabs-nav,
+:root[data-custom-theme='true'] .n-tabs-wrapper,
+:root[data-custom-theme='true'] .n-tabs-tab-wrapper,
+:root[data-custom-theme='true'] .n-tab-pane {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs-tab {
+  background-color: transparent !important;
+}
+
+/* Collapse panels */
+:root[data-custom-theme='true'] .n-collapse,
+:root[data-custom-theme='true'] .n-collapse-item,
+:root[data-custom-theme='true'] .n-collapse-item__header,
+:root[data-custom-theme='true'] .n-collapse-item__content-wrapper,
+:root[data-custom-theme='true'] .n-collapse-item__content-inner {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Lists */
+:root[data-custom-theme='true'] .n-list,
+:root[data-custom-theme='true'] .n-list-item,
+:root[data-custom-theme='true'] .n-thing {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Menu */
+:root[data-custom-theme='true'] .n-menu,
+:root[data-custom-theme='true'] .n-menu-item,
+:root[data-custom-theme='true'] .n-menu-item-content,
+:root[data-custom-theme='true'] .n-submenu,
+:root[data-custom-theme='true'] .n-submenu-children {
+  --n-color: var(--sc-bg-surface) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Tree */
+:root[data-custom-theme='true'] .n-tree,
+:root[data-custom-theme='true'] .n-tree-node,
+:root[data-custom-theme='true'] .n-tree-node-content {
+  background-color: transparent !important;
+}
+
+/* Tooltip and popover content */
+:root[data-custom-theme='true'] .n-tooltip .n-tooltip__content,
+:root[data-custom-theme='true'] .n-popover .n-popover__content,
+:root[data-custom-theme='true'] .n-popover__content {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* --------------------------------------------------------------------------
+   INPUTS AND FORM CONTROLS
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] .n-input,
+:root[data-custom-theme='true'] .n-input__input-el,
+:root[data-custom-theme='true'] .n-input__textarea-el,
+:root[data-custom-theme='true'] .n-input-wrapper,
+:root[data-custom-theme='true'] .n-base-selection,
+:root[data-custom-theme='true'] .n-select,
+:root[data-custom-theme='true'] textarea {
+  --n-color: var(--sc-bg-input) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* --------------------------------------------------------------------------
+   BUTTONS
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] .n-button--default-type:not(.n-button--disabled) {
+  --n-color: var(--sc-bg-surface) !important;
+  background-color: var(--sc-bg-surface) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* --------------------------------------------------------------------------
+   BORDERS
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] .n-card,
+:root[data-custom-theme='true'] .n-input,
+:root[data-custom-theme='true'] .n-select,
+:root[data-custom-theme='true'] .n-collapse-item,
+:root[data-custom-theme='true'] .n-divider,
+:root[data-custom-theme='true'] .sc-header {
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* --------------------------------------------------------------------------
+   TEXT COLORS
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] .n-text,
+:root[data-custom-theme='true'] .n-h1,
+:root[data-custom-theme='true'] .n-h2,
+:root[data-custom-theme='true'] .n-h3,
+:root[data-custom-theme='true'] .n-h4,
+:root[data-custom-theme='true'] .n-h5,
+:root[data-custom-theme='true'] .n-h6,
+:root[data-custom-theme='true'] .n-p {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-text--secondary {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* --------------------------------------------------------------------------
+   CHAT MESSAGE SPECIFIC
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] .message-row__surface--tone-ic {
+  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg)) !important;
+}
+
+:root[data-custom-theme='true'] .message-row__surface--tone-ooc {
+  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg)) !important;
+}
+
+/* --------------------------------------------------------------------------
+   SCROLLBAR (optional visual enhancement)
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] ::-webkit-scrollbar-track {
+  background: var(--sc-bg-surface);
+}
+
+:root[data-custom-theme='true'] ::-webkit-scrollbar-thumb {
+  background: var(--sc-border-strong);
+}
+
+/* --------------------------------------------------------------------------
+   CSS VARIABLE FALLBACK OVERRIDE
+   Force CSS variables to use :root values even when fallbacks are specified
+   -------------------------------------------------------------------------- */
+
+:root[data-custom-theme='true'] {
+  --sc-bg-surface: var(--sc-bg-surface);
+  --sc-bg-elevated: var(--sc-bg-elevated);
+  --sc-bg-input: var(--sc-bg-input);
+  --sc-bg-header: var(--sc-bg-header);
+  --sc-text-primary: var(--sc-text-primary);
+  --sc-text-secondary: var(--sc-text-secondary);
+  --sc-border-mute: var(--sc-border-mute);
+  --sc-border-strong: var(--sc-border-strong);
+}
+
+/* --------------------------------------------------------------------------
+   DEEP NAIVE UI INTERNAL VARIABLE OVERRIDES
+   These target Naive UI's inline CSS variable system
+   -------------------------------------------------------------------------- */
+
+/* Modal deep overrides */
+:root[data-custom-theme='true'] .n-modal .n-card,
+:root[data-custom-theme='true'] .n-modal .n-card__content,
+:root[data-custom-theme='true'] .n-modal .n-card-header,
+:root[data-custom-theme='true'] .n-modal .n-card-header__main,
+:root[data-custom-theme='true'] .n-card__content,
+:root[data-custom-theme='true'] .n-card-header {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Dialog deep overrides */
+:root[data-custom-theme='true'] .n-dialog,
+:root[data-custom-theme='true'] .n-dialog__content,
+:root[data-custom-theme='true'] .n-dialog .n-dialog__title {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Popover deep overrides */
+:root[data-custom-theme='true'] .n-popover-shared,
+:root[data-custom-theme='true'] .n-popover-shared .n-popover-arrow-wrapper,
+:root[data-custom-theme='true'] [class*="n-popover"] {
+  --n-color: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Button comprehensive overrides */
+:root[data-custom-theme='true'] .n-button {
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-button--default-type {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-color-pressed: var(--sc-bg-elevated) !important;
+  --n-color-focus: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-button--tertiary-type,
+:root[data-custom-theme='true'] .n-button--quaternary-type {
+  --n-color: transparent !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Input comprehensive overrides */
+:root[data-custom-theme='true'] .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-color-focus: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-hover: 1px solid var(--sc-border-strong) !important;
+}
+
+/* Select comprehensive overrides */
+:root[data-custom-theme='true'] .n-base-selection,
+:root[data-custom-theme='true'] .n-base-selection .n-base-selection-label {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+:root[data-custom-theme='true'] .n-base-select-menu {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-option-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Dropdown comprehensive overrides */
+:root[data-custom-theme='true'] .n-dropdown-menu {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-option-color-hover: rgba(0, 0, 0, 0.05) !important;
+  --n-option-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-dropdown-option-body {
+  --n-option-text-color: var(--sc-text-primary) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Tag overrides */
+:root[data-custom-theme='true'] .n-tag--default-type {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* Switch overrides */
+:root[data-custom-theme='true'] .n-switch {
+  --n-rail-color: var(--sc-border-mute) !important;
+}
+
+/* Radio/Checkbox overrides */
+:root[data-custom-theme='true'] .n-radio,
+:root[data-custom-theme='true'] .n-checkbox {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Slider overrides */
+:root[data-custom-theme='true'] .n-slider {
+  --n-rail-color: var(--sc-border-mute) !important;
+}
+
+/* Divider overrides */
+:root[data-custom-theme='true'] .n-divider {
+  --n-color: var(--sc-border-mute) !important;
+}
+
+/* Data table overrides */
+:root[data-custom-theme='true'] .n-data-table,
+:root[data-custom-theme='true'] .n-data-table-th,
+:root[data-custom-theme='true'] .n-data-table-td {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+}
+
+/* Drawer deep overrides */
+:root[data-custom-theme='true'] .n-drawer,
+:root[data-custom-theme='true'] .n-drawer-content,
+:root[data-custom-theme='true'] .n-drawer-body-content-wrapper {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-body-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Form item overrides */
+:root[data-custom-theme='true'] .n-form-item-label {
+  --n-label-text-color: var(--sc-text-primary) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Empty state overrides */
+:root[data-custom-theme='true'] .n-empty {
+  --n-text-color: var(--sc-text-secondary) !important;
+}
+
+/* Badge overrides */
+:root[data-custom-theme='true'] .n-badge {
+  --n-color: var(--primary-color, #3388de) !important;
+}
+
+/* Pagination overrides */
+:root[data-custom-theme='true'] .n-pagination {
+  --n-item-color: var(--sc-bg-surface) !important;
+  --n-item-text-color: var(--sc-text-primary) !important;
+  --n-button-color: var(--sc-bg-surface) !important;
+}
+
+/* Loading / Spin overrides */
+:root[data-custom-theme='true'] .n-spin-container {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Tooltip arrow fix */
+:root[data-custom-theme='true'] .n-tooltip .n-tooltip__arrow {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Scrollbar for Naive UI scrollable areas */
+:root[data-custom-theme='true'] .n-scrollbar-rail,
+:root[data-custom-theme='true'] .n-scrollbar-content {
+  --n-scrollbar-color: var(--sc-border-strong) !important;
+}
+
+/* Ultimate fallback: any element with background-color white in custom theme mode */
+:root[data-custom-theme='true'] [style*="background-color: rgb(255, 255, 255)"],
+:root[data-custom-theme='true'] [style*="background-color:#fff"],
+:root[data-custom-theme='true'] [style*="background-color: #fff"],
+:root[data-custom-theme='true'] [style*="background-color:#ffffff"],
+:root[data-custom-theme='true'] [style*="background-color: #ffffff"] {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* --------------------------------------------------------------------------
+   ADDITIONAL MISSING COMPONENTS
+   -------------------------------------------------------------------------- */
+
+/* HTML and Body backgrounds */
+:root[data-custom-theme='true'],
+:root[data-custom-theme='true'] html,
+:root[data-custom-theme='true'] body,
+:root[data-custom-theme='true'] #app {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Radio button groups (used for tabs like 频道/私聊 and layout/theme selectors) */
+:root[data-custom-theme='true'] .n-radio-group,
+:root[data-custom-theme='true'] .n-radio-button-group {
+  --n-button-color: var(--sc-bg-surface) !important;
+  --n-button-color-active: var(--sc-bg-elevated) !important;
+  --n-button-text-color: var(--sc-text-primary) !important;
+  --n-button-border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .n-radio-button,
+:root[data-custom-theme='true'] .n-radio__label {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-radio-button--checked {
+  --n-color: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Button groups */
+:root[data-custom-theme='true'] .n-button-group .n-button {
+  --n-color: var(--sc-bg-surface) !important;
+  background-color: var(--sc-bg-surface) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* Tabs bar backgrounds - more specific */
+:root[data-custom-theme='true'] .n-tabs-bar,
+:root[data-custom-theme='true'] .n-tabs-rail {
+  background-color: transparent !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs-tab-pad,
+:root[data-custom-theme='true'] .n-tabs-scroll-padding {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Segmented control / button style tabs */
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-rail,
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-tab {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-tab--active {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Card style tabs */
+:root[data-custom-theme='true'] .n-tabs--card-type .n-tabs-tab {
+  background-color: var(--sc-bg-surface) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs--card-type .n-tabs-tab--active {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Channel favorites area */
+:root[data-custom-theme='true'] .favorite-channels,
+:root[data-custom-theme='true'] .channel-favorites,
+:root[data-custom-theme='true'] .sc-favorites {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Any Naive UI component with --n-color css variable */
+:root[data-custom-theme='true'] [class*="n-"][style*="--n-color"] {
+  --n-color: var(--sc-bg-elevated) !important;
+}
+
+/* Ensure all popconfirm dialogs use custom theme */
+:root[data-custom-theme='true'] .n-popconfirm,
+:root[data-custom-theme='true'] .n-popconfirm__body {
+  --n-color: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Alert component */
+:root[data-custom-theme='true'] .n-alert {
+  --n-color: var(--sc-bg-elevated) !important;
+}
+
+/* Steps component */
+:root[data-custom-theme='true'] .n-steps,
+:root[data-custom-theme='true'] .n-step {
+  --n-indicator-color: var(--sc-bg-surface) !important;
+}
+
+/* Timeline component */
+:root[data-custom-theme='true'] .n-timeline,
+:root[data-custom-theme='true'] .n-timeline-item {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Upload component */
+:root[data-custom-theme='true'] .n-upload,
+:root[data-custom-theme='true'] .n-upload-trigger {
+  --n-color: var(--sc-bg-surface) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Avatar component background */
+:root[data-custom-theme='true'] .n-avatar {
+  --n-color: var(--sc-bg-elevated) !important;
+}
+
+/* Result/Empty states */
+:root[data-custom-theme='true'] .n-result {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Affix component */
+:root[data-custom-theme='true'] .n-affix {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Back to top */
+:root[data-custom-theme='true'] .n-back-top {
+  --n-color: var(--sc-bg-elevated) !important;
+}
+
+/* Breadcrumb */
+:root[data-custom-theme='true'] .n-breadcrumb {
+  --n-item-text-color: var(--sc-text-primary) !important;
+}
+
+/* Calendar */
+:root[data-custom-theme='true'] .n-calendar {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Carousel */
+:root[data-custom-theme='true'] .n-carousel {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Countdown */
+:root[data-custom-theme='true'] .n-countdown {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Image preview */
+:root[data-custom-theme='true'] .n-image-preview-toolbar {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Transfer component */
+:root[data-custom-theme='true'] .n-transfer {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* Watermark - transparent */
+:root[data-custom-theme='true'] .n-watermark {
+  background-color: transparent !important;
+}
+
+/* Mega fallback: force ALL Naive components to respect custom bg */
+:root[data-custom-theme='true'] .n-config-provider {
+  --n-body-color: var(--sc-bg-surface) !important;
+}
+
+/* --------------------------------------------------------------------------
+   USER-IDENTIFIED SPECIFIC CLASSES
+   -------------------------------------------------------------------------- */
+
+/* Chat search panel */
+:root[data-custom-theme='true'] .chat-search-panel {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Tabs tab wrapper - inner wrapper */
+:root[data-custom-theme='true'] .n-tabs-tab-wrapper {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Export entry */
+:root[data-custom-theme='true'] .export-entry {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* N-table component */
+:root[data-custom-theme='true'] .n-table,
+:root[data-custom-theme='true'] .n-table--bordered,
+:root[data-custom-theme='true'] .n-table--bottom-bordered,
+:root[data-custom-theme='true'] .n-table th,
+:root[data-custom-theme='true'] .n-table td,
+:root[data-custom-theme='true'] .n-table thead,
+:root[data-custom-theme='true'] .n-table tbody {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .n-table th {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Online badge */
+:root[data-custom-theme='true'] .online-badge {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Sider item (sidebar navigation) */
+:root[data-custom-theme='true'] .sider-item {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .sider-item.active,
+:root[data-custom-theme='true'] .sider-item:hover {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Chat search panel results */
+:root[data-custom-theme='true'] .chat-search-panel__results {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* History mode hint */
+:root[data-custom-theme='true'] .history-mode-hint {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Audio drawer and player */
+:root[data-custom-theme='true'] .audio-drawer,
+:root[data-custom-theme='true'] .audio-drawer__player,
+:root[data-custom-theme='true'] .audio-drawer__player * {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer__player input,
+:root[data-custom-theme='true'] .audio-drawer__player select,
+:root[data-custom-theme='true'] .audio-drawer__player .n-input,
+:root[data-custom-theme='true'] .audio-drawer__player .n-select {
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Active tabs - comprehensive */
+:root[data-custom-theme='true'] .n-tabs-tab--active,
+:root[data-custom-theme='true'] .n-tabs-tab.n-tabs-tab--active,
+:root[data-custom-theme='true'] .n-tabs-tab--active.sc-sidebar-fill,
+:root[data-custom-theme='true'] .sc-sidebar-fill.n-tabs-tab--active {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Inactive tabs */
+:root[data-custom-theme='true'] .n-tabs-tab:not(.n-tabs-tab--active) {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+/* SC sidebar fill class */
+:root[data-custom-theme='true'] .sc-sidebar-fill {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .sc-sidebar-fill.active,
+:root[data-custom-theme='true'] .sc-sidebar-fill:hover {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* N-Card action area */
+:root[data-custom-theme='true'] .n-card__action {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* Dice tray columns */
+:root[data-custom-theme='true'] .dice-tray,
+:root[data-custom-theme='true'] .dice-tray__column,
+:root[data-custom-theme='true'] .dice-tray__column--quick,
+:root[data-custom-theme='true'] .dice-tray__column--form {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray input,
+:root[data-custom-theme='true'] .dice-tray .n-input,
+:root[data-custom-theme='true'] .dice-tray .n-select,
+:root[data-custom-theme='true'] .dice-tray__column input {
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* TipTap rich text editor - comprehensive */
+:root[data-custom-theme='true'] .tiptap-wrapper,
+:root[data-custom-theme='true'] .tiptap-wrapper *,
+:root[data-custom-theme='true'] .tiptap-editor,
+:root[data-custom-theme='true'] .tiptap-editor-wrapper,
+:root[data-custom-theme='true'] .tiptap-content,
+:root[data-custom-theme='true'] .ProseMirror,
+:root[data-custom-theme='true'] .tiptap {
+  background-color: var(--sc-bg-input) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .tiptap-toolbar,
+:root[data-custom-theme='true'] .tiptap-menubar,
+:root[data-custom-theme='true'] .tiptap-wrapper .toolbar,
+:root[data-custom-theme='true'] .editor-toolbar {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .tiptap-toolbar button,
+:root[data-custom-theme='true'] .tiptap-menubar button,
+:root[data-custom-theme='true'] .editor-toolbar button {
+  background-color: transparent !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .tiptap-toolbar button:hover,
+:root[data-custom-theme='true'] .tiptap-toolbar button.is-active {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* TipTap placeholder */
+:root[data-custom-theme='true'] .tiptap p.is-editor-empty:first-child::before {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* TipTap selection and focus */
+:root[data-custom-theme='true'] .ProseMirror-focused {
+  border-color: var(--sc-border-strong) !important;
+}
+
+/* TipTap bubble menu */
+:root[data-custom-theme='true'] .tippy-box,
+:root[data-custom-theme='true'] .tippy-content {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Upload dragger */
+:root[data-custom-theme='true'] .n-upload-dragger {
+  background-color: var(--sc-bg-surface) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-upload-dragger:hover {
+  border-color: var(--sc-border-strong) !important;
+}
+
+/* Dice tray quick buttons */
+:root[data-custom-theme='true'] .dice-tray__quick-btn {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray__quick-btn:hover {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+/* Dice tray history card */
+:root[data-custom-theme='true'] .dice-tray__history-card {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* Keyword tooltip */
+:root[data-custom-theme='true'] .keyword-tooltip,
+:root[data-custom-theme='true'] .keyword-tooltip--hover {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* Dice tray macro key buttons */
+:root[data-custom-theme='true'] .dice-tray__macro-key {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray__macro-key:hover {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+/* --------------------------------------------------------------------------
+   KEYWORD HIGHLIGHT CUSTOM THEME OVERRIDES
+   Uses custom CSS variables for full theming support
+   -------------------------------------------------------------------------- */
+
+/* Define custom keyword highlight variables when custom theme is active */
+:root[data-custom-theme='true'] {
+  --keyword-bg: var(--custom-keyword-bg, rgba(180, 140, 60, 0.35));
+  --keyword-bg-hover: var(--custom-keyword-bg-hover, rgba(180, 140, 60, 0.5));
+  --keyword-border-color: var(--custom-keyword-border, rgba(220, 180, 80, 0.7));
+  --keyword-text-color: var(--custom-keyword-text, var(--sc-text-primary));
+  --keyword-underline-bg-hover: var(--custom-keyword-underline-bg-hover, rgba(180, 140, 60, 0.25));
+}
+
+/* Override keyword highlight styles in custom theme mode */
+:root[data-custom-theme='true'] .keyword-highlight {
+  background: var(--keyword-bg) !important;
+  border-bottom-color: var(--keyword-border-color) !important;
+  color: var(--keyword-text-color) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-highlight:hover {
+  background: var(--keyword-bg-hover) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-highlight--underline {
+  background: transparent !important;
+  border-bottom-color: var(--keyword-border-color) !important;
+  color: inherit !important;
+}
+
+:root[data-custom-theme='true'] .keyword-highlight--underline:hover {
+  background: var(--keyword-underline-bg-hover) !important;
+}
+
+/* Keyword tooltip body in custom theme */
+:root[data-custom-theme='true'] .keyword-tooltip__body {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight {
+  background: var(--keyword-bg) !important;
+  border-bottom-color: var(--keyword-border-color) !important;
+}
+
+/* Active tabs with sc-sidebar-fill - more specific selectors */
+:root[data-custom-theme='true'] .n-tabs-tab.n-tabs-tab--active.sc-sidebar-fill,
+:root[data-custom-theme='true'] .n-tabs-tab--active.sc-sidebar-fill,
+:root[data-custom-theme='true'] .sc-sidebar-fill.n-tabs-tab--active,
+:root[data-custom-theme='true'] .n-tabs .n-tabs-tab--active {
+  --n-tab-color-active: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Export entry warning */
+:root[data-custom-theme='true'] .export-entry__warning {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Chat search panel filter bar */
+:root[data-custom-theme='true'] .chat-search-panel__filter-bar {
+  background-color: var(--sc-bg-surface) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* N-base-selection-tags (multi-select tags area) */
+:root[data-custom-theme='true'] .n-base-selection-tags {
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* All dropdown/select menus - comprehensive */
+:root[data-custom-theme='true'] .n-base-select-menu,
+:root[data-custom-theme='true'] .n-base-select-option,
+:root[data-custom-theme='true'] .n-base-select-group-header,
+:root[data-custom-theme='true'] .v-binder-follower-content,
+:root[data-custom-theme='true'] .n-select-menu {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-option-color-pending: rgba(0, 0, 0, 0.05) !important;
+  --n-option-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-base-select-option--selected,
+:root[data-custom-theme='true'] .n-base-select-option--pending {
+  background-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Auto-complete dropdown */
+:root[data-custom-theme='true'] .n-auto-complete-menu {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Cascader dropdown */
+:root[data-custom-theme='true'] .n-cascader-menu {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Time/Date picker dropdowns */
+:root[data-custom-theme='true'] .n-date-panel,
+:root[data-custom-theme='true'] .n-time-picker-panel {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Color picker popup */
+:root[data-custom-theme='true'] .n-color-picker-panel {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* --------------------------------------------------------------------------
+   NAIVEUI SEGMENT TABS - AGGRESSIVE INLINE STYLE OVERRIDE
+   Naive UI sets these as inline styles, so we need to override with CSS vars
+   -------------------------------------------------------------------------- */
+
+/* Target segment tabs specifically */
+:root[data-custom-theme='true'] .n-tabs--segment-type {
+  --n-color-segment: var(--sc-bg-surface) !important;
+  --n-tab-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-rail {
+  background-color: var(--sc-bg-surface) !important;
+  --n-color-segment: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-tab {
+  --n-tab-text-color: var(--sc-text-secondary) !important;
+  --n-tab-text-color-active: var(--sc-text-primary) !important;
+  --n-tab-text-color-hover: var(--sc-text-primary) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-tab--active {
+  --n-tab-color: var(--sc-bg-elevated) !important;
+  --n-tab-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* The segment tab capsule/background */
+:root[data-custom-theme='true'] .n-tabs--segment-type .n-tabs-capsule {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* --------------------------------------------------------------------------
+   NAIVEUI SELECT OPTIONS - INLINE STYLE OVERRIDE
+   -------------------------------------------------------------------------- */
+
+/* Target select option backgrounds */
+:root[data-custom-theme='true'] .n-base-select-option {
+  --n-option-color-active: var(--sc-bg-elevated) !important;
+  --n-option-color-pending: rgba(128, 128, 128, 0.15) !important;
+  --n-option-text-color: var(--sc-text-primary) !important;
+  --n-option-text-color-active: var(--sc-text-primary) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-base-select-option--selected {
+  --n-option-color-active: var(--sc-bg-elevated) !important;
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-base-select-option--pending {
+  background-color: rgba(128, 128, 128, 0.12) !important;
+}
+
+/* The check icon in selected options */
+:root[data-custom-theme='true'] .n-base-select-option__check {
+  color: var(--primary-color, #3388de) !important;
+}
+
+/* Force all inline backgrounds in Naive components */
+:root[data-custom-theme='true'] [class*="n-"][style*="--n-color"] {
+  --n-color: var(--sc-bg-elevated) !important;
+}
+
+:root[data-custom-theme='true'] [class*="n-tabs"][style*="--n-color-segment"] {
+  --n-color-segment: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] [class*="n-tabs"][style*="--n-tab-color"] {
+  --n-tab-color: var(--sc-bg-elevated) !important;
+}
+</style>

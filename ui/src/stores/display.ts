@@ -31,6 +31,41 @@ export type ToolbarHotkeyKey =
 
 export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSeconds'
 
+// 自定义主题颜色配置
+export interface CustomThemeColors {
+  // 背景色
+  bgSurface?: string        // 主背景
+  bgElevated?: string       // 卡片/弹窗背景
+  bgInput?: string          // 输入框背景
+  bgHeader?: string         // 顶栏背景
+  // 文字色
+  textPrimary?: string      // 主文字
+  textSecondary?: string    // 次要文字
+  // 聊天区域
+  chatIcBg?: string         // 场内消息背景
+  chatOocBg?: string        // 场外消息背景
+  chatStageBg?: string      // 聊天舞台背景
+  chatPreviewBg?: string    // 预览区背景
+  chatPreviewDot?: string   // 预览区圆点
+  // 边框
+  borderMute?: string       // 淡边框
+  borderStrong?: string     // 强边框
+  // 强调色
+  primaryColor?: string     // 主题强调色
+  primaryColorHover?: string
+  // 术语高亮
+  keywordBg?: string        // 术语高亮背景
+  keywordBorder?: string    // 术语高亮下划线
+}
+
+export interface CustomTheme {
+  id: string
+  name: string
+  colors: CustomThemeColors
+  createdAt: number
+  updatedAt: number
+}
+
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
@@ -60,6 +95,10 @@ export interface DisplaySettings {
   worldKeywordDeduplicateEnabled: boolean
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
+  // 自定义主题
+  customThemeEnabled: boolean
+  customThemes: CustomTheme[]
+  activeCustomThemeId: string | null
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -298,6 +337,9 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordDeduplicateEnabled: false,
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
+  customThemeEnabled: false,
+  customThemes: [],
+  activeCustomThemeId: null,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -330,6 +372,51 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
   return result as Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
 }
 
+const normalizeCustomThemeColors = (value: any): CustomThemeColors => {
+  if (!value || typeof value !== 'object') return {}
+  const result: CustomThemeColors = {}
+  const colorKeys: (keyof CustomThemeColors)[] = [
+    'bgSurface', 'bgElevated', 'bgInput', 'bgHeader',
+    'textPrimary', 'textSecondary',
+    'chatIcBg', 'chatOocBg', 'chatStageBg', 'chatPreviewBg', 'chatPreviewDot',
+    'borderMute', 'borderStrong',
+    'primaryColor', 'primaryColorHover'
+  ]
+  colorKeys.forEach(key => {
+    if (typeof value[key] === 'string' && value[key].trim()) {
+      result[key] = value[key].trim()
+    }
+  })
+  return result
+}
+
+const normalizeCustomTheme = (value: any): CustomTheme | null => {
+  if (!value || typeof value !== 'object') return null
+  const id = typeof value.id === 'string' ? value.id.trim() : ''
+  const name = typeof value.name === 'string' ? value.name.trim() : ''
+  if (!id || !name) return null
+  return {
+    id,
+    name,
+    colors: normalizeCustomThemeColors(value.colors),
+    createdAt: typeof value.createdAt === 'number' ? value.createdAt : Date.now(),
+    updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : Date.now(),
+  }
+}
+
+const normalizeCustomThemes = (value: any): CustomTheme[] => {
+  if (!Array.isArray(value)) return []
+  const result: CustomTheme[] = []
+  const seenIds = new Set<string>()
+  for (const item of value) {
+    const normalized = normalizeCustomTheme(item)
+    if (normalized && !seenIds.has(normalized.id)) {
+      result.push(normalized)
+      seenIds.add(normalized.id)
+    }
+  }
+  return result
+}
 const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
     return defaultSettings()
@@ -421,6 +508,9 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
+      customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
+      customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
+      activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -560,6 +650,18 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'autoSwitchRoleOnIcOocToggle')
       ? coerceBoolean((patch as any).autoSwitchRoleOnIcOocToggle)
       : base.autoSwitchRoleOnIcOocToggle,
+  customThemeEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'customThemeEnabled')
+      ? coerceBoolean((patch as any).customThemeEnabled)
+      : base.customThemeEnabled,
+  customThemes:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'customThemes')
+      ? normalizeCustomThemes((patch as any).customThemes)
+      : base.customThemes,
+  activeCustomThemeId:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'activeCustomThemeId')
+      ? (typeof (patch as any).activeCustomThemeId === 'string' ? (patch as any).activeCustomThemeId : null)
+      : base.activeCustomThemeId,
 })
 
 export const useDisplayStore = defineStore('display', {
@@ -749,6 +851,9 @@ export const useDisplayStore = defineStore('display', {
       const setVar = (name: string, value: string) => {
         root.style.setProperty(name, value)
       }
+      const removeVar = (name: string) => {
+        root.style.removeProperty(name)
+      }
       setVar('--chat-font-size', `${effective.fontSize / 16}rem`)
       setVar('--chat-line-height', `${effective.lineHeight}`)
       setVar('--chat-letter-spacing', `${effective.letterSpacing}px`)
@@ -757,6 +862,94 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)
+
+      // Apply custom theme colors
+      const customColorVars = [
+        '--sc-bg-surface', '--sc-bg-elevated', '--sc-bg-input', '--sc-bg-header',
+        '--sc-text-primary', '--sc-text-secondary',
+        '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
+        '--sc-border-mute', '--sc-border-strong',
+        '--primary-color', '--primary-color-hover'
+      ]
+      // Clear previous custom colors first
+      customColorVars.forEach(v => removeVar(v))
+
+      if (effective.customThemeEnabled && effective.activeCustomThemeId) {
+        const activeTheme = effective.customThemes.find(t => t.id === effective.activeCustomThemeId)
+        if (activeTheme?.colors) {
+          const c = activeTheme.colors
+          if (c.bgSurface) setVar('--sc-bg-surface', c.bgSurface)
+          if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
+          if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
+          if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
+          if (c.textPrimary) setVar('--sc-text-primary', c.textPrimary)
+          if (c.textSecondary) setVar('--sc-text-secondary', c.textSecondary)
+          // Use --custom-* prefix for chat colors so they can override scoped class variables
+          if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
+          if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
+          if (c.chatStageBg) setVar('--custom-chat-stage-bg', c.chatStageBg)
+          if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
+          if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
+          if (c.borderMute) setVar('--sc-border-mute', c.borderMute)
+          if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
+          if (c.primaryColor) setVar('--primary-color', c.primaryColor)
+          if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
+          // Keyword highlight colors
+          if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
+          if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
+          // Mark custom theme active for CSS selectors
+          root.dataset.customTheme = 'true'
+        }
+      } else {
+        delete root.dataset.customTheme
+      }
+    },
+    // Custom theme management
+    getActiveCustomTheme(): CustomTheme | null {
+      if (!this.settings.customThemeEnabled || !this.settings.activeCustomThemeId) return null
+      return this.settings.customThemes.find(t => t.id === this.settings.activeCustomThemeId) || null
+    },
+    saveCustomTheme(theme: CustomTheme) {
+      const normalized = normalizeCustomTheme(theme)
+      if (!normalized) return
+      const existingIndex = this.settings.customThemes.findIndex(t => t.id === normalized.id)
+      if (existingIndex >= 0) {
+        normalized.updatedAt = Date.now()
+        this.settings.customThemes = [
+          ...this.settings.customThemes.slice(0, existingIndex),
+          normalized,
+          ...this.settings.customThemes.slice(existingIndex + 1),
+        ]
+      } else {
+        normalized.createdAt = Date.now()
+        normalized.updatedAt = Date.now()
+        this.settings.customThemes = [...this.settings.customThemes, normalized]
+      }
+      this.persist()
+      this.applyTheme()
+    },
+    deleteCustomTheme(id: string) {
+      const index = this.settings.customThemes.findIndex(t => t.id === id)
+      if (index < 0) return
+      this.settings.customThemes = [
+        ...this.settings.customThemes.slice(0, index),
+        ...this.settings.customThemes.slice(index + 1),
+      ]
+      if (this.settings.activeCustomThemeId === id) {
+        this.settings.activeCustomThemeId = this.settings.customThemes[0]?.id || null
+      }
+      this.persist()
+      this.applyTheme()
+    },
+    activateCustomTheme(id: string | null) {
+      this.settings.activeCustomThemeId = id
+      this.persist()
+      this.applyTheme()
+    },
+    setCustomThemeEnabled(enabled: boolean) {
+      this.settings.customThemeEnabled = enabled
+      this.persist()
+      this.applyTheme()
     },
   },
 })
