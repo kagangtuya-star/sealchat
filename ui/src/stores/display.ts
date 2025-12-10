@@ -59,6 +59,7 @@ export interface DisplaySettings {
   worldKeywordTooltipEnabled: boolean
   worldKeywordDeduplicateEnabled: boolean
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
+  autoSwitchRoleOnIcOocToggle: boolean
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -296,6 +297,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordTooltipEnabled: true,
   worldKeywordDeduplicateEnabled: false,
   toolbarHotkeys: createDefaultToolbarHotkeys(),
+  autoSwitchRoleOnIcOocToggle: true,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -418,6 +420,7 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
       toolbarHotkeys,
+      autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -553,6 +556,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
       : base.toolbarHotkeys,
+  autoSwitchRoleOnIcOocToggle:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'autoSwitchRoleOnIcOocToggle')
+      ? coerceBoolean((patch as any).autoSwitchRoleOnIcOocToggle)
+      : base.autoSwitchRoleOnIcOocToggle,
 })
 
 export const useDisplayStore = defineStore('display', {

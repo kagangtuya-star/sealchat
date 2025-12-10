@@ -2,6 +2,7 @@
 import { reactive, watch, computed, ref } from 'vue'
 import { createDefaultDisplaySettings, type DisplaySettings } from '@/stores/display'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
+import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 
 interface Props {
   visible: boolean
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 const shortcutPanelVisible = ref(false)
+const roleConfigPanelVisible = ref(false)
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
@@ -56,6 +58,7 @@ watch(
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
   draft.toolbarHotkeys = value.toolbarHotkeys
+  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   },
   { deep: true, immediate: true },
 )
@@ -469,6 +472,54 @@ const handleConfirm = () => emit('save', { ...draft })
       </section>
 
       <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">场内场外自动切换</p>
+            <p class="section-desc">切换IC/OOC模式时，自动切换到预设的频道角色</p>
+          </div>
+        </header>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <n-switch v-model:value="draft.autoSwitchRoleOnIcOocToggle">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                circle
+                size="tiny"
+                quaternary
+                @click="roleConfigPanelVisible = true"
+              >
+                <template #icon>
+                  <n-icon size="16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"></path>
+                      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path>
+                      <path d="M12 2v2"></path>
+                      <path d="M12 22v-2"></path>
+                      <path d="m17 20.66-1-1.73"></path>
+                      <path d="M11 10.27 7 3.34"></path>
+                      <path d="m20.66 17-1.73-1"></path>
+                      <path d="m3.34 7 1.73 1"></path>
+                      <path d="M14 12h8"></path>
+                      <path d="M2 12h2"></path>
+                      <path d="m20.66 7-1.73 1"></path>
+                      <path d="m3.34 17 1.73-1"></path>
+                      <path d="m17 3.34-1 1.73"></path>
+                      <path d="m11 13.73-4 6.93"></path>
+                    </svg>
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            配置默认场内/场外角色
+          </n-tooltip>
+        </div>
+        <p class="control-desc control-desc--hint">频道角色配置独立保存，切换频道时自动加载对应配置</p>
+      </section>
+
+      <section class="display-settings__section">
         <header class="preview-header">
           <div>
             <p class="section-title">实时预览</p>
@@ -509,6 +560,7 @@ const handleConfirm = () => emit('save', { ...draft })
     </div>
   </n-modal>
   <ShortcutSettingsPanel v-model:show="shortcutPanelVisible" />
+  <IcOocRoleConfigPanel v-model:show="roleConfigPanelVisible" />
 </template>
 
 <style scoped lang="scss">

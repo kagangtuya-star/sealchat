@@ -92,6 +92,8 @@ const inputIcMode = computed<'ic' | 'ooc'>({
       chat.updateEditingIcMode(mode);
     } else {
       chat.icMode = mode;
+      // 触发自动角色切换
+      chat.autoSwitchRoleOnIcOocChange(mode);
     }
   },
 });
