@@ -5945,8 +5945,20 @@ const handleDiceInsert = (expr: string) => {
 };
 
 const handleDiceRollNow = (expr: string) => {
-  insertDiceExpression(expr.trim());
+  // 骰子"立即掷骰"功能：直接发送表达式，不插入到输入框
+  // 支持快速连续点击，每次点击都独立发送一条消息
+  const trimmedExpr = expr.trim();
+  if (!trimmedExpr) return;
+  
+  // 临时设置要发送的内容
+  textToSend.value = trimmedExpr;
+  // 先调用 send() 创建待处理的调用，再 flush() 立即执行
   send();
+  send.flush();
+  // 发送后立即清空，为下次点击做准备
+  nextTick(() => {
+    textToSend.value = '';
+  });
 };
 
 const handleDiceDefaultUpdate = async (expr: string) => {
