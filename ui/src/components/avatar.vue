@@ -52,9 +52,11 @@ onLongPress(
     class="avatar-shell"
     :class="border ? 'avatar-shell--bordered' : 'avatar-shell--plain'"
     :style="{ width: `${size}px`, height: `${size}px`, 'min-width': `${size}px`, 'min-height': `${size}px` }"
+    @contextmenu.prevent
+    @dragstart.prevent
   >
-    <img class="w-full h-full" :src="resolvedSrc" v-if="resolvedSrc" :onload="onload" />
-    <img class="absolute w-full h-full" :class="{ 'pointer-events-none': opacity === 0 }" :src="imgAvatar" style="top:0" :style="{ opacity: opacity }" />
+    <img class="avatar-img" :src="resolvedSrc" v-if="resolvedSrc" :onload="onload" draggable="false" />
+    <img class="avatar-img avatar-img--fallback" :src="imgAvatar" :style="{ opacity: opacity }" draggable="false" />
   </div>
 </template>
 
@@ -63,6 +65,25 @@ onLongPress(
   position: relative;
   overflow: hidden;
   border-radius: 0.85rem;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.avatar-img--fallback {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .avatar-shell--bordered {

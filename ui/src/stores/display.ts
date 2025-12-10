@@ -57,6 +57,7 @@ export interface DisplaySettings {
   worldKeywordHighlightEnabled: boolean
   worldKeywordUnderlineOnly: boolean
   worldKeywordTooltipEnabled: boolean
+  worldKeywordDeduplicateEnabled: boolean
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
 }
 
@@ -293,6 +294,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
+  worldKeywordDeduplicateEnabled: false,
   toolbarHotkeys: createDefaultToolbarHotkeys(),
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
@@ -414,6 +416,7 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
+      worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
       toolbarHotkeys,
     }
   } catch (error) {
@@ -542,6 +545,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipEnabled')
       ? coerceBoolean((patch as any).worldKeywordTooltipEnabled)
       : base.worldKeywordTooltipEnabled,
+  worldKeywordDeduplicateEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordDeduplicateEnabled')
+      ? coerceBoolean((patch as any).worldKeywordDeduplicateEnabled)
+      : base.worldKeywordDeduplicateEnabled,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)

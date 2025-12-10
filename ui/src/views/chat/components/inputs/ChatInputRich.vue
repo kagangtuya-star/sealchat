@@ -1095,11 +1095,13 @@ defineExpose({
   outline: none;
   min-height: 3rem;
   color: #1f2937; /* 日间模式默认文字颜色 */
+  font-size: var(--chat-font-size, 0.9375rem);
+  line-height: var(--chat-line-height, 1.6);
 
   /* 基础文本样式 */
   p {
     margin: 0;
-    line-height: 1.6;
+    line-height: inherit;
     min-height: 1.5rem;
   }
 

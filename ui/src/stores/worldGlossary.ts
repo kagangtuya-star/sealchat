@@ -10,6 +10,7 @@ import {
   bulkDeleteWorldKeywords,
   importWorldKeywords,
   exportWorldKeywords,
+  fetchWorldKeywordCategories,
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
 
@@ -26,6 +27,7 @@ interface KeywordPageState {
 export interface CompiledKeywordSpan {
   id: string
   keyword: string
+  category: string
   source: string
   regex: RegExp
   matchMode: 'plain' | 'regex'
@@ -147,6 +149,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
               entries.push({
                 id: item.id,
                 keyword: item.keyword,
+                category: item.category || '',
                 source: text,
                 regex: pattern,
                 matchMode: item.matchMode,
@@ -249,6 +252,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
         if (!current || current.isEnabled === enabled) return null
         const payload: WorldKeywordPayload = {
           keyword: current.keyword,
+          category: current.category,
           aliases: current.aliases,
           matchMode: current.matchMode,
           description: current.description,
@@ -277,8 +281,12 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     return stats
   }
 
-  async function exportKeywords(worldId: string) {
-    return exportWorldKeywords(worldId)
+  async function exportKeywords(worldId: string, category?: string) {
+    return exportWorldKeywords(worldId, category)
+  }
+
+  async function fetchCategories(worldId: string) {
+    return fetchWorldKeywordCategories(worldId)
   }
 
   function handleGatewayEvent(event?: any) {
@@ -328,6 +336,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     removeKeywordBulk,
     importKeywords,
     exportKeywords,
+    fetchCategories,
     setKeywordEnabledBulk,
     setManagerVisible,
     openEditor,

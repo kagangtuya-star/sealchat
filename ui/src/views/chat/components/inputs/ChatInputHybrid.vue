@@ -832,8 +832,8 @@ defineExpose({
   border: 1px solid var(--sc-border-mute, #e5e7eb);
   border-radius: 0.5rem;
   background-color: var(--sc-bg-input, #ffffff);
-  font-size: 0.875rem;
-  line-height: 1.5;
+  font-size: var(--chat-font-size, 0.9375rem);
+  line-height: var(--chat-line-height, 1.6);
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
   word-wrap: break-word;

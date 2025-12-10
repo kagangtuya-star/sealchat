@@ -1,3 +1,5 @@
+import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
+
 interface TooltipContent {
   title: string
   description: string
@@ -5,81 +7,603 @@ interface TooltipContent {
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
 
-let sharedTooltip: HTMLDivElement | null = null
-let sharedTooltipRefCount = 0
-
-function acquireTooltip() {
-  if (!sharedTooltip) {
-    sharedTooltip = document.createElement('div')
-    sharedTooltip.className = 'keyword-tooltip'
-    sharedTooltip.style.display = 'none'
-    document.body.appendChild(sharedTooltip)
-  }
-  sharedTooltipRefCount += 1
-  return sharedTooltip
+interface TooltipInstance {
+  element: HTMLDivElement
+  level: number
+  keywordId: string
+  isPinned: boolean
 }
 
-function releaseTooltip() {
-  sharedTooltipRefCount = Math.max(0, sharedTooltipRefCount - 1)
-  if (sharedTooltipRefCount === 0 && sharedTooltip) {
-    sharedTooltip.remove()
-    sharedTooltip = null
+const MAX_NESTING_DEPTH = 4
+const TOOLTIP_GAP = 12
+const TOOLTIP_PADDING = 8
+
+let tooltipStack: TooltipInstance[] = []
+let globalClickHandler: ((e: MouseEvent | TouchEvent) => void) | null = null
+let globalKeyHandler: ((e: KeyboardEvent) => void) | null = null
+let pendingHideTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPendingHide() {
+  if (pendingHideTimer) {
+    clearTimeout(pendingHideTimer)
+    pendingHideTimer = null
   }
 }
 
-export function createKeywordTooltip(resolver: ContentResolver) {
+// Clean up any orphaned tooltip elements that aren't tracked in the stack
+function cleanupOrphanedTooltips(includeHoverTooltips = false) {
+  const allTooltips = document.querySelectorAll('.keyword-tooltip')
+  const trackedElements = new Set(tooltipStack.map(t => t.element))
+
+  allTooltips.forEach(tooltip => {
+    if (!trackedElements.has(tooltip as HTMLDivElement)) {
+      const isHover = tooltip.classList.contains('keyword-tooltip--hover')
+      if (isHover) {
+        // Only hide hover tooltips (don't remove - controllers manage their lifecycle)
+        if (includeHoverTooltips) {
+          ; (tooltip as HTMLElement).style.display = 'none'
+        }
+      } else {
+        // Remove non-hover orphaned tooltips
+        ; (tooltip as HTMLElement).style.display = 'none'
+        tooltip.remove()
+      }
+    }
+  })
+}
+
+let tooltipIdCounter = 0
+
+function createTooltipElement(level: number): HTMLDivElement {
+  tooltipIdCounter++
+  const tooltip = document.createElement('div')
+  tooltip.id = `keyword-tooltip-${tooltipIdCounter}`
+  tooltip.className = 'keyword-tooltip'
+  tooltip.dataset.level = String(level)
+  tooltip.style.cssText = `
+    display: none;
+    position: fixed;
+    z-index: ${999999 + level};
+    pointer-events: auto;
+  `
+  document.body.appendChild(tooltip)
+  return tooltip
+}
+
+function findBestPosition(
+  target: HTMLElement,
+  tooltip: HTMLDivElement,
+  existingTooltips: TooltipInstance[]
+): { top: number; left: number } {
+  const targetRect = target.getBoundingClientRect()
+  const tooltipWidth = tooltip.offsetWidth
+  const tooltipHeight = tooltip.offsetHeight
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+
+  const occupiedRects = existingTooltips.map(t => t.element.getBoundingClientRect())
+  const candidates: Array<{ top: number; left: number; score: number }> = []
+
+  // Above target
+  const aboveTop = targetRect.top - tooltipHeight - TOOLTIP_GAP
+  const aboveLeft = Math.max(TOOLTIP_PADDING, Math.min(
+    viewportWidth - tooltipWidth - TOOLTIP_PADDING,
+    targetRect.left + targetRect.width / 2 - tooltipWidth / 2
+  ))
+  candidates.push({
+    top: aboveTop,
+    left: aboveLeft,
+    score: calculatePositionScore(aboveTop, aboveLeft, tooltipWidth, tooltipHeight, viewportWidth, viewportHeight, occupiedRects)
+  })
+
+  // Below target
+  const belowTop = targetRect.bottom + TOOLTIP_GAP
+  candidates.push({
+    top: belowTop,
+    left: aboveLeft,
+    score: calculatePositionScore(belowTop, aboveLeft, tooltipWidth, tooltipHeight, viewportWidth, viewportHeight, occupiedRects)
+  })
+
+  // Right of target
+  const rightTop = Math.max(TOOLTIP_PADDING, Math.min(
+    viewportHeight - tooltipHeight - TOOLTIP_PADDING,
+    targetRect.top + targetRect.height / 2 - tooltipHeight / 2
+  ))
+  const rightLeft = targetRect.right + TOOLTIP_GAP
+  candidates.push({
+    top: rightTop,
+    left: rightLeft,
+    score: calculatePositionScore(rightTop, rightLeft, tooltipWidth, tooltipHeight, viewportWidth, viewportHeight, occupiedRects)
+  })
+
+  // Left of target
+  const leftLeft = targetRect.left - tooltipWidth - TOOLTIP_GAP
+  candidates.push({
+    top: rightTop,
+    left: leftLeft,
+    score: calculatePositionScore(rightTop, leftLeft, tooltipWidth, tooltipHeight, viewportWidth, viewportHeight, occupiedRects)
+  })
+
+  candidates.sort((a, b) => b.score - a.score)
+  const best = candidates[0]
+
+  return {
+    top: Math.max(TOOLTIP_PADDING, Math.min(viewportHeight - tooltipHeight - TOOLTIP_PADDING, best.top)),
+    left: Math.max(TOOLTIP_PADDING, Math.min(viewportWidth - tooltipWidth - TOOLTIP_PADDING, best.left))
+  }
+}
+
+function calculatePositionScore(
+  top: number,
+  left: number,
+  width: number,
+  height: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  occupiedRects: DOMRect[]
+): number {
+  let score = 100
+  if (top < TOOLTIP_PADDING) score -= 50
+  if (left < TOOLTIP_PADDING) score -= 50
+  if (top + height > viewportHeight - TOOLTIP_PADDING) score -= 50
+  if (left + width > viewportWidth - TOOLTIP_PADDING) score -= 50
+
+  const rect = new DOMRect(left, top, width, height)
+  for (const occupied of occupiedRects) {
+    if (rectsOverlap(rect, occupied)) {
+      score -= 30
+    }
+  }
+  return score
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom)
+}
+
+function setupGlobalClickHandler(onClickOutside: () => void) {
+  if (globalClickHandler) return
+
+  globalClickHandler = (e: MouseEvent | TouchEvent) => {
+    const target = e.target as HTMLElement
+    if (!target) return
+
+    const isInsideTooltip = tooltipStack.some(t => t.element.contains(target))
+    const isOnKeyword = target.closest('.keyword-highlight')
+
+    if (!isInsideTooltip && !isOnKeyword) {
+      // Use requestAnimationFrame to ensure DOM state is stable
+      requestAnimationFrame(() => {
+        onClickOutside()
+        // Also clean up any orphaned tooltips
+        cleanupOrphanedTooltips()
+      })
+    }
+  }
+
+  // Use mousedown for faster response and to catch clicks before other handlers
+  document.addEventListener('mousedown', globalClickHandler, true)
+  document.addEventListener('touchstart', globalClickHandler, true)
+
+  // Also add Escape key handler
+  if (!globalKeyHandler) {
+    globalKeyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClickOutside()
+        cleanupOrphanedTooltips()
+      }
+    }
+    document.addEventListener('keydown', globalKeyHandler, true)
+  }
+}
+
+function removeGlobalClickHandler() {
+  if (globalClickHandler) {
+    document.removeEventListener('mousedown', globalClickHandler, true)
+    document.removeEventListener('touchstart', globalClickHandler, true)
+    globalClickHandler = null
+  }
+  if (globalKeyHandler) {
+    document.removeEventListener('keydown', globalKeyHandler, true)
+    globalKeyHandler = null
+  }
+}
+
+function hideTooltipsFromLevel(level: number) {
+  while (tooltipStack.length > 0 && tooltipStack[tooltipStack.length - 1].level >= level) {
+    const instance = tooltipStack.pop()
+    if (instance) {
+      instance.element.style.display = 'none'
+      instance.element.remove()
+    }
+  }
+
+  // Update has-child class on remaining tooltips
+  updateParentHasChildClass()
+
+  if (tooltipStack.length === 0) {
+    removeGlobalClickHandler()
+  }
+}
+
+function updateParentHasChildClass() {
+  // Remove has-child class from all tooltips first
+  tooltipStack.forEach(t => t.element.classList.remove('keyword-tooltip--has-child'))
+
+  // Add has-child class to tooltips that have children at higher levels
+  const maxLevel = tooltipStack.length > 0
+    ? Math.max(...tooltipStack.map(t => t.level))
+    : -1
+
+  tooltipStack.forEach(t => {
+    if (t.level < maxLevel) {
+      t.element.classList.add('keyword-tooltip--has-child')
+    }
+  })
+}
+
+function hideAllTooltips() {
+  clearPendingHide()
+  hideTooltipsFromLevel(0)
+
+  // Also hide all hover tooltips
+  const hoverTooltips = document.querySelectorAll('.keyword-tooltip--hover')
+  hoverTooltips.forEach(tooltip => {
+    ; (tooltip as HTMLElement).style.display = 'none'
+  })
+
+  // Also clean up any orphaned tooltips (including hover)
+  cleanupOrphanedTooltips(true)
+}
+
+export interface KeywordTooltipOptions {
+  level?: number
+  compiledKeywords?: CompiledKeywordSpan[]
+  onKeywordDoubleInvoke?: (keywordId: string) => void
+  underlineOnly?: boolean
+}
+
+export interface KeywordTooltipController {
+  show: (target: HTMLElement, keywordId: string) => void
+  hide: (target?: HTMLElement) => void
+  pin: (target: HTMLElement, keywordId: string) => void
+  unpin: () => void
+  destroy: () => void
+  hideAll: () => void
+  getCurrentLevel: () => number
+}
+
+export function createKeywordTooltip(
+  resolver: ContentResolver,
+  options?: KeywordTooltipOptions
+): KeywordTooltipController {
   if (typeof document === 'undefined') {
     return {
-      show() {},
-      hide() {},
-      destroy() {},
+      show() { },
+      hide() { },
+      pin() { },
+      unpin() { },
+      destroy() { },
+      hideAll() { },
+      getCurrentLevel: () => 0
     }
   }
-  const tooltip = acquireTooltip()
 
-  const hide = () => {
-    tooltip.style.display = 'none'
+  const level = options?.level ?? 0
+  const underlineOnly = options?.underlineOnly ?? false
+  let currentTooltip: TooltipInstance | null = null
+  let hoverTooltipElement: HTMLDivElement | null = null
+  let nestedTooltipControllers: Map<string, KeywordTooltipController> = new Map()
+  let currentHoveredKeywordId: string | null = null
+
+  const getHoverTooltip = () => {
+    if (!hoverTooltipElement) {
+      hoverTooltipElement = createTooltipElement(level)
+      hoverTooltipElement.classList.add('keyword-tooltip--hover')
+    }
+    return hoverTooltipElement
   }
 
-  const show = (target: HTMLElement, keywordId: string) => {
-    const data = resolver(keywordId)
-    if (!data) {
-      hide()
-      return
+  const cleanupNestedControllers = () => {
+    nestedTooltipControllers.forEach(ctrl => ctrl.destroy())
+    nestedTooltipControllers.clear()
+    currentHoveredKeywordId = null
+  }
+
+  const getOrCreateNestedController = (keywordId: string): KeywordTooltipController => {
+    let controller = nestedTooltipControllers.get(keywordId)
+    if (!controller) {
+      controller = createKeywordTooltip(resolver, {
+        level: level + 1,
+        compiledKeywords: options?.compiledKeywords,
+        onKeywordDoubleInvoke: options?.onKeywordDoubleInvoke,
+        underlineOnly: underlineOnly
+      })
+      nestedTooltipControllers.set(keywordId, controller)
     }
-    const title = data.title || '术语'
-    const description = data.description || ''
+    return controller
+  }
+
+  const setupTooltipEventDelegation = (tooltip: HTMLDivElement, currentKeywordId: string) => {
+    // Use event delegation on the tooltip element for nested keyword interactions
+    tooltip.addEventListener('mouseover', (e) => {
+      const target = e.target as HTMLElement
+      const keywordSpan = target.closest('.keyword-highlight') as HTMLElement
+      if (!keywordSpan) {
+        return
+      }
+
+      const nestedKeywordId = keywordSpan.dataset.keywordId
+
+      if (!nestedKeywordId) {
+        return
+      }
+
+      if (nestedKeywordId === currentKeywordId) {
+        return
+      }
+
+      // Avoid re-showing if already hovered
+      if (currentHoveredKeywordId === nestedKeywordId) {
+        return
+      }
+      currentHoveredKeywordId = nestedKeywordId
+
+      const nestedController = getOrCreateNestedController(nestedKeywordId)
+      nestedController.show(keywordSpan, nestedKeywordId)
+    })
+
+    tooltip.addEventListener('mouseout', (e) => {
+      const target = e.target as HTMLElement
+      const keywordSpan = target.closest('.keyword-highlight') as HTMLElement
+      if (!keywordSpan) return
+
+      const nestedKeywordId = keywordSpan.dataset.keywordId
+      if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
+
+      // Check if we're moving to a child element (still inside the keyword)
+      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement
+      if (relatedTarget && keywordSpan.contains(relatedTarget)) return
+
+      currentHoveredKeywordId = null
+      const nestedController = nestedTooltipControllers.get(nestedKeywordId)
+      if (nestedController) {
+        nestedController.hide()
+      }
+    })
+
+    tooltip.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement
+      const keywordSpan = target.closest('.keyword-highlight') as HTMLElement
+
+      // If clicking on a nested keyword, handle it
+      if (keywordSpan) {
+        const nestedKeywordId = keywordSpan.dataset.keywordId
+        if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
+
+        e.stopPropagation()
+        e.preventDefault()
+
+        const nestedController = getOrCreateNestedController(nestedKeywordId)
+        nestedController.pin(keywordSpan, nestedKeywordId)
+      } else {
+        // Clicking on non-keyword area of this tooltip - close all child tooltips
+        hideTooltipsFromLevel(level + 1)
+      }
+    })
+
+    tooltip.addEventListener('dblclick', (e) => {
+      if (!options?.onKeywordDoubleInvoke) return
+
+      const target = e.target as HTMLElement
+      const keywordSpan = target.closest('.keyword-highlight') as HTMLElement
+      if (!keywordSpan) return
+
+      const nestedKeywordId = keywordSpan.dataset.keywordId
+      if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
+      e.stopPropagation()
+      e.preventDefault()
+      options.onKeywordDoubleInvoke(nestedKeywordId)
+    })
+  }
+
+  const renderContent = (tooltip: HTMLDivElement, data: TooltipContent, keywordId: string, isPinned: boolean) => {
+    cleanupNestedControllers()
+
     tooltip.innerHTML = ''
+    tooltip.classList.toggle('keyword-tooltip--pinned', isPinned)
+
     const header = document.createElement('div')
     header.className = 'keyword-tooltip__header'
-    header.textContent = title
+    header.textContent = data.title || '术语'
     tooltip.appendChild(header)
-    if (description) {
+
+    if (data.description) {
       const body = document.createElement('div')
       body.className = 'keyword-tooltip__body'
-      body.textContent = description
+
+      if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+        body.innerHTML = applyHighlightsToText(data.description, options.compiledKeywords, underlineOnly)
+      } else {
+        body.textContent = data.description
+      }
+
       tooltip.appendChild(body)
     }
+
+    // Setup event delegation for nested keywords
+    setupTooltipEventDelegation(tooltip, keywordId)
+  }
+
+  const positionTooltip = (tooltip: HTMLDivElement, target: HTMLElement) => {
     tooltip.style.visibility = 'hidden'
     tooltip.style.display = 'block'
     tooltip.style.top = '0'
     tooltip.style.left = '0'
-    const rect = target.getBoundingClientRect()
-    const { offsetWidth, offsetHeight } = tooltip
-    const gap = 12
-    const top = Math.max(8, rect.top + window.scrollY - offsetHeight - gap)
-    const maxLeft = window.innerWidth - offsetWidth - 8
-    const centered = rect.left + rect.width / 2 - offsetWidth / 2
-    const left = Math.min(maxLeft, Math.max(8, centered)) + window.scrollX
+
+    const lowerTooltips = tooltipStack.filter(t => t.level < level && t.isPinned)
+    const { top, left } = findBestPosition(target, tooltip, lowerTooltips)
+
     tooltip.style.visibility = 'visible'
     tooltip.style.top = `${top}px`
     tooltip.style.left = `${left}px`
   }
 
-  const destroy = () => {
-    hide()
-    releaseTooltip()
+  const show = (target: HTMLElement, keywordId: string) => {
+    clearPendingHide()
+
+    if (currentTooltip?.isPinned) return
+
+    const data = resolver(keywordId)
+    if (!data) {
+      hide()
+      return
+    }
+
+    const tooltip = getHoverTooltip()
+    renderContent(tooltip, data, keywordId, false)
+    positionTooltip(tooltip, target)
   }
 
-  return { show, hide, destroy }
+  const hide = () => {
+    clearPendingHide()
+    pendingHideTimer = setTimeout(() => {
+      if (hoverTooltipElement && !currentTooltip?.isPinned) {
+        hoverTooltipElement.style.display = 'none'
+      }
+      pendingHideTimer = null
+    }, 100)
+  }
+
+  const pin = (target: HTMLElement, keywordId: string) => {
+    clearPendingHide()
+
+    const data = resolver(keywordId)
+    if (!data) return
+
+    hideTooltipsFromLevel(level)
+
+    if (hoverTooltipElement) {
+      hoverTooltipElement.style.display = 'none'
+    }
+
+    const tooltip = createTooltipElement(level)
+    tooltip.classList.add('keyword-tooltip--pinned')
+    renderContent(tooltip, data, keywordId, true)
+    positionTooltip(tooltip, target)
+
+    currentTooltip = {
+      element: tooltip,
+      level,
+      keywordId,
+      isPinned: true
+    }
+    tooltipStack.push(currentTooltip)
+
+    // Update parent dim effect
+    updateParentHasChildClass()
+
+    setupGlobalClickHandler(() => {
+      hideAllTooltips()
+    })
+  }
+
+  const unpin = () => {
+    if (currentTooltip) {
+      hideTooltipsFromLevel(level)
+      currentTooltip = null
+    }
+  }
+
+  const destroy = () => {
+    clearPendingHide()
+    cleanupNestedControllers()
+    if (hoverTooltipElement) {
+      hoverTooltipElement.remove()
+      hoverTooltipElement = null
+    }
+    if (currentTooltip) {
+      const idx = tooltipStack.indexOf(currentTooltip)
+      if (idx >= 0) {
+        tooltipStack.splice(idx, 1)
+      }
+      currentTooltip.element.remove()
+      currentTooltip = null
+    }
+    if (tooltipStack.length === 0) {
+      removeGlobalClickHandler()
+    }
+  }
+
+  return {
+    show,
+    hide,
+    pin,
+    unpin,
+    destroy,
+    hideAll: hideAllTooltips,
+    getCurrentLevel: () => level
+  }
 }
+
+function applyHighlightsToText(text: string, compiled: CompiledKeywordSpan[], underlineOnly: boolean): string {
+  if (!text || !compiled.length) return escapeHtml(text)
+
+  type Range = { start: number; end: number; keyword: CompiledKeywordSpan }
+  const ranges: Range[] = []
+
+  compiled.forEach((entry) => {
+    const regex = new RegExp(
+      entry.regex.source,
+      entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`
+    )
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(text)) !== null) {
+      if (!match[0]) {
+        regex.lastIndex += 1
+        continue
+      }
+      ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
+      if (match.index === regex.lastIndex) {
+        regex.lastIndex += 1
+      }
+    }
+  })
+
+  ranges.sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start))
+  const filtered: Range[] = []
+  let cursor = -1
+  ranges.forEach((range) => {
+    if (range.start < cursor) return
+    filtered.push(range)
+    cursor = range.end
+  })
+
+  let result = ''
+  let lastIndex = 0
+  filtered.forEach((range) => {
+    if (range.start > lastIndex) {
+      result += escapeHtml(text.slice(lastIndex, range.start))
+    }
+    const classes = ['keyword-highlight']
+    if (underlineOnly || range.keyword.display === 'minimal') {
+      classes.push('keyword-highlight--underline')
+    }
+    const matchedText = text.slice(range.start, range.end)
+    result += `<span class="${classes.join(' ')}" data-keyword-id="${escapeHtml(range.keyword.id)}" data-keyword-source="${escapeHtml(range.keyword.source)}">${escapeHtml(matchedText)}</span>`
+    lastIndex = range.end
+  })
+  if (lastIndex < text.length) {
+    result += escapeHtml(text.slice(lastIndex))
+  }
+
+  return result
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+export { applyHighlightsToText, MAX_NESTING_DEPTH }

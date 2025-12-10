@@ -4,6 +4,7 @@ export interface WorldKeywordItem {
   id: string
   worldId: string
   keyword: string
+  category: string
   aliases: string[]
   matchMode: 'plain' | 'regex'
   description: string
@@ -24,6 +25,7 @@ export interface WorldKeywordListResponse {
 
 export interface WorldKeywordPayload {
   keyword: string
+  category?: string
   aliases?: string[]
   matchMode?: 'plain' | 'regex'
   description?: string
@@ -66,7 +68,13 @@ export async function importWorldKeywords(worldId: string, payload: WorldKeyword
   return data.stats
 }
 
-export async function exportWorldKeywords(worldId: string) {
-  const { data } = await api.get<{ items: WorldKeywordItem[] }>(`/api/v1/worlds/${worldId}/keywords/export`)
+export async function exportWorldKeywords(worldId: string, category?: string) {
+  const params = category ? { category } : undefined
+  const { data } = await api.get<{ items: WorldKeywordItem[] }>(`/api/v1/worlds/${worldId}/keywords/export`, { params })
   return data.items
+}
+
+export async function fetchWorldKeywordCategories(worldId: string): Promise<string[]> {
+  const { data } = await api.get<{ categories: string[] }>(`/api/v1/worlds/${worldId}/keywords/categories`)
+  return data.categories
 }

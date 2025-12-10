@@ -25,6 +25,7 @@ type WorldKeywordModel struct {
 	StringPKBaseModel
 	WorldID     string                   `json:"worldId" gorm:"size:100;index:idx_world_keyword,priority:1"`
 	Keyword     string                   `json:"keyword" gorm:"size:120;index:idx_world_keyword,priority:2"`
+	Category    string                   `json:"category" gorm:"size:100;index:idx_world_keyword_category"`
 	Aliases     JSONList[string]         `json:"aliases" gorm:"type:json"`
 	MatchMode   WorldKeywordMatchMode    `json:"matchMode" gorm:"size:16;default:'plain'"`
 	Description string                   `json:"description" gorm:"type:text"`

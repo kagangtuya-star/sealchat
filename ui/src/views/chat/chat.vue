@@ -2006,6 +2006,10 @@ const getMessageTone = (message: any): 'ic' | 'ooc' | 'archived' => {
   if (message?.isArchived || message?.is_archived) {
     return 'archived';
   }
+  // 如果正在编辑此消息，使用编辑状态的 icMode
+  if (chat.editing && chat.editing.messageId === message?.id) {
+    return chat.editing.icMode === 'ooc' ? 'ooc' : 'ic';
+  }
   if (message?.icMode === 'ooc' || message?.ic_mode === 'ooc') {
     return 'ooc';
   }
@@ -6405,9 +6409,7 @@ const onScroll = () => {
   } else if (!historyLocked.value) {
     updateViewMode('live');
   }
-  if (container.scrollTop <= 80 && firstLoad && !messageWindow.loadingBefore) {
-    void loadOlderMessages();
-  }
+  // Removed duplicate trigger - IntersectionObserver on topSentinelRef handles loading older messages
 };
 
 const pauseKeydown = ref(false);
@@ -6656,10 +6658,6 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
 
   atLoading.value = false;
 }
-
-const reachTop = throttle(async () => {
-  await loadOlderMessages();
-}, 800);
 
 const { stop: stopTopObserver } = useIntersectionObserver(
   topSentinelRef,
@@ -10537,4 +10535,152 @@ onBeforeUnmount(() => {
   background: rgba(51, 65, 85, 0.65);
   border-color: rgba(148, 163, 184, 0.4);
   color: #e2e8f0;
+}
+
+/* Keyword Tooltip Styles */
+:global(.keyword-tooltip) {
+  position: fixed;
+  z-index: 9999;
+  max-width: 360px;
+  min-width: 180px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.55;
+  pointer-events: auto;
+  animation: keyword-tooltip-fade-in 0.15s ease-out;
+}
+
+@keyframes keyword-tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+:global(.keyword-tooltip--pinned) {
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+/* Parent tooltip dims when child tooltip exists */
+:global(.keyword-tooltip--pinned.keyword-tooltip--has-child) {
+  opacity: 0.7;
+  filter: brightness(0.92);
+}
+
+/* Enhanced shadow for nested tooltips by level */
+:global(.keyword-tooltip--pinned[data-level="1"]) {
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.28);
+  border-width: 1.5px;
+}
+
+:global(.keyword-tooltip--pinned[data-level="2"]) {
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.32);
+  border-width: 2px;
+}
+
+:global(.keyword-tooltip--pinned[data-level="3"]) {
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.36);
+  border-width: 2px;
+}
+
+:global(.keyword-tooltip__header) {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #1e293b;
+  font-size: 15px;
+}
+
+:global(.keyword-tooltip__body) {
+  color: #475569;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: auto;
+}
+
+:global(.keyword-tooltip__body .keyword-highlight) {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* Night mode tooltip */
+:global([data-display-palette='night'] .keyword-tooltip),
+:global(:root[data-display-palette='night'] .keyword-tooltip) {
+  background: #1e1e22;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f4f4f5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip--pinned),
+:global(:root[data-display-palette='night'] .keyword-tooltip--pinned) {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__header),
+:global(:root[data-display-palette='night'] .keyword-tooltip__header) {
+  color: #fafafa;
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__body),
+:global(:root[data-display-palette='night'] .keyword-tooltip__body) {
+  color: rgba(248, 250, 252, 0.8);
+}
+
+/* Keyword Highlight Styles */
+:global(.keyword-highlight) {
+  display: inline;
+  padding: 0 3px;
+  margin: 0 1px;
+  border-bottom: 1px dashed rgba(168, 108, 0, 0.85);
+  background: rgba(255, 230, 150, 0.85);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+:global(.keyword-highlight:hover) {
+  background: rgba(255, 220, 120, 0.95);
+}
+
+:global(.keyword-highlight--underline) {
+  background: transparent;
+  border-bottom-style: dotted;
+}
+
+:global(.keyword-highlight--underline:hover) {
+  background: rgba(255, 230, 150, 0.35);
+}
+
+/* Night mode highlight */
+:global([data-display-palette='night'] .keyword-highlight),
+:global(:root[data-display-palette='night'] .keyword-highlight) {
+  background: rgba(180, 140, 60, 0.35);
+  border-bottom-color: rgba(220, 180, 80, 0.7);
+  color: #fef3c7;
+}
+
+:global([data-display-palette='night'] .keyword-highlight:hover),
+:global(:root[data-display-palette='night'] .keyword-highlight:hover) {
+  background: rgba(180, 140, 60, 0.5);
+}
+
+:global([data-display-palette='night'] .keyword-highlight--underline),
+:global(:root[data-display-palette='night'] .keyword-highlight--underline) {
+  background: transparent;
+  color: inherit;
+}
+
+:global([data-display-palette='night'] .keyword-highlight--underline:hover),
+:global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
+  background: rgba(180, 140, 60, 0.25);
 }

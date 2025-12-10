@@ -18,6 +18,7 @@ var (
 // WorldKeywordInput 用于创建或更新关键词。
 type WorldKeywordInput struct {
 	Keyword     string   `json:"keyword"`
+	Category    string   `json:"category"`
 	Aliases     []string `json:"aliases"`
 	MatchMode   string   `json:"matchMode"`
 	Description string   `json:"description"`
@@ -30,6 +31,7 @@ type WorldKeywordListOptions struct {
 	Page            int
 	PageSize        int
 	Query           string
+	Category        string
 	IncludeDisabled bool
 }
 
@@ -95,8 +97,9 @@ func normalizeWorldKeywordInput(input *WorldKeywordInput) error {
 	case string(model.WorldKeywordDisplayMinimal):
 		input.Display = string(model.WorldKeywordDisplayMinimal)
 	default:
-		input.Display = string(model.WorldKeywordDisplayStandard)
+		input.Display = string(model.WorldKeywordDisplayMinimal)
 	}
+	input.Category = strings.TrimSpace(input.Category)
 	return nil
 }
 
@@ -124,6 +127,9 @@ func WorldKeywordList(worldID, userID string, opts WorldKeywordListOptions) ([]*
 		like := "%" + trimmed + "%"
 		query = query.Where("keyword LIKE ? OR description LIKE ?", like, like)
 	}
+	if cat := strings.TrimSpace(opts.Category); cat != "" {
+		query = query.Where("category = ?", cat)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -149,6 +155,7 @@ func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*mode
 	item := &model.WorldKeywordModel{
 		WorldID:     worldID,
 		Keyword:     input.Keyword,
+		Category:    input.Category,
 		Aliases:     model.JSONList[string](input.Aliases),
 		MatchMode:   model.WorldKeywordMatchMode(input.MatchMode),
 		Description: strings.TrimSpace(input.Description),
@@ -182,6 +189,7 @@ func WorldKeywordUpdate(worldID, keywordID, actorID string, input WorldKeywordIn
 	}
 	updates := map[string]interface{}{
 		"keyword":     input.Keyword,
+		"category":    input.Category,
 		"aliases":     model.JSONList[string](input.Aliases),
 		"match_mode":  model.WorldKeywordMatchMode(input.MatchMode),
 		"description": strings.TrimSpace(input.Description),
@@ -275,13 +283,35 @@ func WorldKeywordImport(worldID, actorID string, entries []WorldKeywordInput, re
 }
 
 // WorldKeywordExport 导出。
-func WorldKeywordExport(worldID, actorID string) ([]*model.WorldKeywordModel, error) {
+func WorldKeywordExport(worldID, actorID string, category string) ([]*model.WorldKeywordModel, error) {
 	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
 		return nil, err
 	}
+	db := model.GetDB()
+	query := db.Where("world_id = ?", worldID)
+	if cat := strings.TrimSpace(category); cat != "" {
+		query = query.Where("category = ?", cat)
+	}
 	var items []*model.WorldKeywordModel
-	if err := model.GetDB().Where("world_id = ?", worldID).Order("keyword ASC").Find(&items).Error; err != nil {
+	if err := query.Order("category ASC, keyword ASC").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+// WorldKeywordListCategories 获取世界内所有分类列表。
+func WorldKeywordListCategories(worldID, userID string) ([]string, error) {
+	if err := ensureWorldKeywordPermission(worldID, userID, false); err != nil {
+		return nil, err
+	}
+	var categories []string
+	err := model.GetDB().Model(&model.WorldKeywordModel{}).
+		Where("world_id = ? AND category != ''", worldID).
+		Distinct("category").
+		Order("category ASC").
+		Pluck("category", &categories).Error
+	if err != nil {
+		return nil, err
+	}
+	return categories, nil
 }

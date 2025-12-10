@@ -436,8 +436,9 @@ const compiledKeywords = computed(() => {
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
+const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
 
-const keywordTooltip = createKeywordTooltip((keywordId) => {
+const keywordTooltipResolver = (keywordId: string) => {
   const keyword = worldGlossary.keywordById[keywordId]
   if (!keyword) {
     return null
@@ -446,7 +447,7 @@ const keywordTooltip = createKeywordTooltip((keywordId) => {
     title: keyword.keyword,
     description: keyword.description,
   }
-})
+}
 
 const handleKeywordQuickEdit = (keywordId: string) => {
   if (!props.worldKeywordEditable) {
@@ -463,12 +464,32 @@ const handleKeywordQuickEdit = (keywordId: string) => {
   worldGlossary.openEditor(worldId, keyword)
 }
 
+let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
+  level: 0,
+  compiledKeywords: compiledKeywords.value,
+  onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
+  underlineOnly: keywordUnderlineOnly.value,
+})
+
+// Lazy rendering state
+let isVisible = false
+let keywordObserver: IntersectionObserver | null = null
+let pendingHighlights = false
+
 const applyKeywordHighlights = async () => {
   await nextTick()
   const host = messageContentRef.value
   if (!host) {
     return
   }
+  
+  // If not visible yet, mark as pending and skip
+  if (!isVisible) {
+    pendingHighlights = true
+    return
+  }
+  
+  pendingHighlights = false
   const compiled = compiledKeywords.value
   if (!keywordHighlightEnabled.value || !compiled.length) {
     refreshWorldKeywordHighlights(host, [], { underlineOnly: false })
@@ -479,10 +500,34 @@ const applyKeywordHighlights = async () => {
     compiled,
     {
       underlineOnly: keywordUnderlineOnly.value,
+      deduplicate: keywordDeduplicateEnabled.value,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
     },
-    keywordTooltipEnabled.value ? keywordTooltip : undefined,
+    keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
   )
+}
+
+// Setup IntersectionObserver for lazy rendering
+const setupVisibilityObserver = () => {
+  const host = messageContentRef.value
+  if (!host || keywordObserver) return
+  
+  keywordObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const wasVisible = isVisible
+      isVisible = entry.isIntersecting
+      
+      // Apply highlights when becoming visible with pending updates
+      if (isVisible && !wasVisible && pendingHighlights) {
+        void applyKeywordHighlights()
+      }
+    })
+  }, {
+    rootMargin: '100px', // Pre-load 100px before visible
+    threshold: 0
+  })
+  
+  keywordObserver.observe(host)
 }
 
 const applyDiceTone = () => {
@@ -610,6 +655,8 @@ onMounted(() => {
     timestampTicker.value = Date.now();
   }, 10000);
 
+  // Setup lazy rendering observer
+  setupVisibilityObserver()
   void applyKeywordHighlights()
 })
 
@@ -629,9 +676,18 @@ watch(
     () => displayStore.settings.worldKeywordHighlightEnabled,
     () => displayStore.settings.worldKeywordUnderlineOnly,
     () => displayStore.settings.worldKeywordTooltipEnabled,
+    () => displayStore.settings.worldKeywordDeduplicateEnabled,
     () => displayContent.value,
   ],
   () => {
+    // Recreate tooltip instance when settings change
+    keywordTooltipInstance.destroy()
+    keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
+      level: 0,
+      compiledKeywords: compiledKeywords.value,
+      onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
+      underlineOnly: keywordUnderlineOnly.value,
+    })
     void applyKeywordHighlights()
   },
   { flush: 'post' },
@@ -647,9 +703,14 @@ onBeforeUnmount(() => {
     clearInterval(timestampInterval);
     timestampInterval = null;
   }
+  // Cleanup visibility observer
+  if (keywordObserver) {
+    keywordObserver.disconnect();
+    keywordObserver = null;
+  }
   destroyImageViewer();
-  keywordTooltip.hide()
-  keywordTooltip.destroy()
+  keywordTooltipInstance.hideAll()
+  keywordTooltipInstance.destroy()
 });
 
 const nick = computed(() => {

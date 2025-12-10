@@ -22,11 +22,13 @@ func WorldKeywordListHandler(c *fiber.Ctx) error {
 	page := parseQueryIntDefault(c, "page", 1)
 	pageSize := parseQueryIntDefault(c, "pageSize", 50)
 	query := strings.TrimSpace(c.Query("q"))
+	category := strings.TrimSpace(c.Query("category"))
 	includeDisabled := c.QueryBool("includeDisabled")
 	items, total, err := service.WorldKeywordList(worldID, user.ID, service.WorldKeywordListOptions{
 		Page:            page,
 		PageSize:        pageSize,
 		Query:           query,
+		Category:        category,
 		IncludeDisabled: includeDisabled,
 	})
 	if err != nil {
@@ -229,7 +231,8 @@ func WorldKeywordExportHandler(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
 	}
 	worldID := c.Params("worldId")
-	items, err := service.WorldKeywordExport(worldID, user.ID)
+	category := strings.TrimSpace(c.Query("category"))
+	items, err := service.WorldKeywordExport(worldID, user.ID, category)
 	if err != nil {
 		status := fiber.StatusInternalServerError
 		if err == service.ErrWorldPermission {
@@ -238,6 +241,23 @@ func WorldKeywordExportHandler(c *fiber.Ctx) error {
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}
 	return c.JSON(fiber.Map{"items": items})
+}
+
+func WorldKeywordCategoriesHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	categories, err := service.WorldKeywordListCategories(worldID, user.ID)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.JSON(fiber.Map{"categories": categories})
 }
 
 type worldKeywordEventPayload struct {

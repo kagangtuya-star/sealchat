@@ -435,6 +435,10 @@ const handleConfirm = () => emit('save', { ...draft })
             <template #checked>启用释义气泡</template>
             <template #unchecked>禁用释义气泡</template>
           </n-switch>
+          <n-switch v-model:value="draft.worldKeywordDeduplicateEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
+            <template #checked>术语去重</template>
+            <template #unchecked>允许重复</template>
+          </n-switch>
         </div>
         <div class="keyword-preview">
           <span

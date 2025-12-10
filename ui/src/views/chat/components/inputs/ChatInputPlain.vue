@@ -251,6 +251,12 @@ defineExpose({
 <style lang="scss" scoped>
 .chat-input-plain-wrapper {
   width: 100%;
+
+  /* 使输入框字体与聊天消息区域保持一致 */
+  :deep(textarea) {
+    font-size: var(--chat-font-size, 0.9375rem) !important;
+    line-height: var(--chat-line-height, 1.6) !important;
+  }
 }
 
 /* 极简滚动条样式 */

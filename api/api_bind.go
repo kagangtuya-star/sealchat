@@ -201,6 +201,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Delete("/:worldId/members/:userId", WorldMemberRemoveHandler)
 	worldGroup.Post("/:worldId/members/:userId/role", WorldMemberRoleHandler)
 	worldGroup.Get("/:worldId/keywords", WorldKeywordListHandler)
+	worldGroup.Get("/:worldId/keywords/categories", WorldKeywordCategoriesHandler)
 	worldGroup.Post("/:worldId/keywords", WorldKeywordCreateHandler)
 	worldGroup.Patch("/:worldId/keywords/:keywordId", WorldKeywordUpdateHandler)
 	worldGroup.Delete("/:worldId/keywords/:keywordId", WorldKeywordDeleteHandler)
