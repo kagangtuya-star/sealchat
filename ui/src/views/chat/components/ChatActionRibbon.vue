@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NIcon } from 'naive-ui'
 import {
   Archive as ArchiveIcon,
   Download as DownloadIcon,
+  DotsVertical as MoreIcon,
   MoodSmile as EmojiIcon,
   Palette,
   Star as StarIcon,
@@ -49,6 +51,183 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+// Ref for measuring container width
+const actionsContainerRef = ref<HTMLElement | null>(null)
+
+// Number of visible buttons (dynamically calculated)
+const visibleCount = ref(7)
+
+// Define all action buttons
+interface ActionButton {
+  key: string
+  label: string
+  icon: any
+  emitEvent: string
+  activeKey: keyof Props
+  condition?: () => boolean
+}
+
+const allActionButtons = computed<ActionButton[]>(() => {
+  const buttons: ActionButton[] = [
+    { key: 'display', label: '显示设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
+    { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
+    { key: 'export', label: '导出记录', icon: DownloadIcon, emitEvent: 'open-export', activeKey: 'exportActive' },
+    { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
+    { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
+  ]
+  
+  // Add import button if allowed (before 消息归档)
+  if (props.canImport) {
+    buttons.push({ key: 'import', label: '导入记录', icon: UploadIcon, emitEvent: 'open-import', activeKey: 'importActive' })
+  }
+  
+  // 消息归档 always at the end
+  buttons.push({ key: 'archive', label: '消息归档', icon: ArchiveIcon, emitEvent: 'open-archive', activeKey: 'archiveActive' })
+  
+  return buttons
+})
+
+// Visible buttons (shown directly)
+const visibleButtons = computed(() => {
+  return allActionButtons.value.slice(0, visibleCount.value)
+})
+
+// Overflow buttons (shown in dropdown)
+const overflowButtons = computed(() => {
+  return allActionButtons.value.slice(visibleCount.value)
+})
+
+// Check if any overflow action is active
+const hasActiveOverflowAction = computed(() => {
+  return overflowButtons.value.some(btn => props[btn.activeKey])
+})
+
+// Show more button only if there are overflow buttons
+const showMoreButton = computed(() => {
+  return overflowButtons.value.length > 0
+})
+
+// Dropdown menu options for overflow buttons
+const moreMenuOptions = computed(() => {
+  return overflowButtons.value.map(btn => ({
+    key: btn.key,
+    label: btn.label,
+    icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
+  }))
+})
+
+const handleMoreMenuSelect = (key: string) => {
+  const button = allActionButtons.value.find(btn => btn.key === key)
+  if (button) {
+    emit(button.emitEvent as any)
+  }
+}
+
+const handleButtonClick = (button: ActionButton) => {
+  emit(button.emitEvent as any)
+}
+
+// Constants for button sizing (conservative estimates to avoid cutoff)
+const BUTTON_BASE_WIDTH = 48 // icon + padding + border
+const CHAR_WIDTH = 16 // approximate width per Chinese character
+const BUTTON_GAP = 8 // gap between buttons (0.5rem)
+const MORE_BUTTON_WIDTH = 75 // width of "更多" button
+const MOBILE_BREAKPOINT = 768 // mobile breakpoint in px
+const SAFETY_MARGIN = 10 // extra margin to prevent partial cutoff
+
+// Check if current viewport is mobile
+const isMobile = () => window.innerWidth <= MOBILE_BREAKPOINT
+
+// Calculate button width based on label (with safety margin)
+const getButtonWidth = (label: string) => {
+  return BUTTON_BASE_WIDTH + label.length * CHAR_WIDTH + SAFETY_MARGIN
+}
+
+// Get all button widths (precomputed)
+const allButtonWidths = computed(() => {
+  return allActionButtons.value.map(btn => getButtonWidth(btn.label))
+})
+
+// Total width needed to display all buttons
+const totalButtonsWidth = computed(() => {
+  const widths = allButtonWidths.value
+  return widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * BUTTON_GAP
+})
+
+// Calculate how many buttons can fit
+const calculateVisibleCount = () => {
+  const totalButtons = allActionButtons.value.length
+  
+  // On mobile, show all buttons (CSS will handle wrapping)
+  if (isMobile()) {
+    visibleCount.value = totalButtons
+    return
+  }
+  
+  if (!actionsContainerRef.value) return
+  
+  const containerWidth = actionsContainerRef.value.offsetWidth
+  const widths = allButtonWidths.value
+  
+  // Check if all buttons fit without "more" button
+  if (totalButtonsWidth.value <= containerWidth) {
+    visibleCount.value = totalButtons
+    return
+  }
+  
+  // Need to calculate how many fit with "more" button
+  // Available width = container - more button - gap before more button
+  const availableWidth = containerWidth - MORE_BUTTON_WIDTH - BUTTON_GAP
+  
+  let usedWidth = 0
+  let count = 0
+  
+  for (let i = 0; i < totalButtons; i++) {
+    const btnWidth = widths[i]
+    const gapWidth = count > 0 ? BUTTON_GAP : 0
+    const neededWidth = usedWidth + gapWidth + btnWidth
+    
+    if (neededWidth <= availableWidth) {
+      usedWidth = neededWidth
+      count++
+    } else {
+      break
+    }
+  }
+  
+  // Ensure at least 1 button is visible
+  visibleCount.value = Math.max(count, 1)
+}
+
+// ResizeObserver for container
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  nextTick(() => {
+    calculateVisibleCount()
+    
+    // Setup ResizeObserver
+    if (actionsContainerRef.value) {
+      resizeObserver = new ResizeObserver(() => {
+        calculateVisibleCount()
+      })
+      resizeObserver.observe(actionsContainerRef.value)
+    }
+  })
+})
+
+onBeforeUnmount(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+})
+
+// Re-calculate when canImport changes (button list changes)
+watch(() => props.canImport, () => {
+  nextTick(calculateVisibleCount)
+})
 
 const roleSelectOptions = computed(() => {
   return props.roles.map(role => ({
@@ -118,93 +297,41 @@ const clearAllFilters = () => {
     </div>
 
     <!-- 功能入口区域 -->
-    <div class="ribbon-section ribbon-section--actions">
+    <div class="ribbon-section ribbon-section--actions" ref="actionsContainerRef">
       <div class="ribbon-actions-grid">
+        <!-- 动态渲染可见按钮 -->
         <n-button
+          v-for="button in visibleButtons"
+          :key="button.key"
           type="tertiary"
           class="ribbon-action-button"
-          :class="{ 'is-active': props.archiveActive }"
-          @click="emit('open-archive')"
+          :class="{ 'is-active': props[button.activeKey] }"
+          @click="handleButtonClick(button)"
         >
           <template #icon>
-            <n-icon :component="ArchiveIcon" />
+            <n-icon :component="button.icon" />
           </template>
-          消息归档
+          {{ button.label }}
         </n-button>
 
-        <n-button
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.exportActive }"
-          @click="emit('open-export')"
+        <!-- 更多功能 - 下拉菜单 (仅在有溢出按钮时显示) -->
+        <n-dropdown
+          v-if="showMoreButton"
+          :options="moreMenuOptions"
+          trigger="click"
+          @select="handleMoreMenuSelect"
         >
-          <template #icon>
-            <n-icon :component="DownloadIcon" />
-          </template>
-          导出记录
-        </n-button>
-
-        <n-button
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.identityActive }"
-          @click="emit('open-identity-manager')"
-        >
-          <template #icon>
-            <n-icon :component="UsersIcon" />
-          </template>
-          角色管理
-        </n-button>
-
-        <n-button
-          v-if="props.canImport"
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.importActive }"
-          @click="emit('open-import')"
-        >
-          <template #icon>
-            <n-icon :component="UploadIcon" />
-          </template>
-          导入记录
-        </n-button>
-
-        <n-button
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.displayActive }"
-          @click="emit('open-display-settings')"
-        >
-          <template #icon>
-            <n-icon :component="Palette" />
-          </template>
-          显示模式
-        </n-button>
-
-        <n-button
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.favoriteActive }"
-          @click="emit('open-favorites')"
-        >
-          <template #icon>
-            <n-icon :component="StarIcon" />
-          </template>
-          频道收藏
-        </n-button>
-
-        <n-button
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props.galleryActive }"
-          @click="emit('open-gallery')"
-        >
-          <template #icon>
-            <n-icon :component="EmojiIcon" />
-          </template>
-          表情资源
-        </n-button>
-
+          <n-button
+            type="tertiary"
+            class="ribbon-action-button ribbon-more-button"
+            :class="{ 'is-active': hasActiveOverflowAction }"
+          >
+            <template #icon>
+              <n-icon :component="MoreIcon" />
+            </template>
+            更多
+          </n-button>
+        </n-dropdown>
       </div>
     </div>
 
@@ -251,12 +378,14 @@ const clearAllFilters = () => {
 }
 
 .ribbon-section--filters {
-  flex: 1;
+  flex-shrink: 0;
 }
 
 .ribbon-section--actions {
-  flex-shrink: 0;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
 }
 
 .ribbon-section--summary {
@@ -295,21 +424,8 @@ const clearAllFilters = () => {
 
 .ribbon-actions-grid {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.5rem;
-}
-
-@media (max-width: 1200px) {
-  .ribbon-actions-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-  }
-
-  .ribbon-actions-grid :deep(.n-button) {
-    width: 100%;
-    justify-content: center;
-  }
 }
 
 :root[data-display-palette='night'] .ribbon-action-button:hover {
@@ -349,6 +465,22 @@ const clearAllFilters = () => {
 
   .ribbon-section--filters {
     flex-wrap: wrap;
+  }
+
+  .ribbon-section--actions {
+    overflow: visible;
+  }
+
+  .ribbon-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .ribbon-actions-grid :deep(.n-button) {
+    width: 100%;
+    justify-content: center;
   }
 
   .ribbon-section--summary {
