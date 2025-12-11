@@ -168,6 +168,89 @@ const updateColor = (key: keyof CustomThemeColors, value: string | null) => {
 const getColorValue = (key: keyof CustomThemeColors): string | null => {
   return themeColors.value[key] || null
 }
+
+// JSON 导出主题
+const exportTheme = (theme: CustomTheme) => {
+  const exportData = {
+    name: theme.name,
+    colors: theme.colors,
+    exportedAt: new Date().toISOString(),
+    version: '1.0',
+  }
+  const json = JSON.stringify(exportData, null, 2)
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `sealchat-theme-${theme.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// JSON 导入主题
+const importFileInput = ref<HTMLInputElement | null>(null)
+const importError = ref<string | null>(null)
+
+const triggerImport = () => {
+  importFileInput.value?.click()
+}
+
+const handleImportFile = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  
+  importError.value = null
+  
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const content = e.target?.result as string
+      const data = JSON.parse(content)
+      
+      // 验证必需字段
+      if (!data.name || typeof data.name !== 'string') {
+        importError.value = '无效的主题文件：缺少 name 字段'
+        return
+      }
+      if (!data.colors || typeof data.colors !== 'object') {
+        importError.value = '无效的主题文件：缺少 colors 字段'
+        return
+      }
+      
+      // 创建新主题
+      const existingTheme = themes.value.find(t => t.name === data.name)
+      const uniqueName = existingTheme 
+        ? `${data.name} ${Date.now().toString(36).slice(-4)}`
+        : data.name
+      
+      const theme: CustomTheme = {
+        id: `imported_${Date.now()}`,
+        name: uniqueName,
+        colors: { ...data.colors },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      
+      // 确保自定义主题功能已启用
+      if (!display.settings.customThemeEnabled) {
+        display.setCustomThemeEnabled(true)
+      }
+      
+      display.saveCustomTheme(theme)
+      display.activateCustomTheme(theme.id)
+      
+      // 重置文件输入
+      target.value = ''
+    } catch (err) {
+      importError.value = '无效的 JSON 文件'
+      console.error('Import theme error:', err)
+    }
+  }
+  reader.readAsText(file)
+}
 </script>
 
 <template>
@@ -190,6 +273,7 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
                 <n-tag v-if="activeThemeId === theme.id" size="small" type="success">当前</n-tag>
               </div>
               <div class="theme-item__actions">
+                <n-button text size="small" @click.stop="exportTheme(theme)">导出</n-button>
                 <n-button text size="small" @click.stop="startEdit(theme)">编辑</n-button>
                 <n-button text size="small" type="error" @click.stop="handleDelete(theme.id)">删除</n-button>
               </div>
@@ -198,6 +282,24 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
         </section>
 
         <n-divider v-if="themes.length > 0" />
+
+        <!-- 导入/导出 JSON -->
+        <section class="theme-section">
+          <p class="section-title">导入/导出</p>
+          <div class="import-export-section">
+            <input
+              ref="importFileInput"
+              type="file"
+              accept=".json,application/json"
+              style="display: none"
+              @change="handleImportFile"
+            />
+            <n-button size="small" @click="triggerImport">从 JSON 文件导入</n-button>
+            <n-text v-if="importError" type="error" class="import-error">{{ importError }}</n-text>
+          </div>
+        </section>
+
+        <n-divider />
 
         <!-- 预设主题 -->
         <section class="theme-section">
@@ -366,6 +468,18 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
   font-size: 0.75rem;
   color: var(--sc-text-secondary);
   margin: 0;
+}
+
+.import-export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.import-error {
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
 }
 
 .color-groups {
