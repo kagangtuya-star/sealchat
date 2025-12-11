@@ -60,6 +60,7 @@ watch(
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
+  draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   // Custom theme fields are managed directly by store actions, not by draft
@@ -360,6 +361,20 @@ const handleConfirm = () => emit('save', { ...draft })
             <template #checked>术语去重</template>
             <template #unchecked>允许重复</template>
           </n-switch>
+        </div>
+        <div class="keyword-indent-settings">
+          <span class="indent-label">多段首行缩进</span>
+          <n-input-number
+            v-model:value="draft.worldKeywordTooltipTextIndent"
+            size="small"
+            :min="0"
+            :max="4"
+            :step="0.5"
+            :disabled="!draft.worldKeywordHighlightEnabled || !draft.worldKeywordTooltipEnabled"
+            style="width: 90px"
+          />
+          <span class="indent-unit">em</span>
+          <span class="indent-hint">（0 为关闭）</span>
         </div>
         <div class="keyword-preview">
           <span
@@ -799,6 +814,30 @@ const handleConfirm = () => emit('save', { ...draft })
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.keyword-indent-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.indent-label {
+  font-size: 0.85rem;
+  color: var(--sc-text-primary);
+}
+
+.indent-unit {
+  font-size: 0.8rem;
+  color: var(--sc-text-secondary);
+}
+
+.indent-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  opacity: 0.85;
 }
 
 .timestamp-settings {

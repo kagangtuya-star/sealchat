@@ -469,6 +469,7 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   compiledKeywords: compiledKeywords.value,
   onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
   underlineOnly: keywordUnderlineOnly.value,
+  textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
 })
 
 // Lazy rendering state
@@ -677,6 +678,7 @@ watch(
     () => displayStore.settings.worldKeywordUnderlineOnly,
     () => displayStore.settings.worldKeywordTooltipEnabled,
     () => displayStore.settings.worldKeywordDeduplicateEnabled,
+    () => displayStore.settings.worldKeywordTooltipTextIndent,
     () => displayContent.value,
   ],
   () => {
@@ -687,6 +689,7 @@ watch(
       compiledKeywords: compiledKeywords.value,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
       underlineOnly: keywordUnderlineOnly.value,
+      textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
     })
     void applyKeywordHighlights()
   },

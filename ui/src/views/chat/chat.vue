@@ -11005,6 +11005,17 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 
+/* 多段首行缩进样式 */
+:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph) {
+  text-indent: var(--keyword-tooltip-text-indent, 0);
+  margin: 0;
+  padding: 0;
+}
+
+:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph) {
+  margin-top: 0.5em;
+}
+
 :global(.keyword-tooltip__body .keyword-highlight) {
   cursor: pointer;
   pointer-events: auto;

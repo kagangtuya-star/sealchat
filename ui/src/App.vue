@@ -984,6 +984,17 @@ nav a:first-of-type {
   border-bottom-color: var(--keyword-border-color) !important;
 }
 
+/* 术语气泡多段首行缩进样式 - 全局 */
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph {
+  text-indent: var(--keyword-tooltip-text-indent, 0);
+  margin: 0;
+  padding: 0;
+}
+
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph {
+  margin-top: 0.5em;
+}
+
 /* Active tabs with sc-sidebar-fill - more specific selectors */
 :root[data-custom-theme='true'] .n-tabs-tab.n-tabs-tab--active.sc-sidebar-fill,
 :root[data-custom-theme='true'] .n-tabs-tab--active.sc-sidebar-fill,

@@ -261,6 +261,7 @@ export interface KeywordTooltipOptions {
   compiledKeywords?: CompiledKeywordSpan[]
   onKeywordDoubleInvoke?: (keywordId: string) => void
   underlineOnly?: boolean
+  textIndent?: number  // 多段首行缩进值（em），0 或未定义则不缩进
 }
 
 export interface KeywordTooltipController {
@@ -291,6 +292,7 @@ export function createKeywordTooltip(
 
   const level = options?.level ?? 0
   const underlineOnly = options?.underlineOnly ?? false
+  const textIndent = options?.textIndent ?? 0
   let currentTooltip: TooltipInstance | null = null
   let hoverTooltipElement: HTMLDivElement | null = null
   let nestedTooltipControllers: Map<string, KeywordTooltipController> = new Map()
@@ -317,7 +319,8 @@ export function createKeywordTooltip(
         level: level + 1,
         compiledKeywords: options?.compiledKeywords,
         onKeywordDoubleInvoke: options?.onKeywordDoubleInvoke,
-        underlineOnly: underlineOnly
+        underlineOnly: underlineOnly,
+        textIndent: textIndent,
       })
       nestedTooltipControllers.set(keywordId, controller)
     }
@@ -422,10 +425,47 @@ export function createKeywordTooltip(
       const body = document.createElement('div')
       body.className = 'keyword-tooltip__body'
 
-      if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
-        body.innerHTML = applyHighlightsToText(data.description, options.compiledKeywords, underlineOnly)
+      // 检测是否包含换行，如果有则按段落渲染
+      // 支持 \n, \r\n, \r 等各种换行符
+      const paragraphs = data.description.split(/\r?\n|\r/)
+      const shouldIndent = paragraphs.length > 1 && textIndent > 0
+
+      // Debug logging
+      console.debug('[KeywordTooltip] description length:', data.description.length)
+      console.debug('[KeywordTooltip] paragraphs count:', paragraphs.length)
+      console.debug('[KeywordTooltip] textIndent:', textIndent)
+      console.debug('[KeywordTooltip] shouldIndent:', shouldIndent)
+
+      if (shouldIndent) {
+        body.classList.add('keyword-tooltip__body--indented')
+        body.style.setProperty('--keyword-tooltip-text-indent', `${textIndent}em`)
+
+        // 将每个段落包装在 p 标签中
+        paragraphs.forEach((para, index) => {
+          if (para.trim() === '' && index !== paragraphs.length - 1) {
+            // 空行用 br 表示
+            body.appendChild(document.createElement('br'))
+            return
+          }
+          if (para.trim() === '') return
+
+          const p = document.createElement('p')
+          p.className = 'keyword-tooltip__paragraph'
+
+          if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+            p.innerHTML = applyHighlightsToText(para, options.compiledKeywords, underlineOnly)
+          } else {
+            p.textContent = para
+          }
+          body.appendChild(p)
+        })
       } else {
-        body.textContent = data.description
+        // 单段或禁用缩进时，使用原有逻辑
+        if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+          body.innerHTML = applyHighlightsToText(data.description, options.compiledKeywords, underlineOnly)
+        } else {
+          body.textContent = data.description
+        }
       }
 
       tooltip.appendChild(body)

@@ -93,6 +93,7 @@ export interface DisplaySettings {
   worldKeywordUnderlineOnly: boolean
   worldKeywordTooltipEnabled: boolean
   worldKeywordDeduplicateEnabled: boolean
+  worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 自定义主题
@@ -136,6 +137,9 @@ const MESSAGE_PADDING_X_MAX = 48
 const MESSAGE_PADDING_Y_DEFAULT = 14
 const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
+const KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT = 1  // 1em - 中文标准首行缩进
+const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
+const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
 const SEND_SHORTCUT_DEFAULT: 'enter' | 'ctrlEnter' = 'enter'
 const coerceSendShortcut = (value?: string): 'enter' | 'ctrlEnter' => (value === 'ctrlEnter' ? 'ctrlEnter' : 'enter')
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
@@ -335,6 +339,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
   worldKeywordDeduplicateEnabled: false,
+  worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   customThemeEnabled: false,
@@ -506,6 +511,12 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
+      worldKeywordTooltipTextIndent: coerceFloatInRange(
+        (parsed as any)?.worldKeywordTooltipTextIndent,
+        KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
+        KEYWORD_TOOLTIP_TEXT_INDENT_MIN,
+        KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
+      ),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
@@ -642,6 +653,15 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordDeduplicateEnabled')
       ? coerceBoolean((patch as any).worldKeywordDeduplicateEnabled)
       : base.worldKeywordDeduplicateEnabled,
+  worldKeywordTooltipTextIndent:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipTextIndent')
+      ? coerceFloatInRange(
+        (patch as any).worldKeywordTooltipTextIndent,
+        KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
+        KEYWORD_TOOLTIP_TEXT_INDENT_MIN,
+        KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
+      )
+      : base.worldKeywordTooltipTextIndent,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
