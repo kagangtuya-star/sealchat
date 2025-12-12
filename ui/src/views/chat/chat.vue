@@ -6648,6 +6648,18 @@ const fetchLatestMessages = async () => {
   }
 };
 
+// Watch for showArchived filter changes to reload messages with archived content
+watch(
+  () => chat.filterState.showArchived,
+  async (showArchived, prevShowArchived) => {
+    // Only reload when switching to "show archived" mode
+    // When hiding, the client-side filter in visibleRowEntries handles it
+    if (showArchived && !prevShowArchived && chat.curChannel?.id) {
+      await fetchLatestMessages();
+    }
+  },
+);
+
 const loadOlderMessagesByWindow = async () => {
   const first = rows.value[0];
   const boundary = normalizeTimestamp(first?.createdAt);

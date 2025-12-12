@@ -180,6 +180,34 @@ func websocketWorks(app *fiber.App) {
 		)
 		c := &WsSyncConn{rawConn, sync.RWMutex{}}
 
+		// 设置pong处理器，收到pong时更新连接活跃状态
+		rawConn.SetPongHandler(func(appData string) error {
+			return nil
+		})
+
+		// 启动ping goroutine，定期发送WebSocket ping帧检测连接是否存活
+		pingTicker := time.NewTicker(30 * time.Second)
+		pingDone := make(chan struct{})
+		go func() {
+			defer pingTicker.Stop()
+			for {
+				select {
+				case <-pingTicker.C:
+					c.Mux.Lock()
+					err := rawConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+					c.Mux.Unlock()
+					if err != nil {
+						log.Printf("WebSocket ping failed, closing connection: %v", err)
+						rawConn.Close()
+						return
+					}
+				case <-pingDone:
+					return
+				}
+			}
+		}()
+
+
 		for {
 			if mt, msg, err = c.ReadMessage(); err != nil {
 				log.Println("read:", err)
@@ -436,6 +464,9 @@ func websocketWorks(app *fiber.App) {
 			//	break
 			// }
 		}
+
+		// 清理ping goroutine
+		close(pingDone)
 
 		// 连接断开，补发停止输入信令
 		if curConnInfo != nil && curConnInfo.TypingEnabled && curConnInfo.ChannelId != "" && curUser != nil {
