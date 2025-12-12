@@ -21,6 +21,7 @@ import UserLabel from '@/components/UserLabel.vue'
 import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
 import ChannelSortModal from './ChannelSortModal.vue';
+import ChannelArchiveModal from './ChannelArchiveModal.vue';
 
 const { t } = useI18n()
 
@@ -151,6 +152,16 @@ const canShowDissolve = (channel?: SChannel) => {
   return chat.isChannelOwner(channel.id, userId) || chat.isChannelAdmin(channel.id, userId);
 };
 
+// 检查是否可以显示归档选项（世界管理员/拥有者）
+const canShowArchive = (channel?: SChannel) => {
+  if (!channel?.id) return false;
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  const role = detail?.memberRole;
+  return role === 'owner' || role === 'admin';
+};
+
 const ensureChannelManagePermission = async (channelId: string) => {
   if (!channelId) return false;
   const userId = user.info.id;
@@ -197,6 +208,66 @@ const handleChannelDissolve = async (channel: SChannel) => {
   });
 };
 
+const handleChannelArchive = async (channel: SChannel) => {
+  if (!channel?.id) return;
+  if (!canShowArchive(channel)) {
+    message.error('仅世界管理员可归档频道');
+    return;
+  }
+
+  const hasChildren = channel.children && channel.children.length > 0;
+  const childCount = channel.children?.length || 0;
+  const content = hasChildren
+    ? `确认要归档「${channel.name}」及其 ${childCount} 个子频道吗？归档后可在"归档管理"中恢复。`
+    : `确认要归档「${channel.name}」吗？归档后可在"归档管理"中恢复。`;
+
+  dialog.warning({
+    title: '归档频道',
+    content,
+    positiveText: '归档',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await chat.archiveChannels([channel.id], true);
+        message.success('频道已归档');
+      } catch (error: any) {
+        message.error(error?.response?.data?.error || '归档失败，请重试');
+        return false;
+      }
+      return true;
+    },
+  });
+};
+
+const handleChannelUnarchive = async (channel: SChannel) => {
+  if (!channel?.id) return;
+  if (!canShowArchive(channel)) {
+    message.error('仅世界管理员可恢复归档频道');
+    return;
+  }
+
+  dialog.info({
+    title: '恢复频道',
+    content: `确认要将「${channel.name}」恢复为正常频道吗？`,
+    positiveText: '恢复',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await chat.unarchiveChannels([channel.id], true);
+        message.success('频道已恢复');
+        // 清除临时归档频道
+        chat.temporaryArchivedChannel = null;
+        // 刷新频道列表
+        await chat.channelList(chat.currentWorldId, true);
+      } catch (error: any) {
+        message.error(error?.response?.data?.error || '恢复失败，请重试');
+        return false;
+      }
+      return true;
+    },
+  });
+};
+
 const handleSelect = async (key: string, data: any) => {
   switch (key) {
     case 'enter':
@@ -217,6 +288,12 @@ const handleSelect = async (key: string, data: any) => {
       break;
     case 'dissolve':
       await handleChannelDissolve(data.item as SChannel);
+      break;
+    case 'archive':
+      await handleChannelArchive(data.item as SChannel);
+      break;
+    case 'unarchive':
+      await handleChannelUnarchive(data.item as SChannel);
       break;
     default:
       break;
@@ -293,6 +370,7 @@ const handleChannelSortEntry = () => {
 };
 
 const showSortModal = ref(false);
+const showArchiveModal = ref(false);
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -362,6 +440,42 @@ const handleOpenWorldGlossary = () => {
         <!-- 频道列表内容将在这里显示 -->
         <div class="space-y-1 flex flex-col px-2">
           <template v-if="chat.curChannel">
+            <!-- 临时显示的归档频道 -->
+            <div
+              v-if="chat.temporaryArchivedChannel"
+              class="sider-item archived-channel"
+              :class="chat.temporaryArchivedChannel.id === chat.curChannel?.id ? ['active'] : []"
+              @click="doChannelSwitch(chat.temporaryArchivedChannel)"
+            >
+              <div class="flex space-x-1 items-center">
+                <n-icon :component="IconNumber"></n-icon>
+                <span class="text-more" style="max-width: 7rem">{{ chat.temporaryArchivedChannel.name }}</span>
+                <n-tag size="tiny" type="warning">归档</n-tag>
+              </div>
+              <div class="right">
+                <div class="flex justify-center space-x-1">
+                  <n-dropdown trigger="click" :options="[
+                    { label: '进入', key: 'enter', item: chat.temporaryArchivedChannel },
+                    { label: '频道管理', key: 'manage', item: chat.temporaryArchivedChannel },
+                    { label: '恢复归档', key: 'unarchive', item: chat.temporaryArchivedChannel, show: canShowArchive(chat.temporaryArchivedChannel as SChannel) }
+                  ]" @select="handleSelect">
+                    <n-button @click.stop quaternary circle size="tiny">
+                      <template #icon>
+                        <n-icon>
+                          <Menu />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                  </n-dropdown>
+                  <n-button quaternary circle size="tiny" @click.stop="handleSelect('manage', { item: chat.temporaryArchivedChannel })">
+                    <template #icon>
+                      <SettingsSharp />
+                    </template>
+                  </n-button>
+                </div>
+              </div>
+            </div>
+
             <!-- <template v-if="false"> -->
             <template v-for="i in chat.channelTree">
               <div class="sider-item" :class="i.id === chat.curChannel?.id ? ['active'] : []"
@@ -393,6 +507,7 @@ const handleOpenWorldGlossary = () => {
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
                       { label: '频道管理', key: 'manage', item: i },
+                      { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
                       { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
                       { label: '解散', key: 'dissolve', item: i, show: canShowDissolve(i as SChannel) }
                     ]" @select="handleSelect">
@@ -447,6 +562,7 @@ const handleOpenWorldGlossary = () => {
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
                           { label: '频道管理', key: 'manage', item: child },
+                          { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },
                           { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
                           { label: '解散', key: 'dissolve', item: child, show: canShowDissolve(child as SChannel) }
                         ]" @select="handleSelect">
@@ -507,9 +623,14 @@ const handleOpenWorldGlossary = () => {
               </template>
               <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
             </n-tooltip>
-            <n-button size="tiny" quaternary block @click="handleChannelSortEntry">
-              频道排序
-            </n-button>
+            <div class="sidebar-footer-row">
+              <n-button size="tiny" quaternary @click="handleChannelSortEntry">
+                频道排序
+              </n-button>
+              <n-button size="tiny" quaternary @click="showArchiveModal = true">
+                频道归档
+              </n-button>
+            </div>
           </div>
         </div>
       </n-tab-pane>
@@ -560,6 +681,7 @@ const handleOpenWorldGlossary = () => {
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
   <ChannelSortModal v-model:show="showSortModal" />
+  <ChannelArchiveModal v-model:show="showArchiveModal" />
 
 </template>
 
@@ -609,5 +731,17 @@ const handleOpenWorldGlossary = () => {
 
 .sidebar-footer-actions .n-button {
   justify-content: center;
+}
+
+.sidebar-footer-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.sider-item.archived-channel {
+  background-color: var(--sc-bg-elevated, #fffbe6);
+  border: 1px dashed var(--sc-accent-primary, #faad14);
+  opacity: 0.9;
 }
 </style>

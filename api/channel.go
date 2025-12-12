@@ -235,10 +235,18 @@ func ChannelInfoGet(c *fiber.Ctx) error {
 		})
 	}
 
+	// 检查频道是否存在
+	if channel.ID == "" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "频道不存在",
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"item": channel,
 	})
 }
+
 
 func ChannelDissolve(c *fiber.Ctx) error {
 	channelID := strings.TrimSpace(c.Params("channelId"))
@@ -347,5 +355,156 @@ func RolePermApply(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "更新成功",
+	})
+}
+
+// ArchivedChannelList 获取归档频道列表
+func ArchivedChannelList(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	worldID := strings.TrimSpace(c.Params("worldId"))
+	if worldID == "" {
+		worldID = strings.TrimSpace(c.Query("worldId"))
+	}
+	if worldID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "世界ID不能为空",
+		})
+	}
+
+	keyword := strings.TrimSpace(c.Query("keyword"))
+	page := c.QueryInt("page", 1)
+	pageSize := c.QueryInt("pageSize", 20)
+
+	result, err := service.ArchivedChannelList(worldID, user.ID, keyword, page, pageSize)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(result)
+}
+
+// ChannelArchive 归档频道
+func ChannelArchive(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	var req struct {
+		ChannelIDs      []string `json:"channelIds"`
+		IncludeChildren bool     `json:"includeChildren"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+
+	if len(req.ChannelIDs) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道ID列表不能为空",
+		})
+	}
+
+	if err := service.ChannelArchive(req.ChannelIDs, user.ID, req.IncludeChildren); err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "频道已归档",
+	})
+}
+
+// ChannelUnarchive 恢复归档频道
+func ChannelUnarchive(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	var req struct {
+		ChannelIDs      []string `json:"channelIds"`
+		IncludeChildren bool     `json:"includeChildren"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+
+	if len(req.ChannelIDs) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道ID列表不能为空",
+		})
+	}
+
+	if err := service.ChannelUnarchive(req.ChannelIDs, user.ID, req.IncludeChildren); err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "频道已恢复",
+	})
+}
+
+// ChannelPermanentDelete 永久删除归档频道
+func ChannelPermanentDelete(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	var req struct {
+		ChannelIDs   []string `json:"channelIds"`
+		ConfirmToken string   `json:"confirmToken"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+
+	if len(req.ChannelIDs) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道ID列表不能为空",
+		})
+	}
+
+	// 验证confirmToken（简单校验：必须等于 "CONFIRM_DELETE"）
+	if req.ConfirmToken != "CONFIRM_DELETE" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请确认删除操作",
+		})
+	}
+
+	if err := service.ChannelPermanentDelete(req.ChannelIDs, user.ID); err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "频道已永久删除",
 	})
 }

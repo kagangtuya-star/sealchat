@@ -355,3 +355,254 @@ func ChannelDissolve(channelID, operatorID string) (err error) {
 
 	return nil
 }
+
+// ChannelArchive 归档频道，世界管理员/拥有者可操作
+func ChannelArchive(channelIDs []string, userID string, includeChildren bool) error {
+	if len(channelIDs) == 0 {
+		return errors.New("频道ID列表不能为空")
+	}
+
+	// 获取第一个频道的世界ID用于权限验证
+	var firstChannel model.ChannelModel
+	if err := model.GetDB().Where("id = ?", channelIDs[0]).Limit(1).Find(&firstChannel).Error; err != nil {
+		return err
+	}
+	if firstChannel.ID == "" {
+		return errors.New("频道不存在")
+	}
+
+	worldID := firstChannel.WorldID
+	if worldID == "" {
+		return errors.New("仅支持世界频道归档")
+	}
+
+	// 检查权限：世界管理员或拥有者
+	if !IsWorldAdmin(worldID, userID) && !pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return errors.New("仅世界管理员可归档频道")
+	}
+
+	// 收集所有需要归档的频道ID
+	targetIDs := make([]string, 0, len(channelIDs))
+	for _, id := range channelIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		targetIDs = append(targetIDs, id)
+	}
+
+	// 如果需要包含子频道
+	if includeChildren {
+		var childIDs []string
+		model.GetDB().Model(&model.ChannelModel{}).
+			Where("parent_id IN ? AND status = ?", targetIDs, model.ChannelStatusActive).
+			Pluck("id", &childIDs)
+		targetIDs = append(targetIDs, childIDs...)
+	}
+
+	if len(targetIDs) == 0 {
+		return errors.New("没有可归档的频道")
+	}
+
+	// 执行归档
+	err := model.GetDB().Model(&model.ChannelModel{}).
+		Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusActive).
+		Update("status", model.ChannelStatusArchived).Error
+
+	return err
+}
+
+// ChannelUnarchive 恢复归档频道，世界管理员/拥有者可操作
+func ChannelUnarchive(channelIDs []string, userID string, includeChildren bool) error {
+	if len(channelIDs) == 0 {
+		return errors.New("频道ID列表不能为空")
+	}
+
+	// 获取第一个频道的世界ID用于权限验证
+	var firstChannel model.ChannelModel
+	if err := model.GetDB().Where("id = ?", channelIDs[0]).Limit(1).Find(&firstChannel).Error; err != nil {
+		return err
+	}
+	if firstChannel.ID == "" {
+		return errors.New("频道不存在")
+	}
+
+	worldID := firstChannel.WorldID
+	if worldID == "" {
+		return errors.New("仅支持世界频道恢复")
+	}
+
+	// 检查权限：世界管理员或拥有者
+	if !IsWorldAdmin(worldID, userID) && !pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return errors.New("仅世界管理员可恢复频道")
+	}
+
+	// 收集所有需要恢复的频道ID
+	targetIDs := make([]string, 0, len(channelIDs))
+	for _, id := range channelIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		targetIDs = append(targetIDs, id)
+	}
+
+	// 如果需要包含子频道
+	if includeChildren {
+		var childIDs []string
+		model.GetDB().Model(&model.ChannelModel{}).
+			Where("parent_id IN ? AND status = ?", targetIDs, model.ChannelStatusArchived).
+			Pluck("id", &childIDs)
+		targetIDs = append(targetIDs, childIDs...)
+	}
+
+	if len(targetIDs) == 0 {
+		return errors.New("没有可恢复的频道")
+	}
+
+	// 执行恢复
+	err := model.GetDB().Model(&model.ChannelModel{}).
+		Where("id IN ? AND status = ?", targetIDs, model.ChannelStatusArchived).
+		Update("status", model.ChannelStatusActive).Error
+
+	return err
+}
+
+// ChannelPermanentDelete 永久删除归档频道，仅世界拥有者可操作
+func ChannelPermanentDelete(channelIDs []string, userID string) error {
+	if len(channelIDs) == 0 {
+		return errors.New("频道ID列表不能为空")
+	}
+
+	// 获取第一个频道的世界ID用于权限验证
+	var firstChannel model.ChannelModel
+	if err := model.GetDB().Where("id = ?", channelIDs[0]).Limit(1).Find(&firstChannel).Error; err != nil {
+		return err
+	}
+	if firstChannel.ID == "" {
+		return errors.New("频道不存在")
+	}
+
+	worldID := firstChannel.WorldID
+	if worldID == "" {
+		return errors.New("仅支持世界频道删除")
+	}
+
+	// 检查权限：仅世界拥有者
+	if !IsWorldOwner(worldID, userID) && !pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return errors.New("仅世界拥有者可永久删除频道")
+	}
+
+	// 验证所有频道都是已归档状态
+	var channels []*model.ChannelModel
+	if err := model.GetDB().Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return err
+	}
+
+	for _, ch := range channels {
+		if ch.Status != model.ChannelStatusArchived {
+			return fmt.Errorf("频道 %s 未归档，仅可删除已归档频道", ch.Name)
+		}
+		if ch.WorldID != worldID {
+			return errors.New("不可跨世界删除频道")
+		}
+	}
+
+	tx := model.GetDB().Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	var err error
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	for _, channelID := range channelIDs {
+		// 删除频道及其子频道
+		if err = tx.Where("id = ? OR parent_id = ?", channelID, channelID).
+			Delete(&model.ChannelModel{}).Error; err != nil {
+			return err
+		}
+
+		// 删除相关角色映射
+		rolePattern := fmt.Sprintf("ch-%s-%%", channelID)
+		if err = tx.Where("role_id LIKE ?", rolePattern).Delete(&model.UserRoleMappingModel{}).Error; err != nil {
+			return err
+		}
+		if err = tx.Where("role_id LIKE ?", rolePattern).Delete(&model.RolePermissionModel{}).Error; err != nil {
+			return err
+		}
+		if err = tx.Where("id LIKE ?", rolePattern).Delete(&model.ChannelRoleModel{}).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ArchivedChannelListResult 归档频道列表结果
+type ArchivedChannelListResult struct {
+	Items     []*model.ChannelModel `json:"items"`
+	Total     int64                 `json:"total"`
+	CanManage bool                  `json:"canManage"`
+	CanDelete bool                  `json:"canDelete"`
+}
+
+// ArchivedChannelList 获取归档频道列表
+func ArchivedChannelList(worldID, userID, keyword string, page, pageSize int) (*ArchivedChannelListResult, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return nil, errors.New("世界ID不能为空")
+	}
+
+	// 检查权限：世界成员可查看
+	if !IsWorldMember(worldID, userID) && !pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return nil, errors.New("无权查看该世界的归档频道")
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	db := model.GetDB()
+	query := db.Model(&model.ChannelModel{}).
+		Where("world_id = ? AND status = ? AND is_private = ?", worldID, model.ChannelStatusArchived, false)
+
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		query = query.Where("name LIKE ?", "%"+keyword+"%")
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var items []*model.ChannelModel
+	offset := (page - 1) * pageSize
+	if err := query.
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(pageSize).
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+
+	// 权限判断
+	canManage := IsWorldAdmin(worldID, userID) || pm.CanWithSystemRole(userID, pm.PermModAdmin)
+	canDelete := IsWorldOwner(worldID, userID) || pm.CanWithSystemRole(userID, pm.PermModAdmin)
+
+	return &ArchivedChannelListResult{
+		Items:     items,
+		Total:     total,
+		CanManage: canManage,
+		CanDelete: canDelete,
+	}, nil
+}

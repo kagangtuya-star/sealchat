@@ -102,6 +102,8 @@ interface ChatState {
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
   channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
+  // 临时显示的归档频道（查看归档频道时使用，切换后清除）
+  temporaryArchivedChannel: SChannel | null;
 }
 
 const apiMap = new Map<string, any>();
@@ -242,6 +244,7 @@ export const useChatStore = defineStore({
       }
     })(),
     channelIcOocRoleConfig: {},
+    temporaryArchivedChannel: null,
   }),
 
   getters: {
@@ -795,12 +798,40 @@ export const useChatStore = defineStore({
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
 
+      let isFromArchive = false;
+
       if (!nextChannel) {
         nextChannel = this.channelTreePrivate.find(c => c.id === id);
       }
+
+      // 如果本地找不到（可能是归档频道），尝试从 API 获取
+      if (!nextChannel) {
+        try {
+          const channelResp = await this.channelInfoGet(id);
+          // 确保返回的频道有有效的 id
+          if (channelResp?.item && channelResp.item.id) {
+            nextChannel = channelResp.item as SChannel;
+            // 标记为从归档获取的频道
+            if ((nextChannel as any).status === 'archived') {
+              isFromArchive = true;
+            }
+          }
+        } catch (error) {
+          console.warn('获取频道信息失败', error);
+        }
+      }
+
       if (!nextChannel) {
         alert('频道不存在');
         return;
+      }
+
+      // 如果切换到的不是归档频道，清除之前的临时归档频道
+      if (!isFromArchive) {
+        this.temporaryArchivedChannel = null;
+      } else {
+        // 保存为临时归档频道，以便在侧边栏显示
+        this.temporaryArchivedChannel = nextChannel as SChannel;
       }
 
       this.cancelEditing();
@@ -837,6 +868,7 @@ export const useChatStore = defineStore({
       this.channelList(this.currentWorldId);
       return true;
     },
+
 
     getActiveIdentity(channelId?: string) {
       const targetId = channelId || this.curChannel?.id || '';
@@ -1954,6 +1986,70 @@ export const useChatStore = defineStore({
       if (wasCurrent && this.channelTree.length) {
         await this.channelSwitchTo(this.channelTree[0].id);
       }
+    },
+
+    // 频道归档
+    async archiveChannels(channelIds: string[], includeChildren = true) {
+      if (!channelIds.length) {
+        throw new Error('频道ID列表不能为空');
+      }
+      const resp = await api.post('api/v1/channels/archive', {
+        channelIds,
+        includeChildren,
+      });
+      // 刷新频道列表
+      if (this.currentWorldId) {
+        await this.channelList(this.currentWorldId, true);
+      }
+      return resp.data;
+    },
+
+    // 恢复归档频道
+    async unarchiveChannels(channelIds: string[], includeChildren = true) {
+      if (!channelIds.length) {
+        throw new Error('频道ID列表不能为空');
+      }
+      const resp = await api.post('api/v1/channels/unarchive', {
+        channelIds,
+        includeChildren,
+      });
+      // 刷新频道列表
+      if (this.currentWorldId) {
+        await this.channelList(this.currentWorldId, true);
+      }
+      return resp.data;
+    },
+
+    // 永久删除归档频道
+    async deleteArchivedChannels(channelIds: string[], confirmToken: string) {
+      if (!channelIds.length) {
+        throw new Error('频道ID列表不能为空');
+      }
+      const resp = await api.delete('api/v1/channels/archived', {
+        data: {
+          channelIds,
+          confirmToken,
+        },
+      });
+      return resp.data;
+    },
+
+    // 获取归档频道列表
+    async getArchivedChannels(
+      worldId: string,
+      params?: { keyword?: string; page?: number; pageSize?: number },
+    ): Promise<{ items: any[]; total: number; canManage: boolean; canDelete: boolean }> {
+      if (!worldId) {
+        throw new Error('世界ID不能为空');
+      }
+      const resp = await api.get(`api/v1/worlds/${worldId}/archived-channels`, {
+        params: {
+          keyword: params?.keyword,
+          page: params?.page,
+          pageSize: params?.pageSize,
+        },
+      });
+      return resp.data;
     },
 
     // 获取频道权限树

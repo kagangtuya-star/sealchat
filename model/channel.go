@@ -8,6 +8,12 @@ import (
 	"sealchat/protocol"
 )
 
+// 频道状态常量
+const (
+	ChannelStatusActive   = "active"   // 正常状态
+	ChannelStatusArchived = "archived" // 归档状态
+)
+
 type ChannelModel struct {
 	StringPKBaseModel
 	WorldID            string `json:"worldId" gorm:"size:100;index"`
