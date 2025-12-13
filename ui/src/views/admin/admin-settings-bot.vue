@@ -139,6 +139,16 @@ const handleAvatarFileChange = async (event: Event) => {
   if (!file) {
     return
   }
+  // Check file size before uploading
+  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : 2 * 1024 * 1024
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1)
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
+    if (input) {
+      input.value = ''
+    }
+    return
+  }
   uploadingAvatar.value = true
   try {
     const formData = new FormData()

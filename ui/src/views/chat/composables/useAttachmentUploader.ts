@@ -1,6 +1,7 @@
 import { api } from '@/stores/_config';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { blobToArrayBuffer } from '@/utils/tools';
 import { db } from '@/models';
 
@@ -16,7 +17,15 @@ interface UploadImageResult {
 export const uploadImageAttachment = async (file: File, options?: UploadImageOptions): Promise<UploadImageResult> => {
   const user = useUserStore();
   const chat = useChatStore();
+  const utils = useUtilsStore();
   const channelId = options?.channelId || chat.curChannel?.id || '';
+
+  // Check file size before uploading
+  const sizeLimit = utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    throw new Error(`文件大小超过限制（最大 ${limitMB} MB）`);
+  }
 
   const formData = new FormData();
   formData.append('file', file);
@@ -28,7 +37,18 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
     headers.ChannelId = channelId;
   }
 
-  const resp = await api.post('/api/v1/attachment-upload', formData, { headers });
+  let resp;
+  try {
+    resp = await api.post('/api/v1/attachment-upload', formData, { headers });
+  } catch (error: any) {
+    // Extract backend error message from response
+    const backendMessage = error?.response?.data?.message;
+    if (backendMessage) {
+      throw new Error(backendMessage);
+    }
+    throw new Error('上传失败，请稍后重试');
+  }
+
   const idsField = resp.data?.ids;
   const filesField = resp.data?.files;
 

@@ -1888,6 +1888,14 @@ const handleIdentityAvatarChange = async (event: Event) => {
     return;
   }
   const file = input.files[0];
+  // Check file size before processing
+  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
   identityForm.avatarAttachmentId = '';
   identityAvatarFile = file;
   revokeIdentityObjectURL();
