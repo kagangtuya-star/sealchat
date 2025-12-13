@@ -369,7 +369,7 @@ const hoverTimestampVisible = ref(false);
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 let timestampInterval: ReturnType<typeof setInterval> | null = null;
 
-const shouldForceTimestampVisible = computed(() => displayStore.settings.alwaysShowTimestamp || isMobileUa);
+const shouldForceTimestampVisible = computed(() => displayStore.settings.alwaysShowTimestamp);
 const timestampShouldRender = computed(() => {
   if (!props.showHeader || props.bodyOnly) {
     return false;
@@ -403,6 +403,32 @@ const handleTimestampHoverEnd = () => {
   }
   clearHoverTimer();
   hoverTimestampVisible.value = false;
+};
+
+const handleMobileTimestampTap = (e: MouseEvent) => {
+  if (!isMobileUa || shouldForceTimestampVisible.value) {
+    return;
+  }
+  // Ignore if target is an interactive element
+  const target = e.target as HTMLElement;
+  if (target.closest('a, button, img, .message-action-bar')) {
+    return;
+  }
+  e.stopPropagation(); // Prevent global click handler from immediately hiding
+  hoverTimestampVisible.value = !hoverTimestampVisible.value;
+};
+
+const chatItemRef = ref<HTMLElement | null>(null);
+
+const handleGlobalClickForTimestamp = (e: MouseEvent) => {
+  if (!isMobileUa || shouldForceTimestampVisible.value || !hoverTimestampVisible.value) {
+    return;
+  }
+  const target = e.target as HTMLElement;
+  // If click is outside this chat item, hide timestamp
+  if (chatItemRef.value && !chatItemRef.value.contains(target)) {
+    hoverTimestampVisible.value = false;
+  }
 };
 
 watch(shouldForceTimestampVisible, (value) => {
@@ -659,6 +685,11 @@ onMounted(() => {
   // Setup lazy rendering observer
   setupVisibilityObserver()
   void applyKeywordHighlights()
+
+  // Mobile: listen for global clicks to hide timestamp
+  if (isMobileUa) {
+    document.addEventListener('click', handleGlobalClickForTimestamp, true);
+  }
 })
 
 watch([displayContent, () => props.tone], () => {
@@ -711,6 +742,10 @@ onBeforeUnmount(() => {
     keywordObserver.disconnect();
     keywordObserver = null;
   }
+  // Mobile: remove global click listener
+  if (isMobileUa) {
+    document.removeEventListener('click', handleGlobalClickForTimestamp, true);
+  }
   destroyImageViewer();
   keywordTooltipInstance.hideAll()
   keywordTooltipInstance.destroy()
@@ -739,6 +774,7 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
   <div v-else-if="item?.is_revoked" class="py-4 text-center">一条消息已被撤回</div>
   <div
     v-else
+    ref="chatItemRef"
     :id="item?.id"
     class="chat-item"
     :class="[
@@ -752,6 +788,7 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
     ]"
     @mouseenter="handleTimestampHoverStart"
     @mouseleave="handleTimestampHoverEnd"
+    @click="handleMobileTimestampTap"
   >
     <div
       v-if="props.showAvatar"
