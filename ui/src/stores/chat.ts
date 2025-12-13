@@ -316,6 +316,19 @@ export const useChatStore = defineStore({
 
   actions: {
     async connect() {
+      // 先清理现有连接，防止连接泄漏
+      const oldSubject = this.subject;
+      if (oldSubject) {
+        try {
+          oldSubject.complete();
+          oldSubject.unsubscribe();
+          console.log('[WS] 清理旧连接');
+        } catch (e) {
+          console.warn('[WS] 清理旧连接失败', e);
+        }
+        this.subject = null;
+      }
+
       this.stopPingLoop();
       if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
         focusListenersBound = true;
@@ -350,6 +363,9 @@ export const useChatStore = defineStore({
         }
       });
 
+      // 保存当前 subject 引用，供错误处理使用
+      const currentSubject = subject;
+
       subject.subscribe({
         next: (msg: any) => {
           // Opcode.READY
@@ -371,22 +387,23 @@ export const useChatStore = defineStore({
           }
         },
         error: err => {
-          console.log('ws error', err);
+          console.log('[WS] 连接错误', err);
           this.subject = null;
           this.connectState = 'disconnected';
           this.stopPingLoop();
           this.reconnectAfter(5, () => {
             try {
               err.target?.close();
-              this.subject?.unsubscribe();
-              console.log('try close');
+              // 使用保存的引用而非 this.subject（此时已为 null）
+              currentSubject?.unsubscribe();
+              console.log('[WS] 错误后清理完成');
             } catch (e) {
-              console.log('unsubscribe error', e)
+              console.warn('[WS] 错误后清理失败', e)
             }
           })
         }, // Called if at any point WebSocket API signals some kind of error.
         complete: () => {
-          console.log('complete');
+          console.log('[WS] 连接关闭');
           this.stopPingLoop();
         } // Called when connection is closed (for whatever reason).
       });
