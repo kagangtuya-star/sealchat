@@ -254,6 +254,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/user-role-link-by-user-id", AdminUserRoleLinkByUserId)
 	v1AuthAdmin.Post("/admin/user-role-unlink-by-user-id", AdminUserRoleUnlinkByUserId)
 
+	// Image migration routes
+	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)
+	v1AuthAdmin.Post("/admin/image-migration/execute", ImageMigrationExecute)
+
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
 		var newConfig utils.AppConfig
 		err := ctx.BodyParser(&newConfig)
