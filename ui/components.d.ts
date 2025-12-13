@@ -11,6 +11,7 @@ declare module 'vue' {
     AudioDrawer: typeof import('./src/components/audio/AudioDrawer.vue')['default']
     AudioSearchBar: typeof import('./src/components/audio/AudioSearchBar.vue')['default']
     Avatar: typeof import('./src/components/avatar.vue')['default']
+    AvatarSetupPrompt: typeof import('./src/components/AvatarSetupPrompt.vue')['default']
     GalleryButton: typeof import('./src/components/gallery/GalleryButton.vue')['default']
     GalleryCollectionTree: typeof import('./src/components/gallery/GalleryCollectionTree.vue')['default']
     GalleryContextMenu: typeof import('./src/components/gallery/GalleryContextMenu.vue')['default']

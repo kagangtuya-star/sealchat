@@ -7,7 +7,7 @@
     "channelNameHint": "Channel name cannot be empty",
     "positiveText": "OK",
     "negativeText": "Cancel"
-  },  
+  },
   "inputBox": {
     "placeholder": "type here...",
     "send": "Send",
@@ -64,5 +64,12 @@
     "sendTo": "[Whisper] to {target}",
     "from": "[Whisper] from {sender}",
     "generic": "[Whisper] private message"
+  },
+  "avatarPrompt": {
+    "title": "Set Your Avatar",
+    "description": "Upload a unique avatar so others can recognize you!",
+    "action": "Set Up Now",
+    "skip": "Maybe Later",
+    "badge": "Click to set avatar"
   }
 }

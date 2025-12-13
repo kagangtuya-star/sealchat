@@ -66,6 +66,7 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
+import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -536,6 +537,8 @@ const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
 const importJobId = ref('');
+const avatarPromptVisible = ref(false);
+const avatarPromptDismissedThisSession = ref(false);
 const ribbonRoleOptions = ref<Array<{ id: string; label: string }>>([]);
 let ribbonRoleOptionsSeq = 0;
 
@@ -588,6 +591,34 @@ const handleActionRibbonStateRequest = () => {
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
   displaySettingsVisible.value = false;
+};
+
+// Avatar prompt handlers
+const handleOpenAvatarPrompt = () => {
+  avatarPromptVisible.value = true;
+};
+
+const handleAvatarPromptSetup = () => {
+  avatarPromptVisible.value = false;
+  // Emit event to open user profile panel
+  chatEvent.emit('open-user-profile');
+};
+
+const handleAvatarPromptSkip = () => {
+  avatarPromptVisible.value = false;
+  avatarPromptDismissedThisSession.value = true;
+};
+
+// Check if avatar prompt should be shown on mount (session-based)
+const checkAvatarPromptOnMount = () => {
+  if (avatarPromptDismissedThisSession.value) return;
+  if (!user.hasDefaultAvatar) return;
+  // Show prompt after a brief delay for better UX
+  setTimeout(() => {
+    if (!avatarPromptDismissedThisSession.value && user.hasDefaultAvatar) {
+      avatarPromptVisible.value = true;
+    }
+  }, 2000);
 };
 
 watch(
@@ -704,6 +735,8 @@ onMounted(() => {
   } catch (e) {
     console.warn('Failed to load emoji usage', e);
   }
+  // Check if we should show avatar prompt
+  checkAvatarPromptOnMount();
 });
 
 const recordEmojiUsage = (id: string) => {
@@ -7709,6 +7742,7 @@ onBeforeUnmount(() => {
                     @create="openIdentityCreate"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
+                    @avatar-setup="handleOpenAvatarPrompt"
                   />
                 </div>
                 <div class="chat-input-actions__cell">
@@ -8452,6 +8486,13 @@ onBeforeUnmount(() => {
 
   <!-- 新用户引导系统 -->
   <OnboardingRoot />
+
+  <!-- 头像设置引导 -->
+  <AvatarSetupPrompt
+    v-model:show="avatarPromptVisible"
+    @setup="handleAvatarPromptSetup"
+    @skip="handleAvatarPromptSkip"
+  />
 </template>
 
 <style lang="scss" scoped>

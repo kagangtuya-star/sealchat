@@ -7,8 +7,9 @@ import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
 import { NDropdown, NButton, NIcon, NTooltip, NPopover } from 'naive-ui';
-import { Plus, Star, AlertTriangle } from '@vicons/tabler';
+import { Plus, Star, AlertTriangle, Camera } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
+import { useI18n } from 'vue-i18n';
 
 const props = withDefaults(defineProps<{
   channelId?: string;
@@ -21,7 +22,10 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'create'): void;
   (event: 'manage'): void;
+  (event: 'avatar-setup'): void;
 }>();
+
+const { t } = useI18n();
 
 const chat = useChatStore();
 const user = useUserStore();
@@ -281,6 +285,19 @@ const handleOpenConfig = () => {
 };
 
 const isNightPalette = computed(() => display.palette === 'night');
+
+// Avatar setup badge logic
+const showAvatarSetupBadge = computed(() => {
+  // Show badge when user has no avatar AND there's no active channel identity avatar
+  if (!user.hasDefaultAvatar) return false;
+  // If using a channel identity with a custom avatar, don't show
+  if (activeIdentity.value?.avatarAttachmentId) return false;
+  return true;
+});
+
+const handleAvatarSetup = () => {
+  emit('avatar-setup');
+};
 </script>
 
 <template>
@@ -301,6 +318,24 @@ const isNightPalette = computed(() => display.palette === 'night');
         </n-button>
       </template>
       <span class="warning-tooltip-content">{{ warningMessage }}</span>
+    </n-tooltip>
+
+    <!-- Avatar Setup Badge -->
+    <n-tooltip v-if="showAvatarSetupBadge" trigger="hover" placement="top">
+      <template #trigger>
+        <n-button
+          quaternary
+          circle
+          size="tiny"
+          class="avatar-setup-badge"
+          @click="handleAvatarSetup"
+        >
+          <template #icon>
+            <n-icon :component="Camera" size="16" />
+          </template>
+        </n-button>
+      </template>
+      <span class="warning-tooltip-content">{{ t('avatarPrompt.badge') }}</span>
     </n-tooltip>
 
     <n-dropdown
@@ -515,6 +550,32 @@ const isNightPalette = computed(() => display.palette === 'night');
   .warning-tooltip-content {
     font-size: 0.75rem;
     max-width: 160px;
+  }
+}
+
+/* Avatar Setup Badge */
+.avatar-setup-badge {
+  color: #3b82f6;
+  animation: avatar-badge-pulse 2s ease-in-out infinite;
+  transition: color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+}
+
+.avatar-setup-badge:hover {
+  color: #2563eb;
+  transform: scale(1.15);
+  animation: none;
+  filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8));
+}
+
+@keyframes avatar-badge-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.8));
+    opacity: 0.85;
   }
 }
 </style>
