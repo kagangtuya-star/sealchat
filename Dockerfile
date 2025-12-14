@@ -1,49 +1,53 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-bookworm-slim AS ui-builder
-WORKDIR /src/ui
-COPY ui/package.json ui/yarn.lock ./
-RUN corepack enable && yarn install --frozen-lockfile
-COPY ui/ ./
-RUN yarn build-only
+###############################################
+# Frontend build stage (mirrors ui-build job) #
+###############################################
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
 
-FROM golang:1.24-bookworm AS go-builder
+WORKDIR /src/ui
+
+# 启用 corepack（默认可能 disable）
+RUN corepack enable
+
+# 指定 yarn 版本（1.22.22 为例）
+RUN corepack prepare yarn@1.22.22 --activate
+
+COPY ui/package.json ui/yarn.lock ./
+RUN yarn install
+
+COPY ui ./
+RUN yarn run build-only
+
+################################################
+# Backend build stage (mirrors backend-build)  #
+################################################
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS go-builder
 WORKDIR /src
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH} \
+    CGO_ENABLED=0
 
 COPY go.mod go.sum ./
 RUN go mod download
-
-COPY . ./
+COPY . .
 COPY --from=ui-builder /src/ui/dist ./ui/dist
+RUN go build -trimpath -ldflags "-s -w" -o /out/sealchat-server .
 
-ARG TARGETOS
-ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-  go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w" .
-
-FROM alpine:3.20 AS webp-assets
-ARG TARGETARCH
-WORKDIR /src
-COPY bin/ ./bin/
-RUN set -eux; \
-  case "${TARGETARCH:-amd64}" in \
-    amd64) WEBP_DIR="linux-x64" ;; \
-    arm64) WEBP_DIR="linux-arm64" ;; \
-    *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-  esac; \
-  mkdir -p /out/bin/"${WEBP_DIR}"; \
-  cp -a ./bin/"${WEBP_DIR}"/. /out/bin/"${WEBP_DIR}"/; \
-  cp ./bin/LICENSE /out/LICENSE; \
-  chmod +x /out/bin/"${WEBP_DIR}"/cwebp /out/bin/"${WEBP_DIR}"/gif2webp
-
+#############################
+# Minimal Alpine runtime    #
+#############################
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget && update-ca-certificates
 WORKDIR /app
-
-COPY --from=go-builder /out/sealchat-server /app/sealchat-server
-COPY --from=webp-assets /out/bin /app/bin
-COPY --from=webp-assets /out/LICENSE /app/LICENSE
-
+RUN addgroup -S sealchat && adduser -S -G sealchat sealchat \
+ && apk add --no-cache ca-certificates tzdata ffmpeg \
+ && mkdir -p /app/data /app/static /app/temp \
+ && chown -R sealchat:sealchat /app
+COPY --from=go-builder /out/sealchat-server /usr/local/bin/sealchat-server
+COPY config.yaml.example /app/config.yaml.example
 EXPOSE 3212
-ENTRYPOINT ["/app/sealchat-server"]
-
+VOLUME ["/app/data", "/app/static", "/app/temp"]
+USER sealchat
+ENTRYPOINT ["/usr/local/bin/sealchat-server"]
