@@ -67,6 +67,7 @@ import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
+import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -1149,6 +1150,8 @@ const identityForm = reactive({
 });
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
+const identityAvatarEditorVisible = ref(false);
+const identityAvatarEditorFile = ref<File | null>(null);
 const editingIdentity = ref<ChannelIdentity | null>(null);
 const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
 const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
@@ -1929,12 +1932,25 @@ const handleIdentityAvatarChange = async (event: Event) => {
     input.value = '';
     return;
   }
+  // Open avatar editor modal
+  identityAvatarEditorFile.value = file;
+  identityAvatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleIdentityAvatarEditorSave = async (file: File) => {
   identityForm.avatarAttachmentId = '';
   identityAvatarFile = file;
   revokeIdentityObjectURL();
   identityAvatarObjectURL = URL.createObjectURL(file);
   identityAvatarPreview.value = identityAvatarObjectURL;
-  input.value = '';
+  identityAvatarEditorVisible.value = false;
+  identityAvatarEditorFile.value = null;
+};
+
+const handleIdentityAvatarEditorCancel = () => {
+  identityAvatarEditorVisible.value = false;
+  identityAvatarEditorFile.value = null;
 };
 
 const removeIdentityAvatar = () => {
@@ -8231,6 +8247,19 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
+  <n-modal
+    v-model:show="identityAvatarEditorVisible"
+    preset="card"
+    title="编辑头像"
+    style="max-width: 450px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="identityAvatarEditorFile"
+      @save="handleIdentityAvatarEditorSave"
+      @cancel="handleIdentityAvatarEditorCancel"
+    />
+  </n-modal>
   <n-drawer
     class="identity-manage-shell"
     v-model:show="identityManageVisible"

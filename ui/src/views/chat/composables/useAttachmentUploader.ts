@@ -4,9 +4,12 @@ import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { blobToArrayBuffer } from '@/utils/tools';
 import { db } from '@/models';
+import { useImageCompressor } from '@/composables/useImageCompressor';
 
 interface UploadImageOptions {
   channelId?: string;
+  /** Skip image compression (e.g., already compressed by AvatarEditor) */
+  skipCompression?: boolean;
 }
 
 interface UploadImageResult {
@@ -27,8 +30,15 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
     throw new Error(`文件大小超过限制（最大 ${limitMB} MB）`);
   }
 
+  // Compress image if applicable (skip if already compressed or not an image)
+  let uploadFile = file;
+  if (!options?.skipCompression && file.type.startsWith('image/') && file.type !== 'image/gif') {
+    const { compress } = useImageCompressor();
+    uploadFile = await compress(file);
+  }
+
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('file', uploadFile);
 
   const headers: Record<string, string> = {
     Authorization: `${user.token}`,
