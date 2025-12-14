@@ -43,3 +43,5 @@ static/
 /.serena
 .codannaignore
 .fastembed_cache
+/.gopath
+!bin/win-x64/*.exe

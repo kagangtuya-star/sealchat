@@ -67,6 +67,7 @@ import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
+import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -1149,6 +1150,8 @@ const identityForm = reactive({
 });
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
+const identityAvatarEditorVisible = ref(false);
+const identityAvatarEditorFile = ref<File | null>(null);
 const editingIdentity = ref<ChannelIdentity | null>(null);
 const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
 const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
@@ -1929,12 +1932,25 @@ const handleIdentityAvatarChange = async (event: Event) => {
     input.value = '';
     return;
   }
+  // Open avatar editor modal
+  identityAvatarEditorFile.value = file;
+  identityAvatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleIdentityAvatarEditorSave = async (file: File) => {
   identityForm.avatarAttachmentId = '';
   identityAvatarFile = file;
   revokeIdentityObjectURL();
   identityAvatarObjectURL = URL.createObjectURL(file);
   identityAvatarPreview.value = identityAvatarObjectURL;
-  input.value = '';
+  identityAvatarEditorVisible.value = false;
+  identityAvatarEditorFile.value = null;
+};
+
+const handleIdentityAvatarEditorCancel = () => {
+  identityAvatarEditorVisible.value = false;
+  identityAvatarEditorFile.value = null;
 };
 
 const removeIdentityAvatar = () => {
@@ -2034,6 +2050,11 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
 };
 
 const getMessageDisplayName = (message: any) => {
+  // 编辑状态下优先使用编辑预览中的角色名称
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview?.isSelf && editingPreview.displayName) {
+    return editingPreview.displayName;
+  }
   return message?.identity?.displayName
     || message?.sender_member_name
     || message?.member?.nick
@@ -2043,6 +2064,11 @@ const getMessageDisplayName = (message: any) => {
 };
 
 const getMessageAvatar = (message: any) => {
+  // 编辑状态下优先使用编辑预览中的角色头像
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview?.isSelf && editingPreview.avatar) {
+    return editingPreview.avatar;
+  }
   const candidates = [
     message?.identity?.avatarAttachment,
     (message as any)?.sender_identity_avatar_id,
@@ -3295,7 +3321,8 @@ const rowSurfaceClass = (item: Message) => {
     'message-row__surface',
     `message-row__surface--tone-${getMessageTone(item)}`,
   ];
-  if (chat.isEditingMessage(item.id || '')) {
+  // 自己正在编辑该消息，或者他人正在编辑该消息（通过实时广播）
+  if (chat.isEditingMessage(item.id || '') || editingPreviewMap.value[item.id || '']) {
     classes.push('message-row__surface--editing');
   }
   return classes;
@@ -4908,6 +4935,17 @@ watch(
   () => chat.editing?.icMode,
   (mode, previous) => {
     if (!chat.editing || mode === previous) {
+      return;
+    }
+    emitEditingPreview();
+  },
+);
+
+// 监听编辑状态下角色 ID 的变化，确保头像和角色名实时更新
+watch(
+  () => chat.editing?.identityId,
+  (identityId, previous) => {
+    if (!chat.editing || identityId === previous) {
       return;
     }
     emitEditingPreview();
@@ -8230,6 +8268,19 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
+  <n-modal
+    v-model:show="identityAvatarEditorVisible"
+    preset="card"
+    title="编辑头像"
+    style="max-width: 450px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="identityAvatarEditorFile"
+      @save="handleIdentityAvatarEditorSave"
+      @cancel="handleIdentityAvatarEditorCancel"
+    />
+  </n-modal>
   <n-drawer
     class="identity-manage-shell"
     v-model:show="identityManageVisible"

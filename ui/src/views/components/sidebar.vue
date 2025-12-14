@@ -397,37 +397,37 @@ const handleOpenWorldGlossary = () => {
 
 <template>
   <div class="w-full h-full sc-sidebar sc-sidebar-fill">
+    <div class="px-2 py-2 flex flex-wrap gap-2 items-center">
+      <div class="flex-1 min-w-[180px]">
+        <n-select
+          class="w-full"
+          size="small"
+          filterable
+          placeholder="选择世界"
+          :options="chat.joinedWorldOptions"
+          :value="chat.currentWorldId"
+          @update:value="handleWorldSelect"
+        />
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <n-button quaternary size="tiny" @click="goWorldLobby">
+          世界大厅
+        </n-button>
+        <n-button quaternary size="tiny" @click="goWorldManage">
+          世界管理
+        </n-button>
+        <n-button
+          quaternary
+          size="tiny"
+          :type="worldGlossary.managerVisible ? 'primary' : 'default'"
+          @click="handleOpenWorldGlossary"
+        >
+          术语管理
+        </n-button>
+      </div>
+    </div>
     <n-tabs type="segment" v-model:value="chat.sidebarTab" tab-class="sc-sidebar-fill" pane-class="sc-sidebar-fill">
       <n-tab-pane name="channels" tab="频道">
-        <div class="px-2 py-2 flex flex-wrap gap-2 items-center">
-          <div class="flex-1 min-w-[180px]">
-            <n-select
-              class="w-full"
-              size="small"
-              filterable
-              placeholder="选择世界"
-              :options="chat.joinedWorldOptions"
-              :value="chat.currentWorldId"
-              @update:value="handleWorldSelect"
-            />
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            <n-button quaternary size="tiny" @click="goWorldLobby">
-              世界大厅
-            </n-button>
-            <n-button quaternary size="tiny" @click="goWorldManage">
-              世界管理
-            </n-button>
-            <n-button
-              quaternary
-              size="tiny"
-              :type="worldGlossary.managerVisible ? 'primary' : 'default'"
-              @click="handleOpenWorldGlossary"
-            >
-              术语管理
-            </n-button>
-          </div>
-        </div>
         <template #tab>
           <span>频道</span>
           <div class="ml-1" v-if="chat.unreadCountPublic">
