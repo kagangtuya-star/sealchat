@@ -132,6 +132,19 @@ let focusListenersBound = false;
 const pendingLatencyProbes: Record<string, number> = {};
 const LATENCY_PROBE_TIMEOUT = 8000;
 
+let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
+let wsConnectionEpoch = 0;
+
+const clearWsReconnectTimer = (store?: { iReconnectAfterTime: number }) => {
+  if (wsReconnectTimer) {
+    clearInterval(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  if (store) {
+    store.iReconnectAfterTime = 0;
+  }
+};
+
 const clearPendingLatencyProbes = () => {
   Object.keys(pendingLatencyProbes).forEach((key) => {
     delete pendingLatencyProbes[key];
@@ -316,6 +329,16 @@ export const useChatStore = defineStore({
 
   actions: {
     async connect() {
+      // 已连接或正在连接时，避免重复 connect 触发“自断线”
+      if (this.subject && (this.connectState === 'connected' || this.connectState === 'connecting' || this.connectState === 'reconnecting')) {
+        return;
+      }
+
+      // 若存在重连倒计时，直接取消，立即发起连接
+      clearWsReconnectTimer(this);
+
+      const epoch = ++wsConnectionEpoch;
+
       // 先清理现有连接，防止连接泄漏
       const oldSubject = this.subject;
       if (oldSubject) {
@@ -345,7 +368,8 @@ export const useChatStore = defineStore({
       const u: User = {
         id: '',
       }
-      this.connectState = 'connecting';
+      // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
+      this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
 
       // 'ws://localhost:3212/ws/seal'
       // const subject = webSocket(`ws:${urlBase}/ws/seal`);
@@ -368,11 +392,14 @@ export const useChatStore = defineStore({
 
       subject.subscribe({
         next: (msg: any) => {
+          if (epoch !== wsConnectionEpoch) {
+            return;
+          }
           // Opcode.READY
           if (msg.op === 4) {
             console.log('svr ready', msg);
             isReady = true
-            this.connectReady();
+            this.connectReady(epoch);
           } else if (msg.op === 0) {
             // Opcode.EVENT
             const e = msg as Event;
@@ -387,12 +414,18 @@ export const useChatStore = defineStore({
           }
         },
         error: err => {
+          if (epoch !== wsConnectionEpoch) {
+            return;
+          }
           console.log('[WS] 连接错误', err);
           this.subject = null;
-          this.connectState = 'disconnected';
+          this.connectState = 'reconnecting';
           this.stopPingLoop();
           this.reconnectAfter(5, () => {
             try {
+              if (epoch !== wsConnectionEpoch) {
+                return;
+              }
               err.target?.close();
               // 使用保存的引用而非 this.subject（此时已为 null）
               currentSubject?.unsubscribe();
@@ -403,8 +436,23 @@ export const useChatStore = defineStore({
           })
         }, // Called if at any point WebSocket API signals some kind of error.
         complete: () => {
+          if (epoch !== wsConnectionEpoch) {
+            return;
+          }
           console.log('[WS] 连接关闭');
+          this.subject = null;
+          this.connectState = 'reconnecting';
           this.stopPingLoop();
+          this.reconnectAfter(5, () => {
+            try {
+              if (epoch !== wsConnectionEpoch) {
+                return;
+              }
+              currentSubject?.unsubscribe();
+            } catch {
+              // ignore
+            }
+          })
         } // Called when connection is closed (for whatever reason).
       });
 
@@ -412,20 +460,48 @@ export const useChatStore = defineStore({
     },
 
     async reconnectAfter(secs: number, beforeConnect?: Function) {
-      setTimeout(async () => {
-        this.connectState = 'reconnecting';
-        // alert(`连接已断开，${secs} 秒后自动重连`);
-        for (let i = secs; i > 0; i--) {
-          this.iReconnectAfterTime = i;
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+      if (typeof window === 'undefined') {
+        return;
+      }
+      if (this.subject && this.connectState === 'connected') {
+        clearWsReconnectTimer(this);
+        return;
+      }
+      if (wsReconnectTimer) {
+        return;
+      }
+      this.connectState = 'reconnecting';
+      let remain = Math.max(0, Math.floor(secs));
+      this.iReconnectAfterTime = remain;
+
+      if (remain <= 0) {
+        clearWsReconnectTimer(this);
         if (beforeConnect) beforeConnect();
         this.connect();
-      }, 500);
+        return;
+      }
+
+      wsReconnectTimer = window.setInterval(() => {
+        if (this.subject && this.connectState === 'connected') {
+          clearWsReconnectTimer(this);
+          return;
+        }
+        remain -= 1;
+        this.iReconnectAfterTime = Math.max(0, remain);
+        if (remain <= 0) {
+          clearWsReconnectTimer(this);
+          if (beforeConnect) beforeConnect();
+          this.connect();
+        }
+      }, 1000);
     },
 
-    async connectReady() {
+    async connectReady(epoch?: number) {
+      if (typeof epoch === 'number' && epoch !== wsConnectionEpoch) {
+        return;
+      }
       this.connectState = 'connected';
+      clearWsReconnectTimer(this);
 
       chatEvent.emit('connected', undefined);
       this.startPingLoop();

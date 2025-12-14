@@ -62,8 +62,6 @@ var (
 const (
 	// 每用户最大连接数，超出时关闭最旧连接
 	maxConnectionsPerUser = 8
-	// 读取超时时间（秒），超过此时间无数据则断开
-	readTimeoutSeconds = 90
 	// 全局健康检查间隔（秒）
 	healthCheckIntervalSeconds = 60
 	// 连接无心跳最大存活时间（秒）
@@ -280,18 +278,12 @@ func websocketWorks(app *fiber.App) {
 			}
 		}()
 
-		// 设置初始读取超时
-		_ = rawConn.SetReadDeadline(time.Now().Add(readTimeoutSeconds * time.Second))
-
 		for {
 			if mt, msg, err = c.ReadMessage(); err != nil {
 				log.Println("[WS] read:", err)
 				// 解析错误或超时
 				break
 			}
-
-			// 成功读取后刷新超时
-			_ = rawConn.SetReadDeadline(time.Now().Add(readTimeoutSeconds * time.Second))
 
 			solved := false
 			gatewayMsg := protocol.GatewayPayloadStructure{}
