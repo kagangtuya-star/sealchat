@@ -3295,7 +3295,8 @@ const rowSurfaceClass = (item: Message) => {
     'message-row__surface',
     `message-row__surface--tone-${getMessageTone(item)}`,
   ];
-  if (chat.isEditingMessage(item.id || '')) {
+  // 自己正在编辑该消息，或者他人正在编辑该消息（通过实时广播）
+  if (chat.isEditingMessage(item.id || '') || editingPreviewMap.value[item.id || '']) {
     classes.push('message-row__surface--editing');
   }
   return classes;

@@ -1340,21 +1340,15 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 .editing-preview__body {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.editing-preview__body {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.9rem;
-  line-height: 1.5;
+  font-size: var(--chat-font-size, 0.95rem);
+  line-height: var(--chat-line-height, 1.6);
+  letter-spacing: var(--chat-letter-spacing, 0px);
   color: inherit;
 }
 
 .editing-preview__rich {
   word-break: break-word;
-  white-space: normal;
+  white-space: pre-wrap;
 }
 
 .editing-preview__body.is-placeholder {
