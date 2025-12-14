@@ -129,6 +129,7 @@ type AppConfig struct {
 	ImageSizeLimit            int64           `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
 	ImageCompress             bool            `json:"imageCompress" yaml:"imageCompress"`
 	ImageCompressQuality      int             `json:"imageCompressQuality" yaml:"imageCompressQuality"`
+	KeywordMaxLength          int64           `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
 	DSN                       string          `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
 	BuiltInSealBotEnable      bool            `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
 	Version                   int             `json:"version" yaml:"version"`
@@ -189,6 +190,7 @@ func ReadConfig() *AppConfig {
 		ImageSizeLimit:            8192,
 		ImageCompress:             true,
 		ImageCompressQuality:      85,
+		KeywordMaxLength:          2000,
 		DSN:                       "./data/chat.db",
 		BuiltInSealBotEnable:      true,
 		Version:                   1,
@@ -422,6 +424,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("imageSizeLimit", config.ImageSizeLimit)
 		_ = k.Set("imageCompress", config.ImageCompress)
 		_ = k.Set("imageCompressQuality", config.ImageCompressQuality)
+		_ = k.Set("keywordMaxLength", config.KeywordMaxLength)
 		_ = k.Set("builtInSealBotEnable", config.BuiltInSealBotEnable)
 		_ = k.Set("galleryQuotaMB", config.GalleryQuotaMB)
 		_ = k.Set("imageBaseUrl", config.ImageBaseURL)

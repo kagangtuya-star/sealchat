@@ -316,6 +316,19 @@ export const useChatStore = defineStore({
 
   actions: {
     async connect() {
+      // 先清理现有连接，防止连接泄漏
+      const oldSubject = this.subject;
+      if (oldSubject) {
+        try {
+          oldSubject.complete();
+          oldSubject.unsubscribe();
+          console.log('[WS] 清理旧连接');
+        } catch (e) {
+          console.warn('[WS] 清理旧连接失败', e);
+        }
+        this.subject = null;
+      }
+
       this.stopPingLoop();
       if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
         focusListenersBound = true;
@@ -350,6 +363,9 @@ export const useChatStore = defineStore({
         }
       });
 
+      // 保存当前 subject 引用，供错误处理使用
+      const currentSubject = subject;
+
       subject.subscribe({
         next: (msg: any) => {
           // Opcode.READY
@@ -371,22 +387,23 @@ export const useChatStore = defineStore({
           }
         },
         error: err => {
-          console.log('ws error', err);
+          console.log('[WS] 连接错误', err);
           this.subject = null;
           this.connectState = 'disconnected';
           this.stopPingLoop();
           this.reconnectAfter(5, () => {
             try {
               err.target?.close();
-              this.subject?.unsubscribe();
-              console.log('try close');
+              // 使用保存的引用而非 this.subject（此时已为 null）
+              currentSubject?.unsubscribe();
+              console.log('[WS] 错误后清理完成');
             } catch (e) {
-              console.log('unsubscribe error', e)
+              console.warn('[WS] 错误后清理失败', e)
             }
           })
         }, // Called if at any point WebSocket API signals some kind of error.
         complete: () => {
-          console.log('complete');
+          console.log('[WS] 连接关闭');
           this.stopPingLoop();
         } // Called when connection is closed (for whatever reason).
       });
@@ -864,6 +881,16 @@ export const useChatStore = defineStore({
 
       this.setChannelUnreadCount(id, 0);
 
+      // 设置网页标题为频道名字，并检查是否需要清除未读通知
+      import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
+        setChannelTitle(nextChannel?.name || '');
+        // 检查是否所有未读都已清零，如果是，清除标题通知
+        const totalUnread = Object.values(this.unreadCountMap).reduce((sum, count) => sum + (count || 0), 0);
+        if (totalUnread === 0) {
+          clearUnreadTitleNotification();
+        }
+      });
+
       chatEvent.emit('channel-switch-to', undefined);
       this.channelList(this.currentWorldId);
       return true;
@@ -894,6 +921,41 @@ export const useChatStore = defineStore({
         [channelId]: identityId,
       };
       localStorage.setItem(`channelIdentity:${channelId}`, identityId || '');
+      // 反向自动切换：切换角色时检查是否需要切换场内外模式
+      this.autoSwitchIcOocOnRoleChange(channelId, identityId);
+    },
+
+    /**
+     * 切换角色时的反向自动切换场内外
+     * 如果角色存在唯一的场内外映射（仅映射到IC或仅映射到OOC），则自动切换模式
+     */
+    autoSwitchIcOocOnRoleChange(channelId: string, newRoleId: string) {
+      const display = useDisplayStore();
+      // 检查是否启用自动切换
+      if (!display.settings.autoSwitchRoleOnIcOocToggle) {
+        return;
+      }
+      if (!channelId || !newRoleId) {
+        return;
+      }
+
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      const isIcRole = config.icRoleId === newRoleId;
+      const isOocRole = config.oocRoleId === newRoleId;
+
+      // 只有唯一映射时才自动切换
+      if (isIcRole && !isOocRole) {
+        // 角色仅映射到 IC，自动切换到 IC 模式
+        if (this.icMode !== 'ic') {
+          this.icMode = 'ic';
+        }
+      } else if (isOocRole && !isIcRole) {
+        // 角色仅映射到 OOC，自动切换到 OOC 模式
+        if (this.icMode !== 'ooc') {
+          this.icMode = 'ooc';
+        }
+      }
+      // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
     },
 
     upsertChannelIdentity(identity: ChannelIdentity) {
@@ -2185,6 +2247,13 @@ export const useChatStore = defineStore({
       }
       this.isAppFocused = normalized;
       this.sendPresencePing(true);
+
+      // 当窗口获得焦点时，清除网页标题中的新消息提示
+      if (normalized) {
+        import('./utils').then(({ clearUnreadTitleNotification }) => {
+          clearUnreadTitleNotification();
+        });
+      }
     },
 
     updatePresence(userId: string, data: { lastPing: number; latencyMs: number; isFocused: boolean }) {

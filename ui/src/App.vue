@@ -1145,4 +1145,262 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] [class*="n-tabs"][style*="--n-tab-color"] {
   --n-tab-color: var(--sc-bg-elevated) !important;
 }
+
+/* ==========================================================================
+   CHAT INPUT TOOLBAR - 输入栏工具区
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .chat-input-actions,
+:root[data-custom-theme='true'] .input-floating-toolbar {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .input-floating-toolbar .n-button:not([disabled]) .n-icon,
+:root[data-custom-theme='true'] .input-floating-toolbar .n-button:not([disabled]) .n-button__icon > svg,
+:root[data-custom-theme='true'] .input-floating-toolbar .n-button:not([disabled]) .n-button__icon,
+:root[data-custom-theme='true'] .chat-input-actions .n-button:not([disabled]) .n-icon,
+:root[data-custom-theme='true'] .chat-input-actions .n-button:not([disabled]) .n-button__icon > svg,
+:root[data-custom-theme='true'] .chat-input-actions .n-button:not([disabled]) .n-button__icon {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .chat-input-actions__icon {
+  color: var(--sc-text-primary) !important;
+}
+
+/* Dice settings trigger */
+:root[data-custom-theme='true'] .dice-tray-settings-trigger {
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray-settings-trigger--active {
+  color: var(--primary-color, #3388de) !important;
+  border-color: var(--sc-border-strong) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* ==========================================================================
+   HISTORY ENTRY - 历史记录条目
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .history-entry {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .history-entry:hover {
+  border-color: var(--primary-color-hover, var(--sc-border-strong)) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .history-entry__preview {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .history-entry__meta,
+:root[data-custom-theme='true'] .history-entry__time {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   MESSAGE ACTION BAR - 消息操作栏
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .message-action-bar__btn {
+  color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+:root[data-custom-theme='true'] .message-action-bar__btn:hover {
+  color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   EDITING PREVIEW BUBBLE - 编辑预览气泡
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .editing-preview__bubble {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .editing-preview__bubble[data-tone='ic'] {
+  background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
+}
+
+:root[data-custom-theme='true'] .editing-preview__bubble[data-tone='ooc'] {
+  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+}
+
+/* ==========================================================================
+   TYPING PREVIEW BUBBLE - 输入预览气泡
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .typing-preview-bubble {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .typing-preview-bubble[data-tone='ic'] {
+  background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
+}
+
+:root[data-custom-theme='true'] .typing-preview-bubble[data-tone='ooc'] {
+  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+}
+
+/* ==========================================================================
+   SELECTION FLOATING BAR - 选择浮动栏
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .selection-floating-bar {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .selection-floating-bar__button {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .selection-floating-bar__button:hover {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   DICE CHIP - 骰子芯片
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .dice-chip {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .dice-chip--preview {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .dice-chip--tone-ic:not(.dice-chip--preview),
+:root[data-custom-theme='true'] [data-dice-tone='ic']:not(.dice-chip--preview) {
+  background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
+}
+
+:root[data-custom-theme='true'] .dice-chip--tone-ooc:not(.dice-chip--preview),
+:root[data-custom-theme='true'] [data-dice-tone='ooc']:not(.dice-chip--preview) {
+  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+}
+
+/* ==========================================================================
+   USER PRESENCE POPOVER - 用户在线状态
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .presence-popover {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .presence-name {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .presence-meta,
+:root[data-custom-theme='true'] .presence-empty {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   CHANNEL SETTINGS - 频道设置
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .role-title {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .role-desc {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   KEYWORD MOBILE ROW - 术语管理移动端行
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .keyword-mobile-simple-row {
+  color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   CHAT DICE BUTTON - 聊天骰子按钮
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .chat-dice-button {
+  color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   HISTORY PANEL - 历史记录面板
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .history-panel {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .history-panel__title {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .history-panel__empty {
+  color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   SCROLL BOTTOM BUTTON - 滚动到底部按钮
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .scroll-bottom-button {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .scroll-bottom-button:hover {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   DICE SETTINGS PANEL - 骰子设置面板
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .dice-settings-panel {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .dice-settings-panel__section {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+:root[data-custom-theme='true'] .dice-settings-panel__title {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .dice-settings-panel__desc,
+:root[data-custom-theme='true'] .dice-settings-panel__hint {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   HISTORY POPOVER - 历史记录弹出框
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .history-popover .n-popover__content {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
 </style>

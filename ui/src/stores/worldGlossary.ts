@@ -13,8 +13,9 @@ import {
   fetchWorldKeywordCategories,
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
+import { useUtilsStore } from './utils'
 
-const KEYWORD_MAX_LENGTH = 500
+const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 
 interface KeywordPageState {
   items: WorldKeywordItem[]
@@ -57,14 +58,29 @@ interface KeywordImportState {
 
 let gatewayBound = false
 
-const clampText = (value?: string | null) => (value ? value.slice(0, KEYWORD_MAX_LENGTH) : value || '')
+const getKeywordMaxLength = () => {
+  try {
+    const utils = useUtilsStore()
+    return utils.config?.keywordMaxLength || DEFAULT_KEYWORD_MAX_LENGTH
+  } catch {
+    return DEFAULT_KEYWORD_MAX_LENGTH
+  }
+}
 
-const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => ({
-  ...item,
-  keyword: clampText(item.keyword),
-  aliases: (item.aliases || []).map((alias) => clampText(alias)),
-  description: item.description ? clampText(item.description) : '',
-})
+const clampText = (value?: string | null, maxLength?: number) => {
+  const limit = maxLength ?? getKeywordMaxLength()
+  return value ? value.slice(0, limit) : value || ''
+}
+
+const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => {
+  const maxLen = getKeywordMaxLength()
+  return {
+    ...item,
+    keyword: clampText(item.keyword, maxLen),
+    aliases: (item.aliases || []).map((alias) => clampText(alias, maxLen)),
+    description: item.description ? clampText(item.description, maxLen) : '',
+  }
+}
 
 export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const pages = ref<Record<string, KeywordPageState>>({})
@@ -203,7 +219,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     try {
       const data = await fetchWorldKeywords(worldId, {
         page: 1,
-        pageSize: 500,
+        pageSize: 5000,
         includeDisabled: true,
       })
       updateKeywordCache(worldId, data.items, data)

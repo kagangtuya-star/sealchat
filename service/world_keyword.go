@@ -115,8 +115,11 @@ func WorldKeywordList(worldID, userID string, opts WorldKeywordListOptions) ([]*
 	if opts.Page <= 0 {
 		opts.Page = 1
 	}
-	if opts.PageSize <= 0 || opts.PageSize > 200 {
+	if opts.PageSize <= 0 {
 		opts.PageSize = 50
+	}
+	if opts.PageSize > 5000 {
+		opts.PageSize = 5000
 	}
 	db := model.GetDB()
 	query := db.Model(&model.WorldKeywordModel{}).Where("world_id = ?", worldID)

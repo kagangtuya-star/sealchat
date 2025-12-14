@@ -18,6 +18,7 @@ import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
+import IcOocRoleConfigPanel from './components/IcOocRoleConfigPanel.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
@@ -65,6 +66,7 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
+import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -535,6 +537,8 @@ const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
 const importJobId = ref('');
+const avatarPromptVisible = ref(false);
+const avatarPromptDismissedThisSession = ref(false);
 const ribbonRoleOptions = ref<Array<{ id: string; label: string }>>([]);
 let ribbonRoleOptionsSeq = 0;
 
@@ -587,6 +591,34 @@ const handleActionRibbonStateRequest = () => {
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
   displaySettingsVisible.value = false;
+};
+
+// Avatar prompt handlers
+const handleOpenAvatarPrompt = () => {
+  avatarPromptVisible.value = true;
+};
+
+const handleAvatarPromptSetup = () => {
+  avatarPromptVisible.value = false;
+  // Emit event to open user profile panel
+  chatEvent.emit('open-user-profile');
+};
+
+const handleAvatarPromptSkip = () => {
+  avatarPromptVisible.value = false;
+  avatarPromptDismissedThisSession.value = true;
+};
+
+// Check if avatar prompt should be shown on mount (session-based)
+const checkAvatarPromptOnMount = () => {
+  if (avatarPromptDismissedThisSession.value) return;
+  if (!user.hasDefaultAvatar) return;
+  // Show prompt after a brief delay for better UX
+  setTimeout(() => {
+    if (!avatarPromptDismissedThisSession.value && user.hasDefaultAvatar) {
+      avatarPromptVisible.value = true;
+    }
+  }, 2000);
 };
 
 watch(
@@ -703,6 +735,8 @@ onMounted(() => {
   } catch (e) {
     console.warn('Failed to load emoji usage', e);
   }
+  // Check if we should show avatar prompt
+  checkAvatarPromptOnMount();
 });
 
 const recordEmojiUsage = (id: string) => {
@@ -1104,6 +1138,7 @@ const handleSlashInput = (e: InputEvent) => {
 };
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
+const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityForm = reactive({
   displayName: '',
@@ -1886,6 +1921,14 @@ const handleIdentityAvatarChange = async (event: Event) => {
     return;
   }
   const file = input.files[0];
+  // Check file size before processing
+  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
   identityForm.avatarAttachmentId = '';
   identityAvatarFile = file;
   revokeIdentityObjectURL();
@@ -1927,6 +1970,7 @@ const submitIdentityForm = async () => {
     isDefault: identityForm.isDefault,
     folderIds: identityForm.folderIds,
   };
+  const wasCreating = identityDialogMode.value === 'create';
   try {
     if (identityAvatarFile) {
       const uploadResult = await uploadImageAttachment(identityAvatarFile, { channelId: chat.curChannel.id });
@@ -1949,6 +1993,17 @@ const submitIdentityForm = async () => {
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true);
     identityDialogVisible.value = false;
+
+    // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
+    if (wasCreating && display.settings.autoSwitchRoleOnIcOocToggle) {
+      const identities = chat.channelIdentities[chat.curChannel.id] || [];
+      if (identities.length === 2) {
+        // Brief delay for better UX before opening config panel
+        setTimeout(() => {
+          icOocRoleConfigPanelVisible.value = true;
+        }, 300);
+      }
+    }
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '保存失败，请稍后重试';
     message.error(errMsg);
@@ -6248,6 +6303,17 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   } else {
     sound.play();
+    
+    // 如果窗口没有焦点，更新网页标题提示新消息
+    if (!chat.isAppFocused && chat.curChannel?.name) {
+      import('@/stores/utils').then(({ updateUnreadTitleNotification }) => {
+        // 累加标题中的未读计数
+        const currentTitle = document.title;
+        const match = currentTitle.match(/^有(\d+)条新消息/);
+        const currentCount = match ? parseInt(match[1], 10) : 0;
+        updateUnreadTitleNotification(currentCount + 1, chat.curChannel?.name || '新消息');
+      });
+    }
   }
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
@@ -7676,6 +7742,7 @@ onBeforeUnmount(() => {
                     @create="openIdentityCreate"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
+                    @avatar-setup="handleOpenAvatarPrompt"
                   />
                 </div>
                 <div class="chat-input-actions__cell">
@@ -8212,6 +8279,16 @@ onBeforeUnmount(() => {
               </template>
               导入角色配置
             </n-tooltip>
+            <n-button
+              text
+              size="small"
+              @click="icOocRoleConfigPanelVisible = true"
+            >
+              <template #icon>
+                <n-icon :component="Settings" size="14" />
+              </template>
+              场内场外映射
+            </n-button>
           </n-space>
         </div>
       </template>
@@ -8353,6 +8430,7 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityImportInputRef" class="hidden" type="file" accept="application/json" @change="handleIdentityImportChange">
+  <IcOocRoleConfigPanel v-model:show="icOocRoleConfigPanelVisible" />
 
   <!-- 新增组件 -->
   <ArchiveDrawer
@@ -8408,6 +8486,13 @@ onBeforeUnmount(() => {
 
   <!-- 新用户引导系统 -->
   <OnboardingRoot />
+
+  <!-- 头像设置引导 -->
+  <AvatarSetupPrompt
+    v-model:show="avatarPromptVisible"
+    @setup="handleAvatarPromptSetup"
+    @skip="handleAvatarPromptSkip"
+  />
 </template>
 
 <style lang="scss" scoped>

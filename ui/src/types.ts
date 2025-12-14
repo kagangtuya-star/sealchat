@@ -108,6 +108,7 @@ export interface ServerConfig {
   imageSizeLimit: number;
   imageCompress: boolean;
   imageCompressQuality: number;
+  keywordMaxLength?: number;
   builtInSealBotEnable: boolean;
   logUpload?: LogUploadConfig;
   captcha?: CaptchaConfig;

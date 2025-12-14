@@ -1,5 +1,6 @@
 <script lang="tsx" setup>
 import { useUserStore } from '@/stores/user';
+import { useUtilsStore } from '@/stores/utils';
 import { computed, onMounted, ref, watch } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import imgAvatar from '@/assets/head2.png'
@@ -14,6 +15,7 @@ import router from '@/router';
 const { t } = useI18n()
 
 const user = useUserStore();
+const utils = useUtilsStore();
 const message = useMessage()
 
 const model = ref({
@@ -123,7 +125,14 @@ const createImage = (file: File) => {
 const onFileChange = async (e: any) => {
   let files = e.target.files || e.dataTransfer.files
   if (!files.length) return
-  createImage(files[0])
+  const file = files[0]
+  // Check file size before processing
+  if (file.size > utils.fileSizeLimit) {
+    const limitMB = (utils.fileSizeLimit / 1024 / 1024).toFixed(1)
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
+    return
+  }
+  createImage(file)
 }
 
 const imageResult = ref('')

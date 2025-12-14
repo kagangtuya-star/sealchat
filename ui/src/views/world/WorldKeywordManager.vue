@@ -2,14 +2,16 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useChatStore } from '@/stores/chat'
+import { useUtilsStore } from '@/stores/utils'
 import { useDialog, useMessage } from 'naive-ui'
 import { triggerBlobDownload } from '@/utils/download'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
 
-const KEYWORD_MAX_LENGTH = 500
+const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 const glossary = useWorldGlossaryStore()
 const chat = useChatStore()
+const utils = useUtilsStore()
 const message = useMessage()
 const dialog = useDialog()
 const breakpoints = useBreakpoints({ tablet: 768 })
@@ -132,7 +134,9 @@ const isMinimalDisplay = computed({
   },
 })
 
-const clampText = (value: string) => value.slice(0, KEYWORD_MAX_LENGTH)
+const keywordMaxLength = computed(() => utils.config?.keywordMaxLength || DEFAULT_KEYWORD_MAX_LENGTH)
+
+const clampText = (value: string) => value.slice(0, keywordMaxLength.value)
 
 const splitAliases = (value?: string | string[] | null) => {
   if (!value) return []
@@ -511,6 +515,32 @@ async function handleImport(replace = false) {
     importTargetCategory.value = ''
   } catch (error: any) {
     message.error(error?.message || '导入失败')
+  }
+}
+
+// File upload import
+const importFileInputRef = ref<HTMLInputElement | null>(null)
+
+const triggerFileImport = () => {
+  importFileInputRef.value?.click()
+}
+
+const handleFileImport = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  
+  try {
+    const text = await file.text()
+    importText.content = text
+    message.success(`已加载文件: ${file.name}`)
+  } catch (error) {
+    console.error(error)
+    message.error('读取文件失败')
+  } finally {
+    if (input) {
+      input.value = ''
+    }
   }
 }
 
@@ -960,7 +990,7 @@ onUnmounted(() => {
     <n-form label-placement="top" class="keyword-editor-form" size="small">
       <div class="keyword-editor__row keyword-editor__row--compact">
         <n-form-item label="关键词" required class="keyword-editor__field keyword-editor__field--keyword" :show-feedback="false">
-          <n-input v-model:value="formModel.keyword" placeholder="必填" :maxlength="KEYWORD_MAX_LENGTH" show-count />
+          <n-input v-model:value="formModel.keyword" placeholder="必填" :maxlength="keywordMaxLength" show-count />
         </n-form-item>
       </div>
       <div class="keyword-editor__row keyword-editor__row--compact">
@@ -1009,7 +1039,7 @@ onUnmounted(() => {
             v-model:value="formModel.description"
             type="textarea"
             :autosize="{ minRows: 10, maxRows: 18 }"
-            :maxlength="KEYWORD_MAX_LENGTH"
+            :maxlength="keywordMaxLength"
             show-count
             placeholder="用于聊天中的提示和解释"
           />
@@ -1038,11 +1068,24 @@ onUnmounted(() => {
       </ul>
       <p class="import-hint-desc">别名为可选项，可用逗号/顿号/分号分隔，留空则忽略。</p>
     </n-alert>
+    <div class="import-file-upload mb-3">
+      <n-button size="small" @click="triggerFileImport">
+        从文件导入
+      </n-button>
+      <input
+        ref="importFileInputRef"
+        type="file"
+        accept=".json,.csv,.txt"
+        class="import-file-input"
+        @change="handleFileImport"
+      />
+    </div>
     <n-input
       v-model:value="importText.content"
       type="textarea"
-      :autosize="{ minRows: 8 }"
+      :autosize="{ minRows: 8, maxRows: 16 }"
       placeholder='[\n  { "keyword": "阿瓦隆", "description": "古老之城" }\n]'
+      class="import-textarea"
     />
     <div class="mt-3">
       <n-form-item label="导入到分类（可选）" :show-feedback="false">
@@ -1307,6 +1350,21 @@ onUnmounted(() => {
   margin: 0;
   font-size: 12px;
   color: #4b5563;
+}
+
+.import-file-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-file-input {
+  display: none;
+}
+
+.import-textarea :deep(textarea) {
+  max-height: 300px;
+  overflow-y: auto !important;
 }
 
 @media (max-width: 767px) {

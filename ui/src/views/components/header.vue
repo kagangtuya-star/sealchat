@@ -348,13 +348,21 @@ const handleRibbonStateUpdate = (state: boolean) => {
   actionRibbonActive.value = !!state;
 };
 
+const handleOpenUserProfile = () => {
+  notifShow.value = false;
+  adminShow.value = false;
+  userProfileShow.value = true;
+};
+
 onMounted(() => {
   chatEvent.on('action-ribbon-state', handleRibbonStateUpdate);
+  chatEvent.on('open-user-profile', handleOpenUserProfile);
   chatEvent.emit('action-ribbon-state-request');
 });
 
 onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
+  chatEvent.off('open-user-profile', handleOpenUserProfile);
 });
 
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarLeftExpand : LayoutSidebarLeftCollapse)

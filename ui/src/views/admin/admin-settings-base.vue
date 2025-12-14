@@ -7,6 +7,7 @@ import { cloneDeep } from 'lodash-es';
 import { useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
 import { onMounted, ref, watch } from 'vue';
+import { api } from '@/stores/_config';
 
 const chat = useChatStore();
 
@@ -80,6 +81,61 @@ const link = computed(() => {
 const feedbackServeAtShow = ref(false)
 const feedbackAdminShow = ref(false)
 const feedbackWeburlShow = ref(false)
+
+// Image migration state
+const migrationStats = ref<{
+  total: number;
+  pending: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  spaceSaved: number;
+} | null>(null)
+const migrationLoading = ref(false)
+const migrationExecuting = ref(false)
+const migrationBatchSize = ref(100)
+
+const fetchMigrationPreview = async () => {
+  migrationLoading.value = true
+  try {
+    const resp = await api.get('/api/v1/admin/image-migration/preview')
+    migrationStats.value = resp.data.stats
+  } catch (error) {
+    message.error('获取迁移预览失败')
+  } finally {
+    migrationLoading.value = false
+  }
+}
+
+const executeMigration = async (dryRun: boolean = false) => {
+  migrationExecuting.value = true
+  try {
+    const resp = await api.post('/api/v1/admin/image-migration/execute', {
+      batchSize: migrationBatchSize.value,
+      dryRun: dryRun
+    })
+    const stats = resp.data.stats
+    if (dryRun) {
+      message.success(`模拟迁移完成: ${stats.completed} 张图片可被迁移，预计节省 ${formatBytes(stats.spaceSaved)}`)
+    } else {
+      message.success(`迁移完成: ${stats.completed} 成功, ${stats.failed} 失败, ${stats.skipped} 跳过，节省 ${formatBytes(stats.spaceSaved)}`)
+    }
+    // Refresh preview
+    await fetchMigrationPreview()
+  } catch (error) {
+    message.error('执行迁移失败: ' + ((error as any)?.response?.data?.message || '未知错误'))
+  } finally {
+    migrationExecuting.value = false
+  }
+}
+
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
 </script>
 
 <template>
@@ -100,7 +156,7 @@ const feedbackWeburlShow = ref(false)
       <n-form-item label="子路径设置" :feedback="feedbackWeburlShow ? '慎重填写，重启后生效' : ''">
         <n-input v-model:value="model.webUrl" @focus="feedbackWeburlShow = true" @blur="feedbackWeburlShow = false" />
       </n-form-item>
-      <n-form-item label="网页标题" :feedback="'留空将回退至“海豹尬聊 SealChat”'">
+      <n-form-item label="网页标题" feedback="留空将回退至「海豹尬聊 SealChat」">
         <n-input v-model:value="model.pageTitle" />
       </n-form-item>
       <n-form-item label="可翻阅聊天记录">
@@ -123,6 +179,42 @@ const feedbackWeburlShow = ref(false)
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
       </n-form-item>
+      <n-form-item label="术语最大字数" feedback="单条术语内容的最大字符数（100-10000）">
+        <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />
+      </n-form-item>
+
+      <!-- Image Migration Section -->
+      <n-divider>图片迁移 (WebP)</n-divider>
+      <n-form-item label="迁移状态">
+        <div class="flex flex-col gap-2 w-full">
+          <div v-if="migrationStats" class="text-sm text-gray-600 dark:text-gray-400">
+            待迁移: {{ migrationStats.pending }} 张 (不含 GIF 和 S3 图片)
+          </div>
+          <div class="flex gap-2 items-center">
+            <n-button size="small" @click="fetchMigrationPreview" :loading="migrationLoading">
+              刷新预览
+            </n-button>
+          </div>
+        </div>
+      </n-form-item>
+      <n-form-item label="批量大小">
+        <n-input-number v-model:value="migrationBatchSize" :min="1" :max="1000" />
+      </n-form-item>
+      <n-form-item label="执行迁移">
+        <div class="flex gap-2">
+          <n-button size="small" @click="executeMigration(true)" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
+            模拟运行
+          </n-button>
+          <n-popconfirm @positive-click="executeMigration(false)">
+            <template #trigger>
+              <n-button size="small" type="warning" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
+                执行迁移
+              </n-button>
+            </template>
+            确定要执行迁移吗？此操作会将 {{ migrationBatchSize }} 张图片转换为 WebP 格式，原文件将被删除。
+          </n-popconfirm>
+        </div>
+      </n-form-item>
     </n-form>
   </div>
   <div class="space-x-2 float-right">
@@ -130,3 +222,4 @@ const feedbackWeburlShow = ref(false)
     <n-button type="primary" :disabled="!modified" @click="save">保存</n-button>
   </div>
 </template>
+

@@ -48,7 +48,9 @@ export const useUserStore = defineStore({
         // state._accessToken = Cookies.get('accessToken') || '';
       }
       return state._accessToken;
-    }
+    },
+    /** 判断用户是否使用默认头像（avatar 为空或未设置） */
+    hasDefaultAvatar: (state) => !state.info.avatar || state.info.avatar.trim() === '',
   },
 
   actions: {

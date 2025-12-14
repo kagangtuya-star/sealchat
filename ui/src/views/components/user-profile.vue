@@ -1,5 +1,6 @@
 <script lang="tsx" setup>
 import { useUserStore } from '@/stores/user';
+import { useUtilsStore } from '@/stores/utils';
 import { computed, onMounted, ref, watch } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import imgAvatar from '@/assets/head2.png'
@@ -14,6 +15,7 @@ import router from '@/router';
 const { t } = useI18n()
 
 const user = useUserStore();
+const utils = useUtilsStore();
 const message = useMessage()
 
 const model = ref({
@@ -123,7 +125,14 @@ const createImage = (file: File) => {
 const onFileChange = async (e: any) => {
   let files = e.target.files || e.dataTransfer.files
   if (!files.length) return
-  createImage(files[0])
+  const file = files[0]
+  // Check file size before processing
+  if (file.size > utils.fileSizeLimit) {
+    const limitMB = (utils.fileSizeLimit / 1024 / 1024).toFixed(1)
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
+    return
+  }
+  createImage(file)
 }
 
 const imageResult = ref('')
@@ -326,7 +335,10 @@ const passwordChange = () => {
       </n-form-item>
       <n-form-item :label="$t('userProfile.avatar')" path="inputValue">
         <input type="file" ref="inputFileRef" @change="onFileChange" accept="image/*" class="input-file" />
-        <Avatar v-if="!imageInfo.image" :src="user.info.avatar" @click="selectFile"></Avatar>
+        <div v-if="!imageInfo.image" class="avatar-upload-wrapper">
+          <Avatar :src="user.info.avatar" @click="selectFile"></Avatar>
+          <div class="avatar-upload-hint">点击头像上传</div>
+        </div>
         <div class="box" v-else>
           <!-- <div v-show="tooSmall" style="color: red; text-align: center">× 图片最低像素为（宽*高）：200*200</div> -->
           <div class="flex">
@@ -450,5 +462,18 @@ const passwordChange = () => {
 
 .input-file {
   display: none;
+}
+
+.avatar-upload-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.avatar-upload-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary, #6b7280);
 }
 </style>

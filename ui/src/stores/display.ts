@@ -887,6 +887,7 @@ export const useDisplayStore = defineStore('display', {
       const customColorVars = [
         '--sc-bg-surface', '--sc-bg-elevated', '--sc-bg-input', '--sc-bg-header',
         '--sc-text-primary', '--sc-text-secondary',
+        '--chat-text-primary', '--chat-text-secondary',
         '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
         '--sc-border-mute', '--sc-border-strong',
         '--primary-color', '--primary-color-hover'
@@ -902,8 +903,16 @@ export const useDisplayStore = defineStore('display', {
           if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
           if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
           if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
-          if (c.textPrimary) setVar('--sc-text-primary', c.textPrimary)
-          if (c.textSecondary) setVar('--sc-text-secondary', c.textSecondary)
+          if (c.textPrimary) {
+            setVar('--sc-text-primary', c.textPrimary)
+            // Also set --chat-text-primary for chat message content area
+            setVar('--chat-text-primary', c.textPrimary)
+          }
+          if (c.textSecondary) {
+            setVar('--sc-text-secondary', c.textSecondary)
+            // Also set --chat-text-secondary for chat message content area
+            setVar('--chat-text-secondary', c.textSecondary)
+          }
           // Use --custom-* prefix for chat colors so they can override scoped class variables
           if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
           if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)

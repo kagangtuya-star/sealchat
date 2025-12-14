@@ -58,6 +58,18 @@ var (
 	userId2ConnInfoGlobal *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
 )
 
+// 连接管理配置常量
+const (
+	// 每用户最大连接数，超出时关闭最旧连接
+	maxConnectionsPerUser = 8
+	// 读取超时时间（秒），超过此时间无数据则断开
+	readTimeoutSeconds = 90
+	// 全局健康检查间隔（秒）
+	healthCheckIntervalSeconds = 60
+	// 连接无心跳最大存活时间（秒）
+	connectionMaxIdleSeconds = 180
+)
+
 func getChannelUsersMap() *utils.SyncMap[string, *utils.SyncSet[string]] {
 	return channelUsersMapGlobal
 }
@@ -99,6 +111,30 @@ func websocketWorks(app *fiber.App) {
 
 			if err == nil {
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
+
+				// 检查并清理超限连接（保留 maxConnectionsPerUser-1 个，为新连接腾出空间）
+				for m.Len() >= maxConnectionsPerUser {
+					var oldestConn *WsSyncConn
+					var oldestTime int64 = time.Now().UnixMilli() + 1
+					m.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+						if info.LastPingTime < oldestTime {
+							oldestTime = info.LastPingTime
+							oldestConn = conn
+						}
+						return true
+					})
+					if oldestConn != nil {
+						log.Printf("[WS] 用户 %s 连接数超限，关闭最旧连接", user.ID)
+						oldestConn.Close()
+						m.Delete(oldestConn)
+						if collector := metrics.Get(); collector != nil {
+							collector.RecordConnectionClosed(user.ID)
+						}
+					} else {
+						break
+					}
+				}
+
 				curConnInfo = &ConnInfo{
 					Conn:         c,
 					LastPingTime: time.Now().UnixMilli(),
@@ -159,6 +195,43 @@ func websocketWorks(app *fiber.App) {
 		}
 	}()
 
+	// 全局连接健康检查，定期清理僵尸连接
+	go func() {
+		ticker := time.NewTicker(healthCheckIntervalSeconds * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			now := time.Now().UnixMilli()
+			cutoff := now - (connectionMaxIdleSeconds * 1000)
+			cleanedCount := 0
+
+			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+				var staleConns []*WsSyncConn
+				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+					if info.LastPingTime < cutoff {
+						staleConns = append(staleConns, conn)
+					}
+					return true
+				})
+
+				for _, conn := range staleConns {
+					log.Printf("[WS] 健康检查：关闭用户 %s 的僵尸连接（无心跳超 %d 秒）", userId, connectionMaxIdleSeconds)
+					conn.Close()
+					connMap.Delete(conn)
+					cleanedCount++
+					if collector := metrics.Get(); collector != nil {
+						collector.RecordConnectionClosed(userId)
+					}
+				}
+				return true
+			})
+
+			if cleanedCount > 0 {
+				log.Printf("[WS] 健康检查完成，清理了 %d 个僵尸连接", cleanedCount)
+			}
+		}
+	}()
+
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		// IsWebSocketUpgrade returns true if the client
 		// requested upgrade to the WebSocket protocol.
@@ -207,13 +280,18 @@ func websocketWorks(app *fiber.App) {
 			}
 		}()
 
+		// 设置初始读取超时
+		_ = rawConn.SetReadDeadline(time.Now().Add(readTimeoutSeconds * time.Second))
 
 		for {
 			if mt, msg, err = c.ReadMessage(); err != nil {
-				log.Println("read:", err)
-				// 解析错误
+				log.Println("[WS] read:", err)
+				// 解析错误或超时
 				break
 			}
+
+			// 成功读取后刷新超时
+			_ = rawConn.SetReadDeadline(time.Now().Add(readTimeoutSeconds * time.Second))
 
 			solved := false
 			gatewayMsg := protocol.GatewayPayloadStructure{}

@@ -1,13 +1,11 @@
 {
   "headText": "海豹尬聊 SealChat",
   "channelListNew": "新建频道",
-
   "channelType": {
     "public": "公开",
     "nonPublic": "非公开",
     "private": "私聊"
   },
-
   "dialoChannelgNew": {
     "title": "新建频道",
     "channelNamePlaceholder": "请输入频道名称",
@@ -15,9 +13,7 @@
     "positiveText": "确定",
     "negativeText": "取消",
     "channelType": "频道类型",
-
     "channelName": "频道名称",
-
     "channelParent": "上级频道",
     "channelParentSelect": "上级频道选择"
   },
@@ -78,5 +74,12 @@
     "sendTo": "[悄悄话] 发送给 {target}",
     "from": "[悄悄话] 来自 {sender}",
     "generic": "[悄悄话] 私密消息"
+  },
+  "avatarPrompt": {
+    "title": "设置你的头像",
+    "description": "上传一张独特的头像，让大家更容易认出你！",
+    "action": "现在设置",
+    "skip": "稍后再说",
+    "badge": "点击设置头像"
   }
 }
