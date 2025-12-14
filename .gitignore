@@ -39,3 +39,7 @@ static/
 /docs
 /plans
 /specs
+/.codanna
+/.serena
+.codannaignore
+.fastembed_cache
