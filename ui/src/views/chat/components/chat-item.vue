@@ -752,6 +752,13 @@ onBeforeUnmount(() => {
 });
 
 const nick = computed(() => {
+  // 编辑状态下优先使用编辑预览中的角色名称（自己或他人）
+  if (selfEditingPreview.value?.displayName) {
+    return selfEditingPreview.value.displayName;
+  }
+  if (otherEditingPreview.value?.displayName) {
+    return otherEditingPreview.value.displayName;
+  }
   if (props.item?.identity?.displayName) {
     return props.item.identity.displayName;
   }
@@ -763,6 +770,17 @@ const nick = computed(() => {
     return props.item.sender_member_name;
   }
   return props.item?.member?.nick || props.item?.user?.name || '未知';
+});
+
+// 编辑状态下优先使用编辑预览中的头像（自己或他人）
+const displayAvatar = computed(() => {
+  if (selfEditingPreview.value?.avatar) {
+    return selfEditingPreview.value.avatar;
+  }
+  if (otherEditingPreview.value?.avatar) {
+    return otherEditingPreview.value.avatar;
+  }
+  return props.avatar;
 });
 
 const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
@@ -796,7 +814,7 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
       :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
       @contextmenu="preventAvatarNativeMenu"
     >
-      <Avatar :src="props.avatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" />
+      <Avatar :src="displayAvatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->

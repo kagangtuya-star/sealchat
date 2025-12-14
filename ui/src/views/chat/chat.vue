@@ -2050,6 +2050,11 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
 };
 
 const getMessageDisplayName = (message: any) => {
+  // 编辑状态下优先使用编辑预览中的角色名称
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview?.isSelf && editingPreview.displayName) {
+    return editingPreview.displayName;
+  }
   return message?.identity?.displayName
     || message?.sender_member_name
     || message?.member?.nick
@@ -2059,6 +2064,11 @@ const getMessageDisplayName = (message: any) => {
 };
 
 const getMessageAvatar = (message: any) => {
+  // 编辑状态下优先使用编辑预览中的角色头像
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview?.isSelf && editingPreview.avatar) {
+    return editingPreview.avatar;
+  }
   const candidates = [
     message?.identity?.avatarAttachment,
     (message as any)?.sender_identity_avatar_id,
@@ -4925,6 +4935,17 @@ watch(
   () => chat.editing?.icMode,
   (mode, previous) => {
     if (!chat.editing || mode === previous) {
+      return;
+    }
+    emitEditingPreview();
+  },
+);
+
+// 监听编辑状态下角色 ID 的变化，确保头像和角色名实时更新
+watch(
+  () => chat.editing?.identityId,
+  (identityId, previous) => {
+    if (!chat.editing || identityId === previous) {
       return;
     }
     emitEditingPreview();

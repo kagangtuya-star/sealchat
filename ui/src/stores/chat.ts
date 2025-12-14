@@ -1929,6 +1929,24 @@ export const useChatStore = defineStore({
     updateEditingIcMode(mode: 'ic' | 'ooc') {
       if (this.editing) {
         this.editing.icMode = mode;
+        // 同步切换编辑状态中的角色（场内外绑定能力）
+        const display = useDisplayStore();
+        if (display.settings.autoSwitchRoleOnIcOocToggle) {
+          const channelId = this.editing.channelId;
+          if (channelId) {
+            const config = this.getChannelIcOocRoleConfig(channelId);
+            const targetRoleId = mode === 'ic' ? config.icRoleId : config.oocRoleId;
+            if (targetRoleId) {
+              const identities = this.channelIdentities[channelId] || [];
+              const targetRole = identities.find((identity) => identity.id === targetRoleId);
+              if (targetRole) {
+                this.editing.identityId = targetRoleId;
+                // 同时更新当前活跃角色，以便预览正确显示
+                this.setActiveIdentity(channelId, targetRoleId);
+              }
+            }
+          }
+        }
       }
     },
 
