@@ -178,9 +178,11 @@ Windows下为zip格式。
 
 ### 主程序
 
-主程序文件名为 `sealchat_server`。根据您的操作系统，可能会有不同的扩展名：
-- Windows: sealchat_server.exe
-- Linux/macOS: sealchat_server
+主程序文件名通常为 `sealchat-server`（自行编译时也可命名为 `sealchat_server`）。根据您的操作系统，可能会有不同的扩展名：
+- Windows: sealchat-server.exe
+- Linux/macOS: sealchat-server
+
+同时发行包会包含 `bin/<平台目录>/cwebp` 与 `bin/<平台目录>/gif2webp`（以及 `LICENSE`），用于图片压缩/转换；请保持它们与主程序同目录，不要删掉或改名。
 
 
 ## 3. 运行程序
@@ -189,7 +191,7 @@ Windows下为zip格式。
 
 ### Windows
 
-直接双击 `sealchat_server.exe` 文件来运行程序。
+直接双击 `sealchat-server.exe` 文件来运行程序。
 
 打开浏览器，访问 http://localhost:3212/ 即可使用，第一个注册的帐号会成为管理员账号。
 
@@ -202,11 +204,11 @@ Windows下为zip格式。
    ```
 3. 给予执行权限（如果尚未授予）：
    ```
-   chmod +x sealchat_server
+   chmod +x sealchat-server
    ```
 4. 运行以下命令：
    ```
-   ./sealchat_server
+   ./sealchat-server
    ```
 
 注意：首次运行时，程序会自动创建配置文件并初始化数据库。请确保程序有足够的权限在当前目录下创建文件。

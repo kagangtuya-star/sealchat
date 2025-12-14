@@ -12,10 +12,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"sealchat/pm/gen"
+	"sealchat/utils"
 	"strings"
 	"sync"
 
-	"github.com/gen2brain/webp"
 	"github.com/gofiber/fiber/v2"
 	"github.com/mikespook/gorbac"
 	"github.com/samber/lo"
@@ -154,7 +154,6 @@ func tryCompressImage(data []byte, mimeType string, quality int) ([]byte, bool, 
 	}
 
 	quality = clampImageQuality(quality)
-	buf := bytes.NewBuffer(make([]byte, 0, len(data)/2))
 
 	// For GIF, extract first frame
 	// (Note: this doesn't preserve animation, just the first frame)
@@ -165,18 +164,10 @@ func tryCompressImage(data []byte, mimeType string, quality int) ([]byte, bool, 
 		}
 	}
 
-	// Encode to WebP format with lossy compression
-	// WebP lossy mode supports alpha channel, so transparency is preserved
-	encodeErr := webp.Encode(buf, img, webp.Options{
-		Lossless: false,
-		Quality:  quality,
-	})
-
+	result, encodeErr := utils.EncodeImageToWebPWithCWebP(img, quality)
 	if encodeErr != nil {
 		return nil, false, encodeErr
 	}
-
-	result := buf.Bytes()
 	// Always use WebP result even if larger, for format consistency
 	// If WebP result is significantly larger (>150%), fall back to original
 	if len(result) > len(data)*3/2 {

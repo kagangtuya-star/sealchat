@@ -7,6 +7,9 @@
 services:
   sealchat:
     image: ghcr.io/kagangtuya-star/sealchat:latest
+    # 如需使用本仓库源码本地构建镜像（会包含 bin/ 下对应平台的 cwebp/gif2webp）：
+    # build:
+    #   context: .
     container_name: sealchat
     restart: unless-stopped
     user: "0:0"  # 以 root 用户运行，解决目录权限问题

@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gen2brain/webp"
 	"github.com/samber/lo"
 	"golang.org/x/crypto/blake2s"
 	_ "golang.org/x/image/webp"
@@ -318,18 +317,10 @@ func compressImageToWebP(data []byte, quality int) ([]byte, bool, error) {
 	}
 
 	quality = clampQuality(quality)
-	buf := bytes.NewBuffer(make([]byte, 0, len(data)/2))
-
-	encodeErr := webp.Encode(buf, img, webp.Options{
-		Lossless: false,
-		Quality:  quality,
-	})
-
+	result, encodeErr := utils.EncodeImageToWebPWithCWebP(img, quality)
 	if encodeErr != nil {
 		return nil, false, encodeErr
 	}
-
-	result := buf.Bytes()
 	// Fall back if WebP is significantly larger (>150%)
 	if len(result) > len(data)*3/2 {
 		return nil, false, nil
