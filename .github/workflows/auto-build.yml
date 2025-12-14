@@ -48,7 +48,7 @@ jobs:
 
   backend-build:
     name: Build Server
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     needs: ui-build
     strategy:
       matrix:
@@ -56,12 +56,15 @@ jobs:
           - name: linux_amd64
             goos: linux
             goarch: amd64
+            runner: ubuntu-latest
           - name: linux_arm64
             goos: linux
             goarch: arm64
+            runner: ubuntu-latest
           - name: windows_amd64
             goos: windows
             goarch: amd64
+            runner: windows-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -80,11 +83,13 @@ jobs:
           path: ./ui/dist
 
       - name: Setup Zig
+        if: ${{ matrix.goos != 'windows' }}
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.11.0
 
       - name: Build binary
+        if: ${{ matrix.goos != 'windows' }}
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -92,13 +97,60 @@ jobs:
         run: |
           if [ "${{ matrix.goos }}" = "linux" ]; then
             if [ "${{ matrix.goarch }}" = "amd64" ]; then
-              CC="zig cc -target x86_64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
+              CC="zig cc -target x86_64-linux-musl" go build -tags nodynamic -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
             elif [ "${{ matrix.goarch }}" = "arm64" ]; then
-              CC="zig cc -target aarch64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
+              CC="zig cc -target aarch64-linux-musl" go build -tags nodynamic -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
             fi
-          elif [ "${{ matrix.goos }}" = "windows" ]; then
-            CC="zig cc -target x86_64-windows-gnu" go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w" .
           fi
+
+      - name: Setup MSYS2 (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-libwebp
+
+      - name: Build binary (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          New-Item -ItemType Directory -Force -Path output | Out-Null
+          go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w" .
+
+      - name: Bundle libwebp DLLs (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        shell: pwsh
+        run: |
+          $bin = "C:\msys64\mingw64\bin"
+          $outDir = Join-Path $PWD "output"
+
+          $libwebp = Get-ChildItem $bin -Filter "libwebp*.dll" | Where-Object { $_.Name -match '^libwebp(-\d+)?\.dll$' } | Select-Object -First 1
+          if (-not $libwebp) { throw "libwebp DLL not found under $bin" }
+
+          $libwebpDemux = Get-ChildItem $bin -Filter "libwebpdemux*.dll" | Where-Object { $_.Name -match '^libwebpdemux(-\d+)?\.dll$' } | Select-Object -First 1
+          if (-not $libwebpDemux) { throw "libwebpdemux DLL not found under $bin" }
+
+          $extraDlls = @(
+            Get-ChildItem $bin -Filter "libsharpyuv*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^libsharpyuv(-\d+)?\.dll$' }
+            Get-ChildItem $bin -Filter "libgcc_s_seh-1.dll" -ErrorAction SilentlyContinue
+            Get-ChildItem $bin -Filter "libstdc++-6.dll" -ErrorAction SilentlyContinue
+            Get-ChildItem $bin -Filter "libwinpthread-1.dll" -ErrorAction SilentlyContinue
+          ) | Where-Object { $_ }
+
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          Copy-Item $libwebp.FullName (Join-Path $outDir $libwebp.Name) -Force
+          Copy-Item $libwebpDemux.FullName (Join-Path $outDir $libwebpDemux.Name) -Force
+          foreach ($dll in $extraDlls) { Copy-Item $dll.FullName (Join-Path $outDir $dll.Name) -Force }
+
+          Copy-Item $libwebp.FullName (Join-Path $outDir "libwebp.dll") -Force
+          Copy-Item $libwebpDemux.FullName (Join-Path $outDir "libwebpdemux.dll") -Force
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -107,33 +159,71 @@ jobs:
           path: ./output
 
       - name: Compress files
+        if: ${{ matrix.goos != 'windows' }}
         run: |
           mkdir -p release
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           if [ "${{ matrix.goos }}" = "linux" ]; then
-            tar -czvf release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz -C output sealchat-server
-            chmod +x release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz
-          elif [ "${{ matrix.goos }}" = "windows" ]; then
-            cd output && zip -r ../release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.zip sealchat-server.exe
+            DATE=$(date -u +%Y%m%d)
+            tar -czvf release/sealchat_${DATE}_${SHORT_SHA}_${{ matrix.name }}.tar.gz -C output sealchat-server
+            chmod +x release/sealchat_${DATE}_${SHORT_SHA}_${{ matrix.name }}.tar.gz
           fi
 
       - name: Set slug output
         id: slug
+        if: ${{ matrix.goos != 'windows' }}
         run: |
-          echo "::set-output name=SHORT_SHA::$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "::set-output name=DATE::$(date +%Y%m%d)"
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "DATE=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Compress files (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $date = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
+          Compress-Archive -Path "output\*" -DestinationPath ("release\sealchat_{0}_{1}_{2}.zip" -f $date, $shortSha, "${{ matrix.name }}") -Force
+
+      - name: Set slug output (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        id: slug_windows
+        shell: pwsh
+        run: |
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $date = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
+          Add-Content -Path $env:GITHUB_OUTPUT -Value ("SHORT_SHA={0}" -f $shortSha)
+          Add-Content -Path $env:GITHUB_OUTPUT -Value ("DATE={0}" -f $date)
 
       - name: Generate Release Notes
         id: release_notes
+        if: ${{ matrix.goos != 'windows' }}
         run: |
           echo "NOTES<<EOF" >> $GITHUB_ENV
           git log --format='- %s' $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
+      - name: Generate Release Notes (Windows)
+        if: ${{ matrix.goos == 'windows' }}
+        id: release_notes_windows
+        shell: pwsh
+        run: |
+          $base = git describe --tags --abbrev=0 2>$null
+          if ($LASTEXITCODE -eq 0 -and $base) {
+            $range = "$base..HEAD"
+          } else {
+            $root = git rev-list --max-parents=0 HEAD
+            $range = "$root..HEAD"
+          }
+          $notes = git log --format='- %s' $range
+          Add-Content -Path $env:GITHUB_ENV -Value "NOTES<<EOF"
+          Add-Content -Path $env:GITHUB_ENV -Value $notes
+          Add-Content -Path $env:GITHUB_ENV -Value "EOF"
+
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}
+          tag_name: ${{ steps.slug.outputs.DATE || steps.slug_windows.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA || steps.slug_windows.outputs.SHORT_SHA }}
           body: |
             ## 更新说明
             ${{ env.NOTES }}
