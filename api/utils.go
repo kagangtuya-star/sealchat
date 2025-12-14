@@ -140,7 +140,8 @@ func shouldCompressUpload(mimeType string) bool {
 		return false
 	}
 	switch mimeType {
-	case "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp":
+	// Skip webp - already compressed by frontend, avoid quality degradation
+	case "image/jpeg", "image/jpg", "image/png", "image/gif":
 		return true
 	default:
 		return false
