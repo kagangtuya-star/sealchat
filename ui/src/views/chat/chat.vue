@@ -3365,11 +3365,6 @@ const createGhostElement = (rowEl: HTMLElement) => {
   const ghost = document.createElement('div');
   ghost.className = 'message-row__ghost-float';
   
-  // Get computed background color from the chat container for theme compatibility
-  const chatContainer = document.querySelector('.chat');
-  const bgColor = chatContainer 
-    ? getComputedStyle(chatContainer).getPropertyValue('--sc-bg-surface').trim() || '#ffffff'
-    : '#ffffff';
   const isDark = document.documentElement.classList.contains('dark') || 
                  document.body.classList.contains('dark');
   
@@ -3378,20 +3373,25 @@ const createGhostElement = (rowEl: HTMLElement) => {
     left: ${rect.left}px;
     top: ${rect.top}px;
     width: ${rect.width}px;
-    height: ${Math.min(rect.height, 150)}px;
+    height: ${Math.min(rect.height, 160)}px;
     z-index: 9999;
     pointer-events: none;
-    opacity: 1;
-    transform: scale(1.03) translateY(-6px);
-    box-shadow: 
-      0 4px 8px rgba(0, 0, 0, ${isDark ? '0.3' : '0.1'}),
-      0 12px 24px rgba(0, 0, 0, ${isDark ? '0.4' : '0.15'}),
-      0 24px 48px rgba(0, 0, 0, ${isDark ? '0.3' : '0.1'});
-    border-radius: 0.75rem;
-    background: ${isDark ? '#2d2d2d' : '#ffffff'};
-    border: 1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'};
+    cursor: grabbing;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, ${isDark ? '0.25' : '0.15'});
+    border-radius: 0.5rem;
+    background: ${isDark ? 'var(--sc-bg-elevated, #1e1e1e)' : 'var(--sc-bg-surface, #fff)'};
     overflow: hidden;
+    opacity: 0;
+    transform: scale(1);
+    transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
   `;
+  
+  // Animate in after appending
+  requestAnimationFrame(() => {
+    ghost.style.opacity = '1';
+    ghost.style.transform = 'scale(1.02)';
+    ghost.style.boxShadow = `0 8px 24px rgba(0, 0, 0, ${isDark ? '0.4' : '0.2'})`;
+  });
   // Clone the surface content - capture dimensions first
   const surface = rowEl.querySelector('.message-row__surface');
   if (surface) {
@@ -3460,15 +3460,32 @@ const applyLiveReorder = () => {
 };
 
 const updateOverTarget = (clientY: number) => {
+  // Hysteresis thresholds to prevent jitter at midpoint
+  // Position only changes when crossing 35% or 65% of element height
+  const THRESHOLD_BEFORE = 0.35; // Switch to 'before' when above 35%
+  const THRESHOLD_AFTER = 0.65;  // Switch to 'after' when below 65%
+  
+  // Helper to calculate position with hysteresis
+  const calcPosition = (rect: DOMRect, currentPos: 'before' | 'after' | null): 'before' | 'after' => {
+    const relativeY = (clientY - rect.top) / rect.height;
+    if (relativeY <= THRESHOLD_BEFORE) {
+      return 'before';
+    }
+    if (relativeY >= THRESHOLD_AFTER) {
+      return 'after';
+    }
+    // In the dead zone (35%-65%), keep current position to prevent flicker
+    return currentPos || 'after';
+  };
+
   // Fast path: check if still within current target before iterating all rows
   if (dragState.overId && dragState.overId !== dragState.activeId) {
     const currentEl = messageRowRefs.get(dragState.overId);
     if (currentEl) {
       const rect = currentEl.getBoundingClientRect();
       if (clientY >= rect.top && clientY < rect.bottom) {
-        // Still within same element, just update position
-        const mid = rect.top + rect.height / 2;
-        dragState.position = clientY <= mid ? 'before' : 'after';
+        // Still within same element, just update position with hysteresis
+        dragState.position = calcPosition(rect, dragState.position);
         return;
       }
     }
@@ -3480,9 +3497,8 @@ const updateOverTarget = (clientY: number) => {
     if (activeEl) {
       const rectActive = activeEl.getBoundingClientRect();
       if (clientY >= rectActive.top && clientY <= rectActive.bottom) {
-        const mid = rectActive.top + rectActive.height / 2;
         dragState.overId = dragState.activeId;
-        dragState.position = clientY <= mid ? 'before' : 'after';
+        dragState.position = calcPosition(rectActive, dragState.position);
         matched = true;
       }
     }
@@ -3498,8 +3514,10 @@ const updateOverTarget = (clientY: number) => {
         continue;
       }
       const rect = el.getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      if (clientY <= mid) {
+      const relativeY = (clientY - rect.top) / rect.height;
+      
+      // Use thresholds for better stability
+      if (relativeY <= THRESHOLD_BEFORE) {
         dragState.overId = item.id;
         dragState.position = 'before';
         matched = true;
@@ -3507,7 +3525,9 @@ const updateOverTarget = (clientY: number) => {
       }
       if (clientY < rect.bottom) {
         dragState.overId = item.id;
-        dragState.position = 'after';
+        // When entering new element, use threshold logic
+        dragState.position = relativeY >= THRESHOLD_AFTER ? 'after' : 
+                             (dragState.overId === item.id ? dragState.position : 'after') || 'after';
         matched = true;
         break;
       }
@@ -9224,13 +9244,6 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-/* All message rows have smooth transition for sibling fill animation */
-.message-row {
-  contain: layout style;
-  transition: transform 0.2s cubic-bezier(0.33, 1, 0.68, 1),
-              margin 0.2s cubic-bezier(0.33, 1, 0.68, 1);
-}
-
 /* Drag source collapses completely - siblings fill the gap */
 .message-row--drag-source {
   opacity: 0 !important;
@@ -9247,6 +9260,51 @@ onBeforeUnmount(() => {
               opacity 0.15s ease-out;
 }
 
+/* Slot-opening animation - messages slide to create space */
+.message-row {
+  position: relative;
+  contain: layout style;
+  transition: transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+/* When hovering over a drop target, shift it and all following rows down */
+.message-row--drop-before:not(.message-row--drag-source),
+.message-row--drop-before:not(.message-row--drag-source) ~ .message-row:not(.message-row--drag-source) {
+  transform: translateY(3rem);
+}
+
+/* When dropping after, only shift rows AFTER the target */
+.message-row--drop-after:not(.message-row--drag-source) ~ .message-row:not(.message-row--drag-source) {
+  transform: translateY(3rem);
+}
+
+/* Indicator line at drop position */
+.message-row--drop-before:not(.message-row--drag-source)::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 1rem;
+  right: 1rem;
+  height: 3px;
+  background: var(--sc-primary, #3b82f6);
+  border-radius: 2px;
+  opacity: 0.8;
+  z-index: 10;
+}
+
+.message-row--drop-after:not(.message-row--drag-source)::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 1rem;
+  right: 1rem;
+  height: 3px;
+  background: var(--sc-primary, #3b82f6);
+  border-radius: 2px;
+  opacity: 0.8;
+  z-index: 10;
+}
+
 /* Drag handle should prevent scroll interference */
 .message-row__handle {
   touch-action: none;
@@ -9260,9 +9318,10 @@ onBeforeUnmount(() => {
 /* Subtle hover highlight for message positioning - compact mode only */
 .message-row .message-row__surface {
   position: relative;
+  transition: background-color 0.15s ease;
 }
 
-.chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--drag-source):hover .message-row__surface::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -9271,10 +9330,6 @@ onBeforeUnmount(() => {
   pointer-events: none;
   z-index: 0;
   transition: opacity 0.15s ease;
-}
-
-:global(.dark) .chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
-  background: rgba(128, 128, 128, 0.1);
 }
 
 /* Dragged message highlight during live reorder */
