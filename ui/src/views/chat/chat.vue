@@ -7632,7 +7632,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
@@ -9298,12 +9298,12 @@ onBeforeUnmount(() => {
   top: 100%;
 }
 
-/* Indicator line at the edge of slot */
-.chat--layout-compact .message-row--drop-before:not(.message-row--drag-source)::before {
+/* Indicator line at the edge of slot - only shown when setting enabled */
+.chat--show-drag-indicator .message-row--drop-before:not(.message-row--drag-source)::before {
   border-top: 3px solid var(--sc-primary, #3b82f6);
 }
 
-.chat--layout-compact .message-row--drop-after:not(.message-row--drag-source)::after {
+.chat--show-drag-indicator .message-row--drop-after:not(.message-row--drag-source)::after {
   border-bottom: 3px solid var(--sc-primary, #3b82f6);
 }
 
