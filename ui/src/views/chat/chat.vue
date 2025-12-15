@@ -3182,6 +3182,14 @@ const dragState = reactive({
   autoScrollSpeed: 0,
   autoScrollRafId: null as number | null,
   lastClientY: null as number | null,
+  // Optimization: RAF throttle for drag updates
+  dragRafId: null as number | null,
+  pendingClientY: null as number | null,
+  // Track previous state to avoid redundant reorders
+  prevOverId: null as string | null,
+  prevPosition: null as 'before' | 'after' | null,
+  // Ghost element offset
+  ghostOffsetY: 0,
 });
 
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
@@ -3273,6 +3281,11 @@ const resetDragState = () => {
   clearGhost();
   stopAutoScroll();
   releaseHandlePointerCapture();
+  // Cancel any pending RAF
+  if (dragState.dragRafId !== null) {
+    cancelAnimationFrame(dragState.dragRafId);
+    dragState.dragRafId = null;
+  }
   dragState.snapshot = [];
   dragState.clientOpId = null;
   dragState.overId = null;
@@ -3281,6 +3294,10 @@ const resetDragState = () => {
   dragState.pointerId = null;
   dragState.startY = 0;
   dragState.lastClientY = null;
+  dragState.pendingClientY = null;
+  dragState.prevOverId = null;
+  dragState.prevPosition = null;
+  dragState.ghostOffsetY = 0;
   if (dragState.originEl) {
     dragState.originEl.classList.remove('message-row--drag-source');
   }
@@ -3343,8 +3360,68 @@ const inheritChatContextClasses = (ghostEl: HTMLElement) => {
   });
 };
 
-const createGhostElement = (_rowEl: HTMLElement) => {
-  // Ghost element disabled - using live reorder preview instead
+const createGhostElement = (rowEl: HTMLElement) => {
+  const rect = rowEl.getBoundingClientRect();
+  const ghost = document.createElement('div');
+  ghost.className = 'message-row__ghost-float';
+  
+  // Get computed background color from the chat container for theme compatibility
+  const chatContainer = document.querySelector('.chat');
+  const bgColor = chatContainer 
+    ? getComputedStyle(chatContainer).getPropertyValue('--sc-bg-surface').trim() || '#ffffff'
+    : '#ffffff';
+  const isDark = document.documentElement.classList.contains('dark') || 
+                 document.body.classList.contains('dark');
+  
+  ghost.style.cssText = `
+    position: fixed;
+    left: ${rect.left}px;
+    top: ${rect.top}px;
+    width: ${rect.width}px;
+    height: ${Math.min(rect.height, 150)}px;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 1;
+    transform: scale(1.03) translateY(-6px);
+    box-shadow: 
+      0 4px 8px rgba(0, 0, 0, ${isDark ? '0.3' : '0.1'}),
+      0 12px 24px rgba(0, 0, 0, ${isDark ? '0.4' : '0.15'}),
+      0 24px 48px rgba(0, 0, 0, ${isDark ? '0.3' : '0.1'});
+    border-radius: 0.75rem;
+    background: ${isDark ? '#2d2d2d' : '#ffffff'};
+    border: 1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'};
+    overflow: hidden;
+  `;
+  // Clone the surface content - capture dimensions first
+  const surface = rowEl.querySelector('.message-row__surface');
+  if (surface) {
+    const surfaceRect = surface.getBoundingClientRect();
+    const clone = surface.cloneNode(true) as HTMLElement;
+    // Reset all styles that might be inherited from drag-source
+    clone.style.cssText = `
+      pointer-events: none;
+      opacity: 1 !important;
+      max-height: none !important;
+      height: ${Math.min(surfaceRect.height, 150)}px;
+      overflow: hidden;
+      transform: none !important;
+      transition: none !important;
+      margin: 0 !important;
+      padding: inherit;
+    `;
+    ghost.appendChild(clone);
+  }
+  inheritChatContextClasses(ghost);
+  document.body.appendChild(ghost);
+  dragState.ghostEl = ghost;
+  dragState.ghostOffsetY = rect.top - dragState.startY;
+};
+
+// Update ghost position to follow cursor
+const updateGhostPosition = (clientY: number) => {
+  if (!dragState.ghostEl) return;
+  const newTop = clientY + (dragState.ghostOffsetY ?? 0);
+  dragState.ghostEl.style.top = `${newTop}px`;
 };
 
 // Live reorder: move the dragged item within rows in real-time
@@ -3355,6 +3432,13 @@ const applyLiveReorder = () => {
   if (!activeId || !overId || activeId === overId) {
     return;
   }
+  // Skip if target hasn't changed (avoid redundant Vue updates)
+  if (overId === dragState.prevOverId && position === dragState.prevPosition) {
+    return;
+  }
+  dragState.prevOverId = overId;
+  dragState.prevPosition = position;
+  
   const currentRows = rows.value;
   const fromIndex = currentRows.findIndex((item) => item.id === activeId);
   const toReference = currentRows.findIndex((item) => item.id === overId);
@@ -3376,6 +3460,20 @@ const applyLiveReorder = () => {
 };
 
 const updateOverTarget = (clientY: number) => {
+  // Fast path: check if still within current target before iterating all rows
+  if (dragState.overId && dragState.overId !== dragState.activeId) {
+    const currentEl = messageRowRefs.get(dragState.overId);
+    if (currentEl) {
+      const rect = currentEl.getBoundingClientRect();
+      if (clientY >= rect.top && clientY < rect.bottom) {
+        // Still within same element, just update position
+        const mid = rect.top + rect.height / 2;
+        dragState.position = clientY <= mid ? 'before' : 'after';
+        return;
+      }
+    }
+  }
+
   let matched = false;
   if (dragState.activeId) {
     const activeEl = messageRowRefs.get(dragState.activeId);
@@ -3389,36 +3487,38 @@ const updateOverTarget = (clientY: number) => {
       }
     }
   }
-  const currentRows = rows.value;
-  for (const item of currentRows) {
-    if (!item?.id || item.id === dragState.activeId) {
-      continue;
+  if (!matched) {
+    const currentRows = rows.value;
+    for (const item of currentRows) {
+      if (!item?.id || item.id === dragState.activeId) {
+        continue;
+      }
+      const el = messageRowRefs.get(item.id);
+      if (!el) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if (clientY <= mid) {
+        dragState.overId = item.id;
+        dragState.position = 'before';
+        matched = true;
+        break;
+      }
+      if (clientY < rect.bottom) {
+        dragState.overId = item.id;
+        dragState.position = 'after';
+        matched = true;
+        break;
+      }
     }
-    const el = messageRowRefs.get(item.id);
-    if (!el) {
-      continue;
-    }
-    const rect = el.getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    if (clientY <= mid) {
-      dragState.overId = item.id;
-      dragState.position = 'before';
-      matched = true;
-      break;
-    }
-    if (clientY < rect.bottom) {
-      dragState.overId = item.id;
-      dragState.position = 'after';
-      matched = true;
-      break;
-    }
-  }
-  if (!matched && currentRows.length > 0) {
-    const last = currentRows[currentRows.length - 1];
-    if (last?.id) {
-      dragState.overId = last.id;
-      dragState.position = 'after';
-      matched = true;
+    if (!matched && currentRows.length > 0) {
+      const last = currentRows[currentRows.length - 1];
+      if (last?.id) {
+        dragState.overId = last.id;
+        dragState.position = 'after';
+        matched = true;
+      }
     }
   }
   if (!matched) {
@@ -3518,14 +3618,28 @@ const finalizeDrag = async () => {
   }
 };
 
+// Process drag update in animation frame for smooth 60fps updates
+const processDragFrame = () => {
+  dragState.dragRafId = null;
+  const clientY = dragState.pendingClientY;
+  if (clientY === null) return;
+  dragState.pendingClientY = null;
+  // Only move the ghost and track target - NO live reordering
+  updateGhostPosition(clientY);
+  updateOverTarget(clientY);
+  updateAutoScroll(clientY);
+};
+
 const onDragPointerMove = (event: PointerEvent) => {
   if (event.pointerId !== dragState.pointerId) {
     return;
   }
   event.preventDefault();
-  updateOverTarget(event.clientY);
-  applyLiveReorder();
-  updateAutoScroll(event.clientY);
+  // Store pending position and schedule RAF if not already scheduled
+  dragState.pendingClientY = event.clientY;
+  if (dragState.dragRafId === null) {
+    dragState.dragRafId = requestAnimationFrame(processDragFrame);
+  }
 };
 
 const onDragPointerUp = (event: PointerEvent) => {
@@ -3571,7 +3685,6 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
       // ignore capture failure
     }
   }
-  rowEl.classList.add('message-row--drag-source');
   dragState.snapshot = rows.value.slice();
   dragState.clientOpId = nanoid();
   dragState.activeId = item.id;
@@ -3581,6 +3694,13 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   dragState.position = 'after';
   dragState.originEl = rowEl;
   document.body.style.userSelect = 'none';
+  
+  // IMPORTANT: Create ghost BEFORE adding drag-source class (which collapses the row)
+  createGhostElement(rowEl);
+  
+  // Now add the collapse class
+  rowEl.classList.add('message-row--drag-source');
+  
   updateOverTarget(event.clientY);
   updateAutoScroll(event.clientY);
 
@@ -9100,13 +9220,41 @@ onBeforeUnmount(() => {
 }
 
 .message-row__ghost {
-  /* Ghost element disabled - using live reorder instead */
+  /* Ghost element disabled - using floating ghost instead */
   display: none;
 }
 
-/* Smooth transition for all message rows during drag reorder */
+/* All message rows have smooth transition for sibling fill animation */
 .message-row {
-  transition: transform 0.2s ease;
+  contain: layout style;
+  transition: transform 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              margin 0.2s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+/* Drag source collapses completely - siblings fill the gap */
+.message-row--drag-source {
+  opacity: 0 !important;
+  pointer-events: none;
+  max-height: 0 !important;
+  overflow: hidden;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  transition: max-height 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              margin 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              padding 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              opacity 0.15s ease-out;
+}
+
+/* Drag handle should prevent scroll interference */
+.message-row__handle {
+  touch-action: none;
+  cursor: grab;
+}
+
+.message-row__handle:active {
+  cursor: grabbing;
 }
 
 /* Subtle hover highlight for message positioning - compact mode only */
@@ -9130,11 +9278,7 @@ onBeforeUnmount(() => {
 }
 
 /* Dragged message highlight during live reorder */
-.message-row--drag-source {
-  position: relative;
-  z-index: 100;
-  transform: scale(1.02);
-}
+/* Combined with transition rules above for instant response */
 
 .message-row--drag-source .message-row__surface {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
