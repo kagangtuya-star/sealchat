@@ -8991,7 +8991,7 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact {
-  background-color: var(--chat-stage-bg);
+  background-color: var(--chat-ic-bg);
   transition: background-color 0.25s ease;
 }
 
@@ -9278,31 +9278,33 @@ onBeforeUnmount(() => {
   transform: translateY(3rem);
 }
 
-/* Indicator line at drop position */
-.message-row--drop-before:not(.message-row--drag-source)::before {
-  content: '';
-  position: absolute;
-  top: -2px;
-  left: 1rem;
-  right: 1rem;
-  height: 3px;
-  background: var(--sc-primary, #3b82f6);
-  border-radius: 2px;
-  opacity: 0.8;
-  z-index: 10;
-}
-
+/* Fill the slot gap with IC background color (synced with day/night/custom themes) */
+.message-row--drop-before:not(.message-row--drag-source)::before,
 .message-row--drop-after:not(.message-row--drag-source)::after {
   content: '';
   position: absolute;
-  bottom: -2px;
-  left: 1rem;
-  right: 1rem;
-  height: 3px;
-  background: var(--sc-primary, #3b82f6);
-  border-radius: 2px;
-  opacity: 0.8;
-  z-index: 10;
+  left: 0;
+  right: 0;
+  height: 3rem;
+  background-color: var(--chat-ic-bg);
+  z-index: -1;
+}
+
+.message-row--drop-before:not(.message-row--drag-source)::before {
+  bottom: 100%;
+}
+
+.message-row--drop-after:not(.message-row--drag-source)::after {
+  top: 100%;
+}
+
+/* Indicator line at the edge of slot */
+.chat--layout-compact .message-row--drop-before:not(.message-row--drag-source)::before {
+  border-top: 3px solid var(--sc-primary, #3b82f6);
+}
+
+.chat--layout-compact .message-row--drop-after:not(.message-row--drag-source)::after {
+  border-bottom: 3px solid var(--sc-primary, #3b82f6);
 }
 
 /* Drag handle should prevent scroll interference */
