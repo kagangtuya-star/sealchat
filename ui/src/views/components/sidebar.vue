@@ -617,8 +617,8 @@ const handleOpenWorldGlossary = () => {
                 <n-button
                   size="tiny"
                   block
-                  :type="pushStore.enabled ? 'primary' : 'default'"
-                  ghost
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': pushStore.enabled }"
                   @click="pushStore.toggle()"
                   :disabled="!pushStore.supported"
                 >
@@ -637,8 +637,8 @@ const handleOpenWorldGlossary = () => {
                 <n-button
                   size="tiny"
                   block
-                  :type="showAllSubChannels ? 'primary' : 'default'"
-                  ghost
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
                   @click="toggleSubChannelDisplay"
                 >
                   {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
@@ -766,5 +766,16 @@ const handleOpenWorldGlossary = () => {
   background-color: var(--sc-bg-elevated, #fffbe6);
   border: 1px dashed var(--sc-accent-primary, #faad14);
   opacity: 0.9;
+}
+
+/* 侧栏开关按钮激活态样式 - 适配日夜间/自定义主题 */
+.sidebar-toggle-active {
+  background-color: var(--sc-sidebar-active, rgba(99, 226, 183, 0.15)) !important;
+  color: var(--sc-text-primary, inherit) !important;
+  border-color: transparent !important;
+}
+
+.sidebar-toggle-active:hover {
+  background-color: var(--sc-sidebar-hover, rgba(99, 226, 183, 0.25)) !important;
 }
 </style>
