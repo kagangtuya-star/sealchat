@@ -204,21 +204,35 @@ const setupImageViewer = async () => {
     return;
   }
 
-  if (inlineImageViewer) {
-    inlineImageViewer.update();
-    return;
-  }
+  // 总是重新创建viewer以确保选项正确（因为图片数量可能变化）
+  destroyImageViewer();
 
+  const hasMultiple = inlineImages.length > 1;
   inlineImageViewer = new Viewer(host, {
     className: 'chat-inline-image-viewer',
-    navbar: false,
+    navbar: hasMultiple,  // 多图时显示缩略图导航
     title: false,
-    toolbar: true,
-    tooltip: false,
-    scalable: false,
-    rotatable: false,
-    transition: false,
-    fullscreen: false,
+    toolbar: {
+      zoomIn: true,
+      zoomOut: true,
+      oneToOne: true,
+      reset: true,
+      prev: hasMultiple,  // 多图时显示上一张
+      play: false,
+      next: hasMultiple,  // 多图时显示下一张
+      rotateLeft: true,
+      rotateRight: true,
+      flipHorizontal: false,
+      flipVertical: false,
+    },
+    tooltip: true,
+    movable: true,
+    zoomable: true,
+    scalable: true,
+    rotatable: true,
+    transition: true,
+    fullscreen: true,
+    keyboard: true,  // 启用键盘导航 (←/→)
     zIndex: 2500,
   });
 };

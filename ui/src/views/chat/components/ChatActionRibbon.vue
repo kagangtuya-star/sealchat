@@ -7,6 +7,7 @@ import {
   DotsVertical as MoreIcon,
   MoodSmile as EmojiIcon,
   Palette,
+  Photo as PhotoIcon,
   Star as StarIcon,
   Upload as UploadIcon,
   Users as UsersIcon,
@@ -33,6 +34,7 @@ interface Props {
   galleryActive?: boolean
   displayActive?: boolean
   favoriteActive?: boolean
+  channelImagesActive?: boolean
   canImport?: boolean
   importActive?: boolean
 }
@@ -46,6 +48,7 @@ interface Emits {
   (e: 'open-gallery'): void
   (e: 'open-display-settings'): void
   (e: 'open-favorites'): void
+  (e: 'open-channel-images'): void
   (e: 'clear-filters'): void
 }
 
@@ -74,6 +77,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
     { key: 'export', label: '导出记录', icon: DownloadIcon, emitEvent: 'open-export', activeKey: 'exportActive' },
     { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
+    { key: 'channel-images', label: '图片浏览', icon: PhotoIcon, emitEvent: 'open-channel-images', activeKey: 'channelImagesActive' },
     { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
   ]
   

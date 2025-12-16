@@ -24,7 +24,7 @@ func PersistAttachmentFile(hash []byte, size int64, tempPath string, contentType
 		return nil, errors.New("存储服务未初始化")
 	}
 	ctx := context.Background()
-	targetBackend := manager.ActiveBackend()
+	targetBackend := manager.ActiveBackendForAttachment()
 	if reused, ok, err := tryReuseAttachment(hash, size, targetBackend); err != nil {
 		return nil, err
 	} else if ok && reused != nil {
@@ -32,7 +32,7 @@ func PersistAttachmentFile(hash []byte, size int64, tempPath string, contentType
 		return reused, nil
 	}
 	objectKey := storage.BuildAttachmentObjectKey(hex.EncodeToString(hash), size, time.Now())
-	result, err := manager.Upload(ctx, storage.UploadInput{
+	result, err := manager.UploadAttachment(ctx, storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: contentType,

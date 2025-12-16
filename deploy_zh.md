@@ -324,6 +324,104 @@ chatHistoryPersistentDays: -1
 dbUrl: postgresql://seal:123@localhost:5432/sealchat
 ```
 
+## 4. 对象存储（S3 兼容）
+
+SealChat 支持将附件/图片与音频存入 S3（或兼容协议的对象存储，如 MinIO、腾讯 COS 等）。相关配置在 `config.yaml` 的 `storage` 段，建议直接参考并复制 `config.yaml.example` / `config.docker.yaml.example` 中的示例，再按实际替换。
+
+### 4.1 存储模式与目录
+
+- `storage.mode`
+  - `local`：全部存本地（默认）
+  - `s3`：优先写入 S3（若 S3 初始化失败会回退本地）
+  - `auto`：有 S3 就用 S3，否则本地
+- 本地目录（当对应类型走本地时生效）
+  - `storage.local.uploadDir`：附件/图片目录
+  - `storage.local.audioDir`：音频目录
+  - `storage.local.tempDir`：临时目录
+
+### 4.2 S3 通用配置项（含分类开关）
+
+以下为关键字段说明（省略的字段请看示例文件）：
+
+```yaml
+storage:
+  mode: s3
+  local:
+    uploadDir: ./sealchat-data/upload
+    audioDir: ./sealchat-data/static/audio
+    tempDir: ./data/temp
+  s3:
+    enabled: true
+    attachmentsEnabled: true
+    audioEnabled: true
+    endpoint: https://s3.example.com
+    region: ""
+    bucket: your-bucket-name
+    accessKey: ""       # 建议留空，改用环境变量
+    secret: ""          # 建议留空，改用环境变量
+    sessionToken: ""
+    pathStyle: false
+    publicBaseUrl: https://cdn.example.com
+    useSSL: true
+```
+
+- `storage.s3.attachmentsEnabled`：是否将**附件/图片**写入 S3。
+- `storage.s3.audioEnabled`：是否将**音频**写入 S3。
+- `storage.s3.endpoint`：对象存储服务地址（通常为区域根域名或 MinIO 地址）。
+- `storage.s3.bucket`：桶名（部分服务商要求包含 appid/租户后缀）。
+- `storage.s3.pathStyle`：是否强制 path-style（`/bucket/key`）。不同服务商要求不同（见下文 COS）。
+- `storage.s3.publicBaseUrl`：对外访问前缀，服务端会用它拼接为 `publicBaseUrl/<objectKey>`。
+  - 如果你的自定义域名访问需要带桶路径（例如 `https://域名/桶名/...`），这里就必须填 `https://域名/桶名`。
+  - 如果你的域名已经 CNAME 到桶的 virtual-host 域名（例如 `https://桶名.xxx/...`），这里填 `https://域名` 即可。
+
+### 4.3 密钥与权限（强烈建议用环境变量）
+
+为避免密钥写入配置文件，建议使用环境变量：
+
+- `SEALCHAT_S3_ACCESS_KEY`
+- `SEALCHAT_S3_SECRET_KEY`
+- `SEALCHAT_S3_SESSION_TOKEN`（可选）
+
+权限建议（至少满足以下能力）：
+
+- 启动自检：对前缀 `sealchat/_healthcheck/*` 具备 `PutObject/GetObject/DeleteObject`（只用于验证连通性）。
+- 业务读写：对前缀 `attachments/*`、`audio/*` 具备 `PutObject/GetObject/DeleteObject`（删除用于资源清理/迁移）。
+
+### 4.4 启动自检与回退策略
+
+当 `storage.s3.enabled=true` 时，服务启动会执行一次小文件 `put/get/delete` 自检：
+
+- 成功：S3 初始化成功并按 `storage.mode` + 分类开关写入。
+- 失败：打印类似日志并回退本地（示例）：
+  - `[storage] 初始化 S3 失败，回退到本地：S3 自检失败: put/get/read/delete ...`
+
+### 4.5 腾讯 COS 特别说明（常见坑）
+
+COS 常见报错：`The bucket you are attempting to access must be addressed using COS virtual-styled domain.`
+
+处理方式：
+
+- 使用 virtual-host style（不要 path-style）：
+  - `storage.s3.pathStyle: false`
+- `storage.s3.endpoint` 使用区域根域名（不要带桶名），例如：
+  - `https://cos.ap-shanghai.myqcloud.com`
+- `storage.s3.bucket` 填 COS 的完整桶名（通常带 `-APPID` 后缀），例如：
+  - `mybucket-125xxxxxxx`
+
+并确认 `publicBaseUrl` 与你实际的对外访问方式一致：
+
+- 若访问形式为 `https://域名/桶名/<objectKey>`，则 `publicBaseUrl` 必须包含桶名路径：`https://域名/桶名`
+- 若访问形式为 `https://桶名.cos.<region>.myqcloud.com/<objectKey>` 或 CDN 域名无需桶路径，则填对应域名即可
+
+### 4.6 管理端迁移到 S3
+
+管理端提供“迁移到 S3”：
+
+- 支持选择迁移类型：**图片附件** / **音频**
+- 建议先执行“模拟运行（dryRun）”观察待迁移数量与错误原因
+- “删除源文件”建议谨慎开启：图片迁移会在确认上传成功且 URL 可访问后才删除本地源文件
+- 注意：迁移只迁移数据，不会自动修改 `storage.s3.attachmentsEnabled/audioEnabled` 开关
+
 ## 其他说明
 
 由于开发资源有限，且处于早期版本，应用场景最为广泛的SQLite是我们的第一优先级支持数据库。

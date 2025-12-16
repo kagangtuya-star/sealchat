@@ -65,7 +65,7 @@ audio:
     - audio/flac
   enableTranscode: true
   defaultBitrateKbps: 96
-  alternateBitrates: [64, 128]
+  alternateBitrates: [] # 已废弃：当前仅保留一份转码产物
   ffmpegPath: ""
 
 # 导出配置
@@ -89,6 +89,8 @@ storage:
     baseUrl: ""
   s3:
     enabled: false
+    attachmentsEnabled: true   # 附件/图片是否存入 S3
+    audioEnabled: true         # 音频是否存入 S3
     endpoint: https://cos.ap-region.myqcloud.com
     region: ap-region
     bucket: your-bucket-name

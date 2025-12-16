@@ -65,6 +65,7 @@ watch(
   draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+  draft.showDragIndicator = value.showDragIndicator
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },
@@ -236,6 +237,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.mergeNeighbors">
           <template #checked>已启用</template>
           <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">拖拽指示线</p>
+            <p class="section-desc">拖动消息排序时显示蓝色指示线</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.showDragIndicator">
+          <template #checked>显示指示线</template>
+          <template #unchecked>隐藏指示线</template>
         </n-switch>
       </section>
 

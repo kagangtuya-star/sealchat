@@ -4,7 +4,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, Notifications, NotificationsOff } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
 import Notif from '../notif.vue'
@@ -22,6 +22,7 @@ import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
 import ChannelSortModal from './ChannelSortModal.vue';
 import ChannelArchiveModal from './ChannelArchiveModal.vue';
+import { usePushNotificationStore } from '@/stores/pushNotification';
 
 const { t } = useI18n()
 
@@ -31,6 +32,7 @@ const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
 const worldGlossary = useWorldGlossaryStore();
+const pushStore = usePushNotificationStore();
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -609,13 +611,34 @@ const handleOpenWorldGlossary = () => {
           </div>
 
           <div class="sidebar-footer-actions">
+            <!-- 推送通知开关 -->
             <n-tooltip placement="top" trigger="hover">
               <template #trigger>
                 <n-button
                   size="tiny"
                   block
-                  :type="showAllSubChannels ? 'primary' : 'default'"
-                  ghost
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': pushStore.enabled }"
+                  @click="pushStore.toggle()"
+                  :disabled="!pushStore.supported"
+                >
+                  <template #icon>
+                    <n-icon :component="pushStore.enabled ? Notifications : NotificationsOff" />
+                  </template>
+                  {{ pushStore.enabled ? '推送已开启' : '推送已关闭' }}
+                </n-button>
+              </template>
+              <span v-if="pushStore.supported">开启后，切换标签页或最小化时可收到新消息通知</span>
+              <span v-else>您的浏览器不支持通知功能</span>
+            </n-tooltip>
+
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  block
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
                   @click="toggleSubChannelDisplay"
                 >
                   {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
@@ -743,5 +766,16 @@ const handleOpenWorldGlossary = () => {
   background-color: var(--sc-bg-elevated, #fffbe6);
   border: 1px dashed var(--sc-accent-primary, #faad14);
   opacity: 0.9;
+}
+
+/* 侧栏开关按钮激活态样式 - 适配日夜间/自定义主题 */
+.sidebar-toggle-active {
+  background-color: var(--sc-sidebar-active, rgba(99, 226, 183, 0.15)) !important;
+  color: var(--sc-text-primary, inherit) !important;
+  border-color: transparent !important;
+}
+
+.sidebar-toggle-active:hover {
+  background-color: var(--sc-sidebar-hover, rgba(99, 226, 183, 0.25)) !important;
 }
 </style>

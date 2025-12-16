@@ -21,7 +21,6 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 		return []*protocol.ChannelPresence{}
 	}
 
-	now := time.Now().UnixMilli()
 	results := []*protocol.ChannelPresence{}
 	set.Range(func(userID string) bool {
 		connSet, ok := userConnMap.Load(userID)
@@ -49,11 +48,9 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 			return true
 		}
 		latency := active.LatencyMs
-		if latency <= 0 {
-			latency = now - active.LastPingTime
-			if latency < 0 {
-				latency = 0
-			}
+		const maxReasonableLatencyMs int64 = 60_000
+		if latency < 0 || latency > maxReasonableLatencyMs {
+			latency = 0
 		}
 		results = append(results, &protocol.ChannelPresence{
 			User:     user.ToProtocolType(),
@@ -78,9 +75,11 @@ func (ctx *ChatContext) BroadcastChannelPresence(channelID string) {
 	if ctx == nil || ctx.UserId2ConnInfo == nil || ctx.ChannelUsersMap == nil || channelID == "" {
 		return
 	}
+	now := time.Now().UnixMilli()
 	presence := buildChannelPresenceSnapshot(channelID, ctx.ChannelUsersMap, ctx.UserId2ConnInfo)
 	event := &protocol.Event{
 		Type:     protocol.EventChannelPresenceUpdated,
+		Timestamp: now,
 		Channel:  &protocol.Channel{ID: channelID},
 		Presence: presence,
 	}

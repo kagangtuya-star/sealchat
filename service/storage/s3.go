@@ -1,10 +1,15 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -38,14 +43,8 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	exists, err := client.BucketExists(ctx, cfg.Bucket)
-	if err != nil {
-		return nil, fmt.Errorf("检测存储桶失败: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("存储桶 %s 不存在", cfg.Bucket)
+	if err := verifyS3ReadWrite(client, cfg.Bucket); err != nil {
+		return nil, fmt.Errorf("S3 自检失败: %w", err)
 	}
 	publicBase := strings.TrimSpace(cfg.PublicBaseURL)
 	if publicBase == "" {
@@ -142,4 +141,69 @@ func logS3Fallback(err error) {
 		return
 	}
 	log.Printf("[storage] S3 操作失败，已回退到本地: %v", err)
+}
+
+func verifyS3ReadWrite(client *minio.Client, bucket string) error {
+	if client == nil {
+		return fmt.Errorf("minio client is nil")
+	}
+	bucket = strings.TrimSpace(bucket)
+	if bucket == "" {
+		return fmt.Errorf("bucket is empty")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	payload := []byte("sealchat-s3-healthcheck")
+	rnd := make([]byte, 12)
+	if _, err := rand.Read(rnd); err != nil {
+		return fmt.Errorf("rand: %w", err)
+	}
+	key := path.Clean(path.Join("sealchat", "_healthcheck", fmt.Sprintf("%d-%s.txt", time.Now().UnixNano(), hex.EncodeToString(rnd))))
+
+	putInfo, err := client.PutObject(ctx, bucket, key, bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		return fmt.Errorf("put: %w", err)
+	}
+
+	defer func() {
+		_ = client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{})
+	}()
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		obj, err := client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+		if err != nil {
+			lastErr = fmt.Errorf("get: %w", err)
+		} else {
+			limited := io.LimitReader(obj, int64(len(payload))+1)
+			data, readErr := io.ReadAll(limited)
+			_ = obj.Close()
+			if readErr != nil {
+				lastErr = fmt.Errorf("read: %w", readErr)
+			} else if len(data) != len(payload) || !bytes.Equal(data, payload) {
+				lastErr = fmt.Errorf("read mismatch: got=%d want=%d", len(data), len(payload))
+			} else {
+				lastErr = nil
+				break
+			}
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(200*(attempt+1)) * time.Millisecond)
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+
+	if err := client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	if putInfo.Size != int64(len(payload)) && putInfo.Size != 0 {
+		// Some S3-compatible backends may not return size reliably, so only flag obviously wrong values.
+		return fmt.Errorf("unexpected put size: %d", putInfo.Size)
+	}
+	return nil
 }

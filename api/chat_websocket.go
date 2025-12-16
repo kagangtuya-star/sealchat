@@ -314,42 +314,19 @@ func websocketWorks(app *fiber.App) {
 										info2.Focused = focusedVal
 									}
 								}
-								latencyUpdated := false
-								if sentAtRaw, exists := bodyMap["clientSentAt"]; exists {
-									switch v := sentAtRaw.(type) {
+								if latencyRaw, exists := bodyMap["latency"]; exists {
+									const maxReasonableLatencyMs int64 = 60_000
+									var lat int64 = -1
+									switch v := latencyRaw.(type) {
 									case float64:
-										lat := now - int64(v)
-										if lat >= 0 {
-											info2.LatencyMs = lat
-											latencyUpdated = true
-										}
-									case int64:
-										lat := now - v
-										if lat >= 0 {
-											info2.LatencyMs = lat
-											latencyUpdated = true
-										}
+										lat = int64(v)
 									case int:
-										lat := now - int64(v)
-										if lat >= 0 {
-											info2.LatencyMs = lat
-											latencyUpdated = true
-										}
+										lat = int64(v)
+									case int64:
+										lat = v
 									}
-								}
-								if !latencyUpdated {
-									if latencyRaw, exists := bodyMap["latency"]; exists {
-										switch v := latencyRaw.(type) {
-										case float64:
-											info2.LatencyMs = int64(v)
-											latencyUpdated = true
-										case int:
-											info2.LatencyMs = int64(v)
-											latencyUpdated = true
-										case int64:
-											info2.LatencyMs = v
-											latencyUpdated = true
-										}
+									if lat >= 0 && lat <= maxReasonableLatencyMs {
+										info2.LatencyMs = lat
 									}
 								}
 							}

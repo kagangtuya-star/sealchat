@@ -258,6 +258,10 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
   const selfId = user.info?.id || '';
   try {
     const data = await chat.getChannelPresence();
+    const updatedAt = typeof data?.updated_at === 'number' ? data.updated_at : undefined;
+    if (typeof updatedAt === 'number') {
+      chat.syncServerTime(updatedAt);
+    }
     if (Array.isArray(data?.data)) {
       data.data.forEach((item: any) => {
         const userId = item?.user?.id || item?.user_id;
@@ -265,8 +269,11 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
           return;
         }
         const isSelf = selfId && userId === selfId;
+        const lastSeenServer = item?.lastSeen ?? item?.last_seen;
         chat.updatePresence(userId, {
-          lastPing: isSelf ? Date.now() : (item?.lastSeen ?? item?.last_seen ?? Date.now()),
+          lastPing: isSelf
+            ? Date.now()
+            : (typeof lastSeenServer === 'number' ? chat.serverTsToLocal(lastSeenServer) : Date.now()),
           latencyMs: isSelf ? chat.lastLatencyMs : (item?.latency ?? item?.latency_ms ?? 0),
           isFocused: isSelf ? chat.isAppFocused : (item?.focused ?? item?.is_focused ?? false),
         });

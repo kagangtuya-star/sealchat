@@ -24,6 +24,18 @@ SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务�
 - **前端**：`ui/` 目录使用 Vue 3、Naive UI、Tiptap、RxJS，开发期可独立运行 Vite 服务，构建后通过 `go:embed` 打包。
 - **存储**：附件可存储在本地或 S3/兼容对象存储 (`service/storage`)，音频依赖可选 `ffmpeg`/`ffprobe`，导出与音频的缓存位置均由 `config.yaml` 配置。
 
+## 对象存储（S3 兼容）
+
+SealChat 支持将**附件/图片**与**音频**分别存入 S3（或兼容协议的对象存储，如 MinIO、腾讯 COS 等），并提供“迁移到 S3”的管理端工具。
+
+- 配置入口：`config.yaml` 的 `storage` 段（参考 `config.yaml.example` / `config.docker.yaml.example`）。
+- 分类开关：`storage.s3.attachmentsEnabled`（附件/图片）、`storage.s3.audioEnabled`（音频）。
+- 安全建议：建议通过环境变量配置 AK/SK（`SEALCHAT_S3_ACCESS_KEY`、`SEALCHAT_S3_SECRET_KEY`、`SEALCHAT_S3_SESSION_TOKEN`），避免把密钥写入配置文件。
+- 启动自检：启用 S3 时会进行一次小文件 `put/get/delete` 自检，自检失败会回退本地并输出原因日志。
+- 迁移工具：管理端“迁移到 S3”支持图片/音频分别迁移，建议先“模拟运行（dryRun）”。
+
+更完整的 S3/COS 配置示例与常见问题请参考 `deploy_zh.md` 的“对象存储（S3 兼容）”章节。
+
 ## 快速开始
 
 ### Docker 部署（推荐）

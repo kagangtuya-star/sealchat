@@ -102,20 +102,22 @@ type LocalStorageConfig struct {
 }
 
 type S3StorageConfig struct {
-	Enabled        bool   `json:"enabled" yaml:"enabled"`
-	Endpoint       string `json:"endpoint" yaml:"endpoint"`
-	Region         string `json:"region" yaml:"region"`
-	Bucket         string `json:"bucket" yaml:"bucket"`
-	AccessKey      string `json:"accessKey" yaml:"accessKey"`
-	SecretKey      string `json:"secretKey" yaml:"secret" koanf:"secret"`
-	SessionToken   string `json:"sessionToken" yaml:"sessionToken"`
-	ForcePathStyle bool   `json:"forcePathStyle" yaml:"pathStyle"`
-	BaseURL        string `json:"baseUrl" yaml:"baseUrl"`
-	PublicBaseURL  string `json:"publicBaseUrl" yaml:"publicBaseUrl"`
-	UseSSL         bool   `json:"useSSL" yaml:"useSSL"`
-	PresignTTL     int    `json:"presignTTL" yaml:"presignTTL"`
-	MaxSizeMB      int64  `json:"maxSizeMB" yaml:"maxSizeMB"`
-	LogLevel       string `json:"logLevel" yaml:"logLevel"`
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	AttachmentsEnabled *bool  `json:"attachmentsEnabled" yaml:"attachmentsEnabled"`
+	AudioEnabled       *bool  `json:"audioEnabled" yaml:"audioEnabled"`
+	Endpoint           string `json:"endpoint" yaml:"endpoint"`
+	Region             string `json:"region" yaml:"region"`
+	Bucket             string `json:"bucket" yaml:"bucket"`
+	AccessKey          string `json:"accessKey" yaml:"accessKey"`
+	SecretKey          string `json:"secretKey" yaml:"secret" koanf:"secret"`
+	SessionToken       string `json:"sessionToken" yaml:"sessionToken"`
+	ForcePathStyle     bool   `json:"forcePathStyle" yaml:"pathStyle"`
+	BaseURL            string `json:"baseUrl" yaml:"baseUrl"`
+	PublicBaseURL      string `json:"publicBaseUrl" yaml:"publicBaseUrl"`
+	UseSSL             bool   `json:"useSSL" yaml:"useSSL"`
+	PresignTTL         int    `json:"presignTTL" yaml:"presignTTL"`
+	MaxSizeMB          int64  `json:"maxSizeMB" yaml:"maxSizeMB"`
+	LogLevel           string `json:"logLevel" yaml:"logLevel"`
 }
 
 type AppConfig struct {
@@ -407,6 +409,7 @@ func (cfg *CaptchaConfig) HasLocalEnabled() bool {
 func WriteConfig(config *AppConfig) {
 	if config != nil {
 		config.Captcha.normalize()
+		config.Storage.normalize()
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
@@ -460,6 +463,12 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("storage.local.tempDir", config.Storage.Local.TempDir)
 		_ = k.Set("storage.local.baseUrl", config.Storage.Local.BaseURL)
 		_ = k.Set("storage.s3.enabled", config.Storage.S3.Enabled)
+		if config.Storage.S3.AttachmentsEnabled != nil {
+			_ = k.Set("storage.s3.attachmentsEnabled", *config.Storage.S3.AttachmentsEnabled)
+		}
+		if config.Storage.S3.AudioEnabled != nil {
+			_ = k.Set("storage.s3.audioEnabled", *config.Storage.S3.AudioEnabled)
+		}
 		_ = k.Set("storage.s3.endpoint", config.Storage.S3.Endpoint)
 		_ = k.Set("storage.s3.region", config.Storage.S3.Region)
 		_ = k.Set("storage.s3.bucket", config.Storage.S3.Bucket)
@@ -642,6 +651,14 @@ func (cfg *StorageConfig) normalize() {
 	if cfg.Mode == "" {
 		cfg.Mode = StorageModeLocal
 	}
+	if cfg.S3.AttachmentsEnabled == nil {
+		v := true
+		cfg.S3.AttachmentsEnabled = &v
+	}
+	if cfg.S3.AudioEnabled == nil {
+		v := true
+		cfg.S3.AudioEnabled = &v
+	}
 	if strings.TrimSpace(cfg.Local.UploadDir) == "" {
 		cfg.Local.UploadDir = "./data/upload"
 	}
@@ -680,6 +697,9 @@ func applyStorageEnvOverrides(cfg *StorageConfig) {
 	}
 	if sk := strings.TrimSpace(os.Getenv("SEALCHAT_S3_SECRET_KEY")); sk != "" {
 		cfg.S3.SecretKey = sk
+	}
+	if st := strings.TrimSpace(os.Getenv("SEALCHAT_S3_SESSION_TOKEN")); st != "" {
+		cfg.S3.SessionToken = st
 	}
 }
 
@@ -725,4 +745,3 @@ func EnsureDataDirs(cfg *AppConfig) {
 		}
 	}
 }
-

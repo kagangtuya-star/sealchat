@@ -96,6 +96,8 @@ export interface DisplaySettings {
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
+  // 拖拽排序
+  showDragIndicator: boolean  // 拖拽时显示蓝色指示线
   // 自定义主题
   customThemeEnabled: boolean
   customThemes: CustomTheme[]
@@ -342,6 +344,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
+  showDragIndicator: false,  // 默认隐藏拖拽指示线
   customThemeEnabled: false,
   customThemes: [],
   activeCustomThemeId: null,
@@ -519,6 +522,7 @@ const loadSettings = (): DisplaySettings => {
       ),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
+      showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
@@ -670,6 +674,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'autoSwitchRoleOnIcOocToggle')
       ? coerceBoolean((patch as any).autoSwitchRoleOnIcOocToggle)
       : base.autoSwitchRoleOnIcOocToggle,
+  showDragIndicator:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showDragIndicator')
+      ? coerceBoolean((patch as any).showDragIndicator)
+      : base.showDragIndicator,
   customThemeEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'customThemeEnabled')
       ? coerceBoolean((patch as any).customThemeEnabled)

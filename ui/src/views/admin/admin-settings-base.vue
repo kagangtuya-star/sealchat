@@ -129,6 +129,62 @@ const executeMigration = async (dryRun: boolean = false) => {
   }
 }
 
+// S3 migration state
+const s3MigrationType = ref<'images' | 'audio'>('images')
+const s3MigrationStats = ref<{
+  total: number;
+  pending: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+} | null>(null)
+const s3MigrationLoading = ref(false)
+const s3MigrationExecuting = ref(false)
+const s3MigrationBatchSize = ref(100)
+const s3MigrationDeleteSource = ref(true)
+
+watch(s3MigrationType, (v) => {
+  s3MigrationDeleteSource.value = v === 'images'
+  s3MigrationStats.value = null
+})
+
+const fetchS3MigrationPreview = async () => {
+  s3MigrationLoading.value = true
+  try {
+    const resp = await api.get('/api/v1/admin/s3-migration/preview', {
+      params: { type: s3MigrationType.value }
+    })
+    s3MigrationStats.value = resp.data.stats
+  } catch (error) {
+    message.error('获取迁移预览失败')
+  } finally {
+    s3MigrationLoading.value = false
+  }
+}
+
+const executeS3Migration = async (dryRun: boolean = false) => {
+  s3MigrationExecuting.value = true
+  try {
+    const resp = await api.post('/api/v1/admin/s3-migration/execute', {
+      type: s3MigrationType.value,
+      batchSize: s3MigrationBatchSize.value,
+      dryRun,
+      deleteSource: s3MigrationDeleteSource.value,
+    })
+    const stats = resp.data.stats
+    if (dryRun) {
+      message.success(`模拟迁移完成：可迁移 ${stats.completed} 项，跳过 ${stats.skipped} 项`)
+    } else {
+      message.success(`迁移完成：成功 ${stats.completed} 项，失败 ${stats.failed} 项`)
+    }
+    await fetchS3MigrationPreview()
+  } catch (error) {
+    message.error('执行迁移失败: ' + ((error as any)?.response?.data?.message || '未知错误'))
+  } finally {
+    s3MigrationExecuting.value = false
+  }
+}
+
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -215,6 +271,53 @@ const formatBytes = (bytes: number) => {
           </n-popconfirm>
         </div>
       </n-form-item>
+
+      <!-- S3 Migration Section -->
+      <n-divider>迁移到 S3</n-divider>
+      <n-form-item label="迁移类型">
+        <n-select
+          v-model:value="s3MigrationType"
+          :options="[
+            { label: '图片附件', value: 'images' },
+            { label: '音频', value: 'audio' },
+          ]"
+          class="w-52"
+        />
+      </n-form-item>
+      <n-form-item label="迁移状态">
+        <div class="flex flex-col gap-2 w-full">
+          <div v-if="s3MigrationStats" class="text-sm text-gray-600 dark:text-gray-400">
+            待迁移: {{ s3MigrationStats.pending }} 项
+          </div>
+          <div class="flex gap-2 items-center">
+            <n-button size="small" @click="fetchS3MigrationPreview" :loading="s3MigrationLoading">
+              刷新预览
+            </n-button>
+          </div>
+        </div>
+      </n-form-item>
+      <n-form-item label="批量大小">
+        <n-input-number v-model:value="s3MigrationBatchSize" :min="1" :max="1000" />
+      </n-form-item>
+      <n-form-item label="删除源文件" :feedback="s3MigrationType === 'images' ? '仅在确认上传成功且可访问后删除本地源文件' : ''">
+        <n-switch v-model:value="s3MigrationDeleteSource" />
+      </n-form-item>
+      <n-form-item label="执行迁移">
+        <div class="flex gap-2">
+          <n-button size="small" @click="executeS3Migration(true)" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
+            模拟运行
+          </n-button>
+          <n-popconfirm @positive-click="executeS3Migration(false)">
+            <template #trigger>
+              <n-button size="small" type="warning" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
+                执行迁移
+              </n-button>
+            </template>
+            确定要执行迁移吗？此操作会将当前类型的本地资源迁移到 S3。
+            <span v-if="s3MigrationDeleteSource">迁移成功且可访问后将删除本地源文件。</span>
+          </n-popconfirm>
+        </div>
+      </n-form-item>
     </n-form>
   </div>
   <div class="space-x-2 float-right">
@@ -222,4 +325,3 @@ const formatBytes = (bytes: number) => {
     <n-button type="primary" :disabled="!modified" @click="save">保存</n-button>
   </div>
 </template>
-

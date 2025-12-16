@@ -89,6 +89,7 @@ interface ChatState {
   isAppFocused: boolean;
   lastPingSentAt: number | null;
   lastLatencyMs: number;
+  serverTimeOffsetMs: number;
   filterState: {
     icOnly: boolean;
     showArchived: boolean;
@@ -235,6 +236,7 @@ export const useChatStore = defineStore({
     isAppFocused: true,
     lastPingSentAt: null,
     lastLatencyMs: 0,
+    serverTimeOffsetMs: 0,
     filterState: {
       icOnly: false,
       showArchived: false,
@@ -2321,7 +2323,7 @@ export const useChatStore = defineStore({
       }
       const now = Date.now();
       const rtt = now - sentAt;
-      if (rtt <= 0) {
+      if (rtt <= 0 || rtt > 60_000) {
         return;
       }
       this.lastLatencyMs = Math.round(rtt);
@@ -2357,6 +2359,26 @@ export const useChatStore = defineStore({
       };
     },
 
+    syncServerTime(serverNowMs: number) {
+      if (typeof serverNowMs !== 'number' || !Number.isFinite(serverNowMs) || serverNowMs <= 0) {
+        return;
+      }
+      const measuredOffset = Date.now() - serverNowMs;
+      if (!Number.isFinite(this.serverTimeOffsetMs)) {
+        this.serverTimeOffsetMs = measuredOffset;
+        return;
+      }
+      const alpha = 0.2;
+      this.serverTimeOffsetMs = this.serverTimeOffsetMs * (1 - alpha) + measuredOffset * alpha;
+    },
+
+    serverTsToLocal(serverTsMs: number) {
+      if (typeof serverTsMs !== 'number' || !Number.isFinite(serverTsMs) || serverTsMs <= 0) {
+        return Date.now();
+      }
+      return serverTsMs + this.serverTimeOffsetMs;
+    },
+
     clearPresenceMap() {
       this.presenceMap = {};
     },
@@ -2373,6 +2395,7 @@ export const useChatStore = defineStore({
       if (!user.token) {
         return;
       }
+      const latency = Math.round(this.lastLatencyMs);
       this.lastPingSentAt = now;
       this.subject.next({
         op: 1,
@@ -2380,6 +2403,7 @@ export const useChatStore = defineStore({
           token: user.token,
           focused: this.isAppFocused,
           clientSentAt: now,
+          ...(latency > 0 && latency <= 60_000 ? { latency } : {}),
         },
       });
     },
@@ -2389,7 +2413,7 @@ export const useChatStore = defineStore({
         return;
       }
       const latency = Date.now() - this.lastPingSentAt;
-      if (latency >= 0) {
+      if (latency >= 0 && latency <= 60_000) {
         this.lastLatencyMs = latency;
       }
       this.lastPingSentAt = null;

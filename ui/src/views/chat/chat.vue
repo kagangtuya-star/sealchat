@@ -25,6 +25,7 @@ import ExportDialog from './components/export/ExportDialog.vue'
 import ExportManagerModal from './components/export/ExportManagerModal.vue'
 import ChatImportDialog from './components/ChatImportDialog.vue'
 import ChatImportProgress from './components/ChatImportProgress.vue'
+import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
 import DiceTray from './components/DiceTray.vue'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
@@ -63,6 +64,7 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
+import { useChannelImagesStore } from '@/stores/channelImages';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
@@ -81,6 +83,7 @@ const utils = useUtilsStore();
 const display = useDisplayStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
+const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
@@ -776,6 +779,7 @@ const filteredGalleryEmojis = computed(() => {
 });
 
 const galleryPanelVisible = computed(() => gallery.isPanelVisible);
+const channelImagesPanelVisible = computed(() => channelImages.panelVisible);
 
 const message = useMessage()
 const dialog = useDialog()
@@ -1047,6 +1051,22 @@ const openGalleryPanel = async () => {
     console.warn('打开画廊失败', error);
     message.error('打开画廊失败，请稍后重试');
   }
+};
+
+const openChannelImagesPanel = () => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.warning('请先选择一个频道');
+    return;
+  }
+  channelImages.openPanel(channelId);
+};
+
+const handleChannelImagesLocate = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+  // 复用搜索跳转逻辑
+  await handleSearchJump(payload);
+  // 可选：关闭图片查看器
+  // channelImages.closePanel();
 };
 
 const handleEmojiManageClick = async () => {
@@ -2092,9 +2112,14 @@ const getMessageTone = (message: any): 'ic' | 'ooc' | 'archived' => {
   if (message?.isArchived || message?.is_archived) {
     return 'archived';
   }
-  // 如果正在编辑此消息，使用编辑状态的 icMode
+  // 如果正在编辑此消息（自己），使用编辑状态的 icMode
   if (chat.editing && chat.editing.messageId === message?.id) {
     return chat.editing.icMode === 'ooc' ? 'ooc' : 'ic';
+  }
+  // 如果他人正在编辑此消息，使用编辑预览中的 tone
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview && !editingPreview.isSelf) {
+    return editingPreview.tone === 'ooc' ? 'ooc' : 'ic';
   }
   if (message?.icMode === 'ooc' || message?.ic_mode === 'ooc') {
     return 'ooc';
@@ -3177,6 +3202,14 @@ const dragState = reactive({
   autoScrollSpeed: 0,
   autoScrollRafId: null as number | null,
   lastClientY: null as number | null,
+  // Optimization: RAF throttle for drag updates
+  dragRafId: null as number | null,
+  pendingClientY: null as number | null,
+  // Track previous state to avoid redundant reorders
+  prevOverId: null as string | null,
+  prevPosition: null as 'before' | 'after' | null,
+  // Ghost element offset
+  ghostOffsetY: 0,
 });
 
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
@@ -3268,6 +3301,11 @@ const resetDragState = () => {
   clearGhost();
   stopAutoScroll();
   releaseHandlePointerCapture();
+  // Cancel any pending RAF
+  if (dragState.dragRafId !== null) {
+    cancelAnimationFrame(dragState.dragRafId);
+    dragState.dragRafId = null;
+  }
   dragState.snapshot = [];
   dragState.clientOpId = null;
   dragState.overId = null;
@@ -3276,6 +3314,10 @@ const resetDragState = () => {
   dragState.pointerId = null;
   dragState.startY = 0;
   dragState.lastClientY = null;
+  dragState.pendingClientY = null;
+  dragState.prevOverId = null;
+  dragState.prevPosition = null;
+  dragState.ghostOffsetY = 0;
   if (dragState.originEl) {
     dragState.originEl.classList.remove('message-row--drag-source');
   }
@@ -3338,8 +3380,68 @@ const inheritChatContextClasses = (ghostEl: HTMLElement) => {
   });
 };
 
-const createGhostElement = (_rowEl: HTMLElement) => {
-  // Ghost element disabled - using live reorder preview instead
+const createGhostElement = (rowEl: HTMLElement) => {
+  const rect = rowEl.getBoundingClientRect();
+  const ghost = document.createElement('div');
+  ghost.className = 'message-row__ghost-float';
+  
+  const isDark = document.documentElement.classList.contains('dark') || 
+                 document.body.classList.contains('dark');
+  
+  ghost.style.cssText = `
+    position: fixed;
+    left: ${rect.left}px;
+    top: ${rect.top}px;
+    width: ${rect.width}px;
+    height: ${Math.min(rect.height, 160)}px;
+    z-index: 9999;
+    pointer-events: none;
+    cursor: grabbing;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, ${isDark ? '0.25' : '0.15'});
+    border-radius: 0.5rem;
+    background: ${isDark ? 'var(--sc-bg-elevated, #1e1e1e)' : 'var(--sc-bg-surface, #fff)'};
+    overflow: hidden;
+    opacity: 0;
+    transform: scale(1);
+    transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  `;
+  
+  // Animate in after appending
+  requestAnimationFrame(() => {
+    ghost.style.opacity = '1';
+    ghost.style.transform = 'scale(1.02)';
+    ghost.style.boxShadow = `0 8px 24px rgba(0, 0, 0, ${isDark ? '0.4' : '0.2'})`;
+  });
+  // Clone the surface content - capture dimensions first
+  const surface = rowEl.querySelector('.message-row__surface');
+  if (surface) {
+    const surfaceRect = surface.getBoundingClientRect();
+    const clone = surface.cloneNode(true) as HTMLElement;
+    // Reset all styles that might be inherited from drag-source
+    clone.style.cssText = `
+      pointer-events: none;
+      opacity: 1 !important;
+      max-height: none !important;
+      height: ${Math.min(surfaceRect.height, 150)}px;
+      overflow: hidden;
+      transform: none !important;
+      transition: none !important;
+      margin: 0 !important;
+      padding: inherit;
+    `;
+    ghost.appendChild(clone);
+  }
+  inheritChatContextClasses(ghost);
+  document.body.appendChild(ghost);
+  dragState.ghostEl = ghost;
+  dragState.ghostOffsetY = rect.top - dragState.startY;
+};
+
+// Update ghost position to follow cursor
+const updateGhostPosition = (clientY: number) => {
+  if (!dragState.ghostEl) return;
+  const newTop = clientY + (dragState.ghostOffsetY ?? 0);
+  dragState.ghostEl.style.top = `${newTop}px`;
 };
 
 // Live reorder: move the dragged item within rows in real-time
@@ -3350,6 +3452,13 @@ const applyLiveReorder = () => {
   if (!activeId || !overId || activeId === overId) {
     return;
   }
+  // Skip if target hasn't changed (avoid redundant Vue updates)
+  if (overId === dragState.prevOverId && position === dragState.prevPosition) {
+    return;
+  }
+  dragState.prevOverId = overId;
+  dragState.prevPosition = position;
+  
   const currentRows = rows.value;
   const fromIndex = currentRows.findIndex((item) => item.id === activeId);
   const toReference = currentRows.findIndex((item) => item.id === overId);
@@ -3371,49 +3480,85 @@ const applyLiveReorder = () => {
 };
 
 const updateOverTarget = (clientY: number) => {
+  // Hysteresis thresholds to prevent jitter at midpoint
+  // Position only changes when crossing 35% or 65% of element height
+  const THRESHOLD_BEFORE = 0.35; // Switch to 'before' when above 35%
+  const THRESHOLD_AFTER = 0.65;  // Switch to 'after' when below 65%
+  
+  // Helper to calculate position with hysteresis
+  const calcPosition = (rect: DOMRect, currentPos: 'before' | 'after' | null): 'before' | 'after' => {
+    const relativeY = (clientY - rect.top) / rect.height;
+    if (relativeY <= THRESHOLD_BEFORE) {
+      return 'before';
+    }
+    if (relativeY >= THRESHOLD_AFTER) {
+      return 'after';
+    }
+    // In the dead zone (35%-65%), keep current position to prevent flicker
+    return currentPos || 'after';
+  };
+
+  // Fast path: check if still within current target before iterating all rows
+  if (dragState.overId && dragState.overId !== dragState.activeId) {
+    const currentEl = messageRowRefs.get(dragState.overId);
+    if (currentEl) {
+      const rect = currentEl.getBoundingClientRect();
+      if (clientY >= rect.top && clientY < rect.bottom) {
+        // Still within same element, just update position with hysteresis
+        dragState.position = calcPosition(rect, dragState.position);
+        return;
+      }
+    }
+  }
+
   let matched = false;
   if (dragState.activeId) {
     const activeEl = messageRowRefs.get(dragState.activeId);
     if (activeEl) {
       const rectActive = activeEl.getBoundingClientRect();
       if (clientY >= rectActive.top && clientY <= rectActive.bottom) {
-        const mid = rectActive.top + rectActive.height / 2;
         dragState.overId = dragState.activeId;
-        dragState.position = clientY <= mid ? 'before' : 'after';
+        dragState.position = calcPosition(rectActive, dragState.position);
         matched = true;
       }
     }
   }
-  const currentRows = rows.value;
-  for (const item of currentRows) {
-    if (!item?.id || item.id === dragState.activeId) {
-      continue;
+  if (!matched) {
+    const currentRows = rows.value;
+    for (const item of currentRows) {
+      if (!item?.id || item.id === dragState.activeId) {
+        continue;
+      }
+      const el = messageRowRefs.get(item.id);
+      if (!el) {
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      const relativeY = (clientY - rect.top) / rect.height;
+      
+      // Use thresholds for better stability
+      if (relativeY <= THRESHOLD_BEFORE) {
+        dragState.overId = item.id;
+        dragState.position = 'before';
+        matched = true;
+        break;
+      }
+      if (clientY < rect.bottom) {
+        dragState.overId = item.id;
+        // When entering new element, use threshold logic
+        dragState.position = relativeY >= THRESHOLD_AFTER ? 'after' : 
+                             (dragState.overId === item.id ? dragState.position : 'after') || 'after';
+        matched = true;
+        break;
+      }
     }
-    const el = messageRowRefs.get(item.id);
-    if (!el) {
-      continue;
-    }
-    const rect = el.getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    if (clientY <= mid) {
-      dragState.overId = item.id;
-      dragState.position = 'before';
-      matched = true;
-      break;
-    }
-    if (clientY < rect.bottom) {
-      dragState.overId = item.id;
-      dragState.position = 'after';
-      matched = true;
-      break;
-    }
-  }
-  if (!matched && currentRows.length > 0) {
-    const last = currentRows[currentRows.length - 1];
-    if (last?.id) {
-      dragState.overId = last.id;
-      dragState.position = 'after';
-      matched = true;
+    if (!matched && currentRows.length > 0) {
+      const last = currentRows[currentRows.length - 1];
+      if (last?.id) {
+        dragState.overId = last.id;
+        dragState.position = 'after';
+        matched = true;
+      }
     }
   }
   if (!matched) {
@@ -3513,14 +3658,28 @@ const finalizeDrag = async () => {
   }
 };
 
+// Process drag update in animation frame for smooth 60fps updates
+const processDragFrame = () => {
+  dragState.dragRafId = null;
+  const clientY = dragState.pendingClientY;
+  if (clientY === null) return;
+  dragState.pendingClientY = null;
+  // Only move the ghost and track target - NO live reordering
+  updateGhostPosition(clientY);
+  updateOverTarget(clientY);
+  updateAutoScroll(clientY);
+};
+
 const onDragPointerMove = (event: PointerEvent) => {
   if (event.pointerId !== dragState.pointerId) {
     return;
   }
   event.preventDefault();
-  updateOverTarget(event.clientY);
-  applyLiveReorder();
-  updateAutoScroll(event.clientY);
+  // Store pending position and schedule RAF if not already scheduled
+  dragState.pendingClientY = event.clientY;
+  if (dragState.dragRafId === null) {
+    dragState.dragRafId = requestAnimationFrame(processDragFrame);
+  }
 };
 
 const onDragPointerUp = (event: PointerEvent) => {
@@ -3566,7 +3725,6 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
       // ignore capture failure
     }
   }
-  rowEl.classList.add('message-row--drag-source');
   dragState.snapshot = rows.value.slice();
   dragState.clientOpId = nanoid();
   dragState.activeId = item.id;
@@ -3576,6 +3734,13 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   dragState.position = 'after';
   dragState.originEl = rowEl;
   document.body.style.userSelect = 'none';
+  
+  // IMPORTANT: Create ghost BEFORE adding drag-source class (which collapses the row)
+  createGhostElement(rowEl);
+  
+  // Now add the collapse class
+  rowEl.classList.add('message-row--drag-source');
+  
   updateOverTarget(event.clientY);
   updateAutoScroll(event.clientY);
 
@@ -4938,6 +5103,8 @@ watch(
       return;
     }
     emitEditingPreview();
+    // 增加 listRevision 强制触发消息行重新渲染，确保外边框 CSS 实时更新
+    listRevision.value += 1;
   },
 );
 
@@ -6352,6 +6519,39 @@ chatEvent.on('message-created', (e?: Event) => {
         updateUnreadTitleNotification(currentCount + 1, chat.curChannel?.name || '新消息');
       });
     }
+    
+    // 前台推送通知（页面打开但切换了标签页）
+    if (!document.hasFocus()) {
+      import('@/stores/pushNotification').then(({ usePushNotificationStore }) => {
+        const pushStore = usePushNotificationStore();
+        if (pushStore.enabled) {
+          // 提取发送者名字
+          const senderName = incoming.identity?.displayName
+            || (incoming as any).sender_member_name
+            || incoming.member?.nick
+            || incoming.user?.nick
+            || '新消息';
+          
+          // 提取消息内容预览（移除 HTML 标签）
+          const rawContent = incoming.content || '';
+          const plainText = rawContent.replace(/<[^>]*>/g, '').trim();
+          const preview = plainText.length > 50 ? plainText.slice(0, 50) + '...' : plainText;
+          
+          // 获取发送者头像（优先角色头像，其次用户/成员头像）
+          const avatarUrl = resolveAttachmentUrl((incoming.identity as any)?.avatarAttachmentId)
+            || incoming.member?.avatar
+            || incoming.user?.avatar
+            || undefined;
+          
+          pushStore.showNotification(
+            chat.curChannel?.name || 'SealChat',
+            `${senderName}: ${preview || '发送了一条消息'}`,
+            chat.curChannel?.id || '',
+            avatarUrl
+          );
+        }
+      });
+    }
   }
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
@@ -6519,13 +6719,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   if (!e?.presence || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
+  if (typeof (e as any)?.timestamp === 'number') {
+    chat.syncServerTime((e as any).timestamp);
+  }
   e.presence.forEach((item) => {
     const userId = item?.user?.id;
     if (!userId) {
       return;
     }
     chat.updatePresence(userId, {
-      lastPing: item?.lastSeen ?? Date.now(),
+      lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
       latencyMs: typeof item?.latency === 'number' ? item.latency : Number(item?.latency) || 0,
       isFocused: !!item?.focused,
     });
@@ -7404,6 +7607,7 @@ onBeforeUnmount(() => {
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
         :favorite-active="display.favoriteBarEnabled"
+        :channel-images-active="channelImagesPanelVisible"
         :can-import="canManageWorldKeywords"
         :import-active="importDialogVisible"
         @update:filters="chat.setFilterState($event)"
@@ -7414,6 +7618,7 @@ onBeforeUnmount(() => {
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
         @open-favorites="channelFavoritesVisible = true"
+        @open-channel-images="openChannelImagesPanel"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -7452,7 +7657,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
@@ -7771,6 +7976,12 @@ onBeforeUnmount(() => {
           </div>
         </transition>
 
+          <div v-if="whisperMode" class="whisper-pill-wrapper">
+            <div class="whisper-pill" @mousedown.prevent>
+              <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
+              <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
+            </div>
+          </div>
           <div class="chat-input-area relative flex-1">
             <div class="chat-input-actions input-floating-toolbar flex flex-1 items-center justify-between gap-2">
               <div class="chat-input-actions__group chat-input-actions__group--leading">
@@ -8144,10 +8355,6 @@ onBeforeUnmount(() => {
             </div>
             <div class="chat-input-editor-row">
               <div class="chat-input-editor-main">
-                <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
-                  <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
-                  <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
-                </div>
                 <ChatInputSwitcher
                   ref="textInputRef"
                   v-model="textToSend"
@@ -8197,6 +8404,7 @@ onBeforeUnmount(() => {
   <RightClickMenu />
   <AvatarClickMenu />
   <GalleryPanel @insert="handleGalleryInsert" />
+  <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
     preset="dialog"
@@ -8811,7 +9019,7 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact {
-  background-color: var(--chat-stage-bg);
+  background-color: var(--chat-ic-bg);
   transition: background-color 0.25s ease;
 }
 
@@ -9060,21 +9268,90 @@ onBeforeUnmount(() => {
 }
 
 .message-row__ghost {
-  /* Ghost element disabled - using live reorder instead */
+  /* Ghost element disabled - using floating ghost instead */
   display: none;
 }
 
-/* Smooth transition for all message rows during drag reorder */
+/* Drag source collapses completely - siblings fill the gap */
+.message-row--drag-source {
+  opacity: 0 !important;
+  pointer-events: none;
+  max-height: 0 !important;
+  overflow: hidden;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  transition: max-height 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              margin 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              padding 0.2s cubic-bezier(0.33, 1, 0.68, 1),
+              opacity 0.15s ease-out;
+}
+
+/* Slot-opening animation - messages slide to create space */
 .message-row {
-  transition: transform 0.2s ease;
+  position: relative;
+  contain: layout style;
+  transition: transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+/* When hovering over a drop target, shift it and all following rows down */
+.message-row--drop-before:not(.message-row--drag-source),
+.message-row--drop-before:not(.message-row--drag-source) ~ .message-row:not(.message-row--drag-source) {
+  transform: translateY(3rem);
+}
+
+/* When dropping after, only shift rows AFTER the target */
+.message-row--drop-after:not(.message-row--drag-source) ~ .message-row:not(.message-row--drag-source) {
+  transform: translateY(3rem);
+}
+
+/* Fill the slot gap with IC background color (synced with day/night/custom themes) */
+.message-row--drop-before:not(.message-row--drag-source)::before,
+.message-row--drop-after:not(.message-row--drag-source)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3rem;
+  background-color: var(--chat-ic-bg);
+  z-index: -1;
+}
+
+.message-row--drop-before:not(.message-row--drag-source)::before {
+  bottom: 100%;
+}
+
+.message-row--drop-after:not(.message-row--drag-source)::after {
+  top: 100%;
+}
+
+/* Indicator line at the edge of slot - only shown when setting enabled */
+.chat--show-drag-indicator .message-row--drop-before:not(.message-row--drag-source)::before {
+  border-top: 3px solid var(--sc-primary, #3b82f6);
+}
+
+.chat--show-drag-indicator .message-row--drop-after:not(.message-row--drag-source)::after {
+  border-bottom: 3px solid var(--sc-primary, #3b82f6);
+}
+
+/* Drag handle should prevent scroll interference */
+.message-row__handle {
+  touch-action: none;
+  cursor: grab;
+}
+
+.message-row__handle:active {
+  cursor: grabbing;
 }
 
 /* Subtle hover highlight for message positioning - compact mode only */
 .message-row .message-row__surface {
   position: relative;
+  transition: background-color 0.15s ease;
 }
 
-.chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
+.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--drag-source):hover .message-row__surface::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -9085,16 +9362,8 @@ onBeforeUnmount(() => {
   transition: opacity 0.15s ease;
 }
 
-:global(.dark) .chat--layout-compact .message-row:not(.message-row--search-hit):hover .message-row__surface::after {
-  background: rgba(128, 128, 128, 0.1);
-}
-
 /* Dragged message highlight during live reorder */
-.message-row--drag-source {
-  position: relative;
-  z-index: 100;
-  transform: scale(1.02);
-}
+/* Combined with transition rules above for instant response */
 
 .message-row--drag-source .message-row__surface {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -9742,31 +10011,114 @@ onBeforeUnmount(() => {
 }
 
 .typing-toggle {
-  transition: color 0.2s ease;
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid transparent;
 }
 
+/* Indicator mode (default gray state) */
 .typing-toggle--indicator {
-  color: #9ca3af;
+  color: var(--sc-text-secondary, #9ca3af);
+  background-color: transparent;
 }
 
 .typing-toggle--indicator:hover {
-  color: #6b7280;
+  color: var(--sc-text-primary, #6b7280);
+  background-color: rgba(156, 163, 175, 0.12);
 }
 
+:root[data-display-palette='night'] .typing-toggle--indicator {
+  color: rgba(156, 163, 175, 0.75);
+}
+
+:root[data-display-palette='night'] .typing-toggle--indicator:hover {
+  color: rgba(209, 213, 219, 0.95);
+  background-color: rgba(156, 163, 175, 0.18);
+}
+
+/* Content mode (active blue state) */
 .typing-toggle--content {
   color: #2563eb;
+  background-color: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
 }
 
 .typing-toggle--content:hover {
   color: #1d4ed8;
+  background-color: rgba(37, 99, 235, 0.18);
+  border-color: rgba(37, 99, 235, 0.5);
 }
 
+:root[data-display-palette='night'] .typing-toggle--content {
+  color: rgba(147, 197, 253, 0.95);
+  background-color: rgba(59, 130, 246, 0.22);
+  border-color: rgba(147, 197, 253, 0.4);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+:root[data-display-palette='night'] .typing-toggle--content:hover {
+  color: #93c5fd;
+  background-color: rgba(59, 130, 246, 0.3);
+  border-color: rgba(147, 197, 253, 0.55);
+}
+
+/* Silent mode (amber/warning state) */
 .typing-toggle--silent {
-  color: #f59e0b;
+  color: #d97706;
+  background-color: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.1);
 }
 
 .typing-toggle--silent:hover {
-  color: #d97706;
+  color: #b45309;
+  background-color: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+:root[data-display-palette='night'] .typing-toggle--silent {
+  color: rgba(252, 211, 77, 0.95);
+  background-color: rgba(245, 158, 11, 0.22);
+  border-color: rgba(252, 211, 77, 0.4);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+:root[data-display-palette='night'] .typing-toggle--silent:hover {
+  color: #fcd34d;
+  background-color: rgba(245, 158, 11, 0.3);
+  border-color: rgba(252, 211, 77, 0.55);
+}
+
+/* Custom theme overrides */
+:root[data-custom-theme='true'] .typing-toggle--indicator {
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .typing-toggle--indicator:hover {
+  color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-hover, rgba(156, 163, 175, 0.12)) !important;
+}
+
+:root[data-custom-theme='true'] .typing-toggle--content {
+  color: var(--sc-primary-color, #2563eb) !important;
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.4) !important;
+}
+
+:root[data-custom-theme='true'] .typing-toggle--content:hover {
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.22) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.55) !important;
+}
+
+:root[data-custom-theme='true'] .typing-toggle--silent {
+  color: var(--sc-warning-color, #d97706) !important;
+  background-color: rgba(245, 158, 11, 0.15) !important;
+  border-color: rgba(245, 158, 11, 0.4) !important;
+}
+
+:root[data-custom-theme='true'] .typing-toggle--silent:hover {
+  background-color: rgba(245, 158, 11, 0.22) !important;
+  border-color: rgba(245, 158, 11, 0.55) !important;
 }
 
 .edit-area {
@@ -10255,10 +10607,11 @@ onBeforeUnmount(() => {
   padding-top: 1.35rem;
 }
 
+.whisper-pill-wrapper {
+  padding: 0.35rem 1rem 0.25rem;
+}
+
 .whisper-pill {
-  position: absolute;
-  top: 0.35rem;
-  left: 1.1rem;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -10268,7 +10621,6 @@ onBeforeUnmount(() => {
   color: #5b21b6;
   font-size: 0.85rem;
   font-weight: 500;
-  z-index: 2;
 }
 
 .whisper-pill__close {

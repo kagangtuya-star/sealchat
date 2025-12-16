@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,7 +292,7 @@ func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOpt
 }
 
 func (svc *audioService) shouldUseObjectStore() bool {
-	return svc.objectStore != nil && svc.objectStore.ActiveBackend() == storage.BackendS3
+	return svc.objectStore != nil && svc.objectStore.ActiveBackendForAudio() == storage.BackendS3
 }
 
 func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mimeType string) (*model.AudioAsset, error) {
@@ -317,7 +316,7 @@ func (svc *audioService) persistWithObjectStore(asset *model.AudioAsset, tempPat
 	}
 	objectKey := storage.BuildAudioObjectKey(asset.ID, originalName)
 	duration, _ := svc.probeDurationFromFile(tempPath)
-	result, err := svc.objectStore.Upload(context.Background(), storage.UploadInput{
+	result, err := svc.objectStore.UploadToS3(context.Background(), storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: mimeType,
@@ -352,49 +351,47 @@ func (svc *audioService) generateVariants(tempPath, assetID, mimeType string) (*
 	transcoded := false
 
 	if svc.cfg.EnableTranscode && svc.ffmpegPath != "" {
-		profiles := []int{}
-		if svc.cfg.DefaultBitrateKbps > 0 {
-			profiles = append(profiles, svc.cfg.DefaultBitrateKbps)
-		}
-		profiles = append(profiles, svc.cfg.AlternateBitrates...)
-		profiles = loUniqInt(profiles)
-		sort.Ints(profiles)
-		if len(profiles) > 0 {
-			var extras []model.AudioAssetVariant
-			primarySet := false
-			for _, bitrate := range profiles {
-				label := fmt.Sprintf("%dk", bitrate)
-				objectKey := filepath.ToSlash(filepath.Join("opus", fmt.Sprintf("%s_%s.ogg", assetID, label)))
-				variantPath := filepath.Join(svc.cfg.TempDir, fmt.Sprintf("%s-%s.ogg", assetID, label))
-				if err := svc.runFFmpeg(tempPath, variantPath, bitrate); err != nil {
-					return nil, err
-				}
-				size, err := svc.storage.moveFromTemp(variantPath, objectKey)
-				if err != nil {
-					return nil, err
-				}
-				variant := model.AudioAssetVariant{
-					Label:       label,
-					BitrateKbps: bitrate,
-					ObjectKey:   objectKey,
-					Size:        size,
-					StorageType: model.StorageLocal,
-				}
-				duration, err := svc.probeDuration(objectKey)
-				if err == nil {
-					variant.Duration = duration
-				}
-				if !primarySet {
-					primary = variant
-					primarySet = true
-				} else {
-					extras = append(extras, variant)
+		// 仅生成一份转码产物：避免默认+备用码率带来的额外存储占用。
+		// 选择策略：优先使用 DefaultBitrateKbps；若无效则回退到 AlternateBitrates 中的第一个正值；最后允许 bitrate=0 让 ffmpeg 自行决定。
+		bitrate := svc.cfg.DefaultBitrateKbps
+		if bitrate <= 0 {
+			for _, candidate := range svc.cfg.AlternateBitrates {
+				if candidate > 0 {
+					bitrate = candidate
+					break
 				}
 			}
-			result.Primary = primary
-			result.Extras = extras
-			transcoded = true
 		}
+		label := "default"
+		objectName := fmt.Sprintf("%s.ogg", assetID)
+		if bitrate > 0 {
+			label = fmt.Sprintf("%dk", bitrate)
+			objectName = fmt.Sprintf("%s_%s.ogg", assetID, label)
+		}
+		objectKey := filepath.ToSlash(filepath.Join("opus", objectName))
+		variantPath := filepath.Join(svc.cfg.TempDir, fmt.Sprintf("%s-%s.ogg", assetID, label))
+		if err := svc.runFFmpeg(tempPath, variantPath, bitrate); err != nil {
+			return nil, err
+		}
+		size, err := svc.storage.moveFromTemp(variantPath, objectKey)
+		if err != nil {
+			return nil, err
+		}
+		variant := model.AudioAssetVariant{
+			Label:       label,
+			BitrateKbps: bitrate,
+			ObjectKey:   objectKey,
+			Size:        size,
+			StorageType: model.StorageLocal,
+		}
+		duration, err := svc.probeDuration(objectKey)
+		if err == nil {
+			variant.Duration = duration
+		}
+		primary = variant
+		result.Primary = primary
+		result.Extras = nil
+		transcoded = true
 	}
 
 	if transcoded {

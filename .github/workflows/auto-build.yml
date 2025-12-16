@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: read # 需要读取 PR 信息的权限
 
 env:
   COMMIT_ID: "${{ github.sha }}"
@@ -41,17 +42,6 @@ jobs:
           name: ui
           path: ./ui/dist
 
-#  delete-previous-release:
-#    name: Delete dev-release
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: dev-drprasad/delete-tag-and-release@v0.2.1
-#        with:
-#          delete_release: true
-#          tag_name: dev
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   backend-build:
     name: Build Server
     runs-on: ubuntu-latest
@@ -73,6 +63,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0 # 获取完整历史以便查找 PR 和 git log
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -156,20 +147,50 @@ jobs:
           echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
           echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      - name: Generate Release Notes
-        id: release_notes
+      # --- 修改重点开始：获取 PR 信息 ---
+      - name: Generate Release Content
+        id: release_content
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "NOTES<<EOF" >> $GITHUB_ENV
-          git log --format='- %s' $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          # 尝试查找合并后的 PR（状态为 merged，关联当前 commit SHA）
+          PR_DATA=$(gh pr list --search "${{ github.sha }}" --state merged --json title,body,number --limit 1)
+          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.[0].number')
+
+          if [ "$PR_NUMBER" != "null" ] && [ -n "$PR_NUMBER" ]; then
+            echo "Found PR #$PR_NUMBER, using PR info for Release."
+            
+            # 获取标题和内容
+            TITLE=$(echo "$PR_DATA" | jq -r '.[0].title')
+            BODY=$(echo "$PR_DATA" | jq -r '.[0].body')
+            
+            # 设置 Release 标题为 PR 标题
+            echo "RELEASE_NAME=$TITLE" >> $GITHUB_ENV
+            
+            # 设置 Release 内容为 PR 描述
+            echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+            echo "$BODY" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "No PR found (direct push?), falling back to git log."
+            
+            # 默认标题
+            echo "RELEASE_NAME=${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}" >> $GITHUB_ENV
+            
+            # 默认内容 (Git Log)
+            echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+            echo "## 更新说明" >> $GITHUB_ENV
+            git log --format='- %s' $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          fi
+      # --- 修改重点结束 ---
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}
-          body: |
-            ## 更新说明
-            ${{ env.NOTES }}
+          name: ${{ env.RELEASE_NAME }} # 使用生成的标题
+          body: ${{ env.RELEASE_BODY }} # 使用生成的内容
           files: |
             release/sealchat_*_*_${{ matrix.name }}.*
         env:

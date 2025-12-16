@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func EncodeImageToWebPWithCWebP(img image.Image, quality int) ([]byte, error) {
@@ -174,7 +175,7 @@ func resolveBundledWebPTool(tool string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("webp encoder tool not found, tried: %s", strings.Join(tried, ", "))
+	return "", fmt.Errorf("webp encoder tool %q not found for %s/%s (dir=%s), tried: %s", name, runtime.GOOS, runtime.GOARCH, platformDir, strings.Join(tried, ", "))
 }
 
 func bundledWebPPlatformDir() (string, error) {
@@ -209,4 +210,110 @@ func clampWebPQuality(val int) int {
 	default:
 		return val
 	}
+}
+
+func VerifyBundledWebPTools() error {
+	return VerifyBundledWebPToolsWithLog(nil)
+}
+
+func VerifyBundledWebPToolsWithLog(logf func(format string, args ...any)) error {
+	tools := []string{"cwebp", "gif2webp"}
+	var errs []string
+	for _, tool := range tools {
+		if err := verifyBundledWebPTool(tool, logf); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("webp tools sanity check failed: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func verifyBundledWebPTool(tool string, logf func(format string, args ...any)) error {
+	if logf != nil {
+		logf("WebP 工具自检：开始检查 %s", tool)
+	}
+	toolPath, err := resolveBundledWebPTool(tool)
+	if err != nil {
+		cwd, _ := os.Getwd()
+		exe, _ := os.Executable()
+		return fmt.Errorf("resolve %s failed: %w (goos=%s goarch=%s cwd=%q exe=%q)", tool, err, runtime.GOOS, runtime.GOARCH, cwd, exe)
+	}
+	if logf != nil {
+		logf("WebP 工具自检：%s 路径=%q", tool, toolPath)
+	}
+
+	info, err := os.Stat(toolPath)
+	if err != nil {
+		return fmt.Errorf("%s not accessible: %w (path=%q)", tool, err, toolPath)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory, expected executable file (path=%q)", tool, toolPath)
+	}
+	if logf != nil {
+		logf("WebP 工具自检：%s 文件权限=%s 大小=%dB", tool, info.Mode().String(), info.Size())
+	}
+
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
+		return fmt.Errorf("%s is not executable (mode=%s path=%q), try chmod +x", tool, info.Mode().String(), toolPath)
+	}
+
+	// 试调用一次，尽量选择不会依赖输入文件的参数；不同版本可能对参数支持略有差异，做一次兜底。
+	out1, err1 := runExternalToolOnce(toolPath, []string{"-version"}, 5*time.Second)
+	if err1 == nil {
+		if logf != nil {
+			logf("WebP 工具自检：%s -version 成功，输出=%q", tool, truncateForLog(out1, 512))
+			logf("WebP 工具自检：%s 检查通过", tool)
+		}
+		return nil
+	}
+	if logf != nil {
+		logf("WebP 工具自检：%s -version 失败：%v，输出=%q", tool, err1, truncateForLog(out1, 512))
+	}
+	out2, err2 := runExternalToolOnce(toolPath, []string{"-h"}, 5*time.Second)
+	if err2 == nil {
+		if logf != nil {
+			logf("WebP 工具自检：%s -h 成功，输出=%q", tool, truncateForLog(out2, 512))
+			logf("WebP 工具自检：%s 检查通过", tool)
+		}
+		return nil
+	}
+	if logf != nil {
+		logf("WebP 工具自检：%s -h 失败：%v，输出=%q", tool, err2, truncateForLog(out2, 512))
+	}
+
+	return fmt.Errorf(
+		"%s sanity check failed (path=%q mode=%s): attempt1(-version)=%v output=%q; attempt2(-h)=%v output=%q",
+		tool,
+		toolPath,
+		info.Mode().String(),
+		err1,
+		truncateForLog(out1, 4096),
+		err2,
+		truncateForLog(out2, 4096),
+	)
+}
+
+func runExternalToolOnce(path string, args []string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, path, args...)
+	out, err := cmd.CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if msg == "" {
+			return "", fmt.Errorf("timeout after %s", timeout)
+		}
+		return msg, fmt.Errorf("timeout after %s: %s", timeout, msg)
+	}
+	return msg, err
+}
+
+func truncateForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
 }

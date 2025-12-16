@@ -26,14 +26,22 @@ import (
 const maxInlineImageSize = 5 * 1024 * 1024
 
 type inlineImageEmbedder struct {
-	mu    sync.RWMutex
-	cache map[string]string
+	mu       sync.RWMutex
+	cache    map[string]string
+	inflight map[string]*inlineImageInflight
 }
 
 func newInlineImageEmbedder() *inlineImageEmbedder {
 	return &inlineImageEmbedder{
-		cache: make(map[string]string),
+		cache:    make(map[string]string),
+		inflight: make(map[string]*inlineImageInflight),
 	}
+}
+
+type inlineImageInflight struct {
+	done  chan struct{}
+	value string
+	ok    bool
 }
 
 func (e *inlineImageEmbedder) inlinePayload(payload *ExportPayload) {
@@ -107,26 +115,89 @@ func (e *inlineImageEmbedder) resolveDataURL(src string) (string, bool) {
 		}
 		return "", false
 	}
-	if cached, ok := e.getCached(token); ok {
-		return cached, true
-	}
-	data, mimeType, key, err := loadAttachmentBytes(token)
-	if err != nil {
+
+	normalized := strings.TrimSpace(token)
+	if normalized == "" {
 		return "", false
 	}
-	if len(data) == 0 || len(data) > maxInlineImageSize {
-		return "", false
+
+	var att *model.AttachmentModel
+	if resolved, err := ResolveAttachment(normalized); err == nil && resolved != nil {
+		att = resolved
 	}
-	if mimeType == "" {
-		mimeType = http.DetectContentType(data)
+
+	inflightKey := normalized
+	if att != nil && len(att.Hash) > 0 && att.Size > 0 {
+		inflightKey = fmt.Sprintf("hs:%s_%d", hex.EncodeToString(att.Hash), att.Size)
 	}
-	if mimeType == "" {
-		return "", false
+
+	dataURL, ok := e.withInflight(inflightKey, func() (string, bool) {
+		if cached, ok := e.getCached(normalized); ok {
+			return cached, true
+		}
+		data, mimeType, key, err := loadAttachmentBytes(normalized, att)
+		if err != nil {
+			return "", false
+		}
+		if len(data) == 0 || len(data) > maxInlineImageSize {
+			return "", false
+		}
+		if mimeType == "" {
+			mimeType = http.DetectContentType(data)
+		}
+		if mimeType == "" {
+			return "", false
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
+		e.setCached(normalized, key, dataURL)
+		return dataURL, true
+	})
+	if ok && inflightKey != normalized {
+		e.setCached(normalized, "", dataURL)
 	}
-	encoded := base64.StdEncoding.EncodeToString(data)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
-	e.setCached(token, key, dataURL)
-	return dataURL, true
+	return dataURL, ok
+}
+
+func (e *inlineImageEmbedder) withInflight(key string, fn func() (string, bool)) (string, bool) {
+	if strings.TrimSpace(key) == "" {
+		return fn()
+	}
+
+	e.mu.Lock()
+	entry := e.inflight[key]
+	if entry != nil {
+		done := entry.done
+		e.mu.Unlock()
+		<-done
+		return entry.value, entry.ok
+	}
+	entry = &inlineImageInflight{done: make(chan struct{})}
+	e.inflight[key] = entry
+	e.mu.Unlock()
+
+	defer func() {
+		if r := recover(); r != nil {
+			e.mu.Lock()
+			entry.value = ""
+			entry.ok = false
+			close(entry.done)
+			delete(e.inflight, key)
+			e.mu.Unlock()
+			panic(r)
+		}
+	}()
+
+	value, ok := fn()
+
+	e.mu.Lock()
+	entry.value = value
+	entry.ok = ok
+	close(entry.done)
+	delete(e.inflight, key)
+	e.mu.Unlock()
+
+	return value, ok
 }
 
 func (e *inlineImageEmbedder) getCached(keys ...string) (string, bool) {
@@ -178,11 +249,18 @@ func extractAttachmentToken(src string) string {
 	return ""
 }
 
-func loadAttachmentBytes(token string) ([]byte, string, string, error) {
+func loadAttachmentBytes(token string, resolved *model.AttachmentModel) ([]byte, string, string, error) {
 	normalized := strings.TrimSpace(token)
 	if normalized == "" {
 		return nil, "", "", fmt.Errorf("empty token")
 	}
+
+	if resolved != nil {
+		if data, mimeType, hashKey, err := readAttachmentFile(resolved); err == nil {
+			return data, mimeType, hashKey, nil
+		}
+	}
+
 	if att, err := ResolveAttachment(normalized); err == nil && att != nil {
 		if data, mimeType, hashKey, err := readAttachmentFile(att); err == nil {
 			return data, mimeType, hashKey, nil

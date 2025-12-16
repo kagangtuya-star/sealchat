@@ -266,7 +266,7 @@ func migrateOneImage(att *model.AttachmentModel, dryRun bool, cfg *utils.AppConf
 
 	// Upload new file
 	ctx := context.Background()
-	uploadResult, err := manager.Upload(ctx, storage.UploadInput{
+	uploadResult, err := manager.UploadAttachment(ctx, storage.UploadInput{
 		ObjectKey:   newObjectKey,
 		LocalPath:   tempPath,
 		ContentType: "image/webp",
