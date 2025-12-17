@@ -42,6 +42,9 @@
   --sc-sidebar-hover: #f0f0f0;
   --sc-sidebar-active: #e4e4e7;
   --sc-chip-bg: rgba(15, 23, 42, 0.04);
+  --sc-scrollbar-size: 6px;
+  --sc-scrollbar-thumb: rgba(148, 163, 184, 0.35);
+  --sc-scrollbar-thumb-hover: rgba(148, 163, 184, 0.55);
 
   --audio-panel-surface: rgba(255, 255, 255, 0.98);
   --audio-panel-border: rgba(15, 23, 42, 0.08);
@@ -90,6 +93,9 @@
   --sc-sidebar-hover: #313138;
   --sc-sidebar-active: #3a3a42;
   --sc-chip-bg: rgba(244, 244, 245, 0.08);
+  --sc-scrollbar-size: 6px;
+  --sc-scrollbar-thumb: rgba(159, 159, 159, 0.35);
+  --sc-scrollbar-thumb-hover: rgba(159, 159, 159, 0.55);
 
   --audio-panel-surface: rgba(6, 8, 15, 0.95);
   --audio-panel-border: rgba(255, 255, 255, 0.08);

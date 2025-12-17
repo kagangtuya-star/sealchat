@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { NDropdown, NIcon, NTooltip, useDialog } from 'naive-ui';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Link, Refresh, UserCircle, Users } from '@vicons/tabler';
-import { SearchOutline, UnlinkOutline, AppsOutline } from '@vicons/ionicons5';
+import { SearchOutline, UnlinkOutline, AppsOutline, MusicalNotesOutline, BrowsersOutline } from '@vicons/ionicons5';
 import Notif from '@/views/notif.vue';
 import UserProfile from '@/views/components/user-profile.vue';
 import { setLocale, setLocaleByNavigator } from '@/lang';
@@ -19,20 +19,30 @@ const props = withDefaults(defineProps<{
   channelTitle?: string;
   connectState?: ConnectState;
   onlineMembersCount?: number;
+  audioStudioActive?: boolean;
   searchActive?: boolean;
+  embedPanelActive?: boolean;
+  embedPanelHasAttention?: boolean;
+  embedPanelDisabled?: boolean;
   actionRibbonActive?: boolean;
 }>(), {
   sidebarCollapsed: false,
   channelTitle: '',
   connectState: 'connecting',
   onlineMembersCount: 0,
+  audioStudioActive: false,
   searchActive: false,
+  embedPanelActive: false,
+  embedPanelHasAttention: false,
+  embedPanelDisabled: false,
   actionRibbonActive: false,
 });
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void;
+  (e: 'open-audio-studio'): void;
   (e: 'toggle-search'): void;
+  (e: 'open-embed-panel'): void;
   (e: 'toggle-action-ribbon'): void;
 }>();
 
@@ -167,6 +177,21 @@ const handleSelect = async (key: string | number) => {
         <template #trigger>
           <button
             type="button"
+            class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': audioStudioActive }"
+            aria-label="音频工作台"
+            @click="emit('open-audio-studio')"
+          >
+            <n-icon :component="MusicalNotesOutline" size="16" />
+          </button>
+        </template>
+        <span>音频工作台</span>
+      </n-tooltip>
+
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
             class="sc-icon-button sc-search-button sc-search-button--channel"
             :class="{ 'is-active': searchActive }"
             aria-label="搜索频道消息"
@@ -176,6 +201,23 @@ const handleSelect = async (key: string | number) => {
           </button>
         </template>
         <span>搜索频道消息</span>
+      </n-tooltip>
+
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': embedPanelActive }"
+            aria-label="频道嵌入窗"
+            :disabled="embedPanelDisabled"
+            @click="emit('open-embed-panel')"
+          >
+            <span v-if="embedPanelHasAttention" class="sc-icon-button__badge"></span>
+            <n-icon :component="BrowsersOutline" size="16" />
+          </button>
+        </template>
+        <span>频道嵌入窗</span>
       </n-tooltip>
 
       <button
@@ -262,6 +304,17 @@ const handleSelect = async (key: string | number) => {
   color: #0ea5e9;
 }
 
+.sc-icon-button__badge {
+  position: absolute;
+  top: 0.32rem;
+  right: 0.32rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background-color: #ef4444;
+  box-shadow: 0 0 0 2px var(--sc-bg-header);
+}
+
 .online-badge {
   position: absolute;
   right: -2px;
@@ -298,4 +351,3 @@ const handleSelect = async (key: string | number) => {
   z-index: 1500;
 }
 </style>
-

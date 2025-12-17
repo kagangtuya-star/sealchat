@@ -212,6 +212,7 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
   padding: 12px;
   background: var(--sc-bg-surface);
   color: var(--sc-text-primary);
+  min-height: 0;
 }
 
 .sc-split-sidebar__section {
@@ -356,6 +357,25 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
   border: 1px solid var(--sc-border-strong);
   background: var(--sc-bg-surface);
   padding: 6px 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35)) transparent;
+}
+
+.sc-split-channel-tree::-webkit-scrollbar {
+  width: var(--sc-scrollbar-size, 6px);
+}
+
+.sc-split-channel-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sc-split-channel-tree::-webkit-scrollbar-thumb {
+  background-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35));
+  border-radius: 999px;
+}
+
+.sc-split-channel-tree::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sc-scrollbar-thumb-hover, rgba(148, 163, 184, 0.55));
 }
 
 .sc-split-channel-item {

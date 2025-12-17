@@ -9034,7 +9034,7 @@ onBeforeUnmount(() => {
   border-radius: 1rem;
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-  scrollbar-color: var(--sc-border-mute) transparent;
+  scrollbar-color: var(--sc-scrollbar-thumb, var(--sc-border-mute)) transparent;
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
@@ -9052,7 +9052,7 @@ onBeforeUnmount(() => {
 }
 
 .chat::-webkit-scrollbar {
-  width: 8px;
+  width: var(--sc-scrollbar-size, 6px);
 }
 
 .chat::-webkit-scrollbar-track {
@@ -9060,16 +9060,20 @@ onBeforeUnmount(() => {
 }
 
 .chat::-webkit-scrollbar-thumb {
-  background-color: var(--sc-border-mute);
+  background-color: var(--sc-scrollbar-thumb, var(--sc-border-mute));
   border-radius: 999px;
 }
 
+:global(.chat::-webkit-scrollbar-thumb:hover) {
+  background-color: var(--sc-scrollbar-thumb-hover, var(--sc-border-strong));
+}
+
 :global(.chat.chat--palette-night) {
-  scrollbar-color: #9f9f9f transparent;
+  scrollbar-color: var(--sc-scrollbar-thumb, rgba(159, 159, 159, 0.35)) transparent;
 }
 
 :global(.chat.chat--palette-night::-webkit-scrollbar-thumb) {
-  background-color: #9f9f9f;
+  background-color: var(--sc-scrollbar-thumb, rgba(159, 159, 159, 0.35));
 }
 
 .chat--palette-day {

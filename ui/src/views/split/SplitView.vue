@@ -30,11 +30,14 @@ type EmbedStateMessage = {
   connectState?: ConnectState;
   onlineMembersCount?: number;
   currentChannelUnread?: number;
+  audioStudioDrawerVisible?: boolean;
   filterState?: FilterState;
   roleOptions?: RoleOption[];
   canImport?: boolean;
   channelTree?: SplitChannelNode[];
   searchPanelVisible?: boolean;
+  iFormButtonActive?: boolean;
+  iFormHasAttention?: boolean;
 };
 
 type EmbedFocusMessage = {
@@ -62,11 +65,14 @@ interface PaneState {
   connectState: ConnectState;
   onlineMembersCount: number;
   currentChannelUnread: number;
+  audioStudioDrawerVisible: boolean;
   filterState: FilterState;
   roleOptions: RoleOption[];
   canImport: boolean;
   channelTree: SplitChannelNode[];
   searchPanelVisible: boolean;
+  embedPanelActive: boolean;
+  embedPanelHasAttention: boolean;
   notifyOwner: boolean;
 }
 
@@ -110,11 +116,14 @@ const paneA = reactive<PaneState>({
   connectState: 'connecting',
   onlineMembersCount: 0,
   currentChannelUnread: 0,
+  audioStudioDrawerVisible: false,
   filterState: { ...defaultFilterState },
   roleOptions: [],
   canImport: false,
   channelTree: [],
   searchPanelVisible: false,
+  embedPanelActive: false,
+  embedPanelHasAttention: false,
   notifyOwner: false,
 });
 
@@ -131,11 +140,14 @@ const paneB = reactive<PaneState>({
   connectState: 'connecting',
   onlineMembersCount: 0,
   currentChannelUnread: 0,
+  audioStudioDrawerVisible: false,
   filterState: { ...defaultFilterState },
   roleOptions: [],
   canImport: false,
   channelTree: [],
   searchPanelVisible: false,
+  embedPanelActive: false,
+  embedPanelHasAttention: false,
   notifyOwner: false,
 });
 
@@ -144,6 +156,7 @@ const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
 const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
 const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
 const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
+const activePaneHasChannel = computed(() => !!activePane.value.channelId);
 
 const activeChannelTitle = computed(() => {
   const raw = activePane.value.channelName || '';
@@ -244,11 +257,14 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (typeof msg.connectState === 'string') target.connectState = msg.connectState;
     if (typeof msg.onlineMembersCount === 'number') target.onlineMembersCount = msg.onlineMembersCount;
     if (typeof msg.currentChannelUnread === 'number') target.currentChannelUnread = msg.currentChannelUnread;
+    if (typeof msg.audioStudioDrawerVisible === 'boolean') target.audioStudioDrawerVisible = msg.audioStudioDrawerVisible;
     if (msg.filterState) target.filterState = { ...msg.filterState };
     if (Array.isArray(msg.roleOptions)) target.roleOptions = msg.roleOptions;
     if (typeof msg.canImport === 'boolean') target.canImport = msg.canImport;
     if (Array.isArray(msg.channelTree)) target.channelTree = msg.channelTree;
     if (typeof msg.searchPanelVisible === 'boolean') target.searchPanelVisible = msg.searchPanelVisible;
+    if (typeof msg.iFormButtonActive === 'boolean') target.embedPanelActive = msg.iFormButtonActive;
+    if (typeof msg.iFormHasAttention === 'boolean') target.embedPanelHasAttention = msg.iFormHasAttention;
 
     persistRouteQuery();
     ensureWorldAlignment(target.id);
@@ -314,6 +330,15 @@ const swapPanes = () => {
 
 const toggleSearch = () => {
   postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel: 'search' });
+};
+
+const openAudioStudio = () => {
+  postToPane(activePaneId.value, { type: 'sealchat.embed.openAudioStudio', paneId: activePaneId.value });
+};
+
+const openEmbedPanel = () => {
+  if (!activePane.value.channelId) return;
+  postToPane(activePaneId.value, { type: 'sealchat.embed.openIFormDrawer', paneId: activePaneId.value });
 };
 
 const toggleActionRibbon = () => {
@@ -403,10 +428,16 @@ const collapsedWidth = computed(() => 0);
         :channel-title="activeChannelTitle"
         :connect-state="activePane.connectState"
         :online-members-count="activePane.onlineMembersCount"
+        :audio-studio-active="activePane.audioStudioDrawerVisible"
         :search-active="activePane.searchPanelVisible"
+        :embed-panel-active="activePane.embedPanelActive"
+        :embed-panel-has-attention="activePane.embedPanelHasAttention"
+        :embed-panel-disabled="!activePaneHasChannel"
         :action-ribbon-active="actionRibbonVisible"
         @toggle-sidebar="isMobileViewport ? (drawerVisible = !drawerVisible) : (sidebarCollapsed = !sidebarCollapsed)"
+        @open-audio-studio="openAudioStudio"
         @toggle-search="toggleSearch"
+        @open-embed-panel="openEmbedPanel"
         @toggle-action-ribbon="toggleActionRibbon"
       />
     </n-layout-header>
@@ -531,6 +562,7 @@ const collapsedWidth = computed(() => 0);
         </n-drawer>
       </n-layout>
     </n-layout>
+
   </main>
 </template>
 

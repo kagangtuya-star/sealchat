@@ -6,6 +6,9 @@ import Chat from '@/views/chat/chat.vue';
 import { useChatStore } from '@/stores/chat';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import { usePushNotificationStore } from '@/stores/pushNotification';
+import { useIFormStore } from '@/stores/iform';
+import { useAudioStudioStore } from '@/stores/audioStudio';
+import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 
 type PaneId = 'A' | 'B';
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
@@ -29,6 +32,9 @@ const route = useRoute();
 const chat = useChatStore();
 const channelSearch = useChannelSearchStore();
 const pushStore = usePushNotificationStore();
+const iFormStore = useIFormStore();
+iFormStore.bootstrap();
+const audioStudio = useAudioStudioStore();
 
 const paneId = computed(() => (typeof route.query.paneId === 'string' ? route.query.paneId : '') as PaneId | '');
 const initialWorldId = computed(() => (typeof route.query.worldId === 'string' ? route.query.worldId : ''));
@@ -46,6 +52,9 @@ const isOwnerOrAdmin = computed(() => {
   const role = detail?.memberRole;
   return role === 'owner' || role === 'admin';
 });
+
+const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
+const iFormHasAttention = computed(() => iFormStore.hasAttention);
 
 const buildChannelTree = (): SplitChannelNode[] => {
   const unreadMap = chat.unreadCountMap || {};
@@ -168,11 +177,14 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     connectState,
     onlineMembersCount,
     currentChannelUnread,
+    audioStudioDrawerVisible: !!audioStudio.drawerVisible,
     filterState: normalizeFilterState(toRaw(chat.filterState)),
     roleOptions: normalizeRoleOptions(toRaw(roleOptions.value)),
     canImport: isOwnerOrAdmin.value,
     channelTree: normalizeChannelTree(buildChannelTree()),
     searchPanelVisible: !!channelSearch.panelVisible,
+    iFormButtonActive: !!iFormButtonActive.value,
+    iFormHasAttention: !!iFormHasAttention.value,
   });
 };
 
@@ -219,6 +231,27 @@ const handleMessage = async (event: MessageEvent) => {
       chatViewRef.value.openPanelForShell(panel);
     }
     postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.openAudioStudio') {
+    const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+    audioStudio.setActiveChannel(channelId || null);
+    audioStudio.toggleDrawer(true);
+    postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.openIFormDrawer') {
+    const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+    if (!channelId) return;
+    try {
+      await iFormStore.ensureForms(channelId);
+      iFormStore.openDrawer();
+      postStateThrottled('sealchat.embed.state');
+    } catch (e) {
+      console.warn('[embed] openIFormDrawer failed', e);
+    }
     return;
   }
 
@@ -314,6 +347,24 @@ watch(
   () => postStateThrottled('sealchat.embed.state'),
 );
 
+watch(
+  () => [iFormButtonActive.value, iFormHasAttention.value] as const,
+  () => postStateThrottled('sealchat.embed.state'),
+);
+
+watch(
+  () => audioStudio.drawerVisible,
+  () => postStateThrottled('sealchat.embed.state'),
+);
+
+watch(
+  () => chat.curChannel?.id,
+  (channelId) => {
+    audioStudio.setActiveChannel(channelId ? String(channelId) : null);
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   initialize();
   window.addEventListener('message', handleMessage);
@@ -331,6 +382,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="sc-embed-root">
     <Chat ref="chatViewRef" @drawer-show="handleDrawerShow" />
+    <AudioDrawer />
   </div>
 </template>
 
