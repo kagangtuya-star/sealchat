@@ -18,6 +18,16 @@ const router = createRouter({
       component: HomeView
     },
     {
+      path: '/split',
+      name: 'split',
+      component: () => import('@/views/split/SplitView.vue'),
+    },
+    {
+      path: '/embed',
+      name: 'embed',
+      component: () => import('@/views/embed/EmbedChatView.vue'),
+    },
+    {
       path: '/user/signin',
       name: 'user-signin',
       component: UserSigninVue

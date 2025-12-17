@@ -71,6 +71,7 @@ import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
+import { useRoute, useRouter } from 'vue-router';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -87,7 +88,26 @@ const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
+const router = useRouter();
+const route = useRoute();
 const isEditing = computed(() => !!chat.editing);
+
+const splitEntryEnabled = computed(() => route.path !== '/embed');
+
+const openSplitView = () => {
+  const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
+  router.push({
+    name: 'split',
+    query: {
+      layout: 'left-column',
+      worldId,
+      a: currentChannelId,
+      b: '',
+      notify: '',
+    },
+  });
+};
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
   get: () => {
@@ -7610,6 +7630,8 @@ onBeforeUnmount(() => {
         :channel-images-active="channelImagesPanelVisible"
         :can-import="canManageWorldKeywords"
         :import-active="importDialogVisible"
+        :split-enabled="splitEntryEnabled"
+        :split-active="false"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -7619,6 +7641,7 @@ onBeforeUnmount(() => {
         @open-display-settings="displaySettingsVisible = true"
         @open-favorites="channelFavoritesVisible = true"
         @open-channel-images="openChannelImagesPanel"
+        @open-split="openSplitView"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>

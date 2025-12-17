@@ -5,6 +5,7 @@ import {
   Archive as ArchiveIcon,
   Download as DownloadIcon,
   DotsVertical as MoreIcon,
+  LayoutBoardSplit as SplitIcon,
   MoodSmile as EmojiIcon,
   Palette,
   Photo as PhotoIcon,
@@ -37,6 +38,8 @@ interface Props {
   channelImagesActive?: boolean
   canImport?: boolean
   importActive?: boolean
+  splitEnabled?: boolean
+  splitActive?: boolean
 }
 
 interface Emits {
@@ -49,6 +52,7 @@ interface Emits {
   (e: 'open-display-settings'): void
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
+  (e: 'open-split'): void
   (e: 'clear-filters'): void
 }
 
@@ -88,6 +92,11 @@ const allActionButtons = computed<ActionButton[]>(() => {
   
   // 消息归档 always at the end
   buttons.push({ key: 'archive', label: '消息归档', icon: ArchiveIcon, emitEvent: 'open-archive', activeKey: 'archiveActive' })
+
+  // 分屏入口（置于“消息归档”之后）
+  if (props.splitEnabled !== false) {
+    buttons.push({ key: 'split', label: '分屏', icon: SplitIcon, emitEvent: 'open-split', activeKey: 'splitActive' })
+  }
   
   return buttons
 })

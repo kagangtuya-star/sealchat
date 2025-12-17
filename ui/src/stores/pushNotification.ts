@@ -5,6 +5,21 @@ import { urlBase } from '@/stores/_config';
 
 const STORAGE_KEY = 'sc-push-notification-enabled';
 
+const resolveEmbedNotifyOwner = (): boolean => {
+    if (typeof window === 'undefined') return true;
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#/embed')) return true;
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) return false;
+    try {
+        const params = new URLSearchParams(hash.slice(queryIndex + 1));
+        const raw = params.get('notifyOwner');
+        return raw === '1' || raw === 'true';
+    } catch {
+        return false;
+    }
+};
+
 /**
  * 推送通知 Store
  * 
@@ -25,7 +40,7 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
 
     // 是否可以发送通知
     const canNotify = computed(() => {
-        return supported.value && enabled.value && permission.value === 'granted';
+        return supported.value && enabled.value && permission.value === 'granted' && resolveEmbedNotifyOwner();
     });
 
     /**

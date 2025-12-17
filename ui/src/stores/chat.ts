@@ -110,6 +110,44 @@ interface ChatState {
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
 
+const resolveEmbedPaneId = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash || '';
+  if (!hash.startsWith('#/embed')) return null;
+  const queryIndex = hash.indexOf('?');
+  if (queryIndex === -1) return null;
+  try {
+    const params = new URLSearchParams(hash.slice(queryIndex + 1));
+    const paneId = params.get('paneId');
+    return paneId && paneId.trim() ? paneId.trim() : null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveScopedStorageKey = (baseKey: string) => {
+  const paneId = resolveEmbedPaneId();
+  if (!paneId) return baseKey;
+  if (baseKey !== 'currentWorldId' && baseKey !== 'lastChannel') return baseKey;
+  return `sc:embed:${paneId}:${baseKey}`;
+};
+
+const readScopedLocalStorage = (baseKey: string) => {
+  try {
+    return localStorage.getItem(resolveScopedStorageKey(baseKey));
+  } catch {
+    return null;
+  }
+};
+
+const writeScopedLocalStorage = (baseKey: string, value: string) => {
+  try {
+    localStorage.setItem(resolveScopedStorageKey(baseKey), value);
+  } catch {
+    // ignore
+  }
+};
+
 type myEventName =
   | EventName
   | 'message-created'
@@ -172,7 +210,7 @@ export const useChatStore = defineStore({
     channelTreePrivate: [] as any,
     channelTreePrivateReady: false,
     curChannel: null,
-    currentWorldId: localStorage.getItem('currentWorldId') || '',
+    currentWorldId: readScopedLocalStorage('currentWorldId') || '',
     joinedWorldIds: [],
     worldListCache: null,
     worldLobbyMode: 'mine',
@@ -264,7 +302,7 @@ export const useChatStore = defineStore({
 
   getters: {
     _lastChannel: (state) => {
-      return localStorage.getItem('lastChannel') || '';
+      return readScopedLocalStorage('lastChannel') || '';
     },
     unreadCountPrivate: (state) => {
       return Object.entries(state.unreadCountMap).reduce((sum, [key, count]) => {
@@ -585,12 +623,12 @@ export const useChatStore = defineStore({
     setCurrentWorld(worldId: string) {
       if (!worldId || this.currentWorldId === worldId) return;
       this.currentWorldId = worldId;
-      localStorage.setItem('currentWorldId', worldId);
+      writeScopedLocalStorage('currentWorldId', worldId);
     },
 
     async initWorlds() {
       if (this.joinedWorldIds.length) {
-        const stored = localStorage.getItem('currentWorldId');
+        const stored = readScopedLocalStorage('currentWorldId');
         if (stored) {
           this.currentWorldId = stored;
         }
@@ -605,12 +643,12 @@ export const useChatStore = defineStore({
             this.worldMap[item.world.id] = item.world;
           }
         });
-        const stored = localStorage.getItem('currentWorldId');
+        const stored = readScopedLocalStorage('currentWorldId');
         if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;
         } else if (this.joinedWorldIds.length) {
           this.currentWorldId = this.joinedWorldIds[0];
-          localStorage.setItem('currentWorldId', this.currentWorldId);
+          writeScopedLocalStorage('currentWorldId', this.currentWorldId);
         }
       } catch (err) {
         console.warn('initWorlds failed', err);
@@ -728,7 +766,7 @@ export const useChatStore = defineStore({
       this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
       if (this.currentWorldId === worldId) {
         this.currentWorldId = this.joinedWorldIds[0] || '';
-        localStorage.setItem('currentWorldId', this.currentWorldId);
+        writeScopedLocalStorage('currentWorldId', this.currentWorldId);
       }
       delete this.channelTreeByWorld[worldId];
     },
@@ -945,7 +983,7 @@ export const useChatStore = defineStore({
       await this.loadChannelIdentities(id);
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);
-      localStorage.setItem('lastChannel', id);
+      writeScopedLocalStorage('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
       this.curChannelUsers = resp2.data.data;
