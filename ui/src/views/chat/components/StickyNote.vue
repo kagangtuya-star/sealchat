@@ -158,37 +158,14 @@
                   <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
                 </svg>
               </button>
-              <button
-                class="sticky-note__toolbar-btn"
-                @click="triggerFileSelect"
-                title="插入图片"
-                :disabled="isUploading"
-              >
-                <n-spin v-if="isUploading" size="tiny" />
-                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                </svg>
-              </button>
             </div>
             <textarea
               v-model="localContent"
               class="sticky-note__textarea"
               placeholder="在此输入内容..."
               @input="debouncedSaveContent"
-              @paste="handlePasteImage"
-              @drop.prevent="handleDropImage"
-              @dragover.prevent
             ></textarea>
           </div>
-          <!-- 隐藏文件选择器 -->
-          <input
-            ref="fileInputRef"
-            type="file"
-            accept="image/*"
-            multiple
-            style="display: none"
-            @change="handleFileSelect"
-          />
         </div>
         <div
           v-else
@@ -235,8 +212,6 @@ import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import StickyNoteEditor from './StickyNoteEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
-import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
-import { urlBase } from '@/stores/_config'
 
 const props = defineProps<{
   noteId: string
@@ -257,8 +232,6 @@ const localContent = ref('')
 const pushPopoverVisible = ref(false)
 const pushTargets = ref<string[]>([])
 const richMode = ref(false) // 富文本模式，默认关闭
-const isUploading = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -283,6 +256,13 @@ const userState = computed<StickyNoteUserState | undefined>(() =>
 const isEditing = computed(() =>
   stickyNoteStore.editingNoteId === props.noteId
 )
+
+// 进入编辑模式时，如果内容是富文本（TipTap JSON），自动切换到富文本模式
+watch(isEditing, (editing) => {
+  if (editing && note.value?.content) {
+    richMode.value = isTipTapJson(note.value.content)
+  }
+})
 
 const isOwner = computed(() => {
   const userId = userStore.info?.id
@@ -367,12 +347,27 @@ const sanitizedContent = computed(() => {
       // 渲染失败时回退到纯文本
     }
   }
-  // 兼容旧纯文本内容
-  return content
+  // 兼容旧内容 - 保留 img 标签，转义其他 HTML
+  // 先提取所有 img 标签保护起来
+  const imgPlaceholders: string[] = []
+  let processed = content.replace(/<img\s+[^>]*>/gi, (match) => {
+    imgPlaceholders.push(match)
+    return `__IMG_PLACEHOLDER_${imgPlaceholders.length - 1}__`
+  })
+  
+  // 转义其他 HTML
+  processed = processed
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/\n/g, '<br>')
+  
+  // 恢复 img 标签
+  imgPlaceholders.forEach((img, i) => {
+    processed = processed.replace(`__IMG_PLACEHOLDER_${i}__`, img)
+  })
+  
+  return processed
 })
 
 const noteStyle = computed(() => {
@@ -466,79 +461,6 @@ function saveContentNow() {
 function copyContent() {
   const text = note.value?.contentText || note.value?.content || ''
   navigator.clipboard.writeText(text)
-}
-
-// 图片上传处理
-const triggerFileSelect = () => {
-  fileInputRef.value?.click()
-}
-
-const handleFileSelect = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || []).filter(file =>
-    file.type.startsWith('image/')
-  )
-  if (files.length > 0) {
-    await uploadImages(files)
-  }
-  input.value = ''
-}
-
-const handlePasteImage = async (event: ClipboardEvent) => {
-  const items = event.clipboardData?.items
-  if (!items) return
-
-  const files: File[] = []
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      const file = item.getAsFile()
-      if (file) files.push(file)
-    }
-  }
-
-  if (files.length > 0) {
-    event.preventDefault()
-    await uploadImages(files)
-  }
-}
-
-const handleDropImage = async (event: DragEvent) => {
-  const files = Array.from(event.dataTransfer?.files || []).filter(file =>
-    file.type.startsWith('image/')
-  )
-  if (files.length > 0) {
-    await uploadImages(files)
-  }
-}
-
-const uploadImages = async (files: File[]) => {
-  if (isUploading.value) return
-  isUploading.value = true
-
-  try {
-    for (const file of files) {
-      const result = await uploadImageAttachment(file, {
-        channelId: note.value?.channelId,
-      })
-
-      if (result.attachmentId) {
-        let imageUrl = result.attachmentId
-        if (imageUrl.startsWith('id:')) {
-          const attachmentId = imageUrl.slice(3)
-          imageUrl = `${urlBase}/api/v1/attachment/${attachmentId}`
-        }
-        // 在简单模式下插入图片 markdown 或 HTML
-        const imageMarkdown = `\n![${file.name}](${imageUrl})\n`
-        localContent.value += imageMarkdown
-        debouncedSaveContent()
-      }
-    }
-  } catch (error: any) {
-    message.error(error.message || '图片上传失败')
-  } finally {
-    isUploading.value = false
-  }
 }
 
 async function pushToTargets() {

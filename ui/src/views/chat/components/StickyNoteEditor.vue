@@ -602,6 +602,14 @@ defineExpose({
   padding-left: 1.5em;
 }
 
+.sticky-note-editor__wrapper :deep(.sticky-note-editor__content ul) {
+  list-style-type: disc;
+}
+
+.sticky-note-editor__wrapper :deep(.sticky-note-editor__content ol) {
+  list-style-type: decimal;
+}
+
 .sticky-note-editor__wrapper :deep(.sticky-note-editor__content a) {
   color: #2563eb;
   text-decoration: underline;
