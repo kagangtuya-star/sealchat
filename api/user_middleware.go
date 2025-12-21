@@ -11,13 +11,14 @@ import (
 )
 
 func getToken(c *fiber.Ctx) string {
-	var token string
-
-	tokens := c.GetReqHeaders()["Authorization"]
-	if len(tokens) > 0 {
-		token = tokens[0]
+	token := strings.TrimSpace(c.Get("Authorization"))
+	if token == "" {
+		tokens := c.GetReqHeaders()["Authorization"]
+		if len(tokens) > 0 {
+			token = tokens[0]
+		}
+		token = strings.TrimSpace(token)
 	}
-	token = strings.TrimSpace(token)
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		token = strings.TrimSpace(token[len("bearer "):])
 	}

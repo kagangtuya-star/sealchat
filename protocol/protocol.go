@@ -284,6 +284,11 @@ const (
 	EventChannelIFormUpdated    EventName = "channel-iform-updated"
 	EventChannelIFormPushed     EventName = "channel-iform-pushed"
 	EventWorldKeywordsUpdated   EventName = "world-keywords-updated"
+	// Sticky Note Events
+	EventStickyNoteCreated EventName = "sticky-note-created"
+	EventStickyNoteUpdated EventName = "sticky-note-updated"
+	EventStickyNoteDeleted EventName = "sticky-note-deleted"
+	EventStickyNotePushed  EventName = "sticky-note-pushed"
 )
 
 type Event struct {
@@ -307,6 +312,7 @@ type Event struct {
 	Presence   []*ChannelPresence         `json:"presence"`
 	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
 	IForm      *ChannelIFormEventPayload  `json:"iform,omitempty"`
+	StickyNote *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
 }
 
 type TypingState string
@@ -386,3 +392,45 @@ const (
 	WebSocketClosing
 	WebSocketClosed
 )
+
+// StickyNote 便签数据结构
+type StickyNote struct {
+	ID          string `json:"id"`
+	ChannelID   string `json:"channelId"`
+	WorldID     string `json:"worldId"`
+	Title       string `json:"title"`
+	Content     string `json:"content"`
+	ContentText string `json:"contentText"`
+	Color       string `json:"color"`
+	CreatorID   string `json:"creatorId"`
+	IsPublic    bool   `json:"isPublic"`
+	IsPinned    bool   `json:"isPinned"`
+	OrderIndex  int    `json:"orderIndex"`
+	DefaultX    int    `json:"defaultX"`
+	DefaultY    int    `json:"defaultY"`
+	DefaultW    int    `json:"defaultW"`
+	DefaultH    int    `json:"defaultH"`
+	CreatedAt   int64  `json:"createdAt"`
+	UpdatedAt   int64  `json:"updatedAt"`
+	Creator     *User  `json:"creator,omitempty"`
+}
+
+// StickyNoteUserState 用户便签状态
+type StickyNoteUserState struct {
+	NoteID    string `json:"noteId"`
+	IsOpen    bool   `json:"isOpen"`
+	PositionX int    `json:"positionX"`
+	PositionY int    `json:"positionY"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	Minimized bool   `json:"minimized"`
+	ZIndex    int    `json:"zIndex"`
+}
+
+// StickyNoteEventPayload 便签事件载荷
+type StickyNoteEventPayload struct {
+	Note          *StickyNote `json:"note,omitempty"`
+	Notes         []*StickyNote `json:"notes,omitempty"`
+	Action        string      `json:"action,omitempty"` // create/update/delete/push
+	TargetUserIDs []string    `json:"targetUserIds,omitempty"`
+}

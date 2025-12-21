@@ -139,6 +139,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 
+	// Sticky Note routes
+	BindStickyNoteRoutes(v1Auth)
+
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")
 	webhookIntegrations.Get("/", WebhookIntegrationList)
@@ -282,6 +285,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		utils.WriteConfig(appConfig)
 		return nil
 	})
+
 
 	// Default /test
 	app.Use(config.WebUrl, filesystem.New(filesystem.Config{

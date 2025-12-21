@@ -42,10 +42,13 @@ export const useUserStore = defineStore({
 
   getters: {
     token: (state) => {
-      if (!state._accessToken) {
-        state._accessToken = localStorage.getItem('accessToken') || '';
+      const storedToken = localStorage.getItem('accessToken') || '';
+      const cookieToken = Cookies.get('Authorization') || '';
+      const latestToken = storedToken || cookieToken;
+      if (latestToken && latestToken !== state._accessToken) {
+        state._accessToken = latestToken;
+        localStorage.setItem('accessToken', state._accessToken);
         Cookies.set('Authorization', state._accessToken);
-        // state._accessToken = Cookies.get('accessToken') || '';
       }
       return state._accessToken;
     },

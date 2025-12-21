@@ -14,6 +14,7 @@ import {
   Upload as UploadIcon,
   Users as UsersIcon,
 } from '@vicons/tabler'
+import { DocumentTextOutline } from '@vicons/ionicons5'
 
 interface FilterState {
   icOnly: boolean
@@ -41,6 +42,8 @@ interface Props {
   importActive?: boolean
   splitEnabled?: boolean
   splitActive?: boolean
+  stickyNoteEnabled?: boolean
+  stickyNoteActive?: boolean
   webhookEnabled?: boolean
   webhookActive?: boolean
 }
@@ -56,6 +59,7 @@ interface Emits {
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
   (e: 'open-split'): void
+  (e: 'toggle-sticky-note'): void
   (e: 'open-webhook'): void
   (e: 'clear-filters'): void
 }
@@ -100,6 +104,11 @@ const allActionButtons = computed<ActionButton[]>(() => {
   // 分屏入口（置于“消息归档”之后）
   if (props.splitEnabled !== false) {
     buttons.push({ key: 'split', label: '分屏', icon: SplitIcon, emitEvent: 'open-split', activeKey: 'splitActive' })
+  }
+
+  // 便签入口（置于“分屏”之后）
+  if (props.stickyNoteEnabled !== false) {
+    buttons.push({ key: 'sticky-note', label: '便签', icon: DocumentTextOutline, emitEvent: 'toggle-sticky-note', activeKey: 'stickyNoteActive' })
   }
 
   // Webhook 授权管理入口（通常在分屏模式下启用）
@@ -247,9 +256,12 @@ onBeforeUnmount(() => {
 })
 
 // Re-calculate when canImport changes (button list changes)
-watch(() => props.canImport, () => {
-  nextTick(calculateVisibleCount)
-})
+watch(
+  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled],
+  () => {
+    nextTick(calculateVisibleCount)
+  }
+)
 
 const roleSelectOptions = computed(() => {
   return props.roles.map(role => ({

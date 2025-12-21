@@ -432,6 +432,17 @@ func websocketWorks(app *fiber.App) {
 				if err == nil {
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
+					// Sticky Note APIs
+					case "sticky-note.update":
+						apiWrap(ctx, msg, apiStickyNoteUpdateWs)
+						solved = true
+					case "sticky-note.delete":
+						apiWrap(ctx, msg, apiStickyNoteDeleteWs)
+						solved = true
+					case "sticky-note.push":
+						apiWrap(ctx, msg, apiStickyNotePushWs)
+						solved = true
+
 					case "channel.create":
 						apiWrap(ctx, msg, apiChannelCreate)
 						solved = true

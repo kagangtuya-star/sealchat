@@ -596,6 +596,7 @@ const collapsedWidth = computed(() => 0);
               :import-active="false"
               :split-enabled="false"
               :split-active="false"
+              :sticky-note-enabled="false"
               @update:filters="setFilters"
               @clear-filters="clearFilters"
               @open-archive="openPanel('archive')"

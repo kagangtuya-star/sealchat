@@ -138,6 +138,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ServiceMetricSample{})
 	db.AutoMigrate(&ChatImportJobModel{})
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})
+	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{})
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").

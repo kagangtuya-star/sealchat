@@ -1,4 +1,5 @@
 import axiosFactory, { Axios } from "axios"
+import Cookies from "js-cookie"
 const axios = axiosFactory.create()
 axios.defaults.withCredentials = true;
 
@@ -23,7 +24,17 @@ export const api = axiosFactory.create({
 });
 
 api.interceptors.request.use(config => {
-  config.headers['Authorization'] = localStorage.getItem('accessToken');
+  const headers = (config.headers || {}) as Record<string, any>;
+  const existingAuth = headers['Authorization'] || headers['authorization'];
+  if (!existingAuth) {
+    const token = localStorage.getItem('accessToken') || Cookies.get('Authorization') || '';
+    if (token && token !== 'null' && token !== 'undefined') {
+      headers['Authorization'] = token;
+    } else {
+      delete headers['Authorization'];
+      delete headers['authorization'];
+    }
+  }
+  config.headers = headers;
   return config;
 });
-

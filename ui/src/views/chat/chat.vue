@@ -32,6 +32,8 @@ import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
+import StickyNoteManager from './components/StickyNoteManager.vue';
+import { useStickyNoteStore } from '@/stores/stickyNote';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
@@ -90,6 +92,7 @@ const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
+const stickyNoteStore = useStickyNoteStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -111,6 +114,10 @@ const openSplitView = () => {
       notify: '',
     },
   });
+};
+
+const toggleStickyNotes = () => {
+  stickyNoteStore.toggleVisible();
 };
 
 type ExternalPanelKey =
@@ -7883,6 +7890,8 @@ onBeforeUnmount(() => {
         :import-active="importDialogVisible"
         :split-enabled="splitEntryEnabled"
         :split-active="false"
+        :sticky-note-enabled="true"
+        :sticky-note-active="stickyNoteStore.uiVisible"
         :webhook-enabled="webhookManageAllowed"
         :webhook-active="webhookDrawerVisible"
         @update:filters="chat.setFilterState($event)"
@@ -7895,6 +7904,7 @@ onBeforeUnmount(() => {
         @open-favorites="channelFavoritesVisible = true"
         @open-channel-images="openChannelImagesPanel"
         @open-split="openSplitView"
+        @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
@@ -9042,6 +9052,12 @@ onBeforeUnmount(() => {
     v-model:show="avatarPromptVisible"
     @setup="handleAvatarPromptSetup"
     @skip="handleAvatarPromptSkip"
+  />
+
+  <!-- 便签功能 -->
+  <StickyNoteManager
+    v-if="chat.curChannel?.id"
+    :channel-id="chat.curChannel.id"
   />
 </template>
 
