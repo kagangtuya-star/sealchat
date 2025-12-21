@@ -37,6 +37,7 @@ type ConnInfo struct {
 	User             *model.UserModel
 	Conn             *WsSyncConn
 	LastPingTime     int64
+	LastAliveTime    int64
 	LatencyMs        int64
 	ChannelId        string
 	WorldId          string
@@ -110,13 +111,33 @@ func websocketWorks(app *fiber.App) {
 			if err == nil {
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
 
+				if user.IsBot {
+					closedCount := 0
+					m.Range(func(conn *WsSyncConn, _ *ConnInfo) bool {
+						conn.Close()
+						m.Delete(conn)
+						closedCount++
+						if collector := metrics.Get(); collector != nil {
+							collector.RecordConnectionClosed(user.ID)
+						}
+						return true
+					})
+					if closedCount > 0 {
+						log.Printf("[WS] bot %s 旧连接已清理: %d", user.ID, closedCount)
+					}
+				}
+
 				// 检查并清理超限连接（保留 maxConnectionsPerUser-1 个，为新连接腾出空间）
 				for m.Len() >= maxConnectionsPerUser {
 					var oldestConn *WsSyncConn
 					var oldestTime int64 = time.Now().UnixMilli() + 1
 					m.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-						if info.LastPingTime < oldestTime {
-							oldestTime = info.LastPingTime
+						lastAlive := info.LastAliveTime
+						if lastAlive == 0 {
+							lastAlive = info.LastPingTime
+						}
+						if lastAlive < oldestTime {
+							oldestTime = lastAlive
 							oldestConn = conn
 						}
 						return true
@@ -134,12 +155,13 @@ func websocketWorks(app *fiber.App) {
 				}
 
 				curConnInfo = &ConnInfo{
-					Conn:         c,
-					LastPingTime: time.Now().UnixMilli(),
-					User:         user,
-					TypingState:  protocol.TypingStateSilent,
-					TypingIcMode: "ic",
-					Focused:      true,
+					Conn:          c,
+					LastPingTime:  time.Now().UnixMilli(),
+					LastAliveTime: time.Now().UnixMilli(),
+					User:          user,
+					TypingState:   protocol.TypingStateSilent,
+					TypingIcMode:  "ic",
+					Focused:       true,
 				}
 				m.Store(c, curConnInfo)
 
@@ -206,7 +228,11 @@ func websocketWorks(app *fiber.App) {
 			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 				var staleConns []*WsSyncConn
 				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
-					if info.LastPingTime < cutoff {
+					lastAlive := info.LastAliveTime
+					if lastAlive == 0 {
+						lastAlive = info.LastPingTime
+					}
+					if lastAlive < cutoff {
 						staleConns = append(staleConns, conn)
 					}
 					return true
@@ -253,6 +279,9 @@ func websocketWorks(app *fiber.App) {
 
 		// 设置pong处理器，收到pong时更新连接活跃状态
 		rawConn.SetPongHandler(func(appData string) error {
+			if curConnInfo != nil {
+				curConnInfo.LastAliveTime = time.Now().UnixMilli()
+			}
 			return nil
 		})
 
@@ -283,6 +312,9 @@ func websocketWorks(app *fiber.App) {
 				log.Println("[WS] read:", err)
 				// 解析错误或超时
 				break
+			}
+			if curConnInfo != nil {
+				curConnInfo.LastAliveTime = time.Now().UnixMilli()
 			}
 
 			solved := false
@@ -331,6 +363,7 @@ func websocketWorks(app *fiber.App) {
 								}
 							}
 							info2.LastPingTime = now
+							info2.LastAliveTime = now
 							activeChannel = info2.ChannelId
 						}
 					}

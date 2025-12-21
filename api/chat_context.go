@@ -93,8 +93,24 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 
 	for _, id := range botIds {
 		if x, ok := ctx.UserId2ConnInfo.Load(id); ok {
-			x.Range(func(key *WsSyncConn, value *ConnInfo) bool {
-				_ = value.Conn.WriteJSON(struct {
+			var active *ConnInfo
+			var activeAt int64 = -1
+			x.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
+				if value == nil {
+					return true
+				}
+				lastAlive := value.LastAliveTime
+				if lastAlive == 0 {
+					lastAlive = value.LastPingTime
+				}
+				if lastAlive > activeAt {
+					activeAt = lastAlive
+					active = value
+				}
+				return true
+			})
+			if active != nil {
+				_ = active.Conn.WriteJSON(struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`
 				}{
@@ -102,8 +118,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 					Event: *data,
 					Op:    protocol.OpEvent,
 				})
-				return true
-			})
+			}
 		}
 	}
 }
