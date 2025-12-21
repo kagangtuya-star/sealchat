@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { NBadge, NButton, NIcon, NInput, NRadioButton, NRadioGroup, NSelect } from 'naive-ui';
 import { ArrowsLeftRight } from '@vicons/tabler';
 
 export type PaneId = 'A' | 'B';
+type PaneMode = 'chat' | 'web';
 
 export interface SplitChannelNode {
   id: string;
@@ -33,6 +34,9 @@ const props = defineProps<{
   operationTarget: OperationTarget;
   worldName: string;
   channelTree: SplitChannelNode[];
+  webTargetPaneId: PaneId;
+  paneModes: { A: PaneMode; B: PaneMode };
+  paneWebUrls: { A: string; B: string };
 }>();
 
 const emit = defineEmits<{
@@ -42,11 +46,29 @@ const emit = defineEmits<{
   (e: 'toggle-lock-same-world', enabled: boolean): void;
   (e: 'set-notify-owner', paneId: PaneId | null): void;
   (e: 'open-channel', channelId: string): void;
+  (e: 'set-web-target', paneId: PaneId): void;
+  (e: 'set-pane-mode', paneId: PaneId, mode: PaneMode): void;
+  (e: 'set-pane-url', paneId: PaneId, url: string): void;
   (e: 'swap-panes'): void;
   (e: 'exit-split'): void;
 }>();
 
 const channelFilter = ref('');
+const webUrlDraft = ref('');
+
+const webTargetMode = computed(() => props.paneModes[props.webTargetPaneId]);
+const updateWebTarget = (value: string) => {
+  if (value === 'A' || value === 'B') {
+    emit('set-web-target', value);
+  }
+};
+const applyWebUrl = () => {
+  emit('set-pane-url', props.webTargetPaneId, webUrlDraft.value);
+};
+const clearWebUrl = () => {
+  webUrlDraft.value = '';
+  emit('set-pane-url', props.webTargetPaneId, '');
+};
 
 const filteredTree = computed(() => {
   const keyword = channelFilter.value.trim().toLowerCase();
@@ -73,6 +95,14 @@ const setNotifyValue = (value: string) => {
   }
   emit('set-notify-owner', null);
 };
+
+watch(
+  () => [props.webTargetPaneId, props.paneWebUrls.A, props.paneWebUrls.B],
+  () => {
+    webUrlDraft.value = props.paneWebUrls[props.webTargetPaneId] || '';
+  },
+  { immediate: true },
+);
 
 const renderTree = (nodes: SplitChannelNode[], depth = 0): any[] => {
   if (!Array.isArray(nodes)) return [];
@@ -179,6 +209,44 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
       </div>
     </div>
 
+    <div class="sc-split-sidebar__section">
+      <div class="sc-split-sidebar__row">
+        <div class="sc-split-sidebar__label">网页分屏</div>
+        <n-radio-group size="small" :value="webTargetPaneId" @update:value="updateWebTarget">
+          <n-radio-button value="A">A</n-radio-button>
+          <n-radio-button value="B">B</n-radio-button>
+        </n-radio-group>
+      </div>
+
+      <div class="sc-split-sidebar__row">
+        <div class="sc-split-sidebar__label">模式</div>
+        <n-radio-group
+          size="small"
+          :value="webTargetMode"
+          @update:value="emit('set-pane-mode', webTargetPaneId, $event)"
+        >
+          <n-radio-button value="chat">聊天</n-radio-button>
+          <n-radio-button value="web">网页</n-radio-button>
+        </n-radio-group>
+      </div>
+
+      <div class="sc-split-sidebar__row sc-split-sidebar__row--stack">
+        <div class="sc-split-sidebar__label">网址</div>
+        <div class="sc-split-sidebar__web-input">
+          <n-input
+            v-model:value="webUrlDraft"
+            size="small"
+            placeholder="https://example.com"
+            clearable
+          />
+          <div class="sc-split-sidebar__web-actions">
+            <n-button size="tiny" tertiary @click="applyWebUrl">应用</n-button>
+            <n-button size="tiny" quaternary @click="clearWebUrl">清空</n-button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="sc-split-sidebar__section sc-split-sidebar__section--channels">
       <n-input v-model:value="channelFilter" size="small" placeholder="筛选频道…" clearable />
 
@@ -238,6 +306,11 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
   flex-wrap: wrap;
 }
 
+.sc-split-sidebar__row--stack {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .sc-split-sidebar__row-actions {
   display: inline-flex;
   align-items: center;
@@ -250,6 +323,19 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
 
 .sc-split-sidebar__row--lock {
   align-items: center;
+}
+
+.sc-split-sidebar__web-input {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-split-sidebar__web-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .sc-split-sidebar__title {

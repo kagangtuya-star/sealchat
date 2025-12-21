@@ -10,6 +10,7 @@ import { setChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+type PaneMode = 'chat' | 'web';
 
 type FilterState = {
   icOnly: boolean;
@@ -57,6 +58,8 @@ interface PaneState {
   iframeKey: number;
   src: string;
   ready: boolean;
+  mode: PaneMode;
+  webUrl: string;
   worldId: string;
   worldName: string;
   worldOptions: Array<{ value: string; label: string }>;
@@ -90,6 +93,7 @@ const activePaneId = ref<PaneId>('A');
 const operationTarget = ref<OperationTarget>('follow');
 const lockSameWorld = ref(false);
 const notifyOwnerPaneId = ref<PaneId | null>(null);
+const webTargetPaneId = ref<PaneId>('A');
 
 const actionRibbonVisible = ref(false);
 
@@ -98,6 +102,41 @@ const sidebarCollapsed = ref(false);
 const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
 
 const defaultFilterState: FilterState = { icOnly: false, showArchived: false, roleIds: [] };
+const storagePrefix = 'sealchat.split.pane';
+const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url') => `${storagePrefix}.${paneId}.${key}`;
+const normalizeUrl = (value: string) => value.trim();
+const isHttpUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+const getWebHost = (value: string) => {
+  if (!isHttpUrl(value)) return '';
+  try {
+    return new URL(value).host;
+  } catch {
+    return '';
+  }
+};
+const loadPaneStorage = (pane: PaneState) => {
+  if (typeof window === 'undefined') return;
+  const mode = window.localStorage.getItem(paneStorageKey(pane.id, 'mode'));
+  if (mode === 'chat' || mode === 'web') {
+    pane.mode = mode;
+  }
+  const url = window.localStorage.getItem(paneStorageKey(pane.id, 'url'));
+  if (typeof url === 'string') {
+    pane.webUrl = url;
+  }
+};
+const persistPaneStorage = (pane: PaneState) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(paneStorageKey(pane.id, 'mode'), pane.mode);
+  window.localStorage.setItem(paneStorageKey(pane.id, 'url'), pane.webUrl);
+};
 
 const splitContainerRef = ref<HTMLElement | null>(null);
 const splitRatio = ref(0.5);
@@ -108,6 +147,8 @@ const paneA = reactive<PaneState>({
   iframeKey: 0,
   src: '',
   ready: false,
+  mode: 'chat',
+  webUrl: '',
   worldId: typeof route.query.worldId === 'string' ? route.query.worldId : '',
   worldName: '',
   worldOptions: [],
@@ -132,6 +173,8 @@ const paneB = reactive<PaneState>({
   iframeKey: 0,
   src: '',
   ready: false,
+  mode: 'chat',
+  webUrl: '',
   worldId: typeof route.query.worldId === 'string' ? route.query.worldId : '',
   worldName: '',
   worldOptions: [],
@@ -152,17 +195,29 @@ const paneB = reactive<PaneState>({
 });
 
 const panes = computed(() => [paneA, paneB]);
+const getPaneById = (paneId: PaneId) => (paneId === 'A' ? paneA : paneB);
 const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
 const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
 const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
 const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
-const activePaneHasChannel = computed(() => !!activePane.value.channelId);
+const activePaneHasChannel = computed(() => activePane.value.mode === 'chat' && !!activePane.value.channelId);
 
 const activeChannelTitle = computed(() => {
+  if (activePane.value.mode === 'web') {
+    const host = getWebHost(normalizeUrl(activePane.value.webUrl));
+    return host ? `网页分屏 · ${host}` : '网页分屏';
+  }
   const raw = activePane.value.channelName || '';
   const name = raw.trim();
   return name ? `# ${name}` : '海豹尬聊 SealChat';
 });
+
+const activePaneConnectState = computed<ConnectState>(() => (activePane.value.mode === 'chat' ? activePane.value.connectState : 'disconnected'));
+const activePaneOnlineMembersCount = computed(() => (activePane.value.mode === 'chat' ? activePane.value.onlineMembersCount : 0));
+const activePaneAudioStudioActive = computed(() => activePane.value.mode === 'chat' && activePane.value.audioStudioDrawerVisible);
+const activePaneSearchActive = computed(() => activePane.value.mode === 'chat' && activePane.value.searchPanelVisible);
+const activePaneEmbedPanelActive = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelActive);
+const activePaneEmbedPanelHasAttention = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelHasAttention);
 
 watch(
   () => [activePaneId.value, activePane.value.channelName] as const,
@@ -184,9 +239,17 @@ const buildEmbedSrc = (pane: PaneState) => {
   return `${base}#/embed?${params.toString()}`;
 };
 
+const buildPaneSrc = (pane: PaneState) => {
+  if (pane.mode === 'web') {
+    const url = normalizeUrl(pane.webUrl);
+    return isHttpUrl(url) ? url : 'about:blank';
+  }
+  return buildEmbedSrc(pane);
+};
+
 const refreshPaneSrc = (pane: PaneState) => {
-  pane.ready = false;
-  pane.src = buildEmbedSrc(pane);
+  pane.ready = pane.mode !== 'chat';
+  pane.src = buildPaneSrc(pane);
   pane.iframeKey += 1;
 };
 
@@ -204,6 +267,8 @@ const persistRouteQuery = () => {
 const getPaneIframe = (paneId: PaneId) => document.getElementById(`sc-split-iframe-${paneId}`) as HTMLIFrameElement | null;
 
 const postToPane = (paneId: PaneId, payload: any) => {
+  const pane = getPaneById(paneId);
+  if (pane.mode !== 'chat') return false;
   const iframe = getPaneIframe(paneId);
   const targetWindow = iframe?.contentWindow;
   if (!targetWindow) return false;
@@ -248,6 +313,7 @@ const handleEmbedMessage = (event: MessageEvent) => {
     const msg = data as EmbedStateMessage;
     const target = msg.paneId === 'A' ? paneA : msg.paneId === 'B' ? paneB : null;
     if (!target) return;
+    if (target.mode !== 'chat') return;
     target.ready = true;
     if (typeof msg.worldId === 'string') target.worldId = msg.worldId;
     if (typeof msg.worldName === 'string') target.worldName = msg.worldName;
@@ -272,9 +338,33 @@ const handleEmbedMessage = (event: MessageEvent) => {
 };
 
 const initialize = () => {
+  loadPaneStorage(paneA);
+  loadPaneStorage(paneB);
   refreshPaneSrc(paneA);
   refreshPaneSrc(paneB);
 };
+
+const setPaneMode = (paneId: PaneId, mode: PaneMode) => {
+  const pane = getPaneById(paneId);
+  if (pane.mode === mode) return;
+  pane.mode = mode;
+  persistPaneStorage(pane);
+  refreshPaneSrc(pane);
+};
+
+const setPaneWebUrl = (paneId: PaneId, url: string) => {
+  const pane = getPaneById(paneId);
+  const normalized = normalizeUrl(url);
+  if (pane.webUrl === normalized) return;
+  pane.webUrl = normalized;
+  persistPaneStorage(pane);
+  if (pane.mode === 'web') {
+    refreshPaneSrc(pane);
+  }
+};
+
+const isPaneWebUrlInvalid = (pane: PaneState) => pane.mode === 'web' && !isHttpUrl(normalizeUrl(pane.webUrl));
+const canOperateChatPane = (paneId: PaneId) => getPaneById(paneId).mode === 'chat';
 
 const setActivePane = (paneId: PaneId) => {
   activePaneId.value = paneId;
@@ -284,6 +374,7 @@ const setWorldForTargetPane = (worldId: string) => {
   const normalized = typeof worldId === 'string' ? worldId.trim() : '';
   if (!normalized) return;
   const targetPaneId = effectiveTargetPaneId.value;
+  if (!canOperateChatPane(targetPaneId)) return;
   postToPane(targetPaneId, { type: 'sealchat.embed.setWorld', paneId: targetPaneId, worldId: normalized });
   setActivePane(targetPaneId);
   if (lockSameWorld.value) {
@@ -310,6 +401,7 @@ const openChannelInTargetPane = (channelId: string) => {
   const worldId = operationPane.value.worldId;
   if (!worldId) return;
   const targetPaneId = effectiveTargetPaneId.value;
+  if (!canOperateChatPane(targetPaneId)) return;
   postToPane(targetPaneId, { type: 'sealchat.embed.setWorld', paneId: targetPaneId, worldId, channelId });
   setActivePane(targetPaneId);
 
@@ -320,6 +412,7 @@ const openChannelInTargetPane = (channelId: string) => {
 };
 
 const swapPanes = () => {
+  if (!canOperateChatPane('A') || !canOperateChatPane('B')) return;
   const a = paneA.channelId;
   const aw = paneA.worldId;
   const b = paneB.channelId;
@@ -329,15 +422,18 @@ const swapPanes = () => {
 };
 
 const toggleSearch = () => {
+  if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel: 'search' });
 };
 
 const openAudioStudio = () => {
+  if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.openAudioStudio', paneId: activePaneId.value });
 };
 
 const openEmbedPanel = () => {
-  if (!activePane.value.channelId) return;
+  if (!activePaneHasChannel.value) return;
+  if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.openIFormDrawer', paneId: activePaneId.value });
 };
 
@@ -347,6 +443,7 @@ const toggleActionRibbon = () => {
 
 
 const setFilters = (filters: FilterState) => {
+  if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.setFilterState', paneId: activePaneId.value, filterState: filters });
 };
 
@@ -355,6 +452,7 @@ const clearFilters = () => {
 };
 
 const openPanel = (panel: string) => {
+  if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel });
 };
 
@@ -427,12 +525,12 @@ const collapsedWidth = computed(() => 0);
       <SplitHeader
         :sidebar-collapsed="computedCollapsed"
         :channel-title="activeChannelTitle"
-        :connect-state="activePane.connectState"
-        :online-members-count="activePane.onlineMembersCount"
-        :audio-studio-active="activePane.audioStudioDrawerVisible"
-        :search-active="activePane.searchPanelVisible"
-        :embed-panel-active="activePane.embedPanelActive"
-        :embed-panel-has-attention="activePane.embedPanelHasAttention"
+        :connect-state="activePaneConnectState"
+        :online-members-count="activePaneOnlineMembersCount"
+        :audio-studio-active="activePaneAudioStudioActive"
+        :search-active="activePaneSearchActive"
+        :embed-panel-active="activePaneEmbedPanelActive"
+        :embed-panel-has-attention="activePaneEmbedPanelHasAttention"
         :embed-panel-disabled="!activePaneHasChannel"
         :action-ribbon-active="actionRibbonVisible"
         @toggle-sidebar="isMobileViewport ? (drawerVisible = !drawerVisible) : (sidebarCollapsed = !sidebarCollapsed)"
@@ -463,6 +561,9 @@ const collapsedWidth = computed(() => 0);
           :notify-owner-pane-id="notifyOwnerPaneId"
           :operation-target="operationTarget"
           :world-name="operationPane.worldName"
+          :web-target-pane-id="webTargetPaneId"
+          :pane-modes="{ A: paneA.mode, B: paneB.mode }"
+          :pane-web-urls="{ A: paneA.webUrl, B: paneB.webUrl }"
           :channel-tree="operationPane.channelTree"
           @set-active-pane="setActivePane"
           @set-operation-target="operationTarget = $event"
@@ -470,6 +571,9 @@ const collapsedWidth = computed(() => 0);
           @toggle-lock-same-world="toggleLockSameWorld"
           @set-notify-owner="setNotifyOwner"
           @open-channel="openChannelInTargetPane"
+          @set-web-target="webTargetPaneId = $event"
+          @set-pane-mode="setPaneMode"
+          @set-pane-url="setPaneWebUrl"
           @swap-panes="swapPanes"
           @exit-split="exitSplit"
         />
@@ -514,7 +618,19 @@ const collapsedWidth = computed(() => 0);
             }"
           >
             <div class="sc-split-pane" :style="{ width: `${splitRatio * 100}%` }">
-              <iframe :id="`sc-split-iframe-A`" :key="paneA.iframeKey" class="sc-split-iframe" :src="paneA.src" />
+              <div class="sc-split-pane__frame">
+                <iframe
+                  :id="`sc-split-iframe-A`"
+                  :key="paneA.iframeKey"
+                  class="sc-split-iframe"
+                  :src="paneA.src"
+                  frameborder="0"
+                />
+                <div v-if="isPaneWebUrlInvalid(paneA)" class="sc-split-web-placeholder">
+                  <div class="sc-split-web-placeholder__title">请输入 http/https 网址</div>
+                  <div class="sc-split-web-placeholder__desc">部分站点禁止 iframe 嵌入，会显示空白。</div>
+                </div>
+              </div>
             </div>
 
             <div
@@ -529,7 +645,19 @@ const collapsedWidth = computed(() => 0);
             />
 
             <div class="sc-split-pane" :style="{ width: `${(1 - splitRatio) * 100}%` }">
-              <iframe :id="`sc-split-iframe-B`" :key="paneB.iframeKey" class="sc-split-iframe" :src="paneB.src" />
+              <div class="sc-split-pane__frame">
+                <iframe
+                  :id="`sc-split-iframe-B`"
+                  :key="paneB.iframeKey"
+                  class="sc-split-iframe"
+                  :src="paneB.src"
+                  frameborder="0"
+                />
+                <div v-if="isPaneWebUrlInvalid(paneB)" class="sc-split-web-placeholder">
+                  <div class="sc-split-web-placeholder__title">请输入 http/https 网址</div>
+                  <div class="sc-split-web-placeholder__desc">部分站点禁止 iframe 嵌入，会显示空白。</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -549,6 +677,9 @@ const collapsedWidth = computed(() => 0);
               :notify-owner-pane-id="notifyOwnerPaneId"
               :operation-target="operationTarget"
               :world-name="operationPane.worldName"
+              :web-target-pane-id="webTargetPaneId"
+              :pane-modes="{ A: paneA.mode, B: paneB.mode }"
+              :pane-web-urls="{ A: paneA.webUrl, B: paneB.webUrl }"
               :channel-tree="operationPane.channelTree"
               @set-active-pane="setActivePane"
               @set-operation-target="operationTarget = $event"
@@ -556,6 +687,9 @@ const collapsedWidth = computed(() => 0);
               @toggle-lock-same-world="toggleLockSameWorld"
               @set-notify-owner="setNotifyOwner"
               @open-channel="(id) => { openChannelInTargetPane(id); drawerVisible = false; }"
+              @set-web-target="webTargetPaneId = $event"
+              @set-pane-mode="setPaneMode"
+              @set-pane-url="setPaneWebUrl"
               @swap-panes="swapPanes"
               @exit-split="exitSplit"
             />
@@ -587,6 +721,14 @@ const collapsedWidth = computed(() => 0);
   min-width: 0;
   min-height: 0;
   flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.sc-split-pane__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .sc-split-divider {
@@ -621,7 +763,31 @@ const collapsedWidth = computed(() => 0);
   width: 100%;
   height: 100%;
   min-height: 0;
+  display: block;
   background: var(--sc-bg-surface);
+}
+
+.sc-split-web-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--sc-text-secondary);
+  background: var(--sc-bg-surface);
+}
+
+.sc-split-web-placeholder__title {
+  font-weight: 600;
+  color: var(--sc-text-primary);
+}
+
+.sc-split-web-placeholder__desc {
+  font-size: 12px;
 }
 
 .sc-split-panes.is-dragging .sc-split-iframe {
