@@ -6041,8 +6041,12 @@ const handleRichImageInsert = async (files: File[]) => {
       draftRecord.status = 'uploaded';
       draftRecord.error = '';
 
-      // 更新编辑器中的图片 URL（使用 id: 协议）
-      const finalUrl = `id:${result.attachmentId}`;
+      // 更新编辑器中的图片 URL（转换为实际 API URL）
+      let finalUrl = result.attachmentId;
+      if (finalUrl.startsWith('id:')) {
+        const attachmentId = finalUrl.slice(3);
+        finalUrl = `${urlBase}/api/v1/attachment/${attachmentId}`;
+      }
       const { state } = editor;
       const { doc } = state;
 
