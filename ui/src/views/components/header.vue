@@ -141,8 +141,7 @@ const handleSelect = async (key: string | number) => {
         onPositiveClick: () => {
           user.logout();
           chat.subject?.unsubscribe();
-          window.location.reload();
-          // router.push({ name: 'user-signin' });
+          router.replace({ name: 'user-signin' });
         },
         onNegativeClick: () => {
         }

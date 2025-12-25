@@ -109,7 +109,7 @@ const handleSelect = async (key: string | number) => {
         negativeText: t('dialogLogOut.negativeText'),
         onPositiveClick: () => {
           user.logout();
-          window.location.reload();
+          router.replace({ name: 'user-signin' });
         },
       });
       break;

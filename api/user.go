@@ -156,11 +156,11 @@ func UserSignin(c *fiber.Ctx) error {
 		})
 	}
 
-	username := requestBody.Username
+	account := strings.TrimSpace(requestBody.Username)
 	password := requestBody.Password
-	if username == "" || password == "" {
+	if account == "" || password == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
-			"message": "用户名或密码不能为空",
+			"message": "账号或密码不能为空",
 		})
 	}
 
@@ -176,7 +176,7 @@ func UserSignin(c *fiber.Ctx) error {
 		})
 	}
 
-	user, err := model.UserAuthenticate(username, password)
+	user, err := model.UserAuthenticateByAccount(account, password)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
