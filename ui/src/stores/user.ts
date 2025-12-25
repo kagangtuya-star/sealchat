@@ -165,6 +165,8 @@ export const useUserStore = defineStore({
         if (statusCode === 401 || statusCode === 403) {
           this.info.id = '';
           localStorage.removeItem('accessToken');
+          Cookies.remove('Authorization');
+          Cookies.remove('accessToken');
           this._accessToken = '';
         }
         this.lastCheckTime = 0;
@@ -204,9 +206,12 @@ export const useUserStore = defineStore({
     logout() {
       // 将 accessToken 从 localStorage 中删除
       localStorage.removeItem('accessToken')
+      Cookies.remove('Authorization');
+      Cookies.remove('accessToken');
       this.info.id = ''
       // 更新 state 中的 accessToken
       this._accessToken = ''
+      this.lastCheckTime = 0
     },
 
     async emojiAdd(attachmentId: string, remark?: string) {

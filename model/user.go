@@ -146,20 +146,63 @@ func UserUpdatePassword(userID string, newPassword string) error {
 	return nil
 }
 
-// 登录认证
+var (
+	ErrInvalidCredentials = errors.New("账号或密码错误")
+	ErrNicknameNotUnique  = errors.New("昵称不唯一，请使用用户名")
+)
+
+func verifyUserPassword(user *UserModel, password string) error {
+	hashedPassword, err := hashPassword(password, user.Salt)
+	if err != nil {
+		return err
+	}
+	if hashedPassword != user.Password {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
+// 登录认证（仅用户名）
 func UserAuthenticate(username, password string) (*UserModel, error) {
 	var user UserModel
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidCredentials
+		}
 		return nil, err
 	}
-	hashedPassword, err := hashPassword(password, user.Salt)
-	if err != nil {
+	if err := verifyUserPassword(&user, password); err != nil {
 		return nil, err
-	}
-	if hashedPassword != user.Password {
-		return nil, errors.New("密码错误")
 	}
 	return &user, nil
+}
+
+// 登录认证（用户名或昵称）
+func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
+	var user UserModel
+	if err := db.Where("username = ?", account).First(&user).Error; err == nil {
+		if err := verifyUserPassword(&user, password); err != nil {
+			return nil, err
+		}
+		return &user, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var users []UserModel
+	if err := db.Where("nickname = ?", account).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	if len(users) == 0 {
+		return nil, ErrInvalidCredentials
+	}
+	if len(users) > 1 {
+		return nil, ErrNicknameNotUnique
+	}
+	if err := verifyUserPassword(&users[0], password); err != nil {
+		return nil, err
+	}
+	return &users[0], nil
 }
 
 func AcessTokenDeleteAllByUserID(userID string) error {

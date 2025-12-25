@@ -45,3 +45,6 @@ static/
 .fastembed_cache
 /.gopath
 !bin/win-x64/*.exe
+/sealchat-data
+.ace-tool/
+/.claude
