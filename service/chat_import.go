@@ -281,11 +281,16 @@ func resolveImportIdentities(channelID string, userID string, entries []*model.P
 
 		var templateIdentity *model.ChannelIdentityModel
 		if mappingConfig != nil && mappingConfig.ReuseIdentityID != "" {
-			// 复用已有身份时仅用作模板，需要在目标频道创建新的身份
 			templateIdentity, err = model.ChannelIdentityGetByID(mappingConfig.ReuseIdentityID)
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, err
 			}
+		}
+
+		if templateIdentity != nil && templateIdentity.ChannelID == channelID {
+			// 目标频道已存在该身份，直接复用，不再新建
+			identityMap[roleName] = templateIdentity
+			continue
 		}
 
 		// 创建新身份
