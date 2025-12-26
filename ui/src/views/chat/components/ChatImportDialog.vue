@@ -81,7 +81,7 @@ const loading = ref(false)
 const templates = ref<Template[]>([])
 const previewResult = ref<PreviewResponse | null>(null)
 const worldMembers = ref<WorldMember[]>([])
-const reusableIdentities = ref<Record<string, ReusableIdentity[]>>({}) // userId => identities
+const reusableIdentities = ref<Record<string, ReusableIdentity[]>>({}) // cacheKey => identities
 
 const form = reactive({
   content: '',
@@ -133,6 +133,23 @@ const channelFilterOptions = computed(() => {
     }))
 })
 
+const channelLabelById = computed(() => {
+  const worldId = currentWorldId.value
+  const worldTree =
+    (worldId && chat.channelTreeByWorld?.[worldId]) ||
+    chat.channelTree ||
+    []
+  const channels = flattenChannels(worldTree as SChannel[])
+  const result: Record<string, string> = {}
+  for (const channel of channels) {
+    if (!channel?.id || channel.isPrivate) {
+      continue
+    }
+    result[channel.id] = getChannelLabel(channel)
+  }
+  return result
+})
+
 watch(channelFilterOptions, (options) => {
   const validIds = new Set(options.map(option => option.value))
   const filtered = selectedChannelFilters.value.filter(id => validIds.has(id))
@@ -143,6 +160,7 @@ watch(channelFilterOptions, (options) => {
 
 watch(currentWorldId, () => {
   selectedChannelFilters.value = []
+  reusableIdentities.value = {}
 })
 
 const clearChannelFilters = () => {
@@ -185,20 +203,77 @@ const loadWorldMembers = async () => {
   }
 }
 
+const normalizeChannelIds = (channelIds?: string[]) => {
+  if (!channelIds || channelIds.length === 0) return []
+  return Array.from(new Set(channelIds.filter(Boolean))).sort()
+}
+
+const resolveIncludeCurrent = (channelIds: string[], includeCurrent?: boolean) => {
+  if (includeCurrent !== undefined) return includeCurrent
+  if (!props.channelId) return false
+  if (channelIds.length === 0) return true
+  return channelIds.includes(props.channelId)
+}
+
+const buildIdentityCacheKey = (userId: string, channelIds: string[], includeCurrent: boolean) => {
+  const worldKey = currentWorldId.value || 'unknown-world'
+  const channelKey = props.channelId || 'unknown-channel'
+  const channelKeyPart = channelIds.length ? channelIds.join(',') : 'all'
+  const includeKey = includeCurrent ? 'inc' : 'exc'
+  return `${worldKey}::${channelKey}::${userId}::${channelKeyPart}::${includeKey}`
+}
+
+const getReusableIdentitiesFor = (
+  userId: string,
+  options?: { channelIds?: string[]; includeCurrent?: boolean }
+) => {
+  const channelIds = normalizeChannelIds(options?.channelIds ?? selectedChannelFilters.value)
+  const includeCurrent = resolveIncludeCurrent(channelIds, options?.includeCurrent)
+  const cacheKey = buildIdentityCacheKey(userId, channelIds, includeCurrent)
+  return reusableIdentities.value[cacheKey] || []
+}
+
+const hasIdentityCache = (cacheKey: string) =>
+  Object.prototype.hasOwnProperty.call(reusableIdentities.value, cacheKey)
+
 // 加载指定用户的可复用身份
-const loadReusableIdentities = async (userId: string) => {
+const loadReusableIdentities = async (
+  userId: string,
+  options?: { channelIds?: string[]; includeCurrent?: boolean; visibleOnly?: boolean }
+) => {
   if (!props.channelId || !userId) return
-  if (reusableIdentities.value[userId]) return // 已加载
+  const channelIds = normalizeChannelIds(options?.channelIds ?? selectedChannelFilters.value)
+  const includeCurrent = resolveIncludeCurrent(channelIds, options?.includeCurrent)
+  const cacheKey = buildIdentityCacheKey(userId, channelIds, includeCurrent)
+  if (hasIdentityCache(cacheKey)) return
   try {
+    const params: Record<string, string | boolean> = {
+      userId,
+      includeCurrent,
+      visibleOnly: options?.visibleOnly ?? true,
+    }
+    if (channelIds.length) {
+      params.channelIds = channelIds.join(',')
+    }
     const res = await api.get<{ identities: ReusableIdentity[] }>(
       `/api/v1/channels/${props.channelId}/import/reusable-identities`,
-      { params: { userId } }
+      { params }
     )
-    reusableIdentities.value[userId] = res.data.identities || []
+    reusableIdentities.value[cacheKey] = res.data.identities || []
   } catch (e) {
     console.error('加载可复用身份失败:', e)
   }
 }
+
+watch(selectedChannelFilters, async () => {
+  const userIds = new Set<string>()
+  for (const mapping of Object.values(form.roleMapping)) {
+    if (mapping.bindToUserId) {
+      userIds.add(mapping.bindToUserId)
+    }
+  }
+  await Promise.all(Array.from(userIds).map(userId => loadReusableIdentities(userId)))
+})
 
 // 世界成员选项
 const memberOptions = computed(() => {
@@ -226,28 +301,31 @@ const matchIdentityFilter = (identity?: ReusableIdentity) => {
 
 // 获取指定用户的可复用身份选项
 const getIdentityOptions = (userId: string) => {
-  const identities = reusableIdentities.value[userId] || []
+  const identities = getReusableIdentitiesFor(userId)
   const filteredIdentities = selectedChannelFilters.value.length
     ? identities.filter(matchIdentityFilter)
     : identities
   return [
     { label: '创建新身份', value: '' },
-    ...filteredIdentities.map(i => ({
-      label: i.displayName || '未命名',
-      value: i.id,
-    }))
+    ...filteredIdentities.map(i => {
+      const displayName = i.displayName || '未命名'
+      const channelLabel = i.channelId ? (channelLabelById.value[i.channelId] || '未知频道') : ''
+      return {
+        label: channelLabel ? `${displayName} (${channelLabel})` : displayName,
+        value: i.id,
+      }
+    })
   ]
 }
 
 const isIdentityFilteredOut = (userId: string) => {
   if (!selectedChannelFilters.value.length) return false
-  const identities = reusableIdentities.value[userId] || []
-  if (!identities.length) return false
-  return !identities.some(matchIdentityFilter)
-}
-
-const hasIdentityCandidates = (userId: string) => {
-  return (reusableIdentities.value[userId] || []).length > 0
+  const channelIds = normalizeChannelIds(selectedChannelFilters.value)
+  const includeCurrent = resolveIncludeCurrent(channelIds)
+  const cacheKey = buildIdentityCacheKey(userId, channelIds, includeCurrent)
+  if (!hasIdentityCache(cacheKey)) return false
+  const identities = reusableIdentities.value[cacheKey] || []
+  return identities.length === 0
 }
 
 // 当用户变化时加载其可复用身份
@@ -268,7 +346,7 @@ const onIdentityChange = (role: string, identityId: string) => {
   
   // 查找选中的身份
   const userId = form.roleMapping[role].bindToUserId
-  const identities = reusableIdentities.value[userId] || []
+  const identities = getReusableIdentitiesFor(userId)
   const selectedIdentity = identities.find(i => i.id === identityId)
   
   if (selectedIdentity) {
@@ -520,8 +598,14 @@ const importConfig = async (e: Event) => {
 
           // 验证 reuseIdentityId（需要先加载该用户的可复用身份）
           if (mapping.reuseIdentityId && mapping.bindToUserId) {
-            await loadReusableIdentities(mapping.bindToUserId)
-            const identities = reusableIdentities.value[mapping.bindToUserId] || []
+            await loadReusableIdentities(mapping.bindToUserId, {
+              channelIds: [],
+              includeCurrent: true,
+            })
+            const identities = getReusableIdentitiesFor(mapping.bindToUserId, {
+              channelIds: [],
+              includeCurrent: true,
+            })
             const validIdentityIds = new Set(identities.map(i => i.id))
             if (!validIdentityIds.has(mapping.reuseIdentityId)) {
               warnings.push(`角色 "${roleName}" 的复用身份不存在，已重置`)
@@ -721,10 +805,7 @@ const importConfig = async (e: Event) => {
                 @update:value="onUserChange(role, $event)"
               />
             </n-form-item>
-            <n-form-item
-              v-if="hasIdentityCandidates(form.roleMapping[role].bindToUserId)"
-              label="复用身份"
-            >
+            <n-form-item label="复用身份">
               <n-select
                 v-model:value="form.roleMapping[role].reuseIdentityId"
                 :options="getIdentityOptions(form.roleMapping[role].bindToUserId)"

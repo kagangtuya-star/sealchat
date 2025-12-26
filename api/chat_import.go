@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -145,12 +147,36 @@ func ChatImportReusableIdentities(c *fiber.Ctx) error {
 	// 可以指定用户ID（用于查询其他成员的身份）
 	targetUserID := c.Query("userId", u.ID)
 
+	channelIDs := []string{}
+	if raw := strings.TrimSpace(c.Query("channelIds")); raw != "" {
+		for _, id := range strings.Split(raw, ",") {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				channelIDs = append(channelIDs, id)
+			}
+		}
+	}
+
+	includeCurrent := false
+	if raw := c.Query("includeCurrent"); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			includeCurrent = parsed
+		}
+	}
+
+	visibleOnly := true
+	if raw := c.Query("visibleOnly"); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			visibleOnly = parsed
+		}
+	}
+
 	// 验证权限：必须是世界管理员才能查看其他成员的身份
 	if targetUserID != u.ID && !service.IsWorldAdmin(channel.WorldID, u.ID) {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限查看其他成员身份"})
 	}
 
-	identities, err := service.ListReusableIdentities(channel.WorldID, channelID, targetUserID)
+	identities, err := service.ListReusableIdentities(channel.WorldID, channelID, targetUserID, channelIDs, includeCurrent, visibleOnly)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "查询身份失败: " + err.Error()})
 	}

@@ -464,11 +464,30 @@ func GetChatImportJobStatus(jobID string) (*ChatImportJobProgress, error) {
 	}, nil
 }
 
-// ListReusableIdentities 获取用户在当前世界其他频道的可复用身份
-func ListReusableIdentities(worldID, currentChannelID, userID string) ([]*model.ChannelIdentityModel, error) {
-	// 获取世界内所有频道
+// ListReusableIdentities 获取用户在当前世界可复用身份
+func ListReusableIdentities(worldID, currentChannelID, userID string, channelIDs []string, includeCurrent bool, visibleOnly bool) ([]*model.ChannelIdentityModel, error) {
+	channelIDSet := make(map[string]struct{})
+	for _, id := range channelIDs {
+		if id == "" {
+			continue
+		}
+		channelIDSet[id] = struct{}{}
+	}
+
+	// 获取世界内频道（默认排除私密频道）
 	var channels []*model.ChannelModel
-	if err := model.GetDB().Where("world_id = ? AND id != ?", worldID, currentChannelID).Find(&channels).Error; err != nil {
+	db := model.GetDB().Where("world_id = ? AND is_private = ?", worldID, false)
+	if len(channelIDSet) > 0 {
+		ids := make([]string, 0, len(channelIDSet))
+		for id := range channelIDSet {
+			ids = append(ids, id)
+		}
+		db = db.Where("id IN ?", ids)
+	}
+	if !includeCurrent {
+		db = db.Where("id != ?", currentChannelID)
+	}
+	if err := db.Find(&channels).Error; err != nil {
 		return nil, err
 	}
 
@@ -477,16 +496,20 @@ func ListReusableIdentities(worldID, currentChannelID, userID string) ([]*model.
 	}
 
 	// 获取频道ID列表
-	channelIDs := make([]string, len(channels))
+	filteredChannelIDs := make([]string, len(channels))
 	for i, ch := range channels {
-		channelIDs[i] = ch.ID
+		filteredChannelIDs[i] = ch.ID
 	}
 
 	// 查询用户在这些频道的身份
+	query := model.GetDB().Where("user_id = ? AND channel_id IN ?", userID, filteredChannelIDs).
+		Order("updated_at DESC")
+	if visibleOnly {
+		query = query.Where("is_hidden = ? OR is_hidden IS NULL", false)
+	}
+
 	var identities []*model.ChannelIdentityModel
-	if err := model.GetDB().Where("user_id = ? AND channel_id IN ?", userID, channelIDs).
-		Order("updated_at DESC").
-		Find(&identities).Error; err != nil {
+	if err := query.Find(&identities).Error; err != nil {
 		return nil, err
 	}
 
