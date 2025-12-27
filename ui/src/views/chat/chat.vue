@@ -4005,7 +4005,8 @@ if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
 }
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
-let typingPreviewOrderSeq = 0;
+let typingPreviewOrderSeq = Date.now();
+const previewOrderMin = 1e-6;
 const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
 const selfPreviewOrderModified = ref(false);
 const resetSelfPreviewOrder = () => {
@@ -4031,7 +4032,7 @@ const getPreviewOrderValue = (item?: TypingPreviewItem | null) => {
     return null;
   }
   const value = typeof item.orderKey === 'number' ? item.orderKey : Number.NaN;
-  return Number.isFinite(value) ? value : null;
+  return Number.isFinite(value) && value > 0 ? value : null;
 };
 const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallback: number) => {
   const prevOrder = getPreviewOrderValue(list[index - 1]);
@@ -4043,7 +4044,7 @@ const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallb
     return prevOrder + 1;
   }
   if (nextOrder !== null) {
-    return nextOrder - 1;
+    return nextOrder > 1 ? nextOrder - 1 : nextOrder / 2;
   }
   return fallback;
 };
@@ -4081,13 +4082,14 @@ const updateSelfPreviewOrderKey = (orderKey: number | null, markModified = false
   if (orderKey === null || !Number.isFinite(orderKey)) {
     return;
   }
-  selfPreviewOrderKey.value = orderKey;
+  const normalized = orderKey > 0 ? orderKey : previewOrderMin;
+  selfPreviewOrderKey.value = normalized;
   if (markModified) {
     selfPreviewOrderModified.value = true;
   }
   typingPreviewList.value = typingPreviewList.value.map((item) => {
     if (item.userId === selfPreviewUserId.value && item.mode === 'typing') {
-      return { ...item, orderKey };
+      return { ...item, orderKey: normalized };
     }
     return item;
   });
@@ -4234,10 +4236,15 @@ const onPreviewDragPointerCancel = (event: PointerEvent) => {
 };
 const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
   const existing = typingPreviewList.value.find((item) => item.userId === userId && item.mode === mode);
-  if (existing) {
+  if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
     return existing.orderKey;
   }
-  return typingPreviewOrderSeq++;
+  if (!Number.isFinite(typingPreviewOrderSeq) || typingPreviewOrderSeq <= 0) {
+    typingPreviewOrderSeq = Date.now();
+  }
+  const next = Math.max(typingPreviewOrderSeq, previewOrderMin);
+  typingPreviewOrderSeq += 1;
+  return next;
 };
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
 	'typing-preview-item',
@@ -4321,21 +4328,7 @@ const typingPreviewItems = computed(() =>
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
 );
-const resolveDisplayOrderForSend = () => {
-	if (!selfPreviewOrderModified.value) {
-		return null;
-	}
-	const previews = typingPreviewItems.value;
-	if (!previews.length) {
-		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
-	}
-	const index = previews.findIndex((item) => item.userId === selfPreviewUserId.value);
-	if (index < 0) {
-		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
-	}
-	const fallback = Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : Date.now();
-	return derivePreviewOrderValue(previews, index, fallback);
-};
+ 
 const resolveSelfPreviewDisplayName = () => {
   const identity = activeIdentityForPreview.value;
   if (identity?.displayName) {
@@ -4406,16 +4399,16 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
   let orderKey: number;
   if (isSelfPreview) {
     const existing = typingPreviewList.value.find((preview) => preview.userId === item.userId && preview.mode === item.mode);
-    if (existing && Number.isFinite(existing.orderKey)) {
+    if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
       orderKey = existing.orderKey;
-    } else if (Number.isFinite(selfPreviewOrderKey.value)) {
+    } else if (Number.isFinite(selfPreviewOrderKey.value) && selfPreviewOrderKey.value > 0) {
       orderKey = selfPreviewOrderKey.value;
     } else {
       orderKey = Number.MAX_SAFE_INTEGER;
     }
 		selfPreviewOrderKey.value = orderKey;
 	} else {
-		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey)) {
+		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey) && item.orderKey > 0) {
 			orderKey = item.orderKey;
 		} else {
 			orderKey = getTypingOrderKey(item.userId, item.mode);
@@ -4441,7 +4434,7 @@ const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typi
 
 const resetTypingPreview = () => {
 	typingPreviewList.value = [];
-	typingPreviewOrderSeq = 0;
+	typingPreviewOrderSeq = Date.now();
 	resetSelfPreviewOrder();
 	typingPreviewRowRefs.clear();
 };
@@ -6215,7 +6208,6 @@ const send = throttle(async () => {
   appendHistoryEntry(sendMode, draft);
 
 	const replyTo = chat.curReplyTo || undefined;
-	const pendingDisplayOrder = resolveDisplayOrderForSend();
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
@@ -6231,12 +6223,9 @@ const send = throttle(async () => {
 		updatedAt: now,
 		content: draft,
     user: user.info,
-    member: chat.curMember || undefined,
-    quote: replyTo,
+		member: chat.curMember || undefined,
+		quote: replyTo,
 	};
-	if (typeof pendingDisplayOrder === 'number' && Number.isFinite(pendingDisplayOrder)) {
-		(tmpMsg as any).displayOrder = pendingDisplayOrder;
-	}
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
@@ -6288,7 +6277,6 @@ const send = throttle(async () => {
 			whisperTargetForSend?.id,
 			clientId,
 			identityIdOverride,
-			pendingDisplayOrder ?? undefined,
 		);
     if (!newMsg) {
       throw new Error('message.create returned empty result');
