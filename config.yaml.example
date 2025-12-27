@@ -92,3 +92,20 @@
       presignTTL: 900
       maxSizeMB: 64
       logLevel: warn
+
+# 邮件通知配置
+emailNotification:
+  enabled: false                # 是否启用邮件通知功能
+  checkIntervalSec: 60          # 检查未读消息的间隔（秒）
+  maxPerHour: 5                 # 每用户每小时最大推送次数
+  minDelayMinutes: 10           # 最小延迟时间（分钟）
+  maxDelayMinutes: 30           # 最大延迟时间（分钟）
+  smtp:
+    host: smtp.example.com      # SMTP 服务器地址
+    port: 587                   # SMTP 端口
+    username: your@email.com    # SMTP 用户名
+    password: ""                # 留空，改用环境变量 SEALCHAT_SMTP_PASSWORD
+    fromAddress: noreply@example.com  # 发件人地址
+    fromName: SealChat          # 发件人名称
+    useTLS: true                # 是否使用 TLS
+    skipVerify: false           # 是否跳过证书验证（不建议）

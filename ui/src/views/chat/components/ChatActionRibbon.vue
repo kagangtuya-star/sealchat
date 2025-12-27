@@ -15,6 +15,7 @@ import {
   Users as UsersIcon,
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
+import { MailOutline } from '@vicons/ionicons5'
 
 interface FilterState {
   icOnly: boolean
@@ -46,6 +47,8 @@ interface Props {
   stickyNoteActive?: boolean
   webhookEnabled?: boolean
   webhookActive?: boolean
+  emailNotificationEnabled?: boolean
+  emailNotificationActive?: boolean
 }
 
 interface Emits {
@@ -61,6 +64,7 @@ interface Emits {
   (e: 'open-split'): void
   (e: 'toggle-sticky-note'): void
   (e: 'open-webhook'): void
+  (e: 'open-email-notification'): void
   (e: 'clear-filters'): void
 }
 
@@ -114,6 +118,11 @@ const allActionButtons = computed<ActionButton[]>(() => {
   // Webhook 授权管理入口（通常在分屏模式下启用）
   if (props.webhookEnabled) {
     buttons.push({ key: 'webhook', label: 'Webhook', icon: LinkIcon, emitEvent: 'open-webhook', activeKey: 'webhookActive' })
+  }
+
+  // 邮件提醒入口（Webhook 下方）
+  if (props.emailNotificationEnabled !== false) {
+    buttons.push({ key: 'email-notification', label: '邮件提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
   }
   
   return buttons
@@ -257,7 +266,7 @@ onBeforeUnmount(() => {
 
 // Re-calculate when canImport changes (button list changes)
 watch(
-  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled],
+  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled, props.emailNotificationEnabled],
   () => {
     nextTick(calculateVisibleCount)
   }

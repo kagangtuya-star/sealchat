@@ -77,6 +77,7 @@ import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
+import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -313,6 +314,7 @@ watch(
 const spectatorInputDisabled = computed(() => !channelSendAllowed.value);
 const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
+const emailNotificationDrawerVisible = ref(false);
 let webhookPermissionSeq = 0;
 
 watch(
@@ -7894,6 +7896,8 @@ onBeforeUnmount(() => {
         :sticky-note-active="stickyNoteStore.uiVisible"
         :webhook-enabled="webhookManageAllowed"
         :webhook-active="webhookDrawerVisible"
+        :email-notification-enabled="true"
+        :email-notification-active="emailNotificationDrawerVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -7906,6 +7910,7 @@ onBeforeUnmount(() => {
         @open-split="openSplitView"
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
+        @open-email-notification="emailNotificationDrawerVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -7914,6 +7919,13 @@ onBeforeUnmount(() => {
       <n-drawer-content closable>
         <template #header>Webhook 授权</template>
         <WebhookIntegrationManager :channel-id="chat.curChannel?.id || ''" />
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
+      <n-drawer-content closable>
+        <template #header>邮件提醒</template>
+        <EmailNotificationManager :channel-id="chat.curChannel?.id || ''" />
       </n-drawer-content>
     </n-drawer>
 

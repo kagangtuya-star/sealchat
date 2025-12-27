@@ -120,28 +120,51 @@ type S3StorageConfig struct {
 	LogLevel           string `json:"logLevel" yaml:"logLevel"`
 }
 
+// SMTPConfig SMTP 邮件服务配置
+type SMTPConfig struct {
+	Host        string `json:"host" yaml:"host"`
+	Port        int    `json:"port" yaml:"port"`
+	Username    string `json:"username" yaml:"username"`
+	Password    string `json:"-" yaml:"password"` // 禁止通过 JSON 输出
+	FromAddress string `json:"fromAddress" yaml:"fromAddress"`
+	FromName    string `json:"fromName" yaml:"fromName"`
+	UseTLS      bool   `json:"useTLS" yaml:"useTLS"`
+	SkipVerify  bool   `json:"skipVerify" yaml:"skipVerify"`
+}
+
+// EmailNotificationConfig 邮件通知功能配置
+type EmailNotificationConfig struct {
+	Enabled          bool       `json:"enabled" yaml:"enabled"`
+	CheckIntervalSec int        `json:"-" yaml:"checkIntervalSec"` // 禁止前端获取
+	MaxPerHour       int        `json:"-" yaml:"maxPerHour"`       // 禁止前端获取
+	MinDelayMinutes  int        `json:"minDelayMinutes" yaml:"minDelayMinutes"`
+	MaxDelayMinutes  int        `json:"maxDelayMinutes" yaml:"maxDelayMinutes"`
+	SMTP             SMTPConfig `json:"-" yaml:"smtp"` // 禁止前端获取
+}
+
 type AppConfig struct {
-	ServeAt                   string          `json:"serveAt" yaml:"serveAt"`
-	Domain                    string          `json:"domain" yaml:"domain"`
-	ImageBaseURL              string          `json:"imageBaseUrl" yaml:"imageBaseUrl"`
-	RegisterOpen              bool            `json:"registerOpen" yaml:"registerOpen"`
-	WebUrl                    string          `json:"webUrl" yaml:"webUrl"`
-	PageTitle                 string          `json:"pageTitle" yaml:"pageTitle"`
-	ChatHistoryPersistentDays int64           `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
-	ImageSizeLimit            int64           `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
-	ImageCompress             bool            `json:"imageCompress" yaml:"imageCompress"`
-	ImageCompressQuality      int             `json:"imageCompressQuality" yaml:"imageCompressQuality"`
-	KeywordMaxLength          int64           `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
-	DSN                       string          `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
-	BuiltInSealBotEnable      bool            `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
-	Version                   int             `json:"version" yaml:"version"`
-	GalleryQuotaMB            int64           `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
-	LogUpload                 LogUploadConfig `json:"logUpload" yaml:"logUpload"`
-	Audio                     AudioConfig     `json:"audio" yaml:"audio"`
-	Export                    ExportConfig    `json:"export" yaml:"export"`
-	Storage                   StorageConfig   `json:"storage" yaml:"storage"`
-	SQLite                    SQLiteConfig    `json:"sqlite" yaml:"sqlite"`
-	Captcha                   CaptchaConfig   `json:"captcha" yaml:"captcha"`
+	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
+	Domain                    string                  `json:"domain" yaml:"domain"`
+	ImageBaseURL              string                  `json:"imageBaseUrl" yaml:"imageBaseUrl"`
+	RegisterOpen              bool                    `json:"registerOpen" yaml:"registerOpen"`
+	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
+	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
+	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
+	ImageSizeLimit            int64                   `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
+	ImageCompress             bool                    `json:"imageCompress" yaml:"imageCompress"`
+	ImageCompressQuality      int                     `json:"imageCompressQuality" yaml:"imageCompressQuality"`
+	KeywordMaxLength          int64                   `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
+	DSN                       string                  `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
+	BuiltInSealBotEnable      bool                    `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
+	Version                   int                     `json:"version" yaml:"version"`
+	GalleryQuotaMB            int64                   `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
+	LogUpload                 LogUploadConfig         `json:"logUpload" yaml:"logUpload"`
+	Audio                     AudioConfig             `json:"audio" yaml:"audio"`
+	Export                    ExportConfig            `json:"export" yaml:"export"`
+	Storage                   StorageConfig           `json:"storage" yaml:"storage"`
+	SQLite                    SQLiteConfig            `json:"sqlite" yaml:"sqlite"`
+	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
+	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
 }
 
 type ExportConfig struct {
@@ -253,6 +276,18 @@ func ReadConfig() *AppConfig {
 			Signup: CaptchaTargetConfig{Mode: CaptchaModeLocal},
 			Signin: CaptchaTargetConfig{Mode: CaptchaModeOff},
 		},
+		EmailNotification: EmailNotificationConfig{
+			Enabled:          false,
+			CheckIntervalSec: 60,
+			MaxPerHour:       5,
+			MinDelayMinutes:  10,
+			MaxDelayMinutes:  30,
+			SMTP: SMTPConfig{
+				Port:     587,
+				UseTLS:   true,
+				FromName: "SealChat",
+			},
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -305,6 +340,7 @@ func ReadConfig() *AppConfig {
 	applySQLiteDefaults(&config.SQLite)
 	applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
+	applyEmailNotificationDefaults(&config.EmailNotification)
 
 	k.Print()
 	currentConfig = &config
@@ -357,6 +393,37 @@ func applyExportDefaults(cfg *ExportConfig) {
 	}
 	if cfg.DownloadBurstKB < 0 {
 		cfg.DownloadBurstKB = 0
+	}
+}
+
+func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.CheckIntervalSec <= 0 {
+		cfg.CheckIntervalSec = 60
+	}
+	if cfg.MaxPerHour <= 0 {
+		cfg.MaxPerHour = 5
+	}
+	if cfg.MinDelayMinutes <= 0 {
+		cfg.MinDelayMinutes = 10
+	}
+	if cfg.MaxDelayMinutes <= 0 {
+		cfg.MaxDelayMinutes = 30
+	}
+	if cfg.MinDelayMinutes > cfg.MaxDelayMinutes {
+		cfg.MinDelayMinutes = cfg.MaxDelayMinutes
+	}
+	if cfg.SMTP.Port <= 0 {
+		cfg.SMTP.Port = 587
+	}
+	if strings.TrimSpace(cfg.SMTP.FromName) == "" {
+		cfg.SMTP.FromName = "SealChat"
+	}
+	// SMTP 密码支持环境变量覆盖
+	if pw := strings.TrimSpace(os.Getenv("SEALCHAT_SMTP_PASSWORD")); pw != "" {
+		cfg.SMTP.Password = pw
 	}
 }
 
@@ -491,6 +558,11 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("captcha.signin.mode", string(config.Captcha.Signin.Mode))
 		_ = k.Set("captcha.signin.turnstile.siteKey", config.Captcha.Signin.Turnstile.SiteKey)
 		_ = k.Set("captcha.signin.turnstile.secretKey", config.Captcha.Signin.Turnstile.SecretKey)
+
+		// 邮件通知配置
+		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)
+		_ = k.Set("emailNotification.minDelayMinutes", config.EmailNotification.MinDelayMinutes)
+		_ = k.Set("emailNotification.maxDelayMinutes", config.EmailNotification.MaxDelayMinutes)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

@@ -23,6 +23,7 @@ const model = ref<ServerConfig>({
   imageCompress: true,
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
+  emailNotification: { enabled: false },
 })
 
 const utils = useUtilsStore();
@@ -192,6 +193,25 @@ const formatBytes = (bytes: number) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
+
+// SMTP test state
+const smtpTestEmail = ref('')
+const smtpTestLoading = ref(false)
+const sendSmtpTestEmail = async () => {
+  if (!smtpTestEmail.value || !smtpTestEmail.value.includes('@')) {
+    message.error('请填写有效的邮箱地址')
+    return
+  }
+  smtpTestLoading.value = true
+  try {
+    const resp = await api.post('/api/v1/admin/email-test', { email: smtpTestEmail.value })
+    message.success(resp.data?.message || '测试邮件已发送')
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '发送失败')
+  } finally {
+    smtpTestLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -234,6 +254,15 @@ const formatBytes = (bytes: number) => {
       </n-form-item>
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
+      </n-form-item>
+      <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
+        <n-switch v-model:value="model.emailNotification.enabled" />
+      </n-form-item>
+      <n-form-item label="测试 SMTP" feedback="发送测试邮件以验证 SMTP 配置是否正确">
+        <div class="flex gap-2 items-center w-full">
+          <n-input v-model:value="smtpTestEmail" placeholder="输入测试邮箱" style="max-width: 240px;" />
+          <n-button :loading="smtpTestLoading" @click="sendSmtpTestEmail">发送测试</n-button>
+        </div>
       </n-form-item>
       <n-form-item label="术语最大字数" feedback="单条术语内容的最大字符数（100-10000）">
         <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />

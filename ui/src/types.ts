@@ -112,6 +112,11 @@ export interface ServerConfig {
   builtInSealBotEnable: boolean;
   logUpload?: LogUploadConfig;
   captcha?: CaptchaConfig;
+  emailNotification?: {
+    enabled: boolean;
+    minDelayMinutes?: number;
+    maxDelayMinutes?: number;
+  };
 }
 
 export interface UserInfo {

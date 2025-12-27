@@ -113,6 +113,15 @@ func main() {
 		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
 
+	// 启动未读消息邮件通知 Worker
+	if config.EmailNotification.Enabled {
+		service.StartUnreadNotificationWorker(service.UnreadNotificationWorkerConfig{
+			CheckIntervalSec: config.EmailNotification.CheckIntervalSec,
+			MaxPerHour:       config.EmailNotification.MaxPerHour,
+			SiteURL:          config.Domain,
+		}, config.EmailNotification.SMTP)
+	}
+
 	autoSave := func() {
 		t := time.NewTicker(3 * 60 * time.Second)
 		for {
