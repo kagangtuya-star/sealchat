@@ -69,6 +69,11 @@ const router = createRouter({
       path: '/status',
       name: 'status',
       component: StatusDashboard,
+    },
+    {
+      path: '/:worldId/:channelId?',
+      name: 'world-channel',
+      component: HomeView,
     }
   ]
 })
