@@ -45,6 +45,9 @@ const { data: roleList } = useRequest(async () => {
 
 const selectedRole = ref<string>();
 
+const perm = ref<{ [K in PermCheckKey]?: boolean }>({});
+const permStart = ref<{ [K in PermCheckKey]?: boolean }>({});
+
 const allChannelKeys = computed(() => {
   // 从权限树中递归提取所有的 modelName
   const allKeys = flatMap(permTable.value, function traverse(node): string[] {
@@ -83,10 +86,6 @@ watch(selectedRole, async (roleId) => {
   permStart.value = clone(m);
   perm.value = m;
 });
-
-
-const perm = ref<{ [K in PermCheckKey]?: boolean }>({});
-const permStart = ref<{ [K in PermCheckKey]?: boolean }>({});
 
 
 const permModified = computed(() => {
