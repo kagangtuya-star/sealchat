@@ -18,6 +18,10 @@ const chat = useChatStore();
 const userStore = useUserStore();
 const currentUserId = computed(() => userStore.info.id);
 
+interface WorldMemberItem extends UserInfo {
+  role?: string;
+}
+
 
 const props = defineProps({
   channel: {
@@ -102,7 +106,7 @@ const removeUserRole = async (userId: string | undefined, roleId: string) => {
 }
 
 
-const worldMembers = ref<UserInfo[]>([]);
+const worldMembers = ref<WorldMemberItem[]>([]);
 
 const loadWorldMembers = async () => {
   if (!props.channel?.worldId) {
@@ -117,7 +121,8 @@ const loadWorldMembers = async () => {
       username: item.username,
       nick: item.nickname,
       avatar: item.avatar,
-    })) as UserInfo[];
+      role: item.role,
+    })) as WorldMemberItem[];
   } catch (error) {
     console.error('加载世界成员失败:', error);
     message.error('加载世界成员失败');
@@ -188,6 +193,47 @@ const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst:
   }
 };
 
+const channelMemberRole = computed(() => roleList.value?.items?.find(role => role.id.endsWith('-member')));
+
+const eligibleWorldMembers = computed(() => {
+  return worldMembers.value.filter((member) => {
+    const role = member.role || 'member';
+    return role === 'owner' || role === 'admin' || role === 'member';
+  });
+});
+
+const addEligibleWorldMembers = async () => {
+  const role = channelMemberRole.value;
+  if (!role) {
+    message.error('未找到成员角色');
+    return;
+  }
+  const candidateIds = eligibleWorldMembers.value.map(member => member.id).filter(Boolean) as string[];
+  if (!candidateIds.length) {
+    message.info('没有可添加的成员');
+    return;
+  }
+  const existingIds = new Set(
+    filterMembersByChannelId(role.id).map(member => member.user?.id).filter(Boolean) as string[],
+  );
+  const toAdd = candidateIds.filter(id => !existingIds.has(id));
+  if (!toAdd.length) {
+    message.info('所有成员已在频道中');
+    return;
+  }
+  if (!(await dialogAskConfirm(dialog, '一键添加成员', `将添加 ${toAdd.length} 位成员到频道成员角色，是否继续？`))) {
+    return;
+  }
+  try {
+    await chat.userRoleLink(role.id, toAdd);
+    await doMemberReload();
+    message.success(`已添加 ${toAdd.length} 位成员`);
+  } catch (error) {
+    console.error('批量添加成员失败:', error);
+    message.error('批量添加成员失败，请确认你拥有权限');
+  }
+};
+
 const getFilteredMemberList = (lst?: UserRoleModel[]) => {
   const retLst = (lst ?? []).map(i => i.user).filter(i => i != undefined);
   return uniqBy(retLst, 'id') as any as UserInfo[]; // 部分版本中编译器对类型有误判
@@ -218,6 +264,18 @@ const canRemoveMember = (roleId: string, userId?: string) => {
         <span v-if="i.id.endsWith('-ob')">此角色能够看到所有的子频道</span>
         <span v-if="i.id.endsWith('-bot')">此角色能够在所有子频道中收发消息</span>
         <span v-if="i.id.endsWith('-spectator')">旁观者仅可查看频道内容，无法发送消息</span>
+      </div>
+
+      <div class="flex justify-end mb-2" v-if="i.id.endsWith('-member')">
+        <n-button
+          size="small"
+          secondary
+          class="member-quick-add-btn"
+          :disabled="eligibleWorldMembers.length === 0"
+          @click="addEligibleWorldMembers"
+        >
+          一键添加世界成员到此频道
+        </n-button>
       </div>
 
       <div class="flex flex-wrap space-x-2 ">
@@ -268,5 +326,21 @@ const canRemoveMember = (roleId: string, userId?: string) => {
 
 :root[data-display-palette='night'] .role-desc {
   color: #d4d4d8 !important;
+}
+
+.member-quick-add-btn {
+  --n-color: var(--n-card-color, var(--n-color, #f8fafc));
+  --n-color-hover: var(--n-color-hover, var(--n-color, #eef2f7));
+  --n-color-pressed: var(--n-color-pressed, var(--n-color, #e2e8f0));
+  --n-text-color: var(--n-text-color-2, var(--n-text-color, #1f2937));
+  --n-border: 1px solid var(--n-border-color, rgba(148, 163, 184, 0.4));
+}
+
+:root[data-display-palette='night'] .member-quick-add-btn {
+  --n-color: var(--n-card-color, rgba(30, 41, 59, 0.65));
+  --n-color-hover: var(--n-color-hover, rgba(51, 65, 85, 0.75));
+  --n-color-pressed: var(--n-color-pressed, rgba(51, 65, 85, 0.9));
+  --n-text-color: var(--n-text-color-2, #e2e8f0);
+  --n-border: 1px solid var(--n-border-color, rgba(148, 163, 184, 0.3));
 }
 </style>

@@ -3,11 +3,13 @@ import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { ChannelType, type SChannel } from '@/types';
 import { clone } from 'lodash-es';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import { onMounted, ref, watch, type PropType } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { chatEvent } from '@/stores/chat';
 
 const message = useMessage()
+const dialog = useDialog()
 const chat = useChatStore();
 const user = useUserStore();
 const { t } = useI18n()
@@ -45,6 +47,24 @@ const model = ref({
   parent_id: '',
 })
 
+const isWorldManager = async () => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  try {
+    const detail = chat.worldDetailMap?.[worldId] || await chat.worldDetail(worldId);
+    const role = detail?.memberRole;
+    return role === 'owner' || role === 'admin';
+  } catch (error) {
+    return false;
+  }
+};
+
+const openChannelSettings = async (channelId?: string) => {
+  if (!channelId) return;
+  await chat.channelSwitchTo(channelId);
+  chatEvent.emit('channel-member-settings-open');
+};
+
 const newChannel = async () => {
   if (!model.value.name.trim()) {
     message.error(t('dialoChannelgNew.channelNameHint'));
@@ -59,10 +79,25 @@ const newChannel = async () => {
     return false;
   }
   try {
-    await chat.channelCreate(model.value);
+    const resp = await chat.channelCreate(model.value);
+    const createdChannelId =
+      (resp as any)?.data?.channel?.id ||
+      (resp as any)?.channel?.id ||
+      (resp as any)?.id;
     await chat.channelList(chat.currentWorldId, true);
     show.value = false;
     message.success('频道创建成功');
+    if (await isWorldManager()) {
+      dialog.info({
+        title: '频道已创建',
+        content: '建议为新频道添加成员并设置权限，是否现在打开频道管理？',
+        positiveText: '打开管理',
+        negativeText: '稍后',
+        onPositiveClick: async () => {
+          await openChannelSettings(createdChannelId);
+        },
+      });
+    }
   } catch (err: any) {
     message.error(err?.message || err?.response?.err || '创建频道失败');
     return false;
