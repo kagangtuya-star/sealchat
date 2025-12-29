@@ -1,4 +1,5 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
+import { createImageTokenRegex, isValidAttachmentToken } from '@/utils/attachmentMarkdown'
 
 interface TooltipContent {
   title: string
@@ -430,12 +431,6 @@ export function createKeywordTooltip(
       const paragraphs = data.description.split(/\r?\n|\r/)
       const shouldIndent = paragraphs.length > 1 && textIndent > 0
 
-      // Debug logging
-      console.debug('[KeywordTooltip] description length:', data.description.length)
-      console.debug('[KeywordTooltip] paragraphs count:', paragraphs.length)
-      console.debug('[KeywordTooltip] textIndent:', textIndent)
-      console.debug('[KeywordTooltip] shouldIndent:', shouldIndent)
-
       if (shouldIndent) {
         body.classList.add('keyword-tooltip__body--indented')
         body.style.setProperty('--keyword-tooltip-text-indent', `${textIndent}em`)
@@ -452,20 +447,13 @@ export function createKeywordTooltip(
           const p = document.createElement('p')
           p.className = 'keyword-tooltip__paragraph'
 
-          if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
-            p.innerHTML = applyHighlightsToText(para, options.compiledKeywords, underlineOnly)
-          } else {
-            p.textContent = para
-          }
+          // Use renderTextWithImages for image support
+          p.innerHTML = renderTextWithImages(para, options?.compiledKeywords, underlineOnly, level)
           body.appendChild(p)
         })
       } else {
-        // 单段或禁用缩进时，使用原有逻辑
-        if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
-          body.innerHTML = applyHighlightsToText(data.description, options.compiledKeywords, underlineOnly)
-        } else {
-          body.textContent = data.description
-        }
+        // 单段或禁用缩进时，使用原有逻辑 with image support
+        body.innerHTML = renderTextWithImages(data.description, options?.compiledKeywords, underlineOnly, level)
       }
 
       tooltip.appendChild(body)
@@ -473,6 +461,9 @@ export function createKeywordTooltip(
 
     // Setup event delegation for nested keywords
     setupTooltipEventDelegation(tooltip, keywordId)
+
+    // Setup image click handler for ViewerJS
+    setupImageViewer(tooltip)
   }
 
   const positionTooltip = (tooltip: HTMLDivElement, target: HTMLElement) => {
@@ -646,4 +637,162 @@ function escapeHtml(text: string): string {
   return div.innerHTML
 }
 
-export { applyHighlightsToText, MAX_NESTING_DEPTH }
+/**
+ * Parse markdown image syntax ![alt](url) and convert to HTML img tags.
+ * Supports id:xxx format for attachment IDs.
+ */
+function parseMarkdownImages(text: string): string {
+  if (!text) return ''
+  const imageRegex = createImageTokenRegex()
+  let result = ''
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imageRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result += escapeHtml(text.slice(lastIndex, match.index))
+    }
+
+    const [full, alt, token] = match
+    if (!isValidAttachmentToken(token)) {
+      result += escapeHtml(full)
+    } else {
+      const url = `/api/v1/attachment/${token}`
+      const thumbUrl = `/api/v1/attachment/${token}/thumb?size=150`
+      const escapedAlt = escapeHtml(alt || '')
+      result += `<img class="keyword-tooltip__image" src="${thumbUrl}" data-original="${url}" alt="${escapedAlt}" loading="lazy" />`
+    }
+
+    lastIndex = match.index + full.length
+  }
+
+  if (lastIndex < text.length) {
+    result += escapeHtml(text.slice(lastIndex))
+  }
+
+  return result
+}
+
+/**
+ * Apply image parsing to text content, combining with optional keyword highlights.
+ */
+function renderTextWithImages(text: string, compiled?: CompiledKeywordSpan[], underlineOnly = false, level = 0): string {
+  if (!text) return ''
+
+  const imageRegex = createImageTokenRegex()
+  const hasImages = imageRegex.test(text)
+  imageRegex.lastIndex = 0
+
+  if (!hasImages) {
+    if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+      return applyHighlightsToText(text, compiled, underlineOnly)
+    }
+    return escapeHtml(text)
+  }
+
+  const parts: string[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imageRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      const textPart = text.slice(lastIndex, match.index)
+      if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+        parts.push(applyHighlightsToText(textPart, compiled, underlineOnly))
+      } else {
+        parts.push(escapeHtml(textPart))
+      }
+    }
+
+    const [full, alt, token] = match
+    if (!isValidAttachmentToken(token)) {
+      if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+        parts.push(applyHighlightsToText(full, compiled, underlineOnly))
+      } else {
+        parts.push(escapeHtml(full))
+      }
+    } else {
+      const url = `/api/v1/attachment/${token}`
+      const thumbUrl = `/api/v1/attachment/${token}/thumb?size=150`
+      parts.push(`<img class="keyword-tooltip__image" src="${thumbUrl}" data-original="${url}" alt="${escapeHtml(alt || '')}" loading="lazy" />`)
+    }
+
+    lastIndex = match.index + full.length
+  }
+
+  if (lastIndex < text.length) {
+    const textPart = text.slice(lastIndex)
+    if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+      parts.push(applyHighlightsToText(textPart, compiled, underlineOnly))
+    } else {
+      parts.push(escapeHtml(textPart))
+    }
+  }
+
+  return parts.join('')
+}
+
+/**
+ * Setup image click handler with ViewerJS (no navbar/preview panel).
+ * Dynamically imports ViewerJS to avoid bundling if unused.
+ */
+function setupImageViewer(tooltip: HTMLDivElement) {
+  if (tooltip.dataset.imageViewerBound === '1') return
+  tooltip.dataset.imageViewerBound = '1'
+
+  tooltip.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement
+    if (target.classList.contains('keyword-tooltip__image')) {
+      e.stopPropagation()
+      e.preventDefault()
+
+      const img = target as HTMLImageElement
+      const originalUrl = img.dataset.original || img.src
+
+      // Dynamically import ViewerJS
+      try {
+        const { default: Viewer } = await import('viewerjs')
+
+        // Create a temporary container with the full image
+        const container = document.createElement('div')
+        container.style.display = 'none'
+        const fullImg = document.createElement('img')
+        fullImg.src = originalUrl
+        container.appendChild(fullImg)
+        document.body.appendChild(container)
+
+        const viewer = new Viewer(container, {
+          navbar: false,  // No preview panel
+          title: false,
+          toolbar: {
+            zoomIn: true,
+            zoomOut: true,
+            oneToOne: true,
+            reset: true,
+            prev: false,
+            next: false,
+            play: false,
+            rotateLeft: true,
+            rotateRight: true,
+            flipHorizontal: false,
+            flipVertical: false,
+          },
+          zIndex: 1000000,
+          hidden() {
+            viewer.destroy()
+            container.remove()
+          },
+        })
+
+        viewer.show()
+      } catch (error) {
+        console.warn('[KeywordTooltip] Failed to load ViewerJS:', error)
+        // Fallback: open image in new tab
+        window.open(originalUrl, '_blank')
+      }
+    }
+  })
+}
+
+export { applyHighlightsToText, MAX_NESTING_DEPTH, parseMarkdownImages, renderTextWithImages }
+
