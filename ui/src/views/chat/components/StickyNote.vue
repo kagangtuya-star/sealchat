@@ -1011,3 +1011,88 @@ onUnmounted(() => {
   border-radius: 2px;
 }
 </style>
+
+<style>
+/* ===== 夜间模式和自定义主题适配 ===== */
+/* 便签背景始终是浅色的，所以所有文字都需要保持深色 */
+/* 使用非 scoped 样式因为便签使用 Teleport 渲染 */
+
+:root[data-display-palette='night'] .sticky-note__title-text {
+  color: rgba(0, 0, 0, 0.75) !important;
+}
+
+:root[data-display-palette='night'] .sticky-note__title-input {
+  color: rgba(0, 0, 0, 0.85) !important;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+:root[data-display-palette='night'] .sticky-note__content {
+  color: rgba(0, 0, 0, 0.75) !important;
+}
+
+:root[data-display-palette='night'] .sticky-note__textarea {
+  color: rgba(0, 0, 0, 0.85) !important;
+}
+
+:root[data-display-palette='night'] .sticky-note__action-btn {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-display-palette='night'] .sticky-note__action-btn:hover {
+  color: rgba(0, 0, 0, 0.8);
+}
+
+:root[data-display-palette='night'] .sticky-note__meta {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+:root[data-display-palette='night'] .sticky-note__meta-label {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-display-palette='night'] .sticky-note__meta-value {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+:root[data-display-palette='night'] .sticky-note__meta-time {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+:root[data-display-palette='night'] .sticky-note__toolbar-btn {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-display-palette='night'] .sticky-note__toolbar-btn:hover {
+  color: rgba(0, 0, 0, 0.8);
+}
+
+/* 自定义主题模式 - 同样需要保持便签文字深色 */
+:root[data-custom-theme='true'] .sticky-note__title-text {
+  color: rgba(0, 0, 0, 0.75) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__title-input {
+  color: rgba(0, 0, 0, 0.85) !important;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+:root[data-custom-theme='true'] .sticky-note__content {
+  color: rgba(0, 0, 0, 0.75) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__textarea {
+  color: rgba(0, 0, 0, 0.85) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__action-btn {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-custom-theme='true'] .sticky-note__meta {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+:root[data-custom-theme='true'] .sticky-note__toolbar-btn {
+  color: rgba(0, 0, 0, 0.6);
+}
+</style>
