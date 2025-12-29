@@ -18,6 +18,63 @@ interface TooltipInstance {
 const MAX_NESTING_DEPTH = 4
 const TOOLTIP_GAP = 12
 const TOOLTIP_PADDING = 8
+const TOOLTIP_MAX_WIDTH = 360
+const TOOLTIP_MIN_WIDTH = 180
+const TOOLTIP_MAX_HEIGHT_RATIO = 0.6 // 最大高度为视口高度的60%
+
+// 确保滚动条样式已注入到页面
+let tooltipStylesInjected = false
+function ensureTooltipStyles() {
+  if (tooltipStylesInjected || typeof document === 'undefined') return
+  tooltipStylesInjected = true
+
+  const styleId = 'keyword-tooltip-scrollbar-styles'
+  if (document.getElementById(styleId)) return
+
+  const style = document.createElement('style')
+  style.id = styleId
+  style.textContent = `
+    /* Keyword Tooltip Scrollbar - Minimal/Invisible Design */
+    .keyword-tooltip {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .keyword-tooltip:hover {
+      scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+    }
+    .keyword-tooltip::-webkit-scrollbar {
+      width: 4px !important;
+      height: 4px !important;
+    }
+    .keyword-tooltip::-webkit-scrollbar-track {
+      background: transparent !important;
+    }
+    .keyword-tooltip::-webkit-scrollbar-thumb {
+      background: transparent !important;
+      border-radius: 2px !important;
+    }
+    .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.2) !important;
+    }
+    /* Night mode */
+    [data-display-palette='night'] .keyword-tooltip:hover,
+    :root[data-display-palette='night'] .keyword-tooltip:hover {
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    [data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb,
+    :root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2) !important;
+    }
+    /* Custom theme */
+    :root[data-custom-theme='true'] .keyword-tooltip:hover {
+      scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
+    }
+    :root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.25) !important;
+    }
+  `
+  document.head.appendChild(style)
+}
 
 let tooltipStack: TooltipInstance[] = []
 let globalClickHandler: ((e: MouseEvent | TouchEvent) => void) | null = null
@@ -56,6 +113,9 @@ function cleanupOrphanedTooltips(includeHoverTooltips = false) {
 let tooltipIdCounter = 0
 
 function createTooltipElement(level: number): HTMLDivElement {
+  // 确保滚动条样式已注入到页面
+  ensureTooltipStyles()
+
   tooltipIdCounter++
   const tooltip = document.createElement('div')
   tooltip.id = `keyword-tooltip-${tooltipIdCounter}`
@@ -71,24 +131,96 @@ function createTooltipElement(level: number): HTMLDivElement {
   return tooltip
 }
 
+/**
+ * 获取当前页面的缩放比例
+ * 支持浏览器 Ctrl+/- 缩放和移动端捏合缩放
+ */
+function getPageZoomLevel(): number {
+  // 方法1: 使用 outerWidth/innerWidth 检测桌面浏览器缩放
+  // 这是检测 Ctrl+/- 缩放的可靠方法
+  if (window.outerWidth && window.innerWidth) {
+    const zoomRatio = window.outerWidth / window.innerWidth
+    // 只有当比例明显不同于1时才使用（避免浮点误差）
+    if (Math.abs(zoomRatio - 1) > 0.05) {
+      return zoomRatio
+    }
+  }
+
+  // 方法2: 移动端捏合缩放
+  if (window.visualViewport && window.visualViewport.scale !== 1) {
+    return window.visualViewport.scale
+  }
+
+  // 默认无缩放
+  return 1
+}
+
+/**
+ * 调整tooltip尺寸以适应视口
+ * 如果高度过高，则扩展宽度以减少高度
+ */
+function adjustTooltipSize(tooltip: HTMLDivElement, viewportWidth: number, viewportHeight: number): void {
+  const zoomLevel = getPageZoomLevel()
+  const effectiveViewportHeight = viewportHeight / zoomLevel
+  const effectiveViewportWidth = viewportWidth / zoomLevel
+  const maxHeight = effectiveViewportHeight * TOOLTIP_MAX_HEIGHT_RATIO
+
+  // 重置样式以获取自然尺寸
+  tooltip.style.maxWidth = `${TOOLTIP_MAX_WIDTH}px`
+  tooltip.style.maxHeight = ''
+  tooltip.style.overflowY = ''
+
+  // 获取当前高度
+  const currentHeight = tooltip.offsetHeight
+
+  // 如果高度超过最大允许高度，尝试扩展宽度
+  if (currentHeight > maxHeight) {
+    // 计算需要的宽度扩展比例（基于内容面积估算）
+    const areaRatio = currentHeight / maxHeight
+    let newMaxWidth = Math.min(
+      TOOLTIP_MAX_WIDTH * Math.sqrt(areaRatio) * 1.1, // 增加10%余量
+      effectiveViewportWidth - TOOLTIP_PADDING * 2 // 不超过视口宽度
+    )
+    newMaxWidth = Math.max(newMaxWidth, TOOLTIP_MIN_WIDTH)
+
+    tooltip.style.maxWidth = `${newMaxWidth}px`
+
+    // 重新检查高度，如果仍然过高则启用滚动
+    const newHeight = tooltip.offsetHeight
+    if (newHeight > maxHeight) {
+      tooltip.style.maxHeight = `${maxHeight}px`
+      tooltip.style.overflowY = 'auto'
+    }
+  }
+}
+
 function findBestPosition(
   target: HTMLElement,
   tooltip: HTMLDivElement,
   existingTooltips: TooltipInstance[]
 ): { top: number; left: number } {
+  const zoomLevel = getPageZoomLevel()
   const targetRect = target.getBoundingClientRect()
-  const tooltipWidth = tooltip.offsetWidth
-  const tooltipHeight = tooltip.offsetHeight
+
+  // 调整tooltip尺寸（考虑视口和高度限制）
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
+  adjustTooltipSize(tooltip, viewportWidth, viewportHeight)
+
+  const tooltipWidth = tooltip.offsetWidth
+  const tooltipHeight = tooltip.offsetHeight
+
+  // 考虑缩放比例调整padding和gap
+  const effectivePadding = TOOLTIP_PADDING / zoomLevel
+  const effectiveGap = TOOLTIP_GAP / zoomLevel
 
   const occupiedRects = existingTooltips.map(t => t.element.getBoundingClientRect())
   const candidates: Array<{ top: number; left: number; score: number }> = []
 
   // Above target
-  const aboveTop = targetRect.top - tooltipHeight - TOOLTIP_GAP
-  const aboveLeft = Math.max(TOOLTIP_PADDING, Math.min(
-    viewportWidth - tooltipWidth - TOOLTIP_PADDING,
+  const aboveTop = targetRect.top - tooltipHeight - effectiveGap
+  const aboveLeft = Math.max(effectivePadding, Math.min(
+    viewportWidth - tooltipWidth - effectivePadding,
     targetRect.left + targetRect.width / 2 - tooltipWidth / 2
   ))
   candidates.push({
@@ -98,7 +230,7 @@ function findBestPosition(
   })
 
   // Below target
-  const belowTop = targetRect.bottom + TOOLTIP_GAP
+  const belowTop = targetRect.bottom + effectiveGap
   candidates.push({
     top: belowTop,
     left: aboveLeft,
@@ -106,11 +238,11 @@ function findBestPosition(
   })
 
   // Right of target
-  const rightTop = Math.max(TOOLTIP_PADDING, Math.min(
-    viewportHeight - tooltipHeight - TOOLTIP_PADDING,
+  const rightTop = Math.max(effectivePadding, Math.min(
+    viewportHeight - tooltipHeight - effectivePadding,
     targetRect.top + targetRect.height / 2 - tooltipHeight / 2
   ))
-  const rightLeft = targetRect.right + TOOLTIP_GAP
+  const rightLeft = targetRect.right + effectiveGap
   candidates.push({
     top: rightTop,
     left: rightLeft,
@@ -118,7 +250,7 @@ function findBestPosition(
   })
 
   // Left of target
-  const leftLeft = targetRect.left - tooltipWidth - TOOLTIP_GAP
+  const leftLeft = targetRect.left - tooltipWidth - effectiveGap
   candidates.push({
     top: rightTop,
     left: leftLeft,
@@ -129,8 +261,8 @@ function findBestPosition(
   const best = candidates[0]
 
   return {
-    top: Math.max(TOOLTIP_PADDING, Math.min(viewportHeight - tooltipHeight - TOOLTIP_PADDING, best.top)),
-    left: Math.max(TOOLTIP_PADDING, Math.min(viewportWidth - tooltipWidth - TOOLTIP_PADDING, best.left))
+    top: Math.max(effectivePadding, Math.min(viewportHeight - tooltipHeight - effectivePadding, best.top)),
+    left: Math.max(effectivePadding, Math.min(viewportWidth - tooltipWidth - effectivePadding, best.left))
   }
 }
 

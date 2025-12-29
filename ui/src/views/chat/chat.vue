@@ -12108,6 +12108,38 @@ onBeforeUnmount(() => {
   line-height: 1.55;
   pointer-events: auto;
   animation: keyword-tooltip-fade-in 0.15s ease-out;
+  transition: max-width 0.2s ease;
+  overflow-wrap: break-word;
+}
+
+/* Tooltip scrollbar styling - minimal/invisible design */
+/* Standard properties for Firefox */
+:global(.keyword-tooltip) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+:global(.keyword-tooltip:hover) {
+  scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+}
+
+/* WebKit properties for Chrome/Safari/Edge */
+:global(.keyword-tooltip::-webkit-scrollbar) {
+  width: 4px;
+  height: 4px;
+}
+
+:global(.keyword-tooltip::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:global(.keyword-tooltip::-webkit-scrollbar-thumb) {
+  background: transparent;
+  border-radius: 2px;
+}
+
+:global(.keyword-tooltip:hover::-webkit-scrollbar-thumb) {
+  background: rgba(128, 128, 128, 0.2);
 }
 
 @keyframes keyword-tooltip-fade-in {
@@ -12200,6 +12232,19 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-tooltip__body),
 :global(:root[data-display-palette='night'] .keyword-tooltip__body) {
   color: rgba(248, 250, 252, 0.8);
+}
+
+/* Night mode tooltip scrollbar - minimal/invisible design */
+/* Firefox */
+:global([data-display-palette='night'] .keyword-tooltip:hover),
+:global(:root[data-display-palette='night'] .keyword-tooltip:hover) {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* WebKit */
+:global([data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb),
+:global(:root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb) {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Keyword Highlight Styles */

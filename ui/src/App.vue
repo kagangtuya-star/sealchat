@@ -925,6 +925,17 @@ nav a:first-of-type {
   border-color: var(--sc-border-mute) !important;
 }
 
+/* Keyword tooltip scrollbar - minimal/invisible design for custom theme */
+/* Firefox */
+:root[data-custom-theme='true'] .keyword-tooltip:hover {
+  scrollbar-color: rgba(128, 128, 128, 0.25) transparent !important;
+}
+
+/* WebKit */
+:root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.25) !important;
+}
+
 /* Dice tray macro key buttons */
 :root[data-custom-theme='true'] .dice-tray__macro-key {
   background-color: var(--sc-bg-surface) !important;
