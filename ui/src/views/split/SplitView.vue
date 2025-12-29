@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
@@ -102,6 +102,15 @@ const sidebarCollapsed = ref(false);
 const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
 
 const defaultFilterState: FilterState = { icOnly: false, showArchived: false, roleIds: [] };
+const normalizeFilterState = (filters: FilterState): FilterState => {
+  const rawRoleIds = Array.isArray(filters.roleIds) ? toRaw(filters.roleIds) : [];
+  const roleIds = Array.isArray(rawRoleIds) ? rawRoleIds.map((id) => String(id ?? '')).filter(Boolean) : [];
+  return {
+    icOnly: !!filters.icOnly,
+    showArchived: !!filters.showArchived,
+    roleIds,
+  };
+};
 const storagePrefix = 'sealchat.split.pane';
 const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url') => `${storagePrefix}.${paneId}.${key}`;
 const normalizeUrl = (value: string) => value.trim();
@@ -444,7 +453,8 @@ const toggleActionRibbon = () => {
 
 const setFilters = (filters: FilterState) => {
   if (!canOperateChatPane(activePaneId.value)) return;
-  postToPane(activePaneId.value, { type: 'sealchat.embed.setFilterState', paneId: activePaneId.value, filterState: filters });
+  const normalized = normalizeFilterState(filters);
+  postToPane(activePaneId.value, { type: 'sealchat.embed.setFilterState', paneId: activePaneId.value, filterState: normalized });
 };
 
 const clearFilters = () => {
