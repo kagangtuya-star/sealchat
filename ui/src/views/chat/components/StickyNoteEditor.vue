@@ -634,3 +634,48 @@ defineExpose({
   height: 0;
 }
 </style>
+
+<style>
+/* ===== 夜间模式和自定义主题适配 ===== */
+/* 便签背景始终是浅色的，所以文字需要保持深色 */
+/* 使用非 scoped 样式因为便签使用 Teleport 渲染 */
+
+:root[data-display-palette='night'] .sticky-note-editor__wrapper .sticky-note-editor__content,
+:root[data-display-palette='night'] .sticky-note-editor__wrapper .ProseMirror {
+  color: rgba(0, 0, 0, 0.85) !important;
+  caret-color: rgba(0, 0, 0, 0.85);
+}
+
+:root[data-display-palette='night'] .sticky-note-editor__wrapper .sticky-note-editor__content p,
+:root[data-display-palette='night'] .sticky-note-editor__wrapper .ProseMirror p {
+  color: inherit;
+}
+
+:root[data-display-palette='night'] .sticky-note-editor__btn {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+:root[data-display-palette='night'] .sticky-note-editor__btn:hover {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+:root[data-display-palette='night'] .sticky-note-editor__btn.is-active {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+/* 自定义主题模式 - 同样需要保持便签文字深色 */
+:root[data-custom-theme='true'] .sticky-note-editor__wrapper .sticky-note-editor__content,
+:root[data-custom-theme='true'] .sticky-note-editor__wrapper .ProseMirror {
+  color: rgba(0, 0, 0, 0.85) !important;
+  caret-color: rgba(0, 0, 0, 0.85);
+}
+
+:root[data-custom-theme='true'] .sticky-note-editor__wrapper .sticky-note-editor__content p,
+:root[data-custom-theme='true'] .sticky-note-editor__wrapper .ProseMirror p {
+  color: inherit;
+}
+
+:root[data-custom-theme='true'] .sticky-note-editor__btn {
+  color: rgba(0, 0, 0, 0.7);
+}
+</style>

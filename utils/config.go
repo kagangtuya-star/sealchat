@@ -150,6 +150,7 @@ type AppConfig struct {
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
 	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
+	TypingOrderWindowMs       int64                   `json:"typingOrderWindowMs" yaml:"typingOrderWindowMs"`
 	ImageSizeLimit            int64                   `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
 	ImageCompress             bool                    `json:"imageCompress" yaml:"imageCompress"`
 	ImageCompressQuality      int                     `json:"imageCompressQuality" yaml:"imageCompressQuality"`
@@ -211,7 +212,8 @@ func ReadConfig() *AppConfig {
 		RegisterOpen:              true,
 		WebUrl:                    "/",
 		PageTitle:                 defaultPageTitle,
-		ChatHistoryPersistentDays: -1,
+	ChatHistoryPersistentDays: -1,
+	TypingOrderWindowMs:       1000,
 		ImageSizeLimit:            8192,
 		ImageCompress:             true,
 		ImageCompressQuality:      85,

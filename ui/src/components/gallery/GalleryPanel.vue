@@ -50,6 +50,12 @@
                 :options="sortOptions"
                 style="width: 100px"
               />
+              <n-select
+                v-model:value="thumbnailSize"
+                size="small"
+                :options="sizeOptions"
+                style="width: 90px"
+              />
               <n-input
                 v-model:value="keyword"
                 size="small"
@@ -93,6 +99,7 @@
             :editable="true"
             :selectable="true"
             :selected-ids="selectedIds"
+            :thumbnail-size="thumbnailSize"
             @toggle-select="handleToggleSelect"
             @range-select="handleRangeSelect"
             @insert="handleItemInsert"
@@ -210,6 +217,7 @@ const user = useUserStore();
 const message = useMessage();
 const dialog = useDialog();
 const remarkPattern = /^[\p{L}\p{N}_]{1,64}$/u;
+const STORAGE_THUMBNAIL_SIZE = 'sealchat.gallery.thumbnailSize';
 
 const emit = defineEmits<{ (e: 'insert', src: string): void }>();
 
@@ -247,6 +255,13 @@ const sortOptions = [
   { label: '按时间', value: 'time' },
   { label: '按名称', value: 'name' }
 ];
+const thumbnailSize = ref<'small' | 'medium' | 'large' | 'xlarge'>('medium');
+const sizeOptions = [
+  { label: '小图', value: 'small' },
+  { label: '中图', value: 'medium' },
+  { label: '大图', value: 'large' },
+  { label: '超大', value: 'xlarge' }
+];
 
 // Upload progress
 const uploadProgress = ref({ current: 0, total: 0 });
@@ -267,6 +282,23 @@ watch(visible, (isVisible) => {
     autoRefreshTimer = setTimeout(() => {
       gallery.loadItems(gallery.activeCollectionId!);
     }, 1000);
+  }
+});
+
+onMounted(() => {
+  if (typeof window === 'undefined') return;
+  const stored = window.localStorage.getItem(STORAGE_THUMBNAIL_SIZE);
+  if (stored === 'small' || stored === 'medium' || stored === 'large' || stored === 'xlarge') {
+    thumbnailSize.value = stored;
+  }
+});
+
+watch(thumbnailSize, (value) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STORAGE_THUMBNAIL_SIZE, value);
+  } catch (error) {
+    console.warn('画廊缩略图尺寸写入失败', error);
   }
 });
 

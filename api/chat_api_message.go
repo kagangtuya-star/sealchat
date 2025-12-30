@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"sealchat/service"
 	"sealchat/service/metrics"
 	"strconv"
@@ -25,6 +26,95 @@ const (
 	displayOrderGap     = 1024.0
 	displayOrderEpsilon = 1e-6
 )
+
+type typingOrderCandidate struct {
+	userId    string
+	orderKey  float64
+	updatedAt int64
+}
+
+func buildTypingOrderSnapshot(
+	channelId string,
+	userConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]],
+) []typingOrderCandidate {
+	if channelId == "" || userConnInfo == nil {
+		return nil
+	}
+	candidates := map[string]typingOrderCandidate{}
+	userConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		if connMap == nil {
+			return true
+		}
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info == nil || info.ChannelId != channelId {
+				return true
+			}
+			if !info.TypingEnabled || info.TypingState == protocol.TypingStateSilent {
+				return true
+			}
+			if info.TypingWhisperTo != "" {
+				return true
+			}
+			if info.TypingOrderKey <= 0 {
+				return true
+			}
+			updated := info.TypingUpdatedAt
+			existing, ok := candidates[userId]
+			if !ok || updated > existing.updatedAt {
+				candidates[userId] = typingOrderCandidate{
+					userId:    userId,
+					orderKey:  info.TypingOrderKey,
+					updatedAt: updated,
+				}
+			}
+			return true
+		})
+		return true
+	})
+	if len(candidates) == 0 {
+		return nil
+	}
+	snapshot := make([]typingOrderCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		snapshot = append(snapshot, candidate)
+	}
+	sort.Slice(snapshot, func(i, j int) bool {
+		if snapshot[i].orderKey != snapshot[j].orderKey {
+			return snapshot[i].orderKey < snapshot[j].orderKey
+		}
+		if snapshot[i].updatedAt != snapshot[j].updatedAt {
+			return snapshot[i].updatedAt > snapshot[j].updatedAt
+		}
+		return snapshot[i].userId < snapshot[j].userId
+	})
+	return snapshot
+}
+
+func resolveTypingPreviewDisplayOrder(
+	snapshot []typingOrderCandidate,
+	senderId string,
+	nowMs int64,
+	windowMs int64,
+) (float64, bool) {
+	if len(snapshot) == 0 || windowMs <= 0 {
+		return 0, false
+	}
+	rank := -1
+	for i, item := range snapshot {
+		if item.userId == senderId {
+			rank = i
+			break
+		}
+	}
+	count := len(snapshot)
+	if rank < 0 {
+		rank = count
+		count += 1
+	}
+	base := (nowMs / windowMs) * windowMs
+	step := float64(windowMs) / float64(count+1)
+	return float64(base) + step*float64(rank+1), true
+}
 
 func canReorderAllMessages(userID string, channel *model.ChannelModel) bool {
 	if channel == nil {
@@ -752,6 +842,24 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 
+	nowMs := time.Now().UnixMilli()
+	displayOrder := float64(nowMs)
+	if data.DisplayOrder != nil && *data.DisplayOrder > 0 {
+		displayOrder = *data.DisplayOrder
+	}
+	if data.WhisperTo == "" {
+		windowMs := int64(0)
+		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
+			windowMs = cfg.TypingOrderWindowMs
+		}
+		if windowMs > 0 {
+			snapshot := buildTypingOrderSnapshot(channelId, ctx.UserId2ConnInfo)
+			if order, ok := resolveTypingPreviewDisplayOrder(snapshot, ctx.User.ID, nowMs, windowMs); ok {
+				displayOrder = order
+			}
+		}
+	}
+
 	m := model.MessageModel{
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
@@ -761,7 +869,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		MemberID:     member.ID,
 		QuoteID:      data.QuoteID,
 		Content:      content,
-		DisplayOrder: float64(time.Now().UnixMilli()),
+		DisplayOrder: displayOrder,
 		ICMode:       icMode,
 
 		SenderMemberName: member.Nickname,
@@ -780,9 +888,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	if identity == nil && ctx.User.IsBot && ctx.User.NickColor != "" {
 		m.SenderIdentityColor = ctx.User.NickColor
-	}
-	if data.DisplayOrder != nil && *data.DisplayOrder > 0 {
-		m.DisplayOrder = *data.DisplayOrder
 	}
 	if whisperUser != nil {
 		m.WhisperTarget = whisperUser

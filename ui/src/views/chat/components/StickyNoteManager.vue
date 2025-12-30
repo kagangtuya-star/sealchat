@@ -39,13 +39,15 @@
           @mouseenter="openRail"
           @mouseleave="closeRail"
         >
+          <!-- 便签文字角标 -->
+          <div class="sticky-note-rail__badge">便签</div>
           <button
             class="sticky-note-rail__handle"
             title="展开便签"
             @click.stop="toggleRailPinned"
             @mousedown.stop
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M9 18l6-6-6-6v12z"/>
             </svg>
           </button>
@@ -246,16 +248,39 @@ onUnmounted(() => {
 
 .sticky-note-rail__handle {
   position: absolute;
-  right: -6px;
+  right: -8px;
   top: 18px;
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 8px 0 0 8px;
+  border-radius: 10px 0 0 10px;
   background: var(--sc-primary-color, #3b82f6);
   color: var(--sc-primary-contrast, #fff);
   cursor: pointer;
   box-shadow: 0 4px 10px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 便签文字角标 - 显示在面板左侧外部，竖排文字 */
+.sticky-note-rail__badge {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  transform: translateX(-100%);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 8px 5px;
+  background: var(--sc-bg-surface, #f8fafc);
+  color: var(--sc-text-primary, #0f172a);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  border-radius: 6px 0 0 6px;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  user-select: none;
 }
 
 .sticky-note-rail__body {
@@ -447,5 +472,20 @@ onUnmounted(() => {
 .slide-up-leave-to {
   opacity: 0;
   transform: translateX(20px) translateY(10px);
+}
+</style>
+
+<style>
+/* ===== 便签角标主题适配（非 scoped） ===== */
+/* 夜间模式 */
+:root[data-display-palette='night'] .sticky-note-rail__badge {
+  background: #26262c;
+  color: #e2e8f0;
+}
+
+/* 自定义主题 - 使用自定义背景色 */
+:root[data-custom-theme='true'] .sticky-note-rail__badge {
+  background: var(--sc-bg-surface, #26262c);
+  color: var(--sc-text-primary, #e2e8f0);
 }
 </style>

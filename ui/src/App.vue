@@ -925,6 +925,17 @@ nav a:first-of-type {
   border-color: var(--sc-border-mute) !important;
 }
 
+/* Keyword tooltip scrollbar - minimal/invisible design for custom theme */
+/* Firefox */
+:root[data-custom-theme='true'] .keyword-tooltip:hover {
+  scrollbar-color: rgba(128, 128, 128, 0.25) transparent !important;
+}
+
+/* WebKit */
+:root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.25) !important;
+}
+
 /* Dice tray macro key buttons */
 :root[data-custom-theme='true'] .dice-tray__macro-key {
   background-color: var(--sc-bg-surface) !important;
@@ -998,6 +1009,36 @@ nav a:first-of-type {
 
 .keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph {
   margin-top: 0.5em;
+}
+
+/* Keyword Tooltip Image Styles */
+.keyword-tooltip__image {
+  max-width: 120px;
+  max-height: 80px;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  display: inline-block;
+  vertical-align: middle;
+  margin: 4px 2px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+}
+
+.keyword-tooltip__image:hover {
+  opacity: 0.85;
+  transform: scale(1.02);
+}
+
+/* Night mode image styles */
+[data-display-palette='night'] .keyword-tooltip__image,
+:root[data-display-palette='night'] .keyword-tooltip__image {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Custom theme image styles */
+:root[data-custom-theme='true'] .keyword-tooltip__image {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
 }
 
 /* Active tabs with sc-sidebar-fill - more specific selectors */

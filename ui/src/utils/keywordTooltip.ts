@@ -1,4 +1,5 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
+import { createImageTokenRegex, isValidAttachmentToken } from '@/utils/attachmentMarkdown'
 
 interface TooltipContent {
   title: string
@@ -17,6 +18,63 @@ interface TooltipInstance {
 const MAX_NESTING_DEPTH = 4
 const TOOLTIP_GAP = 12
 const TOOLTIP_PADDING = 8
+const TOOLTIP_MAX_WIDTH = 360
+const TOOLTIP_MIN_WIDTH = 180
+const TOOLTIP_MAX_HEIGHT_RATIO = 0.6 // 最大高度为视口高度的60%
+
+// 确保滚动条样式已注入到页面
+let tooltipStylesInjected = false
+function ensureTooltipStyles() {
+  if (tooltipStylesInjected || typeof document === 'undefined') return
+  tooltipStylesInjected = true
+
+  const styleId = 'keyword-tooltip-scrollbar-styles'
+  if (document.getElementById(styleId)) return
+
+  const style = document.createElement('style')
+  style.id = styleId
+  style.textContent = `
+    /* Keyword Tooltip Scrollbar - Minimal/Invisible Design */
+    .keyword-tooltip {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+    }
+    .keyword-tooltip:hover {
+      scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+    }
+    .keyword-tooltip::-webkit-scrollbar {
+      width: 4px !important;
+      height: 4px !important;
+    }
+    .keyword-tooltip::-webkit-scrollbar-track {
+      background: transparent !important;
+    }
+    .keyword-tooltip::-webkit-scrollbar-thumb {
+      background: transparent !important;
+      border-radius: 2px !important;
+    }
+    .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.2) !important;
+    }
+    /* Night mode */
+    [data-display-palette='night'] .keyword-tooltip:hover,
+    :root[data-display-palette='night'] .keyword-tooltip:hover {
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    [data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb,
+    :root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2) !important;
+    }
+    /* Custom theme */
+    :root[data-custom-theme='true'] .keyword-tooltip:hover {
+      scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
+    }
+    :root[data-custom-theme='true'] .keyword-tooltip:hover::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.25) !important;
+    }
+  `
+  document.head.appendChild(style)
+}
 
 let tooltipStack: TooltipInstance[] = []
 let globalClickHandler: ((e: MouseEvent | TouchEvent) => void) | null = null
@@ -55,6 +113,9 @@ function cleanupOrphanedTooltips(includeHoverTooltips = false) {
 let tooltipIdCounter = 0
 
 function createTooltipElement(level: number): HTMLDivElement {
+  // 确保滚动条样式已注入到页面
+  ensureTooltipStyles()
+
   tooltipIdCounter++
   const tooltip = document.createElement('div')
   tooltip.id = `keyword-tooltip-${tooltipIdCounter}`
@@ -70,24 +131,96 @@ function createTooltipElement(level: number): HTMLDivElement {
   return tooltip
 }
 
+/**
+ * 获取当前页面的缩放比例
+ * 支持浏览器 Ctrl+/- 缩放和移动端捏合缩放
+ */
+function getPageZoomLevel(): number {
+  // 方法1: 使用 outerWidth/innerWidth 检测桌面浏览器缩放
+  // 这是检测 Ctrl+/- 缩放的可靠方法
+  if (window.outerWidth && window.innerWidth) {
+    const zoomRatio = window.outerWidth / window.innerWidth
+    // 只有当比例明显不同于1时才使用（避免浮点误差）
+    if (Math.abs(zoomRatio - 1) > 0.05) {
+      return zoomRatio
+    }
+  }
+
+  // 方法2: 移动端捏合缩放
+  if (window.visualViewport && window.visualViewport.scale !== 1) {
+    return window.visualViewport.scale
+  }
+
+  // 默认无缩放
+  return 1
+}
+
+/**
+ * 调整tooltip尺寸以适应视口
+ * 如果高度过高，则扩展宽度以减少高度
+ */
+function adjustTooltipSize(tooltip: HTMLDivElement, viewportWidth: number, viewportHeight: number): void {
+  const zoomLevel = getPageZoomLevel()
+  const effectiveViewportHeight = viewportHeight / zoomLevel
+  const effectiveViewportWidth = viewportWidth / zoomLevel
+  const maxHeight = effectiveViewportHeight * TOOLTIP_MAX_HEIGHT_RATIO
+
+  // 重置样式以获取自然尺寸
+  tooltip.style.maxWidth = `${TOOLTIP_MAX_WIDTH}px`
+  tooltip.style.maxHeight = ''
+  tooltip.style.overflowY = ''
+
+  // 获取当前高度
+  const currentHeight = tooltip.offsetHeight
+
+  // 如果高度超过最大允许高度，尝试扩展宽度
+  if (currentHeight > maxHeight) {
+    // 计算需要的宽度扩展比例（基于内容面积估算）
+    const areaRatio = currentHeight / maxHeight
+    let newMaxWidth = Math.min(
+      TOOLTIP_MAX_WIDTH * Math.sqrt(areaRatio) * 1.1, // 增加10%余量
+      effectiveViewportWidth - TOOLTIP_PADDING * 2 // 不超过视口宽度
+    )
+    newMaxWidth = Math.max(newMaxWidth, TOOLTIP_MIN_WIDTH)
+
+    tooltip.style.maxWidth = `${newMaxWidth}px`
+
+    // 重新检查高度，如果仍然过高则启用滚动
+    const newHeight = tooltip.offsetHeight
+    if (newHeight > maxHeight) {
+      tooltip.style.maxHeight = `${maxHeight}px`
+      tooltip.style.overflowY = 'auto'
+    }
+  }
+}
+
 function findBestPosition(
   target: HTMLElement,
   tooltip: HTMLDivElement,
   existingTooltips: TooltipInstance[]
 ): { top: number; left: number } {
+  const zoomLevel = getPageZoomLevel()
   const targetRect = target.getBoundingClientRect()
-  const tooltipWidth = tooltip.offsetWidth
-  const tooltipHeight = tooltip.offsetHeight
+
+  // 调整tooltip尺寸（考虑视口和高度限制）
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
+  adjustTooltipSize(tooltip, viewportWidth, viewportHeight)
+
+  const tooltipWidth = tooltip.offsetWidth
+  const tooltipHeight = tooltip.offsetHeight
+
+  // 考虑缩放比例调整padding和gap
+  const effectivePadding = TOOLTIP_PADDING / zoomLevel
+  const effectiveGap = TOOLTIP_GAP / zoomLevel
 
   const occupiedRects = existingTooltips.map(t => t.element.getBoundingClientRect())
   const candidates: Array<{ top: number; left: number; score: number }> = []
 
   // Above target
-  const aboveTop = targetRect.top - tooltipHeight - TOOLTIP_GAP
-  const aboveLeft = Math.max(TOOLTIP_PADDING, Math.min(
-    viewportWidth - tooltipWidth - TOOLTIP_PADDING,
+  const aboveTop = targetRect.top - tooltipHeight - effectiveGap
+  const aboveLeft = Math.max(effectivePadding, Math.min(
+    viewportWidth - tooltipWidth - effectivePadding,
     targetRect.left + targetRect.width / 2 - tooltipWidth / 2
   ))
   candidates.push({
@@ -97,7 +230,7 @@ function findBestPosition(
   })
 
   // Below target
-  const belowTop = targetRect.bottom + TOOLTIP_GAP
+  const belowTop = targetRect.bottom + effectiveGap
   candidates.push({
     top: belowTop,
     left: aboveLeft,
@@ -105,11 +238,11 @@ function findBestPosition(
   })
 
   // Right of target
-  const rightTop = Math.max(TOOLTIP_PADDING, Math.min(
-    viewportHeight - tooltipHeight - TOOLTIP_PADDING,
+  const rightTop = Math.max(effectivePadding, Math.min(
+    viewportHeight - tooltipHeight - effectivePadding,
     targetRect.top + targetRect.height / 2 - tooltipHeight / 2
   ))
-  const rightLeft = targetRect.right + TOOLTIP_GAP
+  const rightLeft = targetRect.right + effectiveGap
   candidates.push({
     top: rightTop,
     left: rightLeft,
@@ -117,7 +250,7 @@ function findBestPosition(
   })
 
   // Left of target
-  const leftLeft = targetRect.left - tooltipWidth - TOOLTIP_GAP
+  const leftLeft = targetRect.left - tooltipWidth - effectiveGap
   candidates.push({
     top: rightTop,
     left: leftLeft,
@@ -128,8 +261,8 @@ function findBestPosition(
   const best = candidates[0]
 
   return {
-    top: Math.max(TOOLTIP_PADDING, Math.min(viewportHeight - tooltipHeight - TOOLTIP_PADDING, best.top)),
-    left: Math.max(TOOLTIP_PADDING, Math.min(viewportWidth - tooltipWidth - TOOLTIP_PADDING, best.left))
+    top: Math.max(effectivePadding, Math.min(viewportHeight - tooltipHeight - effectivePadding, best.top)),
+    left: Math.max(effectivePadding, Math.min(viewportWidth - tooltipWidth - effectivePadding, best.left))
   }
 }
 
@@ -430,12 +563,6 @@ export function createKeywordTooltip(
       const paragraphs = data.description.split(/\r?\n|\r/)
       const shouldIndent = paragraphs.length > 1 && textIndent > 0
 
-      // Debug logging
-      console.debug('[KeywordTooltip] description length:', data.description.length)
-      console.debug('[KeywordTooltip] paragraphs count:', paragraphs.length)
-      console.debug('[KeywordTooltip] textIndent:', textIndent)
-      console.debug('[KeywordTooltip] shouldIndent:', shouldIndent)
-
       if (shouldIndent) {
         body.classList.add('keyword-tooltip__body--indented')
         body.style.setProperty('--keyword-tooltip-text-indent', `${textIndent}em`)
@@ -452,20 +579,13 @@ export function createKeywordTooltip(
           const p = document.createElement('p')
           p.className = 'keyword-tooltip__paragraph'
 
-          if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
-            p.innerHTML = applyHighlightsToText(para, options.compiledKeywords, underlineOnly)
-          } else {
-            p.textContent = para
-          }
+          // Use renderTextWithImages for image support
+          p.innerHTML = renderTextWithImages(para, options?.compiledKeywords, underlineOnly, level)
           body.appendChild(p)
         })
       } else {
-        // 单段或禁用缩进时，使用原有逻辑
-        if (options?.compiledKeywords && options.compiledKeywords.length > 0 && level < MAX_NESTING_DEPTH - 1) {
-          body.innerHTML = applyHighlightsToText(data.description, options.compiledKeywords, underlineOnly)
-        } else {
-          body.textContent = data.description
-        }
+        // 单段或禁用缩进时，使用原有逻辑 with image support
+        body.innerHTML = renderTextWithImages(data.description, options?.compiledKeywords, underlineOnly, level)
       }
 
       tooltip.appendChild(body)
@@ -473,6 +593,9 @@ export function createKeywordTooltip(
 
     // Setup event delegation for nested keywords
     setupTooltipEventDelegation(tooltip, keywordId)
+
+    // Setup image click handler for ViewerJS
+    setupImageViewer(tooltip)
   }
 
   const positionTooltip = (tooltip: HTMLDivElement, target: HTMLElement) => {
@@ -646,4 +769,162 @@ function escapeHtml(text: string): string {
   return div.innerHTML
 }
 
-export { applyHighlightsToText, MAX_NESTING_DEPTH }
+/**
+ * Parse markdown image syntax ![alt](url) and convert to HTML img tags.
+ * Supports id:xxx format for attachment IDs.
+ */
+function parseMarkdownImages(text: string): string {
+  if (!text) return ''
+  const imageRegex = createImageTokenRegex()
+  let result = ''
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imageRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result += escapeHtml(text.slice(lastIndex, match.index))
+    }
+
+    const [full, alt, token] = match
+    if (!isValidAttachmentToken(token)) {
+      result += escapeHtml(full)
+    } else {
+      const url = `/api/v1/attachment/${token}`
+      const thumbUrl = `/api/v1/attachment/${token}/thumb?size=150`
+      const escapedAlt = escapeHtml(alt || '')
+      result += `<img class="keyword-tooltip__image" src="${thumbUrl}" data-original="${url}" alt="${escapedAlt}" loading="lazy" />`
+    }
+
+    lastIndex = match.index + full.length
+  }
+
+  if (lastIndex < text.length) {
+    result += escapeHtml(text.slice(lastIndex))
+  }
+
+  return result
+}
+
+/**
+ * Apply image parsing to text content, combining with optional keyword highlights.
+ */
+function renderTextWithImages(text: string, compiled?: CompiledKeywordSpan[], underlineOnly = false, level = 0): string {
+  if (!text) return ''
+
+  const imageRegex = createImageTokenRegex()
+  const hasImages = imageRegex.test(text)
+  imageRegex.lastIndex = 0
+
+  if (!hasImages) {
+    if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+      return applyHighlightsToText(text, compiled, underlineOnly)
+    }
+    return escapeHtml(text)
+  }
+
+  const parts: string[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = imageRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      const textPart = text.slice(lastIndex, match.index)
+      if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+        parts.push(applyHighlightsToText(textPart, compiled, underlineOnly))
+      } else {
+        parts.push(escapeHtml(textPart))
+      }
+    }
+
+    const [full, alt, token] = match
+    if (!isValidAttachmentToken(token)) {
+      if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+        parts.push(applyHighlightsToText(full, compiled, underlineOnly))
+      } else {
+        parts.push(escapeHtml(full))
+      }
+    } else {
+      const url = `/api/v1/attachment/${token}`
+      const thumbUrl = `/api/v1/attachment/${token}/thumb?size=150`
+      parts.push(`<img class="keyword-tooltip__image" src="${thumbUrl}" data-original="${url}" alt="${escapeHtml(alt || '')}" loading="lazy" />`)
+    }
+
+    lastIndex = match.index + full.length
+  }
+
+  if (lastIndex < text.length) {
+    const textPart = text.slice(lastIndex)
+    if (compiled && compiled.length > 0 && level < MAX_NESTING_DEPTH - 1) {
+      parts.push(applyHighlightsToText(textPart, compiled, underlineOnly))
+    } else {
+      parts.push(escapeHtml(textPart))
+    }
+  }
+
+  return parts.join('')
+}
+
+/**
+ * Setup image click handler with ViewerJS (no navbar/preview panel).
+ * Dynamically imports ViewerJS to avoid bundling if unused.
+ */
+function setupImageViewer(tooltip: HTMLDivElement) {
+  if (tooltip.dataset.imageViewerBound === '1') return
+  tooltip.dataset.imageViewerBound = '1'
+
+  tooltip.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement
+    if (target.classList.contains('keyword-tooltip__image')) {
+      e.stopPropagation()
+      e.preventDefault()
+
+      const img = target as HTMLImageElement
+      const originalUrl = img.dataset.original || img.src
+
+      // Dynamically import ViewerJS
+      try {
+        const { default: Viewer } = await import('viewerjs')
+
+        // Create a temporary container with the full image
+        const container = document.createElement('div')
+        container.style.display = 'none'
+        const fullImg = document.createElement('img')
+        fullImg.src = originalUrl
+        container.appendChild(fullImg)
+        document.body.appendChild(container)
+
+        const viewer = new Viewer(container, {
+          navbar: false,  // No preview panel
+          title: false,
+          toolbar: {
+            zoomIn: true,
+            zoomOut: true,
+            oneToOne: true,
+            reset: true,
+            prev: false,
+            next: false,
+            play: false,
+            rotateLeft: true,
+            rotateRight: true,
+            flipHorizontal: false,
+            flipVertical: false,
+          },
+          zIndex: 1000000,
+          hidden() {
+            viewer.destroy()
+            container.remove()
+          },
+        })
+
+        viewer.show()
+      } catch (error) {
+        console.warn('[KeywordTooltip] Failed to load ViewerJS:', error)
+        // Fallback: open image in new tab
+        window.open(originalUrl, '_blank')
+      }
+    }
+  })
+}
+
+export { applyHighlightsToText, MAX_NESTING_DEPTH, parseMarkdownImages, renderTextWithImages }
+

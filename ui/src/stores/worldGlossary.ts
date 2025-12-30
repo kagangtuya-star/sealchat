@@ -16,6 +16,7 @@ import {
   fetchWorldKeywordCategoriesPublic,
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
+import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import { useUtilsStore } from './utils'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
@@ -75,13 +76,18 @@ const clampText = (value?: string | null, maxLength?: number) => {
   return value ? value.slice(0, limit) : value || ''
 }
 
+const clampDescription = (value?: string | null, maxLength?: number) => {
+  const limit = maxLength ?? getKeywordMaxLength()
+  return value ? clampTextWithImageTokens(value, limit) : value || ''
+}
+
 const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => {
   const maxLen = getKeywordMaxLength()
   return {
     ...item,
     keyword: clampText(item.keyword, maxLen),
     aliases: (item.aliases || []).map((alias) => clampText(alias, maxLen)),
-    description: item.description ? clampText(item.description, maxLen) : '',
+    description: item.description ? clampDescription(item.description, maxLen) : '',
   }
 }
 

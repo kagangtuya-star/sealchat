@@ -1579,6 +1579,113 @@ const identityAvatarDisplay = computed(() => identityAvatarPreview.value || reso
 const identityImportInputRef = ref<HTMLInputElement | null>(null);
 const identityExporting = ref(false);
 const identityImporting = ref(false);
+const identitySyncDialogVisible = ref(false);
+const identitySyncSourceChannelId = ref<string | null>(null);
+const identitySyncing = ref(false);
+
+const flattenSyncChannels = (channels?: SChannel[]): SChannel[] => {
+  if (!channels || channels.length === 0) return [];
+  const stack = [...channels];
+  const result: SChannel[] = [];
+  while (stack.length) {
+    const node = stack.shift();
+    if (!node) continue;
+    result.push(node);
+    if (node.children && node.children.length > 0) {
+      stack.unshift(...node.children);
+    }
+  }
+  return result;
+};
+
+const getSyncChannelLabel = (channel: SChannel) => {
+  if (!channel) return '未命名频道';
+  const base = channel.name || '未命名频道';
+  return channel.isPrivate ? `${base}（私密）` : base;
+};
+
+const identitySyncChannelOptions = computed(() => {
+  const worldId = chat.currentWorldId;
+  const worldTree =
+    (worldId && chat.channelTreeByWorld?.[worldId]) ||
+    chat.channelTree ||
+    [];
+  return flattenSyncChannels(worldTree as SChannel[])
+    .filter(channel => Boolean(channel?.id) && !channel.isPrivate && channel.id !== chat.curChannel?.id)
+    .map(channel => ({
+      label: getSyncChannelLabel(channel),
+      value: channel.id!,
+    }));
+});
+
+const ensureIdentitySyncOptions = async () => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return;
+  if (identitySyncChannelOptions.value.length > 0) return;
+  try {
+    await chat.channelList(worldId, true);
+  } catch (error) {
+    console.warn('加载频道列表失败', error);
+  }
+};
+
+const normalizeIdentityName = (value: string) => value.trim();
+
+const buildIdentityNameMap = (list: ChannelIdentity[]) => {
+  const map: Record<string, ChannelIdentity> = {};
+  list.forEach((identity) => {
+    const key = normalizeIdentityName(identity.displayName || '');
+    if (key && !map[key]) {
+      map[key] = identity;
+    }
+  });
+  return map;
+};
+
+const maybePromptIdentitySync = async () => {
+  const channelId = chat.curChannel?.id;
+  const currentChannel = chat.curChannel as SChannel | undefined;
+  if (!channelId || !currentChannel) {
+    return;
+  }
+  if (identitySyncDialogVisible.value) {
+    return;
+  }
+  if (chat.isObserver || isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
+    return;
+  }
+  try {
+    await chat.loadChannelIdentities(channelId, true);
+  } catch (error) {
+    console.warn('加载频道角色失败', error);
+    return;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  // 这里是场内外角色未完整配置的简易判断逻辑
+  // const config = chat.getChannelIcOocRoleConfig(channelId);
+  // const hasAnyMapping = !!(config.icRoleId || config.oocRoleId); 
+  if (identities.length > 1) {
+    return;
+  }
+
+  const confirmed = await new Promise<boolean>((resolve) => {
+    dialog.warning({
+      title: '同步其他频道角色？',
+      content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
+      positiveText: '同步',
+      negativeText: '暂不',
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+    });
+  });
+  if (!confirmed) {
+    return;
+  }
+  await openIdentityManager();
+  await nextTick();
+  await openIdentitySyncDialog();
+};
 
 const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v2';
 
@@ -1850,6 +1957,155 @@ const handleIdentityImportChange = async (event: Event) => {
     message.error(error?.message || '导入失败，请检查文件内容');
   } finally {
     identityImporting.value = false;
+  }
+};
+
+const openIdentitySyncDialog = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  identitySyncSourceChannelId.value = null;
+  identitySyncDialogVisible.value = true;
+  await ensureIdentitySyncOptions();
+};
+
+const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const sourceChannelId = identitySyncSourceChannelId.value;
+  const targetChannelId = chat.curChannel.id;
+  if (!sourceChannelId) {
+    message.warning('请选择要同步的频道');
+    return;
+  }
+  if (sourceChannelId === targetChannelId) {
+    message.warning('不能选择当前频道');
+    return;
+  }
+  if (mode === 'overwrite') {
+    const confirmed = await dialogAskConfirm(dialog, {
+      title: '确认覆盖当前频道角色？',
+      content: '将以所选频道角色为准更新同名角色',
+    });
+    if (!confirmed) return;
+  }
+
+  identitySyncing.value = true;
+  try {
+    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true);
+    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
+    const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
+    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
+
+    if (!sourceList.length) {
+      message.warning('所选频道暂无可同步的角色');
+      return;
+    }
+
+    const sourceIdMap: Record<string, ChannelIdentity> = {};
+    sourceList.forEach((identity) => {
+      sourceIdMap[identity.id] = identity;
+    });
+
+    const targetNameMap = buildIdentityNameMap(targetList);
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let emptyNameCount = 0;
+
+    for (const identity of sourceList) {
+      const nameKey = normalizeIdentityName(identity.displayName || '');
+      if (!nameKey) {
+        emptyNameCount += 1;
+        continue;
+      }
+      const payload = {
+        channelId: targetChannelId,
+        displayName: identity.displayName || '',
+        color: identity.color || '',
+        avatarAttachmentId: identity.avatarAttachmentId || '',
+        isDefault: !!identity.isDefault,
+      };
+      const targetIdentity = targetNameMap[nameKey];
+      try {
+        if (targetIdentity) {
+          if (mode === 'overwrite') {
+            const updated = await chat.channelIdentityUpdate(targetIdentity.id, payload);
+            targetNameMap[nameKey] = updated;
+            updatedCount += 1;
+          } else {
+            skippedCount += 1;
+          }
+        } else {
+          const created = await chat.channelIdentityCreate(payload);
+          targetNameMap[nameKey] = created;
+          createdCount += 1;
+        }
+      } catch (error) {
+        console.warn('同步单个角色失败', error);
+      }
+    }
+
+    const resolveMappedIdentityId = (sourceId?: string | null) => {
+      if (!sourceId) return null;
+      const sourceIdentity = sourceIdMap[sourceId];
+      if (!sourceIdentity) return null;
+      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
+      if (!nameKey) return null;
+      return targetNameMap[nameKey]?.id || null;
+    };
+
+    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
+    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId);
+    const mappedIcRoleId = resolveMappedIdentityId(sourceConfig.icRoleId);
+    const mappedOocRoleId = resolveMappedIdentityId(sourceConfig.oocRoleId);
+    let nextIcRoleId = targetConfig.icRoleId;
+    let nextOocRoleId = targetConfig.oocRoleId;
+    if (mode === 'overwrite') {
+      nextIcRoleId = mappedIcRoleId;
+      nextOocRoleId = mappedOocRoleId;
+    } else {
+      if (!nextIcRoleId && mappedIcRoleId) {
+        nextIcRoleId = mappedIcRoleId;
+      }
+      if (!nextOocRoleId && mappedOocRoleId) {
+        nextOocRoleId = mappedOocRoleId;
+      }
+    }
+    const mappingChanged =
+      nextIcRoleId !== targetConfig.icRoleId ||
+      nextOocRoleId !== targetConfig.oocRoleId;
+    if (mappingChanged) {
+      chat.setChannelIcOocRoleConfig(targetChannelId, {
+        icRoleId: nextIcRoleId,
+        oocRoleId: nextOocRoleId,
+      });
+    }
+
+    await chat.loadChannelIdentities(targetChannelId, true);
+    identitySyncDialogVisible.value = false;
+
+    const syncedCount = createdCount + updatedCount;
+    if (syncedCount === 0 && !mappingChanged) {
+      message.warning('没有可同步的角色或映射');
+      return;
+    }
+    const details: string[] = [];
+    if (createdCount) details.push(`新增 ${createdCount}`);
+    if (updatedCount) details.push(`更新 ${updatedCount}`);
+    if (skippedCount) details.push(`跳过 ${skippedCount}`);
+    if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
+    const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
+    const detailNote = details.length ? `（${details.join('，')}）` : '';
+    message.success(`已同步 ${syncedCount} 个角色${detailNote}${mappingNote}`);
+  } catch (error) {
+    console.error('同步频道角色失败', error);
+    message.error('同步失败，请稍后重试');
+  } finally {
+    identitySyncing.value = false;
   }
 };
 
@@ -4005,7 +4261,8 @@ if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
 }
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
-let typingPreviewOrderSeq = 0;
+let typingPreviewOrderSeq = Date.now();
+const previewOrderMin = 1e-6;
 const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
 const selfPreviewOrderModified = ref(false);
 const resetSelfPreviewOrder = () => {
@@ -4031,7 +4288,7 @@ const getPreviewOrderValue = (item?: TypingPreviewItem | null) => {
     return null;
   }
   const value = typeof item.orderKey === 'number' ? item.orderKey : Number.NaN;
-  return Number.isFinite(value) ? value : null;
+  return Number.isFinite(value) && value > 0 ? value : null;
 };
 const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallback: number) => {
   const prevOrder = getPreviewOrderValue(list[index - 1]);
@@ -4043,7 +4300,7 @@ const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallb
     return prevOrder + 1;
   }
   if (nextOrder !== null) {
-    return nextOrder - 1;
+    return nextOrder > 1 ? nextOrder - 1 : nextOrder / 2;
   }
   return fallback;
 };
@@ -4081,13 +4338,14 @@ const updateSelfPreviewOrderKey = (orderKey: number | null, markModified = false
   if (orderKey === null || !Number.isFinite(orderKey)) {
     return;
   }
-  selfPreviewOrderKey.value = orderKey;
+  const normalized = orderKey > 0 ? orderKey : previewOrderMin;
+  selfPreviewOrderKey.value = normalized;
   if (markModified) {
     selfPreviewOrderModified.value = true;
   }
   typingPreviewList.value = typingPreviewList.value.map((item) => {
     if (item.userId === selfPreviewUserId.value && item.mode === 'typing') {
-      return { ...item, orderKey };
+      return { ...item, orderKey: normalized };
     }
     return item;
   });
@@ -4234,10 +4492,15 @@ const onPreviewDragPointerCancel = (event: PointerEvent) => {
 };
 const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
   const existing = typingPreviewList.value.find((item) => item.userId === userId && item.mode === mode);
-  if (existing) {
+  if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
     return existing.orderKey;
   }
-  return typingPreviewOrderSeq++;
+  if (!Number.isFinite(typingPreviewOrderSeq) || typingPreviewOrderSeq <= 0) {
+    typingPreviewOrderSeq = Date.now();
+  }
+  const next = Math.max(typingPreviewOrderSeq, previewOrderMin);
+  typingPreviewOrderSeq += 1;
+  return next;
 };
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
 	'typing-preview-item',
@@ -4321,21 +4584,7 @@ const typingPreviewItems = computed(() =>
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
 );
-const resolveDisplayOrderForSend = () => {
-	if (!selfPreviewOrderModified.value) {
-		return null;
-	}
-	const previews = typingPreviewItems.value;
-	if (!previews.length) {
-		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
-	}
-	const index = previews.findIndex((item) => item.userId === selfPreviewUserId.value);
-	if (index < 0) {
-		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
-	}
-	const fallback = Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : Date.now();
-	return derivePreviewOrderValue(previews, index, fallback);
-};
+ 
 const resolveSelfPreviewDisplayName = () => {
   const identity = activeIdentityForPreview.value;
   if (identity?.displayName) {
@@ -4406,16 +4655,16 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
   let orderKey: number;
   if (isSelfPreview) {
     const existing = typingPreviewList.value.find((preview) => preview.userId === item.userId && preview.mode === item.mode);
-    if (existing && Number.isFinite(existing.orderKey)) {
+    if (existing && Number.isFinite(existing.orderKey) && existing.orderKey > 0) {
       orderKey = existing.orderKey;
-    } else if (Number.isFinite(selfPreviewOrderKey.value)) {
+    } else if (Number.isFinite(selfPreviewOrderKey.value) && selfPreviewOrderKey.value > 0) {
       orderKey = selfPreviewOrderKey.value;
     } else {
       orderKey = Number.MAX_SAFE_INTEGER;
     }
 		selfPreviewOrderKey.value = orderKey;
 	} else {
-		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey)) {
+		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey) && item.orderKey > 0) {
 			orderKey = item.orderKey;
 		} else {
 			orderKey = getTypingOrderKey(item.userId, item.mode);
@@ -4441,7 +4690,7 @@ const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typi
 
 const resetTypingPreview = () => {
 	typingPreviewList.value = [];
-	typingPreviewOrderSeq = 0;
+	typingPreviewOrderSeq = Date.now();
 	resetSelfPreviewOrder();
 	typingPreviewRowRefs.clear();
 };
@@ -6215,7 +6464,6 @@ const send = throttle(async () => {
   appendHistoryEntry(sendMode, draft);
 
 	const replyTo = chat.curReplyTo || undefined;
-	const pendingDisplayOrder = resolveDisplayOrderForSend();
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
@@ -6231,12 +6479,9 @@ const send = throttle(async () => {
 		updatedAt: now,
 		content: draft,
     user: user.info,
-    member: chat.curMember || undefined,
-    quote: replyTo,
+		member: chat.curMember || undefined,
+		quote: replyTo,
 	};
-	if (typeof pendingDisplayOrder === 'number' && Number.isFinite(pendingDisplayOrder)) {
-		(tmpMsg as any).displayOrder = pendingDisplayOrder;
-	}
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
@@ -6288,7 +6533,6 @@ const send = throttle(async () => {
 			whisperTargetForSend?.id,
 			clientId,
 			identityIdOverride,
-			pendingDisplayOrder ?? undefined,
 		);
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -6936,11 +7180,15 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
-    fetchLatestMessages();
+    const fetchTask = fetchLatestMessages();
+    fetchTask.finally(() => {
+      void maybePromptIdentitySync();
+    });
   })
 
   await fetchLatestMessages();
   firstLoad = true;
+  await maybePromptIdentitySync();
 })
 
 onBeforeUnmount(() => {
@@ -8872,6 +9120,17 @@ onBeforeUnmount(() => {
               </template>
               场内场外映射
             </n-button>
+            <n-button
+              text
+              size="small"
+              :disabled="identitySyncing"
+              @click="openIdentitySyncDialog"
+            >
+              <template #icon>
+                <n-icon :component="ArrowsVertical" size="14" />
+              </template>
+              同步其他频道
+            </n-button>
           </n-space>
         </div>
       </template>
@@ -9013,6 +9272,48 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityImportInputRef" class="hidden" type="file" accept="application/json" @change="handleIdentityImportChange">
+  <n-modal
+    :show="identitySyncDialogVisible"
+    preset="card"
+    title="同步其他频道角色"
+    :style="{ width: 'min(520px, 92vw)' }"
+    @update:show="identitySyncDialogVisible = $event"
+  >
+    <div class="space-y-3">
+      <div>
+        <div class="text-sm mb-2">选择要同步的频道</div>
+        <n-select
+          v-model:value="identitySyncSourceChannelId"
+          :options="identitySyncChannelOptions"
+          filterable
+          clearable
+          placeholder="选择频道"
+        />
+        <div class="text-xs text-gray-500 mt-2">
+          同步内容包含角色信息及场内/场外映射配置。
+        </div>
+      </div>
+      <n-space justify="end">
+        <n-button @click="identitySyncDialogVisible = false">取消</n-button>
+        <n-button
+          type="warning"
+          :disabled="!identitySyncSourceChannelId || identitySyncing"
+          :loading="identitySyncing"
+          @click="handleIdentitySync('append')"
+        >
+          追加
+        </n-button>
+        <n-button
+          type="primary"
+          :disabled="!identitySyncSourceChannelId || identitySyncing"
+          :loading="identitySyncing"
+          @click="handleIdentitySync('overwrite')"
+        >
+          覆盖
+        </n-button>
+      </n-space>
+    </div>
+  </n-modal>
   <IcOocRoleConfigPanel v-model:show="icOocRoleConfigPanelVisible" />
 
   <!-- 新增组件 -->
@@ -9641,7 +9942,19 @@ onBeforeUnmount(() => {
   transform: translateY(3rem);
 }
 
-/* Fill the slot gap with IC background color (synced with day/night/custom themes) */
+/* Fill the slot gap with tone-matched background color */
+.message-row--tone-ic {
+  --message-drop-gap-bg: var(--chat-ic-bg);
+}
+
+.message-row--tone-ooc {
+  --message-drop-gap-bg: var(--chat-ooc-bg);
+}
+
+.message-row--tone-archived {
+  --message-drop-gap-bg: rgba(148, 163, 184, 0.2);
+}
+
 .message-row--drop-before:not(.message-row--drag-source)::before,
 .message-row--drop-after:not(.message-row--drag-source)::after {
   content: '';
@@ -9649,7 +9962,7 @@ onBeforeUnmount(() => {
   left: 0;
   right: 0;
   height: 3rem;
-  background-color: var(--chat-ic-bg);
+  background-color: var(--message-drop-gap-bg, var(--chat-ic-bg));
   z-index: -1;
 }
 
@@ -11795,6 +12108,38 @@ onBeforeUnmount(() => {
   line-height: 1.55;
   pointer-events: auto;
   animation: keyword-tooltip-fade-in 0.15s ease-out;
+  transition: max-width 0.2s ease;
+  overflow-wrap: break-word;
+}
+
+/* Tooltip scrollbar styling - minimal/invisible design */
+/* Standard properties for Firefox */
+:global(.keyword-tooltip) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+:global(.keyword-tooltip:hover) {
+  scrollbar-color: rgba(128, 128, 128, 0.2) transparent;
+}
+
+/* WebKit properties for Chrome/Safari/Edge */
+:global(.keyword-tooltip::-webkit-scrollbar) {
+  width: 4px;
+  height: 4px;
+}
+
+:global(.keyword-tooltip::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:global(.keyword-tooltip::-webkit-scrollbar-thumb) {
+  background: transparent;
+  border-radius: 2px;
+}
+
+:global(.keyword-tooltip:hover::-webkit-scrollbar-thumb) {
+  background: rgba(128, 128, 128, 0.2);
 }
 
 @keyframes keyword-tooltip-fade-in {
@@ -11887,6 +12232,19 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-tooltip__body),
 :global(:root[data-display-palette='night'] .keyword-tooltip__body) {
   color: rgba(248, 250, 252, 0.8);
+}
+
+/* Night mode tooltip scrollbar - minimal/invisible design */
+/* Firefox */
+:global([data-display-palette='night'] .keyword-tooltip:hover),
+:global(:root[data-display-palette='night'] .keyword-tooltip:hover) {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* WebKit */
+:global([data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb),
+:global(:root[data-display-palette='night'] .keyword-tooltip:hover::-webkit-scrollbar-thumb) {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Keyword Highlight Styles */

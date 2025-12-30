@@ -1,5 +1,6 @@
   builtInSealBotEnable: true
   chatHistoryPersistentDays: -1
+  typingOrderWindowMs: 1000
   dbUrl: ./data/chat.db
   domain: 127.0.0.1:3212 # 这里需要填写服务器IP或者域名地址，外置图片显示
   imageBaseUrl: 127.0.0.1:3212 # 建议填写对外访问域名或 CDN 地址，可填 https://example.com

@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useChatStore } from '@/stores/chat'
 import { useUtilsStore } from '@/stores/utils'
 import { useDialog, useMessage } from 'naive-ui'
 import { triggerBlobDownload } from '@/utils/download'
+import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
+import { ImageOutline } from '@vicons/ionicons5'
+import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 const glossary = useWorldGlossaryStore()
@@ -99,6 +102,9 @@ const formModel = reactive({
   isEnabled: true,
 })
 
+// Description editor ref
+const descriptionEditorRef = ref<InstanceType<typeof KeywordDescriptionEditor> | null>(null)
+
 const categoryFilter = ref('')
 const categoryOptions = ref<string[]>([])
 
@@ -137,6 +143,7 @@ const isMinimalDisplay = computed({
 const keywordMaxLength = computed(() => utils.config?.keywordMaxLength || DEFAULT_KEYWORD_MAX_LENGTH)
 
 const clampText = (value: string) => value.slice(0, keywordMaxLength.value)
+const clampDescription = (value: string) => clampTextWithImageTokens(value, keywordMaxLength.value)
 
 const splitAliases = (value?: string | string[] | null) => {
   if (!value) return []
@@ -160,7 +167,7 @@ const normalizePayloadEntry = (entry: any): WorldKeywordPayload | null => {
   }
   const description = entry.description ?? entry.desc
   if (description) {
-    const text = clampText(String(description).trim())
+    const text = clampDescription(String(description).trim())
     if (text) payload.description = text
   }
   if (entry.matchMode === 'regex' || entry.matchMode === 'plain') {
@@ -220,7 +227,7 @@ const parseStructuredImport = (raw: string): WorldKeywordPayload[] => {
   return rows
     .map((columns) => {
       const keyword = clampText(columns[0] || '')
-      const descriptionRaw = clampText(columns[1] || '')
+      const descriptionRaw = clampDescription(columns[1] || '')
       if (!keyword || !descriptionRaw) {
         return null
       }
@@ -270,7 +277,7 @@ function openEdit(item: any) {
   formModel.category = item.category || ''
   formModel.aliases = (item.aliases || []).map((alias: string) => clampText(alias)).join(', ')
   formModel.matchMode = item.matchMode
-  formModel.description = clampText(item.description || '')
+  formModel.description = clampDescription(item.description || '')
   formModel.display = item.display
   formModel.isEnabled = item.isEnabled
   glossary.openEditor(worldId, item)
@@ -293,7 +300,7 @@ async function submitEditor() {
     category: formModel.category?.trim() || undefined,
     aliases,
     matchMode: formModel.matchMode,
-    description: formModel.description?.trim() ? clampText(formModel.description.trim()) : undefined,
+    description: formModel.description?.trim() ? clampDescription(formModel.description.trim()) : undefined,
     display: formModel.display,
     isEnabled: formModel.isEnabled,
   }
@@ -1034,14 +1041,24 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="keyword-editor__row keyword-editor__description">
-        <n-form-item label="术语描述 / 详细说明" path="description" :show-feedback="false">
-          <n-input
-            v-model:value="formModel.description"
-            type="textarea"
-            :autosize="{ minRows: 10, maxRows: 18 }"
+        <n-form-item path="description" :show-feedback="false">
+          <template #label>
+            <div class="keyword-description-label">
+              <span>术语描述 / 详细说明</span>
+              <button
+                class="keyword-description-label__upload"
+                type="button"
+                @click="descriptionEditorRef?.triggerFileSelect()"
+                title="插入图片"
+              >
+                <n-icon :component="ImageOutline" size="14" />
+              </button>
+            </div>
+          </template>
+          <KeywordDescriptionEditor
+            ref="descriptionEditorRef"
+            v-model="formModel.description"
             :maxlength="keywordMaxLength"
-            show-count
-            placeholder="用于聊天中的提示和解释"
           />
         </n-form-item>
       </div>
@@ -1247,6 +1264,56 @@ onUnmounted(() => {
 .keyword-editor__description :deep(.n-input) {
   font-size: 14px;
   line-height: 1.5;
+}
+
+.keyword-description-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.5rem;
+}
+
+.keyword-description-label span {
+  flex: 1;
+}
+
+.keyword-description-label__upload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #64748b;
+  transition: background 0.15s, color 0.15s;
+}
+
+.keyword-description-label__upload:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1e293b;
+}
+
+:root[data-display-palette='night'] .keyword-description-label__upload {
+  color: rgba(248, 250, 252, 0.6);
+}
+
+:root[data-display-palette='night'] .keyword-description-label__upload:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(248, 250, 252, 0.9);
+}
+
+:root[data-custom-theme='true'] .keyword-description-label__upload {
+  color: var(--sc-text-secondary);
+}
+
+:root[data-custom-theme='true'] .keyword-description-label__upload:hover {
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
 }
 
 .keyword-manager__toolbar {

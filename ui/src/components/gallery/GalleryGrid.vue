@@ -1,5 +1,5 @@
 <template>
-  <div class="gallery-grid">
+  <div :class="['gallery-grid', sizeClass]">
     <div class="gallery-grid__toolbar">
       <slot name="toolbar"></slot>
     </div>
@@ -56,6 +56,7 @@ const props = defineProps<{
   editable?: boolean;
   selectable?: boolean;
   selectedIds?: string[];
+  thumbnailSize?: 'small' | 'medium' | 'large' | 'xlarge';
 }>();
 
 const emit = defineEmits<{
@@ -70,6 +71,7 @@ const emit = defineEmits<{
 }>();
 
 const selectedSet = computed(() => new Set(props.selectedIds || []));
+const sizeClass = computed(() => `gallery-grid--${props.thumbnailSize ?? 'medium'}`);
 const dragOverIndex = ref<number | null>(null);
 let lastClickIndex = -1;
 let draggingIndex = -1;
@@ -160,12 +162,37 @@ function handleDrop(toIndex: number, evt: DragEvent) {
   flex-direction: column;
   gap: 8px;
   height: 100%;
+  --grid-min-size: 96px;
+  --grid-gap: 12px;
+  --grid-item-padding: 8px;
+  --grid-caption-size: 12px;
+}
+
+.gallery-grid--small {
+  --grid-min-size: 72px;
+  --grid-gap: 8px;
+  --grid-item-padding: 6px;
+  --grid-caption-size: 11px;
+}
+
+.gallery-grid--large {
+  --grid-min-size: 128px;
+  --grid-gap: 14px;
+  --grid-item-padding: 10px;
+  --grid-caption-size: 13px;
+}
+
+.gallery-grid--xlarge {
+  --grid-min-size: 160px;
+  --grid-gap: 16px;
+  --grid-item-padding: 12px;
+  --grid-caption-size: 14px;
 }
 
 .gallery-grid__content {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-size), 1fr));
+  gap: var(--grid-gap);
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -200,7 +227,7 @@ function handleDrop(toIndex: number, evt: DragEvent) {
   cursor: pointer;
   position: relative;
   border-radius: 8px;
-  padding: 8px;
+  padding: var(--grid-item-padding);
   border: 2px solid transparent;
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -235,7 +262,7 @@ function handleDrop(toIndex: number, evt: DragEvent) {
 }
 
 .gallery-grid__caption {
-  font-size: 12px;
+  font-size: var(--grid-caption-size);
   text-align: center;
   color: var(--sc-text-secondary, var(--text-color-2));
   white-space: nowrap;
@@ -267,13 +294,29 @@ function handleDrop(toIndex: number, evt: DragEvent) {
 }
 
 @media (max-width: 768px) {
-  .gallery-grid__content {
-    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-    gap: 8px;
+  .gallery-grid {
+    --grid-min-size: 80px;
+    --grid-gap: 8px;
+    --grid-item-padding: 6px;
+    --grid-caption-size: 11px;
   }
 
-  .gallery-grid__item {
-    padding: 6px;
+  .gallery-grid--small {
+    --grid-min-size: 64px;
+  }
+
+  .gallery-grid--large {
+    --grid-min-size: 96px;
+    --grid-gap: 10px;
+    --grid-item-padding: 8px;
+    --grid-caption-size: 12px;
+  }
+
+  .gallery-grid--xlarge {
+    --grid-min-size: 112px;
+    --grid-gap: 12px;
+    --grid-item-padding: 9px;
+    --grid-caption-size: 12px;
   }
 
   .gallery-grid__actions {
@@ -284,9 +327,5 @@ function handleDrop(toIndex: number, evt: DragEvent) {
     opacity: 1;
   }
 
-  .gallery-grid__caption {
-    font-size: 11px;
-  }
 }
 </style>
-

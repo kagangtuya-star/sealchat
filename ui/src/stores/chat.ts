@@ -16,6 +16,7 @@ import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { PermTreeNode } from '@/types-perm';
 import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
+import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 
 interface ChatState {
   subject: WebSocketSubject<any> | null;
@@ -2999,7 +3000,7 @@ export const useChatStore = defineStore({
 
       // 自动创建默认场外角色
       const displayName = user.info.nick || user.info.username || '场外';
-      const avatarAttachmentId = user.info.avatar || '';
+      const avatarAttachmentId = normalizeAttachmentId(user.info.avatar || '');
 
       try {
         const identity = await this.channelIdentityCreate({
