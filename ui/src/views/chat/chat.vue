@@ -8854,6 +8854,8 @@ onBeforeUnmount(() => {
                     <DiceTray
                       :default-dice="defaultDiceExpr"
                       :can-edit-default="canEditDefaultDice"
+                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
+                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"

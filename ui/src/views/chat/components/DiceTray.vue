@@ -260,9 +260,13 @@ import { useDiceHistory, type DiceHistoryItem } from '@/views/chat/composables/u
 const props = withDefaults(defineProps<{
   defaultDice?: string
   canEditDefault?: boolean
+  builtInDiceEnabled?: boolean
+  botFeatureEnabled?: boolean
 }>(), {
   defaultDice: 'd20',
   canEditDefault: false,
+  builtInDiceEnabled: true,
+  botFeatureEnabled: false,
 });
 
 const emit = defineEmits<{
@@ -669,8 +673,15 @@ const quickExpression = computed(() => {
   if (!entries.length) {
     return '';
   }
+  // 只在内置骰关闭且 bot 开启时，后续骰子不带 .r 前缀
+  const useBotMode = !props.builtInDiceEnabled && props.botFeatureEnabled;
   return entries
-    .map(([faces, count]) => `.r${count}d${faces}`)
+    .map(([faces, count], index) => {
+      if (index === 0) {
+        return `.r${count}d${faces}`;
+      }
+      return useBotMode ? `${count}d${faces}` : `.r${count}d${faces}`;
+    })
     .join(' + ');
 });
 
