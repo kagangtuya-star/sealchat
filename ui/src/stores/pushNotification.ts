@@ -34,7 +34,7 @@ const resolveEmbedNotifyOwnerFromHash = (): boolean => {
  */
 export const usePushNotificationStore = defineStore('pushNotification', () => {
     // 用户开关状态（持久化到 localStorage）
-    const enabled = ref(false);
+    const enabled = ref(true);
 
     // 浏览器通知权限状态
     const permission = ref<NotificationPermission>('default');
@@ -66,7 +66,9 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
 
         // 恢复开关状态
         const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved === 'true') {
+        if (saved === 'false') {
+            enabled.value = false;
+        } else if (saved === 'true') {
             enabled.value = true;
         }
 
