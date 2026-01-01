@@ -140,27 +140,32 @@ const options = computed<DropdownOption[]>(() => {
     });
   }
   const actionLabel = filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色';
-  return [
+  const result: DropdownOption[] = [
     ...list,
     { type: 'divider', key: '__divider' },
     {
       key: '__toggle',
       label: actionLabel,
     },
-    {
-      key: '__create',
-      label: '创建新角色',
-      icon: () => (
-        <NIcon size={18}>
-          <Plus />
-        </NIcon>
-      ),
-    },
-    {
-      key: '__manage',
-      label: '管理角色',
-    },
   ];
+  if (canManageIdentities.value) {
+    result.push(
+      {
+        key: '__create',
+        label: '创建新角色',
+        icon: () => (
+          <NIcon size={18}>
+            <Plus />
+          </NIcon>
+        ),
+      },
+      {
+        key: '__manage',
+        label: '管理角色',
+      },
+    );
+  }
+  return result;
 });
 
 const renderOption: DropdownRenderOption = ({ node, option }) => {
@@ -243,7 +248,19 @@ const isAutoSwitchEnabled = computed(() => display.settings.autoSwitchRoleOnIcOo
 const hasOnlyOneRole = computed(() => identities.value.length === 1);
 const hasNoRoles = computed(() => identities.value.length === 0);
 
+const isObserverMode = computed(() => chat.isObserver || chat.observerMode || !!chat.observerWorldId);
+
+const canManageIdentities = computed(() => {
+  if (isObserverMode.value) return false;
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  const role = detail?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
+
 const isMappingMissing = computed(() => {
+  if (!canManageIdentities.value) return false;
   if (!isAutoSwitchEnabled.value) return false;
   // If only one role, can't configure IC/OOC mapping properly
   if (hasOnlyOneRole.value || hasNoRoles.value) return true;
@@ -288,6 +305,7 @@ const isNightPalette = computed(() => display.palette === 'night');
 
 // Avatar setup badge logic
 const showAvatarSetupBadge = computed(() => {
+  if (!canManageIdentities.value) return false;
   // Show badge when user has no avatar AND there's no active channel identity avatar
   if (!user.hasDefaultAvatar) return false;
   // If using a channel identity with a custom avatar, don't show

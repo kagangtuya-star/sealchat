@@ -1680,16 +1680,41 @@ const buildIdentityNameMap = (list: ChannelIdentity[]) => {
   return map;
 };
 
+const identitySyncPromptPending = ref(false);
+
+const isInObserverMode = () => {
+  return chat.isObserver || chat.observerMode || !!chat.observerWorldId;
+};
+
+const canManageIdentities = () => {
+  // 观察者模式不能管理
+  if (isInObserverMode()) return false;
+  // 检查世界成员角色
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  const role = detail?.memberRole;
+  // 只有 owner 和 admin 可以触发同步弹窗
+  return role === 'owner' || role === 'admin';
+};
+
 const maybePromptIdentitySync = async () => {
+  // 等待一个微任务周期，确保路由守卫的状态更新已完成
+  await Promise.resolve();
+  await nextTick();
+
+  if (!canManageIdentities()) {
+    return;
+  }
   const channelId = chat.curChannel?.id;
   const currentChannel = chat.curChannel as SChannel | undefined;
   if (!channelId || !currentChannel) {
     return;
   }
-  if (identitySyncDialogVisible.value) {
+  if (identitySyncDialogVisible.value || identitySyncPromptPending.value) {
     return;
   }
-  if (chat.isObserver || isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
+  if (isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
     return;
   }
   try {
@@ -1698,14 +1723,16 @@ const maybePromptIdentitySync = async () => {
     console.warn('加载频道角色失败', error);
     return;
   }
+  // 异步操作后再次检查权限
+  if (!canManageIdentities()) {
+    return;
+  }
   const identities = chat.channelIdentities[channelId] || [];
-  // 这里是场内外角色未完整配置的简易判断逻辑
-  // const config = chat.getChannelIcOocRoleConfig(channelId);
-  // const hasAnyMapping = !!(config.icRoleId || config.oocRoleId); 
   if (identities.length > 1) {
     return;
   }
 
+  identitySyncPromptPending.value = true;
   const confirmed = await new Promise<boolean>((resolve) => {
     dialog.warning({
       title: '同步其他频道角色？',
@@ -1717,6 +1744,7 @@ const maybePromptIdentitySync = async () => {
       onClose: () => resolve(false),
     });
   });
+  identitySyncPromptPending.value = false;
   if (!confirmed) {
     return;
   }
