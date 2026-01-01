@@ -133,6 +133,30 @@ body {
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
+/* Global minimal scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: var(--sc-scrollbar-size);
+  height: var(--sc-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--sc-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--sc-scrollbar-thumb-hover);
+}
+
 .n-scrollbar-content {
   height: 100%;
 }

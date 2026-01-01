@@ -329,18 +329,6 @@ nav a:first-of-type {
 }
 
 /* --------------------------------------------------------------------------
-   SCROLLBAR (optional visual enhancement)
-   -------------------------------------------------------------------------- */
-
-:root[data-custom-theme='true'] ::-webkit-scrollbar-track {
-  background: var(--sc-bg-surface);
-}
-
-:root[data-custom-theme='true'] ::-webkit-scrollbar-thumb {
-  background: var(--sc-border-strong);
-}
-
-/* --------------------------------------------------------------------------
    CSS VARIABLE FALLBACK OVERRIDE
    Force CSS variables to use :root values even when fallbacks are specified
    -------------------------------------------------------------------------- */
@@ -354,6 +342,8 @@ nav a:first-of-type {
   --sc-text-secondary: var(--sc-text-secondary);
   --sc-border-mute: var(--sc-border-mute);
   --sc-border-strong: var(--sc-border-strong);
+  --sc-scrollbar-thumb: var(--sc-border-strong);
+  --sc-scrollbar-thumb-hover: var(--sc-border-strong);
 }
 
 /* --------------------------------------------------------------------------
