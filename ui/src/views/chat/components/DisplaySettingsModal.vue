@@ -66,6 +66,7 @@ watch(
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
+  draft.disableContextMenu = value.disableContextMenu
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },
@@ -299,6 +300,19 @@ const handleOpenTutorialHub = () => {
         <n-button secondary size="small" @click="shortcutPanelVisible = true">
           配置快捷键
         </n-button>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">禁用浏览器右键菜单</p>
+            <p class="section-desc">避免应用内右键功能菜单与浏览器默认右键菜单冲突</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.disableContextMenu">
+          <template #checked>已禁用</template>
+          <template #unchecked>允许</template>
+        </n-switch>
       </section>
 
       <section class="display-settings__section">

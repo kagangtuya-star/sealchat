@@ -5,7 +5,7 @@ import { darkTheme } from 'naive-ui'
 import { NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
 import type { GlobalTheme, GlobalThemeOverrides } from 'naive-ui'
 import { i18n } from './lang'
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { useDisplayStore } from '@/stores/display'
 
@@ -49,6 +49,20 @@ watch(i18n.global.locale, (newVal) => {
       dateLocale.value = dateJaJP;
       break;
   }
+})
+
+const handleContextMenu = (e: MouseEvent) => {
+  if (display.settings.disableContextMenu) {
+    e.preventDefault()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('contextmenu', handleContextMenu)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('contextmenu', handleContextMenu)
 })
 </script>
 

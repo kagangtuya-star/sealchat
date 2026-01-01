@@ -102,6 +102,8 @@ export interface DisplaySettings {
   customThemeEnabled: boolean
   customThemes: CustomTheme[]
   activeCustomThemeId: string | null
+  // 右键菜单
+  disableContextMenu: boolean
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -348,6 +350,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   customThemeEnabled: false,
   customThemes: [],
   activeCustomThemeId: null,
+  disableContextMenu: true,  // 默认禁用浏览器右键菜单
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -526,6 +529,7 @@ const loadSettings = (): DisplaySettings => {
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
+      disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -690,6 +694,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'activeCustomThemeId')
       ? (typeof (patch as any).activeCustomThemeId === 'string' ? (patch as any).activeCustomThemeId : null)
       : base.activeCustomThemeId,
+  disableContextMenu:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'disableContextMenu')
+      ? coerceBoolean((patch as any).disableContextMenu)
+      : base.disableContextMenu,
 })
 
 export const useDisplayStore = defineStore('display', {
