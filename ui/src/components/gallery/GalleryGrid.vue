@@ -29,7 +29,7 @@
           />
         </div>
         <n-image
-          :src="item.thumbUrl || buildAttachmentUrl(item.attachmentId)"
+          :src="resolveGalleryItemSrc(item)"
           :preview-src="buildAttachmentUrl(item.attachmentId)"
           object-fit="contain"
           preview-disabled
@@ -45,10 +45,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { NButton, NImage, NCheckbox } from 'naive-ui';
 import type { GalleryItem } from '@/types';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { fetchAttachmentMetaById, normalizeAttachmentId, resolveAttachmentUrl, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 
 const props = defineProps<{
   items: GalleryItem[];
@@ -76,6 +76,23 @@ const dragOverIndex = ref<number | null>(null);
 let lastClickIndex = -1;
 let draggingIndex = -1;
 
+const attachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
+const pendingMetaFetch = new Set<string>();
+
+const ensureAttachmentMeta = async (attachmentId: string) => {
+  const normalized = normalizeAttachmentId(attachmentId);
+  if (!normalized || pendingMetaFetch.has(normalized) || attachmentMetaCache[normalized] !== undefined) {
+    return;
+  }
+  pendingMetaFetch.add(normalized);
+  try {
+    const meta = await fetchAttachmentMetaById(normalized);
+    attachmentMetaCache[normalized] = meta;
+  } finally {
+    pendingMetaFetch.delete(normalized);
+  }
+};
+
 function isSelected(id: string): boolean {
   return selectedSet.value.has(id);
 }
@@ -83,6 +100,31 @@ function isSelected(id: string): boolean {
 function buildAttachmentUrl(attachmentId: string) {
   return resolveAttachmentUrl(attachmentId);
 }
+
+function resolveGalleryItemSrc(item: GalleryItem) {
+  const normalized = normalizeAttachmentId(item.attachmentId);
+  if (!normalized) {
+    return '';
+  }
+  const meta = attachmentMetaCache[normalized];
+  if (meta === undefined && !pendingMetaFetch.has(normalized)) {
+    void ensureAttachmentMeta(normalized);
+  }
+  if (meta?.isAnimated) {
+    return resolveAttachmentUrl(normalized);
+  }
+  return item.thumbUrl || resolveAttachmentUrl(normalized);
+}
+
+watch(
+  () => props.items,
+  (items) => {
+    items.forEach((item) => {
+      void ensureAttachmentMeta(item.attachmentId);
+    });
+  },
+  { immediate: true },
+);
 
 function handleClick(item: GalleryItem, index: number, evt: MouseEvent) {
   if (!props.selectable) {

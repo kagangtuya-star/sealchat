@@ -20,6 +20,8 @@ type AttachmentModel struct {
 	Hash        ByteArray   `gorm:"index,size:100" json:"hash"` // hash是32byte
 	Filename    string      `json:"filename"`
 	Size        int64       `gorm:"index" json:"size"`
+	MimeType    string      `json:"mimeType" gorm:"size:64"` // MIME type (e.g., image/webp, image/gif)
+	IsAnimated  bool        `json:"isAnimated"`              // 是否为动态图片（如动态WebP、GIF）
 	UserID      string      `json:"userId" gorm:"index"`
 	ChannelID   string      `json:"channel_id"` // 上传的频道ID
 	StorageType StorageType `json:"storageType" gorm:"type:varchar(16);default:'local'"`

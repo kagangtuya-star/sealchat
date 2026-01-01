@@ -6,6 +6,8 @@ export interface AttachmentMeta {
   filename?: string;
   size?: number;
   hash?: string;
+  mimeType?: string;
+  isAnimated?: boolean;
   storageType?: string;
   objectKey?: string;
   externalUrl?: string;

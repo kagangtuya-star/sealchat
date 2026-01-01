@@ -768,6 +768,44 @@ const uploadImages = computedAsync(async () => {
   return [];
 }, [], emojiLoading);
 
+const EMOJI_THUMB_SIZE = 150;
+const emojiAttachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
+const pendingEmojiMetaFetch = new Set<string>();
+
+const ensureEmojiAttachmentMeta = async (attachmentId: string) => {
+  const normalized = normalizeAttachmentId(attachmentId);
+  if (!normalized || pendingEmojiMetaFetch.has(normalized) || emojiAttachmentMetaCache[normalized] !== undefined) {
+    return;
+  }
+  pendingEmojiMetaFetch.add(normalized);
+  try {
+    const meta = await fetchAttachmentMetaById(normalized);
+    emojiAttachmentMetaCache[normalized] = meta;
+  } finally {
+    pendingEmojiMetaFetch.delete(normalized);
+  }
+};
+
+const resolveEmojiAttachmentUrl = (attachmentId: string, thumbUrl?: string) => {
+  const normalized = normalizeAttachmentId(attachmentId);
+  if (!normalized) {
+    return '';
+  }
+  const meta = emojiAttachmentMetaCache[normalized];
+  if (meta === undefined && !pendingEmojiMetaFetch.has(normalized)) {
+    void ensureEmojiAttachmentMeta(normalized);
+  }
+  if (meta?.isAnimated) {
+    return resolveAttachmentUrl(normalized);
+  }
+  return thumbUrl || `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
+};
+
+const getEmojiItemSrc = (item: UserEmojiModel) => {
+  const id = item.attachmentId || item.id;
+  return resolveEmojiAttachmentUrl(id);
+};
+
 const hasUserEmoji = computed(() => (uploadImages.value?.length ?? 0) > 0);
 const galleryEmojiItems = computed<GalleryItem[]>(() => {
   if (!gallery.emojiCollectionId) return [];
@@ -8065,7 +8103,7 @@ const insertGalleryInline = (attachmentId: string) => {
   ensureInputFocus();
 };
 
-const getGalleryItemThumb = (item: GalleryItem) => item.thumbUrl || resolveAttachmentUrl(item.attachmentId);
+const getGalleryItemThumb = (item: GalleryItem) => resolveEmojiAttachmentUrl(item.attachmentId, item.thumbUrl);
 
 const handleGalleryEmojiClick = (item: GalleryItem) => {
   recordEmojiUsage(item.id);
@@ -8634,7 +8672,7 @@ onBeforeUnmount(() => {
                                     <div class="emoji-manage-item__content">
                                       <n-checkbox :value="item.id">
                                         <div class="emoji-item">
-                                          <img :src="getSrc(item)" alt="表情" />
+                                          <img :src="getEmojiItemSrc(item)" alt="表情" />
                                           <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">
                                             {{ resolveEmojiRemark(item, idx) }}
                                           </div>
@@ -8658,7 +8696,7 @@ onBeforeUnmount(() => {
                             <template v-else>
                               <div class="emoji-grid">
                                 <div class="emoji-item" v-for="(item, idx) in filteredUserEmojis" :key="item.id" @click="sendEmoji(item)">
-                                  <img :src="getSrc(item)" alt="表情" />
+                                  <img :src="getEmojiItemSrc(item)" alt="表情" />
                                   <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
                                   <div class="emoji-item__actions">
                                     <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>

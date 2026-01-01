@@ -58,23 +58,25 @@ func uploadFiles(
 		if limit == 0 {
 			limit = limits.INT_MAX
 		}
-		hashCode, savedSize, err := SaveMultipartFile(file, tempFile, limit)
+		saveResult, err := SaveMultipartFile(file, tempFile, limit)
 		if err != nil {
 			return err, nil, nil
 		}
-		hexString := hex.EncodeToString(hashCode)
-		fn := fmt.Sprintf("%s_%d", hexString, savedSize)
+		hexString := hex.EncodeToString(saveResult.Hash)
+		fn := fmt.Sprintf("%s_%d", hexString, saveResult.Size)
 
 		_ = tempFile.Close()
-		location, err := service.PersistAttachmentFile(hashCode, savedSize, tempFile.Name(), file.Header.Get("Content-Type"))
+		location, err := service.PersistAttachmentFile(saveResult.Hash, saveResult.Size, tempFile.Name(), saveResult.MimeType)
 		if err != nil {
 			return err, nil, nil
 		}
 
 		attachment := &model.AttachmentModel{
 			Filename:    file.Filename,
-			Size:        savedSize,
-			Hash:        hashCode,
+			Size:        saveResult.Size,
+			Hash:        saveResult.Hash,
+			MimeType:    saveResult.MimeType,
+			IsAnimated:  saveResult.IsAnimated,
 			UserID:      uid,
 			StorageType: location.StorageType,
 			ObjectKey:   location.ObjectKey,
@@ -201,6 +203,8 @@ func AttachmentUploadQuick(c *fiber.Ctx) error {
 		Filename:    item.Filename,
 		Size:        item.Size,
 		Hash:        hashBytes,
+		MimeType:    item.MimeType,
+		IsAnimated:  item.IsAnimated,
 		StorageType: item.StorageType,
 		ObjectKey:   item.ObjectKey,
 		ExternalURL: item.ExternalURL,

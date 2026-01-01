@@ -64,6 +64,11 @@ func AttachmentThumb(c *fiber.Ctx) error {
 		return AttachmentGet(c)
 	}
 
+	// For animated images (GIF/animated WebP), serve original to preserve animation
+	if att.IsAnimated {
+		return AttachmentGet(c)
+	}
+
 	// Check if thumbnail is already cached
 	thumbPath := getThumbCachePath(attachmentID, size)
 	if _, err := os.Stat(thumbPath); err == nil {

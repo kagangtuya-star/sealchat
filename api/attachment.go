@@ -46,6 +46,8 @@ func UploadQuick(c *fiber.Ctx) error {
 		Filename:    item.Filename,
 		Size:        item.Size,
 		Hash:        hashBytes,
+		MimeType:    item.MimeType,
+		IsAnimated:  item.IsAnimated,
 		ChannelID:   body.ChannelID,
 		UserID:      getCurUser(c).ID,
 		StorageType: item.StorageType,
@@ -101,23 +103,25 @@ func Upload(c *fiber.Ctx) error {
 		if limit == 0 {
 			limit = limits.INT_MAX
 		}
-		hashCode, savedSize, err := SaveMultipartFile(file, tempFile, limit)
+		saveResult, err := SaveMultipartFile(file, tempFile, limit)
 		if err != nil {
 			return err
 		}
-		hexString := hex.EncodeToString(hashCode)
-		fn := fmt.Sprintf("%s_%d", hexString, savedSize)
+		hexString := hex.EncodeToString(saveResult.Hash)
+		fn := fmt.Sprintf("%s_%d", hexString, saveResult.Size)
 		_ = tempFile.Close()
 
-		location, err := service.PersistAttachmentFile(hashCode, savedSize, tempFile.Name(), file.Header.Get("Content-Type"))
+		location, err := service.PersistAttachmentFile(saveResult.Hash, saveResult.Size, tempFile.Name(), saveResult.MimeType)
 		if err != nil {
 			return wrapError(c, err, "上传失败，请重试")
 		}
 
 		tx, newItem := model.AttachmentCreate(&model.AttachmentModel{
 			Filename:    file.Filename,
-			Size:        savedSize,
-			Hash:        hashCode,
+			Size:        saveResult.Size,
+			Hash:        saveResult.Hash,
+			MimeType:    saveResult.MimeType,
+			IsAnimated:  saveResult.IsAnimated,
 			ChannelID:   channelId,
 			UserID:      getCurUser(c).ID,
 			StorageType: location.StorageType,
@@ -189,6 +193,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 		if path, err := service.ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
 			if _, err := os.Stat(path); err == nil {
 				setAttachmentCacheHeaders(c, &att)
+				setAttachmentContentType(c, &att)
 				return c.SendFile(path)
 			}
 		}
@@ -209,6 +214,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 		return wrapError(c, err, "读取附件失败")
 	}
 	setAttachmentCacheHeaders(c, &att)
+	setAttachmentContentType(c, &att)
 	return c.SendFile(fullPath)
 }
 
@@ -238,6 +244,8 @@ func AttachmentMeta(c *fiber.Ctx) error {
 			"filename":    att.Filename,
 			"size":        att.Size,
 			"hash":        att.Hash,
+			"mimeType":    att.MimeType,
+			"isAnimated":  att.IsAnimated,
 			"storageType": att.StorageType,
 			"objectKey":   att.ObjectKey,
 			"externalUrl": att.ExternalURL,
@@ -285,6 +293,7 @@ func trySendUploadFile(c *fiber.Ctx, token string) (bool, error) {
 		return true, wrapError(c, err, "读取附件失败")
 	}
 	setAttachmentCacheHeaders(c, nil)
+	setAttachmentContentType(c, nil)
 	return true, c.SendFile(fullPath)
 }
 
@@ -332,4 +341,55 @@ func setAttachmentCacheHeaders(c *fiber.Ctx, att *model.AttachmentModel) {
 	}
 	etag := fmt.Sprintf(`W/"%s-%d"`, att.ID, att.Size)
 	c.Set("ETag", etag)
+}
+
+func setAttachmentContentType(c *fiber.Ctx, att *model.AttachmentModel) {
+	c.Set("X-Content-Type-Options", "nosniff")
+	if att == nil {
+		return
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(att.MimeType))
+	if mimeType == "" {
+		return
+	}
+	if isInlineAttachmentMime(mimeType) {
+		c.Set("Content-Type", mimeType)
+		return
+	}
+	c.Set("Content-Type", "application/octet-stream")
+	filename := sanitizeAttachmentFilename(att.Filename)
+	if filename == "" {
+		filename = "attachment"
+	}
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+}
+
+func isInlineAttachmentMime(mimeType string) bool {
+	if mimeType == "" {
+		return false
+	}
+	if strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/") || strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+	switch mimeType {
+	case "application/pdf":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeAttachmentFilename(value string) string {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return ""
+	}
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '"', '\\', '\r', '\n':
+			return -1
+		default:
+			return r
+		}
+	}, name)
 }

@@ -43,10 +43,18 @@ func copyZeroAlloc(w io.Writer, r io.Reader) (int64, error) {
 // ErrFileTooLarge is returned when uploaded file exceeds size limit
 var ErrFileTooLarge = errors.New("文件大小超过限制")
 
-func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (hashOut []byte, size int64, err error) {
+// SaveMultipartFileResult contains the result of saving a multipart file
+type SaveMultipartFileResult struct {
+	Hash       []byte
+	Size       int64
+	MimeType   string // Final MIME type after conversion (e.g., image/webp)
+	IsAnimated bool   // Whether the image is animated (e.g., animated WebP from GIF)
+}
+
+func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (result SaveMultipartFileResult, err error) {
 	file, err := fh.Open()
 	if err != nil {
-		return nil, 0, err
+		return SaveMultipartFileResult{}, err
 	}
 	defer func() {
 		closeErr := file.Close()
@@ -68,7 +76,7 @@ func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (
 		_ = file.Close()
 		file, err = fh.Open()
 		if err != nil {
-			return nil, 0, err
+			return SaveMultipartFileResult{}, err
 		}
 	}
 
@@ -77,38 +85,42 @@ func SaveMultipartFile(fh *multipart.FileHeader, fOut afero.File, limit int64) (
 		limitedReader := io.LimitReader(file, limit+1)
 		data, readErr := io.ReadAll(limitedReader)
 		if readErr != nil {
-			return nil, 0, readErr
+			return SaveMultipartFileResult{}, readErr
 		}
 
 		// Check if file exceeds limit
 		if int64(len(data)) > limit {
-			return nil, 0, ErrFileTooLarge
+			return SaveMultipartFileResult{}, ErrFileTooLarge
 		}
 
 		if len(data) == 0 {
-			return copyWithHash(fOut, bytes.NewReader(data))
+			hash, size, err := copyWithHash(fOut, bytes.NewReader(data))
+			return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType}, err
 		}
 
-		compressed, ok, compErr := tryCompressImage(data, mimeType, appConfig.ImageCompressQuality)
+		compressed, finalMime, ok, isAnimated, compErr := tryCompressImage(data, mimeType, appConfig.ImageCompressQuality)
 		if compErr != nil {
-			return nil, 0, compErr
+			return SaveMultipartFileResult{}, compErr
 		}
 		if ok && len(compressed) > 0 {
-			return copyWithHash(fOut, bytes.NewReader(compressed))
+			hash, size, err := copyWithHash(fOut, bytes.NewReader(compressed))
+			return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: finalMime, IsAnimated: isAnimated}, err
 		}
-		return copyWithHash(fOut, bytes.NewReader(data))
+		hash, size, err := copyWithHash(fOut, bytes.NewReader(data))
+		return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType, IsAnimated: isAnimated}, err
 	}
 
 	// For non-image files, also check size limit
 	reader := bufio.NewReader(io.LimitReader(file, limit+1))
 	data, readErr := io.ReadAll(reader)
 	if readErr != nil {
-		return nil, 0, readErr
+		return SaveMultipartFileResult{}, readErr
 	}
 	if int64(len(data)) > limit {
-		return nil, 0, ErrFileTooLarge
+		return SaveMultipartFileResult{}, ErrFileTooLarge
 	}
-	return copyWithHash(fOut, bytes.NewReader(data))
+	hash, size, err := copyWithHash(fOut, bytes.NewReader(data))
+	return SaveMultipartFileResult{Hash: hash, Size: size, MimeType: mimeType}, err
 }
 
 func copyWithHash(dst io.Writer, src io.Reader) ([]byte, int64, error) {
@@ -148,33 +160,50 @@ func shouldCompressUpload(mimeType string) bool {
 	}
 }
 
-func tryCompressImage(data []byte, mimeType string, quality int) ([]byte, bool, error) {
+func tryCompressImage(data []byte, mimeType string, quality int) ([]byte, string, bool, bool, error) {
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, false, nil
+		return nil, mimeType, false, false, nil
 	}
 
 	quality = clampImageQuality(quality)
 
-	// For GIF, extract first frame
-	// (Note: this doesn't preserve animation, just the first frame)
+	// For GIF, check if animated (multiple frames)
 	if format == "gif" {
-		if gifImg, gifErr := gif.DecodeAll(bytes.NewReader(data)); gifErr == nil && len(gifImg.Image) > 0 {
-			// Use first frame for static WebP
+		gifImg, gifErr := gif.DecodeAll(bytes.NewReader(data))
+		if gifErr != nil {
+			return nil, mimeType, false, false, nil
+		}
+
+		// Multi-frame GIF: use gif2webp to preserve animation
+		if len(gifImg.Image) > 1 {
+			result, encodeErr := utils.EncodeGIFToWebPWithGIF2WebP(data, quality)
+			if encodeErr != nil {
+				return nil, mimeType, false, false, encodeErr
+			}
+			// If animated WebP is significantly larger, keep original GIF
+			if len(result) > len(data)*3/2 {
+				return nil, mimeType, false, true, nil // Still mark as animated even if keeping GIF
+			}
+			return result, "image/webp", true, true, nil // isAnimated = true
+		}
+
+		// Single-frame GIF: extract first frame for static WebP
+		if len(gifImg.Image) > 0 {
 			img = gifImg.Image[0]
 		}
 	}
 
 	result, encodeErr := utils.EncodeImageToWebPWithCWebP(img, quality)
 	if encodeErr != nil {
-		return nil, false, encodeErr
+		return nil, mimeType, false, false, encodeErr
 	}
 	// Always use WebP result even if larger, for format consistency
 	// If WebP result is significantly larger (>150%), fall back to original
 	if len(result) > len(data)*3/2 {
-		return nil, false, nil
+		return nil, mimeType, false, false, nil
 	}
-	return result, true, nil
+	return result, "image/webp", true, false, nil
 }
 
 func clampImageQuality(val int) int {
