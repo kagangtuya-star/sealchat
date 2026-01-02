@@ -271,16 +271,16 @@ const contentRef = ref<HTMLElement | null>(null);
 
 const visible = computed(() => gallery.isPanelVisible);
 
-// Auto-refresh 1 second after panel opens to fix data fetch latency
+// Auto-refresh 1 second after panel opens or collection switches to fix data fetch latency
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-watch(visible, (isVisible) => {
+watch([visible, () => gallery.activeCollectionId], ([isVisible, activeCollectionId]) => {
   if (autoRefreshTimer) {
     clearTimeout(autoRefreshTimer);
     autoRefreshTimer = null;
   }
-  if (isVisible && gallery.activeCollectionId) {
+  if (isVisible && activeCollectionId) {
     autoRefreshTimer = setTimeout(() => {
-      gallery.loadItems(gallery.activeCollectionId!);
+      gallery.loadItems(activeCollectionId);
     }, 1000);
   }
 });

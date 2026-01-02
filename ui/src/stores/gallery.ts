@@ -131,11 +131,12 @@ export const useGalleryStore = defineStore('gallery', {
         if (this.activeCollectionId) {
           await this.loadItems(this.activeCollectionId);
         }
-        if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
-          await this.loadItems(this.emojiCollectionId);
-        }
       } finally {
         this.initializing = false;
+      }
+      if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
+        // Load emoji collection in the background so panel init isn't blocked.
+        void this.loadItems(this.emojiCollectionId).catch(() => {});
       }
     },
 
