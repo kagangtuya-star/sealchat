@@ -13,7 +13,7 @@ type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
 type PaneMode = 'chat' | 'web';
 
 type FilterState = {
-  icOnly: boolean;
+  icFilter: 'all' | 'ic' | 'ooc';
   showArchived: boolean;
   roleIds: string[];
 };
@@ -101,12 +101,13 @@ const drawerVisible = ref(false);
 const sidebarCollapsed = ref(false);
 const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
 
-const defaultFilterState: FilterState = { icOnly: false, showArchived: false, roleIds: [] };
+const defaultFilterState: FilterState = { icFilter: 'all', showArchived: false, roleIds: [] };
 const normalizeFilterState = (filters: FilterState): FilterState => {
   const rawRoleIds = Array.isArray(filters.roleIds) ? toRaw(filters.roleIds) : [];
   const roleIds = Array.isArray(rawRoleIds) ? rawRoleIds.map((id) => String(id ?? '')).filter(Boolean) : [];
+  const icFilter = ['all', 'ic', 'ooc'].includes(filters.icFilter) ? filters.icFilter : 'all';
   return {
-    icOnly: !!filters.icOnly,
+    icFilter,
     showArchived: !!filters.showArchived,
     roleIds,
   };

@@ -95,7 +95,7 @@ interface ChatState {
   lastLatencyMs: number;
   serverTimeOffsetMs: number;
   filterState: {
-    icOnly: boolean;
+    icFilter: 'all' | 'ic' | 'ooc';
     showArchived: boolean;
     roleIds: string[];
   };
@@ -291,7 +291,7 @@ export const useChatStore = defineStore({
     lastLatencyMs: 0,
     serverTimeOffsetMs: 0,
     filterState: {
-      icOnly: false,
+      icFilter: 'all',
       showArchived: false,
       roleIds: [],
     },
@@ -2634,7 +2634,7 @@ export const useChatStore = defineStore({
       this.lastPingSentAt = null;
     },
 
-    setFilterState(filters: Partial<{ icOnly: boolean; showArchived: boolean; roleIds: string[] }>) {
+    setFilterState(filters: Partial<{ icFilter: 'all' | 'ic' | 'ooc'; showArchived: boolean; roleIds: string[] }>) {
       this.filterState = {
         ...this.filterState,
         ...filters,

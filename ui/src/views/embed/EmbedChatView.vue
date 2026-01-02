@@ -14,7 +14,7 @@ type PaneId = 'A' | 'B';
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
 type FilterState = {
-  icOnly: boolean;
+  icFilter: 'all' | 'ic' | 'ooc';
   showArchived: boolean;
   roleIds: string[];
 };
@@ -119,8 +119,9 @@ const normalizeWorldOptions = (options: any): Array<{ value: string; label: stri
 
 const normalizeFilterState = (state: any): FilterState => {
   const roleIdsRaw = Array.isArray(state?.roleIds) ? state.roleIds : [];
+  const icFilter = ['all', 'ic', 'ooc'].includes(state?.icFilter) ? state.icFilter : 'all';
   return {
-    icOnly: !!state?.icOnly,
+    icFilter,
     showArchived: !!state?.showArchived,
     roleIds: roleIdsRaw.map((id: any) => String(id || '')).filter(Boolean),
   };

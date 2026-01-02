@@ -18,7 +18,7 @@ import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
 
 interface FilterState {
-  icOnly: boolean
+  icFilter: 'all' | 'ic' | 'ooc'
   showArchived: boolean
   roleIds: string[]
 }
@@ -281,7 +281,7 @@ const roleSelectOptions = computed(() => {
 
 const activeFiltersCount = computed(() => {
   let count = 0
-  if (props.filters.icOnly) count++
+  if (props.filters.icFilter !== 'all') count++
   if (props.filters.showArchived) count++
   if (props.filters.roleIds.length > 0) count++
   return count
@@ -297,6 +297,21 @@ const updateFilter = (key: keyof FilterState, value: any) => {
 const clearAllFilters = () => {
   emit('clear-filters')
 }
+
+const icFilterLabel = computed(() => {
+  switch (props.filters.icFilter) {
+    case 'ic': return '只看场内'
+    case 'ooc': return '只看场外'
+    default: return '全部消息'
+  }
+})
+
+const cycleIcFilter = () => {
+  const order: Array<'all' | 'ic' | 'ooc'> = ['all', 'ic', 'ooc']
+  const idx = order.indexOf(props.filters.icFilter)
+  const next = order[(idx + 1) % order.length]
+  updateFilter('icFilter', next)
+}
 </script>
 
 <template>
@@ -304,14 +319,14 @@ const clearAllFilters = () => {
     <!-- 筛选区域 -->
     <div class="ribbon-section ribbon-section--filters">
       <div class="filter-group">
-        <n-switch
-          :value="filters.icOnly"
-          @update:value="updateFilter('icOnly', $event)"
+        <n-button
           size="small"
+          :type="filters.icFilter !== 'all' ? 'primary' : 'default'"
+          :tertiary="filters.icFilter === 'all'"
+          @click="cycleIcFilter"
         >
-          <template #checked>只看场内</template>
-          <template #unchecked>全部消息</template>
-        </n-switch>
+          {{ icFilterLabel }}
+        </n-button>
       </div>
 
       <div class="filter-group">

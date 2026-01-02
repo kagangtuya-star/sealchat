@@ -3080,7 +3080,7 @@ const isMergeCandidate = (message?: Message | null) => {
 const roleFilterActive = computed(() => Array.isArray(chat.filterState.roleIds) && chat.filterState.roleIds.length > 0);
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
-  const { icOnly, showArchived, roleIds } = chat.filterState;
+  const { icFilter, showArchived, roleIds } = chat.filterState;
   const filterRoleIds = Array.isArray(roleIds) ? roleIds : [];
   const allowMergeNeighbors = display.settings.mergeNeighbors && !roleFilterActive.value;
 
@@ -3094,7 +3094,10 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
     }
 
     const icValue = String(message?.icMode ?? message?.ic_mode ?? 'ic').toLowerCase();
-    if (icOnly && icValue !== 'ic') {
+    if (icFilter === 'ic' && icValue !== 'ic') {
+      return false;
+    }
+    if (icFilter === 'ooc' && icValue !== 'ooc') {
       return false;
     }
 
@@ -8244,7 +8247,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
-        @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
+        @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>
 
