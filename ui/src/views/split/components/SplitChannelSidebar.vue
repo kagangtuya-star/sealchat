@@ -281,6 +281,26 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
   background: var(--sc-bg-surface);
   color: var(--sc-text-primary);
   min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35)) transparent;
+}
+
+.sc-split-sidebar::-webkit-scrollbar {
+  width: var(--sc-scrollbar-size, 6px);
+}
+
+.sc-split-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sc-split-sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35));
+  border-radius: 999px;
+}
+
+.sc-split-sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sc-scrollbar-thumb-hover, rgba(148, 163, 184, 0.55));
 }
 
 .sc-split-sidebar__section {
@@ -436,32 +456,10 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
 }
 
 .sc-split-channel-tree {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   border-radius: 10px;
   border: 1px solid var(--sc-border-strong);
   background: var(--sc-bg-surface);
   padding: 6px 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35)) transparent;
-}
-
-.sc-split-channel-tree::-webkit-scrollbar {
-  width: var(--sc-scrollbar-size, 6px);
-}
-
-.sc-split-channel-tree::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.sc-split-channel-tree::-webkit-scrollbar-thumb {
-  background-color: var(--sc-scrollbar-thumb, rgba(148, 163, 184, 0.35));
-  border-radius: 999px;
-}
-
-.sc-split-channel-tree::-webkit-scrollbar-thumb:hover {
-  background-color: var(--sc-scrollbar-thumb-hover, rgba(148, 163, 184, 0.55));
 }
 
 .sc-split-channel-item {
