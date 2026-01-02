@@ -171,7 +171,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		uploadRoot = "./data/upload"
 	}
 	v1Auth.Static("/attachments", uploadRoot)
-	v1Auth.Static("/gallery/thumbs", "./data/gallery/thumbs")
+	v1Auth.Get("/gallery/thumbs/:filename", GalleryThumbServe)
 
 	v1Auth.Get("/status", StatusLatest)
 	v1Auth.Get("/status/history", StatusHistory)

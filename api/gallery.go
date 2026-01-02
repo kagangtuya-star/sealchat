@@ -1,8 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -474,6 +479,24 @@ func saveGalleryThumb(userID, attachmentID, dataURI string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
+
+	// For non-GIF images, convert to WebP
+	if ext != ".gif" {
+		img, _, decErr := image.Decode(bytes.NewReader(decoded))
+		if decErr == nil {
+			webpData, encErr := utils.EncodeImageToWebPWithCWebP(img, galleryThumbWebpQuality)
+			if encErr == nil {
+				filename := attachmentID + ".webp"
+				fullPath := filepath.Join(dir, filename)
+				if err := os.WriteFile(fullPath, webpData, 0o644); err != nil {
+					return "", err
+				}
+				return "/api/v1/gallery/thumbs/" + filename, nil
+			}
+		}
+	}
+
+	// Fallback: save original format (GIF or if WebP conversion failed)
 	filename := attachmentID + ext
 	fullPath := filepath.Join(dir, filename)
 	if err := os.WriteFile(fullPath, decoded, 0o644); err != nil {
