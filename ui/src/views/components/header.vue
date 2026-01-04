@@ -2,7 +2,7 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle, Palette } from '@vicons/tabler';
-import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline } from '@vicons/ionicons5';
+import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -43,6 +43,13 @@ const audioStudio = useAudioStudioStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
 
+const timelineItems = ref<any[]>([]);
+const timelineLoading = ref(false);
+const notifTimer = ref<number | null>(null);
+const isAdmin = computed(() => !!user.checkPerm('mod_admin'));
+const hasUnreadUpdate = computed(() => timelineItems.value.some((item) => item?.type === 'system.update' && !item?.isRead));
+const showNotifBell = computed(() => isAdmin.value && (hasUnreadUpdate.value || notifShow.value));
+
 const channelTitle = computed(() => {
   const raw = chat.curChannel?.name;
   const name = typeof raw === 'string' ? raw.trim() : '';
@@ -70,6 +77,47 @@ const goLogin = () => {
 
 const openDisplaySettings = () => {
   chatEvent.emit('open-display-settings');
+};
+
+const refreshTimeline = async () => {
+  if (!isAdmin.value) {
+    timelineItems.value = [];
+    return;
+  }
+  timelineLoading.value = true;
+  try {
+    const resp = await user.timelineList();
+    timelineItems.value = resp.data.items || [];
+  } catch (err) {
+    console.error(err);
+  } finally {
+    timelineLoading.value = false;
+  }
+};
+
+const markUpdateRead = async () => {
+  const unreadIds = timelineItems.value
+    .filter((item) => item?.type === 'system.update' && !item?.isRead)
+    .map((item) => item.id)
+    .filter((id) => !!id);
+  if (!unreadIds.length) return;
+  try {
+    await user.timelineMarkRead(unreadIds);
+    timelineItems.value = timelineItems.value.map((item) => {
+      if (unreadIds.includes(item.id)) {
+        return { ...item, isRead: true };
+      }
+      return item;
+    });
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+const toggleNotifPanel = () => {
+  userProfileShow.value = false;
+  adminShow.value = false;
+  notifShow.value = !notifShow.value;
 };
 
 const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
@@ -355,6 +403,13 @@ const emitOverlayState = (source: string, visible: boolean, prevVisible?: boolea
 watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', visible, prevVisible));
 watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
 watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
+watch(notifShow, async (visible) => {
+  if (!visible || !isAdmin.value) {
+    return;
+  }
+  await refreshTimeline();
+  await markUpdateRead();
+});
 
 const toggleActionRibbon = () => {
   chatEvent.emit('action-ribbon-toggle');
@@ -379,7 +434,24 @@ onMounted(() => {
 onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.off('open-user-profile', handleOpenUserProfile);
+  if (notifTimer.value) {
+    window.clearInterval(notifTimer.value);
+    notifTimer.value = null;
+  }
 });
+
+watch(isAdmin, (value) => {
+  if (notifTimer.value) {
+    window.clearInterval(notifTimer.value);
+    notifTimer.value = null;
+  }
+  if (!value) {
+    timelineItems.value = [];
+    return;
+  }
+  refreshTimeline();
+  notifTimer.value = window.setInterval(refreshTimeline, 60_000);
+}, { immediate: true });
 
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarLeftExpand : LayoutSidebarLeftCollapse)
 </script>
@@ -491,6 +563,22 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <n-icon :component="AppsOutline" size="18" />
       </button>
 
+      <n-tooltip v-if="showNotifBell" placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button"
+            :class="{ 'is-active': notifShow }"
+            aria-label="查看更新通知"
+            @click="toggleNotifPanel"
+          >
+            <span v-if="hasUnreadUpdate" class="sc-icon-button__badge"></span>
+            <n-icon :component="NotificationsOutline" size="16" />
+          </button>
+        </template>
+        <span>更新通知</span>
+      </n-tooltip>
+
       <n-dropdown :overlap="usernameOverlap" placement="bottom-end" trigger="click" :options="options"
         @select="handleSelect">
         <n-tooltip trigger="hover">
@@ -536,7 +624,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   >
     <AdminSettings @close="adminShow = false" />
   </div>
-  <notif v-show="notifShow" />
+  <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
 </template>
 

@@ -93,6 +93,8 @@ func main() {
 
 	pm.Init()
 
+	service.SyncUpdateCurrentVersion(utils.BuildVersion)
+
 	storageManager, err := service.InitStorageManager(config.Storage)
 	if err != nil {
 		log.Fatalf("初始化存储系统失败: %v", err)
@@ -120,6 +122,16 @@ func main() {
 			MaxPerHour:       config.EmailNotification.MaxPerHour,
 			SiteURL:          config.Domain,
 		}, config.EmailNotification.SMTP)
+	}
+
+	// 启动更新检测 Worker
+	if config.UpdateCheck.Enabled {
+		service.StartUpdateCheckWorker(service.UpdateCheckWorkerConfig{
+			IntervalSec:   config.UpdateCheck.IntervalSec,
+			GithubRepo:    config.UpdateCheck.GithubRepo,
+			GithubToken:   config.UpdateCheck.GithubToken,
+			CurrentVersion: utils.BuildVersion,
+		})
 	}
 
 	autoSave := func() {

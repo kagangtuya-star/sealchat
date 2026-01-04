@@ -108,6 +108,15 @@ export const useUserStore = defineStore({
       return resp;
     },
 
+    async timelineMarkRead(ids?: string[]) {
+      const resp = await api.post('api/v1/timeline-mark-read', {
+        ids: ids || [],
+      }, {
+        headers: { 'Authorization': this.token }
+      });
+      return resp;
+    },
+
     // 强制更新用户信息
     async infoUpdate() {
       const resp = await api.get('api/v1/user-info', {

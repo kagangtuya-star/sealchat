@@ -170,6 +170,32 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async adminUpdateStatus() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/update-status', {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminUpdateCheck() {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/update-check', null, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminUpdateVersion(currentVersion: string) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/update-version', {
+        currentVersion: currentVersion,
+      }, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
     async userResetPassword(id: string) {
       const user = useUserStore();
       const resp = await api.post(`api/v1/admin/user-password-reset`, null, {

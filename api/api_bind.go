@@ -110,6 +110,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/gallery/search", GallerySearch)
 
 	v1Auth.Get("/timeline-list", TimelineList)
+	v1Auth.Post("/timeline-mark-read", TimelineMarkRead)
 
 	v1Auth.Post("/upload", Upload)
 	v1Auth.Post("/upload-quick", UploadQuick)
@@ -277,6 +278,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/user-password-reset", AdminUserResetPassword)
 	v1AuthAdmin.Post("/admin/user-role-link-by-user-id", AdminUserRoleLinkByUserId)
 	v1AuthAdmin.Post("/admin/user-role-unlink-by-user-id", AdminUserRoleUnlinkByUserId)
+	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
+	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
+	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)
