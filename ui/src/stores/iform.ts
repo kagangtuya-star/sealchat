@@ -354,15 +354,22 @@ export const useIFormStore = defineStore('iform', {
       }
       this.ensurePanelMap(channelId);
       const form = this.getForm(channelId, formId);
-      const width = Math.max(1, Math.round(options?.width ?? form?.defaultWidth ?? 640));
-      const height = Math.max(1, Math.round(options?.height ?? form?.defaultHeight ?? 360));
-      const position = resolveDefaultPosition(width, height, options);
+      const desiredWidth = Math.max(1, Math.round(options?.width ?? form?.defaultWidth ?? 640));
+      const desiredHeight = Math.max(1, Math.round(options?.height ?? form?.defaultHeight ?? 360));
+      const maxSize = resolveMaxFloatingSize();
+      const viewport = resolveViewport();
+      const isMobileViewport = viewport.width < MOBILE_VIEWPORT_WIDTH;
+      const baseWidth = isMobileViewport ? maxSize.width : desiredWidth;
+      const baseHeight = isMobileViewport ? maxSize.height : desiredHeight;
+      const size = clampSize(baseWidth, baseHeight);
+      const position = resolveDefaultPosition(size.width, size.height, options);
+      const clamped = clampPosition(position.x, position.y, size.width, size.height);
       const state: FloatingState = {
         formId,
-        width,
-        height,
-        x: position.x,
-        y: position.y,
+        width: size.width,
+        height: size.height,
+        x: clamped.x,
+        y: clamped.y,
         minimized: !!options?.minimized,
         zIndex: ++this.zCounter,
         collapsed: !!options?.collapsed,
@@ -411,8 +418,38 @@ export const useIFormStore = defineStore('iform', {
       if (!state) {
         return;
       }
-      state.width = Math.max(1, Math.round(width));
-      state.height = Math.max(1, Math.round(height));
+      const size = clampSize(width, height);
+      state.width = size.width;
+      state.height = size.height;
+      const clamped = clampPosition(state.x, state.y, state.width, state.height);
+      state.x = clamped.x;
+      state.y = clamped.y;
+    },
+    updateFloatingRect(formId: string, rect: { x: number; y: number; width: number; height: number }) {
+      const state = this.getFloatingState(formId);
+      if (!state) {
+        return;
+      }
+      const size = clampSize(rect.width, rect.height);
+      const clamped = clampPosition(rect.x, rect.y, size.width, size.height);
+      state.width = size.width;
+      state.height = size.height;
+      state.x = clamped.x;
+      state.y = clamped.y;
+    },
+    fitFloatingToViewport(formId: string) {
+      const state = this.getFloatingState(formId);
+      if (!state) {
+        return;
+      }
+      const maxSize = resolveMaxFloatingSize();
+      const clamped = clampPosition(FLOATING_PADDING_X, FLOATING_MIN_Y, maxSize.width, maxSize.height);
+      state.width = maxSize.width;
+      state.height = maxSize.height;
+      state.x = clamped.x;
+      state.y = clamped.y;
+      state.minimized = false;
+      this.bringFloatingToFront(formId);
     },
     bringFloatingToFront(formId: string) {
       const state = this.getFloatingState(formId);
@@ -702,14 +739,44 @@ export const useIFormStore = defineStore('iform', {
   },
 });
 
+const FLOATING_MIN_WIDTH = 240;
+const FLOATING_MIN_HEIGHT = 200;
+const FLOATING_PADDING_X = 16;
+const FLOATING_PADDING_Y = 16;
+const FLOATING_MIN_Y = 48;
+const MOBILE_VIEWPORT_WIDTH = 768;
+
+function resolveViewport() {
+  if (typeof window === 'undefined') {
+    return { width: 1280, height: 720 };
+  }
+  return { width: window.innerWidth || 1280, height: window.innerHeight || 720 };
+}
+
+function resolveMaxFloatingSize() {
+  const viewport = resolveViewport();
+  return {
+    width: Math.max(FLOATING_MIN_WIDTH, viewport.width - FLOATING_PADDING_X * 2),
+    height: Math.max(FLOATING_MIN_HEIGHT, viewport.height - FLOATING_MIN_Y - FLOATING_PADDING_Y),
+  };
+}
+
+function clampSize(width: number, height: number) {
+  const maxSize = resolveMaxFloatingSize();
+  return {
+    width: Math.min(Math.max(FLOATING_MIN_WIDTH, Math.round(width)), maxSize.width),
+    height: Math.min(Math.max(FLOATING_MIN_HEIGHT, Math.round(height)), maxSize.height),
+  };
+}
+
 function resolveDefaultPosition(width: number, height: number, options?: Partial<FloatingState>) {
   if (typeof window === 'undefined') {
     return { x: options?.x ?? 120, y: options?.y ?? 120 };
   }
   const viewportWidth = window.innerWidth || 1280;
   const viewportHeight = window.innerHeight || 720;
-  const defaultX = Math.max(32, (viewportWidth - width) / 2);
-  const defaultY = Math.max(80, (viewportHeight - height) / 3);
+  const defaultX = Math.max(FLOATING_PADDING_X, (viewportWidth - width) / 2);
+  const defaultY = Math.max(FLOATING_MIN_Y, (viewportHeight - height) / 3);
   return {
     x: options?.x ?? defaultX,
     y: options?.y ?? defaultY,
@@ -720,10 +787,10 @@ function clampPosition(x: number, y: number, width: number, height: number) {
   if (typeof window === 'undefined') {
     return { x, y };
   }
-  const maxX = Math.max(16, window.innerWidth - width - 16);
-  const maxY = Math.max(16, window.innerHeight - height - 16);
+  const maxX = Math.max(FLOATING_PADDING_X, window.innerWidth - width - FLOATING_PADDING_X);
+  const maxY = Math.max(FLOATING_MIN_Y, window.innerHeight - height - FLOATING_PADDING_Y);
   return {
-    x: Math.min(Math.max(x, 16), maxX),
-    y: Math.min(Math.max(y, 48), maxY),
+    x: Math.min(Math.max(x, FLOATING_PADDING_X), maxX),
+    y: Math.min(Math.max(y, FLOATING_MIN_Y), maxY),
   };
 }
