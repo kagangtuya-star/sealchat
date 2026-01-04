@@ -7,6 +7,30 @@ import (
 	"sealchat/utils"
 )
 
+// StickyNoteType 便签类型
+type StickyNoteType string
+
+const (
+	StickyNoteTypeText         StickyNoteType = "text"
+	StickyNoteTypeCounter      StickyNoteType = "counter"
+	StickyNoteTypeList         StickyNoteType = "list"
+	StickyNoteTypeSlider       StickyNoteType = "slider"
+	StickyNoteTypeChat         StickyNoteType = "chat"
+	StickyNoteTypeTimer        StickyNoteType = "timer"
+	StickyNoteTypeClock        StickyNoteType = "clock"
+	StickyNoteTypeRoundCounter StickyNoteType = "roundCounter"
+)
+
+// StickyNoteVisibility 便签可见性
+type StickyNoteVisibility string
+
+const (
+	StickyNoteVisibilityAll     StickyNoteVisibility = "all"
+	StickyNoteVisibilityOwner   StickyNoteVisibility = "owner"
+	StickyNoteVisibilityEditors StickyNoteVisibility = "editors"
+	StickyNoteVisibilityViewers StickyNoteVisibility = "viewers"
+)
+
 // StickyNoteModel 便签数据模型
 type StickyNoteModel struct {
 	StringPKBaseModel
@@ -20,6 +44,15 @@ type StickyNoteModel struct {
 	IsPublic    bool       `json:"is_public" gorm:"default:true"`
 	IsPinned    bool       `json:"is_pinned" gorm:"default:false"`
 	OrderIndex  int        `json:"order_index" gorm:"default:0;index:idx_sticky_channel_order,priority:2"`
+
+	// 便签类型相关
+	NoteType StickyNoteType `json:"note_type" gorm:"size:32;default:'text';index"` // text/counter/list/slider/chat/timer/clock/roundCounter
+	TypeData string         `json:"type_data" gorm:"type:text"`                    // JSON 格式的类型特定数据
+
+	// 权限相关
+	Visibility StickyNoteVisibility `json:"visibility" gorm:"size:32;default:'all'"` // owner/editors/viewers/all
+	ViewerIDs  string               `json:"viewer_ids" gorm:"type:text"`             // JSON 数组
+	EditorIDs  string               `json:"editor_ids" gorm:"type:text"`             // JSON 数组
 
 	// 默认布局
 	DefaultX int `json:"default_x" gorm:"default:100"`
@@ -163,12 +196,24 @@ func (s *StickyNoteModel) ToProtocolType() *protocol.StickyNote {
 		IsPublic:    s.IsPublic,
 		IsPinned:    s.IsPinned,
 		OrderIndex:  s.OrderIndex,
+		NoteType:    string(s.NoteType),
+		TypeData:    s.TypeData,
+		Visibility:  string(s.Visibility),
+		ViewerIDs:   s.ViewerIDs,
+		EditorIDs:   s.EditorIDs,
 		DefaultX:    s.DefaultX,
 		DefaultY:    s.DefaultY,
 		DefaultW:    s.DefaultW,
 		DefaultH:    s.DefaultH,
 		CreatedAt:   s.CreatedAt.UnixMilli(),
 		UpdatedAt:   s.UpdatedAt.UnixMilli(),
+	}
+	// 默认值处理
+	if note.NoteType == "" {
+		note.NoteType = "text"
+	}
+	if note.Visibility == "" {
+		note.Visibility = "all"
 	}
 	if s.Creator != nil {
 		note.Creator = s.Creator.ToProtocolType()

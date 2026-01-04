@@ -133,45 +133,55 @@
 
       <!-- 内容区域 -->
       <div class="sticky-note__body">
-        <div
-          v-if="isEditing"
-          class="sticky-note__editor"
-        >
-          <!-- 富文本模式 -->
-          <StickyNoteEditor
-            v-if="richMode"
-            ref="editorRef"
-            v-model="localContent"
-            :channel-id="note?.channelId"
-            @update:model-value="debouncedSaveContent"
-          />
-          <!-- 简单模式 -->
-          <div v-else class="sticky-note__simple-editor">
-            <div class="sticky-note__simple-toolbar">
-              <button
-                class="sticky-note__toolbar-btn"
-                :class="{ 'is-active': richMode }"
-                @click="richMode = true"
-                title="切换到富文本模式"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
-                </svg>
-              </button>
-            </div>
-            <textarea
+        <!-- 文本类型保持原有编辑逻辑 -->
+        <template v-if="isTextType">
+          <div
+            v-if="isEditing"
+            class="sticky-note__editor"
+          >
+            <!-- 富文本模式 -->
+            <StickyNoteEditor
+              v-if="richMode"
+              ref="editorRef"
               v-model="localContent"
-              class="sticky-note__textarea"
-              placeholder="在此输入内容..."
-              @input="debouncedSaveContent"
-            ></textarea>
+              :channel-id="note?.channelId"
+              @update:model-value="debouncedSaveContent"
+            />
+            <!-- 简单模式 -->
+            <div v-else class="sticky-note__simple-editor">
+              <div class="sticky-note__simple-toolbar">
+                <button
+                  class="sticky-note__toolbar-btn"
+                  :class="{ 'is-active': richMode }"
+                  @click="richMode = true"
+                  title="切换到富文本模式"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
+                  </svg>
+                </button>
+              </div>
+              <textarea
+                v-model="localContent"
+                class="sticky-note__textarea"
+                placeholder="在此输入内容..."
+                @input="debouncedSaveContent"
+              ></textarea>
+            </div>
           </div>
-        </div>
-        <div
+          <div
+            v-else
+            class="sticky-note__content"
+            v-html="sanitizedContent"
+          ></div>
+        </template>
+        <!-- 其他类型使用动态组件 -->
+        <component
           v-else
-          class="sticky-note__content"
-          v-html="sanitizedContent"
-        ></div>
+          :is="currentTypeComponent"
+          :note="note"
+          :is-editing="isEditing"
+        />
       </div>
 
       <!-- 底部信息 -->
@@ -205,13 +215,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, defineAsyncComponent } from 'vue'
 import { useMessage } from 'naive-ui'
-import { useStickyNoteStore, type StickyNote, type StickyNoteUserState } from '@/stores/stickyNote'
+import { useStickyNoteStore, type StickyNote, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import StickyNoteEditor from './StickyNoteEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
+
+// 动态导入类型组件
+const StickyNoteText = defineAsyncComponent(() => import('./sticky-notes/StickyNoteText.vue'))
+const StickyNoteCounter = defineAsyncComponent(() => import('./sticky-notes/StickyNoteCounter.vue'))
+const StickyNoteList = defineAsyncComponent(() => import('./sticky-notes/StickyNoteList.vue'))
+const StickyNoteSlider = defineAsyncComponent(() => import('./sticky-notes/StickyNoteSlider.vue'))
+const StickyNoteTimer = defineAsyncComponent(() => import('./sticky-notes/StickyNoteTimer.vue'))
+const StickyNoteClock = defineAsyncComponent(() => import('./sticky-notes/StickyNoteClock.vue'))
+const StickyNoteRoundCounter = defineAsyncComponent(() => import('./sticky-notes/StickyNoteRoundCounter.vue'))
+
+// 类型组件映射
+const typeComponentMap: Record<StickyNoteType, ReturnType<typeof defineAsyncComponent>> = {
+  text: StickyNoteText,
+  counter: StickyNoteCounter,
+  list: StickyNoteList,
+  slider: StickyNoteSlider,
+  chat: StickyNoteText, // chat 暂时使用 text
+  timer: StickyNoteTimer,
+  clock: StickyNoteClock,
+  roundCounter: StickyNoteRoundCounter
+}
 
 const props = defineProps<{
   noteId: string
@@ -268,6 +299,18 @@ const isOwner = computed(() => {
   const userId = userStore.info?.id
   if (!userId) return false
   return note.value?.creatorId === userId || note.value?.creator?.id === userId
+})
+
+// 当前便签类型对应的组件
+const currentTypeComponent = computed(() => {
+  const type = (note.value?.noteType || 'text') as StickyNoteType
+  return typeComponentMap[type] || StickyNoteText
+})
+
+// 是否是文本类型（需要特殊处理编辑模式）
+const isTextType = computed(() => {
+  const type = note.value?.noteType || 'text'
+  return type === 'text' || type === 'chat'
 })
 
 const creatorName = computed(() => {

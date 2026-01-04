@@ -416,6 +416,11 @@ type StickyNote struct {
 	IsPublic    bool   `json:"isPublic"`
 	IsPinned    bool   `json:"isPinned"`
 	OrderIndex  int    `json:"orderIndex"`
+	NoteType    string `json:"noteType"`              // text/counter/list/slider/chat/timer/clock/roundCounter
+	TypeData    string `json:"typeData,omitempty"`    // JSON 格式的类型特定数据
+	Visibility  string `json:"visibility,omitempty"`  // owner/editors/viewers/all
+	ViewerIDs   string `json:"viewerIds,omitempty"`   // JSON 数组
+	EditorIDs   string `json:"editorIds,omitempty"`   // JSON 数组
 	DefaultX    int    `json:"defaultX"`
 	DefaultY    int    `json:"defaultY"`
 	DefaultW    int    `json:"defaultW"`

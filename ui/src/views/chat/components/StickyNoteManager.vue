@@ -57,16 +57,27 @@
               <span class="sticky-note-rail__count">{{ stickyNoteStore.noteList.length }}</span>
             </div>
             <div class="sticky-note-rail__actions">
-              <button
-                class="sticky-note-rail__action sticky-note-rail__action--add"
-                title="新建便签"
-                @click="createNote"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                </svg>
-                <span>新建</span>
-              </button>
+              <div class="sticky-note-rail__action-wrapper">
+                <button
+                  class="sticky-note-rail__action sticky-note-rail__action--add"
+                  title="新建便签"
+                  @click="createNote"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                  </svg>
+                  <span>新建</span>
+                </button>
+                <!-- 类型选择器弹窗 -->
+                <Transition name="fade">
+                  <div v-if="showTypeSelector" class="sticky-note-type-popup">
+                    <div class="sticky-note-type-popup__backdrop" @click="showTypeSelector = false"></div>
+                    <div class="sticky-note-type-popup__content">
+                      <StickyNoteTypeSelector @select="handleTypeSelect" />
+                    </div>
+                  </div>
+                </Transition>
+              </div>
             </div>
             <div class="sticky-note-rail__list">
               <div
@@ -96,9 +107,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useStickyNoteStore } from '@/stores/stickyNote'
+import { useStickyNoteStore, type StickyNoteType } from '@/stores/stickyNote'
 import { chatEvent } from '@/stores/chat'
 import StickyNote from './StickyNote.vue'
+import StickyNoteTypeSelector from './sticky-notes/StickyNoteTypeSelector.vue'
 
 const props = defineProps<{
   channelId: string
@@ -108,6 +120,7 @@ const stickyNoteStore = useStickyNoteStore()
 
 const railOpen = ref(false)
 const railPinned = ref(false)
+const showTypeSelector = ref(false)
 
 // 计算最小化的便签
 const minimizedNotes = computed(() => {
@@ -140,14 +153,22 @@ function formatCreator(note: { creator?: { nickname?: string; nick?: string; nam
 
 // 创建新便签
 async function createNote() {
-  // 计算新便签位置（错开）
+  showTypeSelector.value = true
+}
+
+// 选择类型后创建便签
+async function handleTypeSelect(type: StickyNoteType) {
+  showTypeSelector.value = false
   const offset = stickyNoteStore.activeNoteIds.length * 30
+  const typeData = stickyNoteStore.getDefaultTypeData(type)
   await stickyNoteStore.createNote({
     title: '',
     content: '',
     color: 'yellow',
     defaultX: 100 + offset,
-    defaultY: 100 + offset
+    defaultY: 100 + offset,
+    noteType: type,
+    typeData: typeData ? JSON.stringify(typeData) : undefined
   })
 }
 
@@ -316,6 +337,10 @@ onUnmounted(() => {
   gap: 8px;
 }
 
+.sticky-note-rail__action-wrapper {
+  position: relative;
+}
+
 .sticky-note-rail__action {
   display: inline-flex;
   align-items: center;
@@ -472,6 +497,50 @@ onUnmounted(() => {
 .slide-up-leave-to {
   opacity: 0;
   transform: translateX(20px) translateY(10px);
+}
+
+/* 类型选择器弹窗 */
+.sticky-note-type-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin-top: 4px;
+}
+
+.sticky-note-type-popup__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+}
+
+.sticky-note-type-popup__content {
+  background: var(--sc-bg-elevated, #ffffff);
+  border: 1px solid var(--sc-border-mute, rgba(0, 0, 0, 0.1));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* 夜间模式弹窗适配 */
+:root[data-display-palette='night'] .sticky-note-type-popup__content {
+  background: var(--sc-bg-elevated, #2a2a2e);
+  border-color: var(--sc-border-mute, rgba(255, 255, 255, 0.1));
+}
+
+:root[data-custom-theme='true'] .sticky-note-type-popup__content {
+  background: var(--sc-bg-elevated, #ffffff);
+  border-color: var(--sc-border-mute, rgba(0, 0, 0, 0.1));
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
 

@@ -107,13 +107,18 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	}
 
 	var req struct {
-		Title    string `json:"title"`
-		Content  string `json:"content"`
-		Color    string `json:"color"`
-		DefaultX int    `json:"defaultX"`
-		DefaultY int    `json:"defaultY"`
-		DefaultW int    `json:"defaultW"`
-		DefaultH int    `json:"defaultH"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		Color      string `json:"color"`
+		NoteType   string `json:"noteType"`
+		TypeData   string `json:"typeData"`
+		Visibility string `json:"visibility"`
+		ViewerIDs  string `json:"viewerIds"`
+		EditorIDs  string `json:"editorIds"`
+		DefaultX   int    `json:"defaultX"`
+		DefaultY   int    `json:"defaultY"`
+		DefaultW   int    `json:"defaultW"`
+		DefaultH   int    `json:"defaultH"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -136,20 +141,31 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	if req.DefaultH == 0 {
 		req.DefaultH = 250
 	}
+	if req.NoteType == "" {
+		req.NoteType = "text"
+	}
+	if req.Visibility == "" {
+		req.Visibility = "all"
+	}
 
 	note := &model.StickyNoteModel{
-		ChannelID:  channelID,
-		WorldID:    channel.WorldID,
-		Title:      req.Title,
-		Content:    req.Content,
+		ChannelID:   channelID,
+		WorldID:     channel.WorldID,
+		Title:       req.Title,
+		Content:     req.Content,
 		ContentText: req.Content,
-		Color:      req.Color,
-		CreatorID:  user.ID,
-		IsPublic:   true,
-		DefaultX:   req.DefaultX,
-		DefaultY:   req.DefaultY,
-		DefaultW:   req.DefaultW,
-		DefaultH:   req.DefaultH,
+		Color:       req.Color,
+		CreatorID:   user.ID,
+		IsPublic:    true,
+		NoteType:    model.StickyNoteType(req.NoteType),
+		TypeData:    req.TypeData,
+		Visibility:  model.StickyNoteVisibility(req.Visibility),
+		ViewerIDs:   req.ViewerIDs,
+		EditorIDs:   req.EditorIDs,
+		DefaultX:    req.DefaultX,
+		DefaultY:    req.DefaultY,
+		DefaultW:    req.DefaultW,
+		DefaultH:    req.DefaultH,
 	}
 	note.ID = utils.NewID()
 
@@ -196,6 +212,11 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 		ContentText *string `json:"contentText"`
 		Color       *string `json:"color"`
 		IsPinned    *bool   `json:"isPinned"`
+		NoteType    *string `json:"noteType"`
+		TypeData    *string `json:"typeData"`
+		Visibility  *string `json:"visibility"`
+		ViewerIDs   *string `json:"viewerIds"`
+		EditorIDs   *string `json:"editorIds"`
 		DefaultX    *int    `json:"defaultX"`
 		DefaultY    *int    `json:"defaultY"`
 		DefaultW    *int    `json:"defaultW"`
@@ -224,6 +245,21 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	}
 	if req.IsPinned != nil {
 		updates["is_pinned"] = *req.IsPinned
+	}
+	if req.NoteType != nil {
+		updates["note_type"] = *req.NoteType
+	}
+	if req.TypeData != nil {
+		updates["type_data"] = *req.TypeData
+	}
+	if req.Visibility != nil {
+		updates["visibility"] = *req.Visibility
+	}
+	if req.ViewerIDs != nil {
+		updates["viewer_ids"] = *req.ViewerIDs
+	}
+	if req.EditorIDs != nil {
+		updates["editor_ids"] = *req.EditorIDs
 	}
 	if req.DefaultX != nil {
 		updates["default_x"] = *req.DefaultX

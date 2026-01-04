@@ -5,6 +5,57 @@ import { useUserStore } from './user'
 import { api } from './_config'
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 
+// 便签类型
+export type StickyNoteType = 'text' | 'counter' | 'list' | 'slider' | 'chat' | 'timer' | 'clock' | 'roundCounter'
+
+// 便签可见性
+export type StickyNoteVisibility = 'all' | 'owner' | 'editors' | 'viewers'
+
+// 类型特定数据结构
+export interface CounterTypeData {
+    value: number
+    max?: number
+}
+
+export interface ListItem {
+    id: string
+    content: string
+    checked: boolean
+    indent: number
+}
+
+export interface ListTypeData {
+    items: ListItem[]
+}
+
+export interface SliderTypeData {
+    value: number
+    min: number
+    max: number
+    step: number
+}
+
+export interface TimerTypeData {
+    startTime: number
+    baseValue: number
+    direction: 'up' | 'down'
+    running: boolean
+    resetValue: number
+}
+
+export interface ClockTypeData {
+    segments: number
+    filled: number
+}
+
+export interface RoundCounterTypeData {
+    round: number
+    direction: 'up' | 'down'
+    limit?: number
+}
+
+export type StickyNoteTypeData = CounterTypeData | ListTypeData | SliderTypeData | TimerTypeData | ClockTypeData | RoundCounterTypeData | null
+
 // 便签类型定义
 export interface StickyNote {
     id: string
@@ -18,6 +69,11 @@ export interface StickyNote {
     isPublic: boolean
     isPinned: boolean
     orderIndex: number
+    noteType: StickyNoteType
+    typeData: string
+    visibility: StickyNoteVisibility
+    viewerIds: string
+    editorIds: string
     defaultX: number
     defaultY: number
     defaultW: number
@@ -318,6 +374,11 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         title?: string
         content?: string
         color?: string
+        noteType?: StickyNoteType
+        typeData?: string
+        visibility?: StickyNoteVisibility
+        viewerIds?: string
+        editorIds?: string
         defaultX?: number
         defaultY?: number
         defaultW?: number
@@ -546,6 +607,42 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         uiVisible.value = false
     }
 
+    // 解析 typeData
+    function parseTypeData<T extends StickyNoteTypeData>(note: StickyNote): T | null {
+        if (!note.typeData) return null
+        try {
+            return JSON.parse(note.typeData) as T
+        } catch {
+            return null
+        }
+    }
+
+    // 更新 typeData
+    async function updateTypeData(noteId: string, typeData: StickyNoteTypeData) {
+        const typeDataStr = JSON.stringify(typeData)
+        await updateNote(noteId, { typeData: typeDataStr })
+    }
+
+    // 获取默认 typeData
+    function getDefaultTypeData(noteType: StickyNoteType): StickyNoteTypeData {
+        switch (noteType) {
+            case 'counter':
+                return { value: 0 } as CounterTypeData
+            case 'list':
+                return { items: [] } as ListTypeData
+            case 'slider':
+                return { value: 50, min: 0, max: 100, step: 1 } as SliderTypeData
+            case 'timer':
+                return { startTime: 0, baseValue: 0, direction: 'up', running: false, resetValue: 0 } as TimerTypeData
+            case 'clock':
+                return { segments: 4, filled: 0 } as ClockTypeData
+            case 'roundCounter':
+                return { round: 0, direction: 'up' } as RoundCounterTypeData
+            default:
+                return null
+        }
+    }
+
     return {
         // State
         notes,
@@ -579,6 +676,9 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         handleStickyNoteEvent,
         setVisible,
         toggleVisible,
-        reset
+        reset,
+        parseTypeData,
+        updateTypeData,
+        getDefaultTypeData
     }
 })
