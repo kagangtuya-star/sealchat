@@ -2359,8 +2359,16 @@ export const useChatStore = defineStore({
       }
       const resp = await api.get<PaginationListResponse<UserInfo>>('api/v1/bot-list', {});
       if (resp?.data) {
-        this.botListCache = resp.data;
+        const items = (resp.data.items || []).map((item: any) => ({
+          ...item,
+          avatar: item.avatar || item.avatarAttachmentId || item.avatar_id || item.avatarId || item.avatar_attachment_id || '',
+        }));
+        this.botListCache = {
+          ...resp.data,
+          items,
+        };
         this.botListCacheUpdatedAt = Date.now();
+        return this.botListCache;
       }
       return resp?.data;
     },

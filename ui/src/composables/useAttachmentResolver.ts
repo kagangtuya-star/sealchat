@@ -65,6 +65,12 @@ export const resolveAttachmentUrl = (value?: string) => {
   if (/^(https?:|blob:|data:|\/\/)/i.test(raw)) {
     return raw;
   }
+  if (raw.startsWith('/')) {
+    return `${urlBase}${raw}`;
+  }
+  if (raw.includes('/')) {
+    return `${urlBase}/${raw}`;
+  }
   const normalized = normalizeAttachmentId(raw);
   if (!normalized) {
     return '';
