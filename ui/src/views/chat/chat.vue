@@ -263,6 +263,13 @@ const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   value: bot.id,
 })));
 const hasBotOptions = computed(() => botOptions.value.length > 0);
+const diceModeLabel = computed(() => channelFeatures.botFeatureEnabled ? 'BOT掷骰' : '内置掷骰');
+const diceModeTooltip = computed(() => {
+  if (channelFeatures.botFeatureEnabled) {
+    return '当前使用机器人处理掷骰指令，点击齿轮可切换内置掷骰模式';
+  }
+  return '当前使用内置掷骰功能，点击齿轮可切换机器人掷骰模式';
+});
 const channelSendAllowed = ref(true);
 let sendPermissionSeq = 0;
 const isPrivateChatChannel = (channel?: SChannel | null) => {
@@ -8955,16 +8962,24 @@ onBeforeUnmount(() => {
                     >
                       <template v-if="canManageChannelFeatures" #header-actions>
                         <template v-if="isMobileUa">
-                          <n-button
-                            quaternary
-                            size="tiny"
-                            circle
-                            class="dice-tray-settings-trigger"
-                            :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
-                            @click.stop="diceSettingsVisible = true"
-                          >
-                            <n-icon :component="Settings" size="14" />
-                          </n-button>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                <n-button
+                                  quaternary
+                                  size="tiny"
+                                  circle
+                                  class="dice-tray-settings-trigger"
+                                  :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                  @click.stop="diceSettingsVisible = true"
+                                >
+                                  <n-icon :component="Settings" size="14" />
+                                </n-button>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
                           <n-modal
                             v-model:show="diceSettingsVisible"
                             preset="card"
@@ -9015,16 +9030,24 @@ onBeforeUnmount(() => {
                         <template v-else>
                           <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
                             <template #trigger>
-                              <n-button
-                                quaternary
-                                size="tiny"
-                                circle
-                                class="dice-tray-settings-trigger"
-                                :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
-                                @click.stop="diceSettingsVisible = !diceSettingsVisible"
-                              >
-                                <n-icon :component="Settings" size="14" />
-                              </n-button>
+                              <n-tooltip trigger="hover">
+                                <template #trigger>
+                                  <div class="dice-mode-status">
+                                    <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                    <n-button
+                                      quaternary
+                                      size="tiny"
+                                      circle
+                                      class="dice-tray-settings-trigger"
+                                      :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                      @click.stop="diceSettingsVisible = !diceSettingsVisible"
+                                    >
+                                      <n-icon :component="Settings" size="14" />
+                                    </n-button>
+                                  </div>
+                                </template>
+                                {{ diceModeTooltip }}
+                              </n-tooltip>
                             </template>
                             <div class="dice-settings-panel">
                               <div class="dice-settings-panel__section">
@@ -11152,6 +11175,23 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .chat-dice-button {
   color: rgba(226, 232, 240, 0.95);
+}
+
+.dice-mode-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.dice-mode-status__label {
+  font-size: 11px;
+  color: var(--sc-text-tertiary, #94a3b8);
+  white-space: nowrap;
+}
+
+:root[data-display-palette='night'] .dice-mode-status__label {
+  color: rgba(148, 163, 184, 0.85);
 }
 
 .dice-tray-settings-trigger {

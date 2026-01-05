@@ -258,7 +258,8 @@ watch(newTokenAvatar, (value, oldValue) => {
   <div class="overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
     <n-list>
       <template #header>
-        当前token列表
+        <div>当前token列表</div>
+        <p class="bot-list-hint">创建机器人后，可在频道的掷骰面板点击设置齿轮，启用"机器人骰点"并选择对应机器人。</p>
       </template>
 
       <n-list-item v-for="i in tokens.items" :key="i.id">
@@ -393,5 +394,11 @@ watch(newTokenAvatar, (value, oldValue) => {
   font-size: 12px;
   color: #94a3b8;
   margin: 0;
+}
+
+.bot-list-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0.25rem 0 0;
 }
 </style>
