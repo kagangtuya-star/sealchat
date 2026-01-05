@@ -35,6 +35,80 @@ const updateVersionInput = ref('');
 const updateLoading = ref(false);
 const updateVersionSaving = ref(false);
 const updateError = ref('');
+const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机。';
+const baseServeAtHostOptions = [
+  { label: '仅本机 (127.0.0.1)', value: '127.0.0.1' },
+  { label: '所有网卡 (0.0.0.0)', value: '0.0.0.0' },
+];
+const serveAtHost = ref('0.0.0.0');
+const serveAtPort = ref<number | null>(3212);
+const serveAtSyncing = ref(false);
+const serveAtHostOptions = computed(() => {
+  const options = [...baseServeAtHostOptions];
+  if (!options.some((item) => item.value === serveAtHost.value)) {
+    options.push({
+      label: `当前配置 (${serveAtHost.value})`,
+      value: serveAtHost.value,
+    });
+  }
+  return options;
+});
+
+const normalizePort = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) return null;
+  return Math.min(65535, Math.max(1, Math.trunc(value)));
+};
+
+const parseServeAt = (value: string) => {
+  const trimmed = (value || '').trim();
+  let host = '0.0.0.0';
+  let port = 3212;
+  if (!trimmed) return { host, port };
+  if (trimmed.startsWith(':')) {
+    const parsedPort = Number.parseInt(trimmed.slice(1), 10);
+    if (!Number.isNaN(parsedPort)) {
+      port = parsedPort;
+    }
+    return { host, port };
+  }
+  const lastColonIndex = trimmed.lastIndexOf(':');
+  if (lastColonIndex >= 0) {
+    const hostPart = trimmed.slice(0, lastColonIndex).trim();
+    const portPart = trimmed.slice(lastColonIndex + 1).trim();
+    if (hostPart) host = hostPart;
+    const parsedPort = Number.parseInt(portPart, 10);
+    if (!Number.isNaN(parsedPort)) {
+      port = parsedPort;
+    }
+    return { host, port };
+  }
+  return { host: trimmed, port };
+};
+
+watch(
+  () => model.value.serveAt,
+  (value) => {
+    const parsed = parseServeAt(value);
+    serveAtSyncing.value = true;
+    serveAtHost.value = parsed.host;
+    serveAtPort.value = parsed.port;
+    nextTick(() => {
+      serveAtSyncing.value = false;
+    });
+  },
+  { immediate: true },
+);
+
+watch([serveAtHost, serveAtPort], ([host, port]) => {
+  if (serveAtSyncing.value) return;
+  const normalizedPort = normalizePort(port);
+  if (!normalizedPort) return;
+  const normalizedHost = host || '0.0.0.0';
+  const next = `${normalizedHost}:${normalizedPort}`;
+  if (next !== model.value.serveAt) {
+    model.value.serveAt = next;
+  }
+});
 
 onMounted(async () => {
   const resp = await utils.configGet();
@@ -204,7 +278,6 @@ const link = computed(() => {
   </span>
 })
 
-const feedbackServeAtShow = ref(false)
 const feedbackAdminShow = ref(false)
 const feedbackWeburlShow = ref(false)
 
@@ -342,8 +415,24 @@ const sendSmtpTestEmail = async () => {
 <template>
   <div class="overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
     <n-form label-placement="left" label-width="auto">
-      <n-form-item label="服务地址" :feedback="feedbackServeAtShow ? '慎重填写，重启后生效' : ''">
-        <n-input v-model:value="model.serveAt" @focus="feedbackServeAtShow = true" @blur="feedbackServeAtShow = false" />
+      <n-form-item label="服务地址" :feedback="serveAtHelp">
+        <div class="flex gap-2 items-center w-full">
+          <n-select
+            v-model:value="serveAtHost"
+            :options="serveAtHostOptions"
+            placeholder="选择监听地址"
+            style="max-width: 240px;"
+          />
+          <span class="text-gray-500">:</span>
+          <n-input-number
+            v-model:value="serveAtPort"
+            :min="1"
+            :max="65535"
+            :precision="0"
+            placeholder="端口"
+            style="max-width: 140px;"
+          />
+        </div>
       </n-form-item>
       <n-form-item label="可访问地址" :feedback="feedbackAdminShow ? link : ''">
         <n-input v-model:value="model.domain" @focus="feedbackAdminShow = true" @blur="feedbackAdminShow = false" />
