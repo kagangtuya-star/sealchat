@@ -143,6 +143,73 @@ func apiChannelList(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiChannelFavoriteList(ctx *ChatContext, data *struct {
+	WorldID string `json:"world_id"`
+}) (any, error) {
+	worldID := strings.TrimSpace(data.WorldID)
+	if ctx.IsReadOnly() {
+		if worldID == "" {
+			return nil, fmt.Errorf("未找到世界")
+		}
+		world, err := service.GetWorldByID(worldID)
+		if err != nil {
+			return nil, err
+		}
+		if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
+			return nil, fmt.Errorf("世界未开放公开访问")
+		}
+		items, err := service.ChannelListPublicByWorld(worldID)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if x, exists := ctx.ChannelUsersMap.Load(item.ID); exists {
+				if !item.IsPrivate {
+					item.MembersCount = x.Len()
+				}
+			}
+		}
+		return &struct {
+			Data    []*model.ChannelModel `json:"data"`
+			WorldID string                `json:"world_id"`
+		}{
+			Data:    items,
+			WorldID: worldID,
+		}, nil
+	}
+	if worldID == "" {
+		if w, err := service.GetOrCreateDefaultWorld(); err == nil && w != nil {
+			worldID = w.ID
+		}
+	}
+	if worldID == "" {
+		return nil, fmt.Errorf("未找到世界")
+	}
+	if !service.IsWorldMember(worldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+		return nil, fmt.Errorf("尚未加入该世界")
+	}
+	items, err := service.ChannelList(ctx.User.ID, worldID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range items {
+		if x, exists := ctx.ChannelUsersMap.Load(item.ID); exists {
+			if !item.IsPrivate {
+				item.MembersCount = x.Len()
+			}
+		}
+	}
+
+	return &struct {
+		Data    []*model.ChannelModel `json:"data"`
+		WorldID string                `json:"world_id"`
+	}{
+		Data:    items,
+		WorldID: worldID,
+	}, nil
+}
+
 type RespChannelMember struct {
 	Echo string         `json:"echo"`
 	Data map[string]int `json:"data"`

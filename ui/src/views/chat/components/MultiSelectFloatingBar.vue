@@ -22,6 +22,8 @@ const selectedCount = computed(() => chat.multiSelect?.selectedIds.size ?? 0);
 const hasSelection = computed(() => selectedCount.value > 0);
 const isActive = computed(() => chat.multiSelect?.active ?? false);
 const rangeModeEnabled = computed(() => chat.multiSelect?.rangeModeEnabled ?? false);
+const tooltipZIndex = 2200;
+const tooltipPlacement = 'top';
 const rangeHint = computed(() => {
   if (!rangeModeEnabled.value) return '';
   if (!chat.multiSelect?.rangeAnchorId) return '点击消息选择起点';
@@ -47,7 +49,7 @@ const handleToggleRangeMode = () => {
       </div>
       
       <div class="multi-select-bar__actions">
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button"
@@ -62,7 +64,7 @@ const handleToggleRangeMode = () => {
           复制选中消息（带时间戳）
         </n-tooltip>
 
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button"
@@ -77,7 +79,7 @@ const handleToggleRangeMode = () => {
           批量归档选中消息
         </n-tooltip>
 
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button multi-select-bar__button--danger"
@@ -92,7 +94,7 @@ const handleToggleRangeMode = () => {
           批量删除选中消息
         </n-tooltip>
 
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button"
@@ -109,7 +111,7 @@ const handleToggleRangeMode = () => {
 
         <div class="multi-select-bar__divider"></div>
 
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button"
@@ -122,7 +124,7 @@ const handleToggleRangeMode = () => {
           选中当前所有可见消息
         </n-tooltip>
 
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
               class="multi-select-bar__button"

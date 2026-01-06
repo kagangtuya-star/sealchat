@@ -142,6 +142,14 @@ type EmailNotificationConfig struct {
 	SMTP             SMTPConfig `json:"-" yaml:"smtp"` // 禁止前端获取
 }
 
+// UpdateCheckConfig 更新检测配置
+type UpdateCheckConfig struct {
+	Enabled     bool   `json:"-" yaml:"enabled"`
+	IntervalSec int    `json:"-" yaml:"intervalSec"`
+	GithubRepo  string `json:"-" yaml:"githubRepo"`
+	GithubToken string `json:"-" yaml:"githubToken"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                  `json:"domain" yaml:"domain"`
@@ -166,6 +174,7 @@ type AppConfig struct {
 	SQLite                    SQLiteConfig            `json:"sqlite" yaml:"sqlite"`
 	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
 	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
+	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
 }
 
 type ExportConfig struct {
@@ -290,6 +299,11 @@ func ReadConfig() *AppConfig {
 				FromName: "SealChat",
 			},
 		},
+		UpdateCheck: UpdateCheckConfig{
+			Enabled:     true,
+			IntervalSec: 6 * 60 * 60,
+			GithubRepo:  "kagangtuya-star/sealchat",
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -343,6 +357,7 @@ func ReadConfig() *AppConfig {
 	applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
+	applyUpdateCheckDefaults(&config.UpdateCheck)
 
 	k.Print()
 	currentConfig = &config
@@ -426,6 +441,21 @@ func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {
 	// SMTP 密码支持环境变量覆盖
 	if pw := strings.TrimSpace(os.Getenv("SEALCHAT_SMTP_PASSWORD")); pw != "" {
 		cfg.SMTP.Password = pw
+	}
+}
+
+func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.IntervalSec <= 0 {
+		cfg.IntervalSec = 6 * 60 * 60
+	}
+	if strings.TrimSpace(cfg.GithubRepo) == "" {
+		cfg.GithubRepo = "kagangtuya-star/sealchat"
+	}
+	if token := strings.TrimSpace(os.Getenv("SEALCHAT_GITHUB_TOKEN")); token != "" {
+		cfg.GithubToken = token
 	}
 }
 
@@ -618,6 +648,45 @@ func FormatHostPort(host, port string) string {
 		return ":" + port
 	}
 	return fmt.Sprintf("%s:%s", formattedHost, port)
+}
+
+// IsPortAvailable checks if a TCP port is available for binding
+func IsPortAvailable(addr string) bool {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// FindAvailablePort tries the given address first, then searches nearby ports if occupied.
+// Returns the available address and a boolean indicating if a fallback port was used.
+func FindAvailablePort(addr string) (string, bool) {
+	if IsPortAvailable(addr) {
+		return addr, false
+	}
+
+	host, portStr := splitHostPort(addr)
+	port := 3212
+	if portStr != "" {
+		if p, err := net.LookupPort("tcp", portStr); err == nil {
+			port = p
+		} else if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
+			port = 3212
+		}
+	}
+
+	// Try nearby ports: +1 to +100
+	for offset := 1; offset <= 100; offset++ {
+		candidate := FormatHostPort(host, fmt.Sprintf("%d", port+offset))
+		if IsPortAvailable(candidate) {
+			return candidate, true
+		}
+	}
+
+	// If no port found, return original (will fail at Listen)
+	return addr, false
 }
 
 func EnsureIPv6Bracket(host string) string {

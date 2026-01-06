@@ -25,6 +25,8 @@ const message = useMessage()
 const selectedChannelId = ref<string | null>(null)
 const newFavoriteHotkey = ref<FavoriteHotkey | null>(null)
 const shortcutRecordingTarget = ref<{ type: 'existing' | 'new'; channelId?: string } | null>(null)
+const favoriteCandidates = ref<SChannel[]>([])
+const favoriteCandidatesReady = ref(false)
 let stopShortcutListener: (() => void) | null = null
 
 const flattenChannels = (channels?: SChannel[]): SChannel[] => {
@@ -64,7 +66,7 @@ const favoriteDataReady = computed(() => {
 })
 
 const channelOptions = computed(() =>
-  allChannels.value.map((channel) => ({
+  favoriteCandidates.value.map((channel) => ({
     label: channel.name,
     value: channel.id,
     disabled: favoriteIds.value.includes(channel.id),
@@ -84,6 +86,25 @@ const canAddMore = computed(() => favoriteIds.value.length < FAVORITE_CHANNEL_LI
 const hasChannelsAvailable = computed(() =>
   channelOptions.value.some((option) => !option.disabled),
 )
+
+const loadFavoriteCandidates = async (force = false) => {
+  const worldId = currentWorldId.value
+  favoriteCandidatesReady.value = false
+  if (!worldId) {
+    favoriteCandidates.value = []
+    favoriteCandidatesReady.value = true
+    return
+  }
+  try {
+    const list = await chat.channelFavoriteCandidateList(worldId, force)
+    favoriteCandidates.value = Array.isArray(list) ? list : []
+  } catch (error) {
+    console.warn('获取收藏候选频道失败', error)
+    favoriteCandidates.value = []
+  } finally {
+    favoriteCandidatesReady.value = true
+  }
+}
 
 const handleAddFavorite = () => {
   const channelId = selectedChannelId.value
@@ -204,6 +225,21 @@ watch(
   ({ ready, worldId, ids }) => {
     if (!ready || !ids.length) return
     display.syncFavoritesWithChannels(ids, worldId)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [props.show, currentWorldId.value] as const,
+  ([visible, worldId], [prevVisible, prevWorldId]) => {
+    if (!visible) return
+    const worldChanged = worldId && worldId !== prevWorldId
+    if (worldChanged) {
+      favoriteCandidates.value = []
+    }
+    if (worldId && (worldChanged || !favoriteCandidatesReady.value)) {
+      loadFavoriteCandidates(worldChanged)
+    }
   },
   { immediate: true },
 )

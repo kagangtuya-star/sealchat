@@ -10,13 +10,13 @@
       <header
         v-if="!window.minimized"
         class="iform-floating__header"
-        @mousedown.prevent="startDragging(window, $event)"
+        @pointerdown.prevent="startDragging(window, $event)"
       >
         <div class="iform-floating__title" @dblclick="toggleMinimize(window.formId)">
           <strong>{{ resolveForm(window.formId)?.name || '嵌入窗口' }}</strong>
           <n-tag v-if="window.fromPush" size="small" type="success">同步</n-tag>
         </div>
-        <div class="iform-floating__actions">
+        <div class="iform-floating__actions" @pointerdown.stop>
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button quaternary size="tiny" @click.stop="dockToPanel(window.formId)">
@@ -26,6 +26,16 @@
               </n-button>
             </template>
             <span>固定到面板</span>
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button quaternary size="tiny" @click.stop="fitToViewport(window.formId)">
+                <template #icon>
+                  <n-icon :component="ExpandOutline" />
+                </template>
+              </n-button>
+            </template>
+            <span>适配屏幕</span>
           </n-tooltip>
           <n-button quaternary size="tiny" @click.stop="toggleMinimize(window.formId)">
             <template #icon>
@@ -45,16 +55,56 @@
           <span>需要手动激活音/视频。</span>
         </div>
         <IFormEmbedPortal :form-id="window.formId" surface="floating" />
-        <div class="iform-floating__resize" @mousedown.stop.prevent="startResizing(window, $event)">
+        <div class="iform-floating__resize" @pointerdown.stop.prevent="startResizing(window, 'se', $event)">
           <n-icon size="16" :component="ResizeOutline" />
         </div>
       </div>
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-top"
+        @pointerdown.stop.prevent="startResizing(window, 'n', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-right"
+        @pointerdown.stop.prevent="startResizing(window, 'e', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-bottom"
+        @pointerdown.stop.prevent="startResizing(window, 's', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-left"
+        @pointerdown.stop.prevent="startResizing(window, 'w', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-top-left"
+        @pointerdown.stop.prevent="startResizing(window, 'nw', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-top-right"
+        @pointerdown.stop.prevent="startResizing(window, 'ne', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-bottom-left"
+        @pointerdown.stop.prevent="startResizing(window, 'sw', $event)"
+      />
+      <div
+        v-if="!window.minimized"
+        class="iform-floating__resize-handle is-bottom-right"
+        @pointerdown.stop.prevent="startResizing(window, 'se', $event)"
+      />
       <button
         v-if="window.minimized"
         type="button"
         class="iform-floating__badge"
         @click.stop="toggleMinimize(window.formId)"
-        @mousedown.prevent="startDragging(window, $event)"
+        @pointerdown.prevent="startDragging(window, $event)"
       >
         <span>{{ formInitial(window.formId) }}</span>
       </button>
@@ -67,7 +117,7 @@ import { computed, ref, nextTick } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { useIFormStore } from '@/stores/iform';
 import IFormEmbedPortal from './IFormEmbedPortal.vue';
-import { CloseOutline, ContractOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
+import { CloseOutline, ContractOutline, ExpandOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 
 const iform = useIFormStore();
@@ -102,48 +152,117 @@ const floatingStyle = (windowState: (typeof floatingWindows.value)[number]) => (
   zIndex: windowState.zIndex,
 });
 
-const dragging = ref<{ formId: string; offsetX: number; offsetY: number } | null>(null);
-const resizing = ref<{ formId: string; startWidth: number; startHeight: number; startX: number; startY: number } | null>(null);
+type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-const startDragging = (windowState: (typeof floatingWindows.value)[number], event: MouseEvent) => {
+const dragging = ref<{ formId: string; offsetX: number; offsetY: number; pointerId: number; captureTarget?: HTMLElement | null } | null>(
+  null,
+);
+const resizing = ref<{
+  formId: string;
+  startWidth: number;
+  startHeight: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+  pointerId: number;
+  direction: ResizeDirection;
+  captureTarget?: HTMLElement | null;
+} | null>(null);
+
+const startDragging = (windowState: (typeof floatingWindows.value)[number], event: PointerEvent) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
   iform.bringFloatingToFront(windowState.formId);
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
   dragging.value = {
     formId: windowState.formId,
     offsetX: event.clientX - windowState.x,
     offsetY: event.clientY - windowState.y,
+    pointerId: event.pointerId,
+    captureTarget: target,
   };
 };
 
-const startResizing = (windowState: (typeof floatingWindows.value)[number], event: MouseEvent) => {
+const startResizing = (
+  windowState: (typeof floatingWindows.value)[number],
+  direction: ResizeDirection,
+  event: PointerEvent,
+) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  iform.bringFloatingToFront(windowState.formId);
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
   resizing.value = {
     formId: windowState.formId,
     startWidth: windowState.width,
     startHeight: windowState.height,
     startX: event.clientX,
     startY: event.clientY,
+    startLeft: windowState.x,
+    startTop: windowState.y,
+    pointerId: event.pointerId,
+    direction,
+    captureTarget: target,
   };
 };
 
-useEventListener(window, 'mousemove', (event: MouseEvent) => {
+useEventListener(window, 'pointermove', (event: PointerEvent) => {
   if (dragging.value) {
+    if (event.pointerId !== dragging.value.pointerId) {
+      return;
+    }
     event.preventDefault();
     const x = event.clientX - dragging.value.offsetX;
     const y = event.clientY - dragging.value.offsetY;
     iform.updateFloatingPosition(dragging.value.formId, x, y);
   } else if (resizing.value) {
+    if (event.pointerId !== resizing.value.pointerId) {
+      return;
+    }
     event.preventDefault();
     const deltaX = event.clientX - resizing.value.startX;
     const deltaY = event.clientY - resizing.value.startY;
-    const width = resizing.value.startWidth + deltaX;
-    const height = resizing.value.startHeight + deltaY;
-    iform.updateFloatingSize(resizing.value.formId, width, height);
+    let width = resizing.value.startWidth;
+    let height = resizing.value.startHeight;
+    let x = resizing.value.startLeft;
+    let y = resizing.value.startTop;
+    const direction = resizing.value.direction;
+    if (direction.includes('e')) {
+      width = resizing.value.startWidth + deltaX;
+    }
+    if (direction.includes('s')) {
+      height = resizing.value.startHeight + deltaY;
+    }
+    if (direction.includes('w')) {
+      width = resizing.value.startWidth - deltaX;
+      x = resizing.value.startLeft + deltaX;
+    }
+    if (direction.includes('n')) {
+      height = resizing.value.startHeight - deltaY;
+      y = resizing.value.startTop + deltaY;
+    }
+    iform.updateFloatingRect(resizing.value.formId, { x, y, width, height });
   }
 });
 
-useEventListener(window, 'mouseup', () => {
-  dragging.value = null;
-  resizing.value = null;
-});
+const clearPointerState = (event: PointerEvent) => {
+  if (dragging.value?.pointerId === event.pointerId) {
+    dragging.value?.captureTarget?.releasePointerCapture?.(event.pointerId);
+    dragging.value = null;
+  }
+  if (resizing.value?.pointerId === event.pointerId) {
+    resizing.value?.captureTarget?.releasePointerCapture?.(event.pointerId);
+    resizing.value = null;
+  }
+};
+
+useEventListener(window, 'pointerup', clearPointerState);
+useEventListener(window, 'pointercancel', clearPointerState);
 
 const toggleMinimize = (formId: string) => {
   iform.toggleFloatingMinimize(formId);
@@ -151,6 +270,10 @@ const toggleMinimize = (formId: string) => {
 
 const closeFloating = (formId: string) => {
   iform.closeFloating(formId);
+};
+
+const fitToViewport = (formId: string) => {
+  iform.fitFloatingToViewport(formId);
 };
 
 const dockToPanel = async (formId: string) => {
@@ -184,6 +307,7 @@ const dockToPanel = async (formId: string) => {
   gap: 0.4rem;
   padding: 0.25rem 0.45rem;
   cursor: move;
+  touch-action: none;
   background: rgba(15, 23, 42, 0.55);
   color: #e2e8f0;
   border-radius: 12px 12px 0 0;
@@ -256,6 +380,77 @@ const dockToPanel = async (formId: string) => {
   bottom: 0.3rem;
   cursor: nwse-resize;
   color: rgba(255, 255, 255, 0.8);
+  touch-action: none;
+}
+
+.iform-floating__resize-handle {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+
+.iform-floating__resize-handle.is-top {
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 12px;
+  cursor: ns-resize;
+}
+
+.iform-floating__resize-handle.is-right {
+  top: 28px;
+  right: 0;
+  width: 12px;
+  height: calc(100% - 40px);
+  cursor: ew-resize;
+}
+
+.iform-floating__resize-handle.is-bottom {
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 12px;
+  cursor: ns-resize;
+}
+
+.iform-floating__resize-handle.is-left {
+  top: 28px;
+  left: 0;
+  width: 12px;
+  height: calc(100% - 40px);
+  cursor: ew-resize;
+}
+
+.iform-floating__resize-handle.is-top-left {
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}
+
+.iform-floating__resize-handle.is-top-right {
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+}
+
+.iform-floating__resize-handle.is-bottom-left {
+  bottom: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nesw-resize;
+}
+
+.iform-floating__resize-handle.is-bottom-right {
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
 }
 
 .iform-floating.is-minimized {

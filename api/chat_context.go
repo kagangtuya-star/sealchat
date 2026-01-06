@@ -122,6 +122,21 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 				return true
 			})
 			if active != nil {
+				if data != nil && data.MessageContext != nil {
+					if active.BotLastMessageContext == nil {
+						active.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
+					}
+					active.BotLastMessageContext.Store(channelId, data.MessageContext)
+					if data.MessageContext.IsHiddenDice && data.MessageContext.SenderUserID != "" {
+						if active.BotHiddenDicePending == nil {
+							active.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
+						}
+						active.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
+							TargetUserID: data.MessageContext.SenderUserID,
+							Count:        0,
+						})
+					}
+				}
 				_ = active.Conn.WriteJSON(struct {
 					protocol.Event
 					Op protocol.Opcode `json:"op"`

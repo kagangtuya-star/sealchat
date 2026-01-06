@@ -649,6 +649,20 @@ const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item:
 };
 
 const message = useMessage()
+let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
+
+const getAvatarMenuPoint = (event: MouseEvent) => {
+  const target = event.currentTarget as HTMLElement | null;
+  if (target) {
+    const rect = target.getBoundingClientRect();
+    return {
+      x: rect.right + 4,
+      y: rect.top,
+    };
+  }
+  return { x: event.clientX, y: event.clientY };
+};
+
 const doAvatarClick = (e: MouseEvent) => {
   if (isMobileUa) {
     return;
@@ -657,12 +671,18 @@ const doAvatarClick = (e: MouseEvent) => {
     message.warning('此用户无法查看')
     return;
   }
-  chat.avatarMenu.show = true;
-
-  chat.messageMenu.optionsComponent.x = e.x;
-  chat.messageMenu.optionsComponent.y = e.y;
-  chat.avatarMenu.item = props.item as any;
-  emit('avatar-click')
+  if (avatarClickTimer) {
+    clearTimeout(avatarClickTimer);
+    avatarClickTimer = null;
+  }
+  const point = getAvatarMenuPoint(e);
+  avatarClickTimer = setTimeout(() => {
+    chat.avatarMenu.optionsComponent.x = point.x;
+    chat.avatarMenu.optionsComponent.y = point.y;
+    chat.avatarMenu.item = props.item as any;
+    chat.avatarMenu.show = true;
+    emit('avatar-click')
+  }, 320);
 }
 
 const preventAvatarNativeMenu = (event: Event) => {
@@ -723,6 +743,67 @@ const handleAvatarLongpress = () => {
     return;
   }
   emit('avatar-longpress');
+};
+
+let avatarViewer: Viewer | null = null;
+const doAvatarDblClick = (e: MouseEvent) => {
+  if (isMobileUa) return;
+  if (avatarClickTimer) {
+    clearTimeout(avatarClickTimer);
+    avatarClickTimer = null;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  chat.avatarMenu.show = false;
+  const avatarUrl = displayAvatar.value || props.item?.member?.avatar || props.item?.user?.avatar;
+  if (!avatarUrl) return;
+
+  const resolvedUrl = resolveAttachmentUrl(avatarUrl) || avatarUrl;
+
+  const tempImg = document.createElement('img');
+  tempImg.src = resolvedUrl;
+  tempImg.style.display = 'none';
+  document.body.appendChild(tempImg);
+
+  if (avatarViewer) {
+    avatarViewer.destroy();
+    avatarViewer = null;
+  }
+
+  avatarViewer = new Viewer(tempImg, {
+    navbar: false,
+    title: false,
+    toolbar: {
+      zoomIn: true,
+      zoomOut: true,
+      oneToOne: true,
+      reset: true,
+      prev: false,
+      play: false,
+      next: false,
+      rotateLeft: true,
+      rotateRight: true,
+      flipHorizontal: false,
+      flipVertical: false,
+    },
+    tooltip: true,
+    movable: true,
+    zoomable: true,
+    rotatable: true,
+    transition: true,
+    fullscreen: true,
+    keyboard: true,
+    zIndex: 3000,
+    hidden: () => {
+      tempImg.remove();
+      if (avatarViewer) {
+        avatarViewer.destroy();
+        avatarViewer = null;
+      }
+    },
+  });
+
+  avatarViewer.show();
 };
 
 onMounted(() => {
@@ -891,7 +972,7 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
       :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
       @contextmenu="preventAvatarNativeMenu"
     >
-      <Avatar :src="displayAvatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" />
+      <Avatar :src="displayAvatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" @dblclick="doAvatarDblClick" />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->

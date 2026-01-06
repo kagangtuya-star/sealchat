@@ -4,7 +4,9 @@ import (
 	_ "embed"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -21,6 +23,52 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+
+func extractPort(addr string) string {
+	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return ""
+	}
+	return port
+}
+
+func updateDomainPort(domain, newPort string) (string, bool) {
+	if strings.TrimSpace(newPort) == "" {
+		return domain, false
+	}
+	trimmed := strings.TrimSpace(domain)
+	if trimmed == "" {
+		return utils.FormatHostPort("127.0.0.1", newPort), true
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil || parsed.Host == "" {
+			return domain, false
+		}
+		host := parsed.Hostname()
+		if host == "" {
+			return domain, false
+		}
+		parsed.Host = utils.FormatHostPort(host, newPort)
+		return parsed.String(), true
+	}
+
+	host, _, err := net.SplitHostPort(trimmed)
+	if err == nil {
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		return utils.FormatHostPort(host, newPort), true
+	}
+
+	host = trimmed
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return utils.FormatHostPort(host, newPort), true
+}
 
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
@@ -110,6 +158,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/gallery/search", GallerySearch)
 
 	v1Auth.Get("/timeline-list", TimelineList)
+	v1Auth.Post("/timeline-mark-read", TimelineMarkRead)
 
 	v1Auth.Post("/upload", Upload)
 	v1Auth.Post("/upload-quick", UploadQuick)
@@ -277,6 +326,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/user-password-reset", AdminUserResetPassword)
 	v1AuthAdmin.Post("/admin/user-role-link-by-user-id", AdminUserRoleLinkByUserId)
 	v1AuthAdmin.Post("/admin/user-role-unlink-by-user-id", AdminUserRoleUnlinkByUserId)
+	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
+	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
+	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)
@@ -308,6 +360,19 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	websocketWorks(app)
 
-	// Default :3212
-	log.Fatal(app.Listen(config.ServeAt))
+	// Check port availability and find fallback if needed
+	listenAddr := config.ServeAt
+	actualAddr, usedFallback := utils.FindAvailablePort(listenAddr)
+	if usedFallback {
+		log.Printf("警告: 端口 %s 被占用，已切换到 %s", listenAddr, actualAddr)
+		config.ServeAt = actualAddr
+		// Update domain to reflect new port (IPv6-safe)
+		newPort := extractPort(actualAddr)
+		if newDomain, ok := updateDomainPort(config.Domain, newPort); ok {
+			config.Domain = newDomain
+		}
+		utils.WriteConfig(config)
+		log.Printf("配置文件已更新: serveAt=%s, domain=%s", config.ServeAt, config.Domain)
+	}
+	log.Fatal(app.Listen(actualAddr))
 }

@@ -205,6 +205,10 @@ const initEditor = async () => {
         attributes: {
           class: 'tiptap-content',
         },
+        handleKeyDown: (_view, event) => {
+          emit('keydown', event);
+          return event.defaultPrevented;
+        },
         handlePaste: (view, event) => {
           const items = event.clipboardData?.items;
           if (!items) return false;
@@ -446,10 +450,6 @@ const unsetLink = () => {
 
 const isActive = (name: string, attrs?: Record<string, any>) => {
   return editor.value?.isActive(name, attrs) ?? false;
-};
-
-const handleKeydown = (event: KeyboardEvent) => {
-  emit('keydown', event);
 };
 
 const handleCompositionStart = () => {
@@ -777,7 +777,6 @@ defineExpose({
       <div
         class="tiptap-editor-wrapper"
         ref="editorElement"
-        @keydown="handleKeydown"
         @compositionstart="handleCompositionStart"
         @compositionend="handleCompositionEnd"
       >

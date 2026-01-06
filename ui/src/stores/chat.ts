@@ -26,6 +26,8 @@ interface ChatState {
   channelTreeReady: Record<string, boolean>,
   channelTreePrivate: SChannel[],
   channelTreePrivateReady: boolean,
+  favoriteChannelCandidatesByWorld: Record<string, SChannel[]>,
+  favoriteChannelCandidatesReady: Record<string, boolean>,
   curChannel: Channel | null,
   currentWorldId: string,
   observerMode: boolean,
@@ -221,6 +223,8 @@ export const useChatStore = defineStore({
     channelTreeReady: {},
     channelTreePrivate: [] as any,
     channelTreePrivateReady: false,
+    favoriteChannelCandidatesByWorld: {},
+    favoriteChannelCandidatesReady: {},
     curChannel: null,
     currentWorldId: readScopedLocalStorage('currentWorldId') || '',
     observerMode: false,
@@ -1758,6 +1762,42 @@ export const useChatStore = defineStore({
       return tree;
     },
 
+    async channelFavoriteCandidateList(worldId?: string, force = false) {
+      let targetWorld = worldId || this.currentWorldId;
+      if (!targetWorld && this.observerMode && this.observerWorldId) {
+        targetWorld = this.observerWorldId;
+      }
+      if (!targetWorld && !this.observerMode) {
+        await this.initWorlds();
+      }
+      const finalWorld = targetWorld || this.currentWorldId || (this.observerMode ? this.observerWorldId : '');
+      if (!finalWorld) {
+        return [];
+      }
+      await this.ensureConnectionReady();
+      if (!force && this.favoriteChannelCandidatesByWorld[finalWorld]) {
+        this.favoriteChannelCandidatesReady = {
+          ...this.favoriteChannelCandidatesReady,
+          [finalWorld]: true,
+        };
+        return this.favoriteChannelCandidatesByWorld[finalWorld];
+      }
+      try {
+        const resp = await this.sendAPI('channel.favorite.list', { world_id: finalWorld, worldId: finalWorld }) as APIChannelListResp;
+        const chns = resp?.data?.data ?? [];
+        this.favoriteChannelCandidatesByWorld = {
+          ...this.favoriteChannelCandidatesByWorld,
+          [finalWorld]: chns as SChannel[],
+        };
+        return chns as SChannel[];
+      } finally {
+        this.favoriteChannelCandidatesReady = {
+          ...this.favoriteChannelCandidatesReady,
+          [finalWorld]: true,
+        };
+      }
+    },
+
     patchChannelAttributes(channelId: string, attrs: Partial<SChannel>) {
       if (!channelId) {
         return;
@@ -2319,8 +2359,16 @@ export const useChatStore = defineStore({
       }
       const resp = await api.get<PaginationListResponse<UserInfo>>('api/v1/bot-list', {});
       if (resp?.data) {
-        this.botListCache = resp.data;
+        const items = (resp.data.items || []).map((item: any) => ({
+          ...item,
+          avatar: item.avatar || item.avatarAttachmentId || item.avatar_id || item.avatarId || item.avatar_attachment_id || '',
+        }));
+        this.botListCache = {
+          ...resp.data,
+          items,
+        };
         this.botListCacheUpdatedAt = Date.now();
+        return this.botListCache;
       }
       return resp?.data;
     },

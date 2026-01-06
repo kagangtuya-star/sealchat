@@ -22,9 +22,10 @@ COPY --from=ui-builder /src/ui/dist ./ui/dist
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG BUILD_VERSION
 RUN --mount=type=cache,target=/root/.cache/go-build \
   CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w" .
+    go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
 
 FROM --platform=$BUILDPLATFORM alpine:3.20 AS webp-assets
 ARG TARGETARCH

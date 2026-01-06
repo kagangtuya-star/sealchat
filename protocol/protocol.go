@@ -291,28 +291,38 @@ const (
 	EventStickyNotePushed  EventName = "sticky-note-pushed"
 )
 
+// MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
+type MessageContext struct {
+	ICMode          string `json:"icMode,omitempty"`          // 原消息的 IC/OOC 模式
+	IsWhisper       bool   `json:"isWhisper,omitempty"`       // 原消息是否为悄悄话
+	WhisperToUserID string `json:"whisperToUserId,omitempty"` // 悄悄话目标用户ID
+	IsHiddenDice    bool   `json:"isHiddenDice,omitempty"`    // 是否为暗骰
+	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
+}
+
 type Event struct {
-	ID         int64                      `json:"id"`
-	Type       EventName                  `json:"type"`
-	SelfID     string                     `json:"selfID"`
-	Platform   string                     `json:"platform"`
-	Timestamp  int64                      `json:"timestamp"`
-	Argv       *Argv                      `json:"argv"`
-	Channel    *Channel                   `json:"channel"`
-	Guild      *Guild                     `json:"guild"`
-	Login      *Login                     `json:"login"`
-	Member     *GuildMember               `json:"member"`
-	Message    *Message                   `json:"message"`
-	Operator   *User                      `json:"operator"`
-	Role       *GuildRole                 `json:"role"`
-	User       *User                      `json:"user"`
-	Button     *Button                    `json:"button"`
-	Typing     *TypingPreview             `json:"typing"`
-	Reorder    *MessageReorder            `json:"reorder"`
-	Presence   []*ChannelPresence         `json:"presence"`
-	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
-	IForm      *ChannelIFormEventPayload  `json:"iform,omitempty"`
-	StickyNote *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	ID             int64                      `json:"id"`
+	Type           EventName                  `json:"type"`
+	SelfID         string                     `json:"selfID"`
+	Platform       string                     `json:"platform"`
+	Timestamp      int64                      `json:"timestamp"`
+	Argv           *Argv                      `json:"argv"`
+	Channel        *Channel                   `json:"channel"`
+	Guild          *Guild                     `json:"guild"`
+	Login          *Login                     `json:"login"`
+	Member         *GuildMember               `json:"member"`
+	Message        *Message                   `json:"message"`
+	Operator       *User                      `json:"operator"`
+	Role           *GuildRole                 `json:"role"`
+	User           *User                      `json:"user"`
+	Button         *Button                    `json:"button"`
+	Typing         *TypingPreview             `json:"typing"`
+	Reorder        *MessageReorder            `json:"reorder"`
+	Presence       []*ChannelPresence         `json:"presence"`
+	AudioState     *AudioPlaybackStatePayload `json:"audioState,omitempty"`
+	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
+	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	MessageContext *MessageContext            `json:"messageContext,omitempty"`
 }
 
 type TypingState string
@@ -398,6 +408,7 @@ type StickyNote struct {
 	ID          string `json:"id"`
 	ChannelID   string `json:"channelId"`
 	WorldID     string `json:"worldId"`
+	FolderID    string `json:"folderId,omitempty"` // 所属文件夹
 	Title       string `json:"title"`
 	Content     string `json:"content"`
 	ContentText string `json:"contentText"`
@@ -406,6 +417,11 @@ type StickyNote struct {
 	IsPublic    bool   `json:"isPublic"`
 	IsPinned    bool   `json:"isPinned"`
 	OrderIndex  int    `json:"orderIndex"`
+	NoteType    string `json:"noteType"`              // text/counter/list/slider/chat/timer/clock/roundCounter
+	TypeData    string `json:"typeData,omitempty"`    // JSON 格式的类型特定数据
+	Visibility  string `json:"visibility,omitempty"`  // owner/editors/viewers/all
+	ViewerIDs   string `json:"viewerIds,omitempty"`   // JSON 数组
+	EditorIDs   string `json:"editorIds,omitempty"`   // JSON 数组
 	DefaultX    int    `json:"defaultX"`
 	DefaultY    int    `json:"defaultY"`
 	DefaultW    int    `json:"defaultW"`
@@ -427,10 +443,25 @@ type StickyNoteUserState struct {
 	ZIndex    int    `json:"zIndex"`
 }
 
+// StickyNoteFolder 便签文件夹
+type StickyNoteFolder struct {
+	ID         string              `json:"id"`
+	ChannelID  string              `json:"channelId"`
+	WorldID    string              `json:"worldId"`
+	ParentID   string              `json:"parentId,omitempty"`
+	Name       string              `json:"name"`
+	Color      string              `json:"color,omitempty"`
+	OrderIndex int                 `json:"orderIndex"`
+	CreatorID  string              `json:"creatorId"`
+	CreatedAt  int64               `json:"createdAt"`
+	UpdatedAt  int64               `json:"updatedAt"`
+	Children   []*StickyNoteFolder `json:"children,omitempty"`
+}
+
 // StickyNoteEventPayload 便签事件载荷
 type StickyNoteEventPayload struct {
-	Note          *StickyNote `json:"note,omitempty"`
+	Note          *StickyNote   `json:"note,omitempty"`
 	Notes         []*StickyNote `json:"notes,omitempty"`
-	Action        string      `json:"action,omitempty"` // create/update/delete/push
-	TargetUserIDs []string    `json:"targetUserIds,omitempty"`
+	Action        string        `json:"action,omitempty"` // create/update/delete/push
+	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
 }

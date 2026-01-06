@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	diceCommandPattern    = regexp.MustCompile(`(?i)(?:[\.。．｡]r[^\s　,，。！？!?;；:：]*)`)
+	diceCommandPattern    = regexp.MustCompile(`(?i)(?:[\.。．｡]rh?[^\s　,，。！？!?;；:：]*)`)
 	diceBracePattern      = regexp.MustCompile(`\{([^{}]+)\}`)
 	incompleteDicePattern = regexp.MustCompile(`(?i)(\b\d*)d\b`)
+	hiddenDicePattern     = regexp.MustCompile(`(?i)[\.。．｡]rh`)
 )
 
 const (
@@ -30,8 +31,9 @@ const (
 
 // DiceRenderResult 处理后的内容
 type DiceRenderResult struct {
-	Content string
-	Rolls   []*model.MessageDiceRollModel
+	Content  string
+	Rolls    []*model.MessageDiceRollModel
+	IsHidden bool // 是否为暗骰 (.rh 命令)
 }
 
 // LooksLikeTipTapJSON 判断内容是否为富文本payload，避免服务器端直接解析
@@ -69,7 +71,7 @@ func NormalizeDefaultDiceExpr(raw string) (string, error) {
 // RenderDiceContent 在HTML字符串中识别骰子表达式并渲染为dice-chip
 func RenderDiceContent(content string, defaultDiceExpr string, existing []*model.MessageDiceRollModel) (*DiceRenderResult, error) {
 	if LooksLikeTipTapJSON(content) {
-		return &DiceRenderResult{Content: content, Rolls: nil}, nil
+		return &DiceRenderResult{Content: content, Rolls: nil, IsHidden: false}, nil
 	}
 	wrapper := &htmlparser.Node{Type: htmlparser.ElementNode, DataAtom: htmlatom.Div, Data: "div"}
 	nodes, err := htmlparser.ParseFragment(strings.NewReader(content), wrapper)
@@ -81,9 +83,10 @@ func RenderDiceContent(content string, defaultDiceExpr string, existing []*model
 	}
 	renderer := newDiceRenderer(defaultDiceExpr, existing)
 	renderer.walk(wrapper)
+	isHidden := containsHiddenDiceCommand(content)
 
 	if !renderer.modified {
-		return &DiceRenderResult{Content: content, Rolls: renderer.rolls}, nil
+		return &DiceRenderResult{Content: content, Rolls: renderer.rolls, IsHidden: isHidden}, nil
 	}
 
 	var buf bytes.Buffer
@@ -92,7 +95,7 @@ func RenderDiceContent(content string, defaultDiceExpr string, existing []*model
 			return nil, err
 		}
 	}
-	return &DiceRenderResult{Content: buf.String(), Rolls: renderer.rolls}, nil
+	return &DiceRenderResult{Content: buf.String(), Rolls: renderer.rolls, IsHidden: isHidden}, nil
 }
 
 func newDiceRenderer(defaultDiceExpr string, existing []*model.MessageDiceRollModel) *diceRenderer {
@@ -307,7 +310,10 @@ func (r *diceRenderer) normalizeFormula(match diceTextMatch) (string, error) {
 		candidate = strings.TrimPrefix(candidate, "．")
 		candidate = strings.TrimPrefix(candidate, "｡")
 		candidate = strings.TrimSpace(candidate)
-		if len(candidate) >= 1 && (candidate[0] == 'r') {
+		if len(candidate) >= 2 && strings.HasPrefix(candidate, "rh") {
+			candidate = strings.TrimSpace(candidate[2:])
+			candidate = strings.TrimLeft(candidate, "/ \t\n\r　、，。")
+		} else if len(candidate) >= 1 && (candidate[0] == 'r') {
 			candidate = strings.TrimSpace(candidate[1:])
 			// 去掉 r 后，如果开头是非字母数字字符（如 /、空格等分隔符），继续清理
 			// 这样 .r/ 或 .r  都会变成空字符串，从而使用默认骰
@@ -425,4 +431,14 @@ func buildDiceChipHTML(roll *model.MessageDiceRollModel) string {
 	}
 	builder.WriteString(`</span></span>`)
 	return builder.String()
+}
+
+// containsHiddenDiceCommand 检测内容中是否包含暗骰命令
+func containsHiddenDiceCommand(content string) bool {
+	return hiddenDicePattern.MatchString(content)
+}
+
+// ContainsHiddenDiceCommand 提供给外部使用的暗骰检测
+func ContainsHiddenDiceCommand(content string) bool {
+	return containsHiddenDiceCommand(content)
 }

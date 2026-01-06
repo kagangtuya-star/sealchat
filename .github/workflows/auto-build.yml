@@ -87,14 +87,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
         run: |
+          BUILD_DATE=$(date +%Y%m%d)
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          BUILD_VERSION="${BUILD_DATE}-${SHORT_SHA}"
           if [ "${{ matrix.goos }}" = "linux" ]; then
             if [ "${{ matrix.goarch }}" = "amd64" ]; then
-              CC="zig cc -target x86_64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
+              CC="zig cc -target x86_64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static' -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
             elif [ "${{ matrix.goarch }}" = "arm64" ]; then
-              CC="zig cc -target aarch64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" .
+              CC="zig cc -target aarch64-linux-musl" go build -o "output/sealchat-server" -trimpath -ldflags "-s -w -linkmode external -extldflags '-static' -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
             fi
           elif [ "${{ matrix.goos }}" = "windows" ]; then
-            CC="zig cc -target x86_64-windows-gnu" go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w" .
+            CC="zig cc -target x86_64-windows-gnu" go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
           fi
 
       - name: Prepare package
@@ -222,6 +225,7 @@ jobs:
       - name: Build image
         run: |
           docker build \
+            --build-arg BUILD_VERSION="${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}" \
             -t "${{ env.IMAGE_NAME }}:latest" \
             -t "${{ env.IMAGE_NAME }}:sha-${{ github.sha }}" \
             -t "${{ env.IMAGE_NAME }}:${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}" \

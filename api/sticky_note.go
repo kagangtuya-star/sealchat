@@ -31,6 +31,12 @@ func BindStickyNoteRoutes(group fiber.Router) {
 	group.Patch("/sticky-notes/:noteId/state", apiStickyNoteUserStateUpdate)
 	// 推送便签
 	group.Post("/sticky-notes/:noteId/push", apiStickyNotePushRest)
+
+	// 文件夹相关
+	group.Get("/channels/:channelId/sticky-note-folders", apiChannelStickyNoteFolderList)
+	group.Post("/channels/:channelId/sticky-note-folders", apiChannelStickyNoteFolderCreate)
+	group.Patch("/sticky-note-folders/:folderId", apiStickyNoteFolderUpdate)
+	group.Delete("/sticky-note-folders/:folderId", apiStickyNoteFolderDelete)
 }
 
 // getStickyNoteUser 获取当前用户
@@ -107,13 +113,19 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	}
 
 	var req struct {
-		Title    string `json:"title"`
-		Content  string `json:"content"`
-		Color    string `json:"color"`
-		DefaultX int    `json:"defaultX"`
-		DefaultY int    `json:"defaultY"`
-		DefaultW int    `json:"defaultW"`
-		DefaultH int    `json:"defaultH"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		Color      string `json:"color"`
+		NoteType   string `json:"noteType"`
+		TypeData   string `json:"typeData"`
+		Visibility string `json:"visibility"`
+		ViewerIDs  string `json:"viewerIds"`
+		EditorIDs  string `json:"editorIds"`
+		FolderID   string `json:"folderId"`
+		DefaultX   int    `json:"defaultX"`
+		DefaultY   int    `json:"defaultY"`
+		DefaultW   int    `json:"defaultW"`
+		DefaultH   int    `json:"defaultH"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -136,20 +148,32 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	if req.DefaultH == 0 {
 		req.DefaultH = 250
 	}
+	if req.NoteType == "" {
+		req.NoteType = "text"
+	}
+	if req.Visibility == "" {
+		req.Visibility = "all"
+	}
 
 	note := &model.StickyNoteModel{
-		ChannelID:  channelID,
-		WorldID:    channel.WorldID,
-		Title:      req.Title,
-		Content:    req.Content,
+		ChannelID:   channelID,
+		WorldID:     channel.WorldID,
+		FolderID:    req.FolderID,
+		Title:       req.Title,
+		Content:     req.Content,
 		ContentText: req.Content,
-		Color:      req.Color,
-		CreatorID:  user.ID,
-		IsPublic:   true,
-		DefaultX:   req.DefaultX,
-		DefaultY:   req.DefaultY,
-		DefaultW:   req.DefaultW,
-		DefaultH:   req.DefaultH,
+		Color:       req.Color,
+		CreatorID:   user.ID,
+		IsPublic:    true,
+		NoteType:    model.StickyNoteType(req.NoteType),
+		TypeData:    req.TypeData,
+		Visibility:  model.StickyNoteVisibility(req.Visibility),
+		ViewerIDs:   req.ViewerIDs,
+		EditorIDs:   req.EditorIDs,
+		DefaultX:    req.DefaultX,
+		DefaultY:    req.DefaultY,
+		DefaultW:    req.DefaultW,
+		DefaultH:    req.DefaultH,
 	}
 	note.ID = utils.NewID()
 
@@ -196,6 +220,12 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 		ContentText *string `json:"contentText"`
 		Color       *string `json:"color"`
 		IsPinned    *bool   `json:"isPinned"`
+		NoteType    *string `json:"noteType"`
+		TypeData    *string `json:"typeData"`
+		Visibility  *string `json:"visibility"`
+		ViewerIDs   *string `json:"viewerIds"`
+		EditorIDs   *string `json:"editorIds"`
+		FolderID    *string `json:"folderId"`
 		DefaultX    *int    `json:"defaultX"`
 		DefaultY    *int    `json:"defaultY"`
 		DefaultW    *int    `json:"defaultW"`
@@ -224,6 +254,24 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	}
 	if req.IsPinned != nil {
 		updates["is_pinned"] = *req.IsPinned
+	}
+	if req.NoteType != nil {
+		updates["note_type"] = *req.NoteType
+	}
+	if req.TypeData != nil {
+		updates["type_data"] = *req.TypeData
+	}
+	if req.Visibility != nil {
+		updates["visibility"] = *req.Visibility
+	}
+	if req.ViewerIDs != nil {
+		updates["viewer_ids"] = *req.ViewerIDs
+	}
+	if req.EditorIDs != nil {
+		updates["editor_ids"] = *req.EditorIDs
+	}
+	if req.FolderID != nil {
+		updates["folder_id"] = *req.FolderID
 	}
 	if req.DefaultX != nil {
 		updates["default_x"] = *req.DefaultX
@@ -572,4 +620,155 @@ func BroadcastStickyNoteToUsers(userIDs []string, eventType protocol.EventName, 
 		})
 		return true
 	})
+}
+
+// ========== 文件夹 API ==========
+
+// apiChannelStickyNoteFolderList 获取频道的所有文件夹
+func apiChannelStickyNoteFolderList(c *fiber.Ctx) error {
+	channelID := c.Params("channelId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	folders, err := model.StickyNoteFolderListByChannel(channelID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// 转换为协议类型
+	result := make([]*protocol.StickyNoteFolder, len(folders))
+	for i, f := range folders {
+		result[i] = f.ToProtocolType()
+	}
+
+	return c.JSON(fiber.Map{"folders": result})
+}
+
+// apiChannelStickyNoteFolderCreate 创建文件夹
+func apiChannelStickyNoteFolderCreate(c *fiber.Ctx) error {
+	channelID := c.Params("channelId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	var req struct {
+		Name     string `json:"name"`
+		ParentID string `json:"parentId"`
+		Color    string `json:"color"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+	}
+
+	if req.Name == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "name is required"})
+	}
+
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "channel not found"})
+	}
+
+	folder := &model.StickyNoteFolderModel{
+		ChannelID: channelID,
+		WorldID:   channel.WorldID,
+		ParentID:  req.ParentID,
+		Name:      req.Name,
+		Color:     req.Color,
+		CreatorID: user.ID,
+	}
+
+	if err := model.StickyNoteFolderCreate(folder); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"folder": folder.ToProtocolType()})
+}
+
+// apiStickyNoteFolderUpdate 更新文件夹
+func apiStickyNoteFolderUpdate(c *fiber.Ctx) error {
+	folderID := c.Params("folderId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	folder, err := model.StickyNoteFolderGet(folderID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "folder not found"})
+	}
+
+	// 权限检查
+	canManage, _ := canManageStickyNote(user.ID, folder.ChannelID, folder.CreatorID)
+	if !canManage {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
+	}
+
+	var req struct {
+		Name       *string `json:"name"`
+		ParentID   *string `json:"parentId"`
+		Color      *string `json:"color"`
+		OrderIndex *int    `json:"orderIndex"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+	}
+
+	updates := map[string]interface{}{
+		"updated_at": time.Now(),
+	}
+
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.ParentID != nil {
+		updates["parent_id"] = *req.ParentID
+	}
+	if req.Color != nil {
+		updates["color"] = *req.Color
+	}
+	if req.OrderIndex != nil {
+		updates["order_index"] = *req.OrderIndex
+	}
+
+	if err := model.StickyNoteFolderUpdate(folderID, updates); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	folder, _ = model.StickyNoteFolderGet(folderID)
+	return c.JSON(fiber.Map{"folder": folder.ToProtocolType()})
+}
+
+// apiStickyNoteFolderDelete 删除文件夹
+func apiStickyNoteFolderDelete(c *fiber.Ctx) error {
+	folderID := c.Params("folderId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	folder, err := model.StickyNoteFolderGet(folderID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "folder not found"})
+	}
+
+	// 权限检查
+	canManage, _ := canManageStickyNote(user.ID, folder.ChannelID, folder.CreatorID)
+	if !canManage {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
+	}
+
+	// 将文件夹内的便签移出
+	_ = model.StickyNoteClearFolder(folderID)
+
+	if err := model.StickyNoteFolderDelete(folderID); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"success": true})
 }

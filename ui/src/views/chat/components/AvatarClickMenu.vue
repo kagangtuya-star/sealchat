@@ -6,11 +6,22 @@ import { computed, nextTick } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
 import { useI18n } from 'vue-i18n';
+import { useDisplayStore } from '@/stores/display';
 
 const chat = useChatStore()
 const message = useMessage()
 const { t } = useI18n();
 const user = useUserStore()
+const display = useDisplayStore()
+
+const avatarMenuClass = computed(() => (display.palette === 'night' ? 'avatar-menu--night' : 'avatar-menu--day'))
+const avatarMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
+const avatarMenuOptions = computed<MenuOptions>(() => ({
+  ...chat.avatarMenu.optionsComponent,
+  theme: avatarMenuTheme.value,
+  customClass: avatarMenuClass.value,
+  adjustPosition: { xDirection: 'right', yDirection: 'top' },
+}))
 
 const clickTalkTo = async () => {
   const data = chat.avatarMenu.item;
@@ -132,7 +143,7 @@ const openIdentitySettings = () => {
 </script>
 
 <template>
-  <context-menu v-model:show="chat.avatarMenu.show" :options="chat.messageMenu.optionsComponent">
+  <context-menu v-model:show="chat.avatarMenu.show" :options="avatarMenuOptions">
     <div class="px-4 pb-1 flex space-x-2">
       <Avatar :size="48" :src="chat.avatarMenu.item?.member?.avatar"></Avatar>
       <div>
@@ -150,3 +161,33 @@ const openIdentitySettings = () => {
     <context-menu-item v-if="showIdentitySettings" label="更改频道内资料" @click="openIdentitySettings" />
   </context-menu>
 </template>
+
+<style scoped>
+:deep(.context-menu.avatar-menu--night) {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+}
+
+:deep(.context-menu.avatar-menu--night .context-menu-item) {
+  color: inherit;
+}
+
+:deep(.context-menu.avatar-menu--night .context-menu-item:hover) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:deep(.context-menu.avatar-menu--day) {
+  background: rgba(248, 250, 252, 0.98);
+  border-color: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+:deep(.context-menu.avatar-menu--day .context-menu-item) {
+  color: inherit;
+}
+
+:deep(.context-menu.avatar-menu--day .context-menu-item:hover) {
+  background: rgba(15, 23, 42, 0.06);
+}
+</style>

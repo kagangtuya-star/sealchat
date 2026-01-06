@@ -1,4 +1,4 @@
-const COMMAND_PATTERN = /[\.。．｡]r[^\s　,，。！？!?;；:：]*/gi;
+const COMMAND_PATTERN = /[\.。．｡]rh?[^\s　,，。！？!?;；:：]*/gi;
 const BRACE_PATTERN = /\{([^{}]+)\}/g;
 const INCOMPLETE_PATTERN = /(\b\d*)d\b/gi;
 
@@ -90,7 +90,9 @@ const normalizeFormula = (raw: string, kind: DiceMatch['kind'], defaultDiceExpr:
     if (/^[\.。．｡]/.test(candidate)) {
       candidate = candidate.slice(1);
     }
-    if (/^[rR]/.test(candidate)) {
+    if (/^rh/i.test(candidate)) {
+      candidate = candidate.slice(2);
+    } else if (/^[rR]/.test(candidate)) {
       candidate = candidate.slice(1);
     }
   }
@@ -113,3 +115,5 @@ const normalizeFormula = (raw: string, kind: DiceMatch['kind'], defaultDiceExpr:
   }
   return normalized;
 };
+
+export const isHiddenDiceCommand = (text: string): boolean => /[\.。．｡]rh/i.test(text);

@@ -1,11 +1,11 @@
 <script setup lang="tsx">
-import { useUtilsStore } from '@/stores/utils';
-import { api } from '@/stores/_config';
-import { useUserStore } from '@/stores/user';
+import AvatarEditor from '@/components/AvatarEditor.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useChatStore, chatEvent } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useDialog, useMessage } from 'naive-ui';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n()
@@ -22,8 +22,39 @@ const newTokenName = ref('bot')
 const newTokenAvatar = ref('')
 const newTokenColor = ref('#2563eb')
 const avatarFileInputRef = ref<HTMLInputElement | null>(null)
+const avatarEditorVisible = ref(false)
+const avatarEditorFile = ref<File | null>(null)
+const avatarPreview = ref('')
+let avatarPreviewObjectUrl: string | null = null
 const uploadingAvatar = ref(false)
-const userStore = useUserStore()
+const avatarVersion = ref(0)
+
+const appendAvatarVersion = (url: string, version?: number | string) => {
+  if (!url || !version) {
+    return url
+  }
+  const mark = url.includes('?') ? '&' : '?'
+  return `${url}${mark}v=${encodeURIComponent(String(version))}`
+}
+
+const botAvatarDisplay = computed(() => {
+  const base = avatarPreview.value || resolveAttachmentUrl(newTokenAvatar.value)
+  return appendAvatarVersion(base, avatarPreview.value ? undefined : avatarVersion.value)
+})
+
+const clearAvatarPreview = () => {
+  if (avatarPreviewObjectUrl) {
+    URL.revokeObjectURL(avatarPreviewObjectUrl)
+    avatarPreviewObjectUrl = null
+  }
+  avatarPreview.value = ''
+}
+
+const setAvatarPreview = (file: File) => {
+  clearAvatarPreview()
+  avatarPreviewObjectUrl = URL.createObjectURL(file)
+  avatarPreview.value = avatarPreviewObjectUrl
+}
 // const newChannel = async () => {
 //   if (!newChannelName.value.trim()) {
 //     message.error(t('dialoChannelgNew.channelNameHint'));
@@ -37,19 +68,30 @@ const resetForm = () => {
   newTokenName.value = 'bot';
   newTokenAvatar.value = '';
   newTokenColor.value = '#2563eb';
+  clearAvatarPreview();
 };
 
 const openCreateModal = () => {
   editingToken.value = null;
   resetForm();
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
   showModal.value = true;
+};
+
+const resolveBotAvatarValue = (token?: any) => {
+  if (!token) return '';
+  return token.avatar || token.avatarAttachmentId || token.avatar_id || token.avatarId || token.avatar_attachment_id || '';
 };
 
 const openEditModal = (token: any) => {
   editingToken.value = token;
   newTokenName.value = token.name || 'bot';
-  newTokenAvatar.value = token.avatar || '';
+  newTokenAvatar.value = resolveBotAvatarValue(token);
   newTokenColor.value = token.nickColor || '#2563eb';
+  clearAvatarPreview();
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
   showModal.value = true;
 };
 
@@ -122,11 +164,12 @@ const deleteItem = async (i: any) => {
   })
 }
 
-const resolveAvatar = (value?: string) => {
+const resolveAvatar = (value?: string, version?: number | string) => {
   if (!value) {
     return ''
   }
-  return resolveAttachmentUrl(value)
+  const resolved = resolveAttachmentUrl(value)
+  return appendAvatarVersion(resolved, version)
 }
 
 const triggerAvatarUpload = () => {
@@ -140,7 +183,7 @@ const handleAvatarFileChange = async (event: Event) => {
     return
   }
   // Check file size before uploading
-  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : 2 * 1024 * 1024
+  const sizeLimit = utils.fileSizeLimit
   if (file.size > sizeLimit) {
     const limitMB = (sizeLimit / 1024 / 1024).toFixed(1)
     message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
@@ -149,34 +192,65 @@ const handleAvatarFileChange = async (event: Event) => {
     }
     return
   }
+  avatarEditorFile.value = file
+  avatarEditorVisible.value = true
+  if (input) {
+    input.value = ''
+  }
+}
+
+const handleAvatarEditorSave = async (file: File) => {
   uploadingAvatar.value = true
+  avatarEditorVisible.value = false
+  avatarEditorFile.value = null
+  setAvatarPreview(file)
   try {
-    const formData = new FormData()
-    formData.append('file', file)
-    const resp = await api.post('/api/v1/upload', formData, {
-      headers: {
-        Authorization: userStore.token,
-        ChannelId: 'bot-avatar',
-      },
-    })
-    const attachmentId = resp.data?.ids?.[0]
-    if (!attachmentId) {
+    const result = await uploadImageAttachment(file, { channelId: 'bot-avatar', skipCompression: true })
+    if (!result.attachmentId) {
       throw new Error('上传失败')
     }
-    newTokenAvatar.value = `id:${attachmentId}`
+    newTokenAvatar.value = result.attachmentId
+    avatarVersion.value = Date.now()
     message.success('头像上传成功')
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '头像上传失败')
+    message.error(error?.message || '头像上传失败')
   } finally {
-    if (input) {
-      input.value = ''
-    }
     uploadingAvatar.value = false
   }
 }
 
+const handleAvatarEditorCancel = () => {
+  avatarEditorVisible.value = false
+  avatarEditorFile.value = null
+}
+
+const clearBotAvatar = () => {
+  newTokenAvatar.value = ''
+  clearAvatarPreview()
+}
+
+onUnmounted(() => {
+  clearAvatarPreview()
+})
+
+watch(showModal, (visible) => {
+  if (visible) {
+    return
+  }
+  avatarEditorVisible.value = false
+  avatarEditorFile.value = null
+  clearAvatarPreview()
+})
+
 onMounted(async () => {
   refresh()
+})
+
+watch(newTokenAvatar, (value, oldValue) => {
+  if (!value || value === oldValue) {
+    return
+  }
+  avatarVersion.value = Date.now()
 })
 </script>
 
@@ -184,7 +258,8 @@ onMounted(async () => {
   <div class="overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
     <n-list>
       <template #header>
-        当前token列表
+        <div>当前token列表</div>
+        <p class="bot-list-hint">创建机器人后，可在频道的掷骰面板点击设置齿轮，启用"机器人骰点"并选择对应机器人。</p>
       </template>
 
       <n-list-item v-for="i in tokens.items" :key="i.id">
@@ -206,7 +281,12 @@ onMounted(async () => {
         </template>
         <n-thing :title="i.name" :description="i.token">
           <template #avatar>
-            <n-avatar size="small" :src="resolveAvatar(i.avatar)">
+            <img
+              v-if="resolveBotAvatarValue(i)"
+              :src="resolveAvatar(resolveBotAvatarValue(i), i.updatedAt)"
+              style="width: 28px; height: 28px; min-width: 28px; min-height: 28px; border-radius: 3px; object-fit: cover;"
+            />
+            <n-avatar v-else size="small">
               {{ i.name?.slice(0, 1) || 'B' }}
             </n-avatar>
           </template>
@@ -238,15 +318,20 @@ onMounted(async () => {
       <n-form-item label="机器人头像">
         <input ref="avatarFileInputRef" type="file" accept="image/*" class="hidden" @change="handleAvatarFileChange">
         <div class="bot-avatar-uploader">
-          <n-avatar size="large" :src="resolveAvatar(newTokenAvatar)">
+          <img
+            v-if="botAvatarDisplay"
+            :src="botAvatarDisplay"
+            class="bot-avatar-uploader__preview"
+          />
+          <n-avatar v-else size="large">
             {{ newTokenName.slice(0, 1) || 'B' }}
           </n-avatar>
           <div class="bot-avatar-uploader__actions">
-            <div class="bot-avatar-uploader__buttons">
-              <n-button size="tiny" :loading="uploadingAvatar" @click="triggerAvatarUpload">上传图片</n-button>
-              <n-button size="tiny" quaternary :disabled="!newTokenAvatar" @click="newTokenAvatar = ''">清除</n-button>
-            </div>
-            <n-input v-model:value="newTokenAvatar" size="small" placeholder="也可粘贴图片地址或附件ID" />
+            <n-space>
+              <n-button size="tiny" :loading="uploadingAvatar" @click="triggerAvatarUpload">上传头像</n-button>
+              <n-button size="tiny" quaternary :disabled="!newTokenAvatar" @click="clearBotAvatar">清除</n-button>
+            </n-space>
+            <n-input v-model:value="newTokenAvatar" size="small" placeholder="也可粘贴图片地址或附件ID" @update:value="clearAvatarPreview" />
             <p class="bot-avatar-uploader__hint">支持本地上传，系统会返回附件ID，以 <code>id:xxxxx</code> 开头。</p>
           </div>
         </div>
@@ -258,6 +343,19 @@ onMounted(async () => {
         </div>
       </n-form-item>
     </n-form>
+  </n-modal>
+  <n-modal
+    v-model:show="avatarEditorVisible"
+    preset="card"
+    title="编辑头像"
+    style="max-width: 450px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="avatarEditorFile"
+      @save="handleAvatarEditorSave"
+      @cancel="handleAvatarEditorCancel"
+    />
   </n-modal>
 </template>
 
@@ -276,6 +374,15 @@ onMounted(async () => {
   gap: 0.75rem;
 }
 
+.bot-avatar-uploader__preview {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
 .bot-avatar-uploader__actions {
   flex: 1;
   display: flex;
@@ -283,14 +390,15 @@ onMounted(async () => {
   gap: 0.35rem;
 }
 
-.bot-avatar-uploader__buttons {
-  display: flex;
-  gap: 0.35rem;
-}
-
 .bot-avatar-uploader__hint {
   font-size: 12px;
   color: #94a3b8;
   margin: 0;
+}
+
+.bot-list-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0.25rem 0 0;
 }
 </style>

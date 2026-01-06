@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"sort"
+	"regexp"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ const (
 	displayOrderGap     = 1024.0
 	displayOrderEpsilon = 1e-6
 )
+
+var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
 
 type typingOrderCandidate struct {
 	userId    string
@@ -743,8 +746,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	channelId := data.ChannelID
 
 	var privateOtherUser string
+	botMsgContext := resolveBotMessageContext(ctx, channelId)
 
 	icMode := strings.TrimSpace(strings.ToLower(data.ICMode))
+	if icMode == "" && botMsgContext != nil {
+		icMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
+	}
 	if icMode == "" {
 		icMode = "ic"
 	}
@@ -793,6 +800,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	channelData := channel.ToProtocolType()
 	var renderResult *service.DiceRenderResult
+	var isHiddenDice bool
 	if channel.BuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
 		if err != nil {
@@ -800,27 +808,62 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 		if renderResult != nil {
 			content = renderResult.Content
+			isHiddenDice = renderResult.IsHidden
 		}
+	}
+	if !isHiddenDice {
+		isHiddenDice = service.ContainsHiddenDiceCommand(content)
+	}
+
+	hiddenWhisperToSelf := false
+	whisperTo := strings.TrimSpace(data.WhisperTo)
+	if whisperTo == "" && botMsgContext != nil && botMsgContext.IsWhisper && !botMsgContext.IsHiddenDice {
+		if botMsgContext.WhisperToUserID != "" {
+			whisperTo = botMsgContext.WhisperToUserID
+		}
+	}
+	if ctx.User.IsBot && channel.BotFeatureEnabled {
+		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && pending.TargetUserID != "" {
+			if whisperTo != "" {
+				if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
+					ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
+				}
+			} else {
+				pending.Count++
+				if pending.Count >= 2 {
+					whisperTo = pending.TargetUserID
+					if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
+						ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
+					}
+				} else if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
+					ctx.ConnInfo.BotHiddenDicePending.Store(channelId, pending)
+				}
+			}
+		}
+	}
+	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && !channel.BotFeatureEnabled {
+		hiddenWhisperToSelf = true
+		whisperTo = ctx.User.ID
 	}
 
 	var whisperUser *model.UserModel
 	var whisperMember *model.MemberModel
-	if data.WhisperTo != "" {
-		if data.WhisperTo == ctx.User.ID {
+	if whisperTo != "" {
+		if whisperTo == ctx.User.ID && !hiddenWhisperToSelf {
 			return nil, nil
 		}
 		if len(channelId) < 30 {
-			member, _ := model.MemberGetByUserIDAndChannelIDBase(data.WhisperTo, channelId, "", false)
+			member, _ := model.MemberGetByUserIDAndChannelIDBase(whisperTo, channelId, "", false)
 			if member == nil {
 				return nil, nil
 			}
 			whisperMember = member
 		} else {
-			if data.WhisperTo != privateOtherUser {
+			if whisperTo != privateOtherUser {
 				return nil, nil
 			}
 		}
-		whisperUser = model.UserGet(data.WhisperTo)
+		whisperUser = model.UserGet(whisperTo)
 		if whisperUser == nil {
 			return nil, nil
 		}
@@ -847,7 +890,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if data.DisplayOrder != nil && *data.DisplayOrder > 0 {
 		displayOrder = *data.DisplayOrder
 	}
-	if data.WhisperTo == "" {
+	if whisperTo == "" {
 		windowMs := int64(0)
 		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
 			windowMs = cfg.TypingOrderWindowMs
@@ -874,7 +917,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 		SenderMemberName: member.Nickname,
 		IsWhisper:        whisperUser != nil,
-		WhisperTo:        data.WhisperTo,
+		WhisperTo:        whisperTo,
 	}
 	if identity != nil {
 		m.SenderRoleID = identity.ID
@@ -949,24 +992,47 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			messageData.WhisperTo = whisperUser.ToProtocolType()
 		}
 
+		// 构建消息上下文
+		var msgContext *protocol.MessageContext
+		if channel.BotFeatureEnabled || appConfig.BuiltInSealBotEnable {
+			msgContext = &protocol.MessageContext{
+				ICMode:       icMode,
+				IsWhisper:    whisperUser != nil,
+				IsHiddenDice: isHiddenDice,
+				SenderUserID: ctx.User.ID,
+			}
+			if whisperUser != nil {
+				msgContext.WhisperToUserID = whisperUser.ID
+			}
+		}
+
 		// 发出广播事件
 		ev := &protocol.Event{
 			// 协议规定: 事件中必须含有 channel，message，user
-			Type:    protocol.EventMessageCreated,
-			Message: messageData,
-			Channel: channelData,
-			User:    userData,
+			Type:           protocol.EventMessageCreated,
+			Message:        messageData,
+			Channel:        channelData,
+			User:           userData,
+			MessageContext: msgContext,
 		}
 
 		if whisperUser != nil {
 			recipients := lo.Uniq([]string{ctx.User.ID, whisperUser.ID})
 			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
 		} else {
 			ctx.BroadcastEventInChannel(data.ChannelID, ev)
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+
+		if isHiddenDice && len(channelId) < 30 {
+			go sendHiddenDicePrivateCopy(ctx, channelData, messageData)
+		}
+		if channel.PermType == "private" && ctx.User != nil && ctx.User.IsBot {
+			go forwardHiddenDiceWhisperCopy(ctx, channel, &m, privateOtherUser)
+		}
 
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
 		if appConfig.BuiltInSealBotEnable && whisperUser == nil && channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
@@ -976,14 +1042,16 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				Content   string `json:"content"`
 				WhisperTo string `json:"whisper_to"`
 				ClientID  string `json:"client_id"`
+				ICMode    string `json:"ic_mode"`
 			}{
 				ChannelID: data.ChannelID,
 				QuoteID:   data.QuoteID,
 				Content:   data.Content,
-				WhisperTo: data.WhisperTo,
+				WhisperTo: whisperTo,
 				ClientID:  data.ClientID,
+				ICMode:    icMode,
 			}
-			builtinSealBotSolve(ctx, botReq, channelData)
+			builtinSealBotSolve(ctx, botReq, channelData, isHiddenDice)
 		}
 
 		if channel.PermType == "private" {
@@ -997,7 +1065,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		if whisperUser != nil {
-			targets := lo.Uniq([]string{data.WhisperTo})
+			targets := lo.Uniq([]string{whisperTo})
 			for _, uid := range targets {
 				if uid == "" || uid == ctx.User.ID {
 					continue
@@ -1908,13 +1976,42 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	}{Success: true}, nil
 }
 
+func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.MessageContext {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
+		return nil
+	}
+	if ctx.ConnInfo.BotLastMessageContext == nil {
+		return nil
+	}
+	msgContext, ok := ctx.ConnInfo.BotLastMessageContext.Load(channelId)
+	if !ok {
+		return nil
+	}
+	return msgContext
+}
+
+func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenDicePending {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
+		return nil
+	}
+	if ctx.ConnInfo.BotHiddenDicePending == nil {
+		return nil
+	}
+	pending, ok := ctx.ConnInfo.BotHiddenDicePending.Load(channelId)
+	if !ok {
+		return nil
+	}
+	return pending
+}
+
 func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	QuoteID   string `json:"quote_id"`
 	Content   string `json:"content"`
 	WhisperTo string `json:"whisper_to"`
 	ClientID  string `json:"client_id"`
-}, channelData *protocol.Channel) {
+	ICMode    string `json:"ic_mode"`
+}, channelData *protocol.Channel, isHiddenDice bool) {
 	content := data.Content
 	if len(content) >= 2 && (content[0] == '/' || content[0] == '.') && content[1] == 'x' {
 		vm := ds.NewVM()
@@ -1945,6 +2042,11 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			botText = sb.String()
 		}
 
+		msgICMode := strings.TrimSpace(strings.ToLower(data.ICMode))
+		if msgICMode == "" {
+			msgICMode = "ic"
+		}
+
 		m := model.MessageModel{
 			StringPKBaseModel: model.StringPKBaseModel{
 				ID: utils.NewID(),
@@ -1953,6 +2055,12 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			ChannelID: data.ChannelID,
 			MemberID:  "BOT:1000",
 			Content:   botText,
+			ICMode:    msgICMode,
+		}
+		if isHiddenDice && len(data.ChannelID) < 30 {
+			m.IsWhisper = true
+			m.WhisperTo = ctx.User.ID
+			m.WhisperTarget = ctx.User
 		}
 		model.GetDB().Create(&m)
 
@@ -1969,16 +2077,201 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			Nick: userData.Nick,
 		}
 
-		ctx.BroadcastEventInChannel(data.ChannelID, &protocol.Event{
-			// 协议规定: 事件中必须含有 channel，message，user
-			Type:    protocol.EventMessageCreated,
-			Message: messageData,
-			Channel: channelData,
-			User:    userData,
-		})
+		if m.IsWhisper {
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, []string{ctx.User.ID}, &protocol.Event{
+				// 协议规定: 事件中必须含有 channel，message，user
+				Type:    protocol.EventMessageCreated,
+				Message: messageData,
+				Channel: channelData,
+				User:    userData,
+			})
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, &protocol.Event{
+				// 协议规定: 事件中必须含有 channel，message，user
+				Type:    protocol.EventMessageCreated,
+				Message: messageData,
+				Channel: channelData,
+				User:    userData,
+			})
+		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
 	}
+}
+
+func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel, originalMsg *protocol.Message) {
+	if ctx == nil || ctx.User == nil || ctx.User.ID == "" || sourceChannel == nil || originalMsg == nil {
+		return
+	}
+	const botID = "BOT:1000"
+	botUser := model.UserGet(botID)
+	if botUser == nil {
+		return
+	}
+	ch, _ := model.ChannelPrivateGet(ctx.User.ID, botID)
+	if ch == nil || ch.ID == "" {
+		var isNew bool
+		ch, isNew = model.ChannelPrivateNew(ctx.User.ID, botID)
+		if ch == nil || ch.ID == "" {
+			return
+		}
+		if isNew {
+			if f := model.FriendRelationGet(ctx.User.ID, botID); f.ID != "" {
+				model.FriendRelationSetVisible(ctx.User.ID, botID)
+			} else {
+				_ = model.FriendRelationCreate(ctx.User.ID, botID, false)
+			}
+		}
+	}
+	dmChannel := ch.ToProtocolType()
+	content := fmt.Sprintf("暗骰结果 (来自 #%s)\n%s", sourceChannel.Name, originalMsg.Content)
+	msgICMode := strings.TrimSpace(strings.ToLower(originalMsg.IcMode))
+	if msgICMode == "" {
+		msgICMode = "ic"
+	}
+	m := model.MessageModel{
+		StringPKBaseModel: model.StringPKBaseModel{
+			ID: utils.NewID(),
+		},
+		UserID:    botID,
+		ChannelID: ch.ID,
+		MemberID:  botID,
+		Content:   content,
+		ICMode:    msgICMode,
+	}
+	model.GetDB().Create(&m)
+	botNick := strings.TrimSpace(botUser.Nickname)
+	if botNick == "" {
+		botNick = "小海豹"
+	}
+	userData := &protocol.User{
+		ID:     botID,
+		Nick:   botNick,
+		Avatar: botUser.Avatar,
+		IsBot:  true,
+	}
+	messageData := m.ToProtocolType2(dmChannel)
+	messageData.User = userData
+	messageData.Member = &protocol.GuildMember{
+		Name: userData.Nick,
+		Nick: userData.Nick,
+	}
+	ctx.BroadcastEventInChannelToUsers(ch.ID, []string{ctx.User.ID}, &protocol.Event{
+		Type:    protocol.EventMessageCreated,
+		Message: messageData,
+		Channel: dmChannel,
+		User:    userData,
+	})
+	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
+}
+
+func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || sourceChannel == nil || msg == nil {
+		return
+	}
+	if sourceChannel.PermType != "private" {
+		return
+	}
+	if privateOtherUser == "" {
+		return
+	}
+	if !strings.Contains(msg.Content, "暗骰") {
+		return
+	}
+	match := hiddenDiceForwardPattern.FindStringSubmatch(msg.Content)
+	if len(match) < 2 {
+		return
+	}
+	targetChannelID := strings.TrimSpace(match[1])
+	if targetChannelID == "" {
+		return
+	}
+	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); pending != nil && pending.TargetUserID == privateOtherUser {
+		if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
+			ctx.ConnInfo.BotHiddenDicePending.Delete(targetChannelID)
+		}
+	}
+	targetChannel, _ := model.ChannelGet(targetChannelID)
+	if targetChannel == nil || targetChannel.ID == "" {
+		return
+	}
+	member, err := model.MemberGetByUserIDAndChannelIDBase(ctx.User.ID, targetChannelID, ctx.User.Nickname, true)
+	if err != nil || member == nil {
+		return
+	}
+	whisperUser := model.UserGet(privateOtherUser)
+	if whisperUser == nil {
+		return
+	}
+	var whisperMember *model.MemberModel
+	if len(targetChannelID) < 30 {
+		whisperMember, _ = model.MemberGetByUserIDAndChannelIDBase(privateOtherUser, targetChannelID, "", false)
+	}
+	setUserNickFromMember(whisperUser, whisperMember)
+
+	msgICMode := strings.TrimSpace(strings.ToLower(msg.ICMode))
+	if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
+		msgICMode = strings.TrimSpace(strings.ToLower(botCtx.ICMode))
+	}
+	if msgICMode == "" {
+		msgICMode = "ic"
+	}
+
+	now := time.Now()
+	var existingCount int64
+	model.GetDB().Model(&model.MessageModel{}).
+		Where("channel_id = ? AND user_id = ? AND is_whisper = ? AND whisper_to = ? AND content = ? AND created_at >= ?",
+			targetChannelID, ctx.User.ID, true, privateOtherUser, msg.Content, now.Add(-5*time.Second)).
+		Count(&existingCount)
+	if existingCount > 0 {
+		return
+	}
+	nowMs := now.UnixMilli()
+	m := model.MessageModel{
+		StringPKBaseModel: model.StringPKBaseModel{
+			ID: utils.NewID(),
+		},
+		UserID:           ctx.User.ID,
+		ChannelID:        targetChannelID,
+		MemberID:         member.ID,
+		Content:          msg.Content,
+		DisplayOrder:     float64(nowMs),
+		ICMode:           msgICMode,
+		SenderMemberName: member.Nickname,
+		IsWhisper:        true,
+		WhisperTo:        privateOtherUser,
+	}
+	m.WhisperTarget = whisperUser
+	m.WhisperSenderUserNick = ctx.User.Nickname
+	m.WhisperSenderUserName = ctx.User.Username
+	m.WhisperSenderMemberID = member.ID
+	m.WhisperSenderMemberName = m.SenderMemberName
+	m.WhisperTargetUserNick = whisperUser.Nickname
+	m.WhisperTargetUserName = whisperUser.Username
+	if whisperMember != nil {
+		m.WhisperTargetMemberID = whisperMember.ID
+		m.WhisperTargetMemberName = whisperMember.Nickname
+	}
+
+	if err := model.GetDB().Create(&m).Error; err != nil {
+		return
+	}
+	channelData := targetChannel.ToProtocolType()
+	userData := ctx.User.ToProtocolType()
+	messageData := m.ToProtocolType2(channelData)
+	messageData.Content = msg.Content
+	messageData.User = userData
+	messageData.Member = member.ToProtocolType()
+	messageData.WhisperTo = whisperUser.ToProtocolType()
+
+	recipients := lo.Uniq([]string{ctx.User.ID, whisperUser.ID})
+	ctx.BroadcastEventInChannelToUsers(targetChannelID, recipients, &protocol.Event{
+		Type:    protocol.EventMessageCreated,
+		Message: messageData,
+		Channel: channelData,
+		User:    userData,
+	})
+	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 }
 
 func apiUnreadCount(ctx *ChatContext, data *struct{}) (any, error) {

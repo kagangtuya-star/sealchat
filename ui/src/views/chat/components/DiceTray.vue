@@ -1,13 +1,13 @@
 <template>
   <div class="dice-tray">
     <div class="dice-tray__header">
-      <div>
-        默认骰：<strong>{{ currentDefaultDice }}</strong>
-      </div>
-      <div class="dice-tray__header-actions">
+      <div class="dice-tray__header-main">
+        <span>默认骰：<strong>{{ currentDefaultDice }}</strong></span>
         <n-button v-if="canEditDefault" size="tiny" text type="primary" @click="modalVisible = true">
           修改
         </n-button>
+      </div>
+      <div class="dice-tray__header-actions">
         <slot name="header-actions"></slot>
         <n-button quaternary size="tiny" circle class="dice-tray__close" @click="handleTrayClose">
           <n-icon :component="CloseIcon" size="12" />
@@ -788,6 +788,12 @@ const handleSaveDefault = () => {
   justify-content: space-between;
   margin-bottom: 8px;
   font-size: 13px;
+}
+
+.dice-tray__header-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .dice-tray__header-actions {
