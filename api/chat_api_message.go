@@ -2274,8 +2274,21 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 }
 
-func apiUnreadCount(ctx *ChatContext, data *struct{}) (any, error) {
-	chIds, _ := service.ChannelIdList(ctx.User.ID)
+func apiUnreadCount(ctx *ChatContext, data *struct {
+	WorldID        string `json:"world_id"`
+	IncludePrivate *bool  `json:"include_private"`
+}) (any, error) {
+	worldID := strings.TrimSpace(data.WorldID)
+	includePrivate := false
+	if data.IncludePrivate != nil {
+		includePrivate = *data.IncludePrivate
+	}
+	var chIds []string
+	if worldID == "" {
+		chIds, _ = service.ChannelIdList(ctx.User.ID)
+	} else {
+		chIds, _ = service.ChannelIdListByWorld(ctx.User.ID, worldID, includePrivate)
+	}
 	lst, err := model.ChannelUnreadFetch(chIds, ctx.User.ID)
 	if err != nil {
 		return nil, err

@@ -1754,7 +1754,7 @@ export const useChatStore = defineStore({
       }
 
       if (!this.observerMode) {
-        const countMap = await this.channelUnreadCount();
+        const countMap = await this.channelUnreadCount(finalWorld);
         this.unreadCountMap = countMap;
       }
       // console.log('countMap', countMap);
@@ -2271,11 +2271,15 @@ export const useChatStore = defineStore({
     },
 
     // 获取未读信息
-    async channelUnreadCount() {
+    async channelUnreadCount(worldId?: string) {
       if (this.observerMode) {
         return {};
       }
-      const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', {});
+      const payload: { world_id?: string } = {};
+      if (worldId) {
+        payload.world_id = worldId;
+      }
+      const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', payload);
       return resp?.data;
     },
 

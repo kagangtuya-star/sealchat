@@ -92,6 +92,43 @@ func ChannelIdList(userId string) ([]string, error) {
 	return idsCanRead, nil
 }
 
+func ChannelIdListByWorld(userId, worldID string, includePrivate bool) ([]string, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return ChannelIdList(userId)
+	}
+	allowed, err := ChannelIdList(userId)
+	if err != nil {
+		return nil, err
+	}
+	allowedSet := map[string]struct{}{}
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+
+	channels, err := ChannelListByWorld(worldID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		if ch == nil || strings.TrimSpace(ch.ID) == "" {
+			continue
+		}
+		if _, ok := allowedSet[ch.ID]; ok {
+			ids = append(ids, ch.ID)
+		}
+	}
+
+	if includePrivate {
+		if privateIDs, err := model.FriendChannelIDList(userId); err == nil {
+			ids = append(ids, privateIDs...)
+		}
+	}
+
+	return lo.Uniq(ids), nil
+}
+
 // CanReadChannelByUserId 注意性能比较差，后面修改
 func CanReadChannelByUserId(userId, channelId string) bool {
 	if strings.TrimSpace(channelId) == "" {
