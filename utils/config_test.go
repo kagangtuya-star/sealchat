@@ -18,3 +18,23 @@ func TestFormatHostPort(t *testing.T) {
 		t.Fatalf("unexpected host formatting: %s", bare)
 	}
 }
+
+func TestNormalizeServeAtIPv6(t *testing.T) {
+	got, changed := NormalizeServeAt("::1")
+	if !changed {
+		t.Fatalf("expected IPv6 serveAt to be normalized")
+	}
+	if got != "[::1]:3212" {
+		t.Fatalf("unexpected normalized serveAt: %s", got)
+	}
+}
+
+func TestNormalizeDomainIPv6(t *testing.T) {
+	got, changed := NormalizeDomain("2001:db8::1:3212")
+	if !changed {
+		t.Fatalf("expected IPv6 domain to be normalized")
+	}
+	if got != "[2001:db8::1]:3212" {
+		t.Fatalf("unexpected normalized domain: %s", got)
+	}
+}

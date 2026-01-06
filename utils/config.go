@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -345,6 +346,16 @@ func ReadConfig() *AppConfig {
 	if strings.TrimSpace(config.PageTitle) == "" {
 		config.PageTitle = defaultPageTitle
 	}
+	normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
+	if serveAtChanged {
+		config.ServeAt = normalizedServeAt
+		_ = k.Set("serveAt", config.ServeAt)
+	}
+	normalizedDomain, domainChanged := NormalizeDomain(config.Domain)
+	if domainChanged {
+		config.Domain = normalizedDomain
+		_ = k.Set("domain", config.Domain)
+	}
 
 	config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 	config.Storage.normalize()
@@ -513,6 +524,14 @@ func WriteConfig(config *AppConfig) {
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
 		}
+		normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
+		if serveAtChanged {
+			config.ServeAt = normalizedServeAt
+		}
+		normalizedDomain, domainChanged := NormalizeDomain(config.Domain)
+		if domainChanged {
+			config.Domain = normalizedDomain
+		}
 		if config.ServeAt != "" {
 			_ = k.Set("serveAt", config.ServeAt)
 		}
@@ -632,6 +651,8 @@ func defaultImageBaseURL(serveAt string) string {
 	if ip == "" || ip == "0.0.0.0" || ip == "::" {
 		if detected := detectLocalIPv4(); detected != "" {
 			ip = detected
+		} else if detected := detectLocalIPv6(); detected != "" {
+			ip = detected
 		} else {
 			ip = "127.0.0.1"
 		}
@@ -650,9 +671,25 @@ func FormatHostPort(host, port string) string {
 	return fmt.Sprintf("%s:%s", formattedHost, port)
 }
 
+func FormatListenHostPort(host, port string) string {
+	formattedHost := EnsureIPv6BracketForListen(host)
+	if port == "" {
+		return formattedHost
+	}
+	if formattedHost == "" {
+		return ":" + port
+	}
+	return fmt.Sprintf("%s:%s", formattedHost, port)
+}
+
 // IsPortAvailable checks if a TCP port is available for binding
 func IsPortAvailable(addr string) bool {
-	ln, err := net.Listen("tcp", addr)
+	return IsPortAvailableWithNetwork("tcp", addr)
+}
+
+// IsPortAvailableWithNetwork checks if a TCP port is available for binding with the given network.
+func IsPortAvailableWithNetwork(network, addr string) bool {
+	ln, err := net.Listen(network, addr)
 	if err != nil {
 		return false
 	}
@@ -663,7 +700,13 @@ func IsPortAvailable(addr string) bool {
 // FindAvailablePort tries the given address first, then searches nearby ports if occupied.
 // Returns the available address and a boolean indicating if a fallback port was used.
 func FindAvailablePort(addr string) (string, bool) {
-	if IsPortAvailable(addr) {
+	return FindAvailablePortWithNetwork("tcp", addr)
+}
+
+// FindAvailablePortWithNetwork tries the given address first, then searches nearby ports if occupied.
+// Returns the available address and a boolean indicating if a fallback port was used.
+func FindAvailablePortWithNetwork(network, addr string) (string, bool) {
+	if IsPortAvailableWithNetwork(network, addr) {
 		return addr, false
 	}
 
@@ -679,8 +722,8 @@ func FindAvailablePort(addr string) (string, bool) {
 
 	// Try nearby ports: +1 to +100
 	for offset := 1; offset <= 100; offset++ {
-		candidate := FormatHostPort(host, fmt.Sprintf("%d", port+offset))
-		if IsPortAvailable(candidate) {
+		candidate := FormatListenHostPort(host, fmt.Sprintf("%d", port+offset))
+		if IsPortAvailableWithNetwork(network, candidate) {
 			return candidate, true
 		}
 	}
@@ -690,6 +733,14 @@ func FindAvailablePort(addr string) (string, bool) {
 }
 
 func EnsureIPv6Bracket(host string) string {
+	return ensureIPv6Bracket(host, true)
+}
+
+func EnsureIPv6BracketForListen(host string) string {
+	return ensureIPv6Bracket(host, false)
+}
+
+func ensureIPv6Bracket(host string, encodeZone bool) string {
 	trimmed := strings.TrimSpace(host)
 	if trimmed == "" {
 		return ""
@@ -702,7 +753,10 @@ func EnsureIPv6Bracket(host string) string {
 		return trimmed
 	}
 	if ip := net.ParseIP(base); ip != nil && ip.To4() == nil {
-		return fmt.Sprintf("[%s%s]", base, encodeIPv6Zone(zone))
+		if encodeZone {
+			zone = encodeIPv6Zone(zone)
+		}
+		return fmt.Sprintf("[%s%s]", base, zone)
 	}
 	return trimmed
 }
@@ -736,19 +790,105 @@ func encodeIPv6Zone(zone string) string {
 	return "%25" + zone[1:]
 }
 
+func NormalizeServeAt(addr string) (string, bool) {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return "", false
+	}
+	host, port := splitHostPort(trimmed)
+	if port == "" {
+		port = "3212"
+	}
+	normalized := FormatListenHostPort(host, port)
+	return normalized, normalized != trimmed
+}
+
+func NormalizeDomain(domain string) (string, bool) {
+	trimmed := strings.TrimSpace(domain)
+	if trimmed == "" {
+		return "", false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, err := url.Parse(trimmed)
+		if err != nil || parsed.Host == "" {
+			return trimmed, false
+		}
+		host := parsed.Hostname()
+		if host == "" {
+			return trimmed, false
+		}
+		port := parsed.Port()
+		if port != "" {
+			parsed.Host = FormatHostPort(host, port)
+		} else {
+			parsed.Host = EnsureIPv6Bracket(host)
+		}
+		normalized := parsed.String()
+		return normalized, normalized != trimmed
+	}
+
+	host, port := splitHostPort(trimmed)
+	if host == "" {
+		return trimmed, false
+	}
+	if port == "" {
+		normalized := EnsureIPv6Bracket(host)
+		return normalized, normalized != trimmed
+	}
+	normalized := FormatHostPort(host, port)
+	return normalized, normalized != trimmed
+}
+
 func splitHostPort(addr string) (string, string) {
 	trimmed := strings.TrimSpace(addr)
 	if trimmed == "" {
 		return "", ""
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		host, port, err := net.SplitHostPort(trimmed)
+		if err == nil {
+			return host, port
+		}
+		base, _ := normalizeIPv6Reference(trimmed)
+		if base != "" {
+			return base, ""
+		}
+		return trimmed, ""
 	}
 	if !strings.Contains(trimmed, ":") {
 		return trimmed, ""
 	}
 	host, port, err := net.SplitHostPort(trimmed)
 	if err != nil {
+		if strings.Count(trimmed, ":") >= 2 {
+			lastColon := strings.LastIndex(trimmed, ":")
+			if lastColon > 0 && lastColon < len(trimmed)-1 {
+				hostPart := strings.TrimSpace(trimmed[:lastColon])
+				portPart := strings.TrimSpace(trimmed[lastColon+1:])
+				if hostPart != "" && portPart != "" && isAllDigits(portPart) {
+					base, _ := splitIPv6Zone(hostPart)
+					if ip := net.ParseIP(base); ip != nil && ip.To4() == nil {
+						return hostPart, portPart
+					}
+				}
+			}
+		}
 		return trimmed, ""
 	}
 	return host, port
+}
+
+func isAllDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func detectLocalIPv4() string {
@@ -774,6 +914,45 @@ func detectLocalIPv4() string {
 				if ip := v.IP.To4(); ip != nil {
 					return ip.String()
 				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectLocalIPv6() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip := v.IP
+				if ip == nil || ip.To4() != nil {
+					continue
+				}
+				if ip.IsLinkLocalUnicast() {
+					continue
+				}
+				return ip.String()
+			case *net.IPAddr:
+				ip := v.IP
+				if ip == nil || ip.To4() != nil {
+					continue
+				}
+				if ip.IsLinkLocalUnicast() {
+					continue
+				}
+				return ip.String()
 			}
 		}
 	}

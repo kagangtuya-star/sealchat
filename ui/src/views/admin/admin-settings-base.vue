@@ -36,10 +36,12 @@ const updateLoading = ref(false);
 const updateVersionSaving = ref(false);
 const updateError = ref('');
 const updateBodyExpanded = ref(false);
-const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机。';
+const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机；IPv6 可填 :: 或 ::1，保存时自动补全中括号。';
 const baseServeAtHostOptions = [
   { label: '仅本机 (127.0.0.1)', value: '127.0.0.1' },
   { label: '所有网卡 (0.0.0.0)', value: '0.0.0.0' },
+  { label: '仅本机 (::1)', value: '::1' },
+  { label: '所有网卡 (::)', value: '::' },
 ];
 const serveAtHost = ref('0.0.0.0');
 const serveAtPort = ref<number | null>(3212);
@@ -60,17 +62,67 @@ const normalizePort = (value: number | null) => {
   return Math.min(65535, Math.max(1, Math.trunc(value)));
 };
 
+const stripHostBrackets = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']');
+    if (end >= 0) {
+      return trimmed.slice(1, end);
+    }
+  }
+  return trimmed;
+};
+
+const normalizeHostForServeAt = (value: string) => {
+  const trimmed = stripHostBrackets(value);
+  if (!trimmed) return '';
+  if (trimmed.includes(':')) {
+    return `[${trimmed}]`;
+  }
+  return trimmed;
+};
+
 const parseServeAt = (value: string) => {
   const trimmed = (value || '').trim();
   let host = '0.0.0.0';
   let port = 3212;
   if (!trimmed) return { host, port };
-  if (trimmed.startsWith(':')) {
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']');
+    if (end >= 0) {
+      const hostPart = trimmed.slice(1, end).trim();
+      if (hostPart) host = hostPart;
+      const rest = trimmed.slice(end + 1).trim();
+      if (rest.startsWith(':')) {
+        const parsedPort = Number.parseInt(rest.slice(1), 10);
+        if (!Number.isNaN(parsedPort)) {
+          port = parsedPort;
+        }
+      }
+      return { host, port };
+    }
+  }
+  if (trimmed.startsWith(':') && trimmed.indexOf(':', 1) === -1) {
     const parsedPort = Number.parseInt(trimmed.slice(1), 10);
     if (!Number.isNaN(parsedPort)) {
       port = parsedPort;
     }
     return { host, port };
+  }
+  const colonCount = (trimmed.match(/:/g) || []).length;
+  if (colonCount >= 2) {
+    const lastColonIndex = trimmed.lastIndexOf(':');
+    const hostPart = trimmed.slice(0, lastColonIndex).trim();
+    const portPart = trimmed.slice(lastColonIndex + 1).trim();
+    if (hostPart && !hostPart.endsWith(':') && /^\d+$/.test(portPart)) {
+      const parsedPort = Number.parseInt(portPart, 10);
+      if (!Number.isNaN(parsedPort)) {
+        port = parsedPort;
+        host = hostPart;
+        return { host, port };
+      }
+    }
+    return { host: trimmed, port };
   }
   const lastColonIndex = trimmed.lastIndexOf(':');
   if (lastColonIndex >= 0) {
@@ -104,8 +156,8 @@ watch([serveAtHost, serveAtPort], ([host, port]) => {
   if (serveAtSyncing.value) return;
   const normalizedPort = normalizePort(port);
   if (!normalizedPort) return;
-  const normalizedHost = host || '0.0.0.0';
-  const next = `${normalizedHost}:${normalizedPort}`;
+  const normalizedHost = normalizeHostForServeAt(host || '0.0.0.0');
+  const next = normalizedHost ? `${normalizedHost}:${normalizedPort}` : `:${normalizedPort}`;
   if (next !== model.value.serveAt) {
     model.value.serveAt = next;
   }

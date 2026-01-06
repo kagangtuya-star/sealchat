@@ -24,12 +24,41 @@ import (
 var appConfig *utils.AppConfig
 var appFs afero.Fs
 
+type listenMode int
+
+const (
+	listenIPv4 listenMode = iota
+	listenIPv6
+	listenDual
+)
+
 func extractPort(addr string) string {
 	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
 	if err != nil {
 		return ""
 	}
 	return port
+}
+
+func stripIPv6Zone(host string) string {
+	if idx := strings.LastIndex(host, "%"); idx >= 0 {
+		return host[:idx]
+	}
+	return host
+}
+
+func classifyListenMode(host string) listenMode {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" || trimmed == "0.0.0.0" {
+		return listenDual
+	}
+	if ip := net.ParseIP(stripIPv6Zone(trimmed)); ip != nil {
+		if ip.To4() != nil {
+			return listenIPv4
+		}
+		return listenIPv6
+	}
+	return listenIPv4
 }
 
 func updateDomainPort(domain, newPort string) (string, bool) {
@@ -362,11 +391,22 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	// Check port availability and find fallback if needed
 	listenAddr := config.ServeAt
-	actualAddr, usedFallback := utils.FindAvailablePort(listenAddr)
-	if usedFallback {
-		log.Printf("警告: 端口 %s 被占用，已切换到 %s", listenAddr, actualAddr)
+	if normalized, changed := utils.NormalizeServeAt(listenAddr); changed {
+		listenAddr = normalized
+		config.ServeAt = normalized
+	}
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		host = ""
+		port = "3212"
+	}
+	if port == "" {
+		port = "3212"
+	}
+	mode := classifyListenMode(host)
+	applyFallback := func(originalAddr, actualAddr string) {
+		log.Printf("警告: 端口 %s 被占用，已切换到 %s", originalAddr, actualAddr)
 		config.ServeAt = actualAddr
-		// Update domain to reflect new port (IPv6-safe)
 		newPort := extractPort(actualAddr)
 		if newDomain, ok := updateDomainPort(config.Domain, newPort); ok {
 			config.Domain = newDomain
@@ -374,5 +414,65 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		utils.WriteConfig(config)
 		log.Printf("配置文件已更新: serveAt=%s, domain=%s", config.ServeAt, config.Domain)
 	}
-	log.Fatal(app.Listen(actualAddr))
+
+	switch mode {
+	case listenIPv6:
+		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp6", listenAddr)
+		if usedFallback {
+			applyFallback(listenAddr, actualAddr)
+		}
+		ln6, err := net.Listen("tcp6", actualAddr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("IPv6 listening at %s", actualAddr)
+		log.Fatal(app.Listener(ln6))
+	case listenDual:
+		listenAddr4 := utils.FormatListenHostPort(host, port)
+		actualAddr4, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr4)
+		if usedFallback {
+			applyFallback(listenAddr4, actualAddr4)
+		}
+		port = extractPort(actualAddr4)
+		if port == "" {
+			port = "3212"
+		}
+		listenAddr6 := utils.FormatListenHostPort("::", port)
+		ln4, err4 := net.Listen("tcp4", actualAddr4)
+		if err4 != nil {
+			log.Printf("IPv4 listen failed: %v", err4)
+		}
+		ln6, err6 := net.Listen("tcp6", listenAddr6)
+		if err6 != nil {
+			log.Printf("IPv6 listen unavailable: %v", err6)
+		} else {
+			log.Printf("IPv6 listening at %s", listenAddr6)
+		}
+		if ln4 != nil {
+			if ln6 != nil {
+				go func() {
+					if err := app.Listener(ln6); err != nil {
+						log.Printf("IPv6 listener stopped: %v", err)
+					}
+				}()
+			}
+			log.Printf("IPv4 listening at %s", actualAddr4)
+			log.Fatal(app.Listener(ln4))
+		}
+		if ln6 != nil {
+			log.Fatal(app.Listener(ln6))
+		}
+		log.Fatal(err4)
+	default:
+		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr)
+		if usedFallback {
+			applyFallback(listenAddr, actualAddr)
+		}
+		ln4, err := net.Listen("tcp4", actualAddr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("IPv4 listening at %s", actualAddr)
+		log.Fatal(app.Listener(ln4))
+	}
 }
