@@ -136,6 +136,10 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 	if err != nil {
 		return nil, err
 	}
+	privateChannelCount, err := model.CountPrivateChannels()
+	if err != nil {
+		return nil, err
+	}
 	messageCount, err := model.CountMessages()
 	if err != nil {
 		return nil, err
@@ -149,6 +153,7 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 		RegisteredUsers:       userTotal,
 		WorldCount:            worldCount,
 		ChannelCount:          channelCount,
+		PrivateChannelCount:   privateChannelCount,
 		MessageCount:          messageCount,
 	}
 	return sample, nil

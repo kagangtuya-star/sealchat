@@ -20,6 +20,7 @@ type statusSummary struct {
 	RegisteredUsers       int64 `json:"registeredUsers"`
 	WorldCount            int64 `json:"worldCount"`
 	ChannelCount          int64 `json:"channelCount"`
+	PrivateChannelCount   int64 `json:"privateChannelCount"`
 	MessageCount          int64 `json:"messageCount"`
 	IntervalSeconds       int   `json:"intervalSeconds"`
 	RetentionDays         int   `json:"retentionDays"`
@@ -39,6 +40,7 @@ type statusPoint struct {
 	RegisteredUsers       int64 `json:"registeredUsers"`
 	WorldCount            int64 `json:"worldCount"`
 	ChannelCount          int64 `json:"channelCount"`
+	PrivateChannelCount   int64 `json:"privateChannelCount"`
 	MessageCount          int64 `json:"messageCount"`
 }
 
@@ -143,6 +145,7 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 		RegisteredUsers:       sample.RegisteredUsers,
 		WorldCount:            sample.WorldCount,
 		ChannelCount:          sample.ChannelCount,
+		PrivateChannelCount:   sample.PrivateChannelCount,
 		MessageCount:          sample.MessageCount,
 		IntervalSeconds:       intervalSeconds,
 		RetentionDays:         retentionDays,
@@ -161,6 +164,7 @@ func sampleToPoint(sample *model.ServiceMetricSample) statusPoint {
 		RegisteredUsers:       sample.RegisteredUsers,
 		WorldCount:            sample.WorldCount,
 		ChannelCount:          sample.ChannelCount,
+		PrivateChannelCount:   sample.PrivateChannelCount,
 		MessageCount:          sample.MessageCount,
 	}
 }

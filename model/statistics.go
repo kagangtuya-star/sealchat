@@ -14,10 +14,17 @@ func CountWorlds() (int64, error) {
 	return count, err
 }
 
-// CountChannels 返回正常状态的频道数量。
+// CountChannels 返回正常状态的公共频道数量（不含私聊）。
 func CountChannels() (int64, error) {
 	var count int64
-	err := db.Model(&ChannelModel{}).Where("status <> ?", "deleted").Count(&count).Error
+	err := db.Model(&ChannelModel{}).Where("status <> ? AND is_private = ?", "deleted", false).Count(&count).Error
+	return count, err
+}
+
+// CountPrivateChannels 返回正常状态的私聊频道数量。
+func CountPrivateChannels() (int64, error) {
+	var count int64
+	err := db.Model(&ChannelModel{}).Where("status <> ? AND is_private = ?", "deleted", true).Count(&count).Error
 	return count, err
 }
 

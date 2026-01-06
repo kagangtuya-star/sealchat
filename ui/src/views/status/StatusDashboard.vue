@@ -17,6 +17,7 @@ interface StatusSummary {
   registeredUsers: number;
   worldCount: number;
   channelCount: number;
+  privateChannelCount: number;
   messageCount: number;
   intervalSeconds: number;
   retentionDays: number;
@@ -30,6 +31,7 @@ interface StatusHistoryPoint {
   registeredUsers: number;
   worldCount: number;
   channelCount: number;
+  privateChannelCount: number;
   messageCount: number;
 }
 
@@ -76,7 +78,8 @@ const summaryCards = computed(() => {
     { label: '消息 / 分钟', value: formatNumber(data.messagesPerMinute), hint: '最近一分钟的消息吞吐' },
     { label: '注册用户', value: formatNumber(data.registeredUsers), hint: '未被禁用的账户数量' },
     { label: '世界总数', value: formatNumber(data.worldCount), hint: '状态正常的世界' },
-    { label: '频道总数', value: formatNumber(data.channelCount), hint: '状态正常的频道' },
+    { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
+    { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
     { label: '消息总数', value: formatNumber(data.messageCount), hint: '未被删除的历史消息' },
   ];
 });

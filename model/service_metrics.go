@@ -17,6 +17,7 @@ type ServiceMetricSample struct {
 	RegisteredUsers       int64     `json:"registeredUsers"`
 	WorldCount            int64     `json:"worldCount"`
 	ChannelCount          int64     `json:"channelCount"`
+	PrivateChannelCount   int64     `json:"privateChannelCount"`
 	MessageCount          int64     `json:"messageCount"`
 	CreatedAt             time.Time `json:"createdAt"`
 }
