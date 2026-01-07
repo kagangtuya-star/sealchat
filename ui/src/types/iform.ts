@@ -27,6 +27,7 @@ export interface ChannelIForm {
 
 export interface ChannelIFormStatePayload {
   formId: string;
+  windowId?: string;
   floating?: boolean;
   collapsed?: boolean;
   width?: number;

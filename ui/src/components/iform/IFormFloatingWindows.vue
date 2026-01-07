@@ -2,7 +2,7 @@
   <teleport to="body">
     <div
       v-for="window in floatingWindows"
-      :key="window.formId"
+      :key="window.windowId"
       class="iform-floating"
       :class="{ 'is-minimized': window.minimized }"
       :style="floatingStyle(window)"
@@ -12,14 +12,14 @@
         class="iform-floating__header"
         @pointerdown.prevent="startDragging(window, $event)"
       >
-        <div class="iform-floating__title" @dblclick="toggleMinimize(window.formId)">
+        <div class="iform-floating__title" @dblclick="toggleMinimize(window.windowId)">
           <strong>{{ resolveForm(window.formId)?.name || '嵌入窗口' }}</strong>
           <n-tag v-if="window.fromPush" size="small" type="success">同步</n-tag>
         </div>
         <div class="iform-floating__actions" @pointerdown.stop>
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-button quaternary size="tiny" @click.stop="dockToPanel(window.formId)">
+              <n-button quaternary size="tiny" @click.stop="dockToPanel(window.windowId, window.formId)">
                 <template #icon>
                   <n-icon :component="ReturnUpBackOutline" />
                 </template>
@@ -29,7 +29,7 @@
           </n-tooltip>
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-button quaternary size="tiny" @click.stop="fitToViewport(window.formId)">
+              <n-button quaternary size="tiny" @click.stop="fitToViewport(window.windowId)">
                 <template #icon>
                   <n-icon :component="ExpandOutline" />
                 </template>
@@ -37,12 +37,12 @@
             </template>
             <span>适配屏幕</span>
           </n-tooltip>
-          <n-button quaternary size="tiny" @click.stop="toggleMinimize(window.formId)">
+          <n-button quaternary size="tiny" @click.stop="toggleMinimize(window.windowId)">
             <template #icon>
               <n-icon :component="ContractOutline" />
             </template>
           </n-button>
-          <n-button quaternary size="tiny" @click.stop="closeFloating(window.formId)">
+          <n-button quaternary size="tiny" @click.stop="closeFloating(window.windowId)">
             <template #icon>
               <n-icon :component="CloseOutline" />
             </template>
@@ -54,7 +54,7 @@
           <n-icon size="14" :component="VolumeHighOutline" />
           <span>需要手动激活音/视频。</span>
         </div>
-        <IFormEmbedPortal :form-id="window.formId" surface="floating" />
+        <IFormEmbedPortal :window-id="window.windowId" :form-id="window.formId" surface="floating" />
         <div class="iform-floating__resize" @pointerdown.stop.prevent="startResizing(window, 'se', $event)">
           <n-icon size="16" :component="ResizeOutline" />
         </div>
@@ -103,7 +103,7 @@
         v-if="window.minimized"
         type="button"
         class="iform-floating__badge"
-        @click.stop="toggleMinimize(window.formId)"
+        @click.stop="toggleMinimize(window.windowId)"
         @pointerdown.prevent="startDragging(window, $event)"
       >
         <span>{{ formInitial(window.formId) }}</span>
@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue';
+import { computed, ref, nextTick, watch, onBeforeUnmount } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { useIFormStore } from '@/stores/iform';
 import IFormEmbedPortal from './IFormEmbedPortal.vue';
@@ -154,11 +154,11 @@ const floatingStyle = (windowState: (typeof floatingWindows.value)[number]) => (
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-const dragging = ref<{ formId: string; offsetX: number; offsetY: number; pointerId: number; captureTarget?: HTMLElement | null } | null>(
+const dragging = ref<{ windowId: string; offsetX: number; offsetY: number; pointerId: number; captureTarget?: HTMLElement | null } | null>(
   null,
 );
 const resizing = ref<{
-  formId: string;
+  windowId: string;
   startWidth: number;
   startHeight: number;
   startX: number;
@@ -174,11 +174,11 @@ const startDragging = (windowState: (typeof floatingWindows.value)[number], even
   if (event.pointerType === 'mouse' && event.button !== 0) {
     return;
   }
-  iform.bringFloatingToFront(windowState.formId);
+  iform.bringFloatingToFront(windowState.windowId);
   const target = event.currentTarget as HTMLElement | null;
   target?.setPointerCapture?.(event.pointerId);
   dragging.value = {
-    formId: windowState.formId,
+    windowId: windowState.windowId,
     offsetX: event.clientX - windowState.x,
     offsetY: event.clientY - windowState.y,
     pointerId: event.pointerId,
@@ -194,11 +194,11 @@ const startResizing = (
   if (event.pointerType === 'mouse' && event.button !== 0) {
     return;
   }
-  iform.bringFloatingToFront(windowState.formId);
+  iform.bringFloatingToFront(windowState.windowId);
   const target = event.currentTarget as HTMLElement | null;
   target?.setPointerCapture?.(event.pointerId);
   resizing.value = {
-    formId: windowState.formId,
+    windowId: windowState.windowId,
     startWidth: windowState.width,
     startHeight: windowState.height,
     startX: event.clientX,
@@ -216,12 +216,20 @@ useEventListener(window, 'pointermove', (event: PointerEvent) => {
     if (event.pointerId !== dragging.value.pointerId) {
       return;
     }
+    if (event.buttons === 0) {
+      resetPointerStateFor(dragging.value.windowId);
+      return;
+    }
     event.preventDefault();
     const x = event.clientX - dragging.value.offsetX;
     const y = event.clientY - dragging.value.offsetY;
-    iform.updateFloatingPosition(dragging.value.formId, x, y);
+    iform.updateFloatingPosition(dragging.value.windowId, x, y);
   } else if (resizing.value) {
     if (event.pointerId !== resizing.value.pointerId) {
+      return;
+    }
+    if (event.buttons === 0) {
+      resetPointerStateFor(resizing.value.windowId);
       return;
     }
     event.preventDefault();
@@ -246,7 +254,7 @@ useEventListener(window, 'pointermove', (event: PointerEvent) => {
       height = resizing.value.startHeight - deltaY;
       y = resizing.value.startTop + deltaY;
     }
-    iform.updateFloatingRect(resizing.value.formId, { x, y, width, height });
+    iform.updateFloatingRect(resizing.value.windowId, { x, y, width, height });
   }
 });
 
@@ -261,29 +269,68 @@ const clearPointerState = (event: PointerEvent) => {
   }
 };
 
+const resetPointerStateFor = (windowId?: string) => {
+  if (dragging.value && (!windowId || dragging.value.windowId === windowId)) {
+    dragging.value.captureTarget?.releasePointerCapture?.(dragging.value.pointerId);
+    dragging.value = null;
+  }
+  if (resizing.value && (!windowId || resizing.value.windowId === windowId)) {
+    resizing.value.captureTarget?.releasePointerCapture?.(resizing.value.pointerId);
+    resizing.value = null;
+  }
+};
+
 useEventListener(window, 'pointerup', clearPointerState);
 useEventListener(window, 'pointercancel', clearPointerState);
+useEventListener(window, 'blur', () => resetPointerStateFor());
+if (typeof document !== 'undefined') {
+  useEventListener(document, 'lostpointercapture', (event: PointerEvent) => {
+    if (dragging.value?.pointerId === event.pointerId) {
+      resetPointerStateFor(dragging.value.windowId);
+    }
+    if (resizing.value?.pointerId === event.pointerId) {
+      resetPointerStateFor(resizing.value.windowId);
+    }
+  }, { capture: true });
+}
 
-const toggleMinimize = (formId: string) => {
-  iform.toggleFloatingMinimize(formId);
+watch(floatingWindows, (windows) => {
+  const activeIds = new Set(windows.map((item) => item.windowId));
+  if (dragging.value && !activeIds.has(dragging.value.windowId)) {
+    resetPointerStateFor(dragging.value.windowId);
+  }
+  if (resizing.value && !activeIds.has(resizing.value.windowId)) {
+    resetPointerStateFor(resizing.value.windowId);
+  }
+});
+
+onBeforeUnmount(() => {
+  resetPointerStateFor();
+});
+
+const toggleMinimize = (windowId: string) => {
+  iform.toggleFloatingMinimize(windowId);
 };
 
-const closeFloating = (formId: string) => {
-  iform.closeFloating(formId);
+const closeFloating = (windowId: string) => {
+  resetPointerStateFor(windowId);
+  iform.closeFloating(windowId);
 };
 
-const fitToViewport = (formId: string) => {
-  iform.fitFloatingToViewport(formId);
+const fitToViewport = (windowId: string) => {
+  iform.fitFloatingToViewport(windowId);
 };
 
-const dockToPanel = async (formId: string) => {
+const dockToPanel = async (windowId: string, formId: string) => {
   const form = resolveForm(formId);
+  resetPointerStateFor(windowId);
   iform.openPanel(formId, {
+    windowId,
     height: form?.defaultHeight,
     collapsed: form?.defaultCollapsed,
   });
   await nextTick();
-  iform.closeFloating(formId);
+  iform.closeFloating(windowId);
 };
 </script>
 

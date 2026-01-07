@@ -2,7 +2,7 @@
   <div v-if="panels.length" class="iform-panel-stack">
     <section
       v-for="panel in panels"
-      :key="panel.formId"
+      :key="panel.windowId"
       class="iform-panel"
       :class="{ 'is-collapsed': panel.collapsed }"
       :data-pill="pillLabel(panel)"
@@ -16,14 +16,14 @@
             <n-tag v-if="panel.fromPush" size="small" type="info">同步</n-tag>
           </div>
           <div class="iform-panel__actions">
-            <n-button quaternary size="tiny" @click="toggleCollapse(panel.formId)">
+            <n-button quaternary size="tiny" @click.stop="toggleCollapse(panel.windowId)">
               <template #icon>
                 <n-icon :component="panel.collapsed ? ChevronDown : ChevronUp" />
               </template>
             </n-button>
             <n-tooltip trigger="hover">
               <template #trigger>
-                <n-button quaternary size="tiny" @click="openFloating(panel.formId)">
+                <n-button quaternary size="tiny" @click="openFloating(panel.windowId, panel.formId)">
                   <template #icon>
                     <n-icon :component="OpenOutline" />
                   </template>
@@ -41,7 +41,7 @@
               </template>
               <span>推送到频道</span>
             </n-tooltip>
-            <n-button quaternary size="tiny" @click="closePanel(panel.formId)">
+            <n-button quaternary size="tiny" @click="closePanel(panel.windowId)">
               <template #icon>
                 <n-icon :component="CloseOutline" />
               </template>
@@ -57,7 +57,7 @@
             <n-icon size="14" :component="VolumeHighOutline" />
             <span>如果页面包含媒体，请点击解除静音/播放。</span>
           </div>
-          <IFormEmbedPortal :form-id="panel.formId" surface="panel" />
+          <IFormEmbedPortal :window-id="panel.windowId" :form-id="panel.formId" surface="panel" />
           <div class="iform-panel__resize" @mousedown.prevent="startResizing(panel, $event)">
             <n-icon size="16" :component="ResizeOutline" />
           </div>
@@ -93,7 +93,7 @@ const formMap = computed<Map<string, ChannelIForm>>(() => {
 const resolveForm = (formId: string) => formMap.value.get(formId);
 const message = useMessage();
 
-const resizing = ref<{ formId: string; startHeight: number; startY: number } | null>(null);
+const resizing = ref<{ windowId: string; startHeight: number; startY: number } | null>(null);
 
 const panelBodyStyle = (panel: { height: number }) => ({
   height: `${Math.max(panel.height, 1)}px`,
@@ -107,32 +107,41 @@ const pillLabel = (panel: { formId: string; fromPush?: boolean }) => {
   return panel.fromPush ? `${form.name || '嵌入窗'} · 同步` : (form.name || '嵌入窗');
 };
 
-const toggleCollapse = (formId: string) => {
-  iform.togglePanelCollapse(formId);
+const toggleCollapse = (windowId: string) => {
+  iform.togglePanelCollapse(windowId);
 };
 
-const closePanel = (formId: string) => {
-  iform.closePanel(formId);
+const resetResizing = () => {
+  if (resizing.value) {
+    resizing.value = null;
+  }
 };
 
-const openFloating = async (formId: string) => {
+const closePanel = (windowId: string) => {
+  resetResizing();
+  iform.closePanel(windowId);
+};
+
+const openFloating = async (windowId: string, formId: string) => {
   const form = resolveForm(formId);
+  resetResizing();
   iform.openFloating(formId, {
+    windowId,
     width: form?.defaultWidth,
     height: form?.defaultHeight,
     collapsed: false,
     fromPush: false,
   });
   await nextTick();
-  iform.closePanel(formId);
+  iform.closePanel(windowId);
 };
 
-const handleSectionClick = (panel: { formId: string; collapsed: boolean }, event: MouseEvent) => {
+const handleSectionClick = (panel: { windowId: string; collapsed: boolean }, event: MouseEvent) => {
   if (!panel.collapsed) {
     return;
   }
   event.stopPropagation();
-  toggleCollapse(panel.formId);
+  toggleCollapse(panel.windowId);
 };
 
 const pushSingle = async (formId: string) => {
@@ -159,8 +168,8 @@ const pushSingle = async (formId: string) => {
   }
 };
 
-const startResizing = (panel: { formId: string; height: number }, event: MouseEvent) => {
-  resizing.value = { formId: panel.formId, startHeight: panel.height, startY: event.clientY };
+const startResizing = (panel: { windowId: string; height: number }, event: MouseEvent) => {
+  resizing.value = { windowId: panel.windowId, startHeight: panel.height, startY: event.clientY };
 };
 
 useEventListener(window, 'mousemove', (event: MouseEvent) => {
@@ -170,13 +179,15 @@ useEventListener(window, 'mousemove', (event: MouseEvent) => {
   event.preventDefault();
   const delta = event.clientY - resizing.value.startY;
   const nextHeight = resizing.value.startHeight + delta;
-  iform.resizePanel(resizing.value.formId, nextHeight);
+  iform.resizePanel(resizing.value.windowId, nextHeight);
 });
 
 useEventListener(window, 'mouseup', () => {
-  if (resizing.value) {
-    resizing.value = null;
-  }
+  resetResizing();
+});
+
+useEventListener(window, 'blur', () => {
+  resetResizing();
 });
 </script>
 

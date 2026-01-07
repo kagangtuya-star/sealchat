@@ -65,7 +65,7 @@
                 </div>
                 <div class="iform-card__actions">
                   <n-button quaternary size="tiny" @click="iform.openPanel(form.id)">面板</n-button>
-                  <n-button quaternary size="tiny" @click="iform.openFloating(form.id)">弹出</n-button>
+                  <n-button quaternary size="tiny" @click="openFloating(form.id)">弹出</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canBroadcast" @click="pushSingle(form)">推送</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="openFormModal(form)">编辑</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="confirmDelete(form)">
@@ -356,6 +356,14 @@ const confirmDelete = (form: ChannelIForm) => {
       }
     },
   });
+};
+
+const openFloating = (formId: string) => {
+  if (!formId) {
+    return;
+  }
+  const windowId = iform.createWindowId(formId);
+  iform.openFloating(formId, { windowId });
 };
 
 const pushSingle = async (form: ChannelIForm) => {

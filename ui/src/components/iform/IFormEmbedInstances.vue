@@ -1,5 +1,5 @@
 <template>
-  <IFormEmbedInstance v-for="formId in activeFormIds" :key="formId" :form-id="formId" />
+  <IFormEmbedInstance v-for="windowId in activeWindowIds" :key="windowId" :window-id="windowId" />
 </template>
 
 <script setup lang="ts">
@@ -10,5 +10,5 @@ import IFormEmbedInstance from './IFormEmbedInstance.vue';
 const iform = useIFormStore();
 iform.bootstrap();
 
-const activeFormIds = computed(() => iform.activeEmbedFormIds);
+const activeWindowIds = computed(() => iform.activeEmbedWindowIds);
 </script>

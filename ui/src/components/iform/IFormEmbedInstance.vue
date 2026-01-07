@@ -11,12 +11,18 @@ import IFormEmbedFrame from './IFormEmbedFrame.vue';
 import type { ChannelIForm } from '@/types/iform';
 
 const props = defineProps<{
-  formId: string;
+  windowId: string;
 }>();
 
 const iform = useIFormStore();
 iform.bootstrap();
 
-const host = computed<HTMLElement | null>(() => iform.resolveEmbedHost(props.formId));
-const form = computed<ChannelIForm | undefined>(() => iform.getForm(iform.currentChannelId, props.formId));
+const formId = computed(() => iform.getWindowFormId(props.windowId));
+const host = computed<HTMLElement | null>(() => iform.resolveEmbedHost(props.windowId));
+const form = computed<ChannelIForm | undefined>(() => {
+  if (!formId.value) {
+    return undefined;
+  }
+  return iform.getForm(iform.currentChannelId, formId.value);
+});
 </script>

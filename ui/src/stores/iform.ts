@@ -6,6 +6,7 @@ import { useUserStore } from './user';
 import type { ChannelIForm, ChannelIFormEventPayload, ChannelIFormStatePayload } from '@/types/iform';
 
 interface PanelState {
+  windowId: string;
   formId: string;
   height: number;
   collapsed: boolean;
@@ -31,7 +32,8 @@ interface CapabilitySnapshot {
   broadcast: boolean;
 }
 
-interface EmbedHostCollection {
+interface EmbedHostEntry {
+  formId: string;
   panel?: HTMLElement | null;
   floating?: HTMLElement | null;
   drawer?: HTMLElement | null;
@@ -45,13 +47,14 @@ interface IFormStoreState {
   migrating: boolean;
   bootstrapped: boolean;
   zCounter: number;
+  windowCounter: number;
   selectedFormIds: string[];
   formsByChannel: Record<string, ChannelIForm[]>;
   panelsByChannel: Record<string, Record<string, PanelState>>;
   floatingByChannel: Record<string, Record<string, FloatingState>>;
   attentionChannels: Record<string, boolean>;
   capabilities: Record<string, CapabilitySnapshot>;
-  embedHostsByChannel: Record<string, Record<string, EmbedHostCollection>>;
+  embedHostsByChannel: Record<string, Record<string, EmbedHostEntry>>;
 }
 
 let gatewayBound = false;
@@ -66,6 +69,7 @@ export const useIFormStore = defineStore('iform', {
     migrating: false,
     bootstrapped: false,
     zCounter: 32,
+    windowCounter: 0,
     selectedFormIds: [],
     formsByChannel: Object.create(null),
     panelsByChannel: Object.create(null),
@@ -118,7 +122,7 @@ export const useIFormStore = defineStore('iform', {
       }
       return !!state.attentionChannels[channelId];
     },
-    activeEmbedFormIds(state): string[] {
+    activeEmbedWindowIds(state): string[] {
       const channelId = state.currentChannelId;
       if (!channelId) {
         return [];
@@ -127,8 +131,8 @@ export const useIFormStore = defineStore('iform', {
       if (!hosts) {
         return [];
       }
-      return Object.keys(hosts).filter((formId) => {
-        const registry = hosts[formId];
+      return Object.keys(hosts).filter((windowId) => {
+        const registry = hosts[windowId];
         return !!(registry?.floating || registry?.panel || registry?.drawer);
       });
     },
@@ -276,6 +280,32 @@ export const useIFormStore = defineStore('iform', {
       }
       return (this.formsByChannel[channelId] || []).find((item) => item.id === formId);
     },
+    resolveWindowId(formId: string, windowId?: string) {
+      if (windowId) {
+        return windowId;
+      }
+      return resolveDefaultWindowId(formId);
+    },
+    createWindowId(formId: string) {
+      this.windowCounter += 1;
+      return `${formId}::${this.windowCounter}`;
+    },
+    getWindowFormId(windowId: string, channelId?: string | null) {
+      const targetChannel = channelId ?? this.currentChannelId;
+      if (!targetChannel) {
+        return undefined;
+      }
+      const panel = this.panelsByChannel[targetChannel]?.[windowId];
+      if (panel) {
+        return panel.formId;
+      }
+      const floating = this.floatingByChannel[targetChannel]?.[windowId];
+      if (floating) {
+        return floating.formId;
+      }
+      const host = this.embedHostsByChannel[targetChannel]?.[windowId];
+      return host?.formId;
+    },
     ensurePanelMap(channelId: string) {
       if (!this.panelsByChannel[channelId]) {
         this.panelsByChannel = {
@@ -296,10 +326,12 @@ export const useIFormStore = defineStore('iform', {
         return;
       }
       this.ensurePanelMap(channelId);
+      const windowId = this.resolveWindowId(formId, options?.windowId);
       const form = this.getForm(channelId, formId);
       const baseHeight = options?.height ?? form?.defaultHeight ?? 360;
       const collapsed = options?.collapsed ?? form?.defaultCollapsed ?? false;
       const panel: PanelState = {
+        windowId,
         formId,
         height: Math.max(1, Math.round(baseHeight)),
         collapsed,
@@ -310,38 +342,38 @@ export const useIFormStore = defineStore('iform', {
       };
       this.panelsByChannel[channelId] = {
         ...this.panelsByChannel[channelId],
-        [formId]: panel,
+        [windowId]: panel,
       };
     },
-    closePanel(formId: string) {
+    closePanel(windowId: string) {
       const channelId = this.currentChannelId;
       if (!channelId || !this.panelsByChannel[channelId]) {
         return;
       }
       const next = { ...this.panelsByChannel[channelId] };
-      delete next[formId];
+      delete next[windowId];
       this.panelsByChannel = {
         ...this.panelsByChannel,
         [channelId]: next,
       };
     },
-    togglePanelCollapse(formId: string) {
+    togglePanelCollapse(windowId: string) {
       const channelId = this.currentChannelId;
       if (!channelId) {
         return;
       }
-      const current = this.panelsByChannel[channelId]?.[formId];
+      const current = this.panelsByChannel[channelId]?.[windowId];
       if (!current) {
         return;
       }
       current.collapsed = !current.collapsed;
     },
-    resizePanel(formId: string, height: number) {
+    resizePanel(windowId: string, height: number) {
       const channelId = this.currentChannelId;
       if (!channelId) {
         return;
       }
-      const current = this.panelsByChannel[channelId]?.[formId];
+      const current = this.panelsByChannel[channelId]?.[windowId];
       if (!current) {
         return;
       }
@@ -353,6 +385,7 @@ export const useIFormStore = defineStore('iform', {
         return;
       }
       this.ensurePanelMap(channelId);
+      const windowId = this.resolveWindowId(formId, options?.windowId);
       const form = this.getForm(channelId, formId);
       const desiredWidth = Math.max(1, Math.round(options?.width ?? form?.defaultWidth ?? 640));
       const desiredHeight = Math.max(1, Math.round(options?.height ?? form?.defaultHeight ?? 360));
@@ -365,6 +398,7 @@ export const useIFormStore = defineStore('iform', {
       const position = resolveDefaultPosition(size.width, size.height, options);
       const clamped = clampPosition(position.x, position.y, size.width, size.height);
       const state: FloatingState = {
+        windowId,
         formId,
         width: size.width,
         height: size.height,
@@ -381,31 +415,76 @@ export const useIFormStore = defineStore('iform', {
       };
       this.floatingByChannel[channelId] = {
         ...this.floatingByChannel[channelId],
-        [formId]: state,
+        [windowId]: state,
       };
     },
-    closeFloating(formId: string) {
+    closeFloating(windowId: string) {
       const channelId = this.currentChannelId;
       if (!channelId || !this.floatingByChannel[channelId]) {
         return;
       }
       const next = { ...this.floatingByChannel[channelId] };
-      delete next[formId];
+      delete next[windowId];
       this.floatingByChannel = {
         ...this.floatingByChannel,
         [channelId]: next,
       };
     },
-    toggleFloatingMinimize(formId: string) {
-      const state = this.getFloatingState(formId);
+    closeInstancesByFormId(formId: string, channelId?: string | null) {
+      const targetChannel = channelId ?? this.currentChannelId;
+      if (!targetChannel || !formId) {
+        return;
+      }
+      const panels = this.panelsByChannel[targetChannel];
+      if (panels) {
+        const nextPanels: Record<string, PanelState> = {};
+        Object.entries(panels).forEach(([windowId, state]) => {
+          if (state.formId !== formId) {
+            nextPanels[windowId] = state;
+          }
+        });
+        this.panelsByChannel = {
+          ...this.panelsByChannel,
+          [targetChannel]: nextPanels,
+        };
+      }
+      const floating = this.floatingByChannel[targetChannel];
+      if (floating) {
+        const nextFloating: Record<string, FloatingState> = {};
+        Object.entries(floating).forEach(([windowId, state]) => {
+          if (state.formId !== formId) {
+            nextFloating[windowId] = state;
+          }
+        });
+        this.floatingByChannel = {
+          ...this.floatingByChannel,
+          [targetChannel]: nextFloating,
+        };
+      }
+      const hostRegistry = this.embedHostsByChannel[targetChannel];
+      if (hostRegistry) {
+        const nextHosts: Record<string, EmbedHostEntry> = {};
+        Object.entries(hostRegistry).forEach(([windowId, registry]) => {
+          if (registry.formId !== formId) {
+            nextHosts[windowId] = registry;
+          }
+        });
+        this.embedHostsByChannel = {
+          ...this.embedHostsByChannel,
+          [targetChannel]: nextHosts,
+        };
+      }
+    },
+    toggleFloatingMinimize(windowId: string) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
       state.minimized = !state.minimized;
-      this.bringFloatingToFront(formId);
+      this.bringFloatingToFront(windowId);
     },
-    updateFloatingPosition(formId: string, x: number, y: number) {
-      const state = this.getFloatingState(formId);
+    updateFloatingPosition(windowId: string, x: number, y: number) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
@@ -413,8 +492,8 @@ export const useIFormStore = defineStore('iform', {
       state.x = clamped.x;
       state.y = clamped.y;
     },
-    updateFloatingSize(formId: string, width: number, height: number) {
-      const state = this.getFloatingState(formId);
+    updateFloatingSize(windowId: string, width: number, height: number) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
@@ -425,8 +504,8 @@ export const useIFormStore = defineStore('iform', {
       state.x = clamped.x;
       state.y = clamped.y;
     },
-    updateFloatingRect(formId: string, rect: { x: number; y: number; width: number; height: number }) {
-      const state = this.getFloatingState(formId);
+    updateFloatingRect(windowId: string, rect: { x: number; y: number; width: number; height: number }) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
@@ -437,8 +516,8 @@ export const useIFormStore = defineStore('iform', {
       state.x = clamped.x;
       state.y = clamped.y;
     },
-    fitFloatingToViewport(formId: string) {
-      const state = this.getFloatingState(formId);
+    fitFloatingToViewport(windowId: string) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
@@ -449,21 +528,21 @@ export const useIFormStore = defineStore('iform', {
       state.x = clamped.x;
       state.y = clamped.y;
       state.minimized = false;
-      this.bringFloatingToFront(formId);
+      this.bringFloatingToFront(windowId);
     },
-    bringFloatingToFront(formId: string) {
-      const state = this.getFloatingState(formId);
+    bringFloatingToFront(windowId: string) {
+      const state = this.getFloatingState(windowId);
       if (!state) {
         return;
       }
       state.zIndex = ++this.zCounter;
     },
-    getFloatingState(formId: string): FloatingState | undefined {
+    getFloatingState(windowId: string): FloatingState | undefined {
       const channelId = this.currentChannelId;
       if (!channelId) {
         return undefined;
       }
-      return this.floatingByChannel[channelId]?.[formId];
+      return this.floatingByChannel[channelId]?.[windowId];
     },
     async createForm(payload: Partial<ChannelIForm> & { name: string }) {
       const channelId = this.currentChannelId;
@@ -498,8 +577,7 @@ export const useIFormStore = defineStore('iform', {
       }
       await api.delete(`api/v1/channels/${channelId}/iforms/${formId}`);
       await this.ensureForms(channelId, true);
-      this.closePanel(formId);
-      this.closeFloating(formId);
+      this.closeInstancesByFormId(formId, channelId);
     },
     async pushStates(states: ChannelIFormStatePayload[], options?: { targetUserIds?: string[]; force?: boolean }) {
       const channelId = this.currentChannelId;
@@ -561,8 +639,10 @@ export const useIFormStore = defineStore('iform', {
       const prevChannel = this.currentChannelId;
       this.currentChannelId = channelId;
       states.forEach((state) => {
+        const windowId = this.resolveWindowId(state.formId, state.windowId);
         if (state.floating) {
           this.openFloating(state.formId, {
+            windowId,
             width: state.width,
             height: state.height,
             x: state.x,
@@ -575,6 +655,7 @@ export const useIFormStore = defineStore('iform', {
           });
         } else {
           this.openPanel(state.formId, {
+            windowId,
             height: state.height,
             collapsed: !!state.collapsed,
             forcing: !!state.force,
@@ -623,9 +704,9 @@ export const useIFormStore = defineStore('iform', {
       const panels = this.panelsByChannel[channelId];
       if (panels) {
         const nextPanels: Record<string, PanelState> = {};
-        Object.entries(panels).forEach(([formId, state]) => {
-          if (validIds.has(formId)) {
-            nextPanels[formId] = state;
+        Object.entries(panels).forEach(([windowId, state]) => {
+          if (validIds.has(state.formId)) {
+            nextPanels[windowId] = state;
           }
         });
         this.panelsByChannel = {
@@ -636,9 +717,9 @@ export const useIFormStore = defineStore('iform', {
       const floating = this.floatingByChannel[channelId];
       if (floating) {
         const nextFloating: Record<string, FloatingState> = {};
-        Object.entries(floating).forEach(([formId, state]) => {
-          if (validIds.has(formId)) {
-            nextFloating[formId] = state;
+        Object.entries(floating).forEach(([windowId, state]) => {
+          if (validIds.has(state.formId)) {
+            nextFloating[windowId] = state;
           }
         });
         this.floatingByChannel = {
@@ -648,10 +729,10 @@ export const useIFormStore = defineStore('iform', {
       }
       const hostRegistry = this.embedHostsByChannel[channelId];
       if (hostRegistry) {
-        const nextHosts: Record<string, EmbedHostCollection> = {};
-        Object.entries(hostRegistry).forEach(([formId, registry]) => {
-          if (validIds.has(formId)) {
-            nextHosts[formId] = registry;
+        const nextHosts: Record<string, EmbedHostEntry> = {};
+        Object.entries(hostRegistry).forEach(([windowId, registry]) => {
+          if (validIds.has(registry.formId)) {
+            nextHosts[windowId] = registry;
           }
         });
         this.embedHostsByChannel = {
@@ -660,80 +741,98 @@ export const useIFormStore = defineStore('iform', {
         };
       }
     },
-    registerEmbedHost(formId: string, el: HTMLElement, surface: IFormSurface, channelId?: string | null) {
+    registerEmbedHost(windowId: string, formId: string, el: HTMLElement, surface: IFormSurface, channelId?: string | null) {
       const targetChannel = channelId ?? this.currentChannelId;
-      if (!targetChannel || !formId || !el) {
+      if (!targetChannel || !windowId || !formId || !el) {
         return;
       }
-      this.ensureHostRegistry(targetChannel, formId);
+      this.ensureHostRegistry(targetChannel, windowId, formId);
       const registry = this.embedHostsByChannel[targetChannel];
-      const nextSurface: EmbedHostCollection = {
-        ...(registry[formId] || {}),
+      const current = registry[windowId];
+      if (current && current.formId === formId && current[surface] === el) {
+        return;
+      }
+      const nextSurface: EmbedHostEntry = {
+        ...(current || { formId }),
+        formId,
         [surface]: el,
       };
       this.embedHostsByChannel = {
         ...this.embedHostsByChannel,
         [targetChannel]: {
           ...registry,
-          [formId]: nextSurface,
+          [windowId]: nextSurface,
         },
       };
     },
-    unregisterEmbedHost(formId: string, surface: IFormSurface, el?: HTMLElement | null, channelId?: string | null) {
+    unregisterEmbedHost(windowId: string, surface: IFormSurface, el?: HTMLElement | null, channelId?: string | null) {
       const targetChannel = channelId ?? this.currentChannelId;
       if (!targetChannel) {
         return;
       }
       const registry = this.embedHostsByChannel[targetChannel];
-      if (!registry?.[formId]) {
+      if (!registry?.[windowId]) {
         return;
       }
-      const current = registry[formId];
+      const current = registry[windowId];
+      if (!current[surface]) {
+        return;
+      }
       if (el && current[surface] && current[surface] !== el) {
         return;
       }
-      const nextSurface: EmbedHostCollection = {
+      const nextSurface: EmbedHostEntry = {
         ...current,
         [surface]: null,
       };
       const hasAny = nextSurface.floating || nextSurface.panel || nextSurface.drawer;
       const nextRegistry = { ...registry };
       if (hasAny) {
-        nextRegistry[formId] = nextSurface;
+        nextRegistry[windowId] = nextSurface;
       } else {
-        delete nextRegistry[formId];
+        delete nextRegistry[windowId];
       }
       this.embedHostsByChannel = {
         ...this.embedHostsByChannel,
         [targetChannel]: nextRegistry,
       };
     },
-    resolveEmbedHost(formId: string, channelId?: string | null): HTMLElement | null {
+    resolveEmbedHost(windowId: string, channelId?: string | null): HTMLElement | null {
       const targetChannel = channelId ?? this.currentChannelId;
       if (!targetChannel) {
         return null;
       }
-      const registry = this.embedHostsByChannel[targetChannel]?.[formId];
+      const registry = this.embedHostsByChannel[targetChannel]?.[windowId];
       if (!registry) {
         return null;
       }
+      const hasFloating = !!this.floatingByChannel[targetChannel]?.[windowId];
+      const hasPanel = !!this.panelsByChannel[targetChannel]?.[windowId];
+      if (hasFloating) {
+        return registry.floating || registry.panel || registry.drawer || null;
+      }
+      if (hasPanel) {
+        return registry.panel || registry.floating || registry.drawer || null;
+      }
       return registry.floating || registry.panel || registry.drawer || null;
     },
-    ensureHostRegistry(channelId: string, formId: string) {
+    ensureHostRegistry(channelId: string, windowId: string, formId: string) {
       if (!this.embedHostsByChannel[channelId]) {
         this.embedHostsByChannel = {
           ...this.embedHostsByChannel,
           [channelId]: {},
         };
       }
-      if (!this.embedHostsByChannel[channelId][formId]) {
+      if (!this.embedHostsByChannel[channelId][windowId]) {
         this.embedHostsByChannel = {
           ...this.embedHostsByChannel,
           [channelId]: {
             ...this.embedHostsByChannel[channelId],
-            [formId]: {},
+            [windowId]: { formId },
           },
         };
+      } else if (formId && this.embedHostsByChannel[channelId][windowId].formId !== formId) {
+        this.embedHostsByChannel[channelId][windowId].formId = formId;
       }
     },
   },
@@ -745,12 +844,17 @@ const FLOATING_PADDING_X = 16;
 const FLOATING_PADDING_Y = 16;
 const FLOATING_MIN_Y = 48;
 const MOBILE_VIEWPORT_WIDTH = 768;
+const DEFAULT_WINDOW_SUFFIX = 'default';
 
 function resolveViewport() {
   if (typeof window === 'undefined') {
     return { width: 1280, height: 720 };
   }
   return { width: window.innerWidth || 1280, height: window.innerHeight || 720 };
+}
+
+function resolveDefaultWindowId(formId: string) {
+  return `${formId}::${DEFAULT_WINDOW_SUFFIX}`;
 }
 
 function resolveMaxFloatingSize() {
