@@ -873,6 +873,18 @@ defineExpose({
   }
 }
 
+.tiptap-editor.chat-input--fullscreen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .tiptap-editor.chat-input--expanded .tiptap-editor-wrapper {
   min-height: calc(100vh / 3);
   max-height: calc(100vh / 3);
@@ -881,6 +893,21 @@ defineExpose({
 .tiptap-editor.chat-input--expanded .tiptap-content {
   min-height: max(6rem, calc(100vh / 3 - 2.5rem));
   max-height: max(6rem, calc(100vh / 3 - 2.5rem));
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-editor-wrapper {
+  flex: 1 1 auto;
+  min-height: 100%;
+  max-height: 100%;
+  height: 100%;
+  overflow-y: auto;
+  touch-action: pan-y;
+  min-height: 0;
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-content {
+  min-height: max(6rem, calc(100% - 2.5rem));
+  max-height: max(6rem, calc(100% - 2.5rem));
 }
 
 .tiptap-editor.chat-input--custom-height .tiptap-editor-wrapper {
@@ -933,6 +960,8 @@ defineExpose({
   min-height: 3rem;
   max-height: 12rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 
   /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
   &::-webkit-scrollbar {

@@ -836,10 +836,15 @@ defineExpose({
   line-height: var(--chat-line-height, 1.6);
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-  word-wrap: break-word;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
   position: relative;
   color: var(--sc-text-primary, #0f172a);
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 
   /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
   &::-webkit-scrollbar {
@@ -894,6 +899,15 @@ defineExpose({
 .hybrid-input.chat-input--expanded {
   min-height: calc(100vh / 3);
   max-height: calc(100vh / 3);
+}
+
+.hybrid-input.chat-input--fullscreen {
+  min-height: 100%;
+  max-height: 100%;
+  height: 100%;
+  overflow-y: auto;
+  touch-action: pan-y;
+  min-height: 0;
 }
 
 .hybrid-input.chat-input--custom-height {

@@ -1101,6 +1101,7 @@ const inputMode = ref<'plain' | 'rich'>('plain');
 const richContentCache = ref<string | null>(null);
 const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
+const isMobileWideInput = computed(() => wideInputMode.value && isMobileUa);
 const inputAreaHeightPreview = ref<number | null>(null);
 const customInputHeight = computed(() => (
   inputAreaHeightPreview.value !== null
@@ -1110,11 +1111,12 @@ const customInputHeight = computed(() => (
 const chatInputClassList = computed(() => {
   const classes: string[] = [];
   if (wideInputMode.value) classes.push('chat-input--expanded');
-  if (customInputHeight.value > 0) classes.push('chat-input--custom-height');
+  if (isMobileWideInput.value) classes.push('chat-input--fullscreen');
+  if (customInputHeight.value > 0 && !isMobileWideInput.value) classes.push('chat-input--custom-height');
   return classes;
 });
 const chatInputStyle = computed(() => {
-  if (customInputHeight.value > 0) {
+  if (!isMobileWideInput.value && customInputHeight.value > 0) {
     return { '--custom-input-height': `${customInputHeight.value}px` };
   }
   return {};
@@ -1127,8 +1129,42 @@ const toggleWideInputMode = () => {
     display.updateSettings({ inputAreaHeight: 0 });
     inputAreaHeightPreview.value = null;
   }
-  nextTick(() => textInputRef.value?.focus?.());
+  nextTick(() => {
+    textInputRef.value?.focus?.();
+    updateWideInputViewportHeight();
+    requestAnimationFrame(updateWideInputViewportHeight);
+    window.setTimeout(updateWideInputViewportHeight, 160);
+  });
 };
+
+const updateWideInputViewportHeight = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (!isMobileWideInput.value) {
+    document.documentElement.style.removeProperty('--wide-input-height');
+    return;
+  }
+  const viewport = window.visualViewport;
+  const height = viewport?.height ?? window.innerHeight;
+  document.documentElement.style.setProperty('--wide-input-height', `${Math.round(height)}px`);
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'resize', updateWideInputViewportHeight);
+  useEventListener(window, 'orientationchange', updateWideInputViewportHeight);
+  if (window.visualViewport) {
+    useEventListener(window.visualViewport, 'resize', updateWideInputViewportHeight);
+  }
+}
+
+watch(isMobileWideInput, () => {
+  updateWideInputViewportHeight();
+}, { immediate: true });
+
+onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.removeProperty('--wide-input-height');
+  }
+});
 
 // 输入区域高度拖拽调整（通过上边框触发）
 const inputContainerRef = ref<HTMLElement | null>(null);
@@ -1140,6 +1176,7 @@ const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
 const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
 
 const handleInputBorderPointerDown = (e: PointerEvent) => {
+  if (isMobileWideInput.value) return;
   const container = e.currentTarget as HTMLElement;
   if (!container) return;
   const rect = container.getBoundingClientRect();
@@ -8871,7 +8908,7 @@ onBeforeUnmount(() => {
     >说点什么吧</div>
 
     <!-- flex-grow -->
-    <div class="edit-area flex justify-between relative">
+    <div class="edit-area flex justify-between relative" :class="{ 'edit-area--wide-input': isMobileWideInput }">
       <div class="history-floating space-y-3 flex flex-col items-end">
         <div
           v-if="historyHintVisible"
@@ -8957,7 +8994,17 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="chat-input-area relative flex-1">
-            <div class="chat-input-actions input-floating-toolbar flex flex-1 items-center justify-between gap-2">
+            <div
+              :class="[
+                'chat-input-actions',
+                'input-floating-toolbar',
+                'flex',
+                'items-center',
+                'justify-between',
+                'gap-2',
+                { 'flex-1': !isMobileWideInput },
+              ]"
+            >
               <div class="chat-input-actions__group chat-input-actions__group--leading">
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
@@ -11265,6 +11312,54 @@ onBeforeUnmount(() => {
   padding: 0;
   gap: 0;
   transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .edit-area.edit-area--wide-input {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: var(--wide-input-height, 100vh);
+    z-index: 60;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+    touch-action: none;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-container {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-area {
+    flex: 1 1 auto;
+    margin: 0;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-actions {
+    flex: 0 0 auto;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-editor-row {
+    flex: 1 1 auto;
+    margin-top: 0;
+    align-items: stretch;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-editor-main {
+    flex: 1 1 auto;
+    align-self: stretch;
+    min-height: 0;
+  }
 }
 
 .reply-banner {
