@@ -9569,8 +9569,9 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
                 <template v-else>
-                  <n-button type="primary" circle size="medium" @click="send"
-                    :disabled="spectatorInputDisabled || chat.connectState !== 'connected'">
+                  <n-button size="medium" @click="send"
+                    :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                    class="send-action-btn">
                     <template #icon>
                       <n-icon :component="Send" size="18" />
                     </template>
@@ -11664,6 +11665,33 @@ onBeforeUnmount(() => {
   gap: 0;
 }
 
+.send-action-btn {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 10px !important;
+  padding: 0 !important;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.send-action-btn:hover:not(:disabled) {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+  color: #2563eb !important;
+}
+
+.send-action-btn:disabled {
+  opacity: 0.5;
+}
+
+:root[data-display-palette='night'] .send-action-btn:hover:not(:disabled) {
+  background-color: rgba(96, 165, 250, 0.2) !important;
+  border-color: rgba(96, 165, 250, 0.45) !important;
+  color: #60a5fa !important;
+}
+
 .edit-action-btn {
   width: 40px !important;
   height: 22px !important;
@@ -11756,6 +11784,12 @@ onBeforeUnmount(() => {
   .chat-input-send-inline .n-button {
     width: 40px;
     height: 40px;
+  }
+
+  .send-action-btn {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 8px !important;
   }
 
   .edit-action-btn {
