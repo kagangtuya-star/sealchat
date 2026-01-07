@@ -629,6 +629,19 @@ func syncWorldChannelRoles(worldID, userID, worldRole string) error {
 	if err != nil {
 		return err
 	}
+	publicChannelIDs := map[string]struct{}{}
+	if worldRole == model.WorldRoleMember {
+		publicChannels, err := ChannelListPublicByWorld(worldID)
+		if err != nil {
+			return err
+		}
+		for _, ch := range publicChannels {
+			if ch == nil || strings.TrimSpace(ch.ID) == "" {
+				continue
+			}
+			publicChannelIDs[ch.ID] = struct{}{}
+		}
+	}
 	for _, ch := range channels {
 		if ch == nil || strings.TrimSpace(ch.ID) == "" {
 			continue
@@ -655,8 +668,11 @@ func syncWorldChannelRoles(worldID, userID, worldRole string) error {
 				return err
 			}
 		case model.WorldRoleMember:
-			if err := ensureChannelRoleLink(userID, ch.ID, "member"); err != nil {
-				return err
+			// 成员只加入公开频道，非公开频道需要单独授权
+			if _, ok := publicChannelIDs[ch.ID]; ok {
+				if err := ensureChannelRoleLink(userID, ch.ID, "member"); err != nil {
+					return err
+				}
 			}
 			if err := removeChannelRoleLink(userID, ch.ID, "admin"); err != nil {
 				return err
