@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
 const chat = useChatStore();
 const message = useMessage();
+const dialog = useDialog();
 const form = ref<any>({});
 const loading = ref(false);
 
@@ -47,6 +48,17 @@ const remove = async () => {
     loading.value = false;
   }
 };
+
+const confirmRemove = () => {
+  dialog.warning({
+    title: '删除世界',
+    content: `确定要删除「${form.value.name || '该世界'}」吗？此操作不可恢复，世界内的所有频道和消息将被永久删除。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    maskClosable: false,
+    onPositiveClick: remove,
+  });
+};
 </script>
 
 <template>
@@ -76,7 +88,7 @@ const remove = async () => {
     <template #action>
       <n-space>
         <n-button quaternary @click="close">取消</n-button>
-        <n-button type="error" @click="remove" :loading="loading">删除世界</n-button>
+        <n-button type="error" @click="confirmRemove" :loading="loading">删除世界</n-button>
         <n-button type="primary" @click="save" :loading="loading">保存</n-button>
       </n-space>
     </template>
