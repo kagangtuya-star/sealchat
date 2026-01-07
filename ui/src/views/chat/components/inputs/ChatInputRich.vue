@@ -883,6 +883,16 @@ defineExpose({
   max-height: max(6rem, calc(100vh / 3 - 2.5rem));
 }
 
+.tiptap-editor.chat-input--custom-height .tiptap-editor-wrapper {
+  min-height: var(--custom-input-height, 3rem);
+  max-height: var(--custom-input-height, 12rem);
+}
+
+.tiptap-editor.chat-input--custom-height .tiptap-content {
+  min-height: max(3rem, calc(var(--custom-input-height, 3rem) - 2.5rem));
+  max-height: max(3rem, calc(var(--custom-input-height, 12rem) - 2.5rem));
+}
+
 .tiptap-loading {
   display: flex;
   align-items: center;

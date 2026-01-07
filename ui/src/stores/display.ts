@@ -104,6 +104,8 @@ export interface DisplaySettings {
   activeCustomThemeId: string | null
   // 右键菜单
   disableContextMenu: boolean
+  // 输入区域自定义高度
+  inputAreaHeight: number  // 0 means auto
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -141,6 +143,23 @@ const MESSAGE_PADDING_X_MAX = 48
 const MESSAGE_PADDING_Y_DEFAULT = 14
 const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
+const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
+const INPUT_AREA_HEIGHT_MIN = 80
+const INPUT_AREA_HEIGHT_MAX = 600
+export const INPUT_AREA_HEIGHT_LIMITS = {
+  MIN: INPUT_AREA_HEIGHT_MIN,
+  MAX: INPUT_AREA_HEIGHT_MAX,
+}
+const normalizeInputAreaHeight = (value: unknown) => {
+  const raw = coerceNumberInRange(
+    value,
+    INPUT_AREA_HEIGHT_DEFAULT,
+    INPUT_AREA_HEIGHT_DEFAULT,
+    INPUT_AREA_HEIGHT_MAX,
+  )
+  if (raw <= 0) return 0
+  return Math.max(raw, INPUT_AREA_HEIGHT_MIN)
+}
 const KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT = 1  // 1em - 中文标准首行缩进
 const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
@@ -351,6 +370,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   customThemes: [],
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
+  inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -530,6 +550,7 @@ const loadSettings = (): DisplaySettings => {
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
+      inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -698,6 +719,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'disableContextMenu')
       ? coerceBoolean((patch as any).disableContextMenu)
       : base.disableContextMenu,
+  inputAreaHeight:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
+      ? normalizeInputAreaHeight((patch as any).inputAreaHeight)
+      : base.inputAreaHeight,
 })
 
 export const useDisplayStore = defineStore('display', {

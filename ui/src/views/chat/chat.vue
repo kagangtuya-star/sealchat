@@ -65,6 +65,7 @@ import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/u
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
+import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -1100,11 +1101,118 @@ const inputMode = ref<'plain' | 'rich'>('plain');
 const richContentCache = ref<string | null>(null);
 const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
-const chatInputClassList = computed(() => (wideInputMode.value ? ['chat-input--expanded'] : []));
+const inputAreaHeightPreview = ref<number | null>(null);
+const customInputHeight = computed(() => (
+  inputAreaHeightPreview.value !== null
+    ? inputAreaHeightPreview.value
+    : display.settings.inputAreaHeight
+));
+const chatInputClassList = computed(() => {
+  const classes: string[] = [];
+  if (wideInputMode.value) classes.push('chat-input--expanded');
+  if (customInputHeight.value > 0) classes.push('chat-input--custom-height');
+  return classes;
+});
+const chatInputStyle = computed(() => {
+  if (customInputHeight.value > 0) {
+    return { '--custom-input-height': `${customInputHeight.value}px` };
+  }
+  return {};
+});
 const wideInputTooltip = computed(() => (wideInputMode.value ? '退出广域输入模式' : '进入广域输入模式'));
 const toggleWideInputMode = () => {
   wideInputMode.value = !wideInputMode.value;
+  // 切换广域模式时清除自定义高度，回到默认的两种高度
+  if (customInputHeight.value > 0) {
+    display.updateSettings({ inputAreaHeight: 0 });
+    inputAreaHeightPreview.value = null;
+  }
   nextTick(() => textInputRef.value?.focus?.());
+};
+
+// 输入区域高度拖拽调整（通过上边框触发）
+const inputContainerRef = ref<HTMLElement | null>(null);
+const isResizingInput = ref(false);
+const resizeStartY = ref(0);
+const resizeStartHeight = ref(0);
+const resizePointerId = ref<number | null>(null);
+const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
+const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
+
+const handleInputBorderPointerDown = (e: PointerEvent) => {
+  const container = e.currentTarget as HTMLElement;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const offsetY = e.clientY - rect.top;
+  const threshold = e.pointerType === 'touch' ? RESIZE_BORDER_THRESHOLD_MOBILE : RESIZE_BORDER_THRESHOLD_DESKTOP;
+  if (offsetY > threshold) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  // 在容器上捕获指针
+  resizePointerId.value = e.pointerId;
+  container.setPointerCapture(e.pointerId);
+
+  isResizingInput.value = true;
+  resizeStartY.value = e.clientY;
+  const inputEditor = document.querySelector('.chat-input-editor-main') as HTMLElement;
+  resizeStartHeight.value = customInputHeight.value > 0
+    ? customInputHeight.value
+    : (inputEditor?.offsetHeight || INPUT_AREA_HEIGHT_LIMITS.MIN);
+  inputAreaHeightPreview.value = resizeStartHeight.value;
+
+  container.addEventListener('pointermove', handleInputResizeMove as EventListener);
+  container.addEventListener('pointerup', handleInputResizeEnd as EventListener);
+  container.addEventListener('pointercancel', handleInputResizeEnd as EventListener);
+  container.addEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+  document.body.style.cursor = 'row-resize';
+  document.body.style.userSelect = 'none';
+};
+
+const handleInputResizeMove = (e: PointerEvent) => {
+  if (!isResizingInput.value) return;
+  e.preventDefault();
+  const deltaY = resizeStartY.value - e.clientY;
+  const rawHeight = resizeStartHeight.value + deltaY;
+  if (rawHeight <= INPUT_AREA_HEIGHT_LIMITS.MIN) {
+    inputAreaHeightPreview.value = 0;
+    return;
+  }
+  const newHeight = Math.min(INPUT_AREA_HEIGHT_LIMITS.MAX, rawHeight);
+  inputAreaHeightPreview.value = Math.round(newHeight);
+};
+
+const handleInputResizeEnd = (e?: PointerEvent) => {
+  if (!isResizingInput.value) return;
+  isResizingInput.value = false;
+
+  const container = inputContainerRef.value;
+  const finalHeight = inputAreaHeightPreview.value ?? display.settings.inputAreaHeight;
+  inputAreaHeightPreview.value = null;
+  if (container) {
+    if (resizePointerId.value !== null) {
+      try {
+        container.releasePointerCapture(resizePointerId.value);
+      } catch (_) { /* ignore */ }
+    }
+    container.removeEventListener('pointermove', handleInputResizeMove as EventListener);
+    container.removeEventListener('pointerup', handleInputResizeEnd as EventListener);
+    container.removeEventListener('pointercancel', handleInputResizeEnd as EventListener);
+    container.removeEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+  }
+
+  resizePointerId.value = null;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  if (finalHeight !== display.settings.inputAreaHeight) {
+    display.updateSettings({ inputAreaHeight: finalHeight });
+  }
+};
+
+const handleInputResizeReset = () => {
+  inputAreaHeightPreview.value = null;
+  display.updateSettings({ inputAreaHeight: 0 });
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
 const icHotkeyEnabled = computed(() => {
@@ -8413,6 +8521,7 @@ const handleGalleryDrop = async (event: DragEvent) => {
 
 
 onBeforeUnmount(() => {
+  handleInputResizeEnd();
   chatEvent.off('channel-identity-open', handleIdentityMenuOpen);
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
@@ -8814,8 +8923,10 @@ onBeforeUnmount(() => {
       </div>
 
       <div
+        ref="inputContainerRef"
         class="chat-input-container flex flex-col w-full relative"
-        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled }"
+        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
+        @pointerdown="handleInputBorderPointerDown"
       >
         <transition name="fade">
           <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop>
@@ -9294,7 +9405,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <div class="chat-input-editor-row">
+            <div class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
                 <ChatInputSwitcher
                   ref="textInputRef"
@@ -11229,6 +11340,57 @@ onBeforeUnmount(() => {
   margin: 0;
   box-shadow: none;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  position: relative;
+
+  // 上边框拖拽热区
+  &::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 12px;
+    cursor: row-resize;
+    z-index: 1;
+    touch-action: none;
+  }
+
+  // 可见的分隔线
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--sc-border-mute, rgba(148, 163, 184, 0.3));
+    transition: background-color 0.15s ease;
+    pointer-events: none;
+  }
+
+  &:hover::after {
+    background: var(--sc-border-mute, rgba(148, 163, 184, 0.5));
+  }
+
+  &.chat-input-container--resizing::after {
+    background: var(--primary-color, #3b82f6);
+  }
+
+  &.chat-input-container--resizing {
+    overscroll-behavior: contain;
+  }
+}
+
+// 移动端增大热区
+@media (max-width: 768px), (pointer: coarse) {
+  .chat-input-container::before {
+    top: -8px;
+    height: 20px;
+  }
+
+  .chat-input-container {
+    touch-action: none;
+  }
 }
 
 .chat-input-container--spectator-hidden {
@@ -11237,6 +11399,18 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .chat-input-container {
   box-shadow: none;
+
+  &::after {
+    background: rgba(161, 161, 170, 0.25);
+  }
+
+  &:hover::after {
+    background: rgba(161, 161, 170, 0.4);
+  }
+
+  &.chat-input-container--resizing::after {
+    background: var(--primary-color, #60a5fa);
+  }
 }
 
 .chat-input-area {
