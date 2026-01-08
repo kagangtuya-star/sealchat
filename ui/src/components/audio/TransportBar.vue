@@ -116,8 +116,8 @@ function formatTime(value: number) {
   gap: 0.75rem;
   padding: 1rem;
   border-radius: 12px;
-  background: var(--audio-panel-surface, var(--sc-bg-elevated));
-  border: 1px solid var(--audio-panel-border, var(--sc-border-mute));
+  background: var(--audio-panel-surface, var(--sc-bg-elevated, #f8fafc));
+  border: 1px solid var(--audio-panel-border, var(--sc-border-mute, #e2e8f0));
   box-shadow: var(--audio-panel-shadow, 0 20px 40px rgba(15, 23, 42, 0.08));
   backdrop-filter: blur(12px);
 }
@@ -156,5 +156,14 @@ function formatTime(value: number) {
 .transport-bar__buffer {
   font-size: 0.8rem;
   color: var(--sc-text-secondary);
+}
+</style>
+
+<!-- 非 scoped 样式用于自定义主题覆盖 -->
+<style lang="scss">
+:root[data-custom-theme='true'] .transport-bar.transport-bar {
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  box-shadow: none !important;
 }
 </style>

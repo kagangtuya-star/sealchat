@@ -143,3 +143,13 @@ onBeforeUnmount(() => {
   margin-top: 0.5rem;
 }
 </style>
+
+<!-- 非 scoped 样式用于自定义主题覆盖 -->
+<style lang="scss">
+:root[data-custom-theme='true'] .audio-drawer :deep(.n-drawer-body),
+:root[data-custom-theme='true'] .audio-drawer.n-drawer .n-drawer-body {
+  background: var(--sc-bg-elevated) !important;
+  border-left-color: var(--sc-border-mute) !important;
+  box-shadow: none !important;
+}
+</style>

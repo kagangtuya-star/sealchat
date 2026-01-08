@@ -799,9 +799,7 @@ nav a:first-of-type {
 
 /* Audio drawer and player */
 :root[data-custom-theme='true'] .audio-drawer,
-:root[data-custom-theme='true'] .audio-drawer__player,
-:root[data-custom-theme='true'] .audio-drawer__player * {
-  background-color: var(--sc-bg-elevated) !important;
+:root[data-custom-theme='true'] .audio-drawer__player {
   color: var(--sc-text-primary) !important;
 }
 
@@ -967,6 +965,26 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] .dice-tray__macro-key:hover {
   background-color: var(--sc-bg-elevated) !important;
   border-color: var(--sc-border-strong) !important;
+}
+
+/* Dice tray input-number 覆盖 */
+:root[data-custom-theme='true'] .dice-tray .n-input-number {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-hover: 1px solid var(--sc-accent, #3388de) !important;
+  --n-border-focus: 1px solid var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray .n-input-number .n-button {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .dice-tray .n-input-number .n-button:hover {
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color-hover: var(--sc-text-primary) !important;
 }
 
 /* --------------------------------------------------------------------------
@@ -1464,5 +1482,957 @@ nav a:first-of-type {
   background-color: var(--sc-bg-elevated) !important;
   color: var(--sc-text-primary) !important;
   border-color: var(--sc-border-mute) !important;
+}
+
+/* ==========================================================================
+   音频工作台 (AudioDrawer) 自定义主题完整适配
+   ========================================================================== */
+
+/* 全局 audio 变量覆盖 - 确保所有 audio 组件继承正确的主题色 */
+:root[data-custom-theme='true'] .audio-drawer,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer {
+  --audio-panel-surface: var(--sc-bg-elevated) !important;
+  --audio-panel-border: var(--sc-border-mute) !important;
+  --audio-panel-shadow: none !important;
+  --audio-card-surface: var(--sc-bg-elevated) !important;
+  --audio-card-border: var(--sc-border-mute) !important;
+  --audio-progress-track: var(--sc-bg-surface) !important;
+  --audio-progress-buffer: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Drawer 主容器背景 */
+:root[data-custom-theme='true'] .audio-drawer .n-drawer-body-content-wrapper {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Segment Tabs 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-tabs--segment-type {
+  --n-color-segment: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-tabs--segment-type .n-tabs-rail {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-tabs--segment-type .n-tabs-tab {
+  --n-tab-text-color: var(--sc-text-secondary) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-tabs--segment-type .n-tabs-tab--active {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-tabs--segment-type .n-tabs-capsule {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* Input 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-color-focus: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-hover: 1px solid var(--sc-border-strong) !important;
+  --n-border-focus: 1px solid var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  --n-caret-color: var(--sc-accent, #3388de) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Select 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* DataTable 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-data-table {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-th-color-hover: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-td-color-hover: rgba(128, 128, 128, 0.08) !important;
+  --n-td-color-striped: var(--sc-bg-elevated) !important;
+  --n-th-text-color: var(--sc-text-secondary) !important;
+  --n-td-text-color: var(--sc-text-primary) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+  --n-merged-th-color: var(--sc-bg-elevated) !important;
+  --n-merged-td-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-data-table-th,
+:root[data-custom-theme='true'] .audio-drawer .n-data-table-td {
+  background-color: inherit !important;
+}
+
+/* Pagination 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-pagination {
+  --n-item-color: var(--sc-bg-surface) !important;
+  --n-item-color-hover: var(--sc-bg-elevated) !important;
+  --n-item-color-active: var(--sc-accent, #3388de) !important;
+  --n-item-text-color: var(--sc-text-primary) !important;
+  --n-item-text-color-hover: var(--sc-text-primary) !important;
+  --n-item-text-color-active: #fff !important;
+  --n-item-border-color: var(--sc-border-mute) !important;
+  --n-button-color: var(--sc-bg-surface) !important;
+  --n-button-color-hover: var(--sc-bg-elevated) !important;
+}
+
+/* Tree 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-tree {
+  --n-node-color-hover: var(--sc-bg-elevated) !important;
+  --n-node-color-active: var(--sc-bg-elevated) !important;
+  --n-node-text-color: var(--sc-text-primary) !important;
+  --n-node-text-color-disabled: var(--sc-text-secondary) !important;
+  background-color: transparent !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-tree-node-content {
+  color: var(--sc-text-primary) !important;
+}
+
+/* Slider 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-slider {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-rail-color-hover: var(--sc-border-strong) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-fill-color-hover: var(--sc-accent, #3388de) !important;
+  --n-handle-color: var(--sc-accent, #3388de) !important;
+  --n-dot-color: var(--sc-bg-elevated) !important;
+  --n-dot-color-active: var(--sc-accent, #3388de) !important;
+}
+
+/* Button 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-button--default-type {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-button--tertiary-type,
+:root[data-custom-theme='true'] .audio-drawer .n-button--quaternary-type {
+  --n-color: transparent !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .n-button--secondary-type {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-color-hover: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Checkbox 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-checkbox {
+  --n-color: var(--sc-bg-input) !important;
+  --n-color-checked: var(--sc-accent, #3388de) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-checked: 1px solid var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Radio 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-radio {
+  --n-color: var(--sc-bg-input) !important;
+  --n-color-active: var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Tag 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-tag--default-type {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* Empty 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-empty {
+  --n-text-color: var(--sc-text-secondary) !important;
+  --n-icon-color: var(--sc-text-secondary) !important;
+}
+
+/* Alert 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-alert {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* TreeSelect 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-tree-select {
+  --n-menu-color: var(--sc-bg-elevated) !important;
+}
+
+/* Form Item 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-form-item-label {
+  --n-label-text-color: var(--sc-text-primary) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* Switch 完整覆盖 */
+:root[data-custom-theme='true'] .audio-drawer .n-switch {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-rail-color-active: var(--sc-accent, #3388de) !important;
+}
+
+/* Space 文字颜色 */
+:root[data-custom-theme='true'] .audio-drawer .n-space {
+  color: var(--sc-text-primary) !important;
+}
+
+/* 卡片区域 */
+:root[data-custom-theme='true'] .audio-drawer .audio-library__toolbar,
+:root[data-custom-theme='true'] .audio-drawer .audio-library__folders,
+:root[data-custom-theme='true'] .audio-drawer .audio-library__table,
+:root[data-custom-theme='true'] .audio-drawer .audio-library__detail,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__list,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__detail {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* 音频库选择状态 */
+:root[data-custom-theme='true'] .audio-drawer .audio-library__selection,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__selection {
+  background-color: rgba(var(--sc-accent-rgb, 51, 136, 222), 0.08) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* 音频库详情文字 */
+:root[data-custom-theme='true'] .audio-drawer .audio-library__detail-subtitle,
+:root[data-custom-theme='true'] .audio-drawer .audio-library__duration,
+:root[data-custom-theme='true'] .audio-drawer .audio-library__modal-tip,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__detail header p {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   音频播放器控件 (TransportBar / TrackMixerCard) 深层覆盖
+   ========================================================================== */
+
+/* TransportBar 主容器背景 - 需要覆盖 scoped 样式中的 CSS 变量 */
+:root[data-custom-theme='true'] .audio-drawer .transport-bar,
+:root[data-custom-theme='true'] .audio-drawer .audio-drawer__player .transport-bar,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar {
+  --audio-panel-surface: var(--sc-bg-elevated) !important;
+  --audio-panel-border: var(--sc-border-mute) !important;
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar__progress-meta,
+:root[data-custom-theme='true'] .audio-drawer .transport-bar__buffer,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar__progress-meta,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar__buffer {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* TransportBar 内部 Slider */
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider {
+  --n-rail-color: var(--sc-bg-surface) !important;
+  --n-rail-color-hover: var(--sc-bg-surface) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-fill-color-hover: var(--sc-accent, #3388de) !important;
+  --n-handle-color: var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-rail,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-rail {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-rail__fill {
+  background-color: var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-handle,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-handle {
+  --n-handle-color: #fff !important;
+  background-color: #fff !important;
+  border-color: var(--sc-accent, #3388de) !important;
+}
+
+/* TransportBar 内部 Select */
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-base-selection,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* TransportBar 内部 Button */
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-button--default-type,
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-button--quaternary-type,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-button--default-type,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-button--quaternary-type {
+  --n-color: transparent !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-text-color-hover: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-button--primary-type,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-button--primary-type {
+  --n-color: var(--sc-accent, #3388de) !important;
+  --n-color-hover: var(--sc-accent, #3388de) !important;
+  --n-text-color: #fff !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar .n-button-group,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-button-group {
+  --n-color: var(--sc-bg-surface) !important;
+}
+
+/* TrackMixerCard 主容器背景 */
+:root[data-custom-theme='true'] .audio-drawer .track-card,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card {
+  --audio-card-surface: var(--sc-bg-elevated) !important;
+  --audio-card-border: var(--sc-border-mute) !important;
+  --audio-panel-shadow: none !important;
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card__type,
+:root[data-custom-theme='true'] .audio-drawer .track-card__progress,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card__type,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card__progress {
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card__title,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card__title {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card__volume,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card__volume {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* TrackMixerCard 内部 Slider */
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-slider,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider {
+  --n-rail-color: var(--sc-bg-surface) !important;
+  --n-rail-color-hover: var(--sc-bg-surface) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-fill-color-hover: var(--sc-accent, #3388de) !important;
+  --n-handle-color: var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-rail,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-rail {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-rail__fill {
+  background-color: var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-handle,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-handle {
+  --n-handle-color: #fff !important;
+  background-color: #fff !important;
+  border-color: var(--sc-accent, #3388de) !important;
+}
+
+/* TrackMixerCard 内部 Select */
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-base-selection,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* TrackMixerCard 内部 Button */
+:root[data-custom-theme='true'] .audio-drawer .track-card .n-button--default-type,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-button--default-type {
+  --n-color: transparent !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* TrackMixerCard 自定义进度条样式 */
+:root[data-custom-theme='true'] .audio-drawer .track-card .progress-shell,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .progress-shell {
+  background: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .progress-buffer,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .progress-buffer {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* UploadPanel 上传面板 */
+:root[data-custom-theme='true'] .audio-drawer .upload-panel,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .upload-panel {
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .upload-panel__drop {
+  border-color: var(--sc-accent, #3388de) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .upload-panel .n-progress {
+  --n-rail-color: var(--sc-bg-surface) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* ScenePlaylist 播放列表 */
+:root[data-custom-theme='true'] .audio-drawer .scene-board__list,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__detail {
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .scene-board__detail header h3 {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .scene-board__detail header p,
+:root[data-custom-theme='true'] .audio-drawer .scene-board__row-name p {
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .scene-board__selection {
+  background: rgba(var(--sc-accent-rgb, 51, 136, 222), 0.08) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+/* ScenePlaylist 内部抽屉 */
+:root[data-custom-theme='true'] .audio-drawer .scene-board .n-drawer-body-content-wrapper {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   画廊面板 (GalleryPanel) 自定义主题完整适配
+   ========================================================================== */
+
+/* Drawer 主容器背景 */
+:root[data-custom-theme='true'] .gallery-drawer .n-drawer,
+:root[data-custom-theme='true'] .gallery-drawer .n-drawer-body,
+:root[data-custom-theme='true'] .gallery-drawer .n-drawer-body-content-wrapper {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+/* 画廊面板整体 */
+:root[data-custom-theme='true'] .gallery-panel {
+  color: var(--sc-text-primary) !important;
+}
+
+/* Input 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-color-focus: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Select 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Button 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-button--default-type {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .gallery-drawer .n-button--tertiary-type {
+  --n-color: transparent !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Tree 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-tree {
+  --n-node-color-hover: var(--sc-bg-elevated) !important;
+  --n-node-color-active: var(--sc-bg-elevated) !important;
+  --n-node-text-color: var(--sc-text-primary) !important;
+}
+
+/* Progress 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-progress {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Form Item 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-form-item-label {
+  color: var(--sc-text-primary) !important;
+}
+
+/* 批量操作工具栏 */
+:root[data-custom-theme='true'] .gallery-panel__batch-toolbar {
+  background-color: rgba(var(--sc-accent-rgb, 51, 136, 222), 0.1) !important;
+}
+
+:root[data-custom-theme='true'] .gallery-panel__batch-count {
+  color: var(--sc-accent, #3388de) !important;
+}
+
+/* 进度文字 */
+:root[data-custom-theme='true'] .gallery-panel__progress-text {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* 移动模态框提示 */
+:root[data-custom-theme='true'] .move-modal__hint {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* GalleryGrid Checkbox 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-checkbox {
+  --n-color: transparent !important;
+  --n-color-checked: var(--sc-accent, #3388de) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-checked: 1px solid var(--sc-accent, #3388de) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .gallery-drawer .n-checkbox-box {
+  --n-color: transparent !important;
+  --n-color-checked: var(--sc-accent, #3388de) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-checked: 1px solid var(--sc-accent, #3388de) !important;
+}
+
+/* GalleryUploadZone Upload 覆盖 */
+:root[data-custom-theme='true'] .gallery-drawer .n-upload {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .gallery-drawer .n-upload-dragger {
+  background-color: var(--sc-bg-input) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .gallery-drawer .n-upload-dragger:hover {
+  border-color: var(--sc-accent, #3388de) !important;
+}
+
+/* ==========================================================================
+   IForm Drawer 自定义主题适配
+   ========================================================================== */
+
+/* Drawer 主容器 */
+:root[data-custom-theme='true'] .iform-drawer .n-drawer-body-content-wrapper {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* Input 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Select 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Checkbox/Radio 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-checkbox,
+:root[data-custom-theme='true'] .iform-drawer .n-radio {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Tag 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-tag {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Button 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-button--default-type {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .iform-drawer .n-button--quaternary-type {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Form Item 覆盖 */
+:root[data-custom-theme='true'] .iform-drawer .n-form-item-label {
+  color: var(--sc-text-primary) !important;
+}
+
+/* IForm 标题和副标题 */
+:root[data-custom-theme='true'] .iform-drawer__subtitle {
+  color: var(--sc-text-secondary) !important;
+}
+
+/* ==========================================================================
+   通用 Modal 内控件覆盖（确保所有弹窗内控件适配）
+   ========================================================================== */
+
+/* Modal 内 Form Item */
+:root[data-custom-theme='true'] .n-modal .n-form-item-label {
+  color: var(--sc-text-primary) !important;
+}
+
+/* Modal 内 Input */
+:root[data-custom-theme='true'] .n-modal .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Modal 内 Select */
+:root[data-custom-theme='true'] .n-modal .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+  background-color: var(--sc-bg-input) !important;
+}
+
+/* Modal 内 Checkbox/Radio */
+:root[data-custom-theme='true'] .n-modal .n-checkbox,
+:root[data-custom-theme='true'] .n-modal .n-radio {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Modal 内 TreeSelect */
+:root[data-custom-theme='true'] .n-modal .n-tree-select {
+  --n-menu-color: var(--sc-bg-elevated) !important;
+}
+
+/* Modal 内 InputNumber */
+:root[data-custom-theme='true'] .n-modal .n-input-number {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Modal 内 Switch */
+:root[data-custom-theme='true'] .n-modal .n-switch {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-rail-color-active: var(--sc-accent, #3388de) !important;
+}
+
+/* Modal 内 Steps */
+:root[data-custom-theme='true'] .n-modal .n-steps {
+  --n-indicator-color: var(--sc-bg-surface) !important;
+  --n-indicator-text-color: var(--sc-text-primary) !important;
+  --n-splitor-color: var(--sc-border-mute) !important;
+}
+
+/* Modal 内 DataTable */
+:root[data-custom-theme='true'] .n-modal .n-data-table {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-th-text-color: var(--sc-text-secondary) !important;
+  --n-td-text-color: var(--sc-text-primary) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+}
+
+/* Modal 内 Pagination */
+:root[data-custom-theme='true'] .n-modal .n-pagination {
+  --n-item-color: var(--sc-bg-surface) !important;
+  --n-item-text-color: var(--sc-text-primary) !important;
+  --n-item-border-color: var(--sc-border-mute) !important;
+}
+
+/* Modal 内 Empty */
+:root[data-custom-theme='true'] .n-modal .n-empty {
+  --n-text-color: var(--sc-text-secondary) !important;
+}
+
+/* Modal 内 Alert */
+:root[data-custom-theme='true'] .n-modal .n-alert {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* Modal 内 Progress */
+:root[data-custom-theme='true'] .n-modal .n-progress {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+}
+
+/* Modal 内 Slider */
+:root[data-custom-theme='true'] .n-modal .n-slider {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-handle-color: var(--sc-accent, #3388de) !important;
+}
+
+/* Modal 内 RadioGroup */
+:root[data-custom-theme='true'] .n-modal .n-radio-group {
+  --n-button-color: var(--sc-bg-surface) !important;
+  --n-button-text-color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   通用 Drawer 内控件覆盖（确保所有抽屉内控件适配）
+   ========================================================================== */
+
+/* 所有 Drawer 内 Form Item */
+:root[data-custom-theme='true'] .n-drawer .n-form-item-label {
+  color: var(--sc-text-primary) !important;
+}
+
+/* 所有 Drawer 内 Input */
+:root[data-custom-theme='true'] .n-drawer .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* 所有 Drawer 内 Select */
+:root[data-custom-theme='true'] .n-drawer .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* 所有 Drawer 内 Tabs */
+:root[data-custom-theme='true'] .n-drawer .n-tabs--segment-type {
+  --n-color-segment: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-tabs--segment-type .n-tabs-rail {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-tabs--segment-type .n-tabs-tab {
+  --n-tab-text-color: var(--sc-text-secondary) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-tabs--segment-type .n-tabs-tab--active {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-tabs--segment-type .n-tabs-capsule {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+/* 所有 Drawer 内 DataTable */
+:root[data-custom-theme='true'] .n-drawer .n-data-table {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-th-text-color: var(--sc-text-secondary) !important;
+  --n-td-text-color: var(--sc-text-primary) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+  --n-td-color-hover: rgba(128, 128, 128, 0.08) !important;
+}
+
+/* 所有 Drawer 内 Pagination */
+:root[data-custom-theme='true'] .n-drawer .n-pagination {
+  --n-item-color: var(--sc-bg-surface) !important;
+  --n-item-color-hover: var(--sc-bg-elevated) !important;
+  --n-item-text-color: var(--sc-text-primary) !important;
+  --n-item-border-color: var(--sc-border-mute) !important;
+  --n-button-color: var(--sc-bg-surface) !important;
+}
+
+/* 所有 Drawer 内 Tree */
+:root[data-custom-theme='true'] .n-drawer .n-tree {
+  --n-node-color-hover: var(--sc-bg-elevated) !important;
+  --n-node-color-active: var(--sc-bg-elevated) !important;
+  --n-node-text-color: var(--sc-text-primary) !important;
+}
+
+/* 所有 Drawer 内 Slider */
+:root[data-custom-theme='true'] .n-drawer .n-slider {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-handle-color: var(--sc-accent, #3388de) !important;
+}
+
+/* 所有 Drawer 内 Checkbox/Radio */
+:root[data-custom-theme='true'] .n-drawer .n-checkbox,
+:root[data-custom-theme='true'] .n-drawer .n-radio {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* 所有 Drawer 内 Tag */
+:root[data-custom-theme='true'] .n-drawer .n-tag--default-type {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+/* 所有 Drawer 内 Empty */
+:root[data-custom-theme='true'] .n-drawer .n-empty {
+  --n-text-color: var(--sc-text-secondary) !important;
+  --n-icon-color: var(--sc-text-secondary) !important;
+}
+
+/* 所有 Drawer 内 Alert */
+:root[data-custom-theme='true'] .n-drawer .n-alert {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* 所有 Drawer 内 Switch */
+:root[data-custom-theme='true'] .n-drawer .n-switch {
+  --n-rail-color: var(--sc-border-mute) !important;
+  --n-rail-color-active: var(--sc-accent, #3388de) !important;
+}
+
+/* 所有 Drawer 内 Button */
+:root[data-custom-theme='true'] .n-drawer .n-button--default-type {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-border: 1px solid var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-button--tertiary-type,
+:root[data-custom-theme='true'] .n-drawer .n-button--quaternary-type {
+  --n-color: transparent !important;
+  --n-color-hover: var(--sc-bg-elevated) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .n-drawer .n-button--secondary-type {
+  --n-color: var(--sc-bg-elevated) !important;
+  --n-color-hover: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   频道设置 Modal 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .channel-settings-modal .n-tabs {
+  --n-tab-text-color: var(--sc-text-secondary) !important;
+  --n-tab-text-color-active: var(--sc-text-primary) !important;
+  --n-bar-color: var(--sc-accent, #3388de) !important;
+}
+
+:root[data-custom-theme='true'] .channel-settings-modal .n-tab-pane {
+  background-color: var(--sc-bg-surface) !important;
+}
+
+/* ==========================================================================
+   聊天搜索面板 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .chat-search-panel .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+  --n-placeholder-color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .chat-search-panel .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .chat-search-panel .n-checkbox {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   便签 Popover 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .sticky-note__push-panel {
+  background-color: var(--sc-bg-elevated) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__push-title {
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__push-count {
+  color: var(--sc-text-secondary) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__push-panel .n-checkbox {
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .sticky-note__push-panel .n-base-selection {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   归档管理 Modal 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .channel-archive-modal .archive-search .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .channel-archive-modal .n-list {
+  --n-color: var(--sc-bg-surface) !important;
+  --n-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .channel-archive-modal .n-list-item {
+  --n-color-hover: var(--sc-bg-elevated) !important;
+}
+
+/* ==========================================================================
+   导入/导出对话框 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .export-dialog .n-steps,
+:root[data-custom-theme='true'] .import-dialog .n-steps {
+  --n-indicator-color: var(--sc-bg-surface) !important;
+  --n-indicator-text-color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .export-dialog .n-form-item-label,
+:root[data-custom-theme='true'] .import-dialog .n-form-item-label {
+  color: var(--sc-text-primary) !important;
+}
+
+/* ==========================================================================
+   世界关键词管理 自定义主题适配
+   ========================================================================== */
+
+:root[data-custom-theme='true'] .world-keyword-manager .n-data-table {
+  --n-th-color: var(--sc-bg-elevated) !important;
+  --n-td-color: var(--sc-bg-surface) !important;
+  --n-th-text-color: var(--sc-text-secondary) !important;
+  --n-td-text-color: var(--sc-text-primary) !important;
+  --n-border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .world-keyword-manager .n-input {
+  --n-color: var(--sc-bg-input) !important;
+  --n-text-color: var(--sc-text-primary) !important;
 }
 </style>

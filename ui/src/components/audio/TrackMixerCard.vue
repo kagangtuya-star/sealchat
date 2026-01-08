@@ -222,3 +222,20 @@ function handleSelect(value: string | null) {
   gap: 0.5rem;
 }
 </style>
+
+<!-- 非 scoped 样式用于自定义主题覆盖 -->
+<style lang="scss">
+:root[data-custom-theme='true'] .track-card.track-card {
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  box-shadow: none !important;
+}
+
+:root[data-custom-theme='true'] .track-card.track-card .progress-shell {
+  background: var(--sc-bg-surface) !important;
+}
+
+:root[data-custom-theme='true'] .track-card.track-card .progress-buffer {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+</style>
