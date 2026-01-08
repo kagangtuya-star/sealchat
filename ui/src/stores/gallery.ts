@@ -44,9 +44,35 @@ interface GalleryState {
   activeOwner: { type: 'user'; id: string } | null;
   activeCollectionId: string | null;
   emojiCollectionId: string | null;
+  emojiRemarkVisible: boolean;
 }
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
+const DEFAULT_EMOJI_REMARK_VISIBLE = true;
+
+interface EmojiPreferencePayload {
+  emojiCollectionId: string | null;
+  emojiRemarkVisible: boolean;
+}
+
+function normalizeEmojiPreferencePayload(stored: string | null): EmojiPreferencePayload {
+  if (!stored) {
+    return { emojiCollectionId: null, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (parsed && typeof parsed === 'object') {
+      const emojiCollectionId = typeof parsed.emojiCollectionId === 'string' ? parsed.emojiCollectionId : null;
+      const emojiRemarkVisible = typeof parsed.emojiRemarkVisible === 'boolean'
+        ? parsed.emojiRemarkVisible
+        : DEFAULT_EMOJI_REMARK_VISIBLE;
+      return { emojiCollectionId, emojiRemarkVisible };
+    }
+  } catch {
+    // ignore and fallback to legacy string payload
+  }
+  return { emojiCollectionId: stored, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+}
 
 function ownerKey(ownerId: string) {
   return `user:${ownerId}`;
@@ -65,7 +91,8 @@ export const useGalleryStore = defineStore('gallery', {
     panelVisible: false,
     activeOwner: null,
     activeCollectionId: null,
-    emojiCollectionId: null
+    emojiCollectionId: null,
+    emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE
   }),
 
   getters: {
@@ -102,16 +129,23 @@ export const useGalleryStore = defineStore('gallery', {
     loadEmojiPreference(userId: string) {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
       const stored = localStorage.getItem(key);
-      this.emojiCollectionId = stored || null;
+      const preference = normalizeEmojiPreferencePayload(stored);
+      this.emojiCollectionId = preference.emojiCollectionId;
+      this.emojiRemarkVisible = preference.emojiRemarkVisible;
     },
 
     persistEmojiPreference(userId: string) {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
-      if (this.emojiCollectionId) {
-        localStorage.setItem(key, this.emojiCollectionId);
-      } else {
-        localStorage.removeItem(key);
-      }
+      const payload: EmojiPreferencePayload = {
+        emojiCollectionId: this.emojiCollectionId,
+        emojiRemarkVisible: this.emojiRemarkVisible
+      };
+      localStorage.setItem(key, JSON.stringify(payload));
+    },
+
+    setEmojiRemarkVisible(visible: boolean, userId: string) {
+      this.emojiRemarkVisible = visible;
+      this.persistEmojiPreference(userId);
     },
 
     async openPanel(ownerId: string) {

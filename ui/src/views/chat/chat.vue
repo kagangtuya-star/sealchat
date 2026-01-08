@@ -56,7 +56,7 @@ import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcast
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings, Close as CloseIcon } from '@vicons/ionicons5';
+import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -889,6 +889,16 @@ const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
 const isManagingEmoji = ref(false);
+const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
+
+const toggleEmojiRemarkVisible = () => {
+  const userId = user.info?.id;
+  if (!userId) {
+    message.warning('请先登录');
+    return;
+  }
+  gallery.setEmojiRemarkVisible(!gallery.emojiRemarkVisible, userId);
+};
 
 const resolveEmojiAnchorElement = () => {
   if (typeof window === 'undefined') {
@@ -9200,7 +9210,7 @@ onBeforeUnmount(() => {
                       :x="emojiPopoverXCoord"
                       :y="emojiPopoverYCoord"
                     >
-                      <div class="emoji-panel">
+                      <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
                         <div class="emoji-panel__header">
                           <div class="emoji-panel__header-left">
                             <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
@@ -9215,16 +9225,32 @@ onBeforeUnmount(() => {
                               表情管理
                             </n-tooltip>
                           </div>
-                          <n-tooltip trigger="hover">
-                            <template #trigger>
-                              <n-button text size="small" @click="emojiPopoverShow = false">
-                                <template #icon>
-                                  <n-icon :component="CloseIcon" />
-                                </template>
-                              </n-button>
-                            </template>
-                            关闭
-                          </n-tooltip>
+                          <div class="emoji-panel__header-right">
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button
+                                  text
+                                  size="small"
+                                  class="emoji-panel__toggle-remark"
+                                  @click="toggleEmojiRemarkVisible"
+                                >
+                                  <span>{{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}</span>
+                                  <n-icon :component="emojiRemarkVisible ? EyeOffOutline : EyeOutline" />
+                                </n-button>
+                              </template>
+                              {{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}
+                            </n-tooltip>
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button text size="small" @click="emojiPopoverShow = false">
+                                  <template #icon>
+                                    <n-icon :component="CloseIcon" />
+                                  </template>
+                                </n-button>
+                              </template>
+                              关闭
+                            </n-tooltip>
+                          </div>
                         </div>
 
                         <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
@@ -12387,11 +12413,11 @@ onBeforeUnmount(() => {
 }
 
 .emoji-panel {
-  width: 320px;
+  width: 380px;
   max-height: 400px;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .emoji-panel__content {
@@ -12417,6 +12443,16 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.emoji-panel__header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.emoji-panel__toggle-remark :deep(.n-icon) {
+  margin-left: 4px;
 }
 
 .emoji-panel__title {
@@ -12448,14 +12484,14 @@ onBeforeUnmount(() => {
 
 .emoji-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(70px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(5, minmax(64px, 1fr));
+  gap: 0.5rem;
 }
 
 @media (max-width: 768px) {
   .emoji-grid {
     grid-template-columns: repeat(3, minmax(60px, 1fr));
-    gap: 0.5rem;
+    gap: 0.4rem;
   }
 }
 
@@ -12464,16 +12500,16 @@ onBeforeUnmount(() => {
   flex-direction: column;
   touch-action: manipulation;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.25rem;
   cursor: pointer;
   border-radius: 8px;
-  padding: 0.25rem;
+  padding: 0.15rem;
   transition: background-color 0.15s ease;
 }
 
 .emoji-item img {
-  width: 4.8rem;
-  height: 4.8rem;
+  width: 4.2rem;
+  height: 4.2rem;
   object-fit: contain;
 }
 
@@ -12510,7 +12546,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.25rem;
+}
+
+.emoji-panel--hide-remark .emoji-caption,
+.emoji-panel--hide-remark .emoji-item__actions {
+  display: none;
+}
+
+.emoji-panel--hide-remark .emoji-manage-item__content :deep(.n-button) {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .emoji-item img {
+    width: 4.8rem;
+    height: 4.8rem;
+  }
 }
 
 .emoji-manage-item :deep(.n-checkbox) {
