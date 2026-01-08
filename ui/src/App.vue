@@ -1304,11 +1304,11 @@ nav a:first-of-type {
   color: var(--sc-text-primary) !important;
 }
 
-:root[data-custom-theme='true'] .typing-preview-bubble[data-tone='ic'] {
+:root[data-custom-theme='true'] .chat--layout-bubble .typing-preview-bubble[data-tone='ic'] {
   background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
 }
 
-:root[data-custom-theme='true'] .typing-preview-bubble[data-tone='ooc'] {
+:root[data-custom-theme='true'] .chat--layout-bubble .typing-preview-bubble[data-tone='ooc'] {
   background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
 }
 

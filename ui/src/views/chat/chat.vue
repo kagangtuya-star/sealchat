@@ -10542,6 +10542,31 @@ onBeforeUnmount(() => {
   --typing-preview-bg: var(--chat-compact-ic-bg);
 }
 
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface::before {
+  content: none;
+  display: none;
+}
+
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
+  background-color: var(--typing-preview-bg);
+  background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ooc));
+}
+
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ic'],
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ic));
+}
+
 .identity-drawer__header {
   display: flex;
   align-items: center;
