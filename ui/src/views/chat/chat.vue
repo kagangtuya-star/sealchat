@@ -11028,6 +11028,41 @@ onBeforeUnmount(() => {
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
+.typing-preview-surface {
+  position: relative;
+  z-index: 0;
+}
+
+.typing-preview-surface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chat--layout-compact .typing-preview-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 0.95rem;
+  background-color: var(--chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  background-image: radial-gradient(
+    var(--typing-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px,
+    transparent 1px
+  );
+  background-size: 10px 10px;
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ic']::before {
+  background-color: var(--chat-ic-bg, #fbfdf7);
+  --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ooc']::before {
+  background-color: var(--chat-ooc-bg, #ffffff);
+  --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
+}
+
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-surface,
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-bubble,
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-bubble__body {
@@ -11040,16 +11075,23 @@ onBeforeUnmount(() => {
   border-radius: var(--chat-message-radius, 0.85rem);
   background-color: var(--chat-ic-bg, #f5f5f5);
   border-color: transparent;
+  background-image: radial-gradient(
+    var(--typing-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px,
+    transparent 1px
+  );
+  background-size: 10px 10px;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
   background-color: var(--chat-ic-bg, #f5f5f5);
   border-color: transparent;
+  --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
   background-color: var(--chat-ooc-bg, #ffffff);
   border-color: transparent;
+  --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
