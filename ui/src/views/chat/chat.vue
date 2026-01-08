@@ -11075,34 +11075,30 @@ onBeforeUnmount(() => {
   border-radius: var(--chat-message-radius, 0.85rem);
   background-color: var(--chat-ic-bg, #f5f5f5);
   border-color: transparent;
-  background-image: radial-gradient(
-    var(--typing-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px,
-    transparent 1px
-  );
-  background-size: 10px 10px;
+  background-image: none;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
   background-color: var(--chat-ic-bg, #f5f5f5);
-  border-color: transparent;
+  border-color: rgba(15, 23, 42, 0.14);
   --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
   background-color: var(--chat-ooc-bg, #ffffff);
-  border-color: transparent;
+  border-color: rgba(15, 23, 42, 0.12);
   --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
   background-color: var(--chat-ic-bg, #3f3f45);
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.16);
   color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
   background-color: var(--chat-ooc-bg, #2D2D31);
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.24);
   color: var(--chat-text-primary, #f5f3ff);
 }
 
