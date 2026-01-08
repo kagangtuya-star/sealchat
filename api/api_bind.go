@@ -311,6 +311,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Post("/:worldId/invites", WorldInviteCreateHandler)
 	worldGroup.Get("/favorites", WorldFavoriteListHandler)
 	worldGroup.Post("/:worldId/favorite", WorldFavoriteToggleHandler)
+	worldGroup.Post("/:worldId/ack-edit-notice", WorldAckEditNoticeHandler)
 	worldGroup.Get("/:worldId/members", WorldMemberListHandler)
 	worldGroup.Delete("/:worldId/members/:userId", WorldMemberRemoveHandler)
 	worldGroup.Post("/:worldId/members/:userId/role", WorldMemberRoleHandler)

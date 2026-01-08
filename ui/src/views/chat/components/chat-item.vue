@@ -389,7 +389,39 @@ const contentClassList = computed(() => {
 });
 
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
-const canEdit = computed(() => props.item?.user?.id === user.info.id);
+const resolveMessageUserId = (item: any) => (
+  item?.user?.id
+  || item?.user_id
+  || item?.member?.user?.id
+  || item?.member?.userId
+  || item?.member?.user_id
+  || ''
+);
+const targetUserId = computed(() => resolveMessageUserId(props.item));
+const canEdit = computed(() => {
+  // 自己的消息可编辑
+  if (targetUserId.value && targetUserId.value === user.info.id) return true;
+  if (!targetUserId.value) return false;
+  // 检查世界管理员编辑权限
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = worldDetail?.allowAdminEditMessages
+    || worldDetail?.world?.allowAdminEditMessages
+    || chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (allowAdminEdit) {
+    const memberRole = worldDetail?.memberRole;
+    const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+    const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    if (isWorldAdmin) {
+      const channelId = chat.curChannel?.id;
+      if (channelId && targetUserId.value && chat.isChannelAdmin(channelId, targetUserId.value)) {
+        return false;
+      }
+      return true; // 后端会进一步验证目标消息作者是否为非管理员
+    }
+  }
+  return false;
+});
 
 // Multi-select computed properties (merged from props and store)
 const effectiveMultiSelectMode = computed(() => props.isMultiSelectMode || chat.multiSelect?.active || false);
@@ -1000,8 +1032,11 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
           <template #trigger>
             <span class="edited-label">(已编辑)</span>
           </template>
-          <span v-if="editedTimeText2">编辑于 {{ editedTimeText2 }}</span>
-          <span v-else>编辑时间未知</span>
+          <div>
+            <span v-if="props.item?.editedByUserName">由 {{ props.item.editedByUserName }} 编辑</span>
+            <span v-if="editedTimeText2">{{ props.item?.editedByUserName ? '于' : '编辑于' }} {{ editedTimeText2 }}</span>
+            <span v-else-if="!props.item?.editedByUserName">编辑时间未知</span>
+          </div>
         </n-popover>
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>

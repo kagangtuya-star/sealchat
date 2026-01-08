@@ -895,9 +895,9 @@ export const useChatStore = defineStore({
       delete this.channelTreeByWorld[worldId];
     },
 
-    async worldDetail(worldId: string) {
+    async worldDetail(worldId: string, options?: { force?: boolean }) {
       if (!worldId) return null;
-      if (this.worldDetailMap[worldId]) {
+      if (!options?.force && this.worldDetailMap[worldId]) {
         return this.worldDetailMap[worldId];
       }
       const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
@@ -917,7 +917,7 @@ export const useChatStore = defineStore({
       }
     },
 
-    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean }) {
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
@@ -934,6 +934,14 @@ export const useChatStore = defineStore({
       this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
       if (this.currentWorldId === worldId) {
         this.currentWorldId = this.joinedWorldIds[0] || '';
+      }
+      return resp.data;
+    },
+
+    async worldAckEditNotice(worldId: string) {
+      const resp = await api.post(`/api/v1/worlds/${worldId}/ack-edit-notice`);
+      if (this.worldDetailMap[worldId]) {
+        this.worldDetailMap[worldId].editNoticeAcked = true;
       }
       return resp.data;
     },

@@ -178,11 +178,30 @@ func WorldDetail(c *fiber.Ctx) error {
 	}
 	var memberCount int64
 	_ = db.Model(&model.WorldMemberModel{}).Where("world_id = ?", worldID).Count(&memberCount).Error
+
+	// 获取世界拥有者昵称
+	var ownerNickname string
+	if world.OwnerID != "" {
+		var owner model.UserModel
+		if err := db.Where("id = ?", world.OwnerID).Select("id, nickname, username").Limit(1).Find(&owner).Error; err == nil && owner.ID != "" {
+			ownerNickname = owner.Nickname
+			if ownerNickname == "" {
+				ownerNickname = owner.Username
+			}
+		}
+	}
+
+	// 判断编辑通知是否已确认
+	editNoticeAcked := member.EditNoticeAckedAt != nil
+
 	return c.JSON(fiber.Map{
-		"world":       world,
-		"isMember":    member.ID != "",
-		"memberRole":  member.Role,
-		"memberCount": memberCount,
+		"world":                   world,
+		"isMember":                member.ID != "",
+		"memberRole":              member.Role,
+		"memberCount":             memberCount,
+		"allowAdminEditMessages":  world.AllowAdminEditMessages,
+		"ownerNickname":           ownerNickname,
+		"editNoticeAcked":         editNoticeAcked,
 	})
 }
 
@@ -511,4 +530,24 @@ func WorldFavoriteToggleHandler(c *fiber.Ctx) error {
 		}
 	}
 	return c.JSON(fiber.Map{"worldIds": worldIDs})
+}
+
+func WorldAckEditNoticeHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	db := model.GetDB()
+	now := time.Now()
+	result := db.Model(&model.WorldMemberModel{}).
+		Where("world_id = ? AND user_id = ?", worldID, user.ID).
+		Update("edit_notice_acked_at", now)
+	if result.Error != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "确认失败"})
+	}
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "未加入该世界"})
+	}
+	return c.JSON(fiber.Map{"message": "已确认", "ackedAt": now.UnixMilli()})
 }

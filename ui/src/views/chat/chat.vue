@@ -6224,12 +6224,56 @@ const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | nu
   };
 };
 
+const resolveMessageUserId = (msg?: Message) => (
+  msg?.user?.id
+  || (msg as any)?.user_id
+  || (msg as any)?.member?.user?.id
+  || (msg as any)?.member?.userId
+  || (msg as any)?.member?.user_id
+  || ''
+);
+
+const canEditMessage = (target?: Message) => {
+  if (!target?.id || !chat.curChannel?.id) {
+    return false;
+  }
+  const targetUserId = resolveMessageUserId(target);
+  if (!targetUserId) {
+    return false;
+  }
+  if (targetUserId === user.info.id) {
+    return true;
+  }
+  const worldId = chat.currentWorldId;
+  if (!worldId) {
+    return false;
+  }
+  const detail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = detail?.allowAdminEditMessages
+    ?? detail?.world?.allowAdminEditMessages
+    ?? chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (!allowAdminEdit) {
+    return false;
+  }
+  const isWorldAdmin = detail?.memberRole === 'owner'
+    || detail?.memberRole === 'admin'
+    || detail?.world?.ownerId === user.info.id
+    || chat.worldMap[worldId]?.ownerId === user.info.id;
+  if (!isWorldAdmin) {
+    return false;
+  }
+  if (chat.isChannelAdmin(chat.curChannel.id, targetUserId)) {
+    return false;
+  }
+  return true;
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
   }
-  if (target.user?.id !== user.info.id) {
-    message.error('只能编辑自己发送的消息');
+  if (!canEditMessage(target)) {
+    message.error('无权编辑该消息');
     return;
   }
   stopTypingPreviewNow();

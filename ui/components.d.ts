@@ -7,6 +7,7 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    AdminEditNoticeModal: typeof import('./src/components/AdminEditNoticeModal.vue')['default']
     AudioAssetManager: typeof import('./src/components/audio/AudioAssetManager.vue')['default']
     AudioDrawer: typeof import('./src/components/audio/AudioDrawer.vue')['default']
     AudioSearchBar: typeof import('./src/components/audio/AudioSearchBar.vue')['default']

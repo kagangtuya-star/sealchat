@@ -21,8 +21,10 @@ type MessageModel struct {
 	IsRevoked    bool    `json:"is_revoked" gorm:"null"` // 被撤回。这样实现可能不很严肃，但是能填补窗口中空白
 	IsWhisper    bool    `json:"is_whisper" gorm:"default:false"`
 	WhisperTo    string  `json:"whisper_to" gorm:"size:100"`
-	IsEdited     bool    `json:"is_edited" gorm:"default:false"`
-	EditCount    int     `json:"edit_count" gorm:"default:0"`
+	IsEdited         bool   `json:"is_edited" gorm:"default:false"`
+	EditCount        int    `json:"edit_count" gorm:"default:0"`
+	EditedByUserID   string `json:"edited_by_user_id" gorm:"size:100"`   // 编辑者用户ID（管理员编辑时记录）
+	EditedByUserName string `json:"edited_by_user_name" gorm:"size:100"` // 编辑者用户名
 	// Whisper 元数据持久化
 	WhisperSenderMemberID   string `json:"whisper_sender_member_id" gorm:"size:100"`
 	WhisperSenderMemberName string `json:"whisper_sender_member_name"`
@@ -79,23 +81,25 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 		deletedAt = m.DeletedAt.UnixMilli()
 	}
 	msg := &protocol.Message{
-		ID:            m.ID,
-		Content:       m.Content,
-		Channel:       channelData,
-		CreatedAt:     m.CreatedAt.UnixMilli(),
-		UpdatedAt:     updatedAt,
-		DisplayOrder:  m.DisplayOrder,
-		IsWhisper:     m.IsWhisper,
-		IsEdited:      m.IsEdited,
-		EditCount:     m.EditCount,
-		IcMode:        icMode,
-		IsArchived:    m.IsArchived,
-		ArchivedAt:    archivedAt,
-		ArchivedBy:    m.ArchivedBy,
-		ArchiveReason: m.ArchiveReason,
-		IsDeleted:     m.IsDeleted,
-		DeletedAt:     deletedAt,
-		DeletedBy:     m.DeletedBy,
+		ID:               m.ID,
+		Content:          m.Content,
+		Channel:          channelData,
+		CreatedAt:        m.CreatedAt.UnixMilli(),
+		UpdatedAt:        updatedAt,
+		DisplayOrder:     m.DisplayOrder,
+		IsWhisper:        m.IsWhisper,
+		IsEdited:         m.IsEdited,
+		EditCount:        m.EditCount,
+		EditedByUserId:   m.EditedByUserID,
+		EditedByUserName: m.EditedByUserName,
+		IcMode:           icMode,
+		IsArchived:       m.IsArchived,
+		ArchivedAt:       archivedAt,
+		ArchivedBy:       m.ArchivedBy,
+		ArchiveReason:    m.ArchiveReason,
+		IsDeleted:        m.IsDeleted,
+		DeletedAt:        deletedAt,
+		DeletedBy:        m.DeletedBy,
 		WhisperTo: func() *protocol.User {
 			if m.WhisperTarget != nil {
 				return m.WhisperTarget.ToProtocolType()

@@ -27,8 +27,9 @@ type WorldModel struct {
 	Description       string `json:"description" gorm:"size:500"`
 	Avatar            string `json:"avatar" gorm:"size:255"`
 	Visibility        string `json:"visibility" gorm:"size:24;default:public;index"` // public/private/unlisted
-	EnforceMembership bool   `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
-	OwnerID           string `json:"ownerId" gorm:"size:100;index"`
+	EnforceMembership      bool `json:"enforceMembership" gorm:"default:false"`      // 预留未来严格控制
+	AllowAdminEditMessages bool `json:"allowAdminEditMessages" gorm:"default:false"` // 允许管理员编辑成员发言
+	OwnerID                string `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID  string `json:"defaultChannelId" gorm:"size:100"`
 	InviteSlug        string `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
 	Status            string `json:"status" gorm:"size:24;default:active;index"`
@@ -57,10 +58,11 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 // WorldMemberModel 记录用户与世界的关系与角色。
 type WorldMemberModel struct {
 	StringPKBaseModel
-	WorldID  string    `json:"worldId" gorm:"size:100;index:idx_world_member,priority:1"`
-	UserID   string    `json:"userId" gorm:"size:100;index:idx_world_member,priority:2"`
-	Role     string    `json:"role" gorm:"size:24;index"` // owner/admin/member
-	JoinedAt time.Time `json:"joinedAt"`
+	WorldID           string     `json:"worldId" gorm:"size:100;index:idx_world_member,priority:1"`
+	UserID            string     `json:"userId" gorm:"size:100;index:idx_world_member,priority:2"`
+	Role              string     `json:"role" gorm:"size:24;index"` // owner/admin/member
+	JoinedAt          time.Time  `json:"joinedAt"`
+	EditNoticeAckedAt *time.Time `json:"editNoticeAckedAt"` // 确认管理员编辑提示的时间
 }
 
 func (*WorldMemberModel) TableName() string {

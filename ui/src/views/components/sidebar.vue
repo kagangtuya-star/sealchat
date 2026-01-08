@@ -23,6 +23,7 @@ import SidebarPrivate from './sidebar-private.vue';
 import ChannelSortModal from './ChannelSortModal.vue';
 import ChannelArchiveModal from './ChannelArchiveModal.vue';
 import { usePushNotificationStore } from '@/stores/pushNotification';
+import AdminEditNoticeModal from '@/components/AdminEditNoticeModal.vue';
 
 const { t } = useI18n()
 
@@ -132,6 +133,10 @@ onMounted(() => {
       voices.value = synth.getVoices()
       voice.value = voices.value[0]
     })
+  }
+  // 初始化时检查是否需要显示编辑通知弹窗
+  if (chat.currentWorldId) {
+    checkEditNoticeForWorld(chat.currentWorldId);
   }
 })
 
@@ -362,8 +367,24 @@ const handleWorldSelect = async (value: string) => {
   try {
     await chat.switchWorld(value, { force: true });
     router.push({ name: 'home' });
+    // 检查是否需要显示编辑通知弹窗
+    checkEditNoticeForWorld(value);
   } catch (error) {
     message.error('切换世界失败');
+  }
+};
+
+const checkEditNoticeForWorld = async (worldId: string) => {
+  try {
+    const detail = await chat.worldDetail(worldId, { force: true });
+    if (detail?.allowAdminEditMessages || detail?.world?.allowAdminEditMessages) {
+      if (!detail?.editNoticeAcked) {
+        editNoticeOwnerNickname.value = detail?.ownerNickname || '管理员';
+        showEditNoticeModal.value = true;
+      }
+    }
+  } catch (e) {
+    console.warn('检查编辑通知失败', e);
   }
 };
 
@@ -373,6 +394,8 @@ const handleChannelSortEntry = () => {
 
 const showSortModal = ref(false);
 const showArchiveModal = ref(false);
+const showEditNoticeModal = ref(false);
+const editNoticeOwnerNickname = ref('');
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -705,6 +728,11 @@ const handleOpenWorldGlossary = () => {
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
   <ChannelSortModal v-model:show="showSortModal" />
   <ChannelArchiveModal v-model:show="showArchiveModal" />
+  <AdminEditNoticeModal
+    v-model:visible="showEditNoticeModal"
+    :world-id="chat.currentWorldId"
+    :owner-nickname="editNoticeOwnerNickname"
+  />
 
 </template>
 

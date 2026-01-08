@@ -122,6 +122,28 @@ const isSelfMessage = computed(() => {
   return authorId === user.info.id;
 });
 
+const canEdit = computed(() => {
+  if (isSelfMessage.value) return true;
+  if (!targetUserId.value) return false;
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = worldDetail?.allowAdminEditMessages
+    || worldDetail?.world?.allowAdminEditMessages
+    || chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (allowAdminEdit) {
+    const memberRole = worldDetail?.memberRole;
+    const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+    const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    if (isWorldAdmin) {
+      if (targetIsAdmin.value) {
+        return false;
+      }
+      return true;
+    }
+  }
+  return false;
+});
+
 const canWhisper = computed(() => {
   const authorId = menuMessage.value.author?.id;
   if (!authorId) {
@@ -417,7 +439,7 @@ const clickMultiSelect = () => {
     <context-menu-item label="回复" @click="clickReplyTo" />
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />
     <context-menu-item v-if="showUnarchiveAction" label="取消归档" @click="clickUnarchive" />
-    <context-menu-item label="编辑消息" @click="clickEdit" v-if="isSelfMessage" />
+    <context-menu-item label="编辑消息" @click="clickEdit" v-if="canEdit" />
     <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
