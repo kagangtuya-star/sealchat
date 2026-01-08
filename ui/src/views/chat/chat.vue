@@ -5190,7 +5190,6 @@ let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
-  const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const isSelfPreview = item.userId === selfPreviewUserId.value;
   let orderKey: number;
   if (isSelfPreview) {
@@ -5215,9 +5214,6 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
     typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
   } else {
     typingPreviewList.value.push({ ...item, orderKey });
-  }
-  if (shouldStick) {
-    toBottom();
   }
 };
 
@@ -7471,7 +7467,6 @@ chatEvent.on('message-created', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
-    const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const incoming = normalizeMessageShape(e.message);
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
@@ -7498,9 +7493,7 @@ chatEvent.on('message-created', (e?: Event) => {
       upsertMessage(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      if (shouldStick) {
-        toBottom();
-      }
+      toBottom();
       return;
     }
   } else {
@@ -7553,7 +7546,7 @@ chatEvent.on('message-created', (e?: Event) => {
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
-  if (shouldStick) {
+  if (isSelf) {
     toBottom();
   }
 });
