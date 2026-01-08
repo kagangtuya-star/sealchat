@@ -10200,30 +10200,33 @@ onBeforeUnmount(() => {
 
 .message-row {
   position: relative;
+  padding-top: calc(var(--chat-bubble-gap, 0.85rem) / 2);
+  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) / 2);
 }
 
-.message-row + .message-row {
-  margin-top: var(--chat-bubble-gap, 0.85rem);
+.chat--layout-bubble .message-row {
+  padding-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
+  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
+  background-color: var(--sc-bg-surface);
 }
 
-.chat--layout-bubble .message-row + .message-row {
-  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8);
+.chat--layout-compact .message-row {
+  padding-top: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
+  padding-bottom: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
 }
 
-.chat--layout-compact .message-row + .message-row {
-  margin-top: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35));
+.chat--layout-bubble .message-row:first-child {
+  padding-top: 0;
+}
+
+.chat--layout-bubble .message-row:last-child {
+  padding-bottom: 0;
 }
 
 .message-row--tone-ic,
 .message-row--tone-ooc {
   margin: 0;
-  padding: 0;
   border: none;
-}
-
-.message-row + .message-row--tone-ic,
-.message-row + .message-row--tone-ooc {
-  margin-top: 0;
 }
 
 .selection-floating-bar {
@@ -10271,26 +10274,6 @@ onBeforeUnmount(() => {
 .selection-floating-bar__button.is-disabled {
   opacity: 0.45;
   pointer-events: none;
-}
-
-.message-row--self.message-row--tone-ic:not(:first-child),
-.message-row--self.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.chat--layout-compact .message-row--self.message-row--tone-ic:not(:first-child),
-.chat--layout-compact .message-row--self.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.message-row--tone-ic:not(:first-child),
-.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.chat--layout-compact .message-row--tone-ic:not(:first-child),
-.chat--layout-compact .message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
 }
 
 .message-row__surface {
@@ -10490,7 +10473,8 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .message-row {
   width: 100%;
-  padding: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .chat--layout-compact .message-row__surface {

@@ -514,7 +514,7 @@ const handleOpenTutorialHub = () => {
           <div class="control-field">
             <div>
               <p class="control-title">气泡间距</p>
-              <p class="control-desc">作用于消息行之间的 gap</p>
+              <p class="control-desc">作用于消息行之间的上下内间距</p>
             </div>
             <div class="control-input">
               <n-slider v-model:value="draft.bubbleGap" :min="4" :max="48" :step="2" :format-tooltip="formatPxTooltip" />
@@ -531,7 +531,7 @@ const handleOpenTutorialHub = () => {
           <div class="control-field">
             <div>
               <p class="control-title">紧凑间距</p>
-              <p class="control-desc">仅作用于紧凑模式消息块之间的 gap</p>
+              <p class="control-desc">仅作用于紧凑模式消息块之间的上下内间距</p>
             </div>
             <div class="control-input">
               <n-slider
