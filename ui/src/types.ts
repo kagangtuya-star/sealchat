@@ -160,6 +160,16 @@ export interface ChannelBackgroundSettings {
   overlayOpacity?: number; // 0-100
 }
 
+export interface BackgroundPreset {
+  id: string;
+  name: string;
+  category?: string;
+  attachmentId: string;
+  thumbnailUrl?: string;
+  settings: ChannelBackgroundSettings;
+  createdAt: number;
+}
+
 export interface SChannel extends Channel {
   isPrivate?: boolean;
   createdAt?: string; // 频道创建时间

@@ -11,18 +11,31 @@ import {
   NColorPicker,
   NSwitch,
   NCard,
-  NSpin,
+  NInput,
+  NSelect,
+  NPopconfirm,
   useMessage,
   type UploadFileInfo,
+  type SelectOption,
 } from 'naive-ui';
-import { Photo as ImageIcon, Trash } from '@vicons/tabler';
+import { Photo as ImageIcon, Trash, Edit, Check, X, Plus, FolderPlus } from '@vicons/tabler';
 import VueCropper from 'vue-cropperjs';
 import 'cropperjs/dist/cropper.css';
 import { compressImage } from '@/composables/useImageCompressor';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useChatStore } from '@/stores/chat';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import type { SChannel, ChannelBackgroundSettings } from '@/types';
+import type { SChannel, ChannelBackgroundSettings, BackgroundPreset } from '@/types';
+import {
+  loadPresets,
+  loadCategories,
+  saveCategories,
+  createPreset,
+  addPreset,
+  updatePreset,
+  deletePreset,
+  addCategory,
+} from '@/utils/backgroundPreset';
 
 const props = defineProps({
   channel: {
@@ -69,6 +82,20 @@ const cropperProcessing = ref(false);
 
 const enableOverlay = ref(false);
 
+// 预设管理状态
+const presets = ref<BackgroundPreset[]>([]);
+const categories = ref<string[]>([]);
+const selectedCategory = ref<string | null>(null);
+const editingPresetId = ref<string | null>(null);
+const editingPresetName = ref('');
+const editingPresetCategory = ref<string | null>(null);
+const newCategoryName = ref('');
+const showNewCategoryInput = ref(false);
+const saveAsPresetName = ref('');
+const saveAsPresetCategory = ref<string | null>(null);
+const showSavePresetModal = ref(false);
+const showEditPresetModal = ref(false);
+
 const backgroundUrl = computed(() => {
   if (!backgroundAttachmentId.value) return '';
   return resolveAttachmentUrl(backgroundAttachmentId.value);
@@ -111,6 +138,31 @@ const overlayStyle = computed(() => {
   };
 });
 
+const categoryOptions = computed<SelectOption[]>(() => {
+  return categories.value.map((c) => ({ label: c, value: c }));
+});
+
+const filteredPresets = computed(() => {
+  if (!selectedCategory.value) return presets.value;
+  return presets.value.filter((p) => p.category === selectedCategory.value);
+});
+
+const filterCategoryOptions = computed<SelectOption[]>(() => {
+  return [
+    { label: '全部', value: null as any },
+    ...categories.value.map((c) => ({ label: c, value: c })),
+  ];
+});
+
+const loadChannelPresets = () => {
+  if (!props.channel?.id) return;
+  presets.value = loadPresets(props.channel.id);
+  categories.value = loadCategories(props.channel.id);
+  if (selectedCategory.value && !categories.value.includes(selectedCategory.value)) {
+    selectedCategory.value = null;
+  }
+};
+
 watch(
   () => props.channel,
   (ch) => {
@@ -118,6 +170,7 @@ watch(
       backgroundAttachmentId.value = ch.backgroundAttachmentId || '';
       settings.value = parseSettings(ch.backgroundSettings);
       enableOverlay.value = !!settings.value.overlayColor && (settings.value.overlayOpacity ?? 0) > 0;
+      loadChannelPresets();
     }
   },
   { immediate: true }
@@ -208,6 +261,75 @@ const handleSave = async () => {
   }
 };
 
+// 预设管理功能
+const openSavePresetModal = () => {
+  saveAsPresetName.value = '';
+  saveAsPresetCategory.value = null;
+  showSavePresetModal.value = true;
+};
+
+const handleSaveAsPreset = () => {
+  if (!props.channel?.id || !backgroundAttachmentId.value) return;
+  const name = saveAsPresetName.value.trim() || `预设 ${presets.value.length + 1}`;
+  const preset = createPreset(
+    backgroundAttachmentId.value,
+    settings.value,
+    name,
+    saveAsPresetCategory.value || undefined,
+    backgroundUrl.value
+  );
+  presets.value = addPreset(props.channel.id, preset);
+  showSavePresetModal.value = false;
+  message.success('预设已保存');
+};
+
+const applyPreset = (preset: BackgroundPreset) => {
+  backgroundAttachmentId.value = preset.attachmentId;
+  settings.value = { ...preset.settings };
+  enableOverlay.value = !!preset.settings.overlayColor && (preset.settings.overlayOpacity ?? 0) > 0;
+};
+
+const startEditPreset = (preset: BackgroundPreset) => {
+  editingPresetId.value = preset.id;
+  editingPresetName.value = preset.name;
+  editingPresetCategory.value = preset.category || null;
+  showEditPresetModal.value = true;
+};
+
+const confirmEditPreset = () => {
+  if (!props.channel?.id || !editingPresetId.value) return;
+  presets.value = updatePreset(props.channel.id, editingPresetId.value, {
+    name: editingPresetName.value.trim() || '未命名预设',
+    category: editingPresetCategory.value || undefined,
+  });
+  editingPresetId.value = null;
+  showEditPresetModal.value = false;
+};
+
+const cancelEditPreset = () => {
+  showEditPresetModal.value = false;
+  editingPresetId.value = null;
+};
+
+const handleDeletePreset = (presetId: string) => {
+  if (!props.channel?.id) return;
+  presets.value = deletePreset(props.channel.id, presetId);
+  message.success('预设已删除');
+};
+
+const handleAddCategory = () => {
+  if (!props.channel?.id) return;
+  const name = newCategoryName.value.trim();
+  if (!name) return;
+  categories.value = addCategory(props.channel.id, name);
+  newCategoryName.value = '';
+  showNewCategoryInput.value = false;
+};
+
+const getPresetThumbUrl = (preset: BackgroundPreset) => {
+  return resolveAttachmentUrl(preset.attachmentId);
+};
+
 onUnmounted(() => {
   cropperImageUrl.value = '';
 });
@@ -215,15 +337,18 @@ onUnmounted(() => {
 
 <template>
   <div class="tab-appearance">
+    <!-- 无背景选项 -->
     <div class="section">
       <h4 class="section-title">背景图片</h4>
       <div class="upload-area">
+        <div class="no-bg-option" :class="{ active: !backgroundAttachmentId }" @click="removeBackground">
+          <div class="no-bg-icon">
+            <NIcon :component="X" :size="20" />
+          </div>
+          <span>无</span>
+        </div>
         <div v-if="backgroundUrl" class="current-bg">
           <img :src="backgroundUrl" alt="当前背景" class="bg-thumb" />
-          <NButton size="small" type="error" quaternary @click="removeBackground">
-            <template #icon><NIcon :component="Trash" /></template>
-            移除
-          </NButton>
         </div>
         <NUpload
           accept="image/*"
@@ -233,9 +358,78 @@ onUnmounted(() => {
         >
           <NButton type="primary" size="small">
             <template #icon><NIcon :component="ImageIcon" /></template>
-            {{ backgroundUrl ? '更换图片' : '上传图片' }}
+            {{ backgroundUrl ? '更换' : '上传' }}
           </NButton>
         </NUpload>
+        <NButton
+          v-if="backgroundUrl"
+          size="small"
+          @click="openSavePresetModal"
+        >
+          <template #icon><NIcon :component="Plus" /></template>
+          存为预设
+        </NButton>
+      </div>
+    </div>
+
+    <!-- 预设管理区域 -->
+    <div class="section" v-if="presets.length > 0 || categories.length > 0">
+      <div class="section-header">
+        <h4 class="section-title">快速切换</h4>
+        <div class="category-filter">
+          <NSelect
+            v-model:value="selectedCategory"
+            :options="filterCategoryOptions"
+            size="small"
+            placeholder="分类筛选"
+            clearable
+            style="width: 100px;"
+          />
+        </div>
+      </div>
+      <div class="presets-grid">
+        <div
+          v-for="preset in filteredPresets"
+          :key="preset.id"
+          class="preset-item"
+          :class="{ active: preset.attachmentId === backgroundAttachmentId }"
+          @click="applyPreset(preset)"
+        >
+          <img :src="getPresetThumbUrl(preset)" :alt="preset.name" class="preset-thumb" />
+          <div class="preset-overlay">
+            <div class="preset-actions" @click.stop>
+              <NButton quaternary circle size="tiny" @click="startEditPreset(preset)">
+                <template #icon><NIcon :component="Edit" :size="14" /></template>
+              </NButton>
+              <NPopconfirm @positive-click="handleDeletePreset(preset.id)">
+                <template #trigger>
+                  <NButton quaternary circle size="tiny" type="error">
+                    <template #icon><NIcon :component="Trash" :size="14" /></template>
+                  </NButton>
+                </template>
+                确定删除此预设？
+              </NPopconfirm>
+            </div>
+          </div>
+          <div class="preset-meta">
+            <span class="preset-name">{{ preset.name }}</span>
+            <span v-if="preset.category" class="preset-category">{{ preset.category }}</span>
+          </div>
+        </div>
+      </div>
+      <!-- 分类管理 -->
+      <div class="category-manage">
+        <span class="category-label">分类：</span>
+        <span v-for="cat in categories" :key="cat" class="category-tag">{{ cat }}</span>
+        <NButton v-if="!showNewCategoryInput" quaternary size="tiny" @click="showNewCategoryInput = true">
+          <template #icon><NIcon :component="FolderPlus" :size="14" /></template>
+          添加分类
+        </NButton>
+        <div v-else class="new-category-input">
+          <NInput v-model:value="newCategoryName" size="tiny" placeholder="分类名" style="width: 80px;" />
+          <NButton size="tiny" type="primary" @click="handleAddCategory">确定</NButton>
+          <NButton size="tiny" @click="showNewCategoryInput = false">取消</NButton>
+        </div>
       </div>
     </div>
 
@@ -326,6 +520,48 @@ onUnmounted(() => {
         </NSpace>
       </template>
     </n-modal>
+
+    <n-modal v-model:show="showSavePresetModal" preset="card" title="保存为预设" style="max-width: 400px;">
+      <NSpace vertical>
+        <NInput v-model:value="saveAsPresetName" placeholder="预设名称（可选）" />
+        <NSelect
+          v-model:value="saveAsPresetCategory"
+          :options="categoryOptions"
+          placeholder="选择分类（可选）"
+          clearable
+        />
+      </NSpace>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showSavePresetModal = false">取消</NButton>
+          <NButton type="primary" @click="handleSaveAsPreset">保存</NButton>
+        </NSpace>
+      </template>
+    </n-modal>
+
+    <n-modal
+      v-model:show="showEditPresetModal"
+      preset="card"
+      title="编辑预设"
+      style="max-width: 400px;"
+      @after-leave="cancelEditPreset"
+    >
+      <NSpace vertical>
+        <NInput v-model:value="editingPresetName" placeholder="预设名称" />
+        <NSelect
+          v-model:value="editingPresetCategory"
+          :options="categoryOptions"
+          placeholder="分类（可选）"
+          clearable
+        />
+      </NSpace>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="cancelEditPreset">取消</NButton>
+          <NButton type="primary" @click="confirmEditPreset">保存</NButton>
+        </NSpace>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -338,6 +574,13 @@ onUnmounted(() => {
   margin-bottom: 1.5rem;
 }
 
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -345,10 +588,45 @@ onUnmounted(() => {
   color: var(--n-text-color);
 }
 
+.section-header .section-title {
+  margin-bottom: 0;
+}
+
 .upload-area {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.no-bg-option {
+  width: 60px;
+  height: 45px;
+  border: 2px dashed var(--n-border-color);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--n-text-color-3);
+  font-size: 0.75rem;
+
+  &:hover {
+    border-color: var(--n-primary-color);
+    color: var(--n-primary-color);
+  }
+
+  &.active {
+    border-color: var(--n-primary-color);
+    background: var(--n-primary-color-suppl);
+    color: var(--n-primary-color);
+  }
+}
+
+.no-bg-icon {
+  margin-bottom: 2px;
 }
 
 .current-bg {
@@ -362,7 +640,116 @@ onUnmounted(() => {
   height: 45px;
   object-fit: cover;
   border-radius: 4px;
-  border: 1px solid var(--n-border-color);
+  border: 2px solid var(--n-primary-color);
+}
+
+.presets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 0.75rem;
+}
+
+.preset-item {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--n-primary-color-hover);
+
+    .preset-overlay {
+      opacity: 1;
+    }
+  }
+
+  &.active {
+    border-color: var(--n-primary-color);
+  }
+}
+
+.preset-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.preset-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 4px;
+}
+
+.preset-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.preset-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--n-color-modal);
+  min-height: 26px;
+}
+
+.preset-name {
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.preset-category {
+  font-size: 0.625rem;
+  padding: 1px 6px;
+  background: var(--n-tag-color);
+  color: var(--n-text-color-2);
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.category-manage {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.category-label {
+  font-size: 0.8rem;
+  color: var(--n-text-color-3);
+}
+
+.category-tag {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  background: var(--n-tag-color);
+  border-radius: 4px;
+  color: var(--n-text-color-2);
+}
+
+.new-category-input {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 
 .settings-grid {
