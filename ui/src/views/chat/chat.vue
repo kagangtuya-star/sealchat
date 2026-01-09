@@ -5116,7 +5116,11 @@ const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
   return canReorderAll.value;
 };
 const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
-const autoScrollTypingPreviewEnabled = computed(() => display.settings.autoScrollTypingPreview === true);
+const autoScrollTypingPreviewAlways = computed(() => display.settings.autoScrollTypingPreview === true);
+const shouldObserveTypingPreview = computed(() => (
+  inputPreviewEnabled.value
+  && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
+));
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
@@ -5125,18 +5129,18 @@ const typingPreviewItems = computed(() =>
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
 );
+const selfTypingPreview = computed(() =>
+  typingPreviewItems.value.find((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing') || null,
+);
+const selfTypingPreviewSignature = computed(() => {
+  if (!selfTypingPreview.value) {
+    return '';
+  }
+  return `${selfTypingPreview.value.content}__${selfTypingPreview.value.indicatorOnly ? '1' : '0'}`;
+});
 const hasSelfTypingPreview = computed(() =>
   typingPreviewItems.value.some((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing'),
 );
-const selfTypingPreviewSignature = computed(() => {
-  const selfPreview = typingPreviewItems.value.find(
-    (item) => item.userId === selfPreviewUserId.value && item.mode === 'typing',
-  );
-  if (!selfPreview) {
-    return '';
-  }
-  return `${selfPreview.content}__${selfPreview.indicatorOnly ? '1' : '0'}`;
-});
 
 const selfTypingPreviewKey = computed(() =>
   selfPreviewUserId.value ? `${selfPreviewUserId.value}-typing` : '',
@@ -5162,18 +5166,31 @@ const disposeSelfPreviewObserver = () => {
   }
 };
 
+const shouldAutoScrollTypingPreview = () => {
+  if (!inputPreviewEnabled.value) {
+    return false;
+  }
+  if (autoScrollTypingPreviewAlways.value) {
+    return true;
+  }
+  if (inHistoryMode.value || historyLocked.value) {
+    return false;
+  }
+  return isNearBottom();
+};
+
 const scheduleSelfPreviewAutoScroll = () => {
   if (pendingSelfPreviewScroll) {
+    return;
+  }
+  if (!shouldAutoScrollTypingPreview()) {
     return;
   }
   pendingSelfPreviewScroll = true;
   nextTick(() => {
     requestAnimationFrame(() => {
       pendingSelfPreviewScroll = false;
-      if (!autoScrollTypingPreviewEnabled.value) {
-        return;
-      }
-      if (!inputPreviewEnabled.value) {
+      if (!shouldAutoScrollTypingPreview()) {
         return;
       }
       scrollToBottom();
@@ -5182,7 +5199,7 @@ const scheduleSelfPreviewAutoScroll = () => {
 };
 
 const ensureSelfPreviewObserver = async () => {
-  if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
+  if (!shouldObserveTypingPreview.value) {
     disconnectSelfPreviewObserver();
     return;
   }
@@ -5220,7 +5237,7 @@ const ensureSelfPreviewObserver = async () => {
 };
 
 watch(
-  [typingPreviewItems, selfPreviewUserId, autoScrollTypingPreviewEnabled, inputPreviewEnabled],
+  [typingPreviewItems, selfPreviewUserId, shouldObserveTypingPreview],
   () => {
     void ensureSelfPreviewObserver();
   },
@@ -5233,9 +5250,6 @@ watch(
     if (!hasPreview || prevHasPreview) {
       return;
     }
-    if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
-      return;
-    }
     scheduleSelfPreviewAutoScroll();
   },
   { flush: 'post' },
@@ -5245,9 +5259,6 @@ watch(
   selfTypingPreviewSignature,
   (next, prev) => {
     if (!next || next === prev) {
-      return;
-    }
-    if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
       return;
     }
     scheduleSelfPreviewAutoScroll();

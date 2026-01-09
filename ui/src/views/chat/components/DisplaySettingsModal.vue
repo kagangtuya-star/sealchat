@@ -272,7 +272,7 @@ const handleOpenTutorialHub = () => {
         <header>
           <div>
             <p class="section-title">输入时自动滚动</p>
-            <p class="section-desc">仅对自己的实时预览生效，历史浏览状态下不会自动滚动</p>
+            <p class="section-desc">关闭时仅在非历史模式且已在底部时保持可见，开启后输入时总是滚到底部</p>
           </div>
         </header>
         <n-switch v-model:value="draft.autoScrollTypingPreview">
