@@ -96,6 +96,7 @@ declare module 'vue' {
     NTooltip: typeof import('naive-ui')['NTooltip']
     NTree: typeof import('naive-ui')['NTree']
     NTreeSelect: typeof import('naive-ui')['NTreeSelect']
+    NUpload: typeof import('naive-ui')['NUpload']
     OnboardingResumePrompt: typeof import('./src/components/onboarding/OnboardingResumePrompt.vue')['default']
     OnboardingRoot: typeof import('./src/components/onboarding/OnboardingRoot.vue')['default']
     OnboardingSpotlight: typeof import('./src/components/onboarding/OnboardingSpotlight.vue')['default']

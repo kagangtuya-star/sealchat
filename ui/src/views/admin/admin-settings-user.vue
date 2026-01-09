@@ -2,12 +2,13 @@
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig, UserInfo } from '@/types';
-import { Refresh, Search } from '@vicons/tabler';
+import { Refresh, Search, UserPlus } from '@vicons/tabler';
 import { cloneDeep } from 'lodash-es';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import UserCreateModal from './UserCreateModal.vue';
 
 const emit = defineEmits(['close']);
 
@@ -86,6 +87,13 @@ const handlePageSizeChange = (newPageSize: number) => {
 }
 
 const dialog = useDialog()
+
+// User create modal
+const showUserCreateModal = ref(false);
+
+const handleUserCreated = () => {
+  refresh();
+};
 
 const tryUserResetPassword = (i: UserInfo) => {
   dialog.warning({
@@ -281,6 +289,13 @@ const columns = ref([
           </template>
           刷新
         </n-button>
+
+        <n-button type="primary" @click="showUserCreateModal = true">
+          <template #icon>
+            <n-icon :component="UserPlus" />
+          </template>
+          新增用户
+        </n-button>
       </div>
       
       <div class="user-management__stats">
@@ -323,6 +338,12 @@ const columns = ref([
     <div class="user-management__footer">
       <n-button @click="close">关闭</n-button>
     </div>
+
+    <!-- 新增用户模态框 -->
+    <UserCreateModal
+      v-model:show="showUserCreateModal"
+      @success="handleUserCreated"
+    />
   </div>
 </template>
 

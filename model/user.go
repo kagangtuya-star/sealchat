@@ -310,6 +310,27 @@ func UserBotList() ([]*UserModel, error) {
 	return bots, nil
 }
 
+// UserExistsByUsername 检查用户名是否已存在
+func UserExistsByUsername(username string) bool {
+	var count int64
+	db.Model(&UserModel{}).Where("username = ?", username).Count(&count)
+	return count > 0
+}
+
+// UserExistsByUsernames 批量检查用户名是否已存在，返回已存在的用户名集合
+func UserExistsByUsernames(usernames []string) map[string]bool {
+	if len(usernames) == 0 {
+		return make(map[string]bool)
+	}
+	var existing []string
+	db.Model(&UserModel{}).Where("username IN ?", usernames).Pluck("username", &existing)
+	result := make(map[string]bool)
+	for _, u := range existing {
+		result[u] = true
+	}
+	return result
+}
+
 // UsersDuplicateRemove 删除重复的用户，只保留最早的一个
 func UsersDuplicateRemove() error {
 	var users []UserModel

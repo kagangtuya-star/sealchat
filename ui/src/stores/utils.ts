@@ -238,6 +238,50 @@ export const useUtilsStore = defineStore({
       return resp?.data;
     },
 
+    // 创建用户
+    async adminUserCreate(data: {
+      username: string;
+      nickname: string;
+      password: string;
+      roleIds?: string[];
+      disabled?: boolean;
+    }) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/user-create', data, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    // 检查用户名是否可用
+    async adminCheckUsername(username: string) {
+      const user = useUserStore();
+      const resp = await api.get<{ available: boolean }>('api/v1/admin/user-check-username', {
+        headers: { 'Authorization': user.token },
+        params: { username },
+      });
+      return resp.data;
+    },
+
+    // 获取批量导入模板下载URL
+    getImportTemplateUrl() {
+      return `${api.defaults.baseURL}api/v1/admin/user-import-template`;
+    },
+
+    // 批量导入用户
+    async adminUserBatchCreate(file: File) {
+      const user = useUserStore();
+      const formData = new FormData();
+      formData.append('file', file);
+      const resp = await api.post('api/v1/admin/user-batch-create', formData, {
+        headers: {
+          'Authorization': user.token,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return resp;
+    },
+
     async commandsRefresh() {
       const user = useUserStore();
       const resp = await api.get(`api/v1/commands`, {
