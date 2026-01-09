@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -112,4 +113,90 @@ func ChannelReadInitInBatches(channelId string, userIds []string) error {
 	return db.Clauses(clause.OnConflict{
 		DoNothing: true, // 对应 INSERT OR IGNORE
 	}).CreateInBatches(models, 100).Error
+}
+
+type FirstUnreadFilterOptions struct {
+	IncludeArchived bool
+	ICFilter        string
+	RoleIDs         []string
+	IncludeRoleless bool
+}
+
+// ChannelGetFirstUnreadInfo 获取频道的第一条未读消息信息
+// 返回: messageId, messageTime (毫秒时间戳), error
+func ChannelGetFirstUnreadInfo(channelId, userId string, options *FirstUnreadFilterOptions) (string, int64, error) {
+	var record ChannelLatestReadModel
+	err := db.Where("channel_id = ? AND user_id = ?", channelId, userId).Limit(1).Find(&record).Error
+	if err != nil {
+		return "", 0, err
+	}
+
+	if record.ID == "" {
+		// 没有已读记录，不启用跳转
+		return "", 0, nil
+	}
+
+	// 查找该时间之后的第一条消息（排除自己发的，遵循筛选）
+	lastReadTime := time.UnixMilli(record.MessageTime)
+	var firstUnread MessageModel
+	q := db.Where("channel_id = ? AND created_at > ? AND user_id <> ?", channelId, lastReadTime, userId).
+		Where("is_deleted = ?", false).
+		Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, userId, userId)
+
+	includeArchived := false
+	icFilter := ""
+	includeRoleless := false
+	var roleIDs []string
+	if options != nil {
+		includeArchived = options.IncludeArchived
+		icFilter = strings.ToLower(strings.TrimSpace(options.ICFilter))
+		includeRoleless = options.IncludeRoleless
+		for _, id := range options.RoleIDs {
+			trimmed := strings.TrimSpace(id)
+			if trimmed != "" {
+				roleIDs = append(roleIDs, trimmed)
+			}
+		}
+	}
+
+	if !includeArchived {
+		q = q.Where("is_archived = ?", false)
+	}
+
+	switch icFilter {
+	case "ic":
+		q = q.Where("(ic_mode = ? OR ic_mode = '' OR ic_mode IS NULL)", "ic")
+	case "ooc":
+		q = q.Where("ic_mode = ?", "ooc")
+	}
+
+	if len(roleIDs) > 0 || includeRoleless {
+		roleCond := "(sender_role_id IN ? OR sender_identity_id IN ?)"
+		roleArgs := []any{roleIDs, roleIDs}
+		if includeRoleless {
+			roleCond = "(" + roleCond + " OR ((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL)))"
+		}
+		if len(roleIDs) == 0 && includeRoleless {
+			roleCond = "((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL))"
+			roleArgs = nil
+		}
+		if roleArgs != nil {
+			q = q.Where(roleCond, roleArgs...)
+		} else {
+			q = q.Where(roleCond)
+		}
+	}
+
+	err = q.Order("created_at ASC").
+		Limit(1).
+		Select("id, created_at").
+		Find(&firstUnread).Error
+	if err != nil {
+		return "", 0, err
+	}
+
+	if firstUnread.ID != "" {
+		return firstUnread.ID, firstUnread.CreatedAt.UnixMilli(), nil
+	}
+	return "", 0, nil
 }

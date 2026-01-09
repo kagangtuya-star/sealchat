@@ -118,10 +118,28 @@ interface ChatState {
     rangeAnchorId: string | null;
     rangeModeEnabled: boolean; // 范围选择模式：首条是起点，第二条是终点
   } | null;
+  // 当前频道的第一条未读消息信息
+  firstUnreadInfo: {
+    channelId: string;
+    messageId: string;
+    messageTime: number;
+  } | null;
 }
 
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
+
+const ROLELESS_FILTER_ID = '__roleless__';
+
+const normalizeRoleFilterIds = (roleIds?: string[]) => {
+  const raw = Array.isArray(roleIds) ? roleIds : [];
+  const normalized = raw
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  const includeRoleless = normalized.includes(ROLELESS_FILTER_ID);
+  const filteredRoleIds = normalized.filter((id) => id !== ROLELESS_FILTER_ID);
+  return { roleIds: filteredRoleIds, includeRoleless };
+};
 
 const resolveEmbedPaneId = (): string | null => {
   if (typeof window === 'undefined') return null;
@@ -318,6 +336,7 @@ export const useChatStore = defineStore({
     channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
     multiSelect: null,
+    firstUnreadInfo: null,
   }),
 
   getters: {
@@ -1141,7 +1160,17 @@ export const useChatStore = defineStore({
           return false;
         }
       }
-      const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+      const { roleIds: filterRoleIds, includeRoleless } = normalizeRoleFilterIds(this.filterState.roleIds);
+      const enterPayload: Record<string, any> = {
+        channel_id: id,
+        include_archived: this.filterState.showArchived,
+        ic_filter: this.filterState.icFilter,
+      };
+      if (filterRoleIds.length > 0 || includeRoleless) {
+        enterPayload.role_ids = filterRoleIds;
+        enterPayload.include_roleless = includeRoleless;
+      }
+      const resp = await this.sendAPI('channel.enter', enterPayload);
       // console.log('switch', resp, this.curChannel);
 
       if (!resp.data?.member) {
@@ -1150,6 +1179,20 @@ export const useChatStore = defineStore({
       }
 
       this.curMember = resp.data.member;
+
+      // 保存第一条未读消息信息（在标记已读之前）
+      const firstUnreadMsgId = resp.data.first_unread_message_id;
+      const firstUnreadMsgTime = resp.data.first_unread_msg_time;
+      if (firstUnreadMsgId) {
+        this.firstUnreadInfo = {
+          channelId: id,
+          messageId: firstUnreadMsgId,
+          messageTime: firstUnreadMsgTime || 0,
+        };
+      } else {
+        this.firstUnreadInfo = null;
+      }
+
       await this.loadChannelIdentities(id);
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);

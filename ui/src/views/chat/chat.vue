@@ -7978,6 +7978,29 @@ const showButton = ref(false);
 const historyHintVisible = computed(() => inHistoryMode.value || historyLocked.value);
 const historyHintLabel = computed(() => (isMobileUa ? '历史' : '当前浏览历史消息'));
 
+// 跳转到第一条未读消息相关
+const hasFirstUnread = computed(() => {
+  const info = chat.firstUnreadInfo;
+  return !!(info && info.channelId === chat.curChannel?.id && info.messageId);
+});
+
+const jumpToFirstUnread = async () => {
+  const info = chat.firstUnreadInfo;
+  if (!info || info.channelId !== chat.curChannel?.id || !info.messageId) {
+    return;
+  }
+  await handleSearchJump({
+    messageId: info.messageId,
+    createdAt: info.messageTime || undefined,
+  });
+  // 跳转后清除未读信息，避免重复跳转
+  chat.firstUnreadInfo = null;
+};
+
+const dismissFirstUnread = () => {
+  chat.firstUnreadInfo = null;
+};
+
 const computeAfterCursorFromRows = () => {
   updateWindowAnchorsFromRows();
 };
@@ -9274,6 +9297,22 @@ onBeforeUnmount(() => {
     <!-- flex-grow -->
     <div class="edit-area flex justify-between relative" :class="{ 'edit-area--wide-input': isMobileWideInput }">
       <div class="history-floating space-y-3 flex flex-col items-end">
+        <!-- 跳转到第一条未读消息按钮 -->
+        <n-button
+          v-if="hasFirstUnread"
+          class="jump-to-unread-button history-floating__button"
+          size="small"
+          type="info"
+          @click="jumpToFirstUnread"
+        >
+          跳转到未读
+          <span
+            class="jump-to-unread-close"
+            role="button"
+            aria-label="关闭未读跳转"
+            @click.stop="dismissFirstUnread"
+          >X</span>
+        </n-button>
         <div
           v-if="historyHintVisible"
           class="history-mode-hint"
@@ -11864,6 +11903,47 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .scroll-bottom-button {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+}
+
+/* 跳转到未读按钮样式 */
+.jump-to-unread-button {
+  position: relative;
+  padding-right: 28px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+.jump-to-unread-button:hover {
+  background-color: var(--sc-bg-hover, rgba(156, 163, 175, 0.12)) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+.jump-to-unread-close {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--sc-border-mute);
+  background-color: var(--sc-bg-surface, #ffffff);
+  color: var(--sc-text-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.jump-to-unread-close:hover {
+  background-color: var(--sc-bg-hover, rgba(156, 163, 175, 0.12));
+  color: var(--sc-text-primary, #1f2937);
+  border-color: var(--sc-border-strong);
 }
 
 .message-sentinel {

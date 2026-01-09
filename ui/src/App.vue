@@ -1451,6 +1451,17 @@ nav a:first-of-type {
   background-color: var(--sc-bg-surface) !important;
 }
 
+/* 跳转到未读按钮 - 自定义主题适配 */
+:root[data-custom-theme='true'] .jump-to-unread-button {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .jump-to-unread-button:hover {
+  background-color: var(--sc-bg-surface) !important;
+}
+
 /* ==========================================================================
    DICE SETTINGS PANEL - 骰子设置面板
    ========================================================================== */

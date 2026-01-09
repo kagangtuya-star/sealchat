@@ -234,7 +234,11 @@ func apiChannelMemberCount(ctx *ChatContext, data *struct {
 
 // 进入频道
 func apiChannelEnter(ctx *ChatContext, data *struct {
-	ChannelId string `json:"channel_id"`
+	ChannelId       string   `json:"channel_id"`
+	IncludeArchived bool     `json:"include_archived"`
+	ICFilter        string   `json:"ic_filter"`
+	RoleIDs         []string `json:"role_ids"`
+	IncludeRoleless bool     `json:"include_roleless"`
 }) (any, error) {
 	channelId := data.ChannelId
 	channelWorldID := ""
@@ -325,10 +329,22 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	})
 	ctx.BroadcastChannelPresence(channelId)
 
+	// 获取第一条未读消息信息
+	firstUnreadMsgId, firstUnreadMsgTime, _ := model.ChannelGetFirstUnreadInfo(channelId, ctx.User.ID, &model.FirstUnreadFilterOptions{
+		IncludeArchived: data.IncludeArchived,
+		ICFilter:        data.ICFilter,
+		RoleIDs:         data.RoleIDs,
+		IncludeRoleless: data.IncludeRoleless,
+	})
+
 	rData := &struct {
-		Member *protocol.GuildMember `json:"member"`
+		Member                *protocol.GuildMember `json:"member"`
+		FirstUnreadMessageId  string                `json:"first_unread_message_id,omitempty"`
+		FirstUnreadMsgTime    int64                 `json:"first_unread_msg_time,omitempty"`
 	}{
-		Member: memberPT,
+		Member:                memberPT,
+		FirstUnreadMessageId:  firstUnreadMsgId,
+		FirstUnreadMsgTime:    firstUnreadMsgTime,
 	}
 	return rData, nil
 }
