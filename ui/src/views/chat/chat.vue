@@ -1024,6 +1024,7 @@ const { t } = useI18n();
 
 // const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
+const typingPreviewViewportRef = ref<HTMLElement | null>(null);
 const selectionBar = reactive({
   visible: false,
   text: '',
@@ -5288,7 +5289,75 @@ watch(
   },
   { flush: 'post' },
 );
- 
+
+// 监听整个 typing-preview-viewport 容器的高度变化（用于他人的实时广播）
+let typingViewportResizeObserver: ResizeObserver | null = null;
+let lastTypingViewportHeight = 0;
+
+const shouldAutoScrollRemoteTyping = () => {
+  if (inHistoryMode.value || historyLocked.value) {
+    return false;
+  }
+  return true;
+};
+
+const scheduleRemotePreviewAutoScroll = () => {
+  if (!shouldAutoScrollRemoteTyping()) {
+    return;
+  }
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (!shouldAutoScrollRemoteTyping()) {
+        return;
+      }
+      scrollToBottom();
+    });
+  });
+};
+
+const setupTypingViewportObserver = () => {
+  const el = typingPreviewViewportRef.value;
+  if (!el) {
+    return;
+  }
+  if (typingViewportResizeObserver) {
+    typingViewportResizeObserver.disconnect();
+  }
+  lastTypingViewportHeight = el.getBoundingClientRect().height;
+  typingViewportResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (!entry) {
+      return;
+    }
+    const nextHeight = entry.contentRect.height;
+    if (nextHeight > lastTypingViewportHeight) {
+      scheduleRemotePreviewAutoScroll();
+    }
+    lastTypingViewportHeight = nextHeight;
+  });
+  typingViewportResizeObserver.observe(el);
+};
+
+const disposeTypingViewportObserver = () => {
+  if (typingViewportResizeObserver) {
+    typingViewportResizeObserver.disconnect();
+    typingViewportResizeObserver = null;
+  }
+  lastTypingViewportHeight = 0;
+};
+
+watch(
+  typingPreviewViewportRef,
+  (el) => {
+    if (el) {
+      setupTypingViewportObserver();
+    } else {
+      disposeTypingViewportObserver();
+    }
+  },
+  { flush: 'post' },
+);
+
 const resolveSelfPreviewDisplayName = () => {
   const identity = activeIdentityForPreview.value;
   if (identity?.displayName) {
@@ -5374,17 +5443,10 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
 		}
 	}
   const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
-  const isNewRemotePreview = existingIndex < 0 && !isSelfPreview && item.mode === 'typing';
-  const wasNearBottom = isNewRemotePreview ? isNearBottom() : false;
   if (existingIndex >= 0) {
     typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
   } else {
     typingPreviewList.value.push({ ...item, orderKey });
-  }
-  if (isNewRemotePreview && wasNearBottom && !inHistoryMode.value && !historyLocked.value) {
-    nextTick(() => {
-      scrollToBottom();
-    });
   }
 };
 
@@ -7714,13 +7776,12 @@ chatEvent.on('message-created', (e?: Event) => {
       });
     }
   }
-  const wasNearBottom = isNearBottom();
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
     toBottom();
-  } else if (wasNearBottom && !inHistoryMode.value && !historyLocked.value) {
+  } else if (!inHistoryMode.value && !historyLocked.value) {
     nextTick(() => {
       scrollToBottom();
     });
@@ -8014,6 +8075,7 @@ onBeforeUnmount(() => {
   stopEditingPreviewNow();
   resetTypingPreview();
   disposeSelfPreviewObserver();
+  disposeTypingViewportObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
@@ -9225,7 +9287,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <div class="typing-preview-viewport" v-if="typingPreviewItems.length">
+      <div class="typing-preview-viewport" v-if="typingPreviewItems.length" ref="typingPreviewViewportRef">
         <div
           v-for="preview in typingPreviewItems"
           :key="`${preview.userId}-typing`"
