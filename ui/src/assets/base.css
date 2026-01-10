@@ -14,8 +14,12 @@
   border-bottom-style: dotted;
 }
 
-.keyword-highlight:hover {
+.keyword-highlight:not(.keyword-highlight--underline):hover {
   background-color: rgba(255, 241, 200, 0.8);
+}
+
+.keyword-highlight--underline:hover {
+  background-color: transparent;
 }
 
 html[data-display-palette='night'] .keyword-highlight {
@@ -23,8 +27,16 @@ html[data-display-palette='night'] .keyword-highlight {
   border-bottom-color: rgba(147, 197, 253, 0.85);
 }
 
-html[data-display-palette='night'] .keyword-highlight:hover {
+html[data-display-palette='night'] .keyword-highlight:not(.keyword-highlight--underline):hover {
   background-color: rgba(86, 102, 152, 0.78);
+}
+
+html[data-display-palette='night'] .keyword-highlight--underline {
+  background-color: transparent;
+}
+
+html[data-display-palette='night'] .keyword-highlight--underline:hover {
+  background-color: transparent;
 }
 
 .keyword-tooltip {

@@ -36,7 +36,7 @@ export interface CompiledKeywordSpan {
   source: string
   regex: RegExp
   matchMode: 'plain' | 'regex'
-  display: 'standard' | 'minimal'
+  display: 'standard' | 'minimal' | 'inherit'
   description: string
 }
 
@@ -161,6 +161,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     page.items
       .filter((item) => item && item.isEnabled)
       .forEach((item) => {
+        const display = item.display || 'inherit'
         const baseSources = [item.keyword, ...(item.aliases || [])]
         baseSources
           .map((text) => text?.trim())
@@ -178,7 +179,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
                 source: text,
                 regex: pattern,
                 matchMode: item.matchMode,
-                display: item.display,
+                display,
                 description: item.description,
               })
             } catch (error) {

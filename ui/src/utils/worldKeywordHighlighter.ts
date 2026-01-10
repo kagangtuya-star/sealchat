@@ -154,7 +154,10 @@ function wrapRanges(
     }
     const span = document.createElement('span')
     span.className = HIGHLIGHT_CLASS
-    if (options.underlineOnly || range.keyword.display === 'minimal') {
+    const shouldUnderline =
+      range.keyword.display === 'minimal' ||
+      (options.underlineOnly && range.keyword.display === 'inherit')
+    if (shouldUnderline) {
       span.classList.add(UNDERLINE_ONLY_CLASS)
     }
     span.dataset.keywordId = range.keyword.id

@@ -749,7 +749,10 @@ function applyHighlightsToText(text: string, compiled: CompiledKeywordSpan[], un
       result += escapeHtml(text.slice(lastIndex, range.start))
     }
     const classes = ['keyword-highlight']
-    if (underlineOnly || range.keyword.display === 'minimal') {
+    const shouldUnderline =
+      range.keyword.display === 'minimal' ||
+      (underlineOnly && range.keyword.display === 'inherit')
+    if (shouldUnderline) {
       classes.push('keyword-highlight--underline')
     }
     const matchedText = text.slice(range.start, range.end)

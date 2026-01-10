@@ -13728,7 +13728,7 @@ onBeforeUnmount(() => {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-:global(.keyword-highlight:hover) {
+:global(.keyword-highlight:not(.keyword-highlight--underline):hover) {
   background: rgba(255, 220, 120, 0.95);
 }
 
@@ -13738,7 +13738,7 @@ onBeforeUnmount(() => {
 }
 
 :global(.keyword-highlight--underline:hover) {
-  background: rgba(255, 230, 150, 0.35);
+  background: transparent;
 }
 
 /* Night mode highlight */
@@ -13749,8 +13749,8 @@ onBeforeUnmount(() => {
   color: #fef3c7;
 }
 
-:global([data-display-palette='night'] .keyword-highlight:hover),
-:global(:root[data-display-palette='night'] .keyword-highlight:hover) {
+:global([data-display-palette='night'] .keyword-highlight:not(.keyword-highlight--underline):hover),
+:global(:root[data-display-palette='night'] .keyword-highlight:not(.keyword-highlight--underline):hover) {
   background: rgba(180, 140, 60, 0.5);
 }
 
@@ -13762,6 +13762,6 @@ onBeforeUnmount(() => {
 
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
-  background: rgba(180, 140, 60, 0.25);
+  background: transparent;
 }
 </style>

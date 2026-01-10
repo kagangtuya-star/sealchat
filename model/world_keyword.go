@@ -18,6 +18,7 @@ type WorldKeywordDisplayStyle string
 const (
 	WorldKeywordDisplayStandard WorldKeywordDisplayStyle = "standard"
 	WorldKeywordDisplayMinimal  WorldKeywordDisplayStyle = "minimal"
+	WorldKeywordDisplayInherit  WorldKeywordDisplayStyle = "inherit"
 )
 
 // WorldKeywordModel 存储世界术语配置。
@@ -29,7 +30,7 @@ type WorldKeywordModel struct {
 	Aliases     JSONList[string]         `json:"aliases" gorm:"type:json"`
 	MatchMode   WorldKeywordMatchMode    `json:"matchMode" gorm:"size:16;default:'plain'"`
 	Description string                   `json:"description" gorm:"type:text"`
-	Display     WorldKeywordDisplayStyle `json:"display" gorm:"size:24;default:'standard'"`
+	Display     WorldKeywordDisplayStyle `json:"display" gorm:"size:24;default:'inherit'"`
 	IsEnabled   bool                     `json:"isEnabled" gorm:"default:true"`
 	CreatedBy   string                   `json:"createdBy" gorm:"size:100"`
 	UpdatedBy   string                   `json:"updatedBy" gorm:"size:100"`
@@ -45,6 +46,6 @@ func (m *WorldKeywordModel) Normalize() {
 		m.MatchMode = WorldKeywordMatchPlain
 	}
 	if m.Display == "" {
-		m.Display = WorldKeywordDisplayStandard
+		m.Display = WorldKeywordDisplayInherit
 	}
 }

@@ -98,7 +98,7 @@ const formModel = reactive({
   aliases: '',
   matchMode: 'plain' as 'plain' | 'regex',
   description: '',
-  display: 'minimal' as 'standard' | 'minimal',
+  display: 'inherit' as 'standard' | 'minimal' | 'inherit',
   isEnabled: true,
 })
 
@@ -133,12 +133,11 @@ const isRegexMatch = computed({
   },
 })
 
-const isMinimalDisplay = computed({
-  get: () => formModel.display === 'minimal',
-  set: (value: boolean) => {
-    formModel.display = value ? 'minimal' : 'standard'
-  },
-})
+const displayOptions = [
+  { label: '跟随全局', value: 'inherit' },
+  { label: '标准', value: 'standard' },
+  { label: '极简下划线', value: 'minimal' },
+]
 
 const keywordMaxLength = computed(() => utils.config?.keywordMaxLength || DEFAULT_KEYWORD_MAX_LENGTH)
 
@@ -173,7 +172,7 @@ const normalizePayloadEntry = (entry: any): WorldKeywordPayload | null => {
   if (entry.matchMode === 'regex' || entry.matchMode === 'plain') {
     payload.matchMode = entry.matchMode
   }
-  if (entry.display === 'minimal' || entry.display === 'standard') {
+  if (entry.display === 'minimal' || entry.display === 'standard' || entry.display === 'inherit') {
     payload.display = entry.display
   }
   if (typeof entry.isEnabled === 'boolean') {
@@ -250,7 +249,7 @@ function resetForm() {
   formModel.aliases = ''
   formModel.matchMode = 'plain'
   formModel.description = ''
-  formModel.display = 'standard'
+  formModel.display = 'inherit'
   formModel.isEnabled = true
 }
 
@@ -278,7 +277,7 @@ function openEdit(item: any) {
   formModel.aliases = (item.aliases || []).map((alias: string) => clampText(alias)).join(', ')
   formModel.matchMode = item.matchMode
   formModel.description = clampDescription(item.description || '')
-  formModel.display = item.display
+  formModel.display = item.display || 'inherit'
   formModel.isEnabled = item.isEnabled
   glossary.openEditor(worldId, item)
 }
@@ -705,7 +704,7 @@ watch(
         formModel.aliases = (keyword.aliases || []).join(', ')
         formModel.matchMode = keyword.matchMode
         formModel.description = keyword.description
-        formModel.display = keyword.display
+        formModel.display = keyword.display || 'inherit'
         formModel.isEnabled = keyword.isEnabled
     } else {
       resetForm()
@@ -928,7 +927,15 @@ onUnmounted(() => {
                     <span v-else class="text-gray-400">-</span>
                   </td>
                   <td>{{ item.matchMode === 'regex' ? '正则' : '文本' }}</td>
-                  <td>{{ item.display === 'minimal' ? '极简下划线' : '标准' }}</td>
+                  <td>
+                    {{
+                      item.display === 'minimal'
+                        ? '极简下划线'
+                        : item.display === 'standard'
+                          ? '标准'
+                          : '跟随全局'
+                    }}
+                  </td>
                   <td>
                     <n-tag size="small" :type="item.isEnabled ? 'success' : 'default'">
                       {{ item.isEnabled ? '启用' : '关闭' }}
@@ -1031,11 +1038,13 @@ onUnmounted(() => {
           </n-switch>
         </div>
         <div class="keyword-toggle">
-          <span class="keyword-toggle__label">极简样式</span>
-          <n-switch v-model:value="isMinimalDisplay">
-            <template #checked>极简</template>
-            <template #unchecked>标准</template>
-          </n-switch>
+          <span class="keyword-toggle__label">显示样式</span>
+          <n-select
+            v-model:value="formModel.display"
+            :options="displayOptions"
+            size="small"
+            class="keyword-display-select"
+          />
         </div>
         <div class="keyword-toggle">
           <span class="keyword-toggle__label">启用</span>
@@ -1288,6 +1297,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   min-width: 140px;
+}
+
+.keyword-display-select {
+  min-width: 160px;
 }
 
 .keyword-toggle__label {

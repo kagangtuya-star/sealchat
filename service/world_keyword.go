@@ -96,8 +96,12 @@ func normalizeWorldKeywordInput(input *WorldKeywordInput) error {
 	switch strings.ToLower(strings.TrimSpace(input.Display)) {
 	case string(model.WorldKeywordDisplayMinimal):
 		input.Display = string(model.WorldKeywordDisplayMinimal)
+	case string(model.WorldKeywordDisplayStandard):
+		input.Display = string(model.WorldKeywordDisplayStandard)
+	case string(model.WorldKeywordDisplayInherit):
+		input.Display = string(model.WorldKeywordDisplayInherit)
 	default:
-		input.Display = string(model.WorldKeywordDisplayMinimal)
+		input.Display = string(model.WorldKeywordDisplayInherit)
 	}
 	input.Category = strings.TrimSpace(input.Category)
 	return nil

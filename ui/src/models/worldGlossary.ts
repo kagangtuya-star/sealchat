@@ -8,7 +8,7 @@ export interface WorldKeywordItem {
   aliases: string[]
   matchMode: 'plain' | 'regex'
   description: string
-  display: 'standard' | 'minimal'
+  display: 'standard' | 'minimal' | 'inherit'
   isEnabled: boolean
   createdAt: string
   updatedAt: string
@@ -29,7 +29,7 @@ export interface WorldKeywordPayload {
   aliases?: string[]
   matchMode?: 'plain' | 'regex'
   description?: string
-  display?: 'standard' | 'minimal'
+  display?: 'standard' | 'minimal' | 'inherit'
   isEnabled?: boolean
 }
 

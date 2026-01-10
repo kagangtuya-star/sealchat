@@ -998,7 +998,7 @@ nav a:first-of-type {
   --keyword-bg-hover: var(--custom-keyword-bg-hover, rgba(180, 140, 60, 0.5));
   --keyword-border-color: var(--custom-keyword-border, rgba(220, 180, 80, 0.7));
   --keyword-text-color: var(--custom-keyword-text, var(--sc-text-primary));
-  --keyword-underline-bg-hover: var(--custom-keyword-underline-bg-hover, rgba(180, 140, 60, 0.25));
+  --keyword-underline-bg-hover: var(--custom-keyword-underline-bg-hover, transparent);
 }
 
 /* Override keyword highlight styles in custom theme mode */
