@@ -5374,10 +5374,17 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
 		}
 	}
   const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
+  const isNewRemotePreview = existingIndex < 0 && !isSelfPreview && item.mode === 'typing';
+  const wasNearBottom = isNewRemotePreview ? isNearBottom() : false;
   if (existingIndex >= 0) {
     typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
   } else {
     typingPreviewList.value.push({ ...item, orderKey });
+  }
+  if (isNewRemotePreview && wasNearBottom && !inHistoryMode.value && !historyLocked.value) {
+    nextTick(() => {
+      scrollToBottom();
+    });
   }
 };
 
@@ -7707,11 +7714,16 @@ chatEvent.on('message-created', (e?: Event) => {
       });
     }
   }
+  const wasNearBottom = isNearBottom();
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
     toBottom();
+  } else if (wasNearBottom && !inHistoryMode.value && !historyLocked.value) {
+    nextTick(() => {
+      scrollToBottom();
+    });
   }
 });
 
