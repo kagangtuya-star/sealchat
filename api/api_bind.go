@@ -2,11 +2,13 @@ package api
 
 import (
 	_ "embed"
+	"html"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -98,6 +100,44 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 		host = "127.0.0.1"
 	}
 	return utils.FormatHostPort(host, newPort), true
+}
+
+func buildIndexPaths(webURL string) []string {
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return []string{"/", "/index.html"}
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" {
+		webRoot = "/"
+	}
+	paths := []string{webRoot}
+	if webRoot != "/" {
+		paths = append(paths, webRoot+"/")
+	}
+	paths = append(paths, path.Join(webRoot, "index.html"))
+	return paths
+}
+
+func applyPageTitleToIndex(htmlSource string, title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return htmlSource
+	}
+	start := strings.Index(htmlSource, "<title>")
+	if start == -1 {
+		return htmlSource
+	}
+	end := strings.Index(htmlSource[start:], "</title>")
+	if end == -1 {
+		return htmlSource
+	}
+	end += start
+	escapedTitle := html.EscapeString(trimmed)
+	return htmlSource[:start+len("<title>")] + escapedTitle + htmlSource[end:]
 }
 
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
@@ -396,6 +436,21 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return nil
 	})
 
+
+	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
+	if indexErr != nil {
+		log.Printf("读取内置 index.html 失败: %v", indexErr)
+	} else {
+		renderIndex := func(c *fiber.Ctx) error {
+			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
+			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+			return c.Status(http.StatusOK).SendString(page)
+		}
+		for _, routePath := range buildIndexPaths(config.WebUrl) {
+			pathCopy := routePath
+			app.Get(pathCopy, renderIndex)
+		}
+	}
 
 	// Default /test
 	app.Use(config.WebUrl, filesystem.New(filesystem.Config{

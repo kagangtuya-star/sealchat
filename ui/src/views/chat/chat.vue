@@ -46,7 +46,7 @@ import SoundMessageCreated from '@/assets/message.mp3';
 import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
-import { useUtilsStore } from '@/stores/utils';
+import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
@@ -677,7 +677,7 @@ const defaultPageTitle = computed(() => {
   if (title && title.length > 0) {
     return title;
   }
-  return '海豹尬聊 SealChat';
+  return DEFAULT_PAGE_TITLE;
 });
 const syncPageTitle = (channelName?: string | null) => {
   if (typeof document === 'undefined') return;
