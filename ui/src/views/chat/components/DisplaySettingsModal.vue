@@ -37,6 +37,14 @@ const syncFavoriteBar = (source?: DisplaySettings) => {
   draft.favoriteChannelBarEnabled = source.favoriteChannelBarEnabled
 }
 
+// Sync avatar settings when AvatarStylePanel closes (it saves directly to store)
+watch(avatarStylePanelVisible, (visible) => {
+  if (!visible) {
+    draft.avatarSize = display.settings.avatarSize
+    draft.avatarBorderRadius = display.settings.avatarBorderRadius
+  }
+})
+
 watch(
   () => props.settings,
   (value) => {
@@ -70,6 +78,8 @@ watch(
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
   draft.disableContextMenu = value.disableContextMenu
+  draft.avatarSize = value.avatarSize
+  draft.avatarBorderRadius = value.avatarBorderRadius
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },
