@@ -50,6 +50,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
+import { copyTextWithFallback } from '@/utils/clipboard';
 import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
@@ -1113,16 +1114,10 @@ const handlePointerDown = (event: PointerEvent) => {
 
 const handleSelectionCopy = async () => {
   if (!selectionBar.text) return
-  if (typeof navigator === 'undefined' || !navigator.clipboard) {
-    message.warning('当前环境不支持复制')
-    hideSelectionBar()
-    return
-  }
-  try {
-    await navigator.clipboard.writeText(selectionBar.text)
+  const copied = await copyTextWithFallback(selectionBar.text)
+  if (copied) {
     message.success('已复制选中文本')
-  } catch (error) {
-    console.warn('复制失败', error)
+  } else {
     message.error('复制失败')
   }
   hideSelectionBar()
@@ -8739,11 +8734,11 @@ const handleMultiSelectCopy = async () => {
     const content = typeof msg.content === 'string' ? msg.content.replace(/<[^>]*>/g, '') : '';
     return `[${time}] ${name}: ${content}`;
   }).join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
+  const copied = await copyTextWithFallback(text);
+  if (copied) {
     message.success(`已复制 ${messages.length} 条消息`);
     chat.exitMultiSelectMode();
-  } catch (e) {
+  } else {
     message.error('复制失败');
   }
 };
