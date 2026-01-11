@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -43,6 +44,8 @@ var (
 	ErrAudioTooLarge        = errors.New("音频文件超过允许大小")
 	ErrAudioUnsupportedMime = errors.New("不支持的音频格式")
 )
+
+var ffmpegDurationPattern = regexp.MustCompile(`Duration:\s*([0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?)`)
 
 type localAudioStorage struct {
 	rootDir string
@@ -90,10 +93,63 @@ func InitAudioService(cfg utils.AudioConfig, store *storage.Manager) error {
 			return
 		}
 
-		audioSvc.ffmpegPath = detectExecutable([]string{cfg.FFmpegPath, filepath.Join(filepath.Dir(os.Args[0]), "ffmpeg"), "ffmpeg"})
-		audioSvc.ffprobePath = detectExecutable([]string{cfg.FFmpegPath, filepath.Join(filepath.Dir(os.Args[0]), "ffprobe"), "ffprobe"})
+		audioSvc.ffmpegPath, audioSvc.ffprobePath = resolveFFmpegPaths(&cfg)
 	})
 	return audioSvcErr
+}
+
+func executableDir() string {
+	if exe, err := os.Executable(); err == nil {
+		exe = strings.TrimSpace(exe)
+		if exe != "" {
+			return filepath.Dir(exe)
+		}
+	}
+	if len(os.Args) > 0 {
+		arg0 := strings.TrimSpace(os.Args[0])
+		if arg0 != "" {
+			return filepath.Dir(arg0)
+		}
+	}
+	return ""
+}
+
+func resolveFFmpegPaths(cfg *utils.AudioConfig) (ffmpegPath, ffprobePath string) {
+	configSpecified := strings.TrimSpace(cfg.FFmpegPath) != ""
+
+	if configSpecified {
+		ffmpegPath = detectExecutableWithVerify([]string{cfg.FFmpegPath}, verifyFFmpegBinary)
+		if ffmpegPath != "" {
+			ffprobePath = detectExecutableWithVerify(ffprobeCandidatesFromFFmpegPath(ffmpegPath), verifyFFmpegBinary)
+		}
+	}
+
+	if ffmpegPath == "" {
+		ffmpegPath = discoverFFmpegInExeDir(ffmpegCandidateNames())
+	}
+	if ffprobePath == "" {
+		ffprobePath = discoverFFmpegInExeDir(ffprobeCandidateNames())
+	}
+
+	if ffmpegPath != "" && !configSpecified {
+		cfg.FFmpegPath = ffmpegPath
+		go func() {
+			appCfg := utils.GetConfig()
+			if appCfg != nil {
+				appCfg.Audio.FFmpegPath = ffmpegPath
+				utils.WriteConfig(appCfg)
+				log.Printf("[音频] 已自动发现 FFmpeg 并写入配置: %s", ffmpegPath)
+			}
+		}()
+	}
+
+	if ffmpegPath == "" {
+		ffmpegPath = detectExecutableWithVerify(ffmpegCandidateNames(), verifyFFmpegBinary)
+	}
+	if ffprobePath == "" {
+		ffprobePath = detectExecutableWithVerify(ffprobeCandidateNames(), verifyFFmpegBinary)
+	}
+	return
 }
 
 func buildMimeMap(list []string) map[string]struct{} {
@@ -113,21 +169,74 @@ func buildMimeMap(list []string) map[string]struct{} {
 }
 
 func detectExecutable(candidates []string) string {
+	return detectExecutableWithVerify(candidates, nil)
+}
+
+func detectExecutableWithVerify(candidates []string, verify func(string) bool) string {
 	for _, candidate := range candidates {
 		path := strings.TrimSpace(candidate)
 		if path == "" {
 			continue
 		}
+		var resolved string
 		if filepath.Base(path) == path {
-			if resolved, err := exec.LookPath(path); err == nil {
-				if fileExists(resolved) {
-					return resolved
-				}
+			if r, err := exec.LookPath(path); err == nil && fileExists(r) {
+				resolved = r
 			}
+		} else if fileExists(path) {
+			resolved = path
+		}
+		if resolved == "" {
 			continue
 		}
-		if fileExists(path) {
-			return path
+		if verify != nil && !verify(resolved) {
+			continue
+		}
+		return resolved
+	}
+	return ""
+}
+
+func verifyFFmpegBinary(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "-version")
+	return cmd.Run() == nil
+}
+
+func ffmpegCandidateNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"ffmpeg.exe"}
+	}
+	return []string{"ffmpeg"}
+}
+
+func ffprobeCandidateNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"ffprobe.exe"}
+	}
+	return []string{"ffprobe"}
+}
+
+func ffprobeCandidatesFromFFmpegPath(ffmpegPath string) []string {
+	dir := filepath.Dir(ffmpegPath)
+	names := ffprobeCandidateNames()
+	candidates := make([]string, 0, len(names))
+	for _, name := range names {
+		candidates = append(candidates, filepath.Join(dir, name))
+	}
+	return candidates
+}
+
+func discoverFFmpegInExeDir(names []string) string {
+	exeDir := executableDir()
+	if exeDir == "" {
+		return ""
+	}
+	for _, name := range names {
+		candidate := filepath.Join(exeDir, name)
+		if fileExists(candidate) && verifyFFmpegBinary(candidate) {
+			return candidate
 		}
 	}
 	return ""
@@ -437,9 +546,29 @@ func (svc *audioService) probeDuration(objectKey string) (float64, error) {
 }
 
 func (svc *audioService) probeDurationFromFile(path string) (float64, error) {
+	var ffprobeErr error
 	if svc.ffprobePath == "" {
-		return 0, errors.New("ffprobe not available")
+		ffprobeErr = errors.New("ffprobe not available")
+	} else {
+		duration, err := svc.probeDurationWithFFprobe(path)
+		if err == nil {
+			return duration, nil
+		}
+		ffprobeErr = err
 	}
+
+	if svc.ffmpegPath == "" {
+		return 0, ffprobeErr
+	}
+
+	duration, err := svc.probeDurationWithFFmpeg(path)
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w; ffmpeg fallback failed: %v", ffprobeErr, err)
+	}
+	return duration, nil
+}
+
+func (svc *audioService) probeDurationWithFFprobe(path string) (float64, error) {
 	args := []string{"-v", "error", "-show_entries", "format=duration", "-of", "default=nokey=1:noprint_wrappers=1", path}
 	cmd := exec.CommandContext(context.Background(), svc.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -451,6 +580,46 @@ func (svc *audioService) probeDurationFromFile(path string) (float64, error) {
 		return 0, errors.New("empty duration")
 	}
 	return strconv.ParseFloat(value, 64)
+}
+
+func (svc *audioService) probeDurationWithFFmpeg(path string) (float64, error) {
+	cmd := exec.CommandContext(context.Background(), svc.ffmpegPath, "-hide_banner", "-i", path)
+	output, err := cmd.CombinedOutput()
+	if duration, ok := parseFFmpegDuration(string(output)); ok {
+		return duration, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return 0, errors.New("duration not found in ffmpeg output")
+}
+
+func parseFFmpegDuration(output string) (float64, bool) {
+	match := ffmpegDurationPattern.FindStringSubmatch(output)
+	if len(match) < 2 {
+		return 0, false
+	}
+	return parseTimestampToSeconds(match[1])
+}
+
+func parseTimestampToSeconds(value string) (float64, bool) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	hours, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	minutes, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, false
+	}
+	seconds, err := strconv.ParseFloat(parts[2], 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64(hours*3600+minutes*60) + seconds, true
 }
 
 func chooseName(name, fallback string) string {
