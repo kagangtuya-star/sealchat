@@ -277,6 +277,66 @@ func ChannelInfoGet(c *fiber.Ctx) error {
 	})
 }
 
+type channelCopyRequest struct {
+	Name     string                     `json:"name"`
+	WorldID  string                     `json:"worldId"`
+	ParentID string                     `json:"parentId"`
+	Options  service.ChannelCopyOptions `json:"options"`
+}
+
+func ChannelCopy(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道ID不能为空",
+		})
+	}
+
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	if !pm.CanWithChannelRole(user.ID, channelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelManageRoleRoot) &&
+		!pm.CanWithSystemRole(user.ID, pm.PermModAdmin) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "没有复制频道的权限",
+		})
+	}
+
+	var req channelCopyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+
+	if req.WorldID != "" && !service.IsWorldAdmin(req.WorldID, user.ID) &&
+		!pm.CanWithSystemRole(user.ID, pm.PermModAdmin) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "没有目标世界的管理权限",
+		})
+	}
+
+	result, err := service.ChannelClone(channelID, user, service.ChannelCopyParams{
+		Name:     req.Name,
+		WorldID:  req.WorldID,
+		ParentID: req.ParentID,
+		Options:  req.Options,
+	})
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"channelId": result.ChannelID,
+		"summary":   result.Summary,
+	})
+}
 
 func ChannelDissolve(c *fiber.Ctx) error {
 	channelID := strings.TrimSpace(c.Params("channelId"))

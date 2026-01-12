@@ -17,6 +17,7 @@ import type { PermTreeNode } from '@/types-perm';
 import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
+import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 
 interface ChatState {
   subject: WebSocketSubject<any> | null;
@@ -124,6 +125,34 @@ interface ChatState {
     messageId: string;
     messageTime: number;
   } | null;
+}
+
+interface ChannelCopyOptions {
+  copyRoles: boolean;
+  copyMembers: boolean;
+  copyIdentities: boolean;
+  copyStickyNotes: boolean;
+  copyGallery: boolean;
+  copyIForms: boolean;
+  copyDiceMacros: boolean;
+  copyAudioScenes: boolean;
+  copyAudioState: boolean;
+  copyWebhooks: boolean;
+}
+
+interface ChannelCopyPayload {
+  name?: string;
+  worldId?: string;
+  parentId?: string;
+  options: ChannelCopyOptions;
+}
+
+interface ChannelCopyResponse {
+  channelId: string;
+  summary?: {
+    copied?: string[];
+    skipped?: string[];
+  };
 }
 
 const apiMap = new Map<string, any>();
@@ -1071,6 +1100,14 @@ export const useChatStore = defineStore({
       }
       await this.channelList(targetWorldId, true);
       return resp;
+    },
+
+    async channelCopy(channelId: string, payload: ChannelCopyPayload) {
+      if (!channelId) {
+        throw new Error('缺少频道ID');
+      }
+      const resp = await api.post(`api/v1/channels/${channelId}/copy`, payload);
+      return resp.data as ChannelCopyResponse;
     },
 
     async channelPrivateCreate(userId: string) {
@@ -3095,6 +3132,50 @@ export const useChatStore = defineStore({
         } catch (err) {
           console.warn('Failed to save IC/OOC role config to localStorage', err);
         }
+      }
+    },
+
+    copyLocalChannelSettings(sourceChannelId: string, targetChannelId: string, userId?: string) {
+      if (typeof window === 'undefined') return;
+      if (!sourceChannelId || !targetChannelId || sourceChannelId === targetChannelId) return;
+
+      const tryCopy = (fromKey: string, toKey: string) => {
+        try {
+          const value = localStorage.getItem(fromKey);
+          if (value !== null) {
+            localStorage.setItem(toKey, value);
+          }
+        } catch (err) {
+          console.warn('Failed to copy localStorage key', fromKey, err);
+        }
+      };
+
+      tryCopy(`channelIdentity:${sourceChannelId}`, `channelIdentity:${targetChannelId}`);
+      tryCopy(`channelIcOocRole:${sourceChannelId}`, `channelIcOocRole:${targetChannelId}`);
+      tryCopy(getBgStorageKey(sourceChannelId), getBgStorageKey(targetChannelId));
+      tryCopy(getBgCategoriesKey(sourceChannelId), getBgCategoriesKey(targetChannelId));
+
+      const copyHistoryEntry = (storageKey: string) => {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return;
+          const store = JSON.parse(raw) as Record<string, unknown>;
+          if (!store || typeof store !== 'object') return;
+          const sourceKey = String(sourceChannelId);
+          if (!(sourceKey in store)) return;
+          store[String(targetChannelId)] = store[sourceKey];
+          localStorage.setItem(storageKey, JSON.stringify(store));
+        } catch (err) {
+          console.warn('Failed to copy history storage', storageKey, err);
+        }
+      };
+
+      copyHistoryEntry('sealchat_input_history_v1');
+      copyHistoryEntry('sealchat_input_history_autorestore_v1');
+
+      if (userId) {
+        tryCopy(`sealchat_sticky_notes:${userId}:${sourceChannelId}`, `sealchat_sticky_notes:${userId}:${targetChannelId}`);
+        tryCopy(`sticky-note-ui-visible:${userId}:${sourceChannelId}`, `sticky-note-ui-visible:${userId}:${targetChannelId}`);
       }
     },
 
