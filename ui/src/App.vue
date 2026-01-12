@@ -1151,6 +1151,64 @@ nav a:first-of-type {
   background-color: rgba(0, 0, 0, 0.08) !important;
 }
 
+/* Context menus (vue3-context-menu) */
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night,
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day {
+  --mx-menu-backgroud: var(--sc-bg-elevated);
+  --mx-menu-divider: var(--sc-border-mute);
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item {
+  color: inherit !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item:hover {
+  background: var(--sc-bg-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item:hover {
+  background: var(--sc-bg-hover, rgba(15, 23, 42, 0.06)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator,
+:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator::after {
+  background-color: var(--sc-border-mute, rgba(148, 163, 184, 0.35)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item-sperator::after {
+  background-color: transparent !important;
+}
+
 /* Auto-complete dropdown */
 :root[data-custom-theme='true'] .n-auto-complete-menu {
   background-color: var(--sc-bg-elevated) !important;
