@@ -2040,19 +2040,6 @@ const ensureIdentitySyncOptions = async () => {
   }
 };
 
-const normalizeIdentityName = (value: string) => value.trim();
-
-const buildIdentityNameMap = (list: ChannelIdentity[]) => {
-  const map: Record<string, ChannelIdentity> = {};
-  list.forEach((identity) => {
-    const key = normalizeIdentityName(identity.displayName || '');
-    if (key && !map[key]) {
-      map[key] = identity;
-    }
-  });
-  return map;
-};
-
 const identitySyncPromptPending = ref(false);
 const identitySyncDismissedForSession = ref(false);
 
@@ -2431,8 +2418,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
   }
   if (mode === 'overwrite') {
     const confirmed = await dialogAskConfirm(dialog, {
-      title: '确认覆盖当前频道角色？',
-      content: '将以所选频道角色为准更新同名角色',
+      title: '确认覆盖场内/场外映射？',
+      content: '将以导入方式新建角色，并用新角色覆盖场内/场外映射配置',
     });
     if (!confirmed) return;
   }
@@ -2440,66 +2427,86 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
   identitySyncing.value = true;
   try {
     const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true);
-    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
     const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
-    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
 
     if (!sourceList.length) {
       message.warning('所选频道暂无可同步的角色');
       return;
     }
 
-    const sourceIdMap: Record<string, ChannelIdentity> = {};
-    sourceList.forEach((identity) => {
-      sourceIdMap[identity.id] = identity;
-    });
+    await chat.loadChannelIdentities(targetChannelId, true);
 
-    const targetNameMap = buildIdentityNameMap(targetList);
+    const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
+    const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
+    const sourceMembership = chat.channelIdentityMembership[sourceChannelId] || {};
+    const folderIdMap = new Map<string, string>();
+
+    if (sourceFolders.length > 0) {
+      const sortedFolders = sourceFolders
+        .slice()
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      for (const folder of sortedFolders) {
+        if (!folder?.name) continue;
+        try {
+          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder);
+          if (folder.id) {
+            folderIdMap.set(folder.id, created.id);
+          }
+          if (folder.id && sourceFavorites.has(folder.id)) {
+            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true);
+          }
+        } catch (error) {
+          console.warn('同步文件夹失败', error);
+        }
+      }
+    }
+
     let createdCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
+    let failedCount = 0;
     let emptyNameCount = 0;
+    const identityIdMap = new Map<string, string>();
 
     for (const identity of sourceList) {
-      const nameKey = normalizeIdentityName(identity.displayName || '');
-      if (!nameKey) {
+      const displayName = (identity.displayName || '').trim();
+      if (!displayName) {
         emptyNameCount += 1;
         continue;
       }
-      const payload = {
-        channelId: targetChannelId,
-        displayName: identity.displayName || '',
-        color: identity.color || '',
-        avatarAttachmentId: identity.avatarAttachmentId || '',
-        isDefault: !!identity.isDefault,
-      };
-      const targetIdentity = targetNameMap[nameKey];
-      try {
-        if (targetIdentity) {
-          if (mode === 'overwrite') {
-            const updated = await chat.channelIdentityUpdate(targetIdentity.id, payload);
-            targetNameMap[nameKey] = updated;
-            updatedCount += 1;
-          } else {
-            skippedCount += 1;
+      const avatarPayload = identity.avatarAttachmentId
+        ? {
+            attachmentId: normalizeAttachmentId(identity.avatarAttachmentId),
+            hash: '',
+            size: 0,
+            data: '',
           }
-        } else {
-          const created = await chat.channelIdentityCreate(payload);
-          targetNameMap[nameKey] = created;
-          createdCount += 1;
-        }
+        : null;
+      const folderIds = identity.folderIds?.length
+        ? identity.folderIds
+        : (sourceMembership[identity.id] || []);
+      const mappedFolderIds = folderIds
+        .map(id => folderIdMap.get(id) || '')
+        .filter((id): id is string => !!id);
+      try {
+        const avatarId = await ensureImportAttachment(avatarPayload);
+        const created = await chat.channelIdentityCreate({
+          channelId: targetChannelId,
+          displayName,
+          color: identity.color || '',
+          avatarAttachmentId: avatarId,
+          isDefault: !!identity.isDefault,
+          folderIds: mappedFolderIds,
+        });
+        identityIdMap.set(identity.id, created.id);
+        createdCount += 1;
       } catch (error) {
+        failedCount += 1;
         console.warn('同步单个角色失败', error);
       }
     }
 
     const resolveMappedIdentityId = (sourceId?: string | null) => {
       if (!sourceId) return null;
-      const sourceIdentity = sourceIdMap[sourceId];
-      if (!sourceIdentity) return null;
-      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
-      if (!nameKey) return null;
-      return targetNameMap[nameKey]?.id || null;
+      return identityIdMap.get(sourceId) || null;
     };
 
     const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
@@ -2532,15 +2539,14 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     await chat.loadChannelIdentities(targetChannelId, true);
     identitySyncDialogVisible.value = false;
 
-    const syncedCount = createdCount + updatedCount;
+    const syncedCount = createdCount;
     if (syncedCount === 0 && !mappingChanged) {
       message.warning('没有可同步的角色或映射');
       return;
     }
     const details: string[] = [];
     if (createdCount) details.push(`新增 ${createdCount}`);
-    if (updatedCount) details.push(`更新 ${updatedCount}`);
-    if (skippedCount) details.push(`跳过 ${skippedCount}`);
+    if (failedCount) details.push(`失败 ${failedCount}`);
     if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
     const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
     const detailNote = details.length ? `（${details.join('，')}）` : '';
@@ -10560,7 +10566,7 @@ onBeforeUnmount(() => {
           placeholder="选择频道"
         />
         <div class="text-xs text-gray-500 mt-2">
-          同步内容包含角色信息及场内/场外映射配置。
+          同步会以导入方式新建角色，并同步场内/场外映射配置。
         </div>
       </div>
       <n-space justify="end">
