@@ -130,8 +130,9 @@ const handleCopy = async () => {
     });
 
     const newChannelId = resp?.channelId;
+    const identityMap = resp?.identityMap;
     if (model.value.copyLocalConfig && newChannelId) {
-      chat.copyLocalChannelSettings(props.channel.id, newChannelId, user.info?.id);
+      chat.copyLocalChannelSettings(props.channel.id, newChannelId, user.info?.id, identityMap);
     }
     await chat.channelList(worldId, true);
     show.value = false;

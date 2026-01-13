@@ -42,8 +42,9 @@ type ChannelCopySummary struct {
 }
 
 type ChannelCopyResult struct {
-	ChannelID string             `json:"channelId"`
-	Summary   ChannelCopySummary `json:"summary"`
+	ChannelID   string             `json:"channelId"`
+	Summary     ChannelCopySummary `json:"summary"`
+	IdentityMap map[string]string  `json:"identityMap,omitempty"`
 }
 
 func (s *ChannelCopySummary) addCopied(item string) {
@@ -154,6 +155,7 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 	roleMap := map[string]string{}
 	rolePerms := map[string][]string{}
 	sceneMap := map[string]string{}
+	var identityMap map[string]string
 	var botTokens []*model.BotTokenModel
 	var botUserIDs []string
 
@@ -189,7 +191,8 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 	}
 
 	if params.Options.CopyIdentities {
-		if err := copyChannelIdentities(tx, source.ID, newChannel.ID, allowedUserIDs, &summary); err != nil {
+		identityMap, err = copyChannelIdentities(tx, source.ID, newChannel.ID, allowedUserIDs, &summary)
+		if err != nil {
 			tx.Rollback()
 			cleanupClonedChannel(newChannel.ID)
 			return nil, err
@@ -285,8 +288,9 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 	}
 
 	return &ChannelCopyResult{
-		ChannelID: newChannel.ID,
-		Summary:   summary,
+		ChannelID:   newChannel.ID,
+		Summary:     summary,
+		IdentityMap: identityMap,
 	}, nil
 }
 
@@ -559,10 +563,10 @@ func copyChannelMembers(tx *gorm.DB, sourceID, targetID string, roleMap map[stri
 	return nil
 }
 
-func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserIDs map[string]struct{}, summary *ChannelCopySummary) error {
+func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserIDs map[string]struct{}, summary *ChannelCopySummary) (map[string]string, error) {
 	var identities []model.ChannelIdentityModel
 	if err := tx.Where("channel_id = ?", sourceID).Find(&identities).Error; err != nil {
-		return err
+		return nil, err
 	}
 	identityMap := map[string]string{}
 	for _, identity := range identities {
@@ -588,13 +592,13 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			SortOrder:          identity.SortOrder,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	var folders []model.ChannelIdentityFolderModel
 	if err := tx.Where("channel_id = ?", sourceID).Find(&folders).Error; err != nil {
-		return err
+		return nil, err
 	}
 	folderMap := map[string]string{}
 	for _, folder := range folders {
@@ -616,13 +620,13 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			SortOrder:         folder.SortOrder,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	var members []model.ChannelIdentityFolderMemberModel
 	if err := tx.Where("channel_id = ?", sourceID).Find(&members).Error; err != nil {
-		return err
+		return nil, err
 	}
 	for _, member := range members {
 		if allowedUserIDs != nil {
@@ -644,13 +648,13 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			SortOrder:         member.SortOrder,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	var favorites []model.ChannelIdentityFolderFavoriteModel
 	if err := tx.Where("channel_id = ?", sourceID).Find(&favorites).Error; err != nil {
-		return err
+		return nil, err
 	}
 	for _, favorite := range favorites {
 		if allowedUserIDs != nil {
@@ -669,12 +673,12 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			FolderID:          newFolderID,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	summary.addCopied("identities")
-	return nil
+	return identityMap, nil
 }
 
 func copyChannelStickyNotes(tx *gorm.DB, sourceID, targetID, targetWorldID string, summary *ChannelCopySummary) error {

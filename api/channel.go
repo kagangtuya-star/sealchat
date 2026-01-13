@@ -333,8 +333,9 @@ func ChannelCopy(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"channelId": result.ChannelID,
-		"summary":   result.Summary,
+		"channelId":   result.ChannelID,
+		"summary":     result.Summary,
+		"identityMap": result.IdentityMap,
 	})
 }
 

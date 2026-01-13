@@ -149,6 +149,7 @@ interface ChannelCopyPayload {
 
 interface ChannelCopyResponse {
   channelId: string;
+  identityMap?: Record<string, string>;
   summary?: {
     copied?: string[];
     skipped?: string[];
@@ -3135,9 +3136,20 @@ export const useChatStore = defineStore({
       }
     },
 
-    copyLocalChannelSettings(sourceChannelId: string, targetChannelId: string, userId?: string) {
+    copyLocalChannelSettings(
+      sourceChannelId: string,
+      targetChannelId: string,
+      userId?: string,
+      identityMap?: Record<string, string>
+    ) {
       if (typeof window === 'undefined') return;
       if (!sourceChannelId || !targetChannelId || sourceChannelId === targetChannelId) return;
+
+      const hasIdentityMap = !!identityMap && Object.keys(identityMap).length > 0;
+      const resolveMappedIdentityId = (sourceId?: string | null) => {
+        if (!sourceId || !hasIdentityMap) return null;
+        return identityMap?.[sourceId] || null;
+      };
 
       const tryCopy = (fromKey: string, toKey: string) => {
         try {
@@ -3150,8 +3162,36 @@ export const useChatStore = defineStore({
         }
       };
 
-      tryCopy(`channelIdentity:${sourceChannelId}`, `channelIdentity:${targetChannelId}`);
-      tryCopy(`channelIcOocRole:${sourceChannelId}`, `channelIcOocRole:${targetChannelId}`);
+      const tryCopyActiveIdentity = () => {
+        if (!hasIdentityMap) return;
+        try {
+          const value = localStorage.getItem(`channelIdentity:${sourceChannelId}`);
+          if (value === null) return;
+          const mapped = resolveMappedIdentityId(value);
+          localStorage.setItem(`channelIdentity:${targetChannelId}`, mapped || '');
+        } catch (err) {
+          console.warn('Failed to copy active channel identity', err);
+        }
+      };
+
+      const tryCopyIcOocRoleConfig = () => {
+        if (!hasIdentityMap) return;
+        try {
+          const raw = localStorage.getItem(`channelIcOocRole:${sourceChannelId}`);
+          if (!raw) return;
+          const sourceConfig = JSON.parse(raw) as { icRoleId?: string | null; oocRoleId?: string | null };
+          const mappedConfig = {
+            icRoleId: resolveMappedIdentityId(sourceConfig?.icRoleId) ?? null,
+            oocRoleId: resolveMappedIdentityId(sourceConfig?.oocRoleId) ?? null,
+          };
+          localStorage.setItem(`channelIcOocRole:${targetChannelId}`, JSON.stringify(mappedConfig));
+        } catch (err) {
+          console.warn('Failed to copy IC/OOC role config', err);
+        }
+      };
+
+      tryCopyActiveIdentity();
+      tryCopyIcOocRoleConfig();
       tryCopy(getBgStorageKey(sourceChannelId), getBgStorageKey(targetChannelId));
       tryCopy(getBgCategoriesKey(sourceChannelId), getBgCategoriesKey(targetChannelId));
 
