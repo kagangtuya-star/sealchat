@@ -2068,8 +2068,8 @@ const canManageIdentities = () => {
   if (!worldId) return false;
   const detail = chat.worldDetailMap[worldId];
   const role = detail?.memberRole;
-  // 只有 owner 和 admin 可以触发同步弹窗
-  return role === 'owner' || role === 'admin';
+  // 只有 owner、admin、member 可以触发同步弹窗
+  return role === 'owner' || role === 'admin' || role === 'member';
 };
 
 const maybePromptIdentitySync = async () => {
