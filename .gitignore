@@ -48,3 +48,5 @@ static/
 /sealchat-data
 .ace-tool/
 /.claude
+api/CLAUDE.md
+CLAUDE.md
