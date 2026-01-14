@@ -1452,7 +1452,8 @@ nav a:first-of-type {
 
 :root[data-custom-theme='true'] .dice-chip--tone-ooc:not(.dice-chip--preview),
 :root[data-custom-theme='true'] [data-dice-tone='ooc']:not(.dice-chip--preview) {
-  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+  background-color: color-mix(in srgb, var(--chat-ooc-bg) 85%, var(--sc-text-primary) 15%) !important;
+  border-color: color-mix(in srgb, var(--chat-ooc-border) 70%, var(--sc-text-primary) 30%) !important;
 }
 
 /* ==========================================================================
