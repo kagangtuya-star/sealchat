@@ -208,6 +208,13 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 		})
 	}
 
+	// 校验频道名称非空
+	if strings.TrimSpace(updates.Name) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道名称不能为空",
+		})
+	}
+
 	// 调用编辑方法
 	if err := model.ChannelInfoEdit(channelId, &updates); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

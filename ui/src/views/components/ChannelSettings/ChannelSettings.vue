@@ -62,10 +62,14 @@ watch(() => props.channel, () => {
 }, { immediate: true });
 
 const channelEdit = async (): Promise<void> => {
+  if (!model.value.name?.trim()) {
+    message.error('频道名称不能为空');
+    return;
+  }
   try {
     await chat.channelInfoEdit(model.value.id, model.value);
     message.success('更新成功');
-    await chat.channelList(); // 重载
+    await chat.channelList(chat.currentWorldId, true); // 强制刷新
     modelShow.value = false;
   } catch (err) {
     message.error('更新失败');
