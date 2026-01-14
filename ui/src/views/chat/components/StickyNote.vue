@@ -9,13 +9,13 @@
         { 'sticky-note--editing': isEditing }
       ]"
       :style="noteStyle"
-      @mousedown="handleMouseDown"
+      @pointerdown="handlePointerDown"
     >
       <!-- 头部 -->
       <div
         ref="headerEl"
         class="sticky-note__header"
-        @mousedown.left="startDrag"
+        @pointerdown="startDrag"
       >
         <div class="sticky-note__title">
           <input
@@ -35,7 +35,7 @@
             class="sticky-note__action-btn"
             title="编辑"
             @click="toggleEdit"
-            @mousedown.stop
+            @pointerdown.stop
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
@@ -51,14 +51,14 @@
               <button
                 class="sticky-note__action-btn"
                 title="推送"
-                @mousedown.stop
+                @pointerdown.stop
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7h-2v6H6v-6H4zm8-9l5 5h-3v6h-4V8H7l5-5z"/>
                 </svg>
               </button>
             </template>
-            <div class="sticky-note__push-panel" @mousedown.stop>
+            <div class="sticky-note__push-panel" @pointerdown.stop>
               <div class="sticky-note__push-title">推送便签</div>
               <div class="sticky-note__push-toolbar">
                 <n-checkbox v-model:checked="checkAll" :disabled="allTargetIds.length === 0">
@@ -91,7 +91,7 @@
             class="sticky-note__action-btn"
             title="复制内容"
             @click="copyContent"
-            @mousedown.stop
+            @pointerdown.stop
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
@@ -101,7 +101,7 @@
             class="sticky-note__action-btn"
             title="最小化"
             @click="minimize"
-            @mousedown.stop
+            @pointerdown.stop
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 19h12v2H6z"/>
@@ -112,7 +112,7 @@
             class="sticky-note__action-btn"
             title="删除"
             @click="deleteNote"
-            @mousedown.stop
+            @pointerdown.stop
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 7h12v2H6V7zm2 3h8l-1 10H9L8 10zm3-5h2l1 1h5v2H4V6h5l1-1z"/>
@@ -122,7 +122,7 @@
             class="sticky-note__action-btn sticky-note__action-btn--close"
             title="关闭"
             @click="close"
-            @mousedown.stop
+            @pointerdown.stop
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -208,7 +208,7 @@
       <!-- 调整大小手柄 -->
       <div
         class="sticky-note__resize-handle"
-        @mousedown.left.stop="startResize"
+        @pointerdown.stop="startResize"
       ></div>
     </div>
   </Teleport>
@@ -262,15 +262,20 @@ const localTitle = ref('')
 const localContent = ref('')
 const pushPopoverVisible = ref(false)
 const pushTargets = ref<string[]>([])
+const MIN_NOTE_WIDTH = 200
+const MIN_NOTE_HEIGHT = 150
+const VIEWPORT_PADDING = 8
 const richMode = ref(false) // 富文本模式，默认关闭
 
 // 拖拽状态
 const isDragging = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
+const dragPointerId = ref<number | null>(null)
 
 // 调整大小状态
 const isResizing = ref(false)
 const resizeStart = ref({ x: 0, y: 0, w: 0, h: 0 })
+const resizePointerId = ref<number | null>(null)
 
 // 颜色选项
 const colors = ['yellow', 'pink', 'green', 'blue', 'purple', 'orange']
@@ -432,6 +437,17 @@ const noteStyle = computed(() => {
   }
 })
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function getViewportSize() {
+  return {
+    width: Math.max(window.innerWidth, 1),
+    height: Math.max(window.innerHeight, 1)
+  }
+}
+
 // 颜色映射
 function getColorValue(color: string): string {
   const colorMap: Record<string, string> = {
@@ -458,7 +474,8 @@ function formatTime(timestamp: number): string {
 }
 
 // 事件处理
-function handleMouseDown() {
+function handlePointerDown(e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
   stickyNoteStore.bringToFront(props.noteId)
 }
 
@@ -571,36 +588,47 @@ function deleteNote() {
 }
 
 // 拖拽逻辑
-function startDrag(e: MouseEvent) {
+function startDrag(e: PointerEvent) {
   if (!noteEl.value) return
+  if (e.pointerType === 'mouse' && e.button !== 0) return
 
   isDragging.value = true
+  dragPointerId.value = e.pointerId
   const rect = noteEl.value.getBoundingClientRect()
   dragOffset.value = {
     x: e.clientX - rect.left,
     y: e.clientY - rect.top
   }
 
-  document.addEventListener('mousemove', onDrag)
-  document.addEventListener('mouseup', stopDrag)
+  document.addEventListener('pointermove', onDrag)
+  document.addEventListener('pointerup', stopDrag)
+  document.addEventListener('pointercancel', stopDrag)
 }
 
-function onDrag(e: MouseEvent) {
+function onDrag(e: PointerEvent) {
   if (!isDragging.value || !noteEl.value) return
+  if (dragPointerId.value !== e.pointerId) return
 
-  const x = e.clientX - dragOffset.value.x
-  const y = e.clientY - dragOffset.value.y
+  const viewport = getViewportSize()
+  const rect = noteEl.value.getBoundingClientRect()
+  const maxX = Math.max(0, viewport.width - rect.width)
+  const maxY = Math.max(0, viewport.height - rect.height)
+  const x = clampNumber(e.clientX - dragOffset.value.x, 0, maxX)
+  const y = clampNumber(e.clientY - dragOffset.value.y, 0, maxY)
 
-  noteEl.value.style.left = `${Math.max(0, x)}px`
-  noteEl.value.style.top = `${Math.max(0, y)}px`
+  noteEl.value.style.left = `${x}px`
+  noteEl.value.style.top = `${y}px`
 }
 
-function stopDrag() {
+function stopDrag(e: PointerEvent) {
   if (!isDragging.value || !noteEl.value) return
+  if (dragPointerId.value !== e.pointerId) return
 
   isDragging.value = false
-  document.removeEventListener('mousemove', onDrag)
-  document.removeEventListener('mouseup', stopDrag)
+  dragPointerId.value = null
+  document.removeEventListener('pointermove', onDrag)
+  document.removeEventListener('pointerup', stopDrag)
+  document.removeEventListener('pointercancel', stopDrag)
 
   const rect = noteEl.value.getBoundingClientRect()
   stickyNoteStore.updateUserState(props.noteId, {
@@ -610,10 +638,12 @@ function stopDrag() {
 }
 
 // 调整大小逻辑
-function startResize(e: MouseEvent) {
+function startResize(e: PointerEvent) {
   if (!noteEl.value) return
+  if (e.pointerType === 'mouse' && e.button !== 0) return
 
   isResizing.value = true
+  resizePointerId.value = e.pointerId
   const rect = noteEl.value.getBoundingClientRect()
   resizeStart.value = {
     x: e.clientX,
@@ -622,29 +652,38 @@ function startResize(e: MouseEvent) {
     h: rect.height
   }
 
-  document.addEventListener('mousemove', onResize)
-  document.addEventListener('mouseup', stopResize)
+  document.addEventListener('pointermove', onResize)
+  document.addEventListener('pointerup', stopResize)
+  document.addEventListener('pointercancel', stopResize)
 }
 
-function onResize(e: MouseEvent) {
+function onResize(e: PointerEvent) {
   if (!isResizing.value || !noteEl.value) return
+  if (resizePointerId.value !== e.pointerId) return
 
   const dx = e.clientX - resizeStart.value.x
   const dy = e.clientY - resizeStart.value.y
 
-  const newW = Math.max(200, resizeStart.value.w + dx)
-  const newH = Math.max(150, resizeStart.value.h + dy)
+  const viewport = getViewportSize()
+  const rect = noteEl.value.getBoundingClientRect()
+  const maxW = Math.max(MIN_NOTE_WIDTH, viewport.width - rect.left - VIEWPORT_PADDING)
+  const maxH = Math.max(MIN_NOTE_HEIGHT, viewport.height - rect.top - VIEWPORT_PADDING)
+  const newW = clampNumber(resizeStart.value.w + dx, MIN_NOTE_WIDTH, maxW)
+  const newH = clampNumber(resizeStart.value.h + dy, MIN_NOTE_HEIGHT, maxH)
 
   noteEl.value.style.width = `${newW}px`
   noteEl.value.style.height = `${newH}px`
 }
 
-function stopResize() {
+function stopResize(e: PointerEvent) {
   if (!isResizing.value || !noteEl.value) return
+  if (resizePointerId.value !== e.pointerId) return
 
   isResizing.value = false
-  document.removeEventListener('mousemove', onResize)
-  document.removeEventListener('mouseup', stopResize)
+  resizePointerId.value = null
+  document.removeEventListener('pointermove', onResize)
+  document.removeEventListener('pointerup', stopResize)
+  document.removeEventListener('pointercancel', stopResize)
 
   const rect = noteEl.value.getBoundingClientRect()
   stickyNoteStore.updateUserState(props.noteId, {
@@ -684,10 +723,12 @@ onUnmounted(() => {
     clearTimeout(saveTimeout)
     saveTimeout = null
   }
-  document.removeEventListener('mousemove', onDrag)
-  document.removeEventListener('mouseup', stopDrag)
-  document.removeEventListener('mousemove', onResize)
-  document.removeEventListener('mouseup', stopResize)
+  document.removeEventListener('pointermove', onDrag)
+  document.removeEventListener('pointerup', stopDrag)
+  document.removeEventListener('pointercancel', stopDrag)
+  document.removeEventListener('pointermove', onResize)
+  document.removeEventListener('pointerup', stopResize)
+  document.removeEventListener('pointercancel', stopResize)
 })
 </script>
 
@@ -697,6 +738,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border-radius: 8px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   font-family: system-ui, -apple-system, sans-serif;
@@ -726,6 +769,7 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 8px 12px;
   cursor: move;
+  touch-action: none;
   background: rgba(0, 0, 0, 0.05);
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
@@ -877,6 +921,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   cursor: nwse-resize;
+  touch-action: none;
   background: linear-gradient(
     135deg,
     transparent 50%,

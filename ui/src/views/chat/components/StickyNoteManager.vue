@@ -90,6 +90,15 @@
                   <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
                 </svg>
               </button>
+              <button
+                class="sticky-note-rail__action"
+                title="重置位置"
+                @click="resetOpenNotes"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 6V3L8 7l4 4V8c2.76 0 5 2.24 5 5 0 1.13-.38 2.18-1.02 3.03l1.46 1.46A6.966 6.966 0 0 0 19 13c0-3.87-3.13-7-7-7zM7.02 9.97 5.56 8.51A6.966 6.966 0 0 0 5 11c0 3.87 3.13 7 7 7v3l4-4-4-4v3c-2.76 0-5-2.24-5-5 0-1.13.38-2.18 1.02-3.03z"/>
+                </svg>
+              </button>
             </div>
 
             <!-- 新建文件夹输入 -->
@@ -640,6 +649,11 @@ function openNote(noteId: string) {
   if (!railPinned.value) {
     railOpen.value = false
   }
+}
+
+function resetOpenNotes() {
+  if (stickyNoteStore.activeNoteIds.length === 0) return
+  stickyNoteStore.resetAllOpenNotes({ persistRemote: false })
 }
 
 // 恢复最小化的便签
