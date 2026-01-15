@@ -1010,6 +1010,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           visibility: 'public',
           createdAt: new Date(meta.updatedAt).toISOString(),
           description: meta.description,
+          scope: 'common',
+          worldId: null,
         } as AudioAsset));
         this.assets = fallback;
         this.filteredAssets = fallback;
@@ -1691,6 +1693,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async batchUpdateAssets(assetIds: string[], payload: AudioAssetMutationPayload) {
       if (!assetIds?.length) {
         return { success: 0, failed: 0 };
+      }
+      if ((payload.scope || payload.worldId !== undefined) && !this.isSystemAdmin) {
+        throw new Error('无权限调整素材级别');
       }
       this.assetBulkLoading = true;
       try {

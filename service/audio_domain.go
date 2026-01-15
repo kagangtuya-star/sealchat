@@ -34,6 +34,8 @@ type AudioAssetUpdateInput struct {
 	Tags        []string
 	Visibility  *model.AudioAssetVisibility
 	FolderID    *string
+	Scope       *model.AudioAssetScope
+	WorldID     *string
 	UpdatedBy   string
 	Variants    []model.AudioAssetVariant
 }
@@ -324,6 +326,30 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 	if input.Tags != nil {
 		updates["tags"] = model.JSONList[string](normalizeTags(input.Tags))
 		asset.Tags = model.JSONList[string](normalizeTags(input.Tags))
+	}
+	if input.Scope != nil {
+		scope := *input.Scope
+		switch scope {
+		case model.AudioScopeCommon:
+			updates["scope"] = scope
+			updates["world_id"] = nil
+			asset.Scope = scope
+			asset.WorldID = nil
+		case model.AudioScopeWorld:
+			worldID := ""
+			if input.WorldID != nil {
+				worldID = strings.TrimSpace(*input.WorldID)
+			}
+			if worldID == "" {
+				return nil, errors.New("世界级素材必须指定 worldId")
+			}
+			updates["scope"] = scope
+			updates["world_id"] = worldID
+			asset.Scope = scope
+			asset.WorldID = &worldID
+		default:
+			return nil, errors.New("素材级别无效")
+		}
 	}
 	if len(input.Variants) > 0 {
 		updates["variants"] = model.JSONList[model.AudioAssetVariant](input.Variants)

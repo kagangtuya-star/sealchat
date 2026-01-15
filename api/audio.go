@@ -200,9 +200,37 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 		Tags        []string                    `json:"tags"`
 		Visibility  *model.AudioAssetVisibility `json:"visibility"`
 		FolderID    *string                     `json:"folderId"`
+		Scope       *model.AudioAssetScope      `json:"scope"`
+		WorldID     *string                     `json:"worldId"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	var normalizedScope *model.AudioAssetScope
+	var normalizedWorldID *string
+	if req.Scope != nil || req.WorldID != nil {
+		if !isSystemAdmin {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可调整素材级别")
+		}
+		if req.Scope == nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "更新素材级别需要 scope")
+		}
+		trimmedScope := model.AudioAssetScope(strings.TrimSpace(string(*req.Scope)))
+		if trimmedScope != model.AudioScopeCommon && trimmedScope != model.AudioScopeWorld {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "素材级别无效")
+		}
+		normalizedScope = &trimmedScope
+		if req.WorldID != nil {
+			trimmedWorld := strings.TrimSpace(*req.WorldID)
+			if trimmedWorld != "" {
+				normalizedWorldID = &trimmedWorld
+			}
+		}
+		if trimmedScope == model.AudioScopeWorld && normalizedWorldID == nil {
+			if asset.WorldID == nil || strings.TrimSpace(*asset.WorldID) == "" {
+				return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级素材必须指定 worldId")
+			}
+		}
 	}
 	input := service.AudioAssetUpdateInput{
 		Name:        req.Name,
@@ -210,6 +238,8 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 		Tags:        req.Tags,
 		Visibility:  req.Visibility,
 		FolderID:    req.FolderID,
+		Scope:       normalizedScope,
+		WorldID:     normalizedWorldID,
 		UpdatedBy:   user.ID,
 	}
 	updated, err := service.AudioUpdateAsset(id, input)

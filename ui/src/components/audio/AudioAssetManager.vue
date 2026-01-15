@@ -101,6 +101,14 @@
           批量修改可见性
         </n-button>
         <n-button
+          v-if="audio.isSystemAdmin"
+          size="small"
+          @click="openBatchScopeModal"
+          :loading="audio.assetBulkLoading"
+        >
+          批量修改级别
+        </n-button>
+        <n-button
           size="small"
           type="error"
           @click="confirmBatchDelete"
@@ -186,6 +194,7 @@
             <li>时长：{{ formatDuration(selectedAsset.duration) }}</li>
             <li>上传者：{{ selectedAsset.createdBy }}</li>
             <li>更新时间：{{ formatDate(selectedAsset.updatedAt) }}</li>
+            <li>素材级别：{{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}</li>
             <li>存储：{{ selectedAsset.storageType === 's3' ? '对象存储 (支持跳转)' : '本地文件' }}</li>
             <li>比特率：{{ selectedAsset.bitrate }} kbps · 大小：{{ formatFileSize(selectedAsset.size) }}</li>
           </ul>
@@ -334,6 +343,22 @@
         </n-space>
       </template>
     </n-modal>
+
+    <n-modal v-model:show="batchScopeModalVisible" preset="dialog" title="批量修改素材级别" :mask-closable="false">
+      <p class="audio-library__modal-tip">世界级素材将归属当前世界</p>
+      <n-radio-group v-model:value="batchScopeValue">
+        <n-radio value="common">通用级</n-radio>
+        <n-radio value="world">世界级</n-radio>
+      </n-radio-group>
+      <template #action>
+        <n-space justify="end">
+          <n-button @click="batchScopeModalVisible = false">取消</n-button>
+          <n-button type="primary" :loading="audio.assetBulkLoading" @click="handleBatchScopeSave">
+            确认
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -376,6 +401,8 @@ const batchMoveModalVisible = ref(false);
 const batchMoveTarget = ref<string | null>(null);
 const batchVisibilityModalVisible = ref(false);
 const batchVisibilityValue = ref<'public' | 'restricted'>('public');
+const batchScopeModalVisible = ref(false);
+const batchScopeValue = ref<AudioAssetScope>('common');
 const folderFormRef = ref<FormInst | null>(null);
 const folderForm = reactive({
   id: '',
@@ -514,6 +541,12 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     key: 'folder',
     minWidth: 120,
     render: (row) => folderLabel(row.folderId) || '未分类',
+  },
+  {
+    title: '级别',
+    key: 'scope',
+    width: 90,
+    render: (row) => (row.scope === 'common' ? '通用级' : '世界级'),
   },
   {
     title: '时长',
@@ -865,6 +898,37 @@ async function handleBatchVisibilitySave() {
   } catch (err) {
     console.warn(err);
     message.error('批量修改可见性失败');
+  }
+}
+
+function openBatchScopeModal() {
+  if (!audio.isSystemAdmin || !selectionCount.value) return;
+  batchScopeValue.value = 'common';
+  batchScopeModalVisible.value = true;
+}
+
+async function handleBatchScopeSave() {
+  if (!audio.isSystemAdmin) return;
+  if (batchScopeValue.value === 'world' && !audio.currentWorldId) {
+    message.error('当前未选择世界，无法设为世界级');
+    return;
+  }
+  try {
+    const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
+      scope: batchScopeValue.value,
+      worldId: batchScopeValue.value === 'world' ? audio.currentWorldId : null,
+    });
+    if (summary.success) {
+      message.success(`已更新 ${summary.success} 条素材的级别`);
+    }
+    if (summary.failed) {
+      message.warning(`${summary.failed} 条素材更新失败`);
+    }
+    batchScopeModalVisible.value = false;
+    clearSelection();
+  } catch (err) {
+    console.warn(err);
+    message.error('批量修改级别失败');
   }
 }
 

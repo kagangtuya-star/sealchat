@@ -28,6 +28,8 @@ export interface AudioAssetMutationPayload {
   tags?: string[];
   visibility?: 'public' | 'restricted';
   folderId?: string | null;
+  scope?: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioAssetQueryParams extends Partial<AudioSearchFilters> {
