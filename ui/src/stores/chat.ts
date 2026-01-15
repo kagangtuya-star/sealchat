@@ -235,6 +235,20 @@ const LATENCY_PROBE_TIMEOUT = 8000;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
+let channelSwitchEpoch = 0;
+const channelSwitchGuard: {
+  recent: Array<{ id: string; at: number }>;
+  blockedUntil: number;
+  lastReloadAt: number;
+} = {
+  recent: [],
+  blockedUntil: 0,
+  lastReloadAt: 0,
+};
+const CHANNEL_SWITCH_WINDOW_MS = 1500;
+const CHANNEL_SWITCH_THRESHOLD = 6;
+const CHANNEL_SWITCH_BLOCK_MS = 1500;
+const CHANNEL_SWITCH_RELOAD_COOLDOWN_MS = 10_000;
 
 const clearWsReconnectTimer = (store?: { iReconnectAfterTime: number }) => {
   if (wsReconnectTimer) {
@@ -259,6 +273,34 @@ const cleanupPendingLatencyProbes = () => {
       delete pendingLatencyProbes[key];
     }
   });
+};
+
+const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) => {
+  if (!targetId || targetId === currentId) {
+    return { action: 'allow' as const };
+  }
+  const now = Date.now();
+  if (channelSwitchGuard.blockedUntil > now) {
+    return { action: 'block' as const };
+  }
+  channelSwitchGuard.recent = channelSwitchGuard.recent.filter((item) => now - item.at <= CHANNEL_SWITCH_WINDOW_MS);
+  channelSwitchGuard.recent.push({ id: targetId, at: now });
+  const uniqueIds = Array.from(new Set(channelSwitchGuard.recent.map((item) => item.id)));
+  if (uniqueIds.length !== 2 || channelSwitchGuard.recent.length < CHANNEL_SWITCH_THRESHOLD) {
+    return { action: 'allow' as const };
+  }
+  const isAlternating = channelSwitchGuard.recent
+    .slice(1)
+    .every((item, index) => item.id !== channelSwitchGuard.recent[index].id);
+  if (!isAlternating) {
+    return { action: 'allow' as const };
+  }
+  channelSwitchGuard.blockedUntil = now + CHANNEL_SWITCH_BLOCK_MS;
+  if (now - channelSwitchGuard.lastReloadAt > CHANNEL_SWITCH_RELOAD_COOLDOWN_MS) {
+    channelSwitchGuard.lastReloadAt = now;
+    return { action: 'reload' as const, ids: uniqueIds };
+  }
+  return { action: 'block' as const, ids: uniqueIds };
 };
 
 export const useChatStore = defineStore({
@@ -1131,6 +1173,22 @@ export const useChatStore = defineStore({
     },
 
     async channelSwitchTo(id: string) {
+      const guard = checkChannelSwitchGuard(id, this.curChannel?.id);
+      if (guard.action !== 'allow') {
+        channelSwitchEpoch += 1;
+        if (guard.action === 'reload') {
+          console.warn('[channel-switch-guard] rapid toggling detected, reloading', guard.ids || []);
+          if (typeof window !== 'undefined') {
+            window.location.reload();
+          }
+        } else {
+          console.warn('[channel-switch-guard] rapid toggling detected, blocking', guard.ids || []);
+        }
+        return true;
+      }
+      const switchEpoch = ++channelSwitchEpoch;
+      const isStale = () => switchEpoch !== channelSwitchEpoch;
+
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
 
@@ -1148,6 +1206,9 @@ export const useChatStore = defineStore({
         }
         try {
           const channelResp = await this.channelInfoGet(id);
+          if (isStale()) {
+            return true;
+          }
           // 确保返回的频道有有效的 id
           if (channelResp?.item && channelResp.item.id) {
             nextChannel = channelResp.item as SChannel;
@@ -1181,6 +1242,9 @@ export const useChatStore = defineStore({
       if (this.observerMode) {
         try {
           const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+          if (isStale()) {
+            return true;
+          }
           if (!resp.data?.member) {
             this.curChannel = oldChannel;
             return false;
@@ -1190,10 +1254,16 @@ export const useChatStore = defineStore({
           this.whisperTarget = null;
           writeScopedLocalStorage('lastChannel', id);
           this.setChannelUnreadCount(id, 0);
+          if (isStale()) {
+            return true;
+          }
           chatEvent.emit('channel-switch-to', undefined);
           return true;
         } catch (error) {
           console.warn('[observer] channel.enter failed', error);
+          if (isStale()) {
+            return true;
+          }
           this.curChannel = oldChannel;
           return false;
         }
@@ -1209,9 +1279,15 @@ export const useChatStore = defineStore({
         enterPayload.include_roleless = includeRoleless;
       }
       const resp = await this.sendAPI('channel.enter', enterPayload);
+      if (isStale()) {
+        return true;
+      }
       // console.log('switch', resp, this.curChannel);
 
       if (!resp.data?.member) {
+        if (isStale()) {
+          return true;
+        }
         this.curChannel = oldChannel;
         return false;
       }
@@ -1232,24 +1308,42 @@ export const useChatStore = defineStore({
       }
 
       await this.loadChannelIdentities(id);
+      if (isStale()) {
+        return true;
+      }
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);
+      if (isStale()) {
+        return true;
+      }
       writeScopedLocalStorage('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
+      if (isStale()) {
+        return true;
+      }
       this.curChannelUsers = resp2.data.data;
       this.whisperTarget = null;
 
+      if (isStale()) {
+        return true;
+      }
       try {
         await this.ensureChannelPermissionCache(id);
       } catch (error) {
         console.warn('ensureChannelPermissionCache failed', error);
+      }
+      if (isStale()) {
+        return true;
       }
 
       this.setChannelUnreadCount(id, 0);
 
       // 设置网页标题为频道名字，并检查是否需要清除未读通知
       import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
+        if (this.curChannel?.id !== id) {
+          return;
+        }
         setChannelTitle(nextChannel?.name || '');
         // 检查是否所有未读都已清零，如果是，清除标题通知
         const totalUnread = Object.values(this.unreadCountMap).reduce((sum, count) => sum + (count || 0), 0);
@@ -1258,7 +1352,13 @@ export const useChatStore = defineStore({
         }
       });
 
+      if (isStale()) {
+        return true;
+      }
       chatEvent.emit('channel-switch-to', undefined);
+      if (isStale()) {
+        return true;
+      }
       this.channelList(this.currentWorldId);
       return true;
     },
