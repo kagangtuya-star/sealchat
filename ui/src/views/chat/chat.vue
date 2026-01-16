@@ -9715,7 +9715,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 左下，快捷指令栏 -->
-      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
+      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage && !isMobileWideInput">
         <n-button
           circle
           quaternary
