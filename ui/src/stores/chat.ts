@@ -2015,6 +2015,9 @@ export const useChatStore = defineStore({
         });
       };
       apply(this.channelTree as any);
+      Object.values(this.channelTreeByWorld).forEach((tree) => {
+        apply(tree as SChannel[]);
+      });
       apply(this.channelTreePrivate as any);
       if (this.curChannel?.id === channelId) {
         this.curChannel = {
@@ -3445,6 +3448,18 @@ chatEvent.on('channel-updated', (event) => {
   }
   const chat = useChatStore();
   const patch: Partial<SChannel> = {};
+  if (typeof event.channel?.name === 'string') {
+    patch.name = event.channel.name;
+  }
+  if (typeof event.channel?.note === 'string') {
+    patch.note = event.channel.note;
+  }
+  if (typeof event.channel?.permType === 'string') {
+    patch.permType = event.channel.permType;
+  }
+  if (typeof event.channel?.sortOrder === 'number') {
+    patch.sortOrder = event.channel.sortOrder;
+  }
   if (event.channel?.defaultDiceExpr) {
     patch.defaultDiceExpr = event.channel.defaultDiceExpr;
   }
