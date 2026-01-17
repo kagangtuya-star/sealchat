@@ -1,13 +1,13 @@
 <script setup lang="tsx">
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
-import type { ServerConfig } from '@/types';
+import type { ServerConfig, BackupInfo } from '@/types';
 import { Message } from '@vicons/tabler';
 import { Photo as ImageIcon, X } from '@vicons/tabler';
 import { cloneDeep } from 'lodash-es';
-import { NIcon, useMessage } from 'naive-ui';
+import { NIcon, useMessage, NButton, NPopconfirm } from 'naive-ui';
 import { computed, nextTick } from 'vue';
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch, h } from 'vue';
 import { api } from '@/stores/_config';
 import dayjs from 'dayjs';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
@@ -171,10 +171,17 @@ watch([serveAtHost, serveAtPort], ([host, port]) => {
 onMounted(async () => {
   const resp = await utils.configGet();
   model.value = cloneDeep(resp.data);
+  if (!model.value.backup) {
+    model.value.backup = { enabled: true, intervalHours: 12, retentionCount: 5, path: './backups' };
+  }
+  if (!model.value.audio) {
+    model.value.audio = { allowWorldAudioWorkbench: false };
+  }
   nextTick(() => {
     modified.value = false;
   })
   await fetchUpdateStatus();
+  fetchBackupList();
 })
 
 watch(model, (v) => {
@@ -348,6 +355,79 @@ const link = computed(() => {
 
 const feedbackAdminShow = ref(false)
 const feedbackWeburlShow = ref(false)
+
+// Backup state
+const backupList = ref<BackupInfo[]>([]);
+const backupListLoading = ref(false);
+const backupExecuting = ref(false);
+
+const backupConfig = computed({
+  get: () => {
+    if (!model.value.backup) {
+      model.value.backup = { enabled: true, intervalHours: 12, retentionCount: 5, path: './backups' };
+    }
+    return model.value.backup;
+  },
+  set: (val) => {
+    model.value.backup = val;
+  }
+});
+
+const fetchBackupList = async () => {
+  backupListLoading.value = true;
+  try {
+    const resp = await utils.adminBackupList();
+    backupList.value = resp.data;
+  } catch (error) {
+    message.error('获取备份列表失败');
+  } finally {
+    backupListLoading.value = false;
+  }
+}
+
+const executeBackup = async () => {
+  backupExecuting.value = true;
+  try {
+    await utils.adminBackupExecute();
+    message.success('备份任务已提交');
+    setTimeout(fetchBackupList, 1000);
+  } catch (error) {
+    message.error('执行备份失败: ' + ((error as any)?.response?.data?.message || '未知错误'));
+  } finally {
+    backupExecuting.value = false;
+  }
+}
+
+const deleteBackup = async (row: BackupInfo) => {
+  try {
+    await utils.adminBackupDelete(row.filename);
+    message.success('删除成功');
+    await fetchBackupList();
+  } catch (error) {
+    message.error('删除失败');
+  }
+}
+
+const backupColumns = [
+  { title: '文件名', key: 'filename' },
+  { title: '大小', key: 'size', render: (row: BackupInfo) => formatBytes(row.size) },
+  { title: '创建时间', key: 'createdAt', render: (row: BackupInfo) => dayjs(row.createdAt * 1000).format('YYYY-MM-DD HH:mm:ss') },
+  {
+    title: '操作',
+    key: 'actions',
+    render(row: BackupInfo) {
+      return h(
+        NButton,
+        {
+          size: 'tiny',
+          type: 'error',
+          onClick: () => deleteBackup(row)
+        },
+        { default: () => '删除' }
+      )
+    }
+  }
+]
 
 // Image migration state
 const migrationStats = ref<{
@@ -700,7 +780,7 @@ const clearLoginBg = () => {
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
       </n-form-item>
-      <n-form-item label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
+      <n-form-item v-if="model.audio" label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
         <n-switch v-model:value="model.audio.allowWorldAudioWorkbench" />
       </n-form-item>
       <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
@@ -835,6 +915,40 @@ const clearLoginBg = () => {
               v-html="updateBodyHtml"
             ></div>
           </div>
+        </div>
+      </n-form-item>
+
+      <!-- Backup Section -->
+      <n-divider>数据备份</n-divider>
+      <n-form-item label="启用自动备份">
+        <n-switch v-model:value="backupConfig.enabled" />
+      </n-form-item>
+      <n-form-item label="备份间隔">
+         <n-input-number v-model:value="backupConfig.intervalHours" :min="1">
+            <template #suffix>小时</template>
+         </n-input-number>
+      </n-form-item>
+      <n-form-item label="保留数量" feedback="超过此数量的旧备份将被自动删除">
+         <n-input-number v-model:value="backupConfig.retentionCount" :min="1" />
+      </n-form-item>
+      <n-form-item label="备份路径" feedback="服务端存储备份文件的绝对路径">
+        <n-input v-model:value="backupConfig.path" placeholder="./backups" />
+      </n-form-item>
+      
+      <n-form-item label="手动备份">
+        <div class="flex flex-col gap-2 w-full">
+           <div class="flex gap-2">
+             <n-button size="small" @click="executeBackup" :loading="backupExecuting">立即备份</n-button>
+             <n-button size="small" @click="fetchBackupList" :loading="backupListLoading">刷新列表</n-button>
+           </div>
+           
+           <n-data-table
+             :columns="backupColumns"
+             :data="backupList"
+             :loading="backupListLoading"
+             size="small"
+             :max-height="250"
+           />
         </div>
       </n-form-item>
 

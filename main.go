@@ -148,6 +148,11 @@ func main() {
 		})
 	}
 
+	// 启动 SQLite 备份 Worker
+	if config.Backup.Enabled {
+		service.StartBackupWorker(config)
+	}
+
 	autoSave := func() {
 		t := time.NewTicker(3 * 60 * time.Second)
 		for {

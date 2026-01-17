@@ -111,6 +111,19 @@ export interface ServerAudioConfig {
   allowWorldAudioWorkbench?: boolean;
 }
 
+export interface BackupConfig {
+  enabled: boolean;
+  intervalHours: number;
+  retentionCount: number;
+  path: string;
+}
+
+export interface BackupInfo {
+  filename: string;
+  size: number;
+  createdAt: number;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -130,6 +143,7 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  backup?: BackupConfig;
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
   loginBackground?: {

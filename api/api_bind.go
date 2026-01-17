@@ -420,6 +420,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
 	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
 	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
+	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
+	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
+	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

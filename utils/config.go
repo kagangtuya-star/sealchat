@@ -52,6 +52,9 @@ const (
 	defaultExportHTMLPageSize       = 100
 	defaultExportHTMLPageSizeMax    = 500
 	defaultExportHTMLMaxConcurrency = 2
+	defaultBackupPath               = "./backups"
+	defaultBackupIntervalHours      = 12
+	defaultBackupRetentionCount     = 5
 )
 
 type CaptchaMode string
@@ -152,6 +155,14 @@ type UpdateCheckConfig struct {
 	GithubToken string `json:"-" yaml:"githubToken"`
 }
 
+// BackupConfig SQLite 备份配置
+type BackupConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	IntervalHours  int    `json:"intervalHours" yaml:"intervalHours"`
+	RetentionCount int    `json:"retentionCount" yaml:"retentionCount"`
+	Path           string `json:"path" yaml:"path"`
+}
+
 // LoginBackgroundConfig 登录页背景配置
 type LoginBackgroundConfig struct {
 	AttachmentId   string `json:"attachmentId" yaml:"attachmentId"`
@@ -188,6 +199,7 @@ type AppConfig struct {
 	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
 	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
 	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
+	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 }
 
@@ -319,6 +331,12 @@ func ReadConfig() *AppConfig {
 			IntervalSec: 6 * 60 * 60,
 			GithubRepo:  "kagangtuya-star/sealchat",
 		},
+		Backup: BackupConfig{
+			Enabled:        true,
+			IntervalHours:  defaultBackupIntervalHours,
+			RetentionCount: defaultBackupRetentionCount,
+			Path:           defaultBackupPath,
+		},
 		LoginBackground: LoginBackgroundConfig{
 			Mode:       "cover",
 			Opacity:    30,
@@ -389,6 +407,7 @@ func ReadConfig() *AppConfig {
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
 	applyUpdateCheckDefaults(&config.UpdateCheck)
+	applyBackupDefaults(&config.Backup)
 
 	k.Print()
 	currentConfig = &config
@@ -487,6 +506,21 @@ func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
 	}
 	if token := strings.TrimSpace(os.Getenv("SEALCHAT_GITHUB_TOKEN")); token != "" {
 		cfg.GithubToken = token
+	}
+}
+
+func applyBackupDefaults(cfg *BackupConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.IntervalHours <= 0 {
+		cfg.IntervalHours = defaultBackupIntervalHours
+	}
+	if cfg.RetentionCount <= 0 {
+		cfg.RetentionCount = defaultBackupRetentionCount
+	}
+	if strings.TrimSpace(cfg.Path) == "" {
+		cfg.Path = defaultBackupPath
 	}
 }
 
@@ -635,6 +669,12 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)
 		_ = k.Set("emailNotification.minDelayMinutes", config.EmailNotification.MinDelayMinutes)
 		_ = k.Set("emailNotification.maxDelayMinutes", config.EmailNotification.MaxDelayMinutes)
+
+		// 备份配置
+		_ = k.Set("backup.enabled", config.Backup.Enabled)
+		_ = k.Set("backup.intervalHours", config.Backup.IntervalHours)
+		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
+		_ = k.Set("backup.path", config.Backup.Path)
 
 		// 登录页背景配置
 		_ = k.Set("loginBackground.attachmentId", config.LoginBackground.AttachmentId)

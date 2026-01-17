@@ -94,6 +94,13 @@
       maxSizeMB: 64
       logLevel: warn
 
+# 数据备份配置
+backup:
+  enabled: true                   # 是否启用自动备份
+  intervalHours: 12               # 备份间隔（小时）
+  retentionCount: 5               # 保留备份数量
+  path: ./backups                 # 备份文件存储路径
+
 # 邮件通知配置
 emailNotification:
   enabled: false                # 是否启用邮件通知功能
