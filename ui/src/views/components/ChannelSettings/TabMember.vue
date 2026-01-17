@@ -202,6 +202,14 @@ const eligibleWorldMembers = computed(() => {
   });
 });
 
+const defaultRoleSuffixes = ['-owner', '-member', '-bot', '-ob', '-spectator'];
+const syncDialogVisible = ref(false);
+const syncSourceChannelId = ref<string | null>(null);
+const syncMode = ref<'append' | 'replace'>('append');
+const syncChannelOptions = ref<Array<{ label: string; value: string }>>([]);
+const syncChannelLoading = ref(false);
+const syncSubmitting = ref(false);
+
 const addEligibleWorldMembers = async () => {
   const role = channelMemberRole.value;
   if (!role) {
@@ -234,6 +242,174 @@ const addEligibleWorldMembers = async () => {
   }
 };
 
+const buildRoleSuffixMap = (roles: ChannelRoleModel[]) => {
+  const roleMap = new Map<string, string>();
+  for (const suffix of defaultRoleSuffixes) {
+    const role = roles.find(item => item.id.endsWith(suffix));
+    if (role?.id) {
+      roleMap.set(suffix, role.id);
+    }
+  }
+  return roleMap;
+};
+
+const buildRoleMemberMap = (memberMap: Record<string, string[]>) => {
+  const roleMemberMap: Record<string, string[]> = {};
+  for (const [userId, roleIds] of Object.entries(memberMap)) {
+    for (const roleId of roleIds || []) {
+      if (!roleId) {
+        continue;
+      }
+      if (!roleMemberMap[roleId]) {
+        roleMemberMap[roleId] = [];
+      }
+      roleMemberMap[roleId].push(userId);
+    }
+  }
+  return roleMemberMap;
+};
+
+const loadSyncChannelOptions = async () => {
+  if (!props.channel?.worldId) {
+    syncChannelOptions.value = [];
+    return;
+  }
+  syncChannelLoading.value = true;
+  try {
+    const list = await chat.channelFavoriteCandidateList(props.channel.worldId, true);
+    const options = (Array.isArray(list) ? list : [])
+      .filter(channel => {
+        if (!channel?.id) return false;
+        if (channel.id === props.channel?.id) return false;
+        if (channel.isPrivate) return false;
+        if (channel.permType === 'private') return false;
+        return true;
+      })
+      .map(channel => ({
+        label: channel.name || '未命名频道',
+        value: channel.id,
+      }));
+    syncChannelOptions.value = options;
+  } catch (error) {
+    console.warn('加载同步频道列表失败', error);
+    syncChannelOptions.value = [];
+  } finally {
+    syncChannelLoading.value = false;
+  }
+};
+
+const resetSyncDialog = () => {
+  syncSourceChannelId.value = null;
+  syncMode.value = 'append';
+};
+
+const openSyncDialog = async () => {
+  syncDialogVisible.value = true;
+  await loadSyncChannelOptions();
+};
+
+const handleSyncMembers = async () => {
+  if (!props.channel?.id) {
+    message.error('目标频道不存在');
+    return;
+  }
+  if (!syncSourceChannelId.value) {
+    message.warning('请选择来源频道');
+    return;
+  }
+  if (syncSourceChannelId.value === props.channel.id) {
+    message.warning('不能选择当前频道');
+    return;
+  }
+  syncSubmitting.value = true;
+  try {
+    const [sourceRolesResp, targetRolesResp] = await Promise.all([
+      chat.channelRoleList(syncSourceChannelId.value),
+      chat.channelRoleList(props.channel.id),
+    ]);
+    const sourceRoles = sourceRolesResp.data?.items || [];
+    const targetRoles = targetRolesResp.data?.items || [];
+    const sourceRoleMap = buildRoleSuffixMap(sourceRoles);
+    const targetRoleMap = buildRoleSuffixMap(targetRoles);
+
+    const [sourceMemberMap, targetMemberMap] = await Promise.all([
+      chat.loadChannelMemberRoles(syncSourceChannelId.value, true),
+      chat.loadChannelMemberRoles(props.channel.id, true),
+    ]);
+    const sourceRoleMembers = buildRoleMemberMap(sourceMemberMap);
+    const targetRoleMembers = buildRoleMemberMap(targetMemberMap);
+
+    const operations: Array<{ roleId: string; add: string[]; remove: string[] }> = [];
+    let totalAdd = 0;
+    let totalRemove = 0;
+    const missingSuffixes: string[] = [];
+
+    for (const suffix of defaultRoleSuffixes) {
+      const sourceRoleId = sourceRoleMap.get(suffix);
+      const targetRoleId = targetRoleMap.get(suffix);
+      if (!sourceRoleId || !targetRoleId) {
+        missingSuffixes.push(suffix);
+        continue;
+      }
+      const sourceIds = new Set(sourceRoleMembers[sourceRoleId] || []);
+      const targetIds = new Set(targetRoleMembers[targetRoleId] || []);
+      const toAdd = Array.from(sourceIds).filter(id => !targetIds.has(id));
+      const toRemove = syncMode.value === 'replace'
+        ? Array.from(targetIds).filter(id => !sourceIds.has(id))
+        : [];
+
+      if (suffix === '-owner' && currentUserId.value && toRemove.includes(currentUserId.value)) {
+        message.error('无法移除自己的群主身份');
+        return;
+      }
+      if (toAdd.length || toRemove.length) {
+        operations.push({ roleId: targetRoleId, add: toAdd, remove: toRemove });
+        totalAdd += toAdd.length;
+        totalRemove += toRemove.length;
+      }
+    }
+
+    if (!operations.length) {
+      message.info('成员已同步，无需操作');
+      return;
+    }
+
+    const removeText = syncMode.value === 'replace' ? `，移除 ${totalRemove} 人` : '';
+    if (!(await dialogAskConfirm(dialog, '同步成员', `将新增 ${totalAdd} 人${removeText}，是否继续？`))) {
+      return;
+    }
+
+    for (const op of operations) {
+      if (op.add.length) {
+        await chat.userRoleLink(op.roleId, op.add);
+      }
+      if (op.remove.length) {
+        await chat.userRoleUnlink(op.roleId, op.remove);
+      }
+    }
+    await doMemberReload();
+    message.success('同步完成');
+    if (missingSuffixes.length) {
+      message.info(`部分默认角色未找到，已跳过：${missingSuffixes.join('、')}`);
+    }
+    syncDialogVisible.value = false;
+  } catch (error) {
+    console.error('同步成员失败:', error);
+    message.error('同步成员失败，请确认你拥有权限');
+  } finally {
+    syncSubmitting.value = false;
+  }
+};
+
+watch(
+  () => syncDialogVisible.value,
+  (visible) => {
+    if (!visible) {
+      resetSyncDialog();
+    }
+  },
+);
+
 const getFilteredMemberList = (lst?: UserRoleModel[]) => {
   const retLst = (lst ?? []).map(i => i.user).filter(i => i != undefined);
   return uniqBy(retLst, 'id') as any as UserInfo[]; // 部分版本中编译器对类型有误判
@@ -255,15 +431,29 @@ const canRemoveMember = (roleId: string, userId?: string) => {
 
     <div v-for="i in roleList?.items" class="border-b pb-1 mb-4">
       <!-- <div>{{ i }}</div> -->
-      <h3 class="text-base font-semibold mt-2 text-gray-800 role-title">{{ i.name }}</h3>
-      <div class="text-gray-500 role-desc mb-2">
-        <span
-          v-if="i.id.endsWith('-owner')"
-          class="font-semibold"
-        >你可以添加当前世界用户为成员，使之可查看此非公开频道。（只有先设定为成员才能在其他角色设定列表找到用户！）</span>
-        <span v-if="i.id.endsWith('-ob')">此角色能够看到所有的子频道</span>
-        <span v-if="i.id.endsWith('-bot')">此角色能够在所有子频道中收发消息</span>
-        <span v-if="i.id.endsWith('-spectator')">旁观者仅可查看频道内容，无法发送消息</span>
+      <div class="role-header">
+        <div class="role-header__info">
+          <h3 class="text-base font-semibold mt-2 text-gray-800 role-title">{{ i.name }}</h3>
+          <div class="text-gray-500 role-desc mb-2">
+            <span
+              v-if="i.id.endsWith('-owner')"
+              class="font-semibold"
+            >你可以添加当前世界用户为成员，使之可查看此非公开频道。（只有先设定为成员才能在其他角色设定列表找到用户！）</span>
+            <span v-if="i.id.endsWith('-ob')">此角色能够看到所有的子频道</span>
+            <span v-if="i.id.endsWith('-bot')">此角色能够在所有子频道中收发消息</span>
+            <span v-if="i.id.endsWith('-spectator')">旁观者仅可查看频道内容，无法发送消息</span>
+          </div>
+        </div>
+        <div class="role-header__actions" v-if="i.id.endsWith('-owner')">
+          <n-button
+            size="small"
+            secondary
+            class="member-sync-btn"
+            @click="openSyncDialog"
+          >
+            同步成员
+          </n-button>
+        </div>
       </div>
 
       <div class="flex justify-end mb-2" v-if="i.id.endsWith('-member')">
@@ -316,6 +506,49 @@ const canRemoveMember = (roleId: string, userId?: string) => {
       </div>
     </div>
 
+    <n-modal
+      v-model:show="syncDialogVisible"
+      preset="dialog"
+      title="同步成员"
+      style="max-width: 520px"
+    >
+      <div class="member-sync-modal">
+        <div class="member-sync-field">
+          <div class="member-sync-label">来源频道</div>
+          <n-select
+            v-model:value="syncSourceChannelId"
+            :options="syncChannelOptions"
+            placeholder="选择要同步的频道"
+            size="small"
+            filterable
+            clearable
+            :loading="syncChannelLoading"
+          />
+          <div v-if="!syncChannelLoading && syncChannelOptions.length === 0" class="member-sync-hint">
+            暂无可同步频道
+          </div>
+        </div>
+        <div class="member-sync-field">
+          <div class="member-sync-label">同步模式</div>
+          <n-radio-group v-model:value="syncMode" size="small">
+            <n-radio value="append">追加</n-radio>
+            <n-radio value="replace">覆盖</n-radio>
+          </n-radio-group>
+          <div class="member-sync-hint">
+            覆盖模式会移除目标频道中不在来源频道的成员
+          </div>
+        </div>
+        <div class="member-sync-footer">
+          <n-button size="small" :disabled="syncSubmitting" @click="syncDialogVisible = false">
+            取消
+          </n-button>
+          <n-button size="small" type="primary" :loading="syncSubmitting" @click="handleSyncMembers">
+            开始同步
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
+
   </div>
 </template>
 
@@ -328,7 +561,8 @@ const canRemoveMember = (roleId: string, userId?: string) => {
   color: #d4d4d8 !important;
 }
 
-.member-quick-add-btn {
+.member-quick-add-btn,
+.member-sync-btn {
   --n-color: var(--n-card-color, var(--n-color, #f8fafc));
   --n-color-hover: var(--n-color-hover, var(--n-color, #eef2f7));
   --n-color-pressed: var(--n-color-pressed, var(--n-color, #e2e8f0));
@@ -336,11 +570,54 @@ const canRemoveMember = (roleId: string, userId?: string) => {
   --n-border: 1px solid var(--n-border-color, rgba(148, 163, 184, 0.4));
 }
 
-:root[data-display-palette='night'] .member-quick-add-btn {
+:root[data-display-palette='night'] .member-quick-add-btn,
+:root[data-display-palette='night'] .member-sync-btn {
   --n-color: var(--n-card-color, rgba(30, 41, 59, 0.65));
   --n-color-hover: var(--n-color-hover, rgba(51, 65, 85, 0.75));
   --n-color-pressed: var(--n-color-pressed, rgba(51, 65, 85, 0.9));
   --n-text-color: var(--n-text-color-2, #e2e8f0);
   --n-border: 1px solid var(--n-border-color, rgba(148, 163, 184, 0.3));
+}
+
+.role-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-header__info {
+  min-width: 0;
+  flex: 1;
+}
+
+.role-header__actions {
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+
+.member-sync-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.member-sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.member-sync-label,
+.member-sync-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3, rgba(100, 116, 139, 0.9));
+}
+
+.member-sync-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
 }
 </style>

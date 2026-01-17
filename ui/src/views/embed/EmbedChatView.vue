@@ -366,6 +366,14 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => chat.currentWorldId,
+  (worldId) => {
+    audioStudio.setCurrentWorld(worldId || null);
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   initialize();
   window.addEventListener('message', handleMessage);

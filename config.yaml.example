@@ -57,7 +57,7 @@
 	    enableTranscode: true
 	    defaultBitrateKbps: 96
 	    alternateBitrates: [] # 已废弃：当前仅保留一份转码产物
-	    ffmpegPath: ""
+	    ffmpegPath: "" # 可填写 ffmpeg 路径；ffprobe 与 ffmpeg 同目录可自动用于时长探测
 
   export:
     storageDir: ./data/exports

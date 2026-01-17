@@ -27,14 +27,15 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir         string   `json:"storageDir" yaml:"storageDir"`
-	TempDir            string   `json:"tempDir" yaml:"tempDir"`
-	MaxUploadSizeMB    int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	AllowedMimeTypes   []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode    bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates  []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath         string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	StorageDir              string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                 string   `json:"tempDir" yaml:"tempDir"`
+	MaxUploadSizeMB         int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	AllowedMimeTypes        []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode         bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps      int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates       []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath              string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench bool    `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
 }
 
 type StorageMode string
@@ -151,6 +152,17 @@ type UpdateCheckConfig struct {
 	GithubToken string `json:"-" yaml:"githubToken"`
 }
 
+// LoginBackgroundConfig 登录页背景配置
+type LoginBackgroundConfig struct {
+	AttachmentId   string `json:"attachmentId" yaml:"attachmentId"`
+	Mode           string `json:"mode" yaml:"mode"`
+	Opacity        int    `json:"opacity" yaml:"opacity"`
+	Blur           int    `json:"blur" yaml:"blur"`
+	Brightness     int    `json:"brightness" yaml:"brightness"`
+	OverlayColor   string `json:"overlayColor" yaml:"overlayColor"`
+	OverlayOpacity int    `json:"overlayOpacity" yaml:"overlayOpacity"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                  `json:"domain" yaml:"domain"`
@@ -176,6 +188,7 @@ type AppConfig struct {
 	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
 	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
 	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
+	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 }
 
 type ExportConfig struct {
@@ -242,14 +255,15 @@ func ReadConfig() *AppConfig {
 			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
 		},
 		Audio: AudioConfig{
-			StorageDir:         "./static/audio",
-			TempDir:            "./data/audio-temp",
-			MaxUploadSizeMB:    80,
-			AllowedMimeTypes:   []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
-			EnableTranscode:    true,
-			DefaultBitrateKbps: 96,
-			AlternateBitrates:  []int{64, 128},
-			FFmpegPath:         "",
+			StorageDir:               "./static/audio",
+			TempDir:                  "./data/audio-temp",
+			MaxUploadSizeMB:          80,
+			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
+			EnableTranscode:          true,
+			DefaultBitrateKbps:       96,
+			AlternateBitrates:        []int{64, 128},
+			FFmpegPath:               "",
+			AllowWorldAudioWorkbench: false,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,
@@ -304,6 +318,12 @@ func ReadConfig() *AppConfig {
 			Enabled:     true,
 			IntervalSec: 6 * 60 * 60,
 			GithubRepo:  "kagangtuya-star/sealchat",
+		},
+		LoginBackground: LoginBackgroundConfig{
+			Mode:       "cover",
+			Opacity:    30,
+			Blur:       0,
+			Brightness: 100,
 		},
 	}
 
@@ -565,6 +585,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
+		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
 		_ = k.Set("export.storageDir", config.Export.StorageDir)
 		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
 		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)
@@ -614,6 +635,15 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)
 		_ = k.Set("emailNotification.minDelayMinutes", config.EmailNotification.MinDelayMinutes)
 		_ = k.Set("emailNotification.maxDelayMinutes", config.EmailNotification.MaxDelayMinutes)
+
+		// 登录页背景配置
+		_ = k.Set("loginBackground.attachmentId", config.LoginBackground.AttachmentId)
+		_ = k.Set("loginBackground.mode", config.LoginBackground.Mode)
+		_ = k.Set("loginBackground.opacity", config.LoginBackground.Opacity)
+		_ = k.Set("loginBackground.blur", config.LoginBackground.Blur)
+		_ = k.Set("loginBackground.brightness", config.LoginBackground.Brightness)
+		_ = k.Set("loginBackground.overlayColor", config.LoginBackground.OverlayColor)
+		_ = k.Set("loginBackground.overlayOpacity", config.LoginBackground.OverlayOpacity)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

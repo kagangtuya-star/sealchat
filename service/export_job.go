@@ -458,6 +458,35 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 	return CreateMessageExportJob(opts)
 }
 
+// DeleteMessageExportJob 删除导出任务记录并清理本地文件。
+func DeleteMessageExportJob(job *model.MessageExportJobModel) (bool, error) {
+	if job == nil {
+		return false, fmt.Errorf("任务不存在")
+	}
+	fileDeleted := false
+	path := strings.TrimSpace(job.FilePath)
+	if path != "" {
+		info, err := os.Stat(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return false, err
+			}
+		} else if info.IsDir() {
+			return false, fmt.Errorf("导出路径异常")
+		} else if err := os.Remove(path); err != nil {
+			if !os.IsNotExist(err) {
+				return false, err
+			}
+		} else {
+			fileDeleted = true
+		}
+	}
+	if err := model.GetDB().Delete(&model.MessageExportJobModel{}, "id = ?", job.ID).Error; err != nil {
+		return fileDeleted, err
+	}
+	return fileDeleted, nil
+}
+
 // ExportJobRuntimeSettings 返回任务当前的分页与并发配置。
 func ExportJobRuntimeSettings(job *model.MessageExportJobModel) (int, int) {
 	extra := parseExportExtraOptions("")

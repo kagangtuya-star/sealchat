@@ -12,6 +12,7 @@ import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
+type KeywordDisplayStyle = 'standard' | 'minimal' | 'inherit'
 const glossary = useWorldGlossaryStore()
 const chat = useChatStore()
 const utils = useUtilsStore()
@@ -89,7 +90,8 @@ const worldDetail = computed(() => {
 const canEdit = computed(() => {
   const detail = worldDetail.value
   const role = detail?.memberRole
-  return role === 'owner' || role === 'admin'
+  const allowMemberEdit = detail?.world?.allowMemberEditKeywords ?? detail?.allowMemberEditKeywords ?? false
+  return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 
 const formModel = reactive({
@@ -98,7 +100,7 @@ const formModel = reactive({
   aliases: '',
   matchMode: 'plain' as 'plain' | 'regex',
   description: '',
-  display: 'inherit' as 'standard' | 'minimal' | 'inherit',
+  display: 'inherit' as KeywordDisplayStyle,
   isEnabled: true,
 })
 
@@ -123,6 +125,8 @@ const importTargetCategory = ref('')
 // Bulk modify category
 const bulkCategoryModalVisible = ref(false)
 const bulkTargetCategory = ref('')
+const bulkDisplayModalVisible = ref(false)
+const bulkTargetDisplay = ref<KeywordDisplayStyle>('inherit')
 
 const importText = reactive({ content: '' })
 
@@ -133,11 +137,16 @@ const isRegexMatch = computed({
   },
 })
 
-const displayOptions = [
+const displayOptions: Array<{ label: string; value: KeywordDisplayStyle }> = [
   { label: '跟随全局', value: 'inherit' },
   { label: '标准', value: 'standard' },
   { label: '极简下划线', value: 'minimal' },
 ]
+const displayLabelMap: Record<KeywordDisplayStyle, string> = {
+  inherit: '跟随全局',
+  standard: '标准',
+  minimal: '极简下划线',
+}
 
 const keywordMaxLength = computed(() => utils.config?.keywordMaxLength || DEFAULT_KEYWORD_MAX_LENGTH)
 
@@ -452,6 +461,27 @@ async function handleBulkModifyCategory() {
   bulkCategoryModalVisible.value = false
   bulkTargetCategory.value = ''
   clearSelection()
+}
+
+const openBulkDisplayModal = () => {
+  if (!hasSelection.value) return
+  const first = keywordItems.value.find((item) => selectedIds.value.includes(item.id))
+  bulkTargetDisplay.value = (first?.display || 'inherit') as KeywordDisplayStyle
+  bulkDisplayModalVisible.value = true
+}
+
+async function handleBulkModifyDisplay() {
+  const worldId = currentWorldId.value
+  if (!worldId || !selectedIds.value.length) return
+  try {
+    await glossary.setKeywordDisplayBulk(worldId, [...selectedIds.value], bulkTargetDisplay.value)
+    const label = displayLabelMap[bulkTargetDisplay.value] || displayLabelMap.inherit
+    message.success(`已将 ${selectedIds.value.length} 个术语的显示状态修改为 "${label}"`)
+    bulkDisplayModalVisible.value = false
+    clearSelection()
+  } catch (error: any) {
+    message.error(error?.message || '批量更新失败')
+  }
 }
 
 
@@ -874,6 +904,15 @@ onUnmounted(() => {
               <n-button
                 size="tiny"
                 tertiary
+                type="info"
+                :disabled="!hasSelection"
+                @click="openBulkDisplayModal"
+              >
+                修改显示
+              </n-button>
+              <n-button
+                size="tiny"
+                tertiary
                 type="error"
                 :loading="bulkDeleting"
                 :disabled="!hasSelection"
@@ -1227,6 +1266,23 @@ onUnmounted(() => {
       <n-space>
         <n-button text @click="bulkCategoryModalVisible = false">取消</n-button>
         <n-button type="primary" :disabled="!bulkTargetCategory.trim()" @click="handleBulkModifyCategory">确认修改</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+
+  <!-- Bulk Modify Display Modal -->
+  <n-modal v-model:show="bulkDisplayModalVisible" preset="card" title="批量修改显示状态" style="width: 420px">
+    <div class="mb-2 text-sm text-gray-500">将为 {{ selectedIds.length }} 个术语修改显示状态</div>
+    <n-form-item label="显示状态" :show-feedback="false">
+      <n-select
+        v-model:value="bulkTargetDisplay"
+        :options="displayOptions"
+      />
+    </n-form-item>
+    <template #action>
+      <n-space>
+        <n-button text @click="bulkDisplayModalVisible = false">取消</n-button>
+        <n-button type="primary" @click="handleBulkModifyDisplay">确认修改</n-button>
       </n-space>
     </template>
   </n-modal>

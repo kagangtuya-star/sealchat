@@ -2,11 +2,13 @@ package api
 
 import (
 	_ "embed"
+	"html"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -100,6 +102,44 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 	return utils.FormatHostPort(host, newPort), true
 }
 
+func buildIndexPaths(webURL string) []string {
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return []string{"/", "/index.html"}
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" {
+		webRoot = "/"
+	}
+	paths := []string{webRoot}
+	if webRoot != "/" {
+		paths = append(paths, webRoot+"/")
+	}
+	paths = append(paths, path.Join(webRoot, "index.html"))
+	return paths
+}
+
+func applyPageTitleToIndex(htmlSource string, title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return htmlSource
+	}
+	start := strings.Index(htmlSource, "<title>")
+	if start == -1 {
+		return htmlSource
+	}
+	end := strings.Index(htmlSource[start:], "</title>")
+	if end == -1 {
+		return htmlSource
+	}
+	end += start
+	escapedTitle := html.EscapeString(trimmed)
+	return htmlSource[:start+len("<title>")] + escapedTitle + htmlSource[end:]
+}
+
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
@@ -158,10 +198,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		resp := struct {
 			utils.AppConfig
-			FFmpegAvailable bool `json:"ffmpegAvailable"`
+			FFmpegAvailable          bool `json:"ffmpegAvailable"`
+			AllowWorldAudioWorkbench bool `json:"allowWorldAudioWorkbench"`
 		}{
-			AppConfig:       ret,
-			FFmpegAvailable: ffmpegAvailable,
+			AppConfig:                ret,
+			FFmpegAvailable:          ffmpegAvailable,
+			AllowWorldAudioWorkbench: ret.Audio.AllowWorldAudioWorkbench,
 		}
 		return c.Status(http.StatusOK).JSON(resp)
 	})
@@ -231,6 +273,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
+	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
@@ -273,7 +316,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	audio.Get("/scenes", AudioSceneList)
 	audio.Get("/stream/:id", AudioAssetStream)
 	audio.Get("/state", AudioPlaybackStateGet)
-	audioAdmin := audio.Group("", UserRoleAdminMiddleware)
+	audioAdmin := audio.Group("", AudioWorkbenchMiddleware)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
 	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
 	audioAdmin.Delete("/assets/:id", AudioAssetDelete)
@@ -290,6 +333,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channels/:channelId/member-options", ChannelMemberOptions)
 	v1Auth.Get("/channels/:channelId/speaker-options", ChannelSpeakerOptions)
 	v1Auth.Get("/channels/:channelId/speaker-role-options", ChannelSpeakerRoleOptions)
+	v1Auth.Post("/channels/:channelId/copy", ChannelCopy)
 	v1Auth.Delete("/channels/:channelId", ChannelDissolve)
 	v1Auth.Post("/channel-info-edit", ChannelInfoEdit)
 	v1Auth.Get("/channel-info", ChannelInfoGet)
@@ -332,6 +376,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/chat/export", ChatExportCreate)
 	v1Auth.Get("/chat/export", ChatExportList)
 	v1Auth.Get("/chat/export/:taskId", ChatExportGet)
+	v1Auth.Delete("/chat/export/:taskId", ChatExportDelete)
 	v1Auth.Post("/chat/export/:taskId/retry", ChatExportRetry)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
@@ -386,16 +431,39 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
-		var newConfig utils.AppConfig
-		err := ctx.BodyParser(&newConfig)
+		var payload struct {
+			utils.AppConfig
+			AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
+		}
+		err := ctx.BodyParser(&payload)
 		if err != nil {
 			return err
 		}
+
+		newConfig := payload.AppConfig
+		if payload.AllowWorldAudioWorkbench != nil {
+			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
+		}
+
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
 		return nil
 	})
 
+	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
+	if indexErr != nil {
+		log.Printf("读取内置 index.html 失败: %v", indexErr)
+	} else {
+		renderIndex := func(c *fiber.Ctx) error {
+			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
+			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+			return c.Status(http.StatusOK).SendString(page)
+		}
+		for _, routePath := range buildIndexPaths(config.WebUrl) {
+			pathCopy := routePath
+			app.Get(pathCopy, renderIndex)
+		}
+	}
 
 	// Default /test
 	app.Use(config.WebUrl, filesystem.New(filesystem.Config{

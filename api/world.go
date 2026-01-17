@@ -200,6 +200,7 @@ func WorldDetail(c *fiber.Ctx) error {
 		"memberRole":              member.Role,
 		"memberCount":             memberCount,
 		"allowAdminEditMessages":  world.AllowAdminEditMessages,
+		"allowMemberEditKeywords": world.AllowMemberEditKeywords,
 		"ownerNickname":           ownerNickname,
 		"editNoticeAcked":         editNoticeAcked,
 	})

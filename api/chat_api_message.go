@@ -261,11 +261,13 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 	operatorID := ctx.User.ID
 	targetUserID := msg.UserID
 	if targetUserID != operatorID {
-		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID)
+		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID) ||
+			service.IsWorldAdmin(channel.WorldID, operatorID)
 		if !operatorIsAdmin && !pm.CanWithSystemRole(operatorID, pm.PermModAdmin) {
 			return nil, fmt.Errorf("无权限删除该消息")
 		}
-		if isChannelAdminUser(channel, channelID, targetUserID) {
+		if isChannelAdminUser(channel, channelID, targetUserID) ||
+			service.IsWorldAdmin(channel.WorldID, targetUserID) {
 			return nil, fmt.Errorf("无法删除拥有管理员权限的成员消息")
 		}
 	}
@@ -1324,7 +1326,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)

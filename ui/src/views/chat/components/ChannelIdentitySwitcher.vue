@@ -256,7 +256,7 @@ const canManageIdentities = computed(() => {
   if (!worldId) return false;
   const detail = chat.worldDetailMap[worldId];
   const role = detail?.memberRole;
-  return role === 'owner' || role === 'admin';
+  return role === 'owner' || role === 'admin' || role === 'member';
 });
 
 const isMappingMissing = computed(() => {

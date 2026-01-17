@@ -1,4 +1,5 @@
 export type AudioTrackType = 'music' | 'ambience' | 'sfx';
+export type AudioAssetScope = 'common' | 'world';
 
 export interface AudioAsset {
   id: string;
@@ -9,6 +10,7 @@ export interface AudioAsset {
   bitrate: number;
   storageType: 'local' | 's3';
   objectKey: string;
+  transcodeStatus?: 'pending' | 'ready' | 'failed';
   description?: string;
   tags: string[];
   visibility: 'public' | 'restricted';
@@ -16,6 +18,8 @@ export interface AudioAsset {
   updatedBy?: string;
   createdAt: string;
   updatedAt: string;
+  scope: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioAssetMutationPayload {
@@ -24,6 +28,8 @@ export interface AudioAssetMutationPayload {
   tags?: string[];
   visibility?: 'public' | 'restricted';
   folderId?: string | null;
+  scope?: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioAssetQueryParams extends Partial<AudioSearchFilters> {
@@ -46,12 +52,18 @@ export interface AudioFolder {
   name: string;
   path: string;
   children?: AudioFolder[];
+  scope: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioFolderPayload {
   name: string;
   parentId?: string | null;
+  scope?: AudioAssetScope;
+  worldId?: string | null;
 }
+
+export type PlaylistMode = 'single' | 'sequential' | 'shuffle';
 
 export interface AudioSceneTrack {
   type: AudioTrackType;
@@ -59,6 +71,12 @@ export interface AudioSceneTrack {
   volume: number;
   fadeIn: number;
   fadeOut: number;
+  loopEnabled?: boolean;
+  playbackRate?: number;
+  playlistFolderId?: string | null;
+  playlistMode?: PlaylistMode | null;
+  playlistAssetIds?: string[];
+  playlistIndex?: number;
 }
 
 export interface AudioScene {
@@ -73,6 +91,8 @@ export interface AudioScene {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  scope: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioSceneInput {
@@ -83,6 +103,8 @@ export interface AudioSceneInput {
   order?: number;
   channelScope?: string | null;
   folderId?: string | null;
+  scope?: AudioAssetScope;
+  worldId?: string | null;
 }
 
 export interface AudioSearchFilters {
@@ -92,15 +114,21 @@ export interface AudioSearchFilters {
   creatorIds: string[];
   durationRange: [number, number] | null;
   hasSceneOnly?: boolean;
+  scope?: AudioAssetScope;
+  worldId?: string | null;
+  includeCommon?: boolean;
 }
 
 export interface UploadTaskState {
   id: string;
+  assetId?: string;
   filename: string;
   size: number;
   progress: number;
   status: 'pending' | 'uploading' | 'transcoding' | 'success' | 'error';
   error?: string;
+  retryCount?: number;
+  createdAt?: number;
 }
 
 export interface AudioTrackStatePayload {
@@ -111,6 +139,14 @@ export interface AudioTrackStatePayload {
   solo: boolean;
   fadeIn: number;
   fadeOut: number;
+  isPlaying: boolean;
+  position: number;
+  loopEnabled: boolean;
+  playbackRate: number;
+  playlistFolderId?: string | null;
+  playlistMode?: PlaylistMode | null;
+  playlistAssetIds?: string[];
+  playlistIndex?: number;
 }
 
 export interface AudioPlaybackStatePayload {

@@ -70,6 +70,8 @@ export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
   showAvatar: boolean
+  avatarSize: number            // 头像大小 (px)
+  avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
   autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
@@ -95,6 +97,8 @@ export interface DisplaySettings {
   worldKeywordTooltipEnabled: boolean
   worldKeywordDeduplicateEnabled: boolean
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
+  worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
+  worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -151,6 +155,24 @@ export const INPUT_AREA_HEIGHT_LIMITS = {
   MIN: INPUT_AREA_HEIGHT_MIN,
   MAX: INPUT_AREA_HEIGHT_MAX,
 }
+
+// 头像样式常量
+const AVATAR_SIZE_DEFAULT = 48
+const AVATAR_SIZE_MIN = 32
+const AVATAR_SIZE_MAX = 72
+export const AVATAR_SIZE_LIMITS = {
+  DEFAULT: AVATAR_SIZE_DEFAULT,
+  MIN: AVATAR_SIZE_MIN,
+  MAX: AVATAR_SIZE_MAX,
+}
+const AVATAR_BORDER_RADIUS_DEFAULT = 14 // 约等于 0.85rem
+const AVATAR_BORDER_RADIUS_MIN = 0
+const AVATAR_BORDER_RADIUS_MAX = 50 // 50% = 圆形
+export const AVATAR_BORDER_RADIUS_LIMITS = {
+  DEFAULT: AVATAR_BORDER_RADIUS_DEFAULT,
+  MIN: AVATAR_BORDER_RADIUS_MIN,
+  MAX: AVATAR_BORDER_RADIUS_MAX,
+}
 const normalizeInputAreaHeight = (value: unknown) => {
   const raw = coerceNumberInRange(
     value,
@@ -166,6 +188,11 @@ const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
 const SEND_SHORTCUT_DEFAULT: 'enter' | 'ctrlEnter' = 'enter'
 const coerceSendShortcut = (value?: string): 'enter' | 'ctrlEnter' => (value === 'ctrlEnter' ? 'ctrlEnter' : 'enter')
+const QUICK_INPUT_TRIGGER_DEFAULT = '/'
+const coerceQuickInputTrigger = (value?: string): string => {
+  if (typeof value === 'string' && value.length === 1) return value
+  return QUICK_INPUT_TRIGGER_DEFAULT
+}
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
@@ -340,6 +367,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'day',
   showAvatar: true,
+  avatarSize: AVATAR_SIZE_DEFAULT,
+  avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
   autoScrollTypingPreview: false,
   mergeNeighbors: true,
@@ -363,8 +392,10 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
-  worldKeywordDeduplicateEnabled: false,
+  worldKeywordDeduplicateEnabled: true,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
+  worldKeywordQuickInputEnabled: true,
+  worldKeywordQuickInputTrigger: '/',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -482,6 +513,18 @@ const loadSettings = (): DisplaySettings => {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      avatarSize: coerceNumberInRange(
+        (parsed as any)?.avatarSize,
+        AVATAR_SIZE_DEFAULT,
+        AVATAR_SIZE_MIN,
+        AVATAR_SIZE_MAX,
+      ),
+      avatarBorderRadius: coerceNumberInRange(
+        (parsed as any)?.avatarBorderRadius,
+        AVATAR_BORDER_RADIUS_DEFAULT,
+        AVATAR_BORDER_RADIUS_MIN,
+        AVATAR_BORDER_RADIUS_MAX,
+      ),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
       autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
@@ -540,13 +583,15 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
-      worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
+      worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? true),
       worldKeywordTooltipTextIndent: coerceFloatInRange(
         (parsed as any)?.worldKeywordTooltipTextIndent,
         KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
         KEYWORD_TOOLTIP_TEXT_INDENT_MIN,
         KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
       ),
+      worldKeywordQuickInputEnabled: coerceBoolean((parsed as any)?.worldKeywordQuickInputEnabled ?? true),
+      worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -569,6 +614,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  avatarSize:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
+      ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)
+      : base.avatarSize,
+  avatarBorderRadius:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'avatarBorderRadius')
+      ? coerceNumberInRange((patch as any).avatarBorderRadius, AVATAR_BORDER_RADIUS_DEFAULT, AVATAR_BORDER_RADIUS_MIN, AVATAR_BORDER_RADIUS_MAX)
+      : base.avatarBorderRadius,
   showInputPreview:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
       ? coerceBoolean(patch.showInputPreview)
@@ -699,6 +752,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
         KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
       )
       : base.worldKeywordTooltipTextIndent,
+  worldKeywordQuickInputEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputEnabled')
+      ? coerceBoolean((patch as any).worldKeywordQuickInputEnabled)
+      : base.worldKeywordQuickInputEnabled,
+  worldKeywordQuickInputTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputTrigger')
+      ? coerceQuickInputTrigger((patch as any).worldKeywordQuickInputTrigger)
+      : base.worldKeywordQuickInputTrigger,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
@@ -931,6 +992,14 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)
+
+      // Apply avatar style
+      setVar('--chat-avatar-size', `${effective.avatarSize}px`)
+      // Calculate border-radius: use percentage for values > 25 (approaching circle)
+      const radiusValue = effective.avatarBorderRadius >= 50
+        ? '50%'
+        : `${effective.avatarBorderRadius}%`
+      setVar('--chat-avatar-radius', radiusValue)
 
       // Apply custom theme colors
       const customColorVars = [

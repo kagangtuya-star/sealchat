@@ -21,6 +21,7 @@ watch(() => props.worldId, async (id) => {
     description: detail.world?.description,
     visibility: detail.world?.visibility,
     allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
+    allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
   };
 }, { immediate: true });
 
@@ -88,6 +89,12 @@ const confirmRemove = () => {
           <n-switch v-model:value="form.allowAdminEditMessages" />
           <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
             允许管理员编辑其他成员发言
+          </span>
+        </n-form-item>
+        <n-form-item label="管理权限">
+          <n-switch v-model:value="form.allowMemberEditKeywords" />
+          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
+            允许成员编辑世界术语
           </span>
         </n-form-item>
       </n-form>

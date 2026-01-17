@@ -375,6 +375,14 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => chat.currentWorldId,
+  (worldId) => {
+    audioStudio.setCurrentWorld(worldId || null);
+  },
+  { immediate: true },
+);
+
 watch(presencePopoverVisible, (visible, oldVisible) => {
   if (visible && !oldVisible) {
     handlePresenceRefresh({ silent: true });

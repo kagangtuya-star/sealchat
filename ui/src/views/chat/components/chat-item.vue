@@ -11,9 +11,9 @@ import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
 import Avatar from '@/components/avatar.vue'
-import { Lock, Edit, Check, X } from '@vicons/tabler';
+import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
-import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
+import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
@@ -156,12 +156,22 @@ const parseContent = (payload: any, overrideContent?: string) => {
         // textItems.push(DOMPurify.sanitize(item.toString()));
         // hasImage.value = true;
         break;
-      case "at":
-        if (item.attrs.id == user.info.id) {
-          textItems.push(`<span class="text-blue-500 bg-gray-400 px-1" style="white-space: pre-wrap">@${item.attrs.name}</span>`);
-        } else {
-          textItems.push(`<span class="text-blue-500" style="white-space: pre-wrap">@${item.attrs.name}</span>`);
+      case "at": {
+        const atId = item.attrs.id;
+        const atName = item.attrs.name || '';
+        const isAll = atId === 'all';
+        const isSelf = atId === user.info.id;
+        let className = 'mention-capsule';
+        if (isAll) {
+          className += ' mention-capsule--all';
+        } else if (isSelf) {
+          className += ' mention-capsule--self';
         }
+        // XSS 防护：使用 DOMPurify 转义名称
+        const sanitizedName = DOMPurify.sanitize(atName, { ALLOWED_TAGS: [] });
+        textItems.push(`<span class="${className}">@${sanitizedName}</span>`);
+        break;
+      }
       default: {
         const raw = item.toString();
         if (diceChipHtmlPattern.test(raw)) {
@@ -337,9 +347,11 @@ const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
   || item?.identity?.displayName
   || item?.sender_identity_name
   || item?.sender_member_name
+  || resolveChannelIdentityDisplayName(item?.sender_identity_id || item?.senderIdentityId)
   || item?.member?.nick
   || item?.user?.nick
   || item?.user?.name
+  || resolveChannelUserDisplayName(item?.user?.id || item?.user_id || item?.userId)
   || item?.whisperMeta?.senderUserNick
   || item?.whisperMeta?.senderUserName
   || '未知成员';
@@ -349,6 +361,96 @@ const getTargetDisplayName = (item: any) => item?.whisperMeta?.targetMemberName
   || item?.whisperMeta?.targetUserNick
   || item?.whisperMeta?.targetUserName
   || '未知成员';
+
+const channelUserNameMap = computed(() => {
+  const map = new Map<string, string>();
+  (chat.curChannelUsers || []).forEach((user: any) => {
+    const name = user?.nick || user?.nickname || user?.name || user?.username || '';
+    if (user?.id && name) {
+      map.set(String(user.id), name);
+    }
+  });
+  return map;
+});
+
+const resolveChannelUserDisplayName = (userId?: string) => {
+  if (!userId) return '';
+  return channelUserNameMap.value.get(String(userId)) || '';
+};
+
+const channelIdentityMap = computed(() => {
+  const map = new Map<string, { name: string; color: string }>();
+  const list = chat.channelIdentities[chat.curChannel?.id || ''] || [];
+  list.forEach((identity) => {
+    if (!identity?.id) return;
+    map.set(identity.id, {
+      name: identity.displayName || '',
+      color: identity.color || '',
+    });
+  });
+  return map;
+});
+
+const resolveChannelIdentityDisplayName = (identityId?: string) => {
+  if (!identityId) return '';
+  return channelIdentityMap.value.get(String(identityId))?.name || '';
+};
+
+const resolveChannelIdentityColor = (identityId?: string) => {
+  if (!identityId) return '';
+  return channelIdentityMap.value.get(String(identityId))?.color || '';
+};
+
+const quoteInlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
+
+const buildQuoteSummary = (quote?: any) => {
+  if (!quote) return '';
+  const meta = quote as any;
+  if (meta?.is_deleted || meta?.isDeleted) {
+    return '此消息已删除';
+  }
+  if (meta?.is_revoked || meta?.isRevoked) {
+    return '此消息已撤回';
+  }
+  const content = quote?.content ?? '';
+  if (typeof content !== 'string' || content.trim() === '') {
+    return '[图片]';
+  }
+  if (isTipTapJson(content)) {
+    try {
+      const json = JSON.parse(content);
+      const text = tiptapJsonToPlainText(json).trim();
+      return text || '[图片]';
+    } catch (error) {
+      console.warn('TipTap JSON 文本解析失败', error);
+      return '[图片]';
+    }
+  }
+  const items = Element.parse(content);
+  let text = '';
+  let fallback = '';
+  items.forEach((item) => {
+    if (item.type === 'text') {
+      text += item.toString();
+      return;
+    }
+    if (item.type === 'at') {
+      const name = item.attrs?.name;
+      text += name ? `@${name}` : item.toString();
+      return;
+    }
+    if (!fallback) {
+      if (item.type === 'img') fallback = '[图片]';
+      if (item.type === 'audio') fallback = '[语音]';
+      if (item.type === 'file') fallback = '[附件]';
+    }
+  });
+  const normalized = text.replace(quoteInlineImageTokenPattern, '[图片]').trim();
+  if (normalized) return normalized;
+  const replaced = content.replace(quoteInlineImageTokenPattern, '[图片]').trim();
+  if (replaced && replaced !== content) return replaced;
+  return fallback || '[图片]';
+};
 
 const buildWhisperLabel = (item?: any) => {
   if (!item?.isWhisper) return '';
@@ -371,7 +473,16 @@ const buildWhisperLabel = (item?: any) => {
 };
 
 const whisperLabel = computed(() => buildWhisperLabel(props.item));
-const quoteWhisperLabel = computed(() => buildWhisperLabel((props.item as any)?.quote));
+const quoteItem = computed(() => props.item?.quote ?? null);
+const quoteDisplayName = computed(() => (quoteItem.value ? getMemberDisplayName(quoteItem.value) : ''));
+const quoteNameColor = computed(() => quoteItem.value?.identity?.color
+  || (quoteItem.value as any)?.sender_identity_color
+  || resolveChannelIdentityColor((quoteItem.value as any)?.sender_identity_id || (quoteItem.value as any)?.senderIdentityId)
+  || '');
+const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_deleted || (quoteItem.value as any)?.isDeleted));
+const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
+const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
+const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
 const selfEditingPreview = computed(() => (
   props.editingPreview && props.editingPreview.isSelf ? props.editingPreview : null
@@ -891,6 +1002,21 @@ const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item:
 const message = useMessage()
 let avatarClickTimer: ReturnType<typeof setTimeout> | null = null;
 
+const handleQuoteClick = () => {
+  const quote = quoteItem.value as any;
+  if (!quote?.id) {
+    message.warning('未找到要跳转的消息');
+    return;
+  }
+  const createdAt = quote.createdAt ?? quote.created_at;
+  const displayOrder = quote.displayOrder ?? quote.display_order;
+  chatEvent.emit('search-jump', {
+    messageId: quote.id,
+    createdAt,
+    displayOrder,
+  });
+};
+
 const getAvatarMenuPoint = (event: MouseEvent) => {
   const target = event.currentTarget as HTMLElement | null;
   if (target) {
@@ -905,10 +1031,6 @@ const getAvatarMenuPoint = (event: MouseEvent) => {
 
 const doAvatarClick = (e: MouseEvent) => {
   if (isMobileUa) {
-    return;
-  }
-  if (!props.item?.member?.nick) {
-    message.warning('此用户无法查看')
     return;
   }
   if (avatarClickTimer) {
@@ -1270,22 +1392,24 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
               <n-icon :component="Lock" size="16" />
               <span>{{ whisperLabel }}</span>
             </div>
-            <div v-if="props.item?.quote?.id" class="border-l-4 pl-2 border-blue-500 mb-2">
-              <template v-if="(props.item as any)?.quote?.is_deleted">
-                <span class="text-gray-400">此消息已删除</span>
-              </template>
-              <template v-else-if="props.item?.quote?.is_revoked">
-                <span class="text-gray-400">此消息已撤回</span>
-              </template>
-              <template v-else>
-                <div v-if="quoteWhisperLabel" class="whisper-label whisper-label--quote">
-                  <n-icon :component="Lock" size="14" />
-                  <span>{{ quoteWhisperLabel }}</span>
-                </div>
-                <span class="text-gray-500">
-                  <component :is="parseContent(props.item?.quote)" />
+            <div
+              v-if="quoteItem"
+              class="message-quote"
+              :class="{
+                'message-quote--disabled': !quoteJumpEnabled,
+                'message-quote--muted': quoteIsDeleted || quoteIsRevoked,
+              }"
+              @click.stop="handleQuoteClick"
+            >
+              <n-icon class="message-quote__icon" :component="ArrowBackUp" size="14" />
+              <div class="message-quote__body">
+                <span class="message-quote__name" :style="quoteNameColor ? { color: quoteNameColor } : undefined">
+                  {{ quoteDisplayName }}
                 </span>
-              </template>
+                <span class="message-quote__summary">
+                  {{ quoteSummary }}
+                </span>
+              </div>
             </div>
             <component :is="parseContent(props, displayContent)" />
           </div>
@@ -1340,8 +1464,8 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 
 .chat-item__avatar {
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
+  width: var(--chat-avatar-size, 3rem);
+  height: var(--chat-avatar-size, 3rem);
 }
 
 @media (pointer: coarse) {
@@ -1455,7 +1579,8 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 }
 
 .chat-item--layout-bubble .chat-item__avatar {
-  width: 2.75rem;
+  width: var(--chat-avatar-size, 2.75rem);
+  height: var(--chat-avatar-size, 2.75rem);
   margin-right: 0.5rem;
 }
 
@@ -1534,6 +1659,103 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 
 .chat--layout-compact .chat-item--merged > .right > .content {
   padding-top: 0.1rem;
+}
+
+.message-quote {
+  --quote-accent: var(--primary-color, #3b82f6);
+  --quote-bg: var(--sc-bg-elevated, rgba(59, 130, 246, 0.05));
+  --quote-bg-hover: var(--sc-bg-input, rgba(59, 130, 246, 0.08));
+  --quote-border: var(--sc-border-strong, rgba(59, 130, 246, 0.25));
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--quote-border);
+  border-left-width: 3px;
+  border-left-color: var(--quote-accent);
+  border-radius: 0.6rem;
+  background: var(--quote-bg);
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+:root[data-display-palette='night'] .message-quote,
+[data-display-palette='night'] .message-quote {
+  --quote-bg: var(--sc-bg-input, rgba(15, 23, 42, 0.35));
+  --quote-bg-hover: var(--sc-bg-elevated, rgba(15, 23, 42, 0.5));
+  --quote-border: var(--sc-border-strong, rgba(148, 163, 184, 0.4));
+}
+
+.message-quote__icon {
+  color: var(--quote-accent);
+}
+
+.message-quote__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.message-quote__name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--chat-text-primary, #1f2937);
+  line-height: 1.2;
+}
+
+.message-quote__summary {
+  font-size: 0.82rem;
+  color: var(--chat-text-primary, #1f2937);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.message-quote--muted .message-quote__summary {
+  color: var(--chat-text-secondary, #94a3b8);
+}
+
+.message-quote--muted .message-quote__name {
+  color: var(--chat-text-secondary, #94a3b8);
+}
+
+.message-quote--disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.message-quote:not(.message-quote--disabled):hover {
+  background: var(--quote-bg-hover);
+}
+
+.chat-item--layout-compact .message-quote {
+  background: transparent;
+  border-radius: 0;
+  padding: 0.1rem 0 0.35rem 0.6rem;
+  margin-bottom: 0.35rem;
+  border: none;
+  border-left: 2px solid var(--quote-accent);
+}
+
+.chat-item--layout-compact .message-quote__icon {
+  color: var(--quote-accent);
+}
+
+.chat-item--layout-compact .message-quote__name {
+  font-size: 0.72rem;
+}
+
+.chat-item--layout-compact .message-quote__summary {
+  font-size: 0.78rem;
+}
+
+.chat-item--layout-compact .message-quote:not(.message-quote--disabled):hover {
+  background: transparent;
 }
 
 .content img {
@@ -1936,5 +2158,58 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
   padding: 0;
   background: transparent;
   color: var(--chat-text-secondary);
+}
+
+/* @ mention capsule styles */
+.mention-capsule {
+  display: inline;
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  padding: 0 0.35em;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.mention-capsule:hover {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.mention-capsule--self {
+  background-color: rgba(59, 130, 246, 0.2);
+  font-weight: 600;
+}
+
+.mention-capsule--all {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.mention-capsule--all:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+}
+
+/* Night mode */
+:root[data-display-palette='night'] .mention-capsule {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+:root[data-display-palette='night'] .mention-capsule:hover {
+  background-color: rgba(59, 130, 246, 0.3);
+}
+
+:root[data-display-palette='night'] .mention-capsule--self {
+  background-color: rgba(59, 130, 246, 0.3);
+}
+
+:root[data-display-palette='night'] .mention-capsule--all {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+:root[data-display-palette='night'] .mention-capsule--all:hover {
+  background-color: rgba(239, 68, 68, 0.3);
 }
 </style>

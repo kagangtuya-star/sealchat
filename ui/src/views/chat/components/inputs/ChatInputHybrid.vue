@@ -45,9 +45,15 @@ const emit = defineEmits<{
 }>();
 
 const editorRef = ref<HTMLDivElement | null>(null);
+const wrapperRef = ref<HTMLDivElement | null>(null);
 const isFocused = ref(false);
 const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更新
 const isComposing = ref(false);
+
+// Mention 面板状态
+const mentionVisible = ref(false);
+const mentionActiveIndex = ref(0);
+const mentionTriggerInfo = ref<{ prefix: string; startIndex: number } | null>(null);
 
 const PLACEHOLDER_PREFIX = '[[图片:';
 const PLACEHOLDER_SUFFIX = ']]';
@@ -67,6 +73,22 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 const isImageElement = (node: Node): node is HTMLElement =>
   node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__image');
 
+const isMentionElement = (node: Node): node is HTMLElement =>
+  node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__mention');
+
+// 从 mention 元素构建原始 Satori 标签
+const buildMentionToken = (element: HTMLElement): string => {
+  const atId = element.dataset.atId || '';
+  const atName = element.dataset.atName || '';
+  if (!atId) return '';
+  const nameAttr = atName ? ` name="${atName.replace(/"/g, '&quot;')}"` : '';
+  return `<at id="${atId}"${nameAttr}/>`;
+};
+
+const getMentionTokenLength = (element: HTMLElement): number => {
+  return buildMentionToken(element).length;
+};
+
 const getNodeModelLength = (node: Node): number => {
   if (node.nodeType === Node.TEXT_NODE) {
     return node.textContent?.length ?? 0;
@@ -77,6 +99,9 @@ const getNodeModelLength = (node: Node): number => {
   if (isImageElement(node)) {
     const markerId = (node as HTMLElement).dataset.markerId || '';
     return markerId ? getMarkerLength(markerId) : 0;
+  }
+  if (isMentionElement(node)) {
+    return getMentionTokenLength(node as HTMLElement);
   }
   let total = 0;
   node.childNodes.forEach((child) => {
@@ -96,6 +121,10 @@ const getOffsetWithinNode = (node: Node, offset: number): number => {
   if (isImageElement(node)) {
     const markerId = (node as HTMLElement).dataset.markerId || '';
     const tokenLength = markerId ? getMarkerLength(markerId) : 0;
+    return offset > 0 ? tokenLength : 0;
+  }
+  if (isMentionElement(node)) {
+    const tokenLength = getMentionTokenLength(node as HTMLElement);
     return offset > 0 ? tokenLength : 0;
   }
   const children = Array.from(node.childNodes);
@@ -123,6 +152,10 @@ const reduceNode = (node: Node, target: Node, offset: number): { found: boolean;
   if (isImageElement(node)) {
     const markerId = (node as HTMLElement).dataset.markerId || '';
     return { found: false, length: markerId ? getMarkerLength(markerId) : 0 };
+  }
+
+  if (isMentionElement(node)) {
+    return { found: false, length: getMentionTokenLength(node as HTMLElement) };
   }
 
   let total = 0;
@@ -161,6 +194,15 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
   }
 
   if (isImageElement(node)) {
+    const parent = node.parentNode ?? node;
+    const index = Array.prototype.indexOf.call(parent.childNodes, node);
+    if (position <= 0) {
+      return { node: parent, offset: index };
+    }
+    return { node: parent, offset: index + 1 };
+  }
+
+  if (isMentionElement(node)) {
     const parent = node.parentNode ?? node;
     const index = Array.prototype.indexOf.call(parent.childNodes, node);
     if (position <= 0) {
@@ -262,7 +304,7 @@ const classList = computed(() => {
   return base;
 });
 
-// 渲染内容（解析文本中的图片标记）
+// 渲染内容（解析文本中的图片标记和 @提及）
 const renderContent = (preserveCursor = false) => {
   if (!editorRef.value) return;
 
@@ -273,13 +315,14 @@ const renderContent = (preserveCursor = false) => {
   }
 
   const text = props.modelValue;
-  const imageMarkerRegex = /\[\[图片:([^\]]+)\]\]/g;
+  // 匹配图片标记和 Satori <at> 标签
+  const combinedRegex = /\[\[图片:([^\]]+)\]\]|<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*\/>/g;
 
   let lastIndex = 0;
-  const fragments: Array<{ type: 'text' | 'image'; content: string; markerId?: string }> = [];
+  const fragments: Array<{ type: 'text' | 'image' | 'at'; content: string; markerId?: string; atId?: string; atName?: string }> = [];
 
   let match;
-  while ((match = imageMarkerRegex.exec(text)) !== null) {
+  while ((match = combinedRegex.exec(text)) !== null) {
     // 添加标记前的文本
     if (match.index > lastIndex) {
       fragments.push({
@@ -288,12 +331,22 @@ const renderContent = (preserveCursor = false) => {
       });
     }
 
-    // 添加图片
-    fragments.push({
-      type: 'image',
-      content: match[0],
-      markerId: match[1],
-    });
+    if (match[1]) {
+      // 图片标记 [[图片:markerId]]
+      fragments.push({
+        type: 'image',
+        content: match[0],
+        markerId: match[1],
+      });
+    } else if (match[2]) {
+      // Satori <at> 标签
+      fragments.push({
+        type: 'at',
+        content: match[0],
+        atId: match[2],
+        atName: match[3] || '',
+      });
+    }
 
     lastIndex = match.index + match[0].length;
   }
@@ -306,7 +359,7 @@ const renderContent = (preserveCursor = false) => {
     });
   }
 
-  // 渲染内容（占位符通过 CSS 实现，不需要手动插入）
+  // 渲染内容
   let html = '';
   fragments.forEach((fragment, fragmentIndex) => {
     if (fragment.type === 'text') {
@@ -344,6 +397,12 @@ const renderContent = (preserveCursor = false) => {
         html += `<button class="image-remove" data-marker-id="${fragment.markerId}">×</button>`;
         html += `</span>`;
       }
+    } else if (fragment.type === 'at' && fragment.atId) {
+      // @提及节点 - 渲染为简单的 @名字 格式（不使用胶囊）
+      const displayName = fragment.atName || fragment.atId;
+      const sanitizedName = escapeHtml(displayName);
+      // data-at-* 用于在提取文本时还原原始标签
+      html += `<span class="hybrid-input__mention" data-at-id="${escapeHtml(fragment.atId)}" data-at-name="${sanitizedName}" contenteditable="false">@${sanitizedName}</span>`;
     }
   });
 
@@ -563,10 +622,118 @@ const handleInput = () => {
   isInternalUpdate.value = true;
   emit('update:modelValue', text);
 
+  // 检测 @ 提及触发
+  checkMentionTrigger(text, cursorPosition);
+
   // 在下一个 tick 后重置标志
   nextTick(() => {
     isInternalUpdate.value = false;
   });
+};
+
+// @ 提及检测
+const checkMentionTrigger = (text: string, cursorPosition: number) => {
+  // 从光标位置向前查找最近的触发字符
+  const textBeforeCursor = text.substring(0, cursorPosition);
+
+  for (const prefix of props.mentionPrefix) {
+    const prefixStr = String(prefix);
+    const lastPrefixIndex = textBeforeCursor.lastIndexOf(prefixStr);
+
+    if (lastPrefixIndex === -1) continue;
+
+    // 检查触发字符前是否为空格、换行或字符串开头
+    const charBefore = lastPrefixIndex > 0 ? textBeforeCursor[lastPrefixIndex - 1] : '';
+    const isValidStart = lastPrefixIndex === 0 || /[\s\n]/.test(charBefore);
+
+    if (!isValidStart) continue;
+
+    // 获取触发字符后到光标之间的搜索模式
+    const pattern = textBeforeCursor.substring(lastPrefixIndex + prefixStr.length);
+
+    // 确保模式中没有空格（表示 @ 已结束）
+    if (/\s/.test(pattern)) continue;
+
+    // 显示 mention 面板并触发搜索
+    mentionVisible.value = true;
+    mentionActiveIndex.value = 0;
+    mentionTriggerInfo.value = { prefix: prefixStr, startIndex: lastPrefixIndex };
+    emit('mention-search', pattern, prefixStr);
+    return;
+  }
+
+  // 没有找到有效的触发，隐藏面板
+  closeMentionPanel();
+};
+
+// 关闭 mention 面板
+const closeMentionPanel = () => {
+  mentionVisible.value = false;
+  mentionTriggerInfo.value = null;
+  mentionActiveIndex.value = 0;
+};
+
+// 处理 mention 选择
+const handleMentionSelect = (option: MentionOption) => {
+  if (!mentionTriggerInfo.value) return;
+
+  const { startIndex } = mentionTriggerInfo.value;
+  const cursorPosition = getCursorPosition();
+  const text = props.modelValue;
+
+  // 替换 @ 触发词和搜索模式为选中的值
+  const before = text.substring(0, startIndex);
+  const after = text.substring(cursorPosition);
+  const newValue = before + option.value + ' ' + after;
+
+  isInternalUpdate.value = true;
+  emit('update:modelValue', newValue);
+  emit('mention-select', option);
+
+  closeMentionPanel();
+
+  // 设置光标位置到插入内容之后
+  nextTick(() => {
+    isInternalUpdate.value = false;
+    renderContent(false);
+    const newCursorPos = startIndex + String(option.value).length + 1;
+    setCursorPosition(newCursorPos);
+    editorRef.value?.focus();
+  });
+};
+
+// Mention 面板键盘导航
+const handleMentionKeydown = (event: KeyboardEvent): boolean => {
+  if (!mentionVisible.value || !props.mentionOptions?.length) {
+    return false;
+  }
+
+  const optionsCount = props.mentionOptions.length;
+
+  switch (event.key) {
+    case 'ArrowUp':
+      event.preventDefault();
+      mentionActiveIndex.value = (mentionActiveIndex.value - 1 + optionsCount) % optionsCount;
+      return true;
+    case 'ArrowDown':
+      event.preventDefault();
+      mentionActiveIndex.value = (mentionActiveIndex.value + 1) % optionsCount;
+      return true;
+    case 'Enter':
+    case 'Tab':
+      event.preventDefault();
+      const selectedOption = props.mentionOptions[mentionActiveIndex.value];
+      if (selectedOption) {
+        handleMentionSelect(selectedOption);
+      }
+      return true;
+    case 'Escape':
+      event.preventDefault();
+      closeMentionPanel();
+      return true;
+  }
+
+  return false;
 };
 
 const extractContentWithLineBreaks = () => {
@@ -602,6 +769,14 @@ const collectNodeText = (node: Node, sink: string[], isLastSibling: boolean) => 
     const markerId = (node as HTMLElement).dataset.markerId;
     if (markerId) {
       sink.push(buildMarkerToken(markerId));
+    }
+    return;
+  }
+
+  if (isMentionElement(node)) {
+    const token = buildMentionToken(node as HTMLElement);
+    if (token) {
+      sink.push(token);
     }
     return;
   }
@@ -697,6 +872,11 @@ const handleDragOver = (event: DragEvent) => {
 
 // 处理按键事件
 const handleKeydown = (event: KeyboardEvent) => {
+  // 优先处理 mention 面板键盘导航
+  if (handleMentionKeydown(event)) {
+    return;
+  }
+
   // 处理撤销/重做快捷键
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === 'z') {
     event.preventDefault();
@@ -745,8 +925,16 @@ const handleFocus = () => {
   emit('focus');
 };
 
-const handleBlur = () => {
+const handleBlur = (event: FocusEvent) => {
   isFocused.value = false;
+  // 延迟关闭面板，以允许点击选项
+  const relatedTarget = event.relatedTarget as HTMLElement;
+  if (relatedTarget?.closest('.mention-dropdown')) {
+    return;
+  }
+  setTimeout(() => {
+    closeMentionPanel();
+  }, 150);
   emit('blur');
 };
 
@@ -804,26 +992,61 @@ defineExpose({
 </script>
 
 <template>
-  <div
-    ref="editorRef"
-    :class="classList"
-    :data-placeholder="placeholder"
-    contenteditable
-    :disabled="disabled"
-    @input="handleInput"
-    @paste="handlePaste"
-    @drop="handleDrop"
-    @dragover="handleDragOver"
-    @keydown="handleKeydown"
-    @click="handleClick"
-    @focus="handleFocus"
-    @blur="handleBlur"
-    @compositionstart="handleCompositionStart"
-    @compositionend="handleCompositionEnd"
-  ></div>
+  <div ref="wrapperRef" class="hybrid-input-wrapper">
+    <div
+      ref="editorRef"
+      :class="classList"
+      :data-placeholder="placeholder"
+      contenteditable
+      :disabled="disabled"
+      @input="handleInput"
+      @paste="handlePaste"
+      @drop="handleDrop"
+      @dragover="handleDragOver"
+      @keydown="handleKeydown"
+      @click="handleClick"
+      @focus="handleFocus"
+      @blur="handleBlur"
+      @compositionstart="handleCompositionStart"
+      @compositionend="handleCompositionEnd"
+    ></div>
+    <!-- Mention 下拉面板 -->
+    <Transition name="mention-fade">
+      <div
+        v-if="mentionVisible && mentionOptions && mentionOptions.length > 0"
+        class="mention-dropdown"
+        tabindex="-1"
+      >
+        <div
+          v-for="(option, index) in mentionOptions"
+          :key="option.value"
+          :class="['mention-dropdown__item', { 'is-active': index === mentionActiveIndex }]"
+          @mousedown.prevent="handleMentionSelect(option)"
+          @mouseenter="mentionActiveIndex = index"
+        >
+          <component
+            :is="mentionRenderLabel ? mentionRenderLabel(option) : undefined"
+            v-if="mentionRenderLabel"
+          />
+          <span v-else>{{ option.label }}</span>
+        </div>
+        <div v-if="mentionLoading" class="mention-dropdown__loading">
+          加载中...
+        </div>
+      </div>
+    </Transition>
+  </div>
 </template>
 
 <style lang="scss" scoped>
+.hybrid-input-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .hybrid-input {
   min-height: 2.5rem;
   max-height: 12rem;
@@ -902,6 +1125,7 @@ defineExpose({
 }
 
 .hybrid-input.chat-input--fullscreen {
+  flex: 1 1 auto;
   min-height: 100%;
   max-height: 100%;
   height: 100%;
@@ -998,6 +1222,13 @@ defineExpose({
   }
 }
 
+/* @提及样式 - 输入框中显示为简单的蓝色文本 */
+:deep(.hybrid-input__mention) {
+  color: #3b82f6;
+  user-select: none;
+  cursor: default;
+}
+
 /* 夜间模式滚动条样式 */
 :root[data-display-palette='night'] .hybrid-input {
   &::-webkit-scrollbar-thumb {
@@ -1009,5 +1240,64 @@ defineExpose({
   }
 
   scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
+}
+
+/* Mention 下拉面板样式 */
+.mention-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+  background: var(--sc-bg-surface, #ffffff);
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+
+  &__item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+
+    &:hover,
+    &.is-active {
+      background-color: var(--sc-bg-hover, rgba(59, 130, 246, 0.08));
+    }
+
+    &.is-active {
+      background-color: var(--sc-bg-active, rgba(59, 130, 246, 0.12));
+    }
+  }
+
+  &__loading {
+    padding: 8px 12px;
+    color: var(--sc-text-secondary, #6b7280);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+}
+
+/* Mention 面板过渡动画 */
+.mention-fade-enter-active,
+.mention-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.mention-fade-enter-from,
+.mention-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* 夜间模式下拉面板 */
+:root[data-display-palette='night'] .mention-dropdown {
+  background: var(--sc-bg-surface, #1e1e2e);
+  border-color: var(--sc-border-mute, #3f3f5a);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 </style>

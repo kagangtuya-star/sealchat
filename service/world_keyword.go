@@ -50,7 +50,18 @@ func ensureWorldKeywordPermission(worldID, userID string, requireAdmin bool) err
 		return nil
 	}
 	if requireAdmin {
-		if !IsWorldAdmin(worldID, userID) {
+		if IsWorldAdmin(worldID, userID) {
+			return nil
+		}
+		world, err := GetWorldByID(worldID)
+		if err != nil || world == nil || !world.AllowMemberEditKeywords {
+			return ErrWorldPermission
+		}
+		var member model.WorldMemberModel
+		if err := model.GetDB().Where("world_id = ? AND user_id = ?", worldID, userID).Limit(1).Find(&member).Error; err != nil {
+			return ErrWorldPermission
+		}
+		if member.ID == "" || member.Role != model.WorldRoleMember {
 			return ErrWorldPermission
 		}
 		return nil

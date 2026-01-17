@@ -11,7 +11,15 @@ import { api } from "./_config";
 import { useChatStore } from "./chat";
 import { useUserStore } from "./user";
 
-export const DEFAULT_PAGE_TITLE = '海豹尬聊 SealChat';
+const resolveDefaultPageTitle = () => {
+  if (typeof document === 'undefined') {
+    return '海豹尬聊 SealChat';
+  }
+  const trimmed = document.title?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : '海豹尬聊 SealChat';
+};
+
+export const DEFAULT_PAGE_TITLE = resolveDefaultPageTitle();
 export const applyPageTitle = (title?: string | null) => {
   if (typeof document === 'undefined') return;
   const trimmed = title?.trim() || '';

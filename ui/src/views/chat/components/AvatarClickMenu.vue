@@ -140,12 +140,23 @@ const openIdentitySettings = () => {
   chat.avatarMenu.show = false;
   chatEvent.emit('channel-identity-open');
 };
+
+const menuAvatar = computed(() => {
+  const item = chat.avatarMenu.item;
+  if (!item) return '';
+  // bot: 优先使用 user.avatar
+  if (item.user?.is_bot || item.user_id?.startsWith('BOT:')) {
+    return item.user?.avatar || '';
+  }
+  // 普通用户: 优先使用频道角色头像(member.avatar)，其次用户头像(user.avatar)
+  return item.member?.avatar || item.user?.avatar || '';
+});
 </script>
 
 <template>
   <context-menu v-model:show="chat.avatarMenu.show" :options="avatarMenuOptions">
     <div class="px-4 pb-1 flex space-x-2">
-      <Avatar :size="48" :src="chat.avatarMenu.item?.member?.avatar"></Avatar>
+      <Avatar :size="48" :src="menuAvatar"></Avatar>
       <div>
         <div class="text-more" style="width: 9rem;" :title="nick">{{ nick }}</div>
         <div>

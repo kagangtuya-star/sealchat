@@ -27,8 +27,9 @@ type WorldModel struct {
 	Description       string `json:"description" gorm:"size:500"`
 	Avatar            string `json:"avatar" gorm:"size:255"`
 	Visibility        string `json:"visibility" gorm:"size:24;default:public;index"` // public/private/unlisted
-	EnforceMembership      bool `json:"enforceMembership" gorm:"default:false"`      // 预留未来严格控制
-	AllowAdminEditMessages bool `json:"allowAdminEditMessages" gorm:"default:false"` // 允许管理员编辑成员发言
+	EnforceMembership          bool `json:"enforceMembership" gorm:"default:false"`          // 预留未来严格控制
+	AllowAdminEditMessages     bool `json:"allowAdminEditMessages" gorm:"default:false"`     // 允许管理员编辑成员发言
+	AllowMemberEditKeywords    bool `json:"allowMemberEditKeywords" gorm:"default:false"`    // 允许成员编辑世界术语
 	OwnerID                string `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID  string `json:"defaultChannelId" gorm:"size:100"`
 	InviteSlug        string `json:"inviteSlug" gorm:"size:64;uniqueIndex"`

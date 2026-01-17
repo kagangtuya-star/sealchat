@@ -88,6 +88,7 @@ export interface ExportTaskItem {
   message?: string;
   upload_url?: string;
   download_url: string;
+  file_missing?: boolean;
 }
 
 export interface ExportTaskListResponse {
@@ -96,6 +97,18 @@ export interface ExportTaskListResponse {
   page: number;
   size: number;
   items: ExportTaskItem[];
+}
+
+export interface ServerAudioConfig {
+  storageDir?: string;
+  tempDir?: string;
+  maxUploadSizeMB?: number;
+  allowedMimeTypes?: string[];
+  enableTranscode?: boolean;
+  defaultBitrateKbps?: number;
+  alternateBitrates?: number[];
+  ffmpegPath?: string;
+  allowWorldAudioWorkbench?: boolean;
 }
 
 export interface ServerConfig {
@@ -117,7 +130,17 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
+  loginBackground?: {
+    attachmentId?: string;
+    mode?: 'cover' | 'contain' | 'tile' | 'center';
+    opacity?: number;
+    blur?: number;
+    brightness?: number;
+    overlayColor?: string;
+    overlayOpacity?: number;
+  };
 }
 
 export interface UserInfo {

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pm"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/service/storage"
@@ -55,6 +56,14 @@ func AudioAssetList(c *fiber.Ctx) error {
 			filters.DurationMax = parsed
 		}
 	}
+	// scope/worldId 过滤参数
+	if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
+		filters.Scope = model.AudioAssetScope(scope)
+	}
+	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+		filters.WorldID = &worldID
+	}
+	filters.IncludeCommon = c.QueryBool("includeCommon", true)
 	items, total, err := service.AudioListAssets(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载音频素材失败")
@@ -101,6 +110,32 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 	if v := strings.TrimSpace(c.FormValue("visibility")); v != "" {
 		visibility = model.AudioAssetVisibility(v)
 	}
+	// 解析 scope 和 worldId
+	scope := model.AudioScopeCommon
+	var worldID *string
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if scopeVal := strings.TrimSpace(c.FormValue("scope")); scopeVal != "" {
+		scope = model.AudioAssetScope(scopeVal)
+	}
+	if worldIDVal := strings.TrimSpace(c.FormValue("worldId")); worldIDVal != "" {
+		worldID = &worldIDVal
+	}
+	// 权限校验
+	if scope == model.AudioScopeCommon {
+		// 只有系统管理员可以上传 common 素材
+		if !isSystemAdmin {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可上传通用素材")
+		}
+	} else if scope == model.AudioScopeWorld {
+		// 世界级素材必须指定 worldId
+		if worldID == nil || *worldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级素材必须指定 worldId")
+		}
+		// 检查是否为世界管理员
+		if !isSystemAdmin && !service.IsWorldAdmin(*worldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅世界管理员可上传此世界的素材")
+		}
+	}
 	asset, err := service.AudioCreateAssetFromUpload(file, service.AudioUploadOptions{
 		Name:        name,
 		FolderID:    folderID,
@@ -108,6 +143,8 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 		Description: c.FormValue("description"),
 		Visibility:  visibility,
 		CreatedBy:   user.ID,
+		Scope:       scope,
+		WorldID:     worldID,
 	})
 	if err != nil {
 		switch {
@@ -120,9 +157,16 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 		}
 	}
 	needsTranscode := asset.TranscodeStatus == model.AudioTranscodePending
+	status := "success"
+	if asset.TranscodeStatus == model.AudioTranscodePending {
+		status = "processing"
+	} else if asset.TranscodeStatus == model.AudioTranscodeFailed {
+		status = "failed"
+	}
 	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"item":           asset,
 		"needsTranscode": needsTranscode,
+		"status":         status,
 	})
 }
 
@@ -131,15 +175,62 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 	if id == "" {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
 	}
+	// 先获取素材以检查权限
+	asset, err := service.AudioGetAsset(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	// 权限校验：世界管理员不可操作 common 素材
+	if asset.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可修改通用素材")
+	}
+	if asset.Scope == model.AudioScopeWorld && asset.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*asset.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可修改此素材")
+		}
+	}
 	var req struct {
 		Name        *string                     `json:"name"`
 		Description *string                     `json:"description"`
 		Tags        []string                    `json:"tags"`
 		Visibility  *model.AudioAssetVisibility `json:"visibility"`
 		FolderID    *string                     `json:"folderId"`
+		Scope       *model.AudioAssetScope      `json:"scope"`
+		WorldID     *string                     `json:"worldId"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	var normalizedScope *model.AudioAssetScope
+	var normalizedWorldID *string
+	if req.Scope != nil || req.WorldID != nil {
+		if !isSystemAdmin {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可调整素材级别")
+		}
+		if req.Scope == nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "更新素材级别需要 scope")
+		}
+		trimmedScope := model.AudioAssetScope(strings.TrimSpace(string(*req.Scope)))
+		if trimmedScope != model.AudioScopeCommon && trimmedScope != model.AudioScopeWorld {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "素材级别无效")
+		}
+		normalizedScope = &trimmedScope
+		if req.WorldID != nil {
+			trimmedWorld := strings.TrimSpace(*req.WorldID)
+			if trimmedWorld != "" {
+				normalizedWorldID = &trimmedWorld
+			}
+		}
+		if trimmedScope == model.AudioScopeWorld && normalizedWorldID == nil {
+			if asset.WorldID == nil || strings.TrimSpace(*asset.WorldID) == "" {
+				return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级素材必须指定 worldId")
+			}
+		}
 	}
 	input := service.AudioAssetUpdateInput{
 		Name:        req.Name,
@@ -147,19 +238,40 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 		Tags:        req.Tags,
 		Visibility:  req.Visibility,
 		FolderID:    req.FolderID,
-		UpdatedBy:   getCurUser(c).ID,
+		Scope:       normalizedScope,
+		WorldID:     normalizedWorldID,
+		UpdatedBy:   user.ID,
 	}
-	asset, err := service.AudioUpdateAsset(id, input)
+	updated, err := service.AudioUpdateAsset(id, input)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新素材失败")
 	}
-	return c.JSON(fiber.Map{"item": asset})
+	return c.JSON(fiber.Map{"item": updated})
 }
 
 func AudioAssetDelete(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	// 先获取素材以检查权限
+	asset, err := service.AudioGetAsset(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	// 权限校验：世界管理员不可删除 common 素材
+	if asset.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可删除通用素材")
+	}
+	if asset.Scope == model.AudioScopeWorld && asset.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*asset.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可删除此素材")
+		}
 	}
 	hard := c.QueryBool("hard")
 	if err := service.AudioDeleteAsset(id, hard); err != nil {
@@ -169,7 +281,15 @@ func AudioAssetDelete(c *fiber.Ctx) error {
 }
 
 func AudioFolderList(c *fiber.Ctx) error {
-	items, err := service.AudioListFolders()
+	filters := service.AudioFolderFilters{}
+	if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
+		filters.Scope = model.AudioAssetScope(scope)
+	}
+	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+		filters.WorldID = &worldID
+	}
+	filters.IncludeCommon = c.QueryBool("includeCommon", true)
+	items, err := service.AudioListFoldersWithFilters(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取文件夹失败")
 	}
@@ -180,14 +300,36 @@ func AudioFolderCreate(c *fiber.Ctx) error {
 	var req struct {
 		Name     string  `json:"name"`
 		ParentID *string `json:"parentId"`
+		Scope    string  `json:"scope"`
+		WorldID  *string `json:"worldId"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	scope := model.AudioScopeCommon
+	if req.Scope != "" {
+		scope = model.AudioAssetScope(req.Scope)
+	}
+	// 权限校验
+	if scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可创建通用文件夹")
+	}
+	if scope == model.AudioScopeWorld {
+		if req.WorldID == nil || *req.WorldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级文件夹必须指定 worldId")
+		}
+		if !isSystemAdmin && !service.IsWorldAdmin(*req.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅世界管理员可创建此世界的文件夹")
+		}
+	}
 	folder, err := service.AudioCreateFolder(service.AudioFolderPayload{
 		Name:     req.Name,
 		ParentID: req.ParentID,
-		ActorID:  getCurUser(c).ID,
+		ActorID:  user.ID,
+		Scope:    scope,
+		WorldID:  req.WorldID,
 	})
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
@@ -197,6 +339,24 @@ func AudioFolderCreate(c *fiber.Ctx) error {
 
 func AudioFolderUpdate(c *fiber.Ctx) error {
 	id := c.Params("id")
+	// 先获取文件夹以检查权限
+	folder, err := service.AudioGetFolder(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "文件夹不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取文件夹失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if folder.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可修改通用文件夹")
+	}
+	if folder.Scope == model.AudioScopeWorld && folder.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*folder.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可修改此文件夹")
+		}
+	}
 	var req struct {
 		Name     string  `json:"name"`
 		ParentID *string `json:"parentId"`
@@ -204,19 +364,37 @@ func AudioFolderUpdate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
-	folder, err := service.AudioUpdateFolder(id, service.AudioFolderPayload{
+	updated, err := service.AudioUpdateFolder(id, service.AudioFolderPayload{
 		Name:     req.Name,
 		ParentID: req.ParentID,
-		ActorID:  getCurUser(c).ID,
+		ActorID:  user.ID,
 	})
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
-	return c.JSON(fiber.Map{"item": folder})
+	return c.JSON(fiber.Map{"item": updated})
 }
 
 func AudioFolderDelete(c *fiber.Ctx) error {
 	id := c.Params("id")
+	// 先获取文件夹以检查权限
+	folder, err := service.AudioGetFolder(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "文件夹不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取文件夹失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if folder.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可删除通用文件夹")
+	}
+	if folder.Scope == model.AudioScopeWorld && folder.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*folder.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可删除此文件夹")
+		}
+	}
 	if err := service.AudioDeleteFolder(id); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
@@ -224,8 +402,17 @@ func AudioFolderDelete(c *fiber.Ctx) error {
 }
 
 func AudioSceneList(c *fiber.Ctx) error {
-	channelScope := strings.TrimSpace(c.Query("channelScope"))
-	scenes, err := service.AudioListScenes(channelScope)
+	filters := service.AudioSceneFilters{
+		ChannelScope: strings.TrimSpace(c.Query("channelScope")),
+	}
+	if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
+		filters.Scope = model.AudioAssetScope(scope)
+	}
+	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+		filters.WorldID = &worldID
+	}
+	filters.IncludeCommon = c.QueryBool("includeCommon", true)
+	scenes, err := service.AudioListScenesWithFilters(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取场景失败")
 	}
@@ -237,7 +424,25 @@ func AudioSceneCreate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
-	scene, err := service.AudioCreateScene(req.toInput(getCurUser(c).ID))
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	scope := model.AudioScopeCommon
+	if req.Scope != "" {
+		scope = model.AudioAssetScope(req.Scope)
+	}
+	// 权限校验
+	if scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可创建通用场景")
+	}
+	if scope == model.AudioScopeWorld {
+		if req.WorldID == nil || *req.WorldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级场景必须指定 worldId")
+		}
+		if !isSystemAdmin && !service.IsWorldAdmin(*req.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅世界管理员可创建此世界的场景")
+		}
+	}
+	scene, err := service.AudioCreateScene(req.toInput(user.ID))
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
@@ -246,19 +451,55 @@ func AudioSceneCreate(c *fiber.Ctx) error {
 
 func AudioSceneUpdate(c *fiber.Ctx) error {
 	id := c.Params("id")
+	// 先获取场景以检查权限
+	scene, err := service.AudioGetScene(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "场景不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取场景失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if scene.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可修改通用场景")
+	}
+	if scene.Scope == model.AudioScopeWorld && scene.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*scene.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可修改此场景")
+		}
+	}
 	var req audioSceneRequest
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
-	scene, err := service.AudioUpdateScene(id, req.toInput(getCurUser(c).ID))
+	updated, err := service.AudioUpdateScene(id, req.toInput(user.ID))
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
-	return c.JSON(fiber.Map{"item": scene})
+	return c.JSON(fiber.Map{"item": updated})
 }
 
 func AudioSceneDelete(c *fiber.Ctx) error {
 	id := c.Params("id")
+	// 先获取场景以检查权限
+	scene, err := service.AudioGetScene(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "场景不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取场景失败")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if scene.Scope == model.AudioScopeCommon && !isSystemAdmin {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可删除通用场景")
+	}
+	if scene.Scope == model.AudioScopeWorld && scene.WorldID != nil && !isSystemAdmin {
+		if !service.IsWorldAdmin(*scene.WorldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅该世界管理员可删除此场景")
+		}
+	}
 	if err := service.AudioDeleteScene(id); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除场景失败")
 	}
@@ -367,9 +608,15 @@ type audioSceneRequest struct {
 	Tags         []string                `json:"tags"`
 	Order        int                     `json:"order"`
 	ChannelScope *string                 `json:"channelScope"`
+	Scope        string                  `json:"scope"`
+	WorldID      *string                 `json:"worldId"`
 }
 
 func (r audioSceneRequest) toInput(actor string) service.AudioSceneInput {
+	scope := model.AudioScopeCommon
+	if r.Scope != "" {
+		scope = model.AudioAssetScope(r.Scope)
+	}
 	return service.AudioSceneInput{
 		Name:         r.Name,
 		Description:  r.Description,
@@ -378,6 +625,8 @@ func (r audioSceneRequest) toInput(actor string) service.AudioSceneInput {
 		Order:        r.Order,
 		ChannelScope: r.ChannelScope,
 		ActorID:      actor,
+		Scope:        scope,
+		WorldID:      r.WorldID,
 	}
 }
 
@@ -548,13 +797,17 @@ func convertTrackStates(list model.JSONList[model.AudioTrackState]) []protocol.A
 	result := make([]protocol.AudioTrackState, 0, len(list))
 	for _, item := range list {
 		result = append(result, protocol.AudioTrackState{
-			Type:    item.Type,
-			AssetID: item.AssetID,
-			Volume:  item.Volume,
-			Muted:   item.Muted,
-			Solo:    item.Solo,
-			FadeIn:  item.FadeIn,
-			FadeOut: item.FadeOut,
+			Type:         item.Type,
+			AssetID:      item.AssetID,
+			Volume:       item.Volume,
+			Muted:        item.Muted,
+			Solo:         item.Solo,
+			FadeIn:       item.FadeIn,
+			FadeOut:      item.FadeOut,
+			IsPlaying:    item.IsPlaying,
+			Position:     item.Position,
+			LoopEnabled:  item.LoopEnabled,
+			PlaybackRate: item.PlaybackRate,
 		})
 	}
 	return result

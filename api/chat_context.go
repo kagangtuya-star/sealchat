@@ -32,6 +32,31 @@ func (ctx *ChatContext) IsReadOnly() bool {
 	return ctx.IsGuest() || ctx.IsObserver()
 }
 
+func userHasChannelConnection(userId string, channelId string, userId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]], exclude *WsSyncConn) bool {
+	if userId == "" || channelId == "" || userId2ConnInfo == nil {
+		return false
+	}
+	connMap, ok := userId2ConnInfo.Load(userId)
+	if !ok || connMap == nil {
+		return false
+	}
+	found := false
+	connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
+		if info == nil {
+			return true
+		}
+		if exclude != nil && conn == exclude {
+			return true
+		}
+		if info.ChannelId == channelId {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 func (ctx *ChatContext) BroadcastToUserJSON(userId string, data any) {
 	value, _ := ctx.UserId2ConnInfo.Load(userId)
 	if value == nil {

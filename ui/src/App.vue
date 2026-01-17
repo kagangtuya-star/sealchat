@@ -586,6 +586,31 @@ nav a:first-of-type {
   border-color: var(--sc-border-strong) !important;
 }
 
+/* Keep radio button borders visible in custom theme */
+:root[data-custom-theme='true'] .n-radio-button {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-custom-theme='true'] .n-radio-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--sc-border-mute);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+:root[data-custom-theme='true'] .n-radio-button--checked,
+:root[data-custom-theme='true'] .n-radio-button:hover {
+  z-index: 2;
+}
+
+:root[data-custom-theme='true'] .n-radio-button--checked::after,
+:root[data-custom-theme='true'] .n-radio-button:hover::after {
+  border-color: var(--sc-border-strong);
+}
+
 /* Button groups */
 :root[data-custom-theme='true'] .n-button-group .n-button {
   --n-color: var(--sc-bg-surface) !important;
@@ -1126,6 +1151,64 @@ nav a:first-of-type {
   background-color: rgba(0, 0, 0, 0.08) !important;
 }
 
+/* Context menus (vue3-context-menu) */
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night,
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day {
+  --mx-menu-backgroud: var(--sc-bg-elevated);
+  --mx-menu-divider: var(--sc-border-mute);
+  background: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item {
+  color: inherit !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--night .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.chat-menu--night .context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item:hover {
+  background: var(--sc-bg-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.chat-menu--day .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.chat-menu--day .context-menu-item:hover,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item:hover {
+  background: var(--sc-bg-hover, rgba(15, 23, 42, 0.06)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator,
+:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu .context-menu-item-sperator::after {
+  background-color: var(--sc-border-mute, rgba(148, 163, 184, 0.35)) !important;
+}
+
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--night .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .mx-context-menu.avatar-menu--day .mx-context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--night .context-menu-item-sperator::after,
+:root[data-custom-theme='true'] .context-menu.avatar-menu--day .context-menu-item-sperator::after {
+  background-color: transparent !important;
+}
+
 /* Auto-complete dropdown */
 :root[data-custom-theme='true'] .n-auto-complete-menu {
   background-color: var(--sc-bg-elevated) !important;
@@ -1369,7 +1452,8 @@ nav a:first-of-type {
 
 :root[data-custom-theme='true'] .dice-chip--tone-ooc:not(.dice-chip--preview),
 :root[data-custom-theme='true'] [data-dice-tone='ooc']:not(.dice-chip--preview) {
-  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+  background-color: color-mix(in srgb, var(--chat-ooc-bg) 85%, var(--sc-text-primary) 15%) !important;
+  border-color: color-mix(in srgb, var(--chat-ooc-border) 70%, var(--sc-text-primary) 30%) !important;
 }
 
 /* ==========================================================================

@@ -17,6 +17,7 @@ import type { PermTreeNode } from '@/types-perm';
 import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
+import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 
 interface ChatState {
   subject: WebSocketSubject<any> | null;
@@ -126,6 +127,35 @@ interface ChatState {
   } | null;
 }
 
+interface ChannelCopyOptions {
+  copyRoles: boolean;
+  copyMembers: boolean;
+  copyIdentities: boolean;
+  copyStickyNotes: boolean;
+  copyGallery: boolean;
+  copyIForms: boolean;
+  copyDiceMacros: boolean;
+  copyAudioScenes: boolean;
+  copyAudioState: boolean;
+  copyWebhooks: boolean;
+}
+
+interface ChannelCopyPayload {
+  name?: string;
+  worldId?: string;
+  parentId?: string;
+  options: ChannelCopyOptions;
+}
+
+interface ChannelCopyResponse {
+  channelId: string;
+  identityMap?: Record<string, string>;
+  summary?: {
+    copied?: string[];
+    skipped?: string[];
+  };
+}
+
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
 
@@ -205,6 +235,20 @@ const LATENCY_PROBE_TIMEOUT = 8000;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
+let channelSwitchEpoch = 0;
+const channelSwitchGuard: {
+  recent: Array<{ id: string; at: number }>;
+  blockedUntil: number;
+  lastReloadAt: number;
+} = {
+  recent: [],
+  blockedUntil: 0,
+  lastReloadAt: 0,
+};
+const CHANNEL_SWITCH_WINDOW_MS = 1500;
+const CHANNEL_SWITCH_THRESHOLD = 6;
+const CHANNEL_SWITCH_BLOCK_MS = 1500;
+const CHANNEL_SWITCH_RELOAD_COOLDOWN_MS = 10_000;
 
 const clearWsReconnectTimer = (store?: { iReconnectAfterTime: number }) => {
   if (wsReconnectTimer) {
@@ -229,6 +273,34 @@ const cleanupPendingLatencyProbes = () => {
       delete pendingLatencyProbes[key];
     }
   });
+};
+
+const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) => {
+  if (!targetId || targetId === currentId) {
+    return { action: 'allow' as const };
+  }
+  const now = Date.now();
+  if (channelSwitchGuard.blockedUntil > now) {
+    return { action: 'block' as const };
+  }
+  channelSwitchGuard.recent = channelSwitchGuard.recent.filter((item) => now - item.at <= CHANNEL_SWITCH_WINDOW_MS);
+  channelSwitchGuard.recent.push({ id: targetId, at: now });
+  const uniqueIds = Array.from(new Set(channelSwitchGuard.recent.map((item) => item.id)));
+  if (uniqueIds.length !== 2 || channelSwitchGuard.recent.length < CHANNEL_SWITCH_THRESHOLD) {
+    return { action: 'allow' as const };
+  }
+  const isAlternating = channelSwitchGuard.recent
+    .slice(1)
+    .every((item, index) => item.id !== channelSwitchGuard.recent[index].id);
+  if (!isAlternating) {
+    return { action: 'allow' as const };
+  }
+  channelSwitchGuard.blockedUntil = now + CHANNEL_SWITCH_BLOCK_MS;
+  if (now - channelSwitchGuard.lastReloadAt > CHANNEL_SWITCH_RELOAD_COOLDOWN_MS) {
+    channelSwitchGuard.lastReloadAt = now;
+    return { action: 'reload' as const, ids: uniqueIds };
+  }
+  return { action: 'block' as const, ids: uniqueIds };
 };
 
 export const useChatStore = defineStore({
@@ -936,7 +1008,7 @@ export const useChatStore = defineStore({
       }
     },
 
-    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean }) {
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean; allowMemberEditKeywords?: boolean }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
@@ -1073,6 +1145,14 @@ export const useChatStore = defineStore({
       return resp;
     },
 
+    async channelCopy(channelId: string, payload: ChannelCopyPayload) {
+      if (!channelId) {
+        throw new Error('缺少频道ID');
+      }
+      const resp = await api.post(`api/v1/channels/${channelId}/copy`, payload);
+      return resp.data as ChannelCopyResponse;
+    },
+
     async channelPrivateCreate(userId: string) {
       const resp = await this.sendAPI('channel.private.create', { 'user_id': userId });
       console.log('channel.private.create', resp);
@@ -1093,6 +1173,22 @@ export const useChatStore = defineStore({
     },
 
     async channelSwitchTo(id: string) {
+      const guard = checkChannelSwitchGuard(id, this.curChannel?.id);
+      if (guard.action !== 'allow') {
+        channelSwitchEpoch += 1;
+        if (guard.action === 'reload') {
+          console.warn('[channel-switch-guard] rapid toggling detected, reloading', guard.ids || []);
+          if (typeof window !== 'undefined') {
+            window.location.reload();
+          }
+        } else {
+          console.warn('[channel-switch-guard] rapid toggling detected, blocking', guard.ids || []);
+        }
+        return true;
+      }
+      const switchEpoch = ++channelSwitchEpoch;
+      const isStale = () => switchEpoch !== channelSwitchEpoch;
+
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
 
@@ -1110,6 +1206,9 @@ export const useChatStore = defineStore({
         }
         try {
           const channelResp = await this.channelInfoGet(id);
+          if (isStale()) {
+            return true;
+          }
           // 确保返回的频道有有效的 id
           if (channelResp?.item && channelResp.item.id) {
             nextChannel = channelResp.item as SChannel;
@@ -1143,6 +1242,9 @@ export const useChatStore = defineStore({
       if (this.observerMode) {
         try {
           const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+          if (isStale()) {
+            return true;
+          }
           if (!resp.data?.member) {
             this.curChannel = oldChannel;
             return false;
@@ -1152,10 +1254,16 @@ export const useChatStore = defineStore({
           this.whisperTarget = null;
           writeScopedLocalStorage('lastChannel', id);
           this.setChannelUnreadCount(id, 0);
+          if (isStale()) {
+            return true;
+          }
           chatEvent.emit('channel-switch-to', undefined);
           return true;
         } catch (error) {
           console.warn('[observer] channel.enter failed', error);
+          if (isStale()) {
+            return true;
+          }
           this.curChannel = oldChannel;
           return false;
         }
@@ -1171,9 +1279,15 @@ export const useChatStore = defineStore({
         enterPayload.include_roleless = includeRoleless;
       }
       const resp = await this.sendAPI('channel.enter', enterPayload);
+      if (isStale()) {
+        return true;
+      }
       // console.log('switch', resp, this.curChannel);
 
       if (!resp.data?.member) {
+        if (isStale()) {
+          return true;
+        }
         this.curChannel = oldChannel;
         return false;
       }
@@ -1194,24 +1308,42 @@ export const useChatStore = defineStore({
       }
 
       await this.loadChannelIdentities(id);
+      if (isStale()) {
+        return true;
+      }
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);
+      if (isStale()) {
+        return true;
+      }
       writeScopedLocalStorage('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
+      if (isStale()) {
+        return true;
+      }
       this.curChannelUsers = resp2.data.data;
       this.whisperTarget = null;
 
+      if (isStale()) {
+        return true;
+      }
       try {
         await this.ensureChannelPermissionCache(id);
       } catch (error) {
         console.warn('ensureChannelPermissionCache failed', error);
+      }
+      if (isStale()) {
+        return true;
       }
 
       this.setChannelUnreadCount(id, 0);
 
       // 设置网页标题为频道名字，并检查是否需要清除未读通知
       import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
+        if (this.curChannel?.id !== id) {
+          return;
+        }
         setChannelTitle(nextChannel?.name || '');
         // 检查是否所有未读都已清零，如果是，清除标题通知
         const totalUnread = Object.values(this.unreadCountMap).reduce((sum, count) => sum + (count || 0), 0);
@@ -1220,7 +1352,13 @@ export const useChatStore = defineStore({
         }
       });
 
+      if (isStale()) {
+        return true;
+      }
       chatEvent.emit('channel-switch-to', undefined);
+      if (isStale()) {
+        return true;
+      }
       this.channelList(this.currentWorldId);
       return true;
     },
@@ -1877,6 +2015,9 @@ export const useChatStore = defineStore({
         });
       };
       apply(this.channelTree as any);
+      Object.values(this.channelTreeByWorld).forEach((tree) => {
+        apply(tree as SChannel[]);
+      });
       apply(this.channelTreePrivate as any);
       if (this.curChannel?.id === channelId) {
         this.curChannel = {
@@ -2601,6 +2742,28 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    // 获取可 @ 成员列表
+    async fetchMentionableMembers(channelId: string, icMode?: 'ic' | 'ooc') {
+      if (!channelId || channelId.length > 30) {
+        return { items: [], total: 0, canAtAll: false };
+      }
+      const resp = await api.get<{
+        items: Array<{
+          userId: string;
+          displayName: string;
+          color: string;
+          avatar: string;
+          identityId?: string;
+          identityType: 'ic' | 'ooc' | 'user';
+        }>;
+        total: number;
+        canAtAll: boolean;
+      }>(`api/v1/channels/${channelId}/mentionable-members`, {
+        params: icMode ? { icMode } : undefined,
+      });
+      return resp.data;
+    },
+
     async eventDispatch(e: Event) {
       if (e.type === 'audio-state-updated') {
         const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;
@@ -3046,6 +3209,14 @@ export const useChatStore = defineStore({
       };
     },
 
+    async deleteExportTask(taskId: string) {
+      const resp = await api.delete(`api/v1/chat/export/${taskId}`);
+      return resp.data as {
+        task_id: string;
+        file_deleted?: boolean;
+      };
+    },
+
     // IC/OOC 角色配置相关方法
     getChannelIcOocRoleConfig(channelId: string): { icRoleId: string | null; oocRoleId: string | null } {
       if (!channelId) {
@@ -3095,6 +3266,89 @@ export const useChatStore = defineStore({
         } catch (err) {
           console.warn('Failed to save IC/OOC role config to localStorage', err);
         }
+      }
+    },
+
+    copyLocalChannelSettings(
+      sourceChannelId: string,
+      targetChannelId: string,
+      userId?: string,
+      identityMap?: Record<string, string>
+    ) {
+      if (typeof window === 'undefined') return;
+      if (!sourceChannelId || !targetChannelId || sourceChannelId === targetChannelId) return;
+
+      const hasIdentityMap = !!identityMap && Object.keys(identityMap).length > 0;
+      const resolveMappedIdentityId = (sourceId?: string | null) => {
+        if (!sourceId || !hasIdentityMap) return null;
+        return identityMap?.[sourceId] || null;
+      };
+
+      const tryCopy = (fromKey: string, toKey: string) => {
+        try {
+          const value = localStorage.getItem(fromKey);
+          if (value !== null) {
+            localStorage.setItem(toKey, value);
+          }
+        } catch (err) {
+          console.warn('Failed to copy localStorage key', fromKey, err);
+        }
+      };
+
+      const tryCopyActiveIdentity = () => {
+        if (!hasIdentityMap) return;
+        try {
+          const value = localStorage.getItem(`channelIdentity:${sourceChannelId}`);
+          if (value === null) return;
+          const mapped = resolveMappedIdentityId(value);
+          localStorage.setItem(`channelIdentity:${targetChannelId}`, mapped || '');
+        } catch (err) {
+          console.warn('Failed to copy active channel identity', err);
+        }
+      };
+
+      const tryCopyIcOocRoleConfig = () => {
+        if (!hasIdentityMap) return;
+        try {
+          const raw = localStorage.getItem(`channelIcOocRole:${sourceChannelId}`);
+          if (!raw) return;
+          const sourceConfig = JSON.parse(raw) as { icRoleId?: string | null; oocRoleId?: string | null };
+          const mappedConfig = {
+            icRoleId: resolveMappedIdentityId(sourceConfig?.icRoleId) ?? null,
+            oocRoleId: resolveMappedIdentityId(sourceConfig?.oocRoleId) ?? null,
+          };
+          localStorage.setItem(`channelIcOocRole:${targetChannelId}`, JSON.stringify(mappedConfig));
+        } catch (err) {
+          console.warn('Failed to copy IC/OOC role config', err);
+        }
+      };
+
+      tryCopyActiveIdentity();
+      tryCopyIcOocRoleConfig();
+      tryCopy(getBgStorageKey(sourceChannelId), getBgStorageKey(targetChannelId));
+      tryCopy(getBgCategoriesKey(sourceChannelId), getBgCategoriesKey(targetChannelId));
+
+      const copyHistoryEntry = (storageKey: string) => {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return;
+          const store = JSON.parse(raw) as Record<string, unknown>;
+          if (!store || typeof store !== 'object') return;
+          const sourceKey = String(sourceChannelId);
+          if (!(sourceKey in store)) return;
+          store[String(targetChannelId)] = store[sourceKey];
+          localStorage.setItem(storageKey, JSON.stringify(store));
+        } catch (err) {
+          console.warn('Failed to copy history storage', storageKey, err);
+        }
+      };
+
+      copyHistoryEntry('sealchat_input_history_v1');
+      copyHistoryEntry('sealchat_input_history_autorestore_v1');
+
+      if (userId) {
+        tryCopy(`sealchat_sticky_notes:${userId}:${sourceChannelId}`, `sealchat_sticky_notes:${userId}:${targetChannelId}`);
+        tryCopy(`sticky-note-ui-visible:${userId}:${sourceChannelId}`, `sticky-note-ui-visible:${userId}:${targetChannelId}`);
       }
     },
 
@@ -3194,6 +3448,18 @@ chatEvent.on('channel-updated', (event) => {
   }
   const chat = useChatStore();
   const patch: Partial<SChannel> = {};
+  if (typeof event.channel?.name === 'string') {
+    patch.name = event.channel.name;
+  }
+  if (typeof event.channel?.note === 'string') {
+    patch.note = event.channel.note;
+  }
+  if (typeof event.channel?.permType === 'string') {
+    patch.permType = event.channel.permType;
+  }
+  if (typeof event.channel?.sortOrder === 'number') {
+    patch.sortOrder = event.channel.sortOrder;
+  }
   if (event.channel?.defaultDiceExpr) {
     patch.defaultDiceExpr = event.channel.defaultDiceExpr;
   }

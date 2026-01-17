@@ -420,6 +420,7 @@ func apiStickyNotePushRest(c *fiber.Ctx) error {
 
 	var req struct {
 		TargetUserIDs []string `json:"targetUserIds"`
+		Layout        *protocol.StickyNoteLayout `json:"layout"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -442,6 +443,7 @@ func apiStickyNotePushRest(c *fiber.Ctx) error {
 		Note:          note.ToProtocolType(),
 		Action:        "push",
 		TargetUserIDs: req.TargetUserIDs,
+		Layout:        req.Layout,
 	})
 
 	return c.JSON(fiber.Map{"success": true})
@@ -523,6 +525,7 @@ func apiStickyNoteDeleteWs(ctx *ChatContext, data *struct {
 func apiStickyNotePushWs(ctx *ChatContext, data *struct {
 	NoteID        string   `json:"noteId"`
 	TargetUserIDs []string `json:"targetUserIds"`
+	Layout        *protocol.StickyNoteLayout `json:"layout"`
 }) (any, error) {
 	if len(data.TargetUserIDs) == 0 {
 		return nil, fmt.Errorf("no target users")
@@ -543,6 +546,7 @@ func apiStickyNotePushWs(ctx *ChatContext, data *struct {
 			Note:          note.ToProtocolType(),
 			Action:        "push",
 			TargetUserIDs: data.TargetUserIDs,
+			Layout:        data.Layout,
 		},
 	}
 

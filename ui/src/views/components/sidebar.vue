@@ -17,6 +17,7 @@ import IconNumber from '@/components/icons/IconNumber.vue'
 import IconFluentMention24Filled from '@/components/icons/IconFluentMention24Filled.vue'
 import ChannelSettings from './ChannelSettings/ChannelSettings.vue'
 import ChannelCreate from './ChannelCreate.vue'
+import ChannelCopyModal from './ChannelCopyModal.vue'
 import UserLabel from '@/components/UserLabel.vue'
 import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
@@ -62,6 +63,19 @@ const doSetting = async (i: Channel) => {
   channelToSettings.value = i;
   showModal2.value = true;
 }
+
+const showCopyModal = ref(false);
+const channelToCopy = ref<SChannel | undefined>(undefined);
+const handleChannelCopy = async (channel: SChannel) => {
+  if (!channel?.id) return;
+  const allowed = await ensureChannelManagePermission(channel.id);
+  if (!allowed) {
+    message.error('没有权限复制该频道');
+    return;
+  }
+  channelToCopy.value = channel;
+  showCopyModal.value = true;
+};
 
 const handleOpenMemberSettings = () => {
   if (!chat.curChannel) {
@@ -289,6 +303,9 @@ const handleSelect = async (key: string, data: any) => {
       // 实现管理频道的逻辑
       doSetting(data.item);
       break;
+    case 'copy':
+      await handleChannelCopy(data.item as SChannel);
+      break;
     case 'leave':
       // 实现退出频道的逻辑
       alert('未实现');
@@ -482,6 +499,7 @@ const handleOpenWorldGlossary = () => {
                   <n-dropdown trigger="click" :options="[
                     { label: '进入', key: 'enter', item: chat.temporaryArchivedChannel },
                     { label: '频道管理', key: 'manage', item: chat.temporaryArchivedChannel },
+                    { label: '复制频道', key: 'copy', item: chat.temporaryArchivedChannel },
                     { label: '恢复归档', key: 'unarchive', item: chat.temporaryArchivedChannel, show: canShowArchive(chat.temporaryArchivedChannel as SChannel) }
                   ]" @select="handleSelect">
                     <n-button @click.stop quaternary circle size="tiny">
@@ -532,6 +550,7 @@ const handleOpenWorldGlossary = () => {
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
                       { label: '频道管理', key: 'manage', item: i },
+                      { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
                       { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
                       { label: '解散', key: 'dissolve', item: i, show: canShowDissolve(i as SChannel) }
@@ -587,6 +606,7 @@ const handleOpenWorldGlossary = () => {
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
                           { label: '频道管理', key: 'manage', item: child },
+                          { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },
                           { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
                           { label: '解散', key: 'dissolve', item: child, show: canShowDissolve(child as SChannel) }
@@ -726,6 +746,7 @@ const handleOpenWorldGlossary = () => {
     </div> -->
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
+  <ChannelCopyModal v-model:show="showCopyModal" :channel="channelToCopy" />
   <ChannelSortModal v-model:show="showSortModal" />
   <ChannelArchiveModal v-model:show="showArchiveModal" />
   <AdminEditNoticeModal

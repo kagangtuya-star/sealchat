@@ -58,6 +58,15 @@ func ChannelIdentityList(channelID string, userID string) ([]*ChannelIdentityMod
 	return items, err
 }
 
+// ChannelIdentityListAll 返回频道内所有可见身份（用于 @ 功能）
+func ChannelIdentityListAll(channelID string) ([]*ChannelIdentityModel, error) {
+	var items []*ChannelIdentityModel
+	err := db.Where("channel_id = ? AND (is_hidden = ? OR is_hidden IS NULL)", channelID, false).
+		Order("user_id asc, sort_order asc, created_at asc").
+		Find(&items).Error
+	return items, err
+}
+
 // ChannelIdentityListVisible 返回用户可见的身份列表（排除隐形身份）
 func ChannelIdentityListVisible(channelID string, userID string) ([]*ChannelIdentityModel, error) {
 	var items []*ChannelIdentityModel

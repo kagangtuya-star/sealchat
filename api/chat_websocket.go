@@ -702,12 +702,14 @@ func websocketWorks(app *fiber.App) {
 			ChannelUsersMap: channelUsersMap,
 			UserId2ConnInfo: userId2ConnInfo,
 		}
-		channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
-			if curUser != nil && value.Exists(curUser.ID) {
+	channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
+		if curUser != nil && value.Exists(curUser.ID) {
+			if !userHasChannelConnection(curUser.ID, chId, userId2ConnInfo, nil) {
 				value.Delete(curUser.ID)
-				ctx.BroadcastChannelPresence(chId)
 			}
-			return true
-		})
+			ctx.BroadcastChannelPresence(chId)
+		}
+		return true
+	})
 	}))
 }

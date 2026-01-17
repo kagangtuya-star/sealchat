@@ -149,28 +149,18 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
             }
         };
 
-        console.log('[PushNotification] showNotification called:', {
-            title, body, channelId, icon,
-            canNotify: canNotify.value,
-            hasFocus: hasTopFocus(),
-            permission: permission.value
-        });
-
         if (!canNotify.value) {
-            console.log('[PushNotification] Cannot notify - canNotify is false');
             return;
         }
 
         // 如果页面有焦点，不显示通知
         if (hasTopFocus()) {
-            console.log('[PushNotification] Page has focus, skipping notification');
             return;
         }
 
         try {
             // Notification API 需要完整的绝对 URL
             let resolvedIcon = icon || defaultAvatarUrl;
-            console.log('[PushNotification] Icon before resolve:', resolvedIcon);
 
             // 处理 id:xxx 格式的附件 ID
             if (resolvedIcon && resolvedIcon.startsWith('id:')) {
@@ -183,7 +173,6 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
                 // 相对路径转绝对路径
                 resolvedIcon = new URL(resolvedIcon, window.location.origin).href;
             }
-            console.log('[PushNotification] Icon after resolve:', resolvedIcon);
 
             const notification = new Notification(title, {
                 body,
@@ -191,7 +180,6 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
                 tag: `sealchat-channel-${channelId}`, // 同一频道的通知会合并
                 requireInteraction: false,
             });
-            console.log('[PushNotification] Notification created successfully');
 
             // 点击通知：聚焦窗口并跳转到频道
             notification.onclick = () => {

@@ -6,6 +6,7 @@ import { useMessage } from 'naive-ui';
 import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 declare global {
   interface Window {
@@ -56,6 +57,45 @@ const usernameError = computed(() => {
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
+
+// Login background
+const loginBgConfig = computed(() => config.value?.loginBackground);
+const loginBgUrl = computed(() => {
+  const id = loginBgConfig.value?.attachmentId;
+  if (!id) return '';
+  return resolveAttachmentUrl(id.startsWith('id:') ? id : `id:${id}`);
+});
+const hasLoginBg = computed(() => !!loginBgUrl.value);
+const loginBgStyle = computed(() => {
+  if (!loginBgUrl.value) return {};
+  const cfg = loginBgConfig.value;
+  const mode = cfg?.mode || 'cover';
+  let bgSize = 'cover';
+  let bgRepeat = 'no-repeat';
+  let bgPosition = 'center';
+  switch (mode) {
+    case 'contain': bgSize = 'contain'; break;
+    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
+    case 'center': bgSize = 'auto'; bgPosition = 'center'; break;
+  }
+  return {
+    backgroundImage: `url(${loginBgUrl.value})`,
+    backgroundSize: bgSize,
+    backgroundRepeat: bgRepeat,
+    backgroundPosition: bgPosition,
+    opacity: (cfg?.opacity ?? 30) / 100,
+    filter: `blur(${cfg?.blur ?? 0}px) brightness(${cfg?.brightness ?? 100}%)`,
+  };
+});
+const loginOverlayStyle = computed(() => {
+  const cfg = loginBgConfig.value;
+  if (!cfg?.overlayColor || !cfg?.overlayOpacity) return null;
+  return {
+    backgroundColor: cfg.overlayColor,
+    opacity: cfg.overlayOpacity / 100,
+  };
+});
+
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) {
     return '';
@@ -285,8 +325,12 @@ const randomUsername = () => {
 };
 
 onMounted(async () => {
-  const resp = await utils.configGet();
-  config.value = resp.data;
+  try {
+    const resp = await utils.configGet();
+    config.value = resp.data;
+  } catch (err) {
+    console.error('Failed to load config:', err);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -295,8 +339,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex items-center justify-center h-full w-full">
-    <div class="w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-md dark:bg-gray-800"
+  <div class="sign-up-root">
+    <!-- Background layers -->
+    <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
+    <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
+
+    <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
+      :class="{ 'has-bg': hasLoginBg }"
       v-if="config?.registerOpen">
       <div class="px-6 py-4">
         <div class="flex justify-center mx-auto">
@@ -395,10 +444,56 @@ onBeforeUnmount(() => {
           class="mx-2 text-sm font-bold text-blue-500 dark:text-blue-400 hover:underline">登录</router-link>
       </div>
     </div>
-    <div class="w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-md dark:bg-gray-800" v-else>
+    <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
+      :class="{ 'has-bg': hasLoginBg }" v-else>
       <div class="p-6">你来晚了，门已经悄然关闭。</div>
     </div>
   </div>
 </template>
 
-<style></style>
+<style scoped>
+.sign-up-root {
+  position: relative;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.login-bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.login-overlay-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sign-up-card {
+  position: relative;
+  z-index: 2;
+  background: white;
+}
+
+:global(.dark) .sign-up-card {
+  background: #1f2937;
+}
+
+.sign-up-card.has-bg {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+}
+
+:global(.dark) .sign-up-card.has-bg {
+  background: rgba(31, 41, 55, 0.85);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+</style>

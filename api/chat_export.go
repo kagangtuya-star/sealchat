@@ -68,6 +68,11 @@ type chatExportUploadResponse struct {
 	UploadedAt int64  `json:"uploaded_at,omitempty"`
 }
 
+type chatExportDeleteResponse struct {
+	TaskID      string `json:"task_id"`
+	FileDeleted bool   `json:"file_deleted"`
+}
+
 type chatExportListResponse struct {
 	Total     int64                `json:"total"`
 	TotalSize int64                `json:"total_size"`
@@ -401,6 +406,35 @@ func ChatExportRetry(c *fiber.Ctx) error {
 		DisplayName:    newJob.DisplayName,
 	}
 	return c.JSON(resp)
+}
+
+func ChatExportDelete(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"error": "未认证"})
+	}
+	taskID := strings.TrimSpace(c.Params("taskId"))
+	job, err := service.GetMessageExportJob(taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "任务不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if job.UserID != user.ID {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
+	}
+	if job.Status == model.MessageExportStatusPending || job.Status == model.MessageExportStatusProcessing {
+		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "任务进行中，无法删除"})
+	}
+	fileDeleted, err := service.DeleteMessageExportJob(job)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(chatExportDeleteResponse{
+		TaskID:      job.ID,
+		FileDeleted: fileDeleted,
+	})
 }
 
 func apiChatExportTest(ctx *ChatContext, req *chatExportRequest) (any, error) {

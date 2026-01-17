@@ -138,13 +138,17 @@ type ChannelPresence struct {
 }
 
 type AudioTrackState struct {
-	Type    string  `json:"type"`
-	AssetID *string `json:"assetId"`
-	Volume  float64 `json:"volume"`
-	Muted   bool    `json:"muted"`
-	Solo    bool    `json:"solo"`
-	FadeIn  int     `json:"fadeIn"`
-	FadeOut int     `json:"fadeOut"`
+	Type         string  `json:"type"`
+	AssetID      *string `json:"assetId"`
+	Volume       float64 `json:"volume"`
+	Muted        bool    `json:"muted"`
+	Solo         bool    `json:"solo"`
+	FadeIn       int     `json:"fadeIn"`
+	FadeOut      int     `json:"fadeOut"`
+	IsPlaying    bool    `json:"isPlaying"`
+	Position     float64 `json:"position"`
+	LoopEnabled  bool    `json:"loopEnabled"`
+	PlaybackRate float64 `json:"playbackRate"`
 }
 
 type AudioPlaybackStatePayload struct {
@@ -447,6 +451,14 @@ type StickyNoteUserState struct {
 	ZIndex    int    `json:"zIndex"`
 }
 
+// StickyNoteLayout 便签推送布局比例（基于浏览器视口）
+type StickyNoteLayout struct {
+	XPct float64 `json:"xPct"`
+	YPct float64 `json:"yPct"`
+	WPct float64 `json:"wPct"`
+	HPct float64 `json:"hPct"`
+}
+
 // StickyNoteFolder 便签文件夹
 type StickyNoteFolder struct {
 	ID         string              `json:"id"`
@@ -468,4 +480,5 @@ type StickyNoteEventPayload struct {
 	Notes         []*StickyNote `json:"notes,omitempty"`
 	Action        string        `json:"action,omitempty"` // create/update/delete/push
 	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
+	Layout        *StickyNoteLayout `json:"layout,omitempty"`
 }

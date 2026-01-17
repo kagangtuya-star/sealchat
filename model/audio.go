@@ -22,6 +22,13 @@ const (
 	AudioTranscodeFailed  AudioTranscodeStatus = "failed"
 )
 
+type AudioAssetScope string
+
+const (
+	AudioScopeCommon AudioAssetScope = "common"
+	AudioScopeWorld  AudioAssetScope = "world"
+)
+
 type AudioAssetVariant struct {
 	Label       string            `json:"label"`
 	BitrateKbps int               `json:"bitrateKbps"`
@@ -87,17 +94,21 @@ type AudioAsset struct {
 	UpdatedBy       string                      `json:"updatedBy"`
 	Variants        JSONList[AudioAssetVariant] `json:"variants" gorm:"type:json"`
 	TranscodeStatus AudioTranscodeStatus        `json:"transcodeStatus" gorm:"type:varchar(16);default:'ready'"`
+	Scope           AudioAssetScope             `json:"scope" gorm:"type:varchar(16);index;default:'common'"`
+	WorldID         *string                     `json:"worldId" gorm:"index"`
 }
 
 func (*AudioAsset) TableName() string { return "audio_assets" }
 
 type AudioFolder struct {
 	StringPKBaseModel
-	ParentID  *string `json:"parentId" gorm:"index"`
-	Name      string  `json:"name"`
-	Path      string  `json:"path" gorm:"uniqueIndex"`
-	CreatedBy string  `json:"createdBy"`
-	UpdatedBy string  `json:"updatedBy"`
+	ParentID  *string         `json:"parentId" gorm:"index"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path" gorm:"index:idx_audio_folder_scope_path,unique"`
+	CreatedBy string          `json:"createdBy"`
+	UpdatedBy string          `json:"updatedBy"`
+	Scope     AudioAssetScope `json:"scope" gorm:"type:varchar(16);index:idx_audio_folder_scope_path,unique;default:'common'"`
+	WorldID   *string         `json:"worldId" gorm:"index:idx_audio_folder_scope_path,unique"`
 }
 
 func (*AudioFolder) TableName() string { return "audio_folders" }
@@ -120,18 +131,24 @@ type AudioScene struct {
 	ChannelScope *string                   `json:"channelScope" gorm:"index"`
 	CreatedBy    string                    `json:"createdBy"`
 	UpdatedBy    string                    `json:"updatedBy"`
+	Scope        AudioAssetScope           `json:"scope" gorm:"type:varchar(16);index;default:'common'"`
+	WorldID      *string                   `json:"worldId" gorm:"index"`
 }
 
 func (*AudioScene) TableName() string { return "audio_scenes" }
 
 type AudioTrackState struct {
-	Type    string  `json:"type"`
-	AssetID *string `json:"assetId"`
-	Volume  float64 `json:"volume"`
-	Muted   bool    `json:"muted"`
-	Solo    bool    `json:"solo"`
-	FadeIn  int     `json:"fadeIn"`
-	FadeOut int     `json:"fadeOut"`
+	Type         string  `json:"type"`
+	AssetID      *string `json:"assetId"`
+	Volume       float64 `json:"volume"`
+	Muted        bool    `json:"muted"`
+	Solo         bool    `json:"solo"`
+	FadeIn       int     `json:"fadeIn"`
+	FadeOut      int     `json:"fadeOut"`
+	IsPlaying    bool    `json:"isPlaying"`
+	Position     float64 `json:"position"`
+	LoopEnabled  bool    `json:"loopEnabled"`
+	PlaybackRate float64 `json:"playbackRate"`
 }
 
 type AudioPlaybackState struct {

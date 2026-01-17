@@ -116,6 +116,13 @@ export interface StickyNoteUserState {
     zIndex: number
 }
 
+export interface StickyNotePushLayout {
+    xPct: number
+    yPct: number
+    wPct: number
+    hPct: number
+}
+
 export interface StickyNoteWithState {
     note: StickyNote
     userState?: StickyNoteUserState
@@ -131,6 +138,10 @@ interface StickyNoteLocalCache {
 
 const LOCAL_CACHE_VERSION = 1
 const STORAGE_KEY_PREFIX = 'sealchat_sticky_notes'
+const MIN_NOTE_WIDTH = 200
+const MIN_NOTE_HEIGHT = 150
+const VIEWPORT_PADDING = 8
+let viewportListenerBound = false
 
 export const useStickyNoteStore = defineStore('stickyNote', () => {
     const userStore = useUserStore()
@@ -511,7 +522,14 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
                 zIndex: 1000
             }
         }
-        Object.assign(userStates.value[noteId], updates)
+        const shouldClamp =
+            'positionX' in updates ||
+            'positionY' in updates ||
+            'width' in updates ||
+            'height' in updates
+        const clampedUpdates = shouldClamp ? { ...updates, ...clampNoteState(noteId, updates) } : updates
+
+        Object.assign(userStates.value[noteId], clampedUpdates)
         persistLocalCache()
 
         if (options?.persistRemote === false) {
@@ -524,16 +542,20 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
         // 后台保存
         try {
-            await api.patch(`api/v1/sticky-notes/${noteId}/state`, updates)
+            await api.patch(`api/v1/sticky-notes/${noteId}/state`, clampedUpdates)
         } catch (err) {
             console.error('保存便签状态失败:', err)
         }
     }
 
     // 推送便签
-    async function pushNote(noteId: string, targetUserIds: string[]) {
+    async function pushNote(noteId: string, targetUserIds: string[], layout?: StickyNotePushLayout) {
         try {
-            await api.post(`api/v1/sticky-notes/${noteId}/push`, { targetUserIds })
+            const payload: { targetUserIds: string[]; layout?: StickyNotePushLayout } = { targetUserIds }
+            if (layout) {
+                payload.layout = layout
+            }
+            await api.post(`api/v1/sticky-notes/${noteId}/push`, payload)
             return true
         } catch (err) {
             console.error('推送便签失败:', err)
@@ -542,12 +564,18 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 打开便签
-    function openNote(noteId: string) {
+    function openNote(noteId: string, options?: { persistRemote?: boolean; state?: Partial<StickyNoteUserState> }) {
         if (!activeNoteIds.value.includes(noteId)) {
             activeNoteIds.value.push(noteId)
         }
-        bringToFront(noteId)
-        updateUserState(noteId, { isOpen: true, minimized: false })
+        bringToFront(noteId, options)
+        const clamped = clampNoteState(noteId, options?.state)
+        updateUserState(noteId, {
+            isOpen: true,
+            minimized: false,
+            ...options?.state,
+            ...clamped
+        }, options)
     }
 
     function closeNoteLocal(noteId: string) {
@@ -568,9 +596,9 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 置顶便签
-    function bringToFront(noteId: string) {
+    function bringToFront(noteId: string, options?: { persistRemote?: boolean }) {
         maxZIndex.value += 1
-        updateUserState(noteId, { zIndex: maxZIndex.value })
+        updateUserState(noteId, { zIndex: maxZIndex.value }, options)
     }
 
     // 最小化便签
@@ -580,7 +608,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
     // 恢复便签
     function restoreNote(noteId: string) {
-        updateUserState(noteId, { minimized: false })
+        const clamped = clampNoteState(noteId)
+        updateUserState(noteId, { minimized: false, ...clamped })
         bringToFront(noteId)
     }
 
@@ -594,12 +623,91 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         editingNoteId.value = null
     }
 
+    function clampNumber(value: number, min: number, max: number) {
+        return Math.min(Math.max(value, min), max)
+    }
+
+    function getViewportSize() {
+        if (typeof window === 'undefined') return null
+        return {
+            width: Math.max(window.innerWidth, 1),
+            height: Math.max(window.innerHeight, 1)
+        }
+    }
+
+    function clampNoteState(noteId: string, base?: Partial<StickyNoteUserState>) {
+        const viewport = getViewportSize()
+        if (!viewport) return {}
+
+        const note = notes.value[noteId]
+        const current = userStates.value[noteId]
+        const rawW = base?.width ?? current?.width ?? note?.defaultW ?? 300
+        const rawH = base?.height ?? current?.height ?? note?.defaultH ?? 250
+        const width = clampNumber(rawW, MIN_NOTE_WIDTH, Math.max(MIN_NOTE_WIDTH, viewport.width - VIEWPORT_PADDING))
+        const height = clampNumber(rawH, MIN_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, viewport.height - VIEWPORT_PADDING))
+        const maxX = Math.max(0, viewport.width - width)
+        const maxY = Math.max(0, viewport.height - height)
+        const rawX = base?.positionX ?? current?.positionX ?? note?.defaultX ?? 100
+        const rawY = base?.positionY ?? current?.positionY ?? note?.defaultY ?? 100
+
+        return {
+            positionX: clampNumber(rawX, 0, maxX),
+            positionY: clampNumber(rawY, 0, maxY),
+            width,
+            height
+        }
+    }
+
+    function resetNotePosition(noteId: string, options?: { persistRemote?: boolean }) {
+        const viewport = getViewportSize()
+        if (!viewport) return
+
+        const note = notes.value[noteId]
+        const current = userStates.value[noteId]
+        const rawW = current?.width ?? note?.defaultW ?? 300
+        const rawH = current?.height ?? note?.defaultH ?? 250
+        const width = clampNumber(rawW, MIN_NOTE_WIDTH, Math.max(MIN_NOTE_WIDTH, viewport.width - VIEWPORT_PADDING))
+        const height = clampNumber(rawH, MIN_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, viewport.height - VIEWPORT_PADDING))
+        const positionX = Math.max(0, Math.round((viewport.width - width) / 2))
+        const positionY = Math.max(0, Math.round((viewport.height - height) / 2))
+
+        updateUserState(noteId, { positionX, positionY, width, height }, options)
+    }
+
+    function resetAllOpenNotes(options?: { persistRemote?: boolean }) {
+        activeNoteIds.value.forEach(noteId => resetNotePosition(noteId, options))
+    }
+
+    function resolvePushLayout(layout?: StickyNotePushLayout): Partial<StickyNoteUserState> | null {
+        if (!layout || typeof window === 'undefined') return null
+        const { xPct, yPct, wPct, hPct } = layout
+        if (![xPct, yPct, wPct, hPct].every(value => Number.isFinite(value))) {
+            return null
+        }
+        const viewportW = Math.max(window.innerWidth, 1)
+        const viewportH = Math.max(window.innerHeight, 1)
+        const rawW = Math.round(wPct * viewportW)
+        const rawH = Math.round(hPct * viewportH)
+        const width = clampNumber(rawW, MIN_NOTE_WIDTH, Math.max(MIN_NOTE_WIDTH, viewportW))
+        const height = clampNumber(rawH, MIN_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, viewportH))
+        const maxX = Math.max(0, viewportW - width)
+        const maxY = Math.max(0, viewportH - height)
+        const rawX = Math.round(xPct * viewportW)
+        const rawY = Math.round(yPct * viewportH)
+        return {
+            positionX: clampNumber(rawX, 0, maxX),
+            positionY: clampNumber(rawY, 0, maxY),
+            width,
+            height
+        }
+    }
+
     // 处理WebSocket事件
     function handleStickyNoteEvent(event: any) {
         const payload = event.stickyNote
         if (!payload) return
 
-        const { note, action, targetUserIds } = payload
+        const { note, action, targetUserIds, layout } = payload
 
         switch (action) {
             case 'create':
@@ -628,10 +736,33 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
                     if (!isTarget) break
                     notes.value[note.id] = note
                     setVisible(true)
-                    openNote(note.id)
+                    const layoutState = resolvePushLayout(layout)
+                    openNote(note.id, { persistRemote: false, state: layoutState || undefined })
                 }
                 break
         }
+    }
+
+    let resizeTimer: number | null = null
+
+    function scheduleViewportClamp() {
+        if (typeof window === 'undefined') return
+        if (resizeTimer !== null) {
+            window.clearTimeout(resizeTimer)
+        }
+        resizeTimer = window.setTimeout(() => {
+            activeNoteIds.value.forEach(noteId => {
+                const clamped = clampNoteState(noteId)
+                updateUserState(noteId, clamped, { persistRemote: false })
+            })
+            resizeTimer = null
+        }, 120)
+    }
+
+    if (typeof window !== 'undefined' && !viewportListenerBound) {
+        viewportListenerBound = true
+        window.addEventListener('resize', scheduleViewportClamp)
+        window.addEventListener('orientationchange', scheduleViewportClamp)
     }
 
     function setVisible(value: boolean) {
@@ -773,6 +904,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         restoreNote,
         startEditing,
         stopEditing,
+        resetNotePosition,
+        resetAllOpenNotes,
         handleStickyNoteEvent,
         setVisible,
         toggleVisible,

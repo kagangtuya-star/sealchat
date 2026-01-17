@@ -14,15 +14,18 @@ import (
 )
 
 type AudioAssetFilters struct {
-	Query        string
-	Tags         []string
-	FolderID     *string
-	CreatorIDs   []string
-	DurationMin  float64
-	DurationMax  float64
-	HasSceneOnly bool
-	Page         int
-	PageSize     int
+	Query         string
+	Tags          []string
+	FolderID      *string
+	CreatorIDs    []string
+	DurationMin   float64
+	DurationMax   float64
+	HasSceneOnly  bool
+	Page          int
+	PageSize      int
+	Scope         model.AudioAssetScope
+	WorldID       *string
+	IncludeCommon bool
 }
 
 type AudioAssetUpdateInput struct {
@@ -31,6 +34,8 @@ type AudioAssetUpdateInput struct {
 	Tags        []string
 	Visibility  *model.AudioAssetVisibility
 	FolderID    *string
+	Scope       *model.AudioAssetScope
+	WorldID     *string
 	UpdatedBy   string
 	Variants    []model.AudioAssetVariant
 }
@@ -44,6 +49,14 @@ type AudioFolderPayload struct {
 	Name     string
 	ParentID *string
 	ActorID  string
+	Scope    model.AudioAssetScope
+	WorldID  *string
+}
+
+type AudioFolderFilters struct {
+	Scope         model.AudioAssetScope
+	WorldID       *string
+	IncludeCommon bool
 }
 
 type AudioSceneInput struct {
@@ -54,6 +67,15 @@ type AudioSceneInput struct {
 	Order        int
 	ChannelScope *string
 	ActorID      string
+	Scope        model.AudioAssetScope
+	WorldID      *string
+}
+
+type AudioSceneFilters struct {
+	ChannelScope  string
+	Scope         model.AudioAssetScope
+	WorldID       *string
+	IncludeCommon bool
 }
 
 type AudioTrackState = model.AudioTrackState
@@ -94,6 +116,11 @@ func AudioCreateAssetFromUpload(file *multipart.FileHeader, opts AudioUploadOpti
 	}
 	if err := model.GetDB().Create(asset).Error; err != nil {
 		return nil, err
+	}
+	if asset.TranscodeStatus == model.AudioTranscodePending {
+		if svc := GetAudioService(); svc != nil {
+			svc.scheduleTranscode(asset.ID, asset.ObjectKey)
+		}
 	}
 	return asset, nil
 }
@@ -154,6 +181,18 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 		if filters.DurationMax > 0 {
 			q = q.Where("duration <= ?", filters.DurationMax)
 		}
+		// scope/worldId 过滤
+		if filters.Scope != "" {
+			if filters.Scope == model.AudioScopeWorld && filters.WorldID != nil {
+				if filters.IncludeCommon {
+					q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+				} else {
+					q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
+				}
+			} else {
+				q = q.Where("scope = ?", filters.Scope)
+			}
+		}
 		return q.Order("updated_at DESC")
 	})
 }
@@ -165,12 +204,22 @@ func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
 	result := make([]AudioTrackState, 0, len(items))
 	for _, item := range items {
 		t := AudioTrackState{
-			Type:    strings.TrimSpace(item.Type),
-			Volume:  item.Volume,
-			Muted:   item.Muted,
-			Solo:    item.Solo,
-			FadeIn:  item.FadeIn,
-			FadeOut: item.FadeOut,
+			Type:         strings.TrimSpace(item.Type),
+			Volume:       item.Volume,
+			Muted:        item.Muted,
+			Solo:         item.Solo,
+			FadeIn:       item.FadeIn,
+			FadeOut:      item.FadeOut,
+			IsPlaying:    item.IsPlaying,
+			Position:     item.Position,
+			LoopEnabled:  item.LoopEnabled,
+			PlaybackRate: item.PlaybackRate,
+		}
+		if t.PlaybackRate <= 0 {
+			t.PlaybackRate = 1
+		}
+		if t.Position < 0 {
+			t.Position = 0
 		}
 		if item.AssetID != nil {
 			trimmed := strings.TrimSpace(*item.AssetID)
@@ -278,6 +327,30 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 		updates["tags"] = model.JSONList[string](normalizeTags(input.Tags))
 		asset.Tags = model.JSONList[string](normalizeTags(input.Tags))
 	}
+	if input.Scope != nil {
+		scope := *input.Scope
+		switch scope {
+		case model.AudioScopeCommon:
+			updates["scope"] = scope
+			updates["world_id"] = nil
+			asset.Scope = scope
+			asset.WorldID = nil
+		case model.AudioScopeWorld:
+			worldID := ""
+			if input.WorldID != nil {
+				worldID = strings.TrimSpace(*input.WorldID)
+			}
+			if worldID == "" {
+				return nil, errors.New("世界级素材必须指定 worldId")
+			}
+			updates["scope"] = scope
+			updates["world_id"] = worldID
+			asset.Scope = scope
+			asset.WorldID = &worldID
+		default:
+			return nil, errors.New("素材级别无效")
+		}
+	}
 	if len(input.Variants) > 0 {
 		updates["variants"] = model.JSONList[model.AudioAssetVariant](input.Variants)
 		asset.Variants = model.JSONList[model.AudioAssetVariant](input.Variants)
@@ -309,8 +382,25 @@ func AudioDeleteAsset(id string, hard bool) error {
 }
 
 func AudioListFolders() ([]*AudioFolderNode, error) {
+	return AudioListFoldersWithFilters(AudioFolderFilters{IncludeCommon: true})
+}
+
+func AudioListFoldersWithFilters(filters AudioFolderFilters) ([]*AudioFolderNode, error) {
 	var folders []*model.AudioFolder
-	if err := model.GetDB().Order("path").Find(&folders).Error; err != nil {
+	q := model.GetDB().Order("path")
+	// scope/worldId 过滤
+	if filters.Scope != "" {
+		if filters.Scope == model.AudioScopeWorld && filters.WorldID != nil {
+			if filters.IncludeCommon {
+				q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+			} else {
+				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
+			}
+		} else {
+			q = q.Where("scope = ?", filters.Scope)
+		}
+	}
+	if err := q.Find(&folders).Error; err != nil {
 		return nil, err
 	}
 	nodeMap := map[string]*AudioFolderNode{}
@@ -347,6 +437,10 @@ func AudioCreateFolder(payload AudioFolderPayload) (*model.AudioFolder, error) {
 	} else {
 		path = buildFolderPath("", name)
 	}
+	scope := payload.Scope
+	if scope == "" {
+		scope = model.AudioScopeCommon
+	}
 	folder := &model.AudioFolder{}
 	folder.StringPKBaseModel.Init()
 	folder.Name = name
@@ -354,10 +448,16 @@ func AudioCreateFolder(payload AudioFolderPayload) (*model.AudioFolder, error) {
 	folder.Path = path
 	folder.CreatedBy = payload.ActorID
 	folder.UpdatedBy = payload.ActorID
+	folder.Scope = scope
+	folder.WorldID = cloneStringPtr(payload.WorldID)
 	if err := model.GetDB().Create(folder).Error; err != nil {
 		return nil, err
 	}
 	return folder, nil
+}
+
+func AudioGetFolder(id string) (*model.AudioFolder, error) {
+	return getAudioFolder(id)
 }
 
 func AudioUpdateFolder(id string, payload AudioFolderPayload) (*model.AudioFolder, error) {
@@ -435,9 +535,25 @@ func AudioDeleteFolder(id string) error {
 }
 
 func AudioListScenes(channelScope string) ([]*model.AudioScene, error) {
+	return AudioListScenesWithFilters(AudioSceneFilters{ChannelScope: channelScope, IncludeCommon: true})
+}
+
+func AudioListScenesWithFilters(filters AudioSceneFilters) ([]*model.AudioScene, error) {
 	q := model.GetDB().Order("`order`, created_at")
-	if channelScope != "" {
-		q = q.Where("channel_scope = ?", channelScope)
+	if filters.ChannelScope != "" {
+		q = q.Where("channel_scope = ?", filters.ChannelScope)
+	}
+	// scope/worldId 过滤
+	if filters.Scope != "" {
+		if filters.Scope == model.AudioScopeWorld && filters.WorldID != nil {
+			if filters.IncludeCommon {
+				q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+			} else {
+				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
+			}
+		} else {
+			q = q.Where("scope = ?", filters.Scope)
+		}
 	}
 	var scenes []*model.AudioScene
 	if err := q.Find(&scenes).Error; err != nil {
@@ -450,6 +566,10 @@ func AudioCreateScene(input AudioSceneInput) (*model.AudioScene, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, errors.New("场景名称不能为空")
 	}
+	scope := input.Scope
+	if scope == "" {
+		scope = model.AudioScopeCommon
+	}
 	scene := &model.AudioScene{}
 	scene.StringPKBaseModel.Init()
 	scene.Name = strings.TrimSpace(input.Name)
@@ -460,10 +580,16 @@ func AudioCreateScene(input AudioSceneInput) (*model.AudioScene, error) {
 	scene.ChannelScope = input.ChannelScope
 	scene.CreatedBy = input.ActorID
 	scene.UpdatedBy = input.ActorID
+	scene.Scope = scope
+	scene.WorldID = cloneStringPtr(input.WorldID)
 	if err := model.GetDB().Create(scene).Error; err != nil {
 		return nil, err
 	}
 	return scene, nil
+}
+
+func AudioGetScene(id string) (*model.AudioScene, error) {
+	return getAudioScene(id)
 }
 
 func AudioUpdateScene(id string, input AudioSceneInput) (*model.AudioScene, error) {

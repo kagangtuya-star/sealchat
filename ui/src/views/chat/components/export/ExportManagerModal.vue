@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import { useDebounceFn, useWindowSize } from '@vueuse/core';
 import type { ExportTaskItem } from '@/types';
 import { useChatStore } from '@/stores/chat';
@@ -22,6 +22,7 @@ const emit = defineEmits<Emits>();
 
 const chat = useChatStore();
 const message = useMessage();
+const dialog = useDialog();
 const { width } = useWindowSize();
 const isMobile = computed(() => width.value <= 720);
 const modalWidth = computed(() => (isMobile.value ? '92vw' : '760px'));
@@ -36,6 +37,7 @@ const exportManagerClasses = computed(() => ({
 const loading = ref(false);
 const uploadingTaskId = ref<string | null>(null);
 const retryingTaskId = ref<string | null>(null);
+const deletingTaskId = ref<string | null>(null);
 const page = ref(1);
 const pageSize = ref(5);
 const statusFilter = ref<'done' | 'failed' | 'all'>('done');
@@ -105,6 +107,8 @@ const statusType = (status: string) => {
       return 'default';
   }
 };
+
+const isDeletableStatus = (status: string) => status === 'done' || status === 'failed';
 
 const formatTime = (timestamp?: number) => {
   if (!timestamp) {
@@ -237,6 +241,39 @@ const handleRetry = async (item: ExportTaskItem) => {
   } finally {
     retryingTaskId.value = null;
   }
+};
+
+const handleDelete = async (item: ExportTaskItem) => {
+  if (!isDeletableStatus(item.status)) {
+    message.warning('任务进行中，无法删除。');
+    return;
+  }
+  deletingTaskId.value = item.task_id;
+  try {
+    await chat.deleteExportTask(item.task_id);
+    message.success('导出记录已删除');
+    fetchTasks();
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || (error as Error)?.message || '删除失败';
+    message.error(errMsg);
+  } finally {
+    deletingTaskId.value = null;
+  }
+};
+
+const confirmDelete = (item: ExportTaskItem) => {
+  if (!isDeletableStatus(item.status)) {
+    message.warning('任务进行中，无法删除。');
+    return;
+  }
+  dialog.warning({
+    title: '删除导出记录',
+    content: `确认删除「${taskDisplayName(item)}」？本地文件也会被移除。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    maskClosable: false,
+    onPositiveClick: () => handleDelete(item),
+  });
 };
 
 const handleRefresh = () => {
@@ -381,6 +418,16 @@ watch(
                   @click="handleDownload(item)"
                 >
                   查看
+                </n-button>
+                <n-button
+                  text
+                  size="small"
+                  type="error"
+                  :disabled="!isDeletableStatus(item.status)"
+                  :loading="deletingTaskId === item.task_id"
+                  @click="confirmDelete(item)"
+                >
+                  删除
                 </n-button>
                 <n-button
                   v-if="item.format === 'json' && item.upload_url"

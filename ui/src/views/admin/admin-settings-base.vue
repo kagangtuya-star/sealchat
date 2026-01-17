@@ -3,12 +3,16 @@ import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { Message } from '@vicons/tabler';
+import { Photo as ImageIcon, X } from '@vicons/tabler';
 import { cloneDeep } from 'lodash-es';
-import { useMessage } from 'naive-ui';
+import { NIcon, useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
 import { onMounted, ref, watch } from 'vue';
 import { api } from '@/stores/_config';
 import dayjs from 'dayjs';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
+import { useImageCompressor } from '@/composables/useImageCompressor';
 
 const chat = useChatStore();
 
@@ -25,6 +29,7 @@ const model = ref<ServerConfig>({
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
   emailNotification: { enabled: false },
+  audio: { allowWorldAudioWorkbench: false },
 })
 
 const utils = useUtilsStore();
@@ -473,6 +478,169 @@ const sendSmtpTestEmail = async () => {
     smtpTestLoading.value = false
   }
 }
+
+// Login background state
+const { compress: compressImage } = useImageCompressor();
+const loginBgUploading = ref(false);
+const loginBgFileInput = ref<HTMLInputElement | null>(null);
+
+const loginBgAttachmentId = computed({
+  get: () => model.value.loginBackground?.attachmentId || '',
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.attachmentId = val;
+  },
+});
+
+const loginBgMode = computed({
+  get: () => model.value.loginBackground?.mode || 'cover',
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.mode = val;
+  },
+});
+
+const loginBgOpacity = computed({
+  get: () => model.value.loginBackground?.opacity ?? 30,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.opacity = val;
+  },
+});
+
+const loginBgBlur = computed({
+  get: () => model.value.loginBackground?.blur ?? 0,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.blur = val;
+  },
+});
+
+const loginBgBrightness = computed({
+  get: () => model.value.loginBackground?.brightness ?? 100,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.brightness = val;
+  },
+});
+
+const loginBgOverlayColor = computed({
+  get: () => model.value.loginBackground?.overlayColor || '',
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.overlayColor = val;
+  },
+});
+
+const loginBgOverlayOpacity = computed({
+  get: () => model.value.loginBackground?.overlayOpacity ?? 0,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.overlayOpacity = val;
+  },
+});
+
+const loginBgUrl = computed(() => {
+  const id = loginBgAttachmentId.value;
+  if (!id) return '';
+  return resolveAttachmentUrl(id.startsWith('id:') ? id : `id:${id}`);
+});
+
+const loginBgModeOptions = [
+  { label: '铺满 (Cover)', value: 'cover' },
+  { label: '适应 (Contain)', value: 'contain' },
+  { label: '平铺 (Tile)', value: 'tile' },
+  { label: '居中 (Center)', value: 'center' },
+];
+
+const loginBgPreviewStyle = computed(() => {
+  if (!loginBgUrl.value) return {};
+  const mode = loginBgMode.value;
+  let bgSize = 'cover';
+  let bgRepeat = 'no-repeat';
+  let bgPosition = 'center';
+  switch (mode) {
+    case 'contain':
+      bgSize = 'contain';
+      break;
+    case 'tile':
+      bgSize = 'auto';
+      bgRepeat = 'repeat';
+      break;
+    case 'center':
+      bgSize = 'auto';
+      bgPosition = 'center';
+      break;
+  }
+  return {
+    backgroundImage: `url(${loginBgUrl.value})`,
+    backgroundSize: bgSize,
+    backgroundRepeat: bgRepeat,
+    backgroundPosition: bgPosition,
+    opacity: loginBgOpacity.value / 100,
+    filter: `blur(${loginBgBlur.value}px) brightness(${loginBgBrightness.value}%)`,
+  };
+});
+
+const loginBgOverlayStyle = computed(() => {
+  if (!loginBgOverlayColor.value || !loginBgOverlayOpacity.value) return null;
+  return {
+    backgroundColor: loginBgOverlayColor.value,
+    opacity: loginBgOverlayOpacity.value / 100,
+  };
+});
+
+const triggerLoginBgUpload = () => {
+  loginBgFileInput.value?.click();
+};
+
+const handleLoginBgFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input?.files?.[0];
+  if (!file) return;
+  input.value = '';
+
+  const sizeLimit = utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    return;
+  }
+
+  loginBgUploading.value = true;
+  try {
+    const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080 });
+    const result = await uploadImageAttachment(compressed, { channelId: 'login-background', skipCompression: true });
+    let attachId = result.attachmentId || '';
+    if (attachId.startsWith('id:')) {
+      attachId = attachId.slice(3);
+    }
+    loginBgAttachmentId.value = attachId;
+    message.success('背景图片上传成功');
+  } catch (err: any) {
+    message.error(err?.message || '上传失败');
+  } finally {
+    loginBgUploading.value = false;
+  }
+};
+
+const clearLoginBg = () => {
+  loginBgAttachmentId.value = '';
+};
 </script>
 
 <template>
@@ -532,6 +700,9 @@ const sendSmtpTestEmail = async () => {
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
       </n-form-item>
+      <n-form-item label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
+        <n-switch v-model:value="model.audio.allowWorldAudioWorkbench" />
+      </n-form-item>
       <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
         <n-switch v-model:value="model.emailNotification.enabled" />
       </n-form-item>
@@ -544,6 +715,74 @@ const sendSmtpTestEmail = async () => {
       <n-form-item label="术语最大字数" feedback="单条术语内容的最大字符数（100-10000）">
         <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />
       </n-form-item>
+
+      <!-- Login Background Section -->
+      <n-divider>登录页背景</n-divider>
+      <input ref="loginBgFileInput" type="file" accept="image/*" class="hidden" @change="handleLoginBgFileChange">
+      <n-form-item label="背景图片">
+        <div class="flex gap-3 items-center">
+          <div
+            class="login-bg-no-option"
+            :class="{ active: !loginBgAttachmentId }"
+            @click="clearLoginBg"
+          >
+            <NIcon :component="X" :size="16" />
+            <span>无</span>
+          </div>
+          <div v-if="loginBgUrl" class="login-bg-thumb-wrapper">
+            <img :src="loginBgUrl" alt="登录背景" class="login-bg-thumb" />
+          </div>
+          <n-button size="small" :loading="loginBgUploading" @click="triggerLoginBgUpload">
+            <template #icon><NIcon :component="ImageIcon" /></template>
+            {{ loginBgUrl ? '更换' : '上传' }}
+          </n-button>
+        </div>
+      </n-form-item>
+
+      <template v-if="loginBgAttachmentId">
+        <n-form-item label="显示模式">
+          <n-select v-model:value="loginBgMode" :options="loginBgModeOptions" style="width: 180px;" />
+        </n-form-item>
+        <n-form-item label="透明度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginBgOpacity" :min="0" :max="100" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginBgOpacity }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="模糊度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginBgBlur" :min="0" :max="20" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginBgBlur }}px</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="亮度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginBgBrightness" :min="50" :max="150" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginBgBrightness }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="叠加层颜色">
+          <n-color-picker v-model:value="loginBgOverlayColor" :show-alpha="false" style="width: 100px;" />
+          <n-button v-if="loginBgOverlayColor" size="tiny" quaternary class="ml-2" @click="loginBgOverlayColor = ''">清除</n-button>
+        </n-form-item>
+        <n-form-item v-if="loginBgOverlayColor" label="叠加层透明度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginBgOverlayOpacity" :min="0" :max="100" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginBgOverlayOpacity }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="预览">
+          <div class="login-bg-preview">
+            <div class="login-bg-preview-layer" :style="loginBgPreviewStyle"></div>
+            <div v-if="loginBgOverlayStyle" class="login-bg-preview-overlay" :style="loginBgOverlayStyle"></div>
+            <div class="login-bg-preview-form">
+              <div class="login-bg-preview-input"></div>
+              <div class="login-bg-preview-input"></div>
+              <div class="login-bg-preview-btn"></div>
+            </div>
+          </div>
+        </n-form-item>
+      </template>
 
       <n-divider>版本检测</n-divider>
       <n-form-item label="更新状态">
@@ -707,5 +946,124 @@ const sendSmtpTestEmail = async () => {
 .update-check-body :deep(ul) {
   padding-left: 1.1rem;
   margin: 0.35rem 0;
+}
+
+/* Login Background Styles */
+.login-bg-no-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 2px dashed #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.login-bg-no-option:hover {
+  border-color: #9ca3af;
+  color: #6b7280;
+}
+.login-bg-no-option.active {
+  border-color: #3b82f6;
+  background-color: #eff6ff;
+  color: #3b82f6;
+}
+.dark .login-bg-no-option {
+  border-color: #4b5563;
+  color: #6b7280;
+}
+.dark .login-bg-no-option:hover {
+  border-color: #6b7280;
+  color: #9ca3af;
+}
+.dark .login-bg-no-option.active {
+  border-color: #3b82f6;
+  background-color: #1e3a5f;
+  color: #60a5fa;
+}
+
+.login-bg-thumb-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid #3b82f6;
+}
+.login-bg-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.login-bg-preview {
+  position: relative;
+  width: 240px;
+  height: 160px;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: #f3f4f6;
+}
+.dark .login-bg-preview {
+  background-color: #1f2937;
+}
+
+.login-bg-preview-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.login-bg-preview-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.login-bg-preview-form {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+}
+
+.login-bg-preview-input {
+  width: 100%;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 4px;
+}
+.dark .login-bg-preview-input {
+  background: rgba(31, 41, 55, 0.85);
+}
+
+.login-bg-preview-btn {
+  width: 60%;
+  height: 24px;
+  background: rgba(59, 130, 246, 0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.login-bg-value {
+  display: inline-block;
+  width: 50px;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: right;
+}
+.dark .login-bg-value {
+  color: #9ca3af;
 }
 </style>

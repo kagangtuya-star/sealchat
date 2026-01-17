@@ -178,6 +178,10 @@ func WebhookChanges(c *fiber.Ctx) error {
 			msg.EnsureWhisperMeta()
 			ev.Channel = channelData
 			ev.Message = buildProtocolMessage(msg, channelData)
+			// BOT 出站：Satori XML 转换为 CQ 码
+			if ev.Message != nil {
+				ev.Message.Content = service.ConvertSatoriToCQ(ev.Message.Content)
+			}
 		}
 
 		events = append(events, ev)
@@ -372,6 +376,9 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	if content == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"ok": false, "error": "bad_request", "message": "message.content 不能为空"})
 	}
+
+	// BOT 入站：CQ 码转换为 Satori XML
+	content = service.ConvertCQToSatori(content)
 
 	icMode := strings.ToLower(strings.TrimSpace(req.Message.ICMode))
 	if icMode == "" {

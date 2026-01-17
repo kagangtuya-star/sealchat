@@ -11,6 +11,7 @@ import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { useDisplayStore } from '@/stores/display';
 import { generateMessageLink } from '@/utils/messageLink';
+import { copyTextWithFallback } from '@/utils/clipboard';
 
 const chat = useChatStore()
 const utils = useUtilsStore()
@@ -223,7 +224,14 @@ const canRemoveMessage = computed(() => {
   if (isSelfMessage.value) {
     return true;
   }
-  if (!viewerIsAdmin.value) {
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+  const isWorldAdmin = worldDetail?.memberRole === 'owner' || worldDetail?.memberRole === 'admin' || ownerId === user.info.id;
+  if (!viewerIsAdmin.value && !isWorldAdmin) {
+    return false;
+  }
+  if (ownerId && targetUserId.value === ownerId) {
     return false;
   }
   if (targetIsAdmin.value) {
@@ -374,10 +382,10 @@ const clickCopy = async () => {
     }
   }
 
-  try {
-    await navigator.clipboard.writeText(copyText);
+  const copied = await copyTextWithFallback(copyText);
+  if (copied) {
     message.success("已复制");
-  } catch (err) {
+  } else {
     message.error('复制失败');
   }
 }
@@ -463,10 +471,10 @@ const clickCopyMessageLink = async () => {
     linkBase ? { base: linkBase } : undefined,
   );
 
-  try {
-    await navigator.clipboard.writeText(link);
+  const copied = await copyTextWithFallback(link);
+  if (copied) {
     message.success('消息链接已复制');
-  } catch {
+  } else {
     message.error('复制失败');
   }
 

@@ -4,9 +4,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
-import { useUtilsStore } from '@/stores/utils';
+import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
 declare global {
   interface Window {
@@ -44,6 +45,49 @@ const turnstileLoading = ref(false);
 const userStore = useUserStore();
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
+
+const signInTitle = computed(() => {
+  const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
+  return title && title.length > 0 ? title : DEFAULT_PAGE_TITLE;
+});
+
+// Login background
+const loginBgConfig = computed(() => config.value?.loginBackground);
+const loginBgUrl = computed(() => {
+  const id = loginBgConfig.value?.attachmentId;
+  if (!id) return '';
+  return resolveAttachmentUrl(id.startsWith('id:') ? id : `id:${id}`);
+});
+const hasLoginBg = computed(() => !!loginBgUrl.value);
+const loginBgStyle = computed(() => {
+  if (!loginBgUrl.value) return {};
+  const cfg = loginBgConfig.value;
+  const mode = cfg?.mode || 'cover';
+  let bgSize = 'cover';
+  let bgRepeat = 'no-repeat';
+  let bgPosition = 'center';
+  switch (mode) {
+    case 'contain': bgSize = 'contain'; break;
+    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
+    case 'center': bgSize = 'auto'; bgPosition = 'center'; break;
+  }
+  return {
+    backgroundImage: `url(${loginBgUrl.value})`,
+    backgroundSize: bgSize,
+    backgroundRepeat: bgRepeat,
+    backgroundPosition: bgPosition,
+    opacity: (cfg?.opacity ?? 30) / 100,
+    filter: `blur(${cfg?.blur ?? 0}px) brightness(${cfg?.brightness ?? 100}%)`,
+  };
+});
+const loginOverlayStyle = computed(() => {
+  const cfg = loginBgConfig.value;
+  if (!cfg?.overlayColor || !cfg?.overlayOpacity) return null;
+  return {
+    backgroundColor: cfg.overlayColor,
+    opacity: cfg.overlayOpacity / 100,
+  };
+});
 
 const captchaMode = computed(() => config.value?.captcha?.signin?.mode ?? config.value?.captcha?.mode ?? 'off');
 const captchaImageUrl = computed(() => {
@@ -270,8 +314,12 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
 };
 
 onMounted(async () => {
-  const resp = await utils.configGet();
-  config.value = resp.data;
+  try {
+    const resp = await utils.configGet();
+    config.value = resp.data;
+  } catch (err) {
+    console.error('Failed to load config:', err);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -280,9 +328,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex h-full w-full justify-center items-center">
-    <div class="w-[50%] flex items-center justify-center flex-col" style="min-width: 20rem;">
-      <h2 class="font-bold text-xl mb-8">摸鱼中心</h2>
+  <div class="sign-in-root">
+    <!-- Background layers -->
+    <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
+    <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
+
+    <div class="sign-in-content" :class="{ 'has-bg': hasLoginBg }">
+      <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
         <n-form-item path="account" label="用户名/昵称">
@@ -335,9 +387,53 @@ onBeforeUnmount(() => {
   </div>
 </template>
   
-<style>
-.sign-bg {
-  background-size: cover;
-  background-position: center;
+<style scoped>
+.sign-in-root {
+  position: relative;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.login-bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.login-overlay-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sign-in-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 50%;
+  min-width: 20rem;
+  padding: 2rem;
+  transition: all 0.3s;
+}
+
+.sign-in-content.has-bg {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+}
+
+:global(.dark) .sign-in-content.has-bg {
+  background: rgba(31, 41, 55, 0.85);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 </style>

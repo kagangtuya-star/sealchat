@@ -46,10 +46,11 @@ import SoundMessageCreated from '@/assets/message.mp3';
 import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
-import { useUtilsStore } from '@/stores/utils';
+import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
+import { copyTextWithFallback } from '@/utils/clipboard';
 import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
@@ -79,6 +80,8 @@ import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
+import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
+import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -219,7 +222,8 @@ const canManageWorldKeywords = computed(() => {
   }
   const detail = chat.worldDetailMap[worldId]
   const role = detail?.memberRole
-  return role === 'owner' || role === 'admin'
+  const allowMemberEdit = detail?.world?.allowMemberEditKeywords ?? detail?.allowMemberEditKeywords ?? false
+  return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
@@ -676,7 +680,7 @@ const defaultPageTitle = computed(() => {
   if (title && title.length > 0) {
     return title;
   }
-  return '海豹尬聊 SealChat';
+  return DEFAULT_PAGE_TITLE;
 });
 const syncPageTitle = (channelName?: string | null) => {
   if (typeof document === 'undefined') return;
@@ -1113,16 +1117,10 @@ const handlePointerDown = (event: PointerEvent) => {
 
 const handleSelectionCopy = async () => {
   if (!selectionBar.text) return
-  if (typeof navigator === 'undefined' || !navigator.clipboard) {
-    message.warning('当前环境不支持复制')
-    hideSelectionBar()
-    return
-  }
-  try {
-    await navigator.clipboard.writeText(selectionBar.text)
+  const copied = await copyTextWithFallback(selectionBar.text)
+  if (copied) {
     message.success('已复制选中文本')
-  } catch (error) {
-    console.warn('复制失败', error)
+  } else {
     message.error('复制失败')
   }
   hideSelectionBar()
@@ -2043,19 +2041,6 @@ const ensureIdentitySyncOptions = async () => {
   }
 };
 
-const normalizeIdentityName = (value: string) => value.trim();
-
-const buildIdentityNameMap = (list: ChannelIdentity[]) => {
-  const map: Record<string, ChannelIdentity> = {};
-  list.forEach((identity) => {
-    const key = normalizeIdentityName(identity.displayName || '');
-    if (key && !map[key]) {
-      map[key] = identity;
-    }
-  });
-  return map;
-};
-
 const identitySyncPromptPending = ref(false);
 const identitySyncDismissedForSession = ref(false);
 
@@ -2071,8 +2056,8 @@ const canManageIdentities = () => {
   if (!worldId) return false;
   const detail = chat.worldDetailMap[worldId];
   const role = detail?.memberRole;
-  // 只有 owner 和 admin 可以触发同步弹窗
-  return role === 'owner' || role === 'admin';
+  // 只有 owner、admin、member 可以触发同步弹窗
+  return role === 'owner' || role === 'admin' || role === 'member';
 };
 
 const maybePromptIdentitySync = async () => {
@@ -2434,8 +2419,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
   }
   if (mode === 'overwrite') {
     const confirmed = await dialogAskConfirm(dialog, {
-      title: '确认覆盖当前频道角色？',
-      content: '将以所选频道角色为准更新同名角色',
+      title: '确认覆盖场内/场外映射？',
+      content: '将以导入方式新建角色，并用新角色覆盖场内/场外映射配置',
     });
     if (!confirmed) return;
   }
@@ -2443,66 +2428,86 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
   identitySyncing.value = true;
   try {
     const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true);
-    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
     const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
-    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
 
     if (!sourceList.length) {
       message.warning('所选频道暂无可同步的角色');
       return;
     }
 
-    const sourceIdMap: Record<string, ChannelIdentity> = {};
-    sourceList.forEach((identity) => {
-      sourceIdMap[identity.id] = identity;
-    });
+    await chat.loadChannelIdentities(targetChannelId, true);
 
-    const targetNameMap = buildIdentityNameMap(targetList);
+    const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
+    const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
+    const sourceMembership = chat.channelIdentityMembership[sourceChannelId] || {};
+    const folderIdMap = new Map<string, string>();
+
+    if (sourceFolders.length > 0) {
+      const sortedFolders = sourceFolders
+        .slice()
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      for (const folder of sortedFolders) {
+        if (!folder?.name) continue;
+        try {
+          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder);
+          if (folder.id) {
+            folderIdMap.set(folder.id, created.id);
+          }
+          if (folder.id && sourceFavorites.has(folder.id)) {
+            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true);
+          }
+        } catch (error) {
+          console.warn('同步文件夹失败', error);
+        }
+      }
+    }
+
     let createdCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
+    let failedCount = 0;
     let emptyNameCount = 0;
+    const identityIdMap = new Map<string, string>();
 
     for (const identity of sourceList) {
-      const nameKey = normalizeIdentityName(identity.displayName || '');
-      if (!nameKey) {
+      const displayName = (identity.displayName || '').trim();
+      if (!displayName) {
         emptyNameCount += 1;
         continue;
       }
-      const payload = {
-        channelId: targetChannelId,
-        displayName: identity.displayName || '',
-        color: identity.color || '',
-        avatarAttachmentId: identity.avatarAttachmentId || '',
-        isDefault: !!identity.isDefault,
-      };
-      const targetIdentity = targetNameMap[nameKey];
-      try {
-        if (targetIdentity) {
-          if (mode === 'overwrite') {
-            const updated = await chat.channelIdentityUpdate(targetIdentity.id, payload);
-            targetNameMap[nameKey] = updated;
-            updatedCount += 1;
-          } else {
-            skippedCount += 1;
+      const avatarPayload = identity.avatarAttachmentId
+        ? {
+            attachmentId: normalizeAttachmentId(identity.avatarAttachmentId),
+            hash: '',
+            size: 0,
+            data: '',
           }
-        } else {
-          const created = await chat.channelIdentityCreate(payload);
-          targetNameMap[nameKey] = created;
-          createdCount += 1;
-        }
+        : null;
+      const folderIds = identity.folderIds?.length
+        ? identity.folderIds
+        : (sourceMembership[identity.id] || []);
+      const mappedFolderIds = folderIds
+        .map(id => folderIdMap.get(id) || '')
+        .filter((id): id is string => !!id);
+      try {
+        const avatarId = await ensureImportAttachment(avatarPayload);
+        const created = await chat.channelIdentityCreate({
+          channelId: targetChannelId,
+          displayName,
+          color: identity.color || '',
+          avatarAttachmentId: avatarId,
+          isDefault: !!identity.isDefault,
+          folderIds: mappedFolderIds,
+        });
+        identityIdMap.set(identity.id, created.id);
+        createdCount += 1;
       } catch (error) {
+        failedCount += 1;
         console.warn('同步单个角色失败', error);
       }
     }
 
     const resolveMappedIdentityId = (sourceId?: string | null) => {
       if (!sourceId) return null;
-      const sourceIdentity = sourceIdMap[sourceId];
-      if (!sourceIdentity) return null;
-      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
-      if (!nameKey) return null;
-      return targetNameMap[nameKey]?.id || null;
+      return identityIdMap.get(sourceId) || null;
     };
 
     const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
@@ -2535,15 +2540,14 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     await chat.loadChannelIdentities(targetChannelId, true);
     identitySyncDialogVisible.value = false;
 
-    const syncedCount = createdCount + updatedCount;
+    const syncedCount = createdCount;
     if (syncedCount === 0 && !mappingChanged) {
       message.warning('没有可同步的角色或映射');
       return;
     }
     const details: string[] = [];
     if (createdCount) details.push(`新增 ${createdCount}`);
-    if (updatedCount) details.push(`更新 ${updatedCount}`);
-    if (skippedCount) details.push(`跳过 ${skippedCount}`);
+    if (failedCount) details.push(`失败 ${failedCount}`);
     if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
     const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
     const detailNote = details.length ? `（${details.join('，')}）` : '';
@@ -5711,6 +5715,14 @@ const typingToggleClass = computed(() => ({
 
 const textToSend = ref('');
 
+// 术语快捷输入状态
+const keywordSuggestVisible = ref(false);
+const keywordSuggestQuery = ref('');
+const keywordSuggestIndex = ref(0);
+const keywordSuggestSlashPos = ref(-1);
+const keywordSuggestLoading = ref(false);
+const keywordSuggestOptions = ref<KeywordMatchResult[]>([]);
+
 // 输入历史（localStorage 版本，按频道保留 5 条）
 const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
 const HISTORY_CHANNEL_FALLBACK = '__global__';
@@ -6825,8 +6837,12 @@ const formatInlinePreviewText = (value: string) => {
     }
   }
 
+  // 将 <at> 标签转换为 @名字 格式
+  let replaced = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
+    return `@${name || '用户'}`;
+  });
   // 替换图片标记为 [图片]
-  const replaced = value.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
+  replaced = replaced.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
   return normalizePlaceholderWhitespace(replaced);
 };
 
@@ -6897,16 +6913,21 @@ const renderPreviewContent = (value: string) => {
     }
   }
 
+  // 预览模式：将 <at> 标签转换为简单的 @名字 格式
+  let processedValue = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
+    return `@${name || '用户'}`;
+  });
+
   // 处理普通文本和图片标记
   const imageMarkerRegex = /\[\[(?:图片:([^\]]+)|img:id:([^\]]+))\]\]/g;
   let result = '';
   let lastIndex = 0;
 
   let match;
-  while ((match = imageMarkerRegex.exec(value)) !== null) {
+  while ((match = imageMarkerRegex.exec(processedValue)) !== null) {
     // 添加标记前的文本
     if (match.index > lastIndex) {
-      result += renderDicePreviewSegment(value.substring(lastIndex, match.index));
+      result += renderDicePreviewSegment(processedValue.substring(lastIndex, match.index));
     }
 
     // 添加图片
@@ -6930,11 +6951,11 @@ const renderPreviewContent = (value: string) => {
   }
 
   // 添加剩余文本
-  if (lastIndex < value.length) {
-    result += renderDicePreviewSegment(value.substring(lastIndex));
+  if (lastIndex < processedValue.length) {
+    result += renderDicePreviewSegment(processedValue.substring(lastIndex));
   }
 
-  return DOMPurify.sanitize(result || value);
+  return DOMPurify.sanitize(result || processedValue);
 };
 
 const buildPreviewMeta = (value: string) => {
@@ -6958,7 +6979,7 @@ const buildMessageHtml = async (draft: string) => {
   const placeholderMap = new Map<string, string>();
   let index = 0;
   inlineImageMarkerRegexp.lastIndex = 0;
-  const sanitizedDraft = draft.replace(inlineImageMarkerRegexp, (_, markerId) => {
+  let sanitizedDraft = draft.replace(inlineImageMarkerRegexp, (_, markerId) => {
     const record = inlineImages.get(markerId);
     if (record && record.status === 'uploaded' && record.attachmentId) {
       const placeholder = `__INLINE_IMG_${index++}__`;
@@ -6969,6 +6990,16 @@ const buildMessageHtml = async (draft: string) => {
     return '';
   });
   inlineImageMarkerRegexp.lastIndex = 0;
+
+  // 保护 Satori <at> 标签，避免被 contentEscape 转义
+  const atTagRegexp = /<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*\/>/g;
+  let atIndex = 0;
+  sanitizedDraft = sanitizedDraft.replace(atTagRegexp, (match) => {
+    const placeholder = `__SATORI_AT_${atIndex++}__`;
+    placeholderMap.set(placeholder, match);
+    return placeholder;
+  });
+
   let escaped = contentEscape(sanitizedDraft);
   escaped = escaped.replace(/\r\n/g, '\n').replace(/\n/g, '<br />');
   escaped = await replaceUsernames(escaped);
@@ -7423,6 +7454,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
+  checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
     emitEditingPreview();
@@ -7731,7 +7763,25 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   } else {
     sound.play();
-    
+
+    // 检测是否被 @ 了（包括 @all）
+    const content = incoming.content || '';
+    const currentUserId = user.info.id;
+    const isMentioned = content.includes(`id="${currentUserId}"`) || content.includes('id="all"');
+
+    if (isMentioned) {
+      // 被 @ 时播放额外提示音或特殊处理
+      import('naive-ui').then(({ useMessage }) => {
+        const message = useMessage();
+        const senderName = incoming.identity?.displayName
+          || (incoming as any).sender_member_name
+          || incoming.member?.nick
+          || incoming.user?.nick
+          || '有人';
+        message.info(`${senderName} @ 了你`);
+      });
+    }
+
     // 如果窗口没有焦点，更新网页标题提示新消息
     if (!chat.isAppFocused && chat.curChannel?.name) {
       import('@/stores/utils').then(({ updateUnreadTitleNotification }) => {
@@ -8400,6 +8450,176 @@ const handleMentionSelect = () => {
   pauseKeydown.value = false;
 };
 
+// 术语快捷输入相关函数
+const performKeywordMatch = async (query: string) => {
+  keywordSuggestLoading.value = true;
+  try {
+    await ensurePinyinLoaded();
+    const keywords = worldGlossary.currentKeywords || [];
+    const results = matchKeywords(query, keywords, 5);
+    // 按分数升序排列（低分在上，高分在下靠近输入框）
+    keywordSuggestOptions.value = results.sort((a, b) => a.score - b.score);
+    keywordSuggestIndex.value = results.length > 0 ? results.length - 1 : 0;
+    keywordSuggestVisible.value = results.length > 0;
+  } finally {
+    keywordSuggestLoading.value = false;
+  }
+};
+
+const checkKeywordSuggest = () => {
+  if (!display.settings.worldKeywordQuickInputEnabled) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  const trigger = display.settings.worldKeywordQuickInputTrigger || '/';
+
+  let text: string;
+  let cursorPos: number;
+
+  if (inputMode.value === 'rich') {
+    // 富文本模式：从编辑器获取纯文本和光标位置
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (!editorInstance) {
+      keywordSuggestVisible.value = false;
+      return;
+    }
+    text = editorInstance.getText();
+    cursorPos = editorInstance.state.selection.from - 1; // TipTap 的 from 是基于 1 的
+  } else {
+    // 纯文本模式
+    text = textToSend.value;
+    cursorPos = getInputSelection().start;
+  }
+
+  const beforeCursor = text.slice(0, cursorPos);
+
+  // 查找最近的触发字符
+  const slashIndex = beforeCursor.lastIndexOf(trigger);
+  if (slashIndex === -1) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 提取查询内容
+  const query = beforeCursor.slice(slashIndex + 1);
+
+  // 检测是否是快捷命令模式 (/e 空格 或 /w 空格) - 仅当触发字符为 / 时检查
+  if (trigger === '/' && /^[ew]\s/.test(query)) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 检测两个连续空格
+  if (query.includes('  ')) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 空查询时不显示
+  if (!query.trim()) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 执行匹配
+  keywordSuggestSlashPos.value = slashIndex;
+  keywordSuggestQuery.value = query;
+  performKeywordMatch(query);
+};
+
+const handleKeywordSuggestKeydown = (e: KeyboardEvent): boolean => {
+  if (!keywordSuggestVisible.value) return false;
+
+  const options = keywordSuggestOptions.value;
+  if (!options.length) return false;
+
+  if (e.key === 'ArrowDown') {
+    keywordSuggestIndex.value = Math.min(keywordSuggestIndex.value + 1, options.length - 1);
+    e.preventDefault();
+    return true;
+  }
+
+  if (e.key === 'ArrowUp') {
+    keywordSuggestIndex.value = Math.max(keywordSuggestIndex.value - 1, 0);
+    e.preventDefault();
+    return true;
+  }
+
+  if (e.key === 'Enter' && !e.isComposing) {
+    const selected = options[keywordSuggestIndex.value];
+    if (selected) {
+      applyKeywordSuggestion(selected);
+      e.preventDefault();
+      return true;
+    }
+  }
+
+  if (e.key === 'Escape') {
+    keywordSuggestVisible.value = false;
+    e.preventDefault();
+    return true;
+  }
+
+  return false;
+};
+
+const applyKeywordSuggestion = (result: KeywordMatchResult) => {
+  const keyword = result.keyword.keyword;
+
+  if (inputMode.value === 'rich') {
+    // 富文本模式：使用 TipTap 编辑器 API
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      // 删除触发字符和查询内容，然后插入术语
+      const deleteCount = keywordSuggestQuery.value.length + 1; // +1 for trigger char
+      editorInstance.chain()
+        .focus()
+        .deleteRange({
+          from: editorInstance.state.selection.from - deleteCount,
+          to: editorInstance.state.selection.from
+        })
+        .insertContent(keyword)
+        .run();
+    }
+  } else {
+    // 纯文本模式
+    const slashPos = keywordSuggestSlashPos.value;
+    const queryLen = keywordSuggestQuery.value.length;
+    const cursorPos = slashPos + queryLen + 1; // +1 for trigger char
+
+    const before = textToSend.value.slice(0, slashPos);
+    const after = textToSend.value.slice(cursorPos);
+
+    const newText = before + keyword + after;
+    const newCursor = slashPos + keyword.length;
+
+    textToSend.value = newText;
+
+    // 使用双重 nextTick 确保 DOM 完全更新
+    nextTick(() => {
+      nextTick(() => {
+        setInputSelection(newCursor, newCursor);
+        textInputRef.value?.focus?.();
+      });
+    });
+  }
+
+  keywordSuggestVisible.value = false;
+};
+
+const handleKeywordSuggestSelect = (result: KeywordMatchResult) => {
+  applyKeywordSuggestion(result);
+};
+
+const handleKeywordSuggestHover = (index: number) => {
+  keywordSuggestIndex.value = index;
+};
+
+const handleKeywordSuggestBlur = () => {
+  keywordSuggestVisible.value = false;
+};
+
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'icToggle',
   'whisper',
@@ -8493,6 +8713,11 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
+  // 优先处理术语快捷输入
+  if (handleKeywordSuggestKeydown(e)) {
+    return;
+  }
+
   if (!isEditing.value && handleWhisperKeydown(e)) {
     return;
   }
@@ -8552,11 +8777,25 @@ const atRenderLabel = (option: MentionOption) => {
       return <div class="flex items-center space-x-1">
         <span>{(option as any).data.info}</span>
       </div>
-    case 'at':
-      return <div class="flex items-center space-x-1">
-        <AvatarVue size={24} border={false} src={(option as any).data?.avatar} />
-        <span>{option.label}</span>
+    case 'at': {
+      const data = (option as any).data || {};
+      const identityType = data.identityType;
+      const color = data.color || 'inherit';
+      const isAll = data.userId === 'all';
+      return <div class="flex items-center space-x-2">
+        {isAll ? (
+          <span class="at-option-avatar at-option-avatar--all">@</span>
+        ) : (
+          <AvatarVue size={24} border={false} src={data.avatar} />
+        )}
+        <span style={{ color: isAll ? '#ef4444' : color }}>{option.label}</span>
+        {identityType && identityType !== 'all' && (
+          <span class={`at-option-tag at-option-tag--${identityType}`}>
+            {identityType === 'ic' ? '场内' : identityType === 'ooc' ? '场外' : '用户'}
+          </span>
+        )}
       </div>
+    }
   }
 }
 
@@ -8591,15 +8830,41 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
 
   switch (prefix) {
     case '@': {
-      const lst = (await chat.guildMemberList('')).data.map((i: any) => {
-        return {
-          type: 'at',
-          value: i.nick,
-          label: i.nick,
-          data: i,
+      await ensurePinyinLoaded();
+      const channelId = chat.curChannel?.id;
+      if (!channelId) {
+        atOptions.value = [];
+        break;
+      }
+      const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
+      const result = await chat.fetchMentionableMembers(channelId, icMode);
+      let lst: MentionOption[] = [];
+      // @all option
+      if (result.canAtAll) {
+        const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
+        if (allMatches) {
+          lst.push({
+            type: 'at',
+            value: '<at id="all" name="全体成员"/>',
+            label: '全体成员',
+            data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+          });
         }
-      })
-      atOptions.value = lst;
+      }
+      // Filter and map members
+      for (const item of result.items) {
+        if (pattern && !matchText(pattern, item.displayName)) {
+          continue;
+        }
+        const escapedName = item.displayName.replace(/"/g, '&quot;');
+        lst.push({
+          type: 'at',
+          value: `<at id="${item.userId}" name="${escapedName}"/>`,
+          label: item.displayName,
+          data: item,
+        });
+      }
+      atOptions.value = lst.slice(0, 10);
       break;
     }
     case '.': case '/':
@@ -8739,11 +9004,11 @@ const handleMultiSelectCopy = async () => {
     const content = typeof msg.content === 'string' ? msg.content.replace(/<[^>]*>/g, '') : '';
     return `[${time}] ${name}: ${content}`;
   }).join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
+  const copied = await copyTextWithFallback(text);
+  if (copied) {
     message.success(`已复制 ${messages.length} 条消息`);
     chat.exitMultiSelectMode();
-  } catch (e) {
+  } else {
     message.error('复制失败');
   }
 };
@@ -9342,7 +9607,7 @@ onBeforeUnmount(() => {
             <template v-else>
               <div class="typing-preview-content">
                 <div v-if="display.showAvatar" class="typing-preview-avatar">
-                  <AvatarVue :border="false" :size="48" :src="preview.avatar" />
+                  <AvatarVue :border="false" :src="preview.avatar" />
                 </div>
                 <div class="typing-preview-main">
                   <div class="typing-preview-bubble-header">
@@ -9450,7 +9715,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 左下，快捷指令栏 -->
-      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
+      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage && !isMobileWideInput">
         <n-button
           circle
           quaternary
@@ -9980,6 +10245,14 @@ onBeforeUnmount(() => {
             </div>
             <div class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
+                <KeywordSuggestPanel
+                  :visible="keywordSuggestVisible"
+                  :options="keywordSuggestOptions"
+                  :active-index="keywordSuggestIndex"
+                  :loading="keywordSuggestLoading"
+                  @select="handleKeywordSuggestSelect"
+                  @hover="handleKeywordSuggestHover"
+                />
                 <ChatInputSwitcher
                   ref="textInputRef"
                   v-model="textToSend"
@@ -9997,6 +10270,7 @@ onBeforeUnmount(() => {
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
+                  @blur="handleKeywordSuggestBlur"
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
@@ -10370,7 +10644,7 @@ onBeforeUnmount(() => {
           placeholder="选择频道"
         />
         <div class="text-xs text-gray-500 mt-2">
-          同步内容包含角色信息及场内/场外映射配置。
+          同步会以导入方式新建角色，并同步场内/场外映射配置。
         </div>
       </div>
       <n-space justify="end">
@@ -11295,9 +11569,9 @@ onBeforeUnmount(() => {
 
 .typing-preview-avatar {
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
-  min-width: 3rem;
+  width: var(--chat-avatar-size, 3rem);
+  height: var(--chat-avatar-size, 3rem);
+  min-width: var(--chat-avatar-size, 3rem);
 }
 
 .message-row__handle--placeholder {
@@ -12234,6 +12508,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  position: relative;
 }
 
 .chat-input-editor-main :deep(.hybrid-input) {
@@ -12244,6 +12519,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
+  align-self: stretch;
 }
 
 .chat-input-send-inline .n-button {
@@ -12256,6 +12532,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
+  height: 100%;
+  max-height: 88px;
+  min-height: 44px;
 }
 
 .send-action-btn {
@@ -12286,8 +12565,11 @@ onBeforeUnmount(() => {
 }
 
 .edit-action-btn {
-  width: 40px !important;
-  height: 22px !important;
+  width: 44px !important;
+  height: auto !important;
+  flex: 1 1 0;
+  min-height: 20px;
+  max-height: 44px;
   border-radius: 0 !important;
   padding: 0 !important;
   transition: background-color 0.2s ease, border-color 0.2s ease;
@@ -12385,9 +12667,14 @@ onBeforeUnmount(() => {
     border-radius: 8px !important;
   }
 
+  .edit-actions-group {
+    max-height: 80px;
+    min-height: 40px;
+  }
+
   .edit-action-btn {
-    width: 36px !important;
-    height: 20px !important;
+    width: 40px !important;
+    max-height: 40px;
   }
 }
 
@@ -13546,9 +13833,9 @@ onBeforeUnmount(() => {
 
 .dice-chip--tone-ooc:not(.dice-chip--preview),
 [data-dice-tone='ooc']:not(.dice-chip--preview) {
-  background: #fcfcfc;
-  border-color: rgba(15, 23, 42, 0.12);
-  color: #1f2937;
+  background: color-mix(in srgb, var(--chat-ooc-bg) 85%, var(--sc-text-primary) 15%);
+  border-color: color-mix(in srgb, var(--chat-ooc-border) 70%, var(--sc-text-primary) 30%);
+  color: var(--sc-text-primary);
 }
 
 .dice-chip--tone-archived:not(.dice-chip--preview),
@@ -13558,50 +13845,47 @@ onBeforeUnmount(() => {
   color: #334155;
 }
 
-:global([data-display-palette='night']) .dice-chip {
+:root[data-display-palette='night'] .dice-chip {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(148, 163, 184, 0.35);
   color: #f3f4f6;
 }
 
-:global([data-display-palette='night']) .dice-chip--preview {
+:root[data-display-palette='night'] .dice-chip--preview {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.35);
   color: #f8fafc;
 }
 
-:global([data-display-palette='night']) .dice-chip--error {
+:root[data-display-palette='night'] .dice-chip--error {
   background: rgba(127, 29, 29, 0.7);
   border-color: rgba(248, 113, 113, 0.75);
   color: #fecaca;
 }
 
-:global([data-display-palette='night']) .dice-chip--tone-ic:not(.dice-chip--preview),
-:global([data-display-palette='night']) [data-dice-tone='ic']:not(.dice-chip--preview) {
+:root[data-display-palette='night'] .dice-chip--tone-ic:not(.dice-chip--preview),
+:root[data-display-palette='night'] [data-dice-tone='ic']:not(.dice-chip--preview) {
   background: #333135;
   border-color: rgba(255, 255, 255, 0.18);
   color: #f4f4f5;
 }
 
-:global([data-display-palette='night']) .dice-chip--tone-ooc:not(.dice-chip--preview),
-:global([data-display-palette='night']) [data-dice-tone='ooc']:not(.dice-chip--preview) {
-  background: #2a282a;
-  border-color: rgba(255, 255, 255, 0.15);
-  color: #f5f3ff;
+:root[data-display-palette='night'] .dice-chip--tone-ooc:not(.dice-chip--preview),
+:root[data-display-palette='night'] [data-dice-tone='ooc']:not(.dice-chip--preview) {
+  background: color-mix(in srgb, var(--chat-ooc-bg) 85%, var(--sc-text-primary) 15%);
+  border-color: color-mix(in srgb, var(--chat-ooc-border) 70%, var(--sc-text-primary) 30%);
+  color: var(--sc-text-primary);
 }
 
-:global([data-display-palette='night']) .dice-chip--tone-archived:not(.dice-chip--preview),
-:global([data-display-palette='night']) [data-dice-tone='archived']:not(.dice-chip--preview) {
+:root[data-display-palette='night'] .dice-chip--tone-archived:not(.dice-chip--preview),
+:root[data-display-palette='night'] [data-dice-tone='archived']:not(.dice-chip--preview) {
   background: rgba(51, 65, 85, 0.65);
   border-color: rgba(148, 163, 184, 0.4);
   color: #e2e8f0;
 }
 
 .dice-chip:not(.dice-chip--preview) {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  box-shadow: var(--chat-dice-result-shadow);
   color: inherit;
   font-size: inherit;
   line-height: inherit;
@@ -13825,5 +14109,59 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: transparent;
+}
+
+/* @ mention option styles */
+.at-option-avatar {
+  flex-shrink: 0;
+}
+
+.at-option-avatar--all {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: white;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.at-option-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.at-option-tag--ic {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.at-option-tag--ooc {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
+.at-option-tag--user {
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+:global([data-display-palette='night']) .at-option-tag--ic,
+:global(:root[data-display-palette='night']) .at-option-tag--ic {
+  background: rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+}
+
+:global([data-display-palette='night']) .at-option-tag--ooc,
+:global(:root[data-display-palette='night']) .at-option-tag--ooc {
+  background: rgba(168, 85, 247, 0.25);
+  color: #c084fc;
 }
 </style>

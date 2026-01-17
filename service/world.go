@@ -38,6 +38,7 @@ type WorldUpdateParams struct {
 	Avatar                 string
 	EnforceMembership      *bool
 	AllowAdminEditMessages *bool
+	AllowMemberEditKeywords *bool
 }
 
 func normalizeWorldDescription(desc string) (string, error) {
@@ -204,6 +205,7 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 		Visibility:        visibility,
 		OwnerID:           ownerID,
 		EnforceMembership: false,
+		AllowMemberEditKeywords: false,
 		Status:            "active",
 	}
 	db := model.GetDB()
@@ -268,6 +270,9 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	}
 	if params.AllowAdminEditMessages != nil {
 		updates["allow_admin_edit_messages"] = *params.AllowAdminEditMessages
+	}
+	if params.AllowMemberEditKeywords != nil {
+		updates["allow_member_edit_keywords"] = *params.AllowMemberEditKeywords
 	}
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()

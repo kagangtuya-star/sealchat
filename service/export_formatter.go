@@ -117,6 +117,8 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			// 非富文本内容，直接使用原始内容作为 HTML
 			htmlContent = originalContent
 		}
+		// 将 <at> 标签转换为带样式的 HTML
+		htmlContent = convertAtTagsToHTML(htmlContent)
 		exportMessages = append(exportMessages, ExportMessage{
 			ID:             msg.ID,
 			SenderID:       msg.UserID,
@@ -486,10 +488,77 @@ func (r *identityResolver) resolveIdentityName(identityID string) string {
 	return ""
 }
 
+// atTagPattern 匹配 Satori <at> 标签: <at id="xxx" name="角色名"/>
+var atTagPattern = regexp.MustCompile(`<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*/>`)
+
+// convertAtTagsToMention 将 <at> 标签转换为 @名字 格式（纯文本）
+func convertAtTagsToMention(input string) string {
+	if input == "" || !strings.Contains(input, "<at") {
+		return input
+	}
+	return atTagPattern.ReplaceAllStringFunc(input, func(match string) string {
+		submatches := atTagPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		atID := submatches[1]
+		atName := ""
+		if len(submatches) >= 3 {
+			atName = submatches[2]
+		}
+		// 优先使用 name 属性，若为空则使用 id
+		displayName := strings.TrimSpace(atName)
+		if displayName == "" {
+			if atID == "all" {
+				displayName = "全体成员"
+			} else {
+				displayName = atID
+			}
+		}
+		return "@" + displayName
+	})
+}
+
+// convertAtTagsToHTML 将 <at> 标签转换为带样式的 HTML span
+func convertAtTagsToHTML(input string) string {
+	if input == "" || !strings.Contains(input, "<at") {
+		return input
+	}
+	return atTagPattern.ReplaceAllStringFunc(input, func(match string) string {
+		submatches := atTagPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		atID := submatches[1]
+		atName := ""
+		if len(submatches) >= 3 {
+			atName = submatches[2]
+		}
+		// 优先使用 name 属性，若为空则使用 id
+		displayName := strings.TrimSpace(atName)
+		if displayName == "" {
+			if atID == "all" {
+				displayName = "全体成员"
+			} else {
+				displayName = atID
+			}
+		}
+		// 生成带样式的 HTML span
+		className := "mention-capsule"
+		if atID == "all" {
+			className += " mention-capsule--all"
+		}
+		return fmt.Sprintf(`<span class="%s">@%s</span>`, className, htmlEscape(displayName))
+	})
+}
+
 func stripRichText(input string) string {
 	if input == "" {
 		return ""
 	}
+
+	// 先将 <at> 标签转换为 @名字 格式
+	input = convertAtTagsToMention(input)
 
 	if plain, ok := extractTipTapPlainText(input); ok {
 		return normalizePlainText(plain)
@@ -1537,6 +1606,8 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .content mark { background-color: #fef08a; }
     .content a { color: #3b82f6; text-decoration: underline; }
     .content img { max-width: 100%; height: auto; border-radius: 4px; }
+    .mention-capsule { display: inline; background-color: rgba(59, 130, 246, 0.1); color: #3b82f6; padding: 0 0.35em; border-radius: 4px; font-weight: 500; }
+    .mention-capsule--all { background-color: rgba(239, 68, 68, 0.1); color: #ef4444; }
   </style>
 </head>
 <body>

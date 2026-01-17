@@ -8,7 +8,7 @@ const props = defineProps({
   src: String,
   size: {
     type: Number,
-    default: 48,
+    default: 0, // 0 means inherit from CSS variable
   },
   border: {
     type: Boolean,
@@ -32,6 +32,25 @@ const resolvedSrc = computed(() => {
   return url;
 })
 
+// Size style: use props.size if specified, otherwise inherit from CSS variable
+const sizeStyle = computed(() => {
+  if (props.size > 0) {
+    return {
+      width: `${props.size}px`,
+      height: `${props.size}px`,
+      minWidth: `${props.size}px`,
+      minHeight: `${props.size}px`,
+    }
+  }
+  // Inherit from CSS variable
+  return {
+    width: 'var(--chat-avatar-size, 48px)',
+    height: 'var(--chat-avatar-size, 48px)',
+    minWidth: 'var(--chat-avatar-size, 48px)',
+    minHeight: 'var(--chat-avatar-size, 48px)',
+  }
+})
+
 const emit = defineEmits(['longpress']);
 
 const htmlRefHook = ref<HTMLElement | null>(null)
@@ -51,7 +70,7 @@ onLongPress(
     ref="htmlRefHook"
     class="avatar-shell"
     :class="border ? 'avatar-shell--bordered' : 'avatar-shell--plain'"
-    :style="{ width: `${size}px`, height: `${size}px`, 'min-width': `${size}px`, 'min-height': `${size}px` }"
+    :style="sizeStyle"
     @contextmenu.prevent
     @dragstart.prevent
   >
@@ -64,7 +83,7 @@ onLongPress(
 .avatar-shell {
   position: relative;
   overflow: hidden;
-  border-radius: 0.85rem;
+  border-radius: var(--chat-avatar-radius, 0.85rem);
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
@@ -89,6 +108,11 @@ onLongPress(
 .avatar-shell--bordered {
   border: 1px solid rgba(148, 163, 184, 0.6);
   background-color: #ffffff;
+}
+
+:root[data-display-palette='night'] .avatar-shell--bordered {
+  background-color: rgba(30, 41, 59, 0.95);
+  border-color: rgba(148, 163, 184, 0.35);
 }
 
 .avatar-shell--plain {
