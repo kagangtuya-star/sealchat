@@ -160,6 +160,7 @@ const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
 
 const ROLELESS_FILTER_ID = '__roleless__';
+const defaultOocRoleCreateTasks = new Map<string, Promise<string | null>>();
 
 const normalizeRoleFilterIds = (roleIds?: string[]) => {
   const raw = Array.isArray(roleIds) ? roleIds : [];
@@ -3395,34 +3396,66 @@ export const useChatStore = defineStore({
         return null;
       }
 
-      // 检查是否已经配置了场外角色
+      // 获取已加载的角色列表
+      const identities = this.channelIdentities[channelId] || [];
+
+      // 检查是否已经配置了场外角色，并验证该角色是否仍然存在
       const config = this.getChannelIcOocRoleConfig(channelId);
       if (config.oocRoleId) {
-        return config.oocRoleId;
+        const configuredRoleExists = identities.some(
+          (identity) => identity.id === config.oocRoleId
+        );
+        if (configuredRoleExists) {
+          return config.oocRoleId;
+        }
+        // 配置的角色已不存在，清除无效配置
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
+      }
+
+      // 检查是否有正在进行的创建任务（防止竞态条件）
+      const inFlight = defaultOocRoleCreateTasks.get(channelId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      // 如果用户已有任意角色卡，不再自动创建
+      if (identities.length > 0) {
+        // 优先使用第一个角色作为默认 OOC 角色
+        const firstRole = identities[0];
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
+        return firstRole.id;
       }
 
       // 自动创建默认场外角色
       const displayName = user.info.nick || user.info.username || '场外';
       const avatarAttachmentId = normalizeAttachmentId(user.info.avatar || '');
 
-      try {
-        const identity = await this.channelIdentityCreate({
-          channelId,
-          displayName,
-          color: '',
-          avatarAttachmentId,
-          isDefault: false,
-        });
+      const task = (async () => {
+        try {
+          const identity = await this.channelIdentityCreate({
+            channelId,
+            displayName,
+            color: '',
+            avatarAttachmentId,
+            isDefault: false,
+          });
 
-        // 设置为场外默认角色
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
+          // 设置为场外默认角色
+          this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
 
-        console.log(`Created default OOC role for channel ${channelId}`, identity);
-        return identity.id;
-      } catch (err) {
-        console.warn('Failed to create default OOC role', err);
-        return null;
-      }
+          console.log(`Created default OOC role for channel ${channelId}`, identity);
+          return identity.id;
+        } catch (err) {
+          console.warn('Failed to create default OOC role', err);
+          return null;
+        }
+      })();
+
+      defaultOocRoleCreateTasks.set(channelId, task);
+      task.finally(() => {
+        defaultOocRoleCreateTasks.delete(channelId);
+      });
+      return task;
     },
   }
 });
