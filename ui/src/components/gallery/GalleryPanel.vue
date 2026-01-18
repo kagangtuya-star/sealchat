@@ -29,13 +29,13 @@
           <template #actions>
             <n-button size="small" type="primary" block @click="emitCreateCollection">新建分类</n-button>
             <n-button
-              v-if="gallery.activeCollectionId"
+              v-if="gallery.activeCollectionId && !isFavorites"
               size="small"
               tertiary
               block
               @click="toggleEmojiLink"
             >
-              {{ isEmojiLinked ? '取消表情联动' : '设为表情联动分类' }}
+              {{ isEmojiLinked ? '取消表情联动' : '添加表情联动' }}
             </n-button>
           </template>
         </GalleryCollectionTree>
@@ -332,7 +332,8 @@ const loading = computed(() => {
   // Show loading if active collection is loading
   return gallery.isCollectionLoading(gallery.activeCollectionId);
 });
-const isEmojiLinked = computed(() => gallery.emojiCollectionId === gallery.activeCollectionId);
+const isEmojiLinked = computed(() => gallery.activeCollectionId ? gallery.emojiCollectionIds.includes(gallery.activeCollectionId) : false);
+const isFavorites = computed(() => gallery.activeCollectionId === gallery.favoritesCollectionId);
 
 // Keyboard shortcuts handler
 function handleKeydown(evt: KeyboardEvent) {
@@ -794,13 +795,10 @@ function toggleEmojiLink() {
     message.warning('请先登录');
     return;
   }
-  if (gallery.activeCollectionId === gallery.emojiCollectionId) {
-    gallery.linkEmojiCollection(null, userId.value);
-    message.success('已取消表情联动');
-  } else if (gallery.activeCollectionId) {
-    gallery.linkEmojiCollection(gallery.activeCollectionId, userId.value);
-    message.success('已设置为表情联动分类');
-  }
+  if (!gallery.activeCollectionId) return;
+  const linked = isEmojiLinked.value;
+  gallery.linkEmojiCollection(gallery.activeCollectionId, userId.value, !linked);
+  message.success(linked ? '已取消表情联动' : '已添加表情联动');
 }
 </script>
 

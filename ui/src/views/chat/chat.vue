@@ -883,6 +883,32 @@ const emojiSearchQuery = ref('');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
 
+// 表情分类选项卡（使用 store 持久化）
+const activeEmojiTab = computed({
+  get: () => gallery.activeEmojiTabId,
+  set: (val) => {
+    const userId = user.info?.id;
+    if (userId) {
+      gallery.setActiveEmojiTab(val, userId);
+    }
+  }
+});
+const emojiTabOptions = computed(() => {
+  const ids = gallery.allEmojiCollectionIds;
+  const ownerId = user.info?.id;
+  if (!ownerId) return [];
+  const collections = gallery.getCollections(ownerId);
+  return ids.map(id => {
+    const col = collections.find(c => c.id === id);
+    return {
+      id,
+      name: col?.name || '未知分类',
+      isFavorites: id === gallery.favoritesCollectionId
+    };
+  });
+});
+const hasMultipleTabs = computed(() => emojiTabOptions.value.length > 1);
+
 const toggleEmojiRemarkVisible = () => {
   const userId = user.info?.id;
   if (!userId) {
@@ -948,16 +974,9 @@ const ensureEmojiCollectionLoaded = async () => {
     return;
   }
   try {
-    await gallery.loadCollections(ownerId);
+    await gallery.ensureEmojiCollection(ownerId);
   } catch {
     // ignore load errors for emoji collections
-  }
-  if (gallery.emojiCollectionId) {
-    try {
-      await gallery.loadItems(gallery.emojiCollectionId);
-    } catch {
-      // ignore
-    }
   }
 };
 
@@ -991,7 +1010,17 @@ const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
 
 const filteredEmojiItems = computed(() => {
   const query = emojiSearchQuery.value.trim().toLowerCase();
-  const items = emojiItems.value;
+  const tabId = activeEmojiTab.value;
+
+  // 根据选项卡筛选
+  let items: GalleryItem[];
+  if (tabId) {
+    items = gallery.getItemsByCollection(tabId);
+  } else {
+    items = emojiItems.value;
+  }
+
+  // 搜索过滤
   const filtered = !query ? items : items.filter((item, idx) => {
     const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
     return remark.toLowerCase().includes(query);
@@ -1522,12 +1551,13 @@ watch(
 );
 
 watch(
-  () => gallery.emojiCollectionId,
-  (collectionId) => {
-    if (collectionId) {
-      void gallery.loadItems(collectionId);
+  () => gallery.emojiCollectionIds,
+  (ids) => {
+    for (const id of ids) {
+      void gallery.loadItems(id);
     }
-  }
+  },
+  { deep: true }
 );
 
 watch(emojiPopoverShow, (show, prevShow) => {
@@ -9201,7 +9231,7 @@ const emojiSelectedDelete = async () => {
     message.info('没有选中的表情');
     return;
   }
-  const collectionId = gallery.emojiCollectionId;
+  const collectionId = gallery.favoritesCollectionId;
   if (!collectionId) {
     message.error('未找到表情收藏分类');
     return;
@@ -9845,6 +9875,26 @@ onBeforeUnmount(() => {
                               关闭
                             </n-tooltip>
                           </div>
+                        </div>
+
+                        <div v-if="hasEmojiItems && hasMultipleTabs" class="emoji-panel__tabs">
+                          <button
+                            class="emoji-panel__tab"
+                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === null }"
+                            @click="activeEmojiTab = null"
+                          >
+                            全部
+                          </button>
+                          <button
+                            v-for="tab in emojiTabOptions"
+                            :key="tab.id"
+                            class="emoji-panel__tab"
+                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === tab.id }"
+                            :title="tab.name"
+                            @click="activeEmojiTab = tab.id"
+                          >
+                            <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                          </button>
                         </div>
 
                         <div v-if="hasEmojiItems" class="emoji-panel__search">
@@ -13168,6 +13218,54 @@ onBeforeUnmount(() => {
 
 .emoji-panel__title {
   font-weight: 600;
+}
+
+.emoji-panel__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-bottom: 4px;
+}
+
+.emoji-panel__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  border-radius: 12px;
+  background: var(--sc-bg-elevated, #f8fafc);
+  color: var(--sc-text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.emoji-panel__tab:hover {
+  background: var(--sc-bg-hover, #e2e8f0);
+  border-color: var(--border-color-hover, rgba(0, 0, 0, 0.15));
+}
+
+.emoji-panel__tab--active {
+  background: var(--primary-color, #18a058);
+  border-color: var(--primary-color, #18a058);
+  color: #fff;
+}
+
+.emoji-panel__tab--active:hover {
+  background: var(--primary-color-hover, #16924e);
+  border-color: var(--primary-color-hover, #16924e);
+}
+
+.emoji-panel__tab-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .emoji-panel__search {

@@ -44,8 +44,10 @@ interface GalleryState {
   panelVisible: boolean;
   activeOwner: { type: 'user'; id: string } | null;
   activeCollectionId: string | null;
-  emojiCollectionId: string | null;
+  emojiCollectionIds: string[];
+  favoritesCollectionId: string | null;
   emojiRemarkVisible: boolean;
+  activeEmojiTabId: string | null;
 }
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
@@ -54,27 +56,34 @@ const DEFAULT_EMOJI_REMARK_VISIBLE = true;
 export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
 
 interface EmojiPreferencePayload {
-  emojiCollectionId: string | null;
+  emojiCollectionIds: string[];
   emojiRemarkVisible: boolean;
+  activeEmojiTabId: string | null;
 }
 
 function normalizeEmojiPreferencePayload(stored: string | null): EmojiPreferencePayload {
   if (!stored) {
-    return { emojiCollectionId: null, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+    return { emojiCollectionIds: [], emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE, activeEmojiTabId: null };
   }
   try {
     const parsed = JSON.parse(stored);
     if (parsed && typeof parsed === 'object') {
-      const emojiCollectionId = typeof parsed.emojiCollectionId === 'string' ? parsed.emojiCollectionId : null;
+      let emojiCollectionIds: string[] = [];
+      if (Array.isArray(parsed.emojiCollectionIds)) {
+        emojiCollectionIds = parsed.emojiCollectionIds.filter((id: unknown) => typeof id === 'string');
+      } else if (typeof parsed.emojiCollectionId === 'string') {
+        emojiCollectionIds = [parsed.emojiCollectionId];
+      }
       const emojiRemarkVisible = typeof parsed.emojiRemarkVisible === 'boolean'
         ? parsed.emojiRemarkVisible
         : DEFAULT_EMOJI_REMARK_VISIBLE;
-      return { emojiCollectionId, emojiRemarkVisible };
+      const activeEmojiTabId = typeof parsed.activeEmojiTabId === 'string' ? parsed.activeEmojiTabId : null;
+      return { emojiCollectionIds, emojiRemarkVisible, activeEmojiTabId };
     }
   } catch {
     // ignore and fallback to legacy string payload
   }
-  return { emojiCollectionId: stored, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+  return { emojiCollectionIds: [stored], emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE, activeEmojiTabId: null };
 }
 
 function ownerKey(ownerId: string) {
@@ -94,8 +103,10 @@ export const useGalleryStore = defineStore('gallery', {
     panelVisible: false,
     activeOwner: null,
     activeCollectionId: null,
-    emojiCollectionId: null,
-    emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE
+    emojiCollectionIds: [],
+    favoritesCollectionId: null,
+    emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE,
+    activeEmojiTabId: null
   }),
 
   getters: {
@@ -118,13 +129,33 @@ export const useGalleryStore = defineStore('gallery', {
     isPanelVisible: (state) => state.panelVisible,
     isInitializing: (state) => state.initializing,
     emojiItems(state): GalleryItem[] {
-      if (!state.emojiCollectionId) return [];
-      return state.items[state.emojiCollectionId]?.items ?? [];
+      const result = new Map<string, GalleryItem>();
+      const addItems = (collectionId: string | null) => {
+        if (!collectionId) return;
+        const items = state.items[collectionId]?.items;
+        if (items) {
+          for (const item of items) {
+            result.set(item.id, item);
+          }
+        }
+      };
+      addItems(state.favoritesCollectionId);
+      for (const id of state.emojiCollectionIds) {
+        addItems(id);
+      }
+      return Array.from(result.values());
     },
-    emojiCollection(state): GalleryCollection | null {
-      if (!state.activeOwner || !state.emojiCollectionId) return null;
-      const list = state.collections[ownerKey(state.activeOwner.id)]?.items ?? [];
-      return list.find((item) => item.id === state.emojiCollectionId) ?? null;
+    allEmojiCollectionIds(state): string[] {
+      const ids: string[] = [];
+      if (state.favoritesCollectionId) {
+        ids.push(state.favoritesCollectionId);
+      }
+      for (const id of state.emojiCollectionIds) {
+        if (!ids.includes(id)) {
+          ids.push(id);
+        }
+      }
+      return ids;
     }
   },
 
@@ -133,17 +164,24 @@ export const useGalleryStore = defineStore('gallery', {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
       const stored = localStorage.getItem(key);
       const preference = normalizeEmojiPreferencePayload(stored);
-      this.emojiCollectionId = preference.emojiCollectionId;
+      this.emojiCollectionIds = preference.emojiCollectionIds;
       this.emojiRemarkVisible = preference.emojiRemarkVisible;
+      this.activeEmojiTabId = preference.activeEmojiTabId;
     },
 
     persistEmojiPreference(userId: string) {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
       const payload: EmojiPreferencePayload = {
-        emojiCollectionId: this.emojiCollectionId,
-        emojiRemarkVisible: this.emojiRemarkVisible
+        emojiCollectionIds: this.emojiCollectionIds,
+        emojiRemarkVisible: this.emojiRemarkVisible,
+        activeEmojiTabId: this.activeEmojiTabId
       };
       localStorage.setItem(key, JSON.stringify(payload));
+    },
+
+    setActiveEmojiTab(tabId: string | null, userId: string) {
+      this.activeEmojiTabId = tabId;
+      this.persistEmojiPreference(userId);
     },
 
     setEmojiRemarkVisible(visible: boolean, userId: string) {
@@ -171,9 +209,11 @@ export const useGalleryStore = defineStore('gallery', {
       } finally {
         this.initializing = false;
       }
-      if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
-        // Load emoji collection in the background so panel init isn't blocked.
-        void this.loadItems(this.emojiCollectionId).catch(() => {});
+      // Load emoji collections in background
+      for (const id of this.emojiCollectionIds) {
+        if (id !== this.activeCollectionId) {
+          void this.loadItems(id).catch(() => {});
+        }
       }
     },
 
@@ -188,33 +228,33 @@ export const useGalleryStore = defineStore('gallery', {
       }
     },
 
-    linkEmojiCollection(collectionId: string | null, userId: string) {
-      this.emojiCollectionId = collectionId;
-      this.persistEmojiPreference(userId);
-      if (collectionId) {
-        void this.loadItems(collectionId);
+    linkEmojiCollection(collectionId: string, userId: string, link: boolean) {
+      if (link) {
+        if (!this.emojiCollectionIds.includes(collectionId)) {
+          this.emojiCollectionIds.push(collectionId);
+          void this.loadItems(collectionId);
+        }
+      } else {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== collectionId);
       }
+      this.persistEmojiPreference(userId);
     },
 
     async ensureEmojiCollection(ownerId: string): Promise<string | null> {
-      if (this.emojiCollectionId) {
-        const collection = this.getCollections(ownerId).find(c => c.id === this.emojiCollectionId);
-        if (collection) {
-          await this.loadItems(this.emojiCollectionId);
-          return collection.id;
-        }
-      }
-
       const collections = await this.loadCollections(ownerId, true);
       const existing = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
 
       if (existing) {
-        this.linkEmojiCollection(existing.id, ownerId);
+        this.favoritesCollectionId = existing.id;
         await this.loadItems(existing.id);
-        return existing.id;
       }
 
-      return null;
+      // Load linked collections in background
+      for (const id of this.emojiCollectionIds) {
+        void this.loadItems(id).catch(() => {});
+      }
+
+      return existing?.id ?? null;
     },
 
     async addEmoji(attachmentId: string, ownerId: string): Promise<void> {
@@ -224,7 +264,7 @@ export const useGalleryStore = defineStore('gallery', {
       const collections = await this.loadCollections(ownerId, true);
       const emojiCol = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
       if (emojiCol) {
-        this.linkEmojiCollection(emojiCol.id, ownerId);
+        this.favoritesCollectionId = emojiCol.id;
         this.upsertItems(emojiCol.id, [item]);
       }
     },
@@ -284,8 +324,11 @@ export const useGalleryStore = defineStore('gallery', {
           void this.loadItems(newActiveId);
         }
       }
-      if (this.emojiCollectionId === collectionId) {
-        this.emojiCollectionId = null;
+      if (this.emojiCollectionIds.includes(collectionId)) {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== collectionId);
+      }
+      if (this.favoritesCollectionId === collectionId) {
+        this.favoritesCollectionId = null;
       }
       this.persistEmojiPreference(ownerId);
     },
