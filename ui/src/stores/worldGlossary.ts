@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { chatEvent, useChatStore } from './chat'
 import { useUserStore } from './user'
-import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
+import type { WorldKeywordItem, WorldKeywordPayload, WorldKeywordReorderItem } from '@/models/worldGlossary'
 import {
   fetchWorldKeywords,
   fetchWorldKeywordsPublic,
@@ -10,6 +10,7 @@ import {
   updateWorldKeyword,
   deleteWorldKeyword,
   bulkDeleteWorldKeywords,
+  reorderWorldKeywords,
   importWorldKeywords,
   exportWorldKeywords,
   fetchWorldKeywordCategories,
@@ -192,6 +193,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   function updateKeywordCache(worldId: string, list: WorldKeywordItem[], meta?: { total?: number; page?: number; pageSize?: number }) {
     const normalizedList = list.map(normalizeKeywordItem)
+    // Sort by sortOrder descending to ensure priority order
+    normalizedList.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0))
     const total = meta?.total ?? list.length
     const page = meta?.page ?? 1
     const pageSize = meta?.pageSize ?? list.length
@@ -355,6 +358,24 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     return fetchWorldKeywordCategories(worldId)
   }
 
+  async function reorderKeywords(worldId: string, items: WorldKeywordReorderItem[]) {
+    const updated = await reorderWorldKeywords(worldId, items)
+    if (updated > 0) {
+      const pageItems = pages.value[worldId]?.items || []
+      const orderMap = new Map(items.map((item) => [item.id, item.sortOrder]))
+      const nextList = pageItems.map((item) => {
+        const newOrder = orderMap.get(item.id)
+        if (newOrder !== undefined) {
+          return { ...item, sortOrder: newOrder }
+        }
+        return item
+      })
+      nextList.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0))
+      updateKeywordCache(worldId, nextList)
+    }
+    return updated
+  }
+
   function handleGatewayEvent(event?: any) {
     if (!event || event.type !== 'world-keywords-updated') {
       return
@@ -403,6 +424,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     importKeywords,
     exportKeywords,
     fetchCategories,
+    reorderKeywords,
     setKeywordEnabledBulk,
     setKeywordDisplayBulk,
     setManagerVisible,

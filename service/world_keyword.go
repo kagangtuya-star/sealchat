@@ -23,7 +23,14 @@ type WorldKeywordInput struct {
 	MatchMode   string   `json:"matchMode"`
 	Description string   `json:"description"`
 	Display     string   `json:"display"`
+	SortOrder   *int     `json:"sortOrder"`
 	Enabled     *bool    `json:"isEnabled"`
+}
+
+// WorldKeywordReorderItem 批量更新排序时的单项。
+type WorldKeywordReorderItem struct {
+	ID        string `json:"id"`
+	SortOrder int    `json:"sortOrder"`
 }
 
 // WorldKeywordListOptions 查询参数。
@@ -156,7 +163,7 @@ func WorldKeywordList(worldID, userID string, opts WorldKeywordListOptions) ([]*
 		return []*model.WorldKeywordModel{}, 0, nil
 	}
 	var items []*model.WorldKeywordModel
-	if err := query.Order("updated_at DESC").Offset((opts.Page - 1) * opts.PageSize).Limit(opts.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order("sort_order DESC, updated_at DESC").Offset((opts.Page - 1) * opts.PageSize).Limit(opts.PageSize).Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil
@@ -202,7 +209,7 @@ func WorldKeywordListPublic(worldID string, opts WorldKeywordListOptions) ([]*mo
 		return []*model.WorldKeywordModel{}, 0, nil
 	}
 	var items []*model.WorldKeywordModel
-	if err := query.Order("updated_at DESC").Offset((opts.Page - 1) * opts.PageSize).Limit(opts.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order("sort_order DESC, updated_at DESC").Offset((opts.Page - 1) * opts.PageSize).Limit(opts.PageSize).Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil
@@ -216,6 +223,16 @@ func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*mode
 	if err := normalizeWorldKeywordInput(&input); err != nil {
 		return nil, err
 	}
+	sortOrder := 0
+	if input.SortOrder != nil {
+		sortOrder = *input.SortOrder
+	} else {
+		var maxSort int
+		model.GetDB().Model(&model.WorldKeywordModel{}).
+			Where("world_id = ?", worldID).
+			Select("COALESCE(MAX(sort_order), 0)").Scan(&maxSort)
+		sortOrder = maxSort + 1
+	}
 	item := &model.WorldKeywordModel{
 		WorldID:     worldID,
 		Keyword:     input.Keyword,
@@ -224,6 +241,7 @@ func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*mode
 		MatchMode:   model.WorldKeywordMatchMode(input.MatchMode),
 		Description: strings.TrimSpace(input.Description),
 		Display:     model.WorldKeywordDisplayStyle(input.Display),
+		SortOrder:   sortOrder,
 		IsEnabled:   input.Enabled == nil || *input.Enabled,
 		CreatedBy:   actorID,
 		UpdatedBy:   actorID,
@@ -262,6 +280,9 @@ func WorldKeywordUpdate(worldID, keywordID, actorID string, input WorldKeywordIn
 	}
 	if input.Enabled != nil {
 		updates["is_enabled"] = *input.Enabled
+	}
+	if input.SortOrder != nil {
+		updates["sort_order"] = *input.SortOrder
 	}
 	if err := db.Model(&record).Updates(updates).Error; err != nil {
 		return nil, err
@@ -403,4 +424,55 @@ func WorldKeywordListCategoriesPublic(worldID string) ([]string, error) {
 		return nil, err
 	}
 	return categories, nil
+}
+
+// WorldKeywordReorder 批量更新排序。
+func WorldKeywordReorder(worldID, actorID string, items []WorldKeywordReorderItem) (int, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return 0, err
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	if len(items) > 5000 {
+		return 0, errors.New("批量更新数量不能超过5000")
+	}
+	cleaned := make([]WorldKeywordReorderItem, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, WorldKeywordReorderItem{ID: id, SortOrder: item.SortOrder})
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	db := model.GetDB()
+	updated := 0
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range cleaned {
+			res := tx.Model(&model.WorldKeywordModel{}).
+				Where("id = ? AND world_id = ?", item.ID, worldID).
+				Updates(map[string]interface{}{
+					"sort_order": item.SortOrder,
+					"updated_by": actorID,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected > 0 {
+				updated++
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return updated, nil
 }

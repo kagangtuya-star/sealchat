@@ -128,6 +128,11 @@ const bulkTargetCategory = ref('')
 const bulkDisplayModalVisible = ref(false)
 const bulkTargetDisplay = ref<KeywordDisplayStyle>('inherit')
 
+// Drag and drop state
+const dragSourceId = ref<string | null>(null)
+const dragTargetId = ref<string | null>(null)
+const isReordering = ref(false)
+
 const importText = reactive({ content: '' })
 
 const isRegexMatch = computed({
@@ -250,6 +255,70 @@ const parseStructuredImport = (raw: string): WorldKeywordPayload[] => {
       return normalizePayloadEntry(entry)
     })
     .filter((item): item is WorldKeywordPayload => Boolean(item))
+}
+
+// Drag and drop handlers
+function handleDragStart(e: DragEvent, item: WorldKeywordItem) {
+  if (!canEdit.value) return
+  dragSourceId.value = item.id
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', item.id)
+  }
+}
+
+function handleDragEnter(item: WorldKeywordItem) {
+  if (!dragSourceId.value || dragSourceId.value === item.id) return
+  dragTargetId.value = item.id
+}
+
+function handleDragOver(e: DragEvent) {
+  e.preventDefault()
+}
+
+function handleDragLeave() {
+  // Optional: clear target on leave
+}
+
+async function handleDrop(targetItem: WorldKeywordItem) {
+  const sourceId = dragSourceId.value
+  const targetId = targetItem.id
+  dragSourceId.value = null
+  dragTargetId.value = null
+
+  if (!sourceId || sourceId === targetId) return
+
+  const worldId = currentWorldId.value
+  if (!worldId) return
+
+  const items = [...keywordItems.value]
+  const sourceIndex = items.findIndex((item) => item.id === sourceId)
+  const targetIndex = items.findIndex((item) => item.id === targetId)
+  if (sourceIndex === -1 || targetIndex === -1) return
+
+  // Reorder locally first
+  const [removed] = items.splice(sourceIndex, 1)
+  items.splice(targetIndex, 0, removed)
+
+  // Calculate new sortOrders (descending, highest at top)
+  const reorderItems = items.map((item, index) => ({
+    id: item.id,
+    sortOrder: items.length - index,
+  }))
+
+  isReordering.value = true
+  try {
+    await glossary.reorderKeywords(worldId, reorderItems)
+  } catch (error) {
+    message.error('排序失败')
+  } finally {
+    isReordering.value = false
+  }
+}
+
+function handleDragEnd() {
+  dragSourceId.value = null
+  dragTargetId.value = null
 }
 
 function resetForm() {
@@ -948,7 +1017,18 @@ onUnmounted(() => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="item in pagedKeywords" :key="item.id">
+                <tr
+                  v-for="item in pagedKeywords"
+                  :key="item.id"
+                  :draggable="canEdit"
+                  :class="{ 'keyword-drop-target': dragTargetId === item.id, 'keyword-dragging': dragSourceId === item.id }"
+                  @dragstart="handleDragStart($event, item)"
+                  @dragenter="handleDragEnter(item)"
+                  @dragover="handleDragOver"
+                  @dragleave="handleDragLeave"
+                  @drop="handleDrop(item)"
+                  @dragend="handleDragEnd"
+                >
                   <td>
                     <n-checkbox
                       :checked="selectedIds.includes(item.id)"
@@ -1289,6 +1369,23 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.keyword-drop-target {
+  background-color: rgba(24, 160, 88, 0.15) !important;
+  border-top: 2px solid var(--n-primary-color, #18a058) !important;
+}
+
+.keyword-dragging {
+  opacity: 0.5;
+}
+
+tr[draggable="true"] {
+  cursor: grab;
+}
+
+tr[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 .keyword-editor-form {
   display: flex;
   flex-direction: column;

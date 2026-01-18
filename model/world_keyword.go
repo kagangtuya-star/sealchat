@@ -31,9 +31,11 @@ type WorldKeywordModel struct {
 	MatchMode   WorldKeywordMatchMode    `json:"matchMode" gorm:"size:16;default:'plain'"`
 	Description string                   `json:"description" gorm:"type:text"`
 	Display     WorldKeywordDisplayStyle `json:"display" gorm:"size:24;default:'inherit'"`
+	SortOrder   int                      `json:"sortOrder" gorm:"default:0;index:idx_world_keyword_sort"`
 	IsEnabled   bool                     `json:"isEnabled" gorm:"default:true"`
 	CreatedBy   string                   `json:"createdBy" gorm:"size:100"`
 	UpdatedBy   string                   `json:"updatedBy" gorm:"size:100"`
+	MatchedVia  string                   `json:"matchedVia,omitempty" gorm:"-"`
 }
 
 func (*WorldKeywordModel) TableName() string { return "world_keywords" }

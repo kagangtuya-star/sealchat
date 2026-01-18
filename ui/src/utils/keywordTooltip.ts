@@ -4,6 +4,7 @@ import { createImageTokenRegex, isValidAttachmentToken } from '@/utils/attachmen
 interface TooltipContent {
   title: string
   description: string
+  matchedVia?: string
 }
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
@@ -554,6 +555,14 @@ export function createKeywordTooltip(
     header.textContent = data.title || '术语'
     tooltip.appendChild(header)
 
+    // Show redirect info if matched via alias
+    if (data.matchedVia && data.matchedVia.toLowerCase() !== data.title.toLowerCase()) {
+      const redirect = document.createElement('div')
+      redirect.className = 'keyword-tooltip__redirect'
+      redirect.textContent = `重定向自: ${data.matchedVia}`
+      tooltip.appendChild(redirect)
+    }
+
     if (data.description) {
       const body = document.createElement('div')
       body.className = 'keyword-tooltip__body'
@@ -623,8 +632,12 @@ export function createKeywordTooltip(
       return
     }
 
+    // Get matched source from target element
+    const matchedVia = target.dataset.keywordSource || undefined
+    const enrichedData = { ...data, matchedVia }
+
     const tooltip = getHoverTooltip()
-    renderContent(tooltip, data, keywordId, false)
+    renderContent(tooltip, enrichedData, keywordId, false)
     positionTooltip(tooltip, target)
   }
 
@@ -644,6 +657,10 @@ export function createKeywordTooltip(
     const data = resolver(keywordId)
     if (!data) return
 
+    // Get matched source from target element
+    const matchedVia = target.dataset.keywordSource || undefined
+    const enrichedData = { ...data, matchedVia }
+
     hideTooltipsFromLevel(level)
 
     if (hoverTooltipElement) {
@@ -652,7 +669,7 @@ export function createKeywordTooltip(
 
     const tooltip = createTooltipElement(level)
     tooltip.classList.add('keyword-tooltip--pinned')
-    renderContent(tooltip, data, keywordId, true)
+    renderContent(tooltip, enrichedData, keywordId, true)
     positionTooltip(tooltip, target)
 
     currentTooltip = {

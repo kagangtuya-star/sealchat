@@ -226,6 +226,46 @@ func WorldKeywordBulkDeleteHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"deleted": count, "requestId": requestID})
 }
 
+func WorldKeywordReorderHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		Items []service.WorldKeywordReorderItem `json:"items"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	count, err := service.WorldKeywordReorder(worldID, user.ID, payload.Items)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	if count == 0 {
+		return c.JSON(fiber.Map{"updated": count})
+	}
+	requestID := utils.NewID()
+	keywordIDs := make([]string, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		if trimmed := strings.TrimSpace(item.ID); trimmed != "" {
+			keywordIDs = append(keywordIDs, trimmed)
+		}
+	}
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "reordered",
+		RequestID:   requestID,
+		KeywordIDs:  keywordIDs,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"updated": count, "requestId": requestID})
+}
+
 func WorldKeywordImportHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {

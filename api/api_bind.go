@@ -394,6 +394,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Patch("/:worldId/keywords/:keywordId", WorldKeywordUpdateHandler)
 	worldGroup.Delete("/:worldId/keywords/:keywordId", WorldKeywordDeleteHandler)
 	worldGroup.Post("/:worldId/keywords/bulk-delete", WorldKeywordBulkDeleteHandler)
+	worldGroup.Post("/:worldId/keywords/reorder", WorldKeywordReorderHandler)
 	worldGroup.Post("/:worldId/keywords/import", WorldKeywordImportHandler)
 	worldGroup.Get("/:worldId/keywords/export", WorldKeywordExportHandler)
 	worldGroup.Get("/:worldId/archived-channels", ArchivedChannelList)
