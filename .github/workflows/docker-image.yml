@@ -49,6 +49,11 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Set build version
+        id: build_version
+        run: |
+          echo "BUILD_VERSION=$(date +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -56,6 +61,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            BUILD_VERSION=${{ steps.build_version.outputs.BUILD_VERSION }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
