@@ -10,12 +10,14 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pm"
 	"sealchat/utils"
 )
 
 var (
 	ErrWorldNotFound             = errors.New("world not found")
 	ErrWorldPermission           = errors.New("world permission denied")
+	ErrWorldCreateForbidden      = errors.New("仅平台管理员可创建世界")
 	ErrWorldInviteInvalid        = errors.New("world invite invalid")
 	ErrWorldMemberInvalid        = errors.New("world member invalid")
 	ErrWorldOwnerImmutable       = errors.New("world owner immutable")
@@ -189,6 +191,13 @@ func GetWorldByID(worldID string) (*model.WorldModel, error) {
 }
 
 func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *model.ChannelModel, error) {
+	// 检查是否允许非平台管理员创建世界
+	config := utils.GetConfig()
+	if config != nil && !config.Audio.AllowNonAdminCreateWorld {
+		if !pm.CanWithSystemRole(ownerID, pm.PermModAdmin) {
+			return nil, nil, ErrWorldCreateForbidden
+		}
+	}
 	name := strings.TrimSpace(params.Name)
 	if name == "" {
 		return nil, nil, errors.New("世界名称不能为空")

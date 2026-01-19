@@ -109,6 +109,7 @@ export interface ServerAudioConfig {
   alternateBitrates?: number[];
   ffmpegPath?: string;
   allowWorldAudioWorkbench?: boolean;
+  allowNonAdminCreateWorld?: boolean;
 }
 
 export interface BackupConfig {

@@ -27,15 +27,16 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir              string   `json:"storageDir" yaml:"storageDir"`
-	TempDir                 string   `json:"tempDir" yaml:"tempDir"`
-	MaxUploadSizeMB         int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	AllowedMimeTypes        []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode         bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps      int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates       []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath              string   `json:"ffmpegPath" yaml:"ffmpegPath"`
-	AllowWorldAudioWorkbench bool    `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	StorageDir               string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
+	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps       int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates        []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath               string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
 type StorageMode string
@@ -276,6 +277,7 @@ func ReadConfig() *AppConfig {
 			AlternateBitrates:        []int{64, 128},
 			FFmpegPath:               "",
 			AllowWorldAudioWorkbench: false,
+			AllowNonAdminCreateWorld: true,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,
@@ -620,6 +622,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
+		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
 		_ = k.Set("export.storageDir", config.Export.StorageDir)
 		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
 		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)

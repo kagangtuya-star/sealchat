@@ -147,6 +147,9 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 		Avatar:      body.Avatar,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrWorldCreateForbidden) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 	}
 	return c.JSON(fiber.Map{
