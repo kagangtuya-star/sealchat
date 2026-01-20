@@ -449,7 +449,7 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
-    <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
+    <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card sc-form-scroll"
       :class="{ 'has-bg': hasLoginBg }"
       v-if="config?.registerOpen">
       <div class="px-6 py-4">
@@ -631,6 +631,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .login-bg-layer {
@@ -651,6 +653,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 2;
   background: white;
+  max-height: 100%;
 }
 
 :global(.dark) .sign-up-card {

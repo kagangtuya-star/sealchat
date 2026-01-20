@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
-    <div class="sign-in-content" :class="{ 'has-bg': hasLoginBg }">
+    <div class="sign-in-content sc-form-scroll" :class="{ 'has-bg': hasLoginBg }">
       <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
@@ -400,6 +400,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .login-bg-layer {
@@ -422,9 +424,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 50%;
   min-width: 20rem;
+  max-height: 100%;
   padding: 2rem;
   transition: all 0.3s;
 }

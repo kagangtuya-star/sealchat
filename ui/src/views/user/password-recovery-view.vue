@@ -440,7 +440,7 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
-    <div class="recovery-content" :class="{ 'has-bg': hasLoginBg }">
+    <div class="recovery-content sc-form-scroll" :class="{ 'has-bg': hasLoginBg }">
       <h2 class="font-bold text-xl mb-6">找回密码</h2>
 
       <!-- 未启用邮箱认证 -->
@@ -579,6 +579,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .login-bg-layer {
@@ -601,10 +603,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 50%;
   min-width: 20rem;
   max-width: 32rem;
+  max-height: 100%;
   padding: 2rem;
   transition: all 0.3s;
 }

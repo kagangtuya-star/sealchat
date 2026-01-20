@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="pointer-events-auto relative border px-4 py-2 rounded-md" style="min-width: 20rem;">
+  <div class="pointer-events-auto relative border px-4 py-2 rounded-md sc-form-scroll" style="min-width: 20rem; max-height: 80vh;">
     <div class=" text-lg text-center mb-8">{{ $t('userProfile.title') }}</div>
     <n-form ref="formRef" :model="model" label-placement="left" label-width="64px" require-mark-placement="right-hanging">
       <n-form-item :label="$t('userProfile.nickname')" path="inputValue">
