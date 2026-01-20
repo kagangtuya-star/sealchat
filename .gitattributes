@@ -1,0 +1,53 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+info.db
+record.log
+go.sum
+.idea
+sealdice-core
+data/save.yaml
+configs/
+data/
+pegtest/
+temp/
+
+dist/
+config.yaml
+version.yaml
+assets/
+data.db
+chat.db
+static/
+/已经实现的需求
+/.cache
+/.gocache
+/.gomodcache
+/docs
+/plans
+/specs
+/.codanna
+/.serena
+.codannaignore
+.fastembed_cache
+/.gopath
+!bin/win-x64/*.exe
+/sealchat-data
+.ace-tool/
+/.claude
+api/CLAUDE.md
+CLAUDE.md
+backup_settings.patch
