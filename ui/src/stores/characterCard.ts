@@ -27,6 +27,7 @@ export interface CharacterCardData {
   name: string;
   type: string;
   attrs: Record<string, any>;
+  avatarUrl?: string;
 }
 
 // Convert API response to UI format

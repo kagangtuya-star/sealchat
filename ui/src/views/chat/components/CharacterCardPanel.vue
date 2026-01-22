@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NSelect, NPopconfirm, NTag, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Unlink } from '@vicons/tabler';
+import { Plus, Trash, Edit, Link, Unlink, Eye } from '@vicons/tabler';
 import { useCharacterCardStore } from '@/stores/characterCard';
+import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useChatStore } from '@/stores/chat';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { CharacterCard, ChannelIdentity } from '@/types';
 
 const props = defineProps<{
@@ -17,6 +19,7 @@ const emit = defineEmits<{
 
 const message = useMessage();
 const cardStore = useCharacterCardStore();
+const sheetStore = useCharacterSheetStore();
 const chatStore = useChatStore();
 
 const resolvedChannelId = computed(() => props.channelId || chatStore.curChannel?.id || '');
@@ -291,6 +294,13 @@ const getBoundIdentities = (cardId: string) => {
   return result;
 };
 
+const resolveCardAvatarUrl = (cardId: string) => {
+  const bound = getBoundIdentities(cardId);
+  const identity = bound.find(item => item.avatarAttachmentId) || bound[0];
+  if (!identity?.avatarAttachmentId) return '';
+  return resolveAttachmentUrl(identity.avatarAttachmentId) || identity.avatarAttachmentId;
+};
+
 const handleUnbind = async (identityId: string) => {
   if (!resolvedChannelId.value) return;
   try {
@@ -304,6 +314,37 @@ const handleUnbind = async (identityId: string) => {
 const formatAttrs = (attrs: Record<string, any> | undefined) => {
   if (!attrs || Object.keys(attrs).length === 0) return '暂无属性';
   return Object.entries(attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
+};
+
+const openPreview = async (card: CharacterCard) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  try {
+    let cardData = cardStore.activeCards[channelId];
+    if (!cardData || cardData.name !== card.name) {
+      await cardStore.getActiveCard(channelId);
+      cardData = cardStore.activeCards[channelId];
+    }
+    const avatarUrl = resolveCardAvatarUrl(card.id);
+    sheetStore.openSheet(card, channelId, {
+      name: cardData?.name || card.name,
+      type: cardData?.type || card.sheetType,
+      attrs: cardData?.attrs || card.attrs || {},
+      avatarUrl: avatarUrl || undefined,
+    });
+  } catch (e: any) {
+    console.warn('Failed to open character preview', e);
+    const avatarUrl = resolveCardAvatarUrl(card.id);
+    sheetStore.openSheet(card, channelId, {
+      name: card.name,
+      type: card.sheetType,
+      attrs: card.attrs || {},
+      avatarUrl: avatarUrl || undefined,
+    });
+  }
 };
 </script>
 
@@ -338,6 +379,9 @@ const formatAttrs = (attrs: Record<string, any> | undefined) => {
             <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
           </template>
           <template #header-extra>
+            <n-button text size="small" title="预览" @click="openPreview(card)">
+              <template #icon><n-icon :component="Eye" /></template>
+            </n-button>
             <n-button text size="small" @click="openEditModal(card)">
               <template #icon><n-icon :component="Edit" /></template>
             </n-button>

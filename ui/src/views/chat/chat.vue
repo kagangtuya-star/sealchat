@@ -33,6 +33,7 @@ import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
+import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
@@ -81,6 +82,7 @@ import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrati
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 import CharacterCardPanel from './components/CharacterCardPanel.vue';
 import { useCharacterCardStore } from '@/stores/characterCard';
+import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
@@ -100,6 +102,7 @@ const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
 const characterCardStore = useCharacterCardStore();
+const characterSheetStore = useCharacterSheetStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -107,6 +110,25 @@ const isEditing = computed(() => !!chat.editing);
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+
+let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const ST_REFRESH_DELAY = 1000;
+const ST_COMMAND_RE = /^([./。,，！!#\\/])?st(\\s|$)/i;
+
+const hasStCommand = (content: string) => {
+  const plain = (content || '').replace(/<[^>]*>/g, '').trim();
+  if (!plain) return false;
+  const lines = plain.split(/\\r?\\n/);
+  return lines.some(line => ST_COMMAND_RE.test(line.trim()));
+};
+
+const scheduleCharacterSheetRefresh = () => {
+  if (characterSheetStore.activeWindowIds.length === 0) return;
+  if (stRefreshTimer) clearTimeout(stRefreshTimer);
+  stRefreshTimer = setTimeout(() => {
+    void characterSheetStore.refreshAllWindows();
+  }, ST_REFRESH_DELAY);
+};
 
 const openSplitView = () => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
@@ -7811,6 +7833,9 @@ chatEvent.on('message-created', (e?: Event) => {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  if (hasStCommand(incoming.content || '')) {
+    scheduleCharacterSheetRefresh();
+  }
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
     let matchedPending: Message | undefined;
@@ -8207,6 +8232,10 @@ onBeforeUnmount(() => {
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
+  if (stRefreshTimer) {
+    clearTimeout(stRefreshTimer);
+    stRefreshTimer = null;
+  }
 });
 
 const showButton = ref(false);
@@ -10844,6 +10873,9 @@ onBeforeUnmount(() => {
     v-if="chat.curChannel?.id"
     :channel-id="chat.curChannel.id"
   />
+
+  <!-- 人物卡预览窗口 -->
+  <CharacterSheetManager />
 </template>
 
 <style lang="scss" scoped>
