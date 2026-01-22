@@ -85,6 +85,9 @@
                   <n-button size="tiny" @click="resetTemplate">
                     重置为默认模板
                   </n-button>
+                  <n-button size="tiny" @click="resetTemplateToCoc">
+                    重置为COC默认模板
+                  </n-button>
                 </div>
               </div>
             </n-tab-pane>
@@ -275,9 +278,15 @@ const handleTemplateSave = () => {
 };
 
 const resetTemplate = () => {
-  const defaultTpl = sheetStore.getDefaultTemplate();
+  const defaultTpl = sheetStore.getDefaultTemplate(windowData.value?.sheetType);
   templateText.value = defaultTpl;
   sheetStore.updateTemplate(props.windowId, defaultTpl);
+};
+
+const resetTemplateToCoc = () => {
+  const cocTpl = sheetStore.getDefaultTemplate('coc7');
+  templateText.value = cocTpl;
+  sheetStore.updateTemplate(props.windowId, cocTpl);
 };
 
 watch(
@@ -307,7 +316,7 @@ onMounted(() => {
   syncTemplateText();
   const win = windowData.value;
   if (win) {
-    const normalized = sheetStore.normalizeTemplate(win.cardId, win.template);
+    const normalized = sheetStore.normalizeTemplate(win.cardId, win.template, win.sheetType);
     if (normalized !== win.template) {
       sheetStore.updateTemplate(props.windowId, normalized);
       templateText.value = normalized;
@@ -535,6 +544,7 @@ onBeforeUnmount(() => {
 .sheet-window__template-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .sheet-window__resize-handle {

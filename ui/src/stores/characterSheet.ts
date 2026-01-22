@@ -8,6 +8,7 @@ export interface CharacterSheetWindow {
   cardId: string;
   cardName: string;
   channelId: string;
+  sheetType?: string;
   attrs: Record<string, any>;
   template: string;
   positionX: number;
@@ -44,6 +45,7 @@ interface PersistedWindowState {
   cardId: string;
   cardName: string;
   channelId: string;
+  sheetType?: string;
   attrs: Record<string, any>;
   positionX: number;
   positionY: number;
@@ -118,10 +120,18 @@ const clampBubbleCoords = (x: number, y: number): { x: number; y: number } => {
 };
 
 const DEFAULT_TEMPLATE_MARK = 'sealchat-default-template:v2';
+const DEFAULT_TEMPLATE_MARK_COC = 'sealchat-default-template:v2-coc-dark';
+
+const isCocSheetType = (value?: string) => {
+  const normalized = (value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === 'coc') return true;
+  return normalized.startsWith('coc');
+};
 
 const isLegacyDefaultTemplate = (template: string) => {
   if (!template) return false;
-  if (template.includes(DEFAULT_TEMPLATE_MARK)) return false;
+  if (template.includes(DEFAULT_TEMPLATE_MARK) || template.includes(DEFAULT_TEMPLATE_MARK_COC)) return false;
   if (template.includes('window.prompt')) return true;
   const hasShell =
     template.includes('id="content"') &&
@@ -135,13 +145,13 @@ const isLegacyDefaultTemplate = (template: string) => {
   return hasShell && (hasLegacyRoll || hasPrompt);
 };
 
-const normalizeTemplate = (_cardId: string | undefined, template: string) => {
+const normalizeTemplate = (_cardId: string | undefined, template: string, sheetType?: string) => {
   if (!template) return template;
   if (!isLegacyDefaultTemplate(template)) return template;
-  return getDefaultTemplate();
+  return getDefaultTemplate(sheetType);
 };
 
-const getDefaultTemplate = () => `<!DOCTYPE html>
+const getGenericDefaultTemplate = () => `<!DOCTYPE html>
 <!-- ${DEFAULT_TEMPLATE_MARK} -->
 <html>
 <head>
@@ -379,12 +389,468 @@ const getDefaultTemplate = () => `<!DOCTYPE html>
 </body>
 </html>`;
 
+const getCocDefaultTemplate = () => `<!DOCTYPE html>
+<!-- ${DEFAULT_TEMPLATE_MARK_COC} -->
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      /* 克苏鲁暗黑风格配色 */
+      --c-bg: #0f1115; /* 深渊黑 */
+      --c-card-bg: #161920; /* 卡片背景 */
+      --c-text-main: #c9d1d9; /* 灰白文字 */
+      --c-text-dim: #6e7681; /* 暗淡文字 */
+      --c-accent: #3fb950; /* 诡异绿 (用于高亮) */
+      --c-accent-dim: rgba(63, 185, 80, 0.15);
+      --c-danger: #f85149; /* 血红 (用于HP) */
+      --c-magic: #a371f7; /* 魔法紫 (用于MP) */
+      --c-sanity: #e3b341; /* 理智黄 (用于SAN) */
+      --c-border: #30363d;
+      --c-hover: #21262d;
+      
+      --font-serif: "Songti SC", "SimSun", "Georgia", serif; /* 衬线体更有年代感 */
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: var(--font-sans);
+      background: var(--c-bg);
+      color: var(--c-text-main);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 2px; }
+
+    /* 容器 */
+    .sheet-container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: var(--c-card-bg);
+      border: 1px solid var(--c-border);
+      border-radius: 6px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      overflow: hidden;
+    }
+
+    /* 头部：头像与名字 */
+    .header {
+      display: flex;
+      align-items: center;
+      padding: 16px;
+      background: linear-gradient(180deg, rgba(22,25,32,1) 0%, rgba(13,17,23,1) 100%);
+      border-bottom: 1px solid var(--c-border);
+    }
+    .avatar {
+      width: 56px; height: 56px;
+      border-radius: 4px; /* 方形圆角更像档案 */
+      background: #000;
+      border: 1px solid var(--c-border);
+      display: flex; align-items: center; justify-content: center;
+      margin-right: 16px;
+      overflow: hidden;
+      font-size: 24px; color: var(--c-text-dim);
+      flex-shrink: 0;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .info { flex: 1; }
+    .name {
+      font-family: var(--font-serif);
+      font-size: 20px;
+      font-weight: bold;
+      color: #fff;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .pl-label {
+      font-size: 11px;
+      color: var(--c-text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* 状态栏 (HP/MP/SAN) */
+    .status-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      background: var(--c-border); /*用于分割线的颜色*/
+      border-bottom: 1px solid var(--c-border);
+    }
+    .status-item {
+      background: var(--c-card-bg);
+      padding: 8px 12px;
+      text-align: center;
+      position: relative;
+    }
+    .status-item:hover { background: var(--c-hover); }
+    .status-label {
+      font-size: 11px; color: var(--c-text-dim); display: block;
+      margin-bottom: 2px;
+    }
+    .status-val {
+      font-family: var(--font-serif);
+      font-size: 18px; font-weight: bold;
+      cursor: pointer;
+      border-bottom: 1px dashed transparent;
+    }
+    .status-val:hover { border-bottom-color: currentColor; }
+    /* 状态特定颜色 */
+    .st-hp .status-val { color: var(--c-danger); }
+    .st-mp .status-val { color: var(--c-magic); }
+    .st-san .status-val { color: var(--c-sanity); }
+
+    /* 基础属性网格 (STR, DEX等) */
+    .section-title {
+      font-family: var(--font-serif);
+      background: rgba(255,255,255,0.03);
+      color: var(--c-text-dim);
+      font-size: 12px;
+      padding: 6px 16px;
+      border-bottom: 1px solid var(--c-border);
+      border-top: 1px solid var(--c-border);
+      margin-top: -1px; /* 合并边框 */
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--c-border);
+      padding-bottom: 1px; /* 修正底部边框 */
+    }
+    .stat-box {
+      background: var(--c-card-bg);
+      padding: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stat-box:hover { background: var(--c-hover); }
+    
+    .stat-name {
+      color: var(--c-text-dim);
+      font-size: 12px;
+      cursor: pointer;
+      position: relative;
+    }
+    .stat-name:hover { color: var(--c-accent); text-decoration: underline; }
+    
+    .stat-val {
+      font-family: var(--font-serif);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--c-text-main);
+      cursor: pointer;
+      min-width: 24px;
+      text-align: right;
+    }
+    .stat-val:hover { color: #fff; background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+    /* 技能列表 (多列布局) */
+    .skills-container {
+      padding: 12px;
+      column-count: 2; /* 两列显示 */
+      column-gap: 20px;
+    }
+    @media (max-width: 400px) { .skills-container { column-count: 1; } }
+
+    .skill-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+      break-inside: avoid; /* 防止在列中间断开 */
+    }
+    .skill-item:hover { background: rgba(255,255,255,0.02); }
+    
+    .skill-name {
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--c-text-main);
+    }
+    .skill-name:hover { color: var(--c-accent); }
+    
+    .skill-val {
+      font-family: var(--font-serif);
+      font-size: 13px;
+      color: var(--c-text-dim);
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .skill-val:hover { color: #fff; background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+    /* 输入框样式 */
+    .inline-editor {
+      width: 50px;
+      background: #000;
+      color: #fff;
+      border: 1px solid var(--c-accent);
+      border-radius: 2px;
+      font-family: inherit;
+      font-size: inherit;
+      padding: 2px;
+      text-align: center;
+    }
+
+    .empty-msg {
+      padding: 40px; text-align: center; color: var(--c-text-dim);
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div id="content"></div>
+
+  <script>
+    var _windowId = null;
+
+    // 工具函数
+    function escapeHtml(text) {
+      if (text === null || text === undefined) return '';
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function postEvent(action, payload) {
+      if (!_windowId) return;
+      window.parent.postMessage({
+        type: 'SEALCHAT_EVENT',
+        version: 1,
+        windowId: _windowId,
+        action: action,
+        payload: payload
+      }, '*');
+    }
+
+    window.sealchat = {
+      onUpdate: function(cb) {
+        window.addEventListener('message', function(e) {
+          if (e.source !== window.parent) return;
+          if (e.data && e.data.type === 'SEALCHAT_UPDATE') {
+            _windowId = e.data.payload.windowId;
+            cb(e.data.payload);
+          }
+        });
+      },
+    };
+
+    // COC 数据定义
+    const STAT_KEYS = ['力量', '体质', '体型', '敏捷', '外貌', '智力', '意志', '教育', '幸运'];
+    const STATUS_KEYS = ['生命值', '魔法值', '理智'];
+    // 状态栏键值映射（用于 CSS 类名和排序）
+    const STATUS_MAP = {
+      '生命值': { cls: 'st-hp', label: 'HP' },
+      '魔法值': { cls: 'st-mp', label: 'MP' },
+      '理智': { cls: 'st-san', label: 'SAN' }
+    };
+
+    function render(data) {
+      var el = document.getElementById('content');
+      if (!data || !data.attrs || Object.keys(data.attrs).length === 0) {
+        el.innerHTML = '<div class="empty-msg">Waiting for investigator data...</div>';
+        return;
+      }
+
+      var attrs = data.attrs;
+      var otherSkills = [];
+      
+      // 分类数据
+      var foundStats = {};
+      var foundStatus = {};
+
+      for (var key in attrs) {
+        if (STAT_KEYS.includes(key)) {
+          foundStats[key] = attrs[key];
+        } else if (STATUS_KEYS.includes(key)) {
+          foundStatus[key] = attrs[key];
+        } else {
+          // 过滤掉非数值的或者过长的（大概率不是技能）
+          var val = attrs[key];
+          var isNumeric = typeof val === 'number' || (typeof val === 'string' && /^-?\\d+$/.test(val));
+          if (isNumeric) {
+             otherSkills.push({ key: key, val: val });
+          }
+        }
+      }
+
+      // 排序技能：中文拼音/英文排序可能比较复杂，这里简单按字母序
+      otherSkills.sort(function(a, b) { return a.key.localeCompare(b.key, 'zh'); });
+
+      // 构建 HTML
+      var html = '<div class="sheet-container">';
+
+      // 1. Header
+      var avatarUrl = data.avatarUrl || '';
+      var avatarHtml = avatarUrl 
+        ? '<img src="' + escapeHtml(avatarUrl) + '">' 
+        : (data.name || '?').charAt(0);
+      
+      html += '<div class="header">';
+      html +=   '<div class="avatar">' + avatarHtml + '</div>';
+      html +=   '<div class="info">';
+      html +=     '<div class="name">' + escapeHtml(data.name || 'Unknown Investigator') + '</div>';
+      html +=     '<div class="pl-label">Investigator Sheet</div>';
+      html +=   '</div>';
+      html += '</div>';
+
+      // 2. Status Bar (HP/MP/SAN)
+      // 即使数据里没有，也渲染格子占位
+      html += '<div class="status-bar">';
+      STATUS_KEYS.forEach(function(k) {
+        var conf = STATUS_MAP[k];
+        var val = foundStatus[k] !== undefined ? foundStatus[k] : '--';
+        html += '<div class="status-item ' + conf.cls + '">';
+        html +=   '<span class="status-label">' + conf.label + '</span>';
+        html +=   '<div class="status-val" data-attr="' + k + '" data-value="' + val + '">' + val + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+
+      // 3. Main Characteristics
+      html += '<div class="section-title">Characteristics</div>';
+      html += '<div class="stats-grid">';
+      STAT_KEYS.forEach(function(k) {
+        var val = foundStats[k] !== undefined ? foundStats[k] : '';
+        if (val === '') return; // 如果完全没这个属性，就不显示格子，或者也可以显示空白
+        html += '<div class="stat-box">';
+        html +=   '<span class="stat-name" data-roll=".ra ' + k + '" data-skill="' + k + '">' + k + '</span>';
+        html +=   '<span class="stat-val" data-attr="' + k + '" data-value="' + val + '">' + val + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+
+      // 4. Skills
+      if (otherSkills.length > 0) {
+        html += '<div class="section-title">Skills</div>';
+        html += '<div class="skills-container">';
+        otherSkills.forEach(function(item) {
+          html += '<div class="skill-item">';
+          html +=   '<span class="skill-name" data-roll=".ra ' + item.key + '" data-skill="' + item.key + '">' + escapeHtml(item.key) + '</span>';
+          html +=   '<span class="skill-val" data-attr="' + item.key + '" data-value="' + item.val + '">' + item.val + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+
+      html += '</div>'; // end container
+      el.innerHTML = html;
+    }
+
+    // 编辑逻辑
+    function openInlineEditor(target) {
+      if (target.dataset.editing === '1') return;
+      var attrKey = target.dataset.attr;
+      var currentVal = target.dataset.value;
+      if (currentVal === '--') currentVal = ''; // 处理空状态
+      
+      var input = document.createElement('input');
+      input.type = 'number';
+      input.value = currentVal;
+      input.className = 'inline-editor';
+      
+      // 保持原始宽度防止布局跳动太厉害
+      var originalWidth = target.offsetWidth;
+      input.style.width = Math.max(originalWidth + 20, 50) + 'px';
+
+      target.textContent = '';
+      target.appendChild(input);
+      target.dataset.editing = '1';
+      input.focus();
+      input.select();
+
+      var commit = function() {
+        var val = input.value.trim();
+        var num = Number(val);
+        if (val === '' || isNaN(num)) {
+          cancel();
+          return;
+        }
+        // 更新界面
+        target.textContent = val;
+        target.dataset.value = val;
+        target.dataset.editing = '';
+        // 发送更新
+        var patch = {};
+        patch[attrKey] = num;
+        postEvent('UPDATE_ATTRS', { attrs: patch });
+      };
+
+      var cancel = function() {
+        target.textContent = currentVal || '--';
+        target.dataset.editing = '';
+      };
+
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      });
+      input.addEventListener('blur', commit);
+      input.addEventListener('click', function(e) { e.stopPropagation(); });
+    }
+
+    // 全局事件委托
+    document.addEventListener('click', function(e) {
+      var target = e.target;
+      
+      // 1. 处理数值编辑
+      if (target.classList.contains('stat-val') || 
+          target.classList.contains('skill-val') || 
+          target.classList.contains('status-val')) {
+        openInlineEditor(target);
+        return;
+      }
+
+      // 2. 处理掷骰
+      // 向上寻找是否有 data-roll
+      while (target && target !== document.body) {
+        if (target.dataset && target.dataset.roll) {
+          var rect = target.getBoundingClientRect();
+          postEvent('ROLL_DICE', {
+            roll: {
+              template: target.dataset.roll,
+              label: target.innerText || target.dataset.skill,
+              args: { skill: target.dataset.skill },
+              rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+            }
+          });
+          return;
+        }
+        target = target.parentElement;
+      }
+    });
+
+    sealchat.onUpdate(render);
+  </script>
+</body>
+</html>`;
+
+const getDefaultTemplate = (sheetType?: string) => (
+  isCocSheetType(sheetType) ? getCocDefaultTemplate() : getGenericDefaultTemplate()
+);
+
 export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const windows = ref<Record<string, CharacterSheetWindow>>({});
   const activeWindowIds = ref<string[]>([]);
   const maxZIndex = ref(2000);
   const hasRestored = ref(false);
   const cardStore = useCharacterCardStore();
+
+  const resolveSheetTypeByCardId = (cardId?: string) => {
+    if (!cardId) return '';
+    return cardStore.getCardById(cardId)?.sheetType || '';
+  };
 
   const activeWindows = computed(() =>
     activeWindowIds.value.map(id => windows.value[id]).filter(Boolean)
@@ -396,7 +862,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       const parsed = raw ? JSON.parse(raw) : {};
       let changed = false;
       for (const [cardId, template] of Object.entries(parsed)) {
-        const normalized = normalizeTemplate(cardId, String(template || ''));
+        const sheetType = resolveSheetTypeByCardId(cardId);
+        const normalized = normalizeTemplate(cardId, String(template || ''), sheetType);
         if (normalized !== template) {
           parsed[cardId] = normalized;
           changed = true;
@@ -425,18 +892,19 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   };
 
-  const getTemplate = (cardId: string): string => {
+  const getTemplate = (cardId: string, sheetType?: string): string => {
     const templates = loadTemplates();
     const stored = templates[cardId];
+    const resolvedSheetType = sheetType || resolveSheetTypeByCardId(cardId);
     if (stored) {
-      const normalized = normalizeTemplate(cardId, stored);
+      const normalized = normalizeTemplate(cardId, stored, resolvedSheetType);
       if (normalized !== stored) {
         saveTemplate(cardId, normalized);
       }
       return normalized;
     }
-    const fallback = getDefaultTemplate();
-    const normalized = normalizeTemplate(cardId, fallback);
+    const fallback = getDefaultTemplate(resolvedSheetType);
+    const normalized = normalizeTemplate(cardId, fallback, resolvedSheetType);
     if (normalized !== fallback) {
       saveTemplate(cardId, normalized);
     }
@@ -455,6 +923,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         cardId: win.cardId,
         cardName: win.cardName,
         channelId: win.channelId,
+        sheetType: win.sheetType,
         attrs: win.attrs,
         positionX: win.positionX,
         positionY: win.positionY,
@@ -489,7 +958,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     let nextMaxZ = maxZIndex.value;
     for (const state of states) {
       if (!state?.cardId) continue;
-      const template = getTemplate(state.cardId);
+      const resolvedSheetType = state.sheetType || resolveSheetTypeByCardId(state.cardId);
+      const template = getTemplate(state.cardId, resolvedSheetType);
       const clampedPos = clampBubbleCoords(state.bubbleX || 0, state.bubbleY || 0);
       const width = Math.max(MIN_WIDTH, state.width || DEFAULT_WIDTH);
       const height = Math.max(MIN_HEIGHT, state.height || DEFAULT_HEIGHT);
@@ -498,6 +968,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         cardId: state.cardId,
         cardName: state.cardName || '人物卡',
         channelId: state.channelId || '',
+        sheetType: resolvedSheetType || undefined,
         attrs: state.attrs || {},
         template,
         positionX: state.positionX ?? VIEWPORT_PADDING,
@@ -566,8 +1037,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     );
     if (existingId) {
       const existing = windows.value[existingId];
+      const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
       if (existing) {
-        const normalized = normalizeTemplate(existing.cardId, existing.template);
+        if (resolvedSheetType && !existing.sheetType) {
+          existing.sheetType = resolvedSheetType;
+        }
+        const normalized = normalizeTemplate(existing.cardId, existing.template, existing.sheetType);
         if (normalized !== existing.template) {
           existing.template = normalized;
         }
@@ -598,13 +1073,15 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       ? clampBubbleCoords(savedBubblePos.x, savedBubblePos.y)
       : getDefaultBubblePosition(activeWindowIds.value.length);
 
+    const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
     windows.value[windowId] = {
       id: windowId,
       cardId: card.id,
       cardName: card.name,
       channelId,
+      sheetType: resolvedSheetType || undefined,
       attrs: cardData?.attrs || card.attrs || {},
-      template: getTemplate(card.id),
+      template: getTemplate(card.id, resolvedSheetType),
       positionX: posX,
       positionY: posY,
       width: DEFAULT_WIDTH,
@@ -686,7 +1163,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const updateTemplate = (windowId: string, template: string) => {
     const win = windows.value[windowId];
     if (win) {
-      const normalized = normalizeTemplate(win.cardId, template);
+      const normalized = normalizeTemplate(win.cardId, template, win.sheetType);
       win.template = normalized;
       saveTemplate(win.cardId, normalized);
       schedulePersistWindows();
