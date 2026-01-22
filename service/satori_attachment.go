@@ -26,20 +26,20 @@ import (
 
 // SatoriAttachmentConfig holds configuration for Satori content normalization
 type SatoriAttachmentConfig struct {
-	ImageSizeLimit        int64 // Max image size in bytes
-	ImageCompress         bool
-	ImageCompressQuality  int
-	TempDir               string
-	MaxImagesPerMessage   int // Max number of images to process per message
+	ImageSizeLimit       int64 // Max image size in bytes
+	ImageCompress        bool
+	ImageCompressQuality int
+	TempDir              string
+	MaxImagesPerMessage  int // Max number of images to process per message
 }
 
 // SatoriAttachmentResult contains the result of normalizing Satori content
 type SatoriAttachmentResult struct {
-	Content           string   // Normalized content with id:xxx references
-	AttachmentIDs     []string // Created attachment IDs
-	ProcessedCount    int      // Number of images processed
-	SkippedCount      int      // Number of images skipped (errors, limits)
-	Errors            []error  // Non-fatal errors encountered
+	Content        string   // Normalized content with id:xxx references
+	AttachmentIDs  []string // Created attachment IDs
+	ProcessedCount int      // Number of images processed
+	SkippedCount   int      // Number of images skipped (errors, limits)
+	Errors         []error  // Non-fatal errors encountered
 }
 
 // NormalizeSatoriContent processes Satori content, extracting Base64 images
@@ -52,6 +52,9 @@ func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachm
 	if content == "" {
 		return result, nil
 	}
+
+	content = protocol.EscapeSatoriText(content)
+	result.Content = content
 
 	// Parse Satori content
 	root := protocol.ElementParse(content)
@@ -270,9 +273,9 @@ func shouldCompressImage(mimeType string) bool {
 
 // Image decompression bomb limits
 const (
-	maxImagePixels   = 100 * 1024 * 1024 // 100 megapixels max
-	maxGIFFrames     = 500               // Max GIF frames
-	maxImageDimension = 16384            // Max width or height
+	maxImagePixels    = 100 * 1024 * 1024 // 100 megapixels max
+	maxGIFFrames      = 500               // Max GIF frames
+	maxImageDimension = 16384             // Max width or height
 )
 
 func tryCompressImageData(data []byte, mimeType string, quality int) ([]byte, string, bool, bool, error) {

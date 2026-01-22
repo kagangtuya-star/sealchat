@@ -829,6 +829,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	// BOT 消息的 Satori 内容规范化
 	if ctx.User.IsBot {
+		content = protocol.EscapeSatoriText(content)
 		if strings.Contains(content, "data:image/") {
 			// 将 Base64 图片转换为附件
 			satoriResult, satoriErr := service.NormalizeSatoriContent(content, ctx.User.ID, channelId, service.SatoriAttachmentConfig{

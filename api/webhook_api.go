@@ -379,6 +379,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 
 	// BOT 入站：CQ 码转换为 Satori XML
 	content = service.ConvertCQToSatori(content)
+	content = protocol.EscapeSatoriText(content)
 
 	icMode := strings.ToLower(strings.TrimSpace(req.Message.ICMode))
 	if icMode == "" {
