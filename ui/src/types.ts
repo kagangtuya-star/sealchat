@@ -383,9 +383,21 @@ export interface ChannelIdentity {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  characterCardId?: string;
   isDefault: boolean;
   sortOrder: number;
   folderIds?: string[];
+}
+
+export interface CharacterCard {
+  id: string;
+  userId: string;
+  channelId: string;
+  name: string;
+  sheetType: string;
+  attrs: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ChannelIdentityFolder {

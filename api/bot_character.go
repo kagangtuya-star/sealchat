@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"sealchat/service"
+	"sealchat/utils"
 )
 
 // Character card API skeleton for future SealDice integration
@@ -15,14 +18,7 @@ type CharacterPendingRequest struct {
 	API       string
 	Data      any
 	CreatedAt time.Time
-	Response  chan *CharacterAPIResponse
-}
-
-// CharacterAPIResponse represents a response from SealDice
-type CharacterAPIResponse struct {
-	OK    bool            `json:"ok"`
-	Data  json.RawMessage `json:"data,omitempty"`
-	Error string          `json:"error,omitempty"`
+	Response  chan json.RawMessage
 }
 
 // characterPendingRequests stores pending character API requests by echo ID
@@ -126,32 +122,79 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 }
 
 // findBotConnectionForChannel finds a BOT WebSocket connection for a specific channel
-// TODO: Implement proper BOT routing based on channel membership
 func findBotConnectionForChannel(ctx *ChatContext, channelID string) *WsSyncConn {
-	// Skeleton: iterate through userId2ConnInfo to find BOT connections
-	// that are associated with the given channel
-	_ = channelID
-	_ = ctx
+	if ctx == nil || ctx.User == nil || userId2ConnInfoGlobal == nil {
+		return nil
+	}
 
-	// For now, return nil - to be implemented when BOT connection tracking is added
-	return nil
+	botIds := service.BotListByChannelId(ctx.User.ID, channelID)
+	if len(botIds) == 0 {
+		return nil
+	}
+
+	var activeConn *WsSyncConn
+	var activeAt int64 = -1
+
+	for _, id := range botIds {
+		if x, ok := userId2ConnInfoGlobal.Load(id); ok {
+			x.Range(func(conn *WsSyncConn, value *ConnInfo) bool {
+				if value == nil {
+					return true
+				}
+				lastAlive := value.LastAliveTime
+				if lastAlive == 0 {
+					lastAlive = value.LastPingTime
+				}
+				if lastAlive > activeAt {
+					activeAt = lastAlive
+					activeConn = conn
+				}
+				return true
+			})
+		}
+	}
+
+	return activeConn
 }
 
 // findAnyBotConnection finds any available BOT WebSocket connection
 func findAnyBotConnection(ctx *ChatContext) *WsSyncConn {
-	_ = ctx
-	// Skeleton: iterate through userId2ConnInfo to find any BOT connection
-	return nil
+	if userId2ConnInfoGlobal == nil {
+		return nil
+	}
+
+	var activeConn *WsSyncConn
+	var activeAt int64 = -1
+
+	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		connMap.Range(func(conn *WsSyncConn, value *ConnInfo) bool {
+			if value == nil || value.User == nil || !value.User.IsBot {
+				return true
+			}
+			lastAlive := value.LastAliveTime
+			if lastAlive == 0 {
+				lastAlive = value.LastPingTime
+			}
+			if lastAlive > activeAt {
+				activeAt = lastAlive
+				activeConn = conn
+			}
+			return true
+		})
+		return true
+	})
+
+	return activeConn
 }
 
 // forwardCharacterRequest forwards a character API request to a BOT
-func forwardCharacterRequest(botConn *WsSyncConn, api, echo string, data any) *CharacterAPIResponse {
+func forwardCharacterRequest(botConn *WsSyncConn, api, echo string, data any) json.RawMessage {
 	if botConn == nil {
 		return nil
 	}
 
 	// Create pending request with response channel
-	respChan := make(chan *CharacterAPIResponse, 1)
+	respChan := make(chan json.RawMessage, 1)
 	pending := &CharacterPendingRequest{
 		Echo:      echo,
 		API:       api,
@@ -191,13 +234,8 @@ func HandleCharacterResponse(echo string, data json.RawMessage) bool {
 
 	req := pending.(*CharacterPendingRequest)
 
-	var resp CharacterAPIResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		resp = CharacterAPIResponse{OK: false, Error: "响应解析失败"}
-	}
-
 	select {
-	case req.Response <- &resp:
+	case req.Response <- data:
 	default:
 	}
 
@@ -216,19 +254,203 @@ func sendCharacterError(ctx *ChatContext, echo, errMsg string) {
 	_ = ctx.Conn.WriteJSON(resp)
 }
 
-func sendCharacterResponse(ctx *ChatContext, echo string, resp *CharacterAPIResponse) {
+func sendCharacterResponse(ctx *ChatContext, echo string, data json.RawMessage) {
 	result := map[string]any{
 		"api":  "",
 		"echo": echo,
-		"data": map[string]any{
-			"ok": resp.OK,
-		},
 	}
-	if resp.Error != "" {
-		result["data"].(map[string]any)["error"] = resp.Error
-	}
-	if resp.Data != nil {
-		result["data"].(map[string]any)["data"] = resp.Data
+	if len(data) == 0 {
+		result["data"] = map[string]any{
+			"ok":    false,
+			"error": "响应为空",
+		}
+	} else {
+		result["data"] = json.RawMessage(data)
 	}
 	_ = ctx.Conn.WriteJSON(result)
+}
+
+// apiCharacterNew handles character.new requests
+func apiCharacterNew(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID    string `json:"user_id"`
+			GroupID   string `json:"group_id"`
+			Name      string `json:"name"`
+			SheetType string `json:"sheet_type"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.new", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterSave handles character.save requests
+func apiCharacterSave(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID    string `json:"user_id"`
+			GroupID   string `json:"group_id"`
+			Name      string `json:"name"`
+			SheetType string `json:"sheet_type"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.save", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterTag handles character.tag requests
+func apiCharacterTag(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID  string `json:"user_id"`
+			GroupID string `json:"group_id"`
+			Name    string `json:"name"`
+			ID      string `json:"id"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.tag", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterUntagAll handles character.untagAll requests
+func apiCharacterUntagAll(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID  string `json:"user_id"`
+			GroupID string `json:"group_id"`
+			Name    string `json:"name"`
+			ID      string `json:"id"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findAnyBotConnection(ctx)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.untagAll", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterLoad handles character.load requests
+func apiCharacterLoad(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID  string `json:"user_id"`
+			GroupID string `json:"group_id"`
+			Name    string `json:"name"`
+			ID      string `json:"id"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.load", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterDelete handles character.delete requests
+func apiCharacterDelete(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			UserID string `json:"user_id"`
+			Name   string `json:"name"`
+			ID     string `json:"id"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	botConn := findAnyBotConnection(ctx)
+	if botConn == nil {
+		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+		return
+	}
+
+	resp := forwardCharacterRequest(botConn, "character.delete", data.Echo, data.Data)
+	if resp == nil {
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	sendCharacterResponse(ctx, data.Echo, resp)
 }

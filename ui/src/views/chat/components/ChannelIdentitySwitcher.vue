@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useChatStore } from '@/stores/chat';
+import { useCharacterCardStore } from '@/stores/characterCard';
 import { useUserStore } from '@/stores/user';
 import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
@@ -30,6 +31,7 @@ const { t } = useI18n();
 const chat = useChatStore();
 const user = useUserStore();
 const display = useDisplayStore();
+const cardStore = useCharacterCardStore();
 
 const resolvedChannelId = computed(() => props.channelId || chat.curChannel?.id || '');
 
@@ -227,6 +229,21 @@ const handleSelect = async (key: string | number) => {
     return;
   }
   chat.setActiveIdentity(channelId, String(key));
+  if (isObserverMode.value) {
+    emit('identity-changed' as any);
+    return;
+  }
+  try {
+    const boundCardId = cardStore.getBoundCardId(String(key));
+    if (boundCardId) {
+      await cardStore.tagCard(channelId, undefined, boundCardId);
+    } else {
+      await cardStore.tagCard(channelId);
+    }
+    await cardStore.loadCards(channelId);
+  } catch (e) {
+    console.warn('Failed to sync character card for identity', e);
+  }
   emit('identity-changed' as any);
 };
 

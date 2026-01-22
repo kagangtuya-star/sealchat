@@ -301,6 +301,15 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
+	v1Auth.Post("/channel-identities/:id/bind-character-card", ChannelIdentityBindCharacterCard)
+	v1Auth.Post("/channel-identities/:id/unbind-character-card", ChannelIdentityUnbindCharacterCard)
+
+	v1Auth.Get("/character-cards", CharacterCardList)
+	v1Auth.Post("/character-cards", CharacterCardCreate)
+	v1Auth.Get("/character-cards/:id", CharacterCardGet)
+	v1Auth.Put("/character-cards/:id", CharacterCardUpdate)
+	v1Auth.Delete("/character-cards/:id", CharacterCardDelete)
+
 	v1Auth.Get("/channel-identity-folders", ChannelIdentityFolderList)
 	v1Auth.Post("/channel-identity-folders", ChannelIdentityFolderCreate)
 	v1Auth.Put("/channel-identity-folders/:id", ChannelIdentityFolderUpdate)

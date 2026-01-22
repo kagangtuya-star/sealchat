@@ -111,6 +111,9 @@ export interface DisplaySettings {
   disableContextMenu: boolean
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
+  // 人物卡
+  characterCardBadgeEnabled: boolean
+  characterCardBadgeTemplateByWorld: Record<string, string>
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -404,6 +407,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
+  characterCardBadgeEnabled: true,
+  characterCardBadgeTemplateByWorld: {},
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -600,6 +605,10 @@ const loadSettings = (): DisplaySettings => {
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
+      characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
+      characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
+        ? (parsed as any).characterCardBadgeTemplateByWorld
+        : {},
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -792,6 +801,16 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)
       : base.inputAreaHeight,
+  characterCardBadgeEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeEnabled')
+      ? coerceBoolean((patch as any).characterCardBadgeEnabled)
+      : base.characterCardBadgeEnabled,
+  characterCardBadgeTemplateByWorld:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeTemplateByWorld')
+      ? (isPlainObject((patch as any).characterCardBadgeTemplateByWorld)
+          ? (patch as any).characterCardBadgeTemplateByWorld
+          : {})
+      : { ...base.characterCardBadgeTemplateByWorld },
 })
 
 export const useDisplayStore = defineStore('display', {

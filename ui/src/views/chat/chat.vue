@@ -79,6 +79,8 @@ import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
+import CharacterCardPanel from './components/CharacterCardPanel.vue';
+import { useCharacterCardStore } from '@/stores/characterCard';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
@@ -97,6 +99,7 @@ const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
+const characterCardStore = useCharacterCardStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -378,6 +381,7 @@ const spectatorInputDisabled = computed(() => !channelSendAllowed.value);
 const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
 const emailNotificationDrawerVisible = ref(false);
+const characterCardPanelVisible = ref(false);
 let webhookPermissionSeq = 0;
 
 watch(
@@ -1716,7 +1720,9 @@ const identityForm = reactive({
   avatarAttachmentId: '',
   isDefault: false,
   folderIds: [] as string[],
+  characterCardId: '' as string,
 });
+const identityOriginalCardId = ref('');
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityAvatarEditorVisible = ref(false);
@@ -1752,6 +1758,15 @@ const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
 });
 
 const folderSelectOptions = computed(() => identityFolders.value.map(folder => ({ label: folder.name, value: folder.id })));
+
+const characterCardSelectOptions = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const cards = characterCardStore.getCardsByChannel(channelId);
+  return [
+    { label: '不绑定', value: '' },
+    ...cards.map(card => ({ label: card.name, value: card.id })),
+  ];
+});
 
 const favoriteFolderSet = computed(() => new Set(identityFavoriteFolderIds.value));
 
@@ -2741,6 +2756,8 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
+  identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+  identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
 
@@ -2755,13 +2772,23 @@ const openIdentityCreate = async () => {
   if (!identityForm.displayName) {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
+  // Load character cards for the channel
+  await characterCardStore.loadCards(chat.curChannel.id);
+  identityForm.characterCardId = '';
+  identityOriginalCardId.value = '';
   identityDialogVisible.value = true;
 };
 
-const openIdentityEdit = (identity: ChannelIdentity) => {
+const openIdentityEdit = async (identity: ChannelIdentity) => {
   editingIdentity.value = identity;
   identityDialogMode.value = 'edit';
   resetIdentityForm(identity);
+  // Load character cards for the channel
+  if (chat.curChannel?.id) {
+    await characterCardStore.loadCards(chat.curChannel.id);
+    identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+    identityOriginalCardId.value = identityForm.characterCardId;
+  }
   identityDialogVisible.value = true;
 };
 
@@ -2865,10 +2892,34 @@ const submitIdentityForm = async () => {
       identityAvatarFile = null;
     }
     if (identityDialogMode.value === 'create') {
-      await chat.channelIdentityCreate(payload);
+      const createdIdentity = await chat.channelIdentityCreate(payload);
+      // Handle character card binding for new identity
+      if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        try {
+          if (identityForm.characterCardId) {
+            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
+          } else {
+            await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+          }
+        } catch (e) {
+          console.warn('Failed to bind character card', e);
+        }
+      }
       message.success('频道角色已创建');
     } else if (editingIdentity.value) {
       await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+      // Handle character card binding changes for existing identity
+      if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        try {
+          if (identityForm.characterCardId) {
+            await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+          } else {
+            await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+          }
+        } catch (e) {
+          console.warn('Failed to update character card binding', e);
+        }
+      }
       message.success('频道角色已更新');
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true);
@@ -9389,6 +9440,8 @@ onBeforeUnmount(() => {
         :webhook-active="webhookDrawerVisible"
         :email-notification-enabled="true"
         :email-notification-active="emailNotificationDrawerVisible"
+        :character-card-enabled="true"
+        :character-card-active="characterCardPanelVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -9402,6 +9455,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
+        @open-character-card="characterCardPanelVisible = true"
         @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -10373,6 +10427,7 @@ onBeforeUnmount(() => {
     @select-all="handleMultiSelectAll"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
+  <CharacterCardPanel v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
   <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
@@ -10430,6 +10485,14 @@ onBeforeUnmount(() => {
             <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
+      </n-form-item>
+      <n-form-item label="绑定人物卡">
+        <n-select
+          v-model:value="identityForm.characterCardId"
+          :options="characterCardSelectOptions"
+          placeholder="选择要绑定的人物卡"
+          clearable
+        />
       </n-form-item>
       <n-form-item>
         <n-checkbox v-model:checked="identityForm.isDefault">

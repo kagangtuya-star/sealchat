@@ -25,6 +25,7 @@ import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { chatEvent } from '@/stores/chat'
+import CharacterCardBadge from './CharacterCardBadge.vue'
 
 type EditingPreviewInfo = {
   userId: string;
@@ -1299,6 +1300,8 @@ const displayAvatar = computed(() => {
 
 const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
 
+const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
+
 </script>
 
 <template>
@@ -1352,8 +1355,10 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
           <span>{{ tooltipTimestampText }}</span>
         </n-popover>
         <span v-if="props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+        <CharacterCardBadge v-if="props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
 
         <span v-if="!props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+        <CharacterCardBadge v-if="!props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>
             <span class="time">{{ inlineTimestampText }}</span>

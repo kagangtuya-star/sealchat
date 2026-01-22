@@ -82,6 +82,7 @@ watch(
   draft.disableContextMenu = value.disableContextMenu
   draft.avatarSize = value.avatarSize
   draft.avatarBorderRadius = value.avatarBorderRadius
+  draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },
@@ -507,6 +508,20 @@ const handleOpenTutorialHub = () => {
           </span>
           <span> 穿越黑森林。</span>
         </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">人物卡徽章</p>
+            <p class="section-desc">在消息发送者名称后显示角色属性（如 HP/SAN）</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.characterCardBadgeEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+        <p class="control-desc control-desc--hint">徽章模板可在世界设置中自定义，格式如 "HP {hp}/{hpmax} SAN {san}"</p>
       </section>
 
       <section class="display-settings__section">

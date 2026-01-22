@@ -21,6 +21,7 @@ import (
 type ApiMsgPayload struct {
 	Api  string `json:"api"`
 	Echo string `json:"echo"`
+	Data json.RawMessage `json:"data"`
 }
 
 type WsSyncConn struct {
@@ -522,6 +523,15 @@ func websocketWorks(app *fiber.App) {
 					if solved {
 						continue
 					}
+
+					// Handle BOT response (api field is empty)
+					if apiMsg.Api == "" && apiMsg.Echo != "" {
+						if len(apiMsg.Data) > 0 && HandleCharacterResponse(apiMsg.Echo, apiMsg.Data) {
+							solved = true
+							continue
+						}
+					}
+
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
 					// Sticky Note APIs
@@ -654,6 +664,24 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "character.list":
 						apiCharacterList(ctx, msg)
+						solved = true
+					case "character.new":
+						apiCharacterNew(ctx, msg)
+						solved = true
+					case "character.save":
+						apiCharacterSave(ctx, msg)
+						solved = true
+					case "character.tag":
+						apiCharacterTag(ctx, msg)
+						solved = true
+					case "character.untagAll":
+						apiCharacterUntagAll(ctx, msg)
+						solved = true
+					case "character.load":
+						apiCharacterLoad(ctx, msg)
+						solved = true
+					case "character.delete":
+						apiCharacterDelete(ctx, msg)
 						solved = true
 					}
 				}

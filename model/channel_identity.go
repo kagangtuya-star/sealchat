@@ -16,6 +16,7 @@ type ChannelIdentityModel struct {
 	DisplayName        string   `json:"displayName"`
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
+	CharacterCardID    string   `json:"characterCardId,omitempty" gorm:"size:100;index"`
 	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
 	IsHidden           bool     `json:"isHidden" gorm:"default:false"`
 	SortOrder          int      `json:"sortOrder" gorm:"index"`

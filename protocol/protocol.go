@@ -60,6 +60,16 @@ type ChannelIdentity struct {
 	IsDefault          bool   `json:"isDefault"`
 }
 
+type CharacterCard struct {
+	ID        string         `json:"id"`
+	UserID    string         `json:"userId,omitempty"`
+	ChannelID string         `json:"channelId,omitempty"`
+	Name      string         `json:"name"`
+	SheetType string         `json:"sheetType"`
+	Attrs     map[string]any `json:"attrs"`
+	UpdatedAt int64          `json:"updatedAt,omitempty"`
+}
+
 type GuildMember struct {
 	ID       string           `json:"id"`
 	User     *User            `json:"user"`
@@ -297,6 +307,10 @@ const (
 	EventStickyNoteUpdated EventName = "sticky-note-updated"
 	EventStickyNoteDeleted EventName = "sticky-note-deleted"
 	EventStickyNotePushed  EventName = "sticky-note-pushed"
+	// Character Card Events
+	EventCharacterCardCreated EventName = "character-card-created"
+	EventCharacterCardUpdated EventName = "character-card-updated"
+	EventCharacterCardDeleted EventName = "character-card-deleted"
 )
 
 // MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
@@ -330,6 +344,7 @@ type Event struct {
 	AudioState     *AudioPlaybackStatePayload `json:"audioState,omitempty"`
 	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
 	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	CharacterCard  *CharacterCardEventPayload `json:"characterCard,omitempty"`
 	MessageContext *MessageContext            `json:"messageContext,omitempty"`
 }
 
@@ -481,4 +496,10 @@ type StickyNoteEventPayload struct {
 	Action        string        `json:"action,omitempty"` // create/update/delete/push
 	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
 	Layout        *StickyNoteLayout `json:"layout,omitempty"`
+}
+
+// CharacterCardEventPayload 角色卡事件载荷
+type CharacterCardEventPayload struct {
+	Card   *CharacterCard `json:"card,omitempty"`
+	Action string         `json:"action,omitempty"` // create/update/delete
 }

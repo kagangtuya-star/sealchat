@@ -39,6 +39,11 @@ type ChannelModel struct {
 	MembersCount int          `json:"membersCount" gorm:"-"`
 }
 
+type ChannelBackgroundUpdate struct {
+	BackgroundAttachmentId string `json:"backgroundAttachmentId"`
+	BackgroundSettings     string `json:"backgroundSettings"`
+}
+
 func (*ChannelModel) TableName() string {
 	return "channels"
 }
@@ -46,6 +51,14 @@ func (*ChannelModel) TableName() string {
 func (m *ChannelModel) UpdateRecentSent() {
 	m.RecentSentAt = time.Now().UnixMilli()
 	db.Model(m).Update("recent_sent_at", m.RecentSentAt)
+}
+
+// ChannelBackgroundEdit 仅更新频道背景相关字段
+func ChannelBackgroundEdit(channelId string, updates *ChannelBackgroundUpdate) error {
+	return db.Model(&ChannelModel{}).
+		Where("id = ?", channelId).
+		Select("background_attachment_id", "background_settings").
+		Updates(updates).Error
 }
 
 // ChannelInfoEdit 可修改内容: 名称，简介，公开或非公开，成员正在输入提示，优先级序号，背景图
