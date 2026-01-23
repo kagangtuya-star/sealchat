@@ -1,7 +1,7 @@
 import twemoji from '@twemoji/api';
 
 const CDN_BASE = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/';
-const LOCAL_BASE = '/twemoji/';
+const LOCAL_BASE = `${import.meta.env.BASE_URL}twemoji/`;
 
 let cdnAvailable: boolean | null = null;
 let cdnCheckPromise: Promise<boolean> | null = null;
