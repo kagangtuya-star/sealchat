@@ -42,6 +42,11 @@ type SatoriAttachmentResult struct {
 	Errors         []error  // Non-fatal errors encountered
 }
 
+const (
+	satoriAssetPrefix = "sealchat://asset/"
+	assetIDLength     = 64
+)
+
 // NormalizeSatoriContent processes Satori content, extracting Base64 images
 // and converting them to attachments. Returns normalized content with id:xxx references.
 func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachmentConfig) (*SatoriAttachmentResult, error) {
@@ -75,7 +80,7 @@ func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachm
 
 	// Traverse and process img elements
 	root.Traverse(func(el *protocol.Element) {
-		if el.Type != "img" {
+		if el.Type != "img" && el.Type != "file" {
 			return
 		}
 
@@ -95,6 +100,19 @@ func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachm
 			return
 		}
 
+		if strings.HasPrefix(src, satoriAssetPrefix) {
+			assetID := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(src, satoriAssetPrefix)))
+			if assetID == "" || !isHexString(assetID) {
+				result.SkippedCount++
+				return
+			}
+			el.Attrs["src"] = "id:" + assetID
+			result.AttachmentIDs = append(result.AttachmentIDs, assetID)
+			result.ProcessedCount++
+			modified = true
+			return
+		}
+
 		// Skip if already an id: reference or http(s): URL
 		if strings.HasPrefix(src, "id:") {
 			return
@@ -109,7 +127,8 @@ func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachm
 			return
 		}
 
-		attachmentID, err := processDataURLToAttachment(src, userID, channelID, cfg, appFs, tmpDir)
+		expectImage := el.Type == "img"
+		attachmentID, err := processDataURLToAttachment(src, userID, channelID, cfg, appFs, tmpDir, expectImage)
 		if err != nil {
 			result.Errors = append(result.Errors, err)
 			result.SkippedCount++
@@ -131,7 +150,7 @@ func NormalizeSatoriContent(content, userID, channelID string, cfg SatoriAttachm
 }
 
 // processDataURLToAttachment converts a data URL to an attachment
-func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAttachmentConfig, appFs afero.Fs, tmpDir string) (string, error) {
+func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAttachmentConfig, appFs afero.Fs, tmpDir string, expectImage bool) (string, error) {
 	// Parse data URL: data:[<mediatype>][;base64],<data>
 	parts := strings.SplitN(dataURL, ",", 2)
 	if len(parts) != 2 {
@@ -153,8 +172,10 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 
 	mimeType := strings.ToLower(meta[:semi])
 
-	// Validate supported image types
-	if !isSupportedImageMime(mimeType) {
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	if expectImage && !isSupportedImageMime(mimeType) {
 		return "", fmt.Errorf("unsupported image type: %s", mimeType)
 	}
 
@@ -178,8 +199,11 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 
 	// Verify actual content type from magic bytes
 	detectedMime := http.DetectContentType(decoded)
-	if !isSupportedImageMime(detectedMime) {
+	if expectImage && !isSupportedImageMime(detectedMime) {
 		return "", fmt.Errorf("detected mime type not supported: %s", detectedMime)
+	}
+	if !expectImage && (mimeType == "application/octet-stream" || mimeType == "") {
+		mimeType = strings.ToLower(detectedMime)
 	}
 
 	// Apply compression if enabled (matches normal upload flow)
@@ -187,7 +211,7 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 	var finalMime string
 	var isAnimated bool
 
-	if cfg.ImageCompress && shouldCompressImage(mimeType) {
+	if expectImage && cfg.ImageCompress && shouldCompressImage(mimeType) {
 		compressed, compMime, ok, animated, compErr := tryCompressImageData(decoded, mimeType, cfg.ImageCompressQuality)
 		if compErr != nil {
 			return "", fmt.Errorf("compression failed: %w", compErr)
@@ -212,6 +236,11 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 		return "", fmt.Errorf("hash calculation failed: %w", err)
 	}
 	size := int64(len(finalData))
+	if existing, err := model.AttachmentFindByHashAndSize(hash, size); err != nil {
+		return "", fmt.Errorf("attachment lookup failed: %w", err)
+	} else if existing != nil {
+		return existing.ID, nil
+	}
 
 	// Write to temp file
 	tempFile, err := afero.TempFile(appFs, tmpDir, "*.upload")
@@ -366,4 +395,17 @@ func generateFilename(hash []byte, size int64, mimeType string) string {
 		ext = ".webp"
 	}
 	return fmt.Sprintf("%s_%d%s", hexHash[:16], time.Now().UnixMilli(), ext)
+}
+
+func isHexString(value string) bool {
+	if len(value) != assetIDLength {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }

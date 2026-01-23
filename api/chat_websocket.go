@@ -638,6 +638,10 @@ func websocketWorks(app *fiber.App) {
 						apiWrap(ctx, msg, apiMessageTyping)
 						solved = true
 
+					case "asset.upload":
+						apiWrap(ctx, msg, apiAssetUpload)
+						solved = true
+
 					case "unread.count":
 						apiWrap(ctx, msg, apiUnreadCount)
 

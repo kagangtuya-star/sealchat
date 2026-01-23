@@ -47,7 +47,9 @@ func (*AttachmentModel) TableName() string {
 
 func AttachmentCreate(at *AttachmentModel) (tx *gorm.DB, item *AttachmentModel) {
 	db := GetDB()
-	at.ID = utils.NewID()
+	if at.ID == "" {
+		at.ID = utils.NewID()
+	}
 	if at.StorageType == "" {
 		at.StorageType = StorageLocal
 	}
