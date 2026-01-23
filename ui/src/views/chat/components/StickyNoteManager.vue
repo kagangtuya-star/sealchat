@@ -346,6 +346,29 @@ const pushPopupAnchor = ref<DOMRect | null>(null)
 const pushPopupRef = ref<HTMLElement | null>(null)
 const railPanelRef = ref<HTMLElement | null>(null)
 
+const noteTypePreloaders: Partial<Record<StickyNoteType, () => Promise<unknown>>> = {
+  counter: () => import('./sticky-notes/StickyNoteCounter.vue'),
+  list: () => import('./sticky-notes/StickyNoteList.vue'),
+  slider: () => import('./sticky-notes/StickyNoteSlider.vue'),
+  timer: () => import('./sticky-notes/StickyNoteTimer.vue'),
+  clock: () => import('./sticky-notes/StickyNoteClock.vue'),
+  roundCounter: () => import('./sticky-notes/StickyNoteRoundCounter.vue')
+}
+const noteTypePreloadCache: Partial<Record<StickyNoteType, Promise<unknown>>> = {}
+
+async function preloadNoteType(noteType?: StickyNoteType) {
+  if (!noteType) return
+  const loader = noteTypePreloaders[noteType]
+  if (!loader) return
+  if (!noteTypePreloadCache[noteType]) {
+    noteTypePreloadCache[noteType] = loader().catch((err) => {
+      delete noteTypePreloadCache[noteType]
+      console.warn('预加载便签组件失败', err)
+    })
+  }
+  await noteTypePreloadCache[noteType]
+}
+
 function setColorPickerRef(el: HTMLElement | null) {
   colorPickerRef.value = el
 }
@@ -690,8 +713,12 @@ function toggleRailPinned() {
 }
 
 // 监听WebSocket事件
-function handleEvent(event: any) {
+async function handleEvent(event: any) {
   if (event.type?.startsWith('sticky-note-')) {
+    if (event.type === 'sticky-note-pushed') {
+      const noteType = event.stickyNote?.note?.noteType as StickyNoteType | undefined
+      await preloadNoteType(noteType)
+    }
     stickyNoteStore.handleStickyNoteEvent(event)
   }
 }
