@@ -38,6 +38,34 @@ func UserEmojiAdd(c *fiber.Ctx) error {
 	})
 }
 
+func UserReactionEmojiAdd(c *fiber.Ctx) error {
+	ui := getCurUser(c)
+
+	var body struct {
+		AttachmentId string `json:"attachmentId"`
+		Remark       string `json:"remark"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求参数错误")
+	}
+	if strings.TrimSpace(body.AttachmentId) == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "附件ID不能为空")
+	}
+
+	remark := strings.TrimSpace(body.Remark)
+	if remark != "" && !service.GalleryValidateRemark(remark) {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, service.ErrGalleryRemarkInvalid.Error())
+	}
+
+	item, err := service.GalleryAddEmojiReaction(ui.ID, body.AttachmentId, remark)
+	if err != nil {
+		return wrapError(c, err, "添加表情反应失败")
+	}
+	return c.JSON(fiber.Map{
+		"item": item,
+	})
+}
+
 func UserEmojiDelete(c *fiber.Ctx) error {
 	ui := getCurUser(c)
 	var reqBody struct {

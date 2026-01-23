@@ -57,6 +57,7 @@ type MessageModel struct {
 	// WhisperTarget 为前端展示提供冗余
 	WhisperTarget *UserModel            `json:"whisper_target" gorm:"-"`
 	WhisperMeta   *protocol.WhisperMeta `json:"whisper_meta,omitempty" gorm:"-"`
+	Reactions     []MessageReactionListItem `json:"reactions,omitempty" gorm:"-"`
 }
 
 func (*MessageModel) TableName() string {

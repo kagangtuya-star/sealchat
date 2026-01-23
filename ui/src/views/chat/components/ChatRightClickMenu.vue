@@ -3,7 +3,7 @@ import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
 import { useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
-import { computed } from 'vue';
+import { computed, ref, defineAsyncComponent } from 'vue';
 import Element from '@satorijs/element'
 import { useDialog, useMessage, useThemeVars } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
@@ -13,6 +13,8 @@ import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { useDisplayStore } from '@/stores/display';
 import { generateMessageLink } from '@/utils/messageLink';
 import { copyTextWithFallback } from '@/utils/clipboard';
+const ReactionQuickPicker = defineAsyncComponent(() => import('./ReactionQuickPicker.vue'));
+const EmojiPickerModal = defineAsyncComponent(() => import('./EmojiPickerModal.vue'));
 
 const chat = useChatStore()
 const utils = useUtilsStore()
@@ -23,6 +25,8 @@ const display = useDisplayStore()
 const { t } = useI18n();
 const user = useUserStore()
 const gallery = useGalleryStore()
+
+const showEmojiPicker = ref(false);
 
 const contextMenuClass = computed(() => (display.palette === 'night' ? 'chat-menu--night' : 'chat-menu--day'))
 const contextMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
@@ -297,6 +301,39 @@ const clickReplyTo = () => {
   chat.setReplayTo(menuMessage.value.raw);
 }
 
+const handleQuickReaction = async (emoji: string) => {
+  const messageId = menuMessage.value.raw?.id;
+  if (!messageId) {
+    return;
+  }
+  chat.messageMenu.show = false;
+  try {
+    await chat.addReaction(messageId, emoji);
+  } catch (error) {
+    const errMsg = (error as Error)?.message || '添加反应失败';
+    message.error(errMsg);
+  }
+};
+
+const openFullEmojiPicker = () => {
+  chat.messageMenu.show = false;
+  showEmojiPicker.value = true;
+};
+
+const handleFullEmojiSelect = async (emoji: string) => {
+  const messageId = menuMessage.value.raw?.id;
+  if (!messageId) {
+    return;
+  }
+  showEmojiPicker.value = false;
+  try {
+    await chat.addReaction(messageId, emoji);
+  } catch (error) {
+    const errMsg = (error as Error)?.message || '添加反应失败';
+    message.error(errMsg);
+  }
+};
+
 const clickDelete = async () => {
   if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
     return;
@@ -492,6 +529,12 @@ const clickCopyMessageLink = async () => {
   <context-menu
     v-model:show="chat.messageMenu.show"
     :options="contextMenuOptions">
+    <div v-if="chat.messageMenu.show" class="reaction-picker-slot">
+      <ReactionQuickPicker
+        @select="handleQuickReaction"
+        @expand="openFullEmojiPicker"
+      />
+    </div>
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
     <context-menu-item label="复制消息链接" @click="clickCopyMessageLink" />
@@ -504,9 +547,19 @@ const clickCopyMessageLink = async () => {
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
   </context-menu>
+
+  <EmojiPickerModal
+    v-if="showEmojiPicker"
+    @select="handleFullEmojiSelect"
+    @close="showEmojiPicker = false"
+  />
 </template>
 
 <style scoped>
+.reaction-picker-slot {
+  padding: 6px 8px;
+}
+
 :deep(.context-menu.chat-menu--night) {
   background: rgba(15, 23, 42, 0.95);
   border-color: rgba(148, 163, 184, 0.35);
@@ -533,5 +586,17 @@ const clickCopyMessageLink = async () => {
 
 :deep(.context-menu.chat-menu--day .context-menu-item:hover) {
   background: rgba(15, 23, 42, 0.06);
+}
+
+:root[data-custom-theme='true'] :deep(.context-menu.chat-menu--night),
+:root[data-custom-theme='true'] :deep(.context-menu.chat-menu--day) {
+  background: var(--sc-bg-surface);
+  border-color: var(--sc-border-strong);
+  color: var(--sc-text-primary);
+}
+
+:root[data-custom-theme='true'] :deep(.context-menu.chat-menu--night .context-menu-item:hover),
+:root[data-custom-theme='true'] :deep(.context-menu.chat-menu--day .context-menu-item:hover) {
+  background: var(--sc-bg-layer);
 }
 </style>

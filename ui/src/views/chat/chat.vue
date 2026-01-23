@@ -3836,6 +3836,9 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
   }
+  if (Array.isArray((msg as any).reactions) && msg.id) {
+    chat.setMessageReactions(msg.id, (msg as any).reactions);
+  }
   return msg as Message;
 };
 

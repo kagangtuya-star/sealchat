@@ -11,6 +11,7 @@ import {
   updateItem as apiUpdateItem,
   uploadItems as apiUploadItems,
   addEmojiToFavorites as apiAddEmojiToFavorites,
+  addEmojiToReactions as apiAddEmojiToReactions,
   type GalleryCollectionPayload,
   type GalleryItemUploadPayload
 } from '@/models/gallery';
@@ -46,6 +47,7 @@ interface GalleryState {
   activeCollectionId: string | null;
   emojiCollectionIds: string[];
   favoritesCollectionId: string | null;
+  reactionCollectionId: string | null;
   emojiRemarkVisible: boolean;
   activeEmojiTabId: string | null;
 }
@@ -54,6 +56,7 @@ const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
 const DEFAULT_EMOJI_REMARK_VISIBLE = true;
 
 export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
+export const COLLECTION_TYPE_EMOJI_REACTION = 'emoji_reactions';
 
 interface EmojiPreferencePayload {
   emojiCollectionIds: string[];
@@ -105,6 +108,7 @@ export const useGalleryStore = defineStore('gallery', {
     activeCollectionId: null,
     emojiCollectionIds: [],
     favoritesCollectionId: null,
+    reactionCollectionId: null,
     emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE,
     activeEmojiTabId: null
   }),
@@ -144,6 +148,10 @@ export const useGalleryStore = defineStore('gallery', {
         addItems(id);
       }
       return Array.from(result.values());
+    },
+    reactionEmojiItems(state): GalleryItem[] {
+      if (!state.reactionCollectionId) return [];
+      return state.items[state.reactionCollectionId]?.items ?? [];
     },
     allEmojiCollectionIds(state): string[] {
       const ids: string[] = [];
@@ -229,6 +237,9 @@ export const useGalleryStore = defineStore('gallery', {
     },
 
     linkEmojiCollection(collectionId: string, userId: string, link: boolean) {
+      if (collectionId === this.reactionCollectionId) {
+        return;
+      }
       if (link) {
         if (!this.emojiCollectionIds.includes(collectionId)) {
           this.emojiCollectionIds.push(collectionId);
@@ -243,10 +254,19 @@ export const useGalleryStore = defineStore('gallery', {
     async ensureEmojiCollection(ownerId: string): Promise<string | null> {
       const collections = await this.loadCollections(ownerId, true);
       const existing = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
+      const reactionCollection = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI_REACTION);
 
       if (existing) {
         this.favoritesCollectionId = existing.id;
         await this.loadItems(existing.id);
+      }
+      if (reactionCollection) {
+        this.reactionCollectionId = reactionCollection.id;
+        await this.loadItems(reactionCollection.id);
+      }
+      if (this.reactionCollectionId && this.emojiCollectionIds.includes(this.reactionCollectionId)) {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== this.reactionCollectionId);
+        this.persistEmojiPreference(ownerId);
       }
 
       // Load linked collections in background
@@ -266,6 +286,17 @@ export const useGalleryStore = defineStore('gallery', {
       if (emojiCol) {
         this.favoritesCollectionId = emojiCol.id;
         this.upsertItems(emojiCol.id, [item]);
+      }
+    },
+
+    async addReactionEmoji(attachmentId: string, ownerId: string): Promise<void> {
+      const resp = await apiAddEmojiToReactions(attachmentId);
+      const item = resp.data.item;
+      const collections = await this.loadCollections(ownerId, true);
+      const reactionCol = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI_REACTION);
+      if (reactionCol) {
+        this.reactionCollectionId = reactionCol.id;
+        this.upsertItems(reactionCol.id, [item]);
       }
     },
 
@@ -329,6 +360,9 @@ export const useGalleryStore = defineStore('gallery', {
       }
       if (this.favoritesCollectionId === collectionId) {
         this.favoritesCollectionId = null;
+      }
+      if (this.reactionCollectionId === collectionId) {
+        this.reactionCollectionId = null;
       }
       this.persistEmojiPreference(ownerId);
     },

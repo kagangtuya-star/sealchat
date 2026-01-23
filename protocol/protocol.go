@@ -285,6 +285,7 @@ const (
 	EventMessageUnpinned        EventName = "message-unpinned"
 	EventMessageReordered       EventName = "message-reordered"
 	EventMessageRemoved         EventName = "message-removed"
+	EventMessageReaction        EventName = "message.reaction"
 	EventInteractionCommand     EventName = "interaction/command"
 	EventReactionAdded          EventName = "reaction-added"
 	EventReactionDeleted        EventName = "reaction-deleted"
@@ -322,6 +323,15 @@ type MessageContext struct {
 	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
 }
 
+type MessageReactionEvent struct {
+	MessageID string `json:"messageId"`
+	Emoji     string `json:"emoji"`
+	Count     int    `json:"count"`
+	Action    string `json:"action"` // "add" | "remove"
+	UserID    string `json:"userId"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 type Event struct {
 	ID             int64                      `json:"id"`
 	Type           EventName                  `json:"type"`
@@ -346,6 +356,7 @@ type Event struct {
 	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
 	CharacterCard  *CharacterCardEventPayload `json:"characterCard,omitempty"`
 	MessageContext *MessageContext            `json:"messageContext,omitempty"`
+	MessageReaction *MessageReactionEvent     `json:"messageReaction,omitempty"`
 }
 
 type TypingState string

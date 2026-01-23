@@ -142,6 +142,16 @@ body {
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
+/* Twemoji images */
+.twemoji-img,
+img.emoji {
+  height: 1.2em;
+  width: 1.2em;
+  margin: 0 0.05em 0 0.1em;
+  vertical-align: -0.15em;
+  display: inline-block;
+}
+
 /* Global minimal scrollbar */
 * {
   scrollbar-width: thin;

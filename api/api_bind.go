@@ -261,6 +261,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
 	v1Auth.Get("/user-lookup", UserLookup)
 	v1Auth.Post("/user-emoji-add", UserEmojiAdd)
+	v1Auth.Post("/user-reaction-emoji-add", UserReactionEmojiAdd)
 	v1Auth.Get("/user-emoji-list", UserEmojiList)
 	v1Auth.Post("/user-emoji-delete", UserEmojiDelete)
 	v1Auth.Patch("/user-emoji/:id", UserEmojiUpdate)
@@ -326,6 +327,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	diceMacros.Post("/import", ChannelDiceMacroImport)
 
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
+	v1Auth.Post("/messages/:messageId/reactions", MessageReactionAdd)
+	v1Auth.Delete("/messages/:messageId/reactions", MessageReactionRemove)
+	v1Auth.Get("/messages/:messageId/reactions", MessageReactionList)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 

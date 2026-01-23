@@ -26,6 +26,7 @@ import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLi
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { chatEvent } from '@/stores/chat'
 import CharacterCardBadge from './CharacterCardBadge.vue'
+import MessageReactions from './MessageReactions.vue'
 
 type EditingPreviewInfo = {
   userId: string;
@@ -1308,9 +1309,36 @@ const displayAvatar = computed(() => {
   return props.avatar;
 });
 
+const messageReactions = computed(() => {
+  if (!props.item?.id) {
+    return [];
+  }
+  return chat.getMessageReactions(props.item.id);
+});
+
+const handleReactionToggle = async (emoji: string) => {
+  if (!props.item?.id) return;
+  const reaction = messageReactions.value.find((item) => item.emoji === emoji);
+  if (reaction?.meReacted) {
+    await chat.removeReaction(props.item.id, emoji);
+  } else {
+    await chat.addReaction(props.item.id, emoji);
+  }
+};
+
 const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
 
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
+
+watch(
+  () => props.item?.id,
+  (messageId) => {
+    if (messageId) {
+      void chat.fetchMessageReactions(messageId);
+    }
+  },
+  { immediate: true }
+);
 
 </script>
 
@@ -1467,6 +1495,12 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
         </template>
         <div v-if="props.item?.failed" class="failed absolute bg-red-600 rounded-md px-2 text-white">!</div>
       </div>
+      <MessageReactions
+        v-if="props.item?.id"
+        :reactions="messageReactions"
+        :message-id="props.item.id"
+        @toggle="handleReactionToggle"
+      />
     </div>
   </div>
 </template>

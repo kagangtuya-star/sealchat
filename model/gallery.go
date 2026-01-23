@@ -17,6 +17,7 @@ const (
 
 const (
 	CollectionTypeEmojiFavorites = "emoji_favorites"
+	CollectionTypeEmojiReactions = "emoji_reactions"
 )
 
 type GalleryCollection struct {

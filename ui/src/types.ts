@@ -20,6 +20,7 @@ declare module '@satorijs/protocol' {
     isDeleted?: boolean;
     deletedAt?: number;
     deletedBy?: string;
+    reactions?: MessageReaction[];
   }
   interface Channel {
     defaultDiceExpr?: string;
@@ -48,6 +49,21 @@ export interface SatoriMessage {
   sender_role_id?: string;
   isWhisper?: boolean;
   whisperTo?: User | null;
+}
+
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  meReacted: boolean;
+}
+
+export interface MessageReactionEvent {
+  messageId: string;
+  emoji: string;
+  count: number;
+  action: 'add' | 'remove';
+  userId: string;
+  timestamp: number;
 }
 
 export interface LogUploadConfig {

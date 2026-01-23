@@ -114,6 +114,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&MessageArchiveLogModel{})
+	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
 	db.AutoMigrate(&MemberModel{})

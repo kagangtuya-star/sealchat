@@ -74,3 +74,7 @@ export function searchGallery(params: GallerySearchRequest) {
 export function addEmojiToFavorites(attachmentId: string, remark?: string) {
   return api.post<{ item: GalleryItem }>('api/v1/user-emoji-add', { attachmentId, remark });
 }
+
+export function addEmojiToReactions(attachmentId: string, remark?: string) {
+  return api.post<{ item: GalleryItem }>('api/v1/user-reaction-emoji-add', { attachmentId, remark });
+}

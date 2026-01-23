@@ -1439,6 +1439,27 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		}
 	}
 
+	if ctx.User != nil && len(items) > 0 {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			if item.ID != "" {
+				ids = append(ids, item.ID)
+			}
+		}
+		if len(ids) > 0 {
+			reactionMap, err := service.ListMessageReactionsForMessages(ids, ctx.User.ID)
+			if err != nil {
+				log.Printf("加载消息反应摘要失败: %v", err)
+			} else {
+				for _, item := range items {
+					if list, ok := reactionMap[item.ID]; ok {
+						item.Reactions = list
+					}
+				}
+			}
+		}
+	}
+
 	return &struct {
 		Data          []*model.MessageModel `json:"data"`
 		Next          string                `json:"next"`

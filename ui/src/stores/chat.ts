@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -125,6 +125,9 @@ interface ChatState {
     messageId: string;
     messageTime: number;
   } | null;
+  messageReactions: Record<string, MessageReaction[]>;
+  messageReactionLoaded: Record<string, boolean>;
+  messageReactionLoading: Record<string, boolean>;
 }
 
 interface ChannelCopyOptions {
@@ -222,7 +225,8 @@ type myEventName =
   | 'channel-member-settings-open'
   | 'bot-list-updated'
   | 'global-overlay-toggle'
-  | 'open-display-settings';
+  | 'open-display-settings'
+  | 'message.reaction';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -410,6 +414,9 @@ export const useChatStore = defineStore({
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
+    messageReactions: {},
+    messageReactionLoaded: {},
+    messageReactionLoading: {},
   }),
 
   getters: {
@@ -2252,6 +2259,146 @@ export const useChatStore = defineStore({
       return (resp as any).data?.message;
     },
 
+    getMessageReactions(messageId: string): MessageReaction[] {
+      return this.messageReactions[messageId] || [];
+    },
+
+    async fetchMessageReactions(messageId: string, options?: { force?: boolean }) {
+      if (!messageId) return [];
+      const force = options?.force === true;
+      if (!force && (this.messageReactionLoaded[messageId] || this.messageReactionLoading[messageId])) {
+        return this.messageReactions[messageId] || [];
+      }
+      this.messageReactionLoading[messageId] = true;
+      try {
+        const resp = await api.get(`api/v1/messages/${messageId}/reactions`);
+        const items = resp?.data?.items || [];
+        this.setMessageReactions(messageId, items);
+        return items;
+      } finally {
+        this.messageReactionLoading[messageId] = false;
+      }
+    },
+
+    setMessageReactions(messageId: string, items: MessageReaction[]) {
+      this.messageReactions[messageId] = Array.isArray(items) ? items : [];
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    async addReaction(messageId: string, emoji: string) {
+      const normalized = emoji?.trim();
+      if (!messageId || !normalized) return;
+      this.optimisticAddReaction(messageId, normalized);
+      try {
+        const resp = await api.post(`api/v1/messages/${messageId}/reactions`, { emoji: normalized });
+        this.updateReactionFromServer(messageId, resp?.data);
+      } catch (error) {
+        await this.fetchMessageReactions(messageId, { force: true });
+        throw error;
+      }
+    },
+
+    async removeReaction(messageId: string, emoji: string) {
+      const normalized = emoji?.trim();
+      if (!messageId || !normalized) return;
+      this.optimisticRemoveReaction(messageId, normalized);
+      try {
+        const resp = await api.delete(`api/v1/messages/${messageId}/reactions`, { data: { emoji: normalized } });
+        this.updateReactionFromServer(messageId, resp?.data);
+      } catch (error) {
+        await this.fetchMessageReactions(messageId, { force: true });
+        throw error;
+      }
+    },
+
+    optimisticAddReaction(messageId: string, emoji: string) {
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (idx >= 0) {
+        if (!reactions[idx].meReacted) {
+          reactions[idx] = { ...reactions[idx], count: reactions[idx].count + 1, meReacted: true };
+        }
+      } else {
+        reactions.push({ emoji, count: 1, meReacted: true });
+      }
+      this.messageReactions[messageId] = reactions;
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    optimisticRemoveReaction(messageId: string, emoji: string) {
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (idx >= 0 && reactions[idx].meReacted) {
+        const nextCount = reactions[idx].count - 1;
+        if (nextCount <= 0) {
+          reactions.splice(idx, 1);
+        } else {
+          reactions[idx] = { ...reactions[idx], count: nextCount, meReacted: false };
+        }
+        this.messageReactions[messageId] = reactions;
+      }
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    updateReactionFromServer(messageId: string, payload?: any) {
+      const emoji = String(payload?.emoji || '').trim();
+      if (!messageId || !emoji) return;
+      const count = typeof payload?.count === 'number' ? payload.count : 0;
+      const meReacted = !!payload?.meReacted;
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (count <= 0) {
+        if (idx >= 0) {
+          reactions.splice(idx, 1);
+        }
+      } else if (idx >= 0) {
+        reactions[idx] = { ...reactions[idx], count, meReacted };
+      } else {
+        reactions.push({ emoji, count, meReacted });
+      }
+      this.messageReactions[messageId] = reactions;
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    handleReactionEvent(event: MessageReactionEvent) {
+      if (!event?.messageId || !event?.emoji) {
+        return;
+      }
+      const reactions = [...(this.messageReactions[event.messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === event.emoji);
+      const user = useUserStore();
+      if (event.action === 'add') {
+        if (idx >= 0) {
+          reactions[idx] = {
+            ...reactions[idx],
+            count: event.count,
+            meReacted: event.userId === user.info.id ? true : reactions[idx].meReacted,
+          };
+        } else {
+          reactions.push({
+            emoji: event.emoji,
+            count: event.count,
+            meReacted: event.userId === user.info.id,
+          });
+        }
+      } else {
+        if (idx >= 0) {
+          const next = {
+            ...reactions[idx],
+            count: event.count,
+            meReacted: event.userId === user.info.id ? false : reactions[idx].meReacted,
+          };
+          if (event.count <= 0) {
+            reactions.splice(idx, 1);
+          } else {
+            reactions[idx] = next;
+          }
+        }
+      }
+      this.messageReactions[event.messageId] = reactions;
+      this.messageReactionLoaded[event.messageId] = true;
+    },
+
     async messageReorder(channel_id: string, payload: { messageId: string; beforeId?: string; afterId?: string; clientOpId?: string }) {
       const resp = await this.sendAPI('message.reorder', {
         channel_id,
@@ -3472,6 +3619,15 @@ chatEvent.on('message-created-notice', (data: any) => {
   if (chat.channelTree.find(c => c.id === chId) || chat.channelTreePrivate.find(c => c.id === chId)) {
     chat.unreadCountMap[chId] = (chat.unreadCountMap[chId] || 0) + 1;
   }
+});
+
+chatEvent.on('message.reaction', (event: any) => {
+  const chat = useChatStore();
+  const payload = event?.messageReaction || event?.reaction || event;
+  if (!payload) {
+    return;
+  }
+  chat.handleReactionEvent(payload as MessageReactionEvent);
 });
 
 chatEvent.on('channel-updated', (event) => {
