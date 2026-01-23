@@ -48,11 +48,14 @@ const isMobileUa = typeof navigator !== 'undefined'
 const DEFAULT_FETCH_LIMIT = 10;
 const PAGE_FETCH_LIMIT = 50;
 const SUMMARY_NAME_LIMIT = 3;
+const CACHE_IMMEDIATE_MS = 800;
+const REFRESH_DELAY_MS = 700;
 const LONG_PRESS_DELAY = isMobileUa ? 420 : 360;
 const longPressTimer = ref<number | null>(null);
 const suppressNextClick = ref(false);
 const suppressResetTimer = ref<number | null>(null);
 const hoverCloseTimer = ref<number | null>(null);
+const refreshTimer = ref<number | null>(null);
 const requestSeq = ref(0);
 const reactionUserCache = reactive<Record<string, { items: ReactionUserItem[]; total: number; ts: number; complete: boolean }>>({});
 
@@ -85,6 +88,31 @@ const fetchReactionUsersPage = async (emoji: string, limit: number, offset = 0) 
   return { items, total };
 };
 
+const mergeReactionUsers = (existing: ReactionUserItem[], incoming: ReactionUserItem[]) => {
+  if (existing.length === 0) {
+    return incoming;
+  }
+  const incomingMap = new Map<string, ReactionUserItem>();
+  incoming.forEach((item) => {
+    incomingMap.set(item.userId, item);
+  });
+  const merged: ReactionUserItem[] = [];
+  existing.forEach((item) => {
+    const next = incomingMap.get(item.userId);
+    if (next) {
+      merged.push({ ...item, ...next });
+      incomingMap.delete(item.userId);
+    }
+  });
+  incoming.forEach((item) => {
+    if (incomingMap.has(item.userId)) {
+      merged.push(item);
+      incomingMap.delete(item.userId);
+    }
+  });
+  return merged;
+};
+
 const applyCachedUsers = (cached: { items: ReactionUserItem[]; total: number; complete: boolean }, limit: number) => {
   popoverState.users = cached.items.slice(0, limit);
   popoverState.total = cached.total;
@@ -93,10 +121,16 @@ const applyCachedUsers = (cached: { items: ReactionUserItem[]; total: number; co
   popoverState.expanded = cached.complete && cached.items.length >= cached.total;
 };
 
-const fetchReactionUsers = async (emoji: string, limit = DEFAULT_FETCH_LIMIT) => {
+const fetchReactionUsers = async (emoji: string, limit = DEFAULT_FETCH_LIMIT, options?: { force?: boolean }) => {
   if (!props.messageId || !emoji) return;
+  const force = options?.force === true;
   const cached = reactionUserCache[emoji];
-  if (cached && Date.now() - cached.ts < 30000 && cached.items.length >= limit) {
+  const now = Date.now();
+  if (!force && cached && now - cached.ts < CACHE_IMMEDIATE_MS) {
+    applyCachedUsers(cached, limit);
+    return;
+  }
+  if (!force && cached && now - cached.ts < 30000 && cached.items.length >= limit) {
     applyCachedUsers(cached, limit);
     return;
   }
@@ -106,9 +140,11 @@ const fetchReactionUsers = async (emoji: string, limit = DEFAULT_FETCH_LIMIT) =>
   try {
     const { items, total } = await fetchReactionUsersPage(emoji, limit, 0);
     if (seq !== requestSeq.value) return;
-    popoverState.users = items;
+    const base = popoverState.show && popoverState.emoji === emoji ? popoverState.users : (reactionUserCache[emoji]?.items || []);
+    const merged = mergeReactionUsers(base, items);
+    popoverState.users = merged;
     popoverState.total = total;
-    reactionUserCache[emoji] = { items, total, ts: Date.now(), complete: items.length >= total };
+    reactionUserCache[emoji] = { items: merged, total, ts: Date.now(), complete: items.length >= total };
   } catch (error) {
     if (seq !== requestSeq.value) return;
     popoverState.users = [];
@@ -146,7 +182,7 @@ const getSelfReactionUser = (): ReactionUserItem | null => {
 const syncUserListForSelf = (list: ReactionUserItem[], target: ReactionUserItem, shouldHave: boolean) => {
   const next = list.filter((item) => item.userId !== target.userId);
   if (shouldHave) {
-    next.unshift(target);
+    next.push(target);
   }
   return next;
 };
@@ -245,6 +281,17 @@ const handleReactionClick = (emoji: string, count: number, event: MouseEvent) =>
     openPopover(emoji, nextCount, DEFAULT_FETCH_LIMIT);
   }
   emit('toggle', emoji);
+  if (!isMobileUa) {
+    if (refreshTimer.value !== null) {
+      clearTimeout(refreshTimer.value);
+    }
+    refreshTimer.value = window.setTimeout(() => {
+      if (popoverState.show && popoverState.emoji === emoji) {
+        void fetchReactionUsers(emoji, DEFAULT_FETCH_LIMIT, { force: true });
+      }
+      refreshTimer.value = null;
+    }, REFRESH_DELAY_MS);
+  }
 };
 
 const handleHoverOpen = (emoji: string, count: number) => {
@@ -335,7 +382,10 @@ const loadAllUsers = async () => {
     popoverState.users = allItems;
     popoverState.total = total;
     popoverState.expanded = true;
-    reactionUserCache[emoji] = { items: allItems, total, ts: Date.now(), complete: allItems.length >= total };
+    const base = reactionUserCache[emoji]?.items || popoverState.users;
+    const merged = mergeReactionUsers(base, allItems);
+    popoverState.users = merged;
+    reactionUserCache[emoji] = { items: merged, total, ts: Date.now(), complete: merged.length >= total };
   } catch (error) {
     if (seq !== requestSeq.value) return;
     popoverState.error = '加载失败';
@@ -352,6 +402,10 @@ onBeforeUnmount(() => {
   if (suppressResetTimer.value !== null) {
     clearTimeout(suppressResetTimer.value);
     suppressResetTimer.value = null;
+  }
+  if (refreshTimer.value !== null) {
+    clearTimeout(refreshTimer.value);
+    refreshTimer.value = null;
   }
 });
 
@@ -446,20 +500,6 @@ watch(reactionItems, (items) => {
           点击显示全部人
         </button>
         <div v-else-if="popoverState.allLoading" class="reaction-users-popover__status">加载全部中…</div>
-        <div v-if="popoverState.expanded" class="reaction-users-popover__list">
-          <div
-            v-for="user in popoverState.users"
-            :key="user.userId"
-            class="reaction-users-popover__item"
-          >
-            <span
-              class="reaction-users-popover__name"
-              :style="user.identityColor ? { color: user.identityColor } : undefined"
-            >
-              {{ user.displayName }}
-            </span>
-          </div>
-        </div>
       </div>
     </n-popover>
   </div>
@@ -623,28 +663,4 @@ watch(reactionItems, (items) => {
   text-decoration: underline;
 }
 
-.reaction-users-popover__list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: min(220px, 46vh);
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.reaction-users-popover__item {
-  padding: 2px 4px;
-  border-radius: 6px;
-}
-
-.reaction-users-popover__item:hover {
-  background: var(--sc-bg-hover, rgba(0, 0, 0, 0.04));
-}
-
-.reaction-users-popover__name {
-  font-size: 12px;
-  font-weight: 500;
-  color: inherit;
-  word-break: break-word;
-}
 </style>
