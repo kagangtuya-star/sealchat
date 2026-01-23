@@ -330,6 +330,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/messages/:messageId/reactions", MessageReactionAdd)
 	v1Auth.Delete("/messages/:messageId/reactions", MessageReactionRemove)
 	v1Auth.Get("/messages/:messageId/reactions", MessageReactionList)
+	v1Auth.Get("/messages/:messageId/reactions/users", MessageReactionUsers)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 

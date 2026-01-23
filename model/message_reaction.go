@@ -5,6 +5,7 @@ type MessageReactionModel struct {
 	MessageID string `json:"message_id" gorm:"size:100;uniqueIndex:idx_message_reaction_unique,priority:1"`
 	UserID    string `json:"user_id" gorm:"size:100;uniqueIndex:idx_message_reaction_unique,priority:2"`
 	Emoji     string `json:"emoji" gorm:"size:100;uniqueIndex:idx_message_reaction_unique,priority:3"`
+	IdentityID string `json:"identity_id" gorm:"size:100;index"`
 }
 
 func (*MessageReactionModel) TableName() string {

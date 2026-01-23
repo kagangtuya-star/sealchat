@@ -13,7 +13,8 @@ import (
 )
 
 type messageReactionRequest struct {
-	Emoji string `json:"emoji"`
+	Emoji      string `json:"emoji"`
+	IdentityID string `json:"identity_id"`
 }
 
 func MessageReactionAdd(c *fiber.Ctx) error {
@@ -39,7 +40,19 @@ func MessageReactionAdd(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "emoji 不能为空"})
 	}
 
-	summary, err := service.AddMessageReaction(msg.ID, user.ID, emoji)
+	identityID := strings.TrimSpace(req.IdentityID)
+	identity, err := service.ChannelIdentityValidateMessageIdentity(user.ID, channel.ID, identityID)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "身份校验失败"})
+	}
+	if identity == nil && identityID == "" {
+		identity, _ = service.EnsureHiddenDefaultIdentity(user.ID, channel.ID)
+	}
+	if identity != nil {
+		identityID = identity.ID
+	}
+
+	summary, err := service.AddMessageReaction(msg.ID, user.ID, emoji, identityID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
 	}
@@ -115,6 +128,38 @@ func MessageReactionList(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"items": items,
+	})
+}
+
+func MessageReactionUsers(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+
+	msg, channel, status, errMsg, err := resolveReactionMessage(user, c.Params("messageId"))
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
+	}
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": errMsg})
+	}
+
+	emoji := strings.TrimSpace(c.Query("emoji"))
+	if emoji == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "emoji 不能为空"})
+	}
+
+	limit := c.QueryInt("limit", 50)
+	offset := c.QueryInt("offset", 0)
+	items, total, err := service.ListMessageReactionUsers(msg.ID, channel.ID, emoji, limit, offset)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"items": items,
+		"total": total,
 	})
 }
 

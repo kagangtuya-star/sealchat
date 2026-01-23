@@ -2288,9 +2288,14 @@ export const useChatStore = defineStore({
     async addReaction(messageId: string, emoji: string) {
       const normalized = emoji?.trim();
       if (!messageId || !normalized) return;
+      const identityId = this.getActiveIdentityId(this.curChannel?.id);
+      const payload: Record<string, any> = { emoji: normalized };
+      if (identityId) {
+        payload.identity_id = identityId;
+      }
       this.optimisticAddReaction(messageId, normalized);
       try {
-        const resp = await api.post(`api/v1/messages/${messageId}/reactions`, { emoji: normalized });
+        const resp = await api.post(`api/v1/messages/${messageId}/reactions`, payload);
         this.updateReactionFromServer(messageId, resp?.data);
       } catch (error) {
         await this.fetchMessageReactions(messageId, { force: true });
@@ -2301,9 +2306,14 @@ export const useChatStore = defineStore({
     async removeReaction(messageId: string, emoji: string) {
       const normalized = emoji?.trim();
       if (!messageId || !normalized) return;
+      const identityId = this.getActiveIdentityId(this.curChannel?.id);
+      const payload: Record<string, any> = { emoji: normalized };
+      if (identityId) {
+        payload.identity_id = identityId;
+      }
       this.optimisticRemoveReaction(messageId, normalized);
       try {
-        const resp = await api.delete(`api/v1/messages/${messageId}/reactions`, { data: { emoji: normalized } });
+        const resp = await api.delete(`api/v1/messages/${messageId}/reactions`, { data: payload });
         this.updateReactionFromServer(messageId, resp?.data);
       } catch (error) {
         await this.fetchMessageReactions(messageId, { force: true });
