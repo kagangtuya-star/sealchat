@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, reactive } from 'vue';
 import type { MessageReaction } from '@/types';
 import { buildEmojiRenderInfo } from '@/utils/emojiRender';
+import { noteEmojiLoadFailure } from '@/utils/twemoji';
 
 const props = defineProps<{
   reactions: MessageReaction[];
@@ -12,6 +13,8 @@ const emit = defineEmits<{
   (e: 'toggle', emoji: string): void;
 }>();
 
+const textFallback = reactive<Record<string, boolean>>({});
+
 const reactionItems = computed(() =>
   props.reactions.map((item) => {
     const render = buildEmojiRenderInfo(item.emoji);
@@ -20,15 +23,17 @@ const reactionItems = computed(() =>
       url: render.src,
       fallbackUrl: render.fallback,
       isCustom: render.isCustom,
+      useText: render.asText || !!textFallback[item.emoji],
     };
   })
 );
 
 const handleImgError = (event: Event) => {
   const img = event.target as HTMLImageElement;
-  const fallback = img.dataset.fallback;
-  if (fallback && img.src !== fallback) {
-    img.src = fallback;
+  const emoji = img.dataset.emoji || img.alt || '';
+  noteEmojiLoadFailure(img.src, emoji);
+  if (emoji) {
+    textFallback[emoji] = true;
   }
 };
 </script>
@@ -43,9 +48,12 @@ const handleImgError = (event: Event) => {
       :title="reaction.emoji"
       @click="emit('toggle', reaction.emoji)"
     >
+      <span v-if="reaction.useText" class="message-reactions__emoji-text">{{ reaction.emoji }}</span>
       <img
+        v-else
         :src="reaction.url"
         :alt="reaction.emoji"
+        :data-emoji="reaction.emoji"
         :data-fallback="reaction.fallbackUrl"
         class="message-reactions__emoji"
         loading="lazy"
@@ -89,6 +97,16 @@ const handleImgError = (event: Event) => {
 .message-reactions__emoji {
   width: 16px;
   height: 16px;
+}
+
+.message-reactions__emoji-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .message-reactions__count {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
 import { Plus } from '@vicons/tabler';
 import { buildEmojiRenderInfo } from '@/utils/emojiRender';
+import { noteEmojiLoadFailure } from '@/utils/twemoji';
 import { addRecentEmoji, getQuickEmojis, loadRecentEmojis, subscribeRecentEmojis } from '@/utils/recentEmojis';
 
 const emit = defineEmits<{
@@ -10,6 +11,7 @@ const emit = defineEmits<{
 }>();
 
 const refreshTick = ref(0);
+const textFallback = reactive<Record<string, boolean>>({});
 
 const emojiItems = computed(() => {
   refreshTick.value;
@@ -20,6 +22,7 @@ const emojiItems = computed(() => {
       url: render.src,
       fallbackUrl: render.fallback,
       isCustom: render.isCustom,
+      useText: render.asText || !!textFallback[item.value],
     };
   });
 });
@@ -32,9 +35,10 @@ const handleSelect = (emoji: string) => {
 
 const handleImgError = (event: Event) => {
   const img = event.target as HTMLImageElement;
-  const fallback = img.dataset.fallback;
-  if (fallback && img.src !== fallback) {
-    img.src = fallback;
+  const emoji = img.dataset.emoji || img.alt || '';
+  noteEmojiLoadFailure(img.src, emoji);
+  if (emoji) {
+    textFallback[emoji] = true;
   }
 };
 
@@ -64,9 +68,12 @@ onBeforeUnmount(() => {
       :title="item.emoji"
       @click="handleSelect(item.emoji)"
     >
+      <span v-if="item.useText" class="reaction-quick-picker__emoji-text">{{ item.emoji }}</span>
       <img
+        v-else
         :src="item.url"
         :alt="item.emoji"
+        :data-emoji="item.emoji"
         :data-fallback="item.fallbackUrl"
         class="twemoji-img"
         @error="handleImgError"
@@ -109,6 +116,16 @@ onBeforeUnmount(() => {
 .reaction-quick-picker__item .twemoji-img {
   width: 22px;
   height: 22px;
+}
+
+.reaction-quick-picker__emoji-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .reaction-quick-picker__expand {
@@ -165,6 +182,12 @@ onBeforeUnmount(() => {
   .reaction-quick-picker__item .twemoji-img {
     width: 20px;
     height: 20px;
+  }
+
+  .reaction-quick-picker__emoji-text {
+    width: 20px;
+    height: 20px;
+    font-size: 18px;
   }
 }
 </style>

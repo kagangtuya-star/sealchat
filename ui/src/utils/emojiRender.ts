@@ -1,10 +1,11 @@
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import { getEmojiUrl, getFallbackUrl } from '@/utils/twemoji';
+import { getEmojiUrl, getFallbackUrl, shouldUseEmojiText } from '@/utils/twemoji';
 
 export type EmojiRenderInfo = {
   src: string;
   fallback?: string;
   isCustom: boolean;
+  asText?: boolean;
 };
 
 export const isCustomEmojiValue = (value: string): boolean => {
@@ -27,6 +28,14 @@ export const buildEmojiRenderInfo = (value: string): EmojiRenderInfo => {
     return {
       src: resolveAttachmentUrl(normalized),
       isCustom: true,
+    };
+  }
+  if (shouldUseEmojiText(normalized)) {
+    return {
+      src: '',
+      fallback: '',
+      isCustom: false,
+      asText: true,
     };
   }
   return {
