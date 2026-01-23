@@ -620,20 +620,20 @@ watch(reactionItems, (items) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border-radius: 6px;
   background: var(--sc-bg-hover, rgba(15, 23, 42, 0.06));
 }
 
 .reaction-users-popover__emoji-text {
-  font-size: 20px;
+  font-size: 36px;
   line-height: 1;
 }
 
 .reaction-users-popover__emoji-img {
-  width: 20px;
-  height: 20px;
+  width: 36px;
+  height: 36px;
 }
 
 .reaction-users-popover__text {
