@@ -14302,6 +14302,60 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
+/* Spoiler styles */
+:root {
+  --spoiler-bg: #cbd5e1;
+  --spoiler-stripe: rgba(100, 116, 139, 0.55);
+  --spoiler-border: rgba(15, 23, 42, 0.18);
+  --spoiler-reveal-bg: rgba(226, 232, 240, 0.85);
+}
+
+:root[data-display-palette='night'] {
+  --spoiler-bg: #3f3f46;
+  --spoiler-stripe: rgba(148, 163, 184, 0.35);
+  --spoiler-border: rgba(255, 255, 255, 0.18);
+  --spoiler-reveal-bg: rgba(71, 85, 105, 0.35);
+}
+
+:root[data-custom-theme='true'] {
+  --spoiler-bg: color-mix(in srgb, var(--sc-text-primary) 16%, transparent);
+  --spoiler-stripe: color-mix(in srgb, var(--sc-text-primary) 35%, transparent);
+  --spoiler-border: color-mix(in srgb, var(--sc-text-primary) 25%, transparent);
+  --spoiler-reveal-bg: color-mix(in srgb, var(--sc-text-primary) 12%, transparent);
+}
+
+.tiptap-spoiler {
+  display: inline-block;
+  padding: 0 0.2em;
+  border-radius: 0.2em;
+  border: 1px solid var(--spoiler-border);
+  color: transparent;
+  background-color: var(--spoiler-bg);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--spoiler-stripe) 0,
+    var(--spoiler-stripe) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.tiptap-spoiler.is-revealed {
+  color: inherit;
+  background-color: var(--spoiler-reveal-bg);
+  background-image: none;
+}
+
+.tiptap-editor .tiptap-spoiler,
+.keyword-rich-content .tiptap-spoiler,
+.sticky-note-editor__content .tiptap-spoiler {
+  color: inherit;
+  background-color: var(--spoiler-reveal-bg);
+  background-image: none;
+}
+
 /* @ mention option styles */
 .at-option-avatar {
   flex-shrink: 0;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick, shallowRef, computed } from 'vue';
 import type { Editor } from '@tiptap/vue-3';
+import { Spoiler } from '@/utils/tiptap-spoiler';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useMessage } from 'naive-ui';
 
@@ -104,6 +105,7 @@ const initEditor = async () => {
         Color,
         Underline,
         Highlight.configure({ multicolor: true }),
+        Spoiler,
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
         Link.configure({
           openOnClick: false,
@@ -249,6 +251,7 @@ const toggleBold = () => editor.value?.chain().focus().toggleBold().run();
 const toggleItalic = () => editor.value?.chain().focus().toggleItalic().run();
 const toggleUnderline = () => editor.value?.chain().focus().toggleUnderline().run();
 const toggleStrike = () => editor.value?.chain().focus().toggleStrike().run();
+const toggleSpoiler = () => editor.value?.chain().focus().toggleSpoiler().run();
 const toggleCode = () => editor.value?.chain().focus().toggleCode().run();
 const toggleCodeBlock = () => editor.value?.chain().focus().toggleCodeBlock().run();
 const toggleBulletList = () => editor.value?.chain().focus().toggleBulletList().run();
@@ -458,6 +461,15 @@ defineExpose({
             title="删除线"
           >
             <span class="line-through">S</span>
+          </n-button>
+          <n-button
+            size="tiny"
+            text
+            :type="isActive('spoiler') ? 'primary' : 'default'"
+            @click="toggleSpoiler"
+            title="隐藏/揭示"
+          >
+            <span class="font-semibold">SP</span>
           </n-button>
           <n-button
             size="tiny"

@@ -568,6 +568,16 @@ export function createKeywordTooltip(
     if (data.description) {
       const body = document.createElement('div')
       body.className = 'keyword-tooltip__body'
+      body.addEventListener('click', (event) => {
+        const target = event.target as HTMLElement | null
+        if (!target) return
+        if (target.closest('a')) return
+        const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null
+        if (!spoiler || !body.contains(spoiler)) return
+        event.preventDefault()
+        event.stopPropagation()
+        spoiler.classList.toggle('is-revealed')
+      })
 
       // 根据格式选择渲染方式
       const isRich = data.descriptionFormat === 'rich' && isTipTapJson(data.description)

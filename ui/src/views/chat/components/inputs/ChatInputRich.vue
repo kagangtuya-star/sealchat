@@ -2,6 +2,7 @@
 import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
+import { Spoiler } from '@/utils/tiptap-spoiler';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -188,6 +189,7 @@ const initEditor = async () => {
         Highlight.configure({
           multicolor: true,
         }),
+        Spoiler,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
         }),
@@ -397,6 +399,7 @@ const toggleBold = () => editor.value?.chain().focus().toggleBold().run();
 const toggleItalic = () => editor.value?.chain().focus().toggleItalic().run();
 const toggleUnderline = () => editor.value?.chain().focus().toggleUnderline().run();
 const toggleStrike = () => editor.value?.chain().focus().toggleStrike().run();
+const toggleSpoiler = () => editor.value?.chain().focus().toggleSpoiler().run();
 const toggleCode = () => editor.value?.chain().focus().toggleCode().run();
 const toggleCodeBlock = () => editor.value?.chain().focus().toggleCodeBlock().run();
 const toggleBulletList = () => editor.value?.chain().focus().toggleBulletList().run();
@@ -610,6 +613,15 @@ defineExpose({
             title="删除线"
           >
             <span class="line-through">S</span>
+          </n-button>
+          <n-button
+            size="small"
+            text
+            :type="isActive('spoiler') ? 'primary' : 'default'"
+            @click="toggleSpoiler"
+            title="隐藏/揭示"
+          >
+            <span class="font-semibold">SP</span>
           </n-button>
           <n-button
             size="small"
@@ -870,6 +882,15 @@ defineExpose({
               title="删除线"
             >
               <span class="line-through">S</span>
+            </n-button>
+            <n-button
+              size="tiny"
+              text
+              :type="isActive('spoiler') ? 'primary' : 'default'"
+              @click="toggleSpoiler"
+              title="隐藏/揭示"
+            >
+              <span class="font-semibold">SP</span>
             </n-button>
             <div class="tiptap-bubble-menu__divider"></div>
             <n-button

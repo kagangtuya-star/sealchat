@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue';
 import type { Editor } from '@tiptap/vue-3';
+import { Spoiler } from '@/utils/tiptap-spoiler';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useMessage } from 'naive-ui';
 
@@ -95,6 +96,7 @@ const initEditor = async () => {
         Highlight.configure({
           multicolor: true,
         }),
+        Spoiler,
         Link.configure({
           openOnClick: false,
           HTMLAttributes: {
@@ -271,6 +273,7 @@ const toggleBold = () => editor.value?.chain().focus().toggleBold().run();
 const toggleItalic = () => editor.value?.chain().focus().toggleItalic().run();
 const toggleUnderline = () => editor.value?.chain().focus().toggleUnderline().run();
 const toggleStrike = () => editor.value?.chain().focus().toggleStrike().run();
+const toggleSpoiler = () => editor.value?.chain().focus().toggleSpoiler().run();
 const toggleBulletList = () => editor.value?.chain().focus().toggleBulletList().run();
 const toggleOrderedList = () => editor.value?.chain().focus().toggleOrderedList().run();
 
@@ -374,6 +377,14 @@ defineExpose({
           title="删除线"
         >
           <s>S</s>
+        </button>
+        <button
+          class="sticky-note-editor__btn"
+          :class="{ 'is-active': isActive('spoiler') }"
+          @click="toggleSpoiler"
+          title="隐藏/揭示"
+        >
+          SP
         </button>
 
         <span class="sticky-note-editor__divider"></span>

@@ -277,6 +277,15 @@ const handleContentDblclick = async (event: MouseEvent) => {
   inlineImageViewer.view(imageIndex >= 0 ? imageIndex : 0);
 };
 
+const handleContentClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('a')) return;
+  const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null;
+  if (!spoiler) return;
+  spoiler.classList.toggle('is-revealed');
+};
+
 const props = defineProps({
   username: String,
   content: String,
@@ -1381,7 +1390,7 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick"
+      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick"
         :class="contentClassList">
         <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">

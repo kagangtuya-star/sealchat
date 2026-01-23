@@ -173,6 +173,7 @@
             v-else
             class="sticky-note__content"
             v-html="sanitizedContent"
+            @click="handleContentClick"
           ></div>
         </template>
         <!-- 其他类型使用动态组件 -->
@@ -417,6 +418,15 @@ const sanitizedContent = computed(() => {
   
   return processed
 })
+
+const handleContentClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('a')) return
+  const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null
+  if (!spoiler) return
+  spoiler.classList.toggle('is-revealed')
+}
 
 const noteStyle = computed(() => {
   const state = userState.value
