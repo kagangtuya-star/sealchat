@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 
 	"sealchat/model"
 	"sealchat/protocol"
@@ -21,6 +22,8 @@ func BindStickyNoteRoutes(group fiber.Router) {
 	group.Get("/channels/:channelId/sticky-notes", apiChannelStickyNoteList)
 	// 创建便签
 	group.Post("/channels/:channelId/sticky-notes", apiChannelStickyNoteCreate)
+	// 迁移/复制便签
+	group.Post("/channels/:channelId/sticky-notes/migrate", apiChannelStickyNoteMigrate)
 	// 获取单个便签
 	group.Get("/sticky-notes/:noteId", apiStickyNoteGet)
 	// 更新便签
@@ -62,6 +65,17 @@ func canManageStickyNote(userID, channelID, creatorID string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func ensureStickyNoteChannelMembership(userID, channelID string) error {
+	member, err := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false)
+	if err != nil {
+		return err
+	}
+	if member == nil {
+		return fmt.Errorf("仅频道成员可操作便签")
+	}
+	return nil
 }
 
 // apiChannelStickyNoteList 获取频道的所有便签
@@ -190,6 +204,210 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	})
 
 	return c.JSON(fiber.Map{"note": note.ToProtocolType()})
+}
+
+// apiChannelStickyNoteMigrate 迁移/复制便签到其他频道
+func apiChannelStickyNoteMigrate(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	if channelID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "缺少频道ID"})
+	}
+	if strings.Contains(channelID, ":") {
+		return c.Status(400).JSON(fiber.Map{"error": "暂不支持私聊频道"})
+	}
+
+	var req struct {
+		TargetChannelIds []string `json:"targetChannelIds"`
+		NoteIds          []string `json:"noteIds"`
+		Mode             string   `json:"mode"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+	}
+
+	if err := ensureStickyNoteChannelMembership(user.ID, channelID); err != nil {
+		return c.Status(403).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	sourceChannel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if sourceChannel == nil || sourceChannel.ID == "" {
+		return c.Status(404).JSON(fiber.Map{"error": "channel not found"})
+	}
+
+	targetSet := make(map[string]struct{})
+	targets := make([]string, 0, len(req.TargetChannelIds))
+	for _, raw := range req.TargetChannelIds {
+		targetID := strings.TrimSpace(raw)
+		if targetID == "" || targetID == channelID || strings.Contains(targetID, ":") {
+			continue
+		}
+		if _, ok := targetSet[targetID]; ok {
+			continue
+		}
+		targetSet[targetID] = struct{}{}
+		targets = append(targets, targetID)
+	}
+	if len(targets) == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "请至少选择一个目标频道"})
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "copy"
+	}
+	if mode != "copy" && mode != "move" {
+		return c.Status(400).JSON(fiber.Map{"error": "模式仅支持 copy 或 move"})
+	}
+	if mode == "move" && len(targets) != 1 {
+		return c.Status(400).JSON(fiber.Map{"error": "迁移仅支持一个目标频道"})
+	}
+
+	notes, err := model.StickyNoteListByChannel(channelID, false)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	selected := notes
+	if len(req.NoteIds) > 0 {
+		noteSet := make(map[string]struct{})
+		for _, raw := range req.NoteIds {
+			noteID := strings.TrimSpace(raw)
+			if noteID == "" {
+				continue
+			}
+			noteSet[noteID] = struct{}{}
+		}
+		filtered := make([]*model.StickyNoteModel, 0, len(noteSet))
+		for _, note := range notes {
+			if _, ok := noteSet[note.ID]; ok {
+				filtered = append(filtered, note)
+			}
+		}
+		selected = filtered
+	}
+	if len(selected) == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "未找到可迁移的便签"})
+	}
+
+	summary := make([]fiber.Map, 0, len(targets))
+	copiedByTarget := make(map[string][]*model.StickyNoteModel, len(targets))
+
+	for _, targetID := range targets {
+		targetChannel, err := model.ChannelGet(targetID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		if targetChannel == nil || targetChannel.ID == "" {
+			return c.Status(404).JSON(fiber.Map{"error": fmt.Sprintf("频道 %s 不存在", targetID)})
+		}
+		if targetChannel.WorldID != sourceChannel.WorldID {
+			return c.Status(400).JSON(fiber.Map{"error": "不允许跨世界迁移/复制"})
+		}
+		if err := ensureStickyNoteChannelMembership(user.ID, targetID); err != nil {
+			return c.Status(403).JSON(fiber.Map{"error": fmt.Sprintf("没有权限操作目标频道 %s", targetID)})
+		}
+
+		var cloned []*model.StickyNoteModel
+		copyErr := model.GetDB().Transaction(func(tx *gorm.DB) error {
+			noteMap := make(map[string]string, len(selected))
+			cloned = make([]*model.StickyNoteModel, 0, len(selected))
+			for _, note := range selected {
+				newID := utils.NewID()
+				clone := *note
+				clone.StringPKBaseModel = model.StringPKBaseModel{ID: newID}
+				clone.ChannelID = targetID
+				clone.WorldID = targetChannel.WorldID
+				clone.FolderID = ""
+				if err := tx.Create(&clone).Error; err != nil {
+					return err
+				}
+				noteMap[note.ID] = newID
+				copyNote := clone
+				cloned = append(cloned, &copyNote)
+			}
+
+			if len(noteMap) > 0 {
+				noteIDs := make([]string, 0, len(noteMap))
+				for id := range noteMap {
+					noteIDs = append(noteIDs, id)
+				}
+				var states []model.StickyNoteUserStateModel
+				if err := tx.Where("sticky_note_id IN ?", noteIDs).Find(&states).Error; err != nil {
+					return err
+				}
+				for _, state := range states {
+					newNoteID := noteMap[state.StickyNoteID]
+					if newNoteID == "" {
+						continue
+					}
+					cloneState := state
+					cloneState.StringPKBaseModel = model.StringPKBaseModel{ID: utils.NewID()}
+					cloneState.StickyNoteID = newNoteID
+					if err := tx.Create(&cloneState).Error; err != nil {
+						return err
+					}
+				}
+			}
+
+			if mode == "move" {
+				noteIDs := make([]string, 0, len(selected))
+				for _, note := range selected {
+					noteIDs = append(noteIDs, note.ID)
+				}
+				now := time.Now()
+				if err := tx.Model(&model.StickyNoteModel{}).
+					Where("id IN ? AND channel_id = ?", noteIDs, channelID).
+					Updates(map[string]interface{}{
+						"is_deleted": true,
+						"deleted_at": now,
+						"deleted_by": user.ID,
+					}).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if copyErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": copyErr.Error()})
+		}
+
+		copiedByTarget[targetID] = cloned
+		summary = append(summary, fiber.Map{
+			"channelId": targetID,
+			"count":     len(cloned),
+		})
+	}
+
+	for targetID, cloned := range copiedByTarget {
+		for _, note := range cloned {
+			note.LoadCreator()
+			BroadcastStickyNoteToChannel(targetID, protocol.EventStickyNoteCreated, &protocol.StickyNoteEventPayload{
+				Note:   note.ToProtocolType(),
+				Action: "create",
+			})
+		}
+	}
+
+	if mode == "move" {
+		for _, note := range selected {
+			BroadcastStickyNoteToChannel(channelID, protocol.EventStickyNoteDeleted, &protocol.StickyNoteEventPayload{
+				Note:   &protocol.StickyNote{ID: note.ID, ChannelID: channelID},
+				Action: "delete",
+			})
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"mode":    mode,
+		"targets": summary,
+	})
 }
 
 // apiStickyNoteGet 获取单个便签

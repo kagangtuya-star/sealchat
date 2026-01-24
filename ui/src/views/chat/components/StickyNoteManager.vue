@@ -99,6 +99,15 @@
                   <path d="M12 6V3L8 7l4 4V8c2.76 0 5 2.24 5 5 0 1.13-.38 2.18-1.02 3.03l1.46 1.46A6.966 6.966 0 0 0 19 13c0-3.87-3.13-7-7-7zM7.02 9.97 5.56 8.51A6.966 6.966 0 0 0 5 11c0 3.87 3.13 7 7 7v3l4-4-4-4v3c-2.76 0-5-2.24-5-5 0-1.13.38-2.18 1.02-3.03z"/>
                 </svg>
               </button>
+              <button
+                class="sticky-note-rail__action"
+                title="迁移/复制便签"
+                @click="openMigrationModal"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                </svg>
+              </button>
             </div>
 
             <!-- 新建文件夹输入 -->
@@ -303,6 +312,64 @@
         </div>
       </div>
     </template>
+    <n-modal
+      v-model:show="migrationModalVisible"
+      preset="dialog"
+      title="迁移/复制便签"
+      positive-text="执行"
+      negative-text="取消"
+      @positive-click="handleMigration"
+      @negative-click="closeMigrationModal"
+    >
+      <n-form label-placement="left" label-width="72">
+        <n-form-item label="目标频道" required>
+          <n-select
+            v-model:value="migrationTargets"
+            multiple
+            filterable
+            :options="migrationChannelOptions"
+            placeholder="选择目标频道"
+          />
+        </n-form-item>
+        <n-form-item label="模式" required>
+          <n-radio-group v-model:value="migrationMode">
+            <n-radio value="copy">复制</n-radio>
+            <n-radio value="move">迁移</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item label="便签">
+          <div class="sticky-note-migrate__selector">
+            <n-input
+              v-model:value="migrationNoteKeyword"
+              size="small"
+              clearable
+              placeholder="搜索便签"
+              class="sticky-note-migrate__search"
+            />
+            <div class="sticky-note-migrate__meta">
+              已选 {{ migrationSelectedCount }}/{{ migrationTotalCount }}
+            </div>
+            <div class="sticky-note-migrate__list">
+              <n-checkbox-group v-model:value="migrationNoteIds">
+                <div class="sticky-note-migrate__list-inner">
+                  <n-checkbox value="@all">全部</n-checkbox>
+                  <n-checkbox
+                    v-for="note in filteredMigrationNotes"
+                    :key="note.id"
+                    :value="note.id"
+                  >
+                    {{ note.title || '无标题便签' }}
+                  </n-checkbox>
+                  <div v-if="filteredMigrationNotes.length === 0" class="sticky-note-migrate__empty">
+                    无匹配便签
+                  </div>
+                </div>
+              </n-checkbox-group>
+            </div>
+          </div>
+        </n-form-item>
+      </n-form>
+    </n-modal>
   </div>
 </template>
 
@@ -313,6 +380,7 @@ import { chatEvent, useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import StickyNote from './StickyNote.vue'
 import StickyNoteTypeSelector from './sticky-notes/StickyNoteTypeSelector.vue'
+import { useMessage } from 'naive-ui'
 
 const props = defineProps<{
   channelId: string
@@ -321,6 +389,7 @@ const props = defineProps<{
 const stickyNoteStore = useStickyNoteStore()
 const chatStore = useChatStore()
 const userStore = useUserStore()
+const message = useMessage()
 
 const railOpen = ref(false)
 const railPinned = ref(false)
@@ -345,6 +414,11 @@ const pushPopupStyle = ref<Record<string, string>>({})
 const pushPopupAnchor = ref<DOMRect | null>(null)
 const pushPopupRef = ref<HTMLElement | null>(null)
 const railPanelRef = ref<HTMLElement | null>(null)
+const migrationModalVisible = ref(false)
+const migrationTargets = ref<string[]>([])
+const migrationMode = ref<'copy' | 'move'>('copy')
+const migrationNoteIds = ref<string[]>([])
+const migrationNoteKeyword = ref('')
 
 const noteTypePreloaders: Partial<Record<StickyNoteType, () => Promise<unknown>>> = {
   counter: () => import('./sticky-notes/StickyNoteCounter.vue'),
@@ -399,6 +473,93 @@ const minimizedNotes = computed(() => {
 // 未分类便签
 const uncategorizedNotes = computed(() => {
   return stickyNoteStore.noteList.filter(note => !note.folderId)
+})
+
+const filteredMigrationNotes = computed(() => {
+  const keyword = migrationNoteKeyword.value.trim().toLowerCase()
+  const sorted = [...stickyNoteStore.noteList].sort((a, b) => {
+    const aTime = typeof a.updatedAt === 'number' ? a.updatedAt : 0
+    const bTime = typeof b.updatedAt === 'number' ? b.updatedAt : 0
+    return bTime - aTime
+  })
+  if (!keyword) {
+    return sorted
+  }
+  return sorted.filter(note => {
+    const title = (note.title || '').toLowerCase()
+    const contentText = (note.contentText || '').toLowerCase()
+    return title.includes(keyword) || contentText.includes(keyword)
+  })
+})
+
+const filteredMigrationNoteIds = computed(() => filteredMigrationNotes.value.map(note => note.id))
+
+const migrationTotalCount = computed(() => stickyNoteStore.noteList.length)
+
+const migrationSelectedCount = computed(() => {
+  if (migrationNoteIds.value.includes('@all')) {
+    return migrationTotalCount.value
+  }
+  const set = new Set(migrationNoteIds.value.filter(id => id !== '@all'))
+  return set.size
+})
+
+const mergeAllSelection = () => {
+  const next = ['@all', ...filteredMigrationNoteIds.value]
+  if (next.length !== migrationNoteIds.value.length ||
+    next.some((value, index) => value !== migrationNoteIds.value[index])) {
+    migrationNoteIds.value = next
+  }
+}
+
+const buildSelectedSet = (values: string[]) => new Set(values.filter(id => id !== '@all'))
+
+watch(migrationNoteIds, (value, prev = []) => {
+  const hasAll = value.includes('@all')
+  const prevHasAll = prev.includes('@all')
+  if (hasAll && !prevHasAll) {
+    mergeAllSelection()
+    return
+  }
+  if (!hasAll && prevHasAll) {
+    if (value.length > 0) {
+      migrationNoteIds.value = []
+    }
+    return
+  }
+  if (hasAll && prevHasAll) {
+    const selectedSet = buildSelectedSet(value)
+    const allIds = filteredMigrationNoteIds.value
+    const isFull = selectedSet.size === allIds.length && allIds.every(id => selectedSet.has(id))
+    if (!isFull) {
+      migrationNoteIds.value = Array.from(selectedSet)
+    }
+  }
+})
+
+watch(filteredMigrationNoteIds, () => {
+  if (migrationNoteIds.value.includes('@all')) {
+    mergeAllSelection()
+  }
+})
+
+const migrationChannelOptions = computed(() => {
+  const tree = (chatStore.currentWorldId && chatStore.channelTreeByWorld?.[chatStore.currentWorldId]) || chatStore.channelTree || []
+  const result: Array<{ label: string; value: string }> = []
+  const walk = (nodes: any[], depth = 0) => {
+    nodes.forEach((node) => {
+      if (!node?.id || node.id === props.channelId) {
+        return
+      }
+      const indent = depth ? `${'· '.repeat(depth)}` : ''
+      result.push({ label: `${indent}${node.name || node.id}`, value: node.id })
+      if (node.children?.length) {
+        walk(node.children, depth + 1)
+      }
+    })
+  }
+  walk(tree)
+  return result
 })
 
 // 获取文件夹内的便签
@@ -679,6 +840,42 @@ function resetOpenNotes() {
   stickyNoteStore.resetAllOpenNotes({ persistRemote: false })
 }
 
+function openMigrationModal() {
+  migrationModalVisible.value = true
+}
+
+function closeMigrationModal() {
+  migrationModalVisible.value = false
+  migrationNoteKeyword.value = ''
+}
+
+async function handleMigration() {
+  if (migrationTargets.value.length === 0) {
+    message.warning('请选择目标频道')
+    return
+  }
+  if (migrationMode.value === 'move' && migrationTargets.value.length > 1) {
+    message.warning('迁移模式仅支持一个目标频道')
+    return
+  }
+  const selected = migrationNoteIds.value.filter(id => id !== '@all')
+  if (!selected.length) {
+    message.warning('请选择要迁移/复制的便签')
+    return
+  }
+  const ok = await stickyNoteStore.migrateNotes(migrationTargets.value, selected, migrationMode.value)
+  if (ok) {
+    message.success(migrationMode.value === 'move' ? '迁移成功' : '复制成功')
+    migrationModalVisible.value = false
+    migrationTargets.value = []
+    migrationNoteIds.value = []
+    migrationMode.value = 'copy'
+    migrationNoteKeyword.value = ''
+  } else {
+    message.error('操作失败')
+  }
+}
+
 // 恢复最小化的便签
 function restore(noteId: string) {
   stickyNoteStore.restoreNote(noteId)
@@ -873,6 +1070,59 @@ onUnmounted(() => {
 .sticky-note-rail__list {
   max-height: 360px;
   overflow-y: auto;
+}
+
+.sticky-note-migrate__selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sticky-note-migrate__search :deep(.n-input__input-el) {
+  font-size: 12px;
+}
+
+.sticky-note-migrate__meta {
+  font-size: 12px;
+  color: var(--sc-text-secondary, #64748b);
+  text-align: right;
+}
+
+.sticky-note-migrate__list {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.12));
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--sc-bg-elevated, #ffffff);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.8) transparent;
+}
+
+.sticky-note-migrate__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sticky-note-migrate__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sticky-note-migrate__list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.8);
+  border-radius: 999px;
+}
+
+.sticky-note-migrate__list-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sticky-note-migrate__empty {
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--sc-text-secondary, #64748b);
 }
 
 .sticky-note-rail__item {

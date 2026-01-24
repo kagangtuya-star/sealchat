@@ -563,6 +563,28 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
     }
 
+    // 迁移/复制便签
+    async function migrateNotes(targetIds: string[], noteIds: string[], mode: 'copy' | 'move') {
+        const channelId = currentChannelId.value
+        if (!channelId) {
+            throw new Error('未选择频道')
+        }
+        if (!targetIds.length) {
+            throw new Error('请选择目标频道')
+        }
+        try {
+            await api.post(`api/v1/channels/${channelId}/sticky-notes/migrate`, {
+                targetChannelIds: targetIds,
+                noteIds,
+                mode
+            })
+            return true
+        } catch (err) {
+            console.error('迁移/复制便签失败:', err)
+            return false
+        }
+    }
+
     // 打开便签
     function openNote(noteId: string, options?: { persistRemote?: boolean; state?: Partial<StickyNoteUserState> }) {
         if (!activeNoteIds.value.includes(noteId)) {
@@ -897,6 +919,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         deleteNote,
         updateUserState,
         pushNote,
+        migrateNotes,
         openNote,
         closeNote,
         bringToFront,
