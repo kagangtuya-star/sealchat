@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import type { MessageReaction } from '@/types';
 import { buildEmojiRenderInfo } from '@/utils/emojiRender';
 import { noteEmojiLoadFailure } from '@/utils/twemoji';
@@ -69,6 +69,22 @@ const popoverState = reactive({
   expanded: false,
   error: '',
 });
+
+const reactionFollowerClass = 'reaction-users-follower';
+
+const markReactionFollower = (enabled: boolean) => {
+  if (typeof document === 'undefined') return;
+  const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
+  followers.forEach((el) => {
+    if (!el) return;
+    if (!el.querySelector('.reaction-users-popover')) return;
+    if (enabled) {
+      el.classList.add(reactionFollowerClass);
+    } else {
+      el.classList.remove(reactionFollowerClass);
+    }
+  });
+};
 
 const handleImgError = (event: Event) => {
   const img = event.target as HTMLImageElement;
@@ -428,6 +444,19 @@ watch(reactionItems, (items) => {
     }
   }
 }, { deep: true });
+
+watch([() => popoverState.show, () => popoverState.emoji], async ([show]) => {
+  if (!show) {
+    markReactionFollower(false);
+    return;
+  }
+  await nextTick();
+  markReactionFollower(true);
+});
+
+onBeforeUnmount(() => {
+  markReactionFollower(false);
+});
 </script>
 
 <template>
@@ -436,7 +465,7 @@ watch(reactionItems, (items) => {
       v-for="reaction in reactionItems"
       :key="reaction.emoji"
       trigger="manual"
-      placement="top"
+      :placement="isMobileUa ? 'top-start' : 'top'"
       content-class="reaction-users-popover"
       :show="popoverState.show && popoverState.emoji === reaction.emoji"
       @clickoutside="closePopover"
@@ -519,7 +548,7 @@ watch(reactionItems, (items) => {
   gap: 4px;
   padding: 2px 8px;
   border: 1px solid var(--chat-border-mute);
-  border-radius: 12px;
+  border-radius: 20px;
   background: var(--sc-bg-elevated, rgba(0, 0, 0, 0.03));
   cursor: pointer;
   font-size: 14px;
@@ -586,14 +615,31 @@ watch(reactionItems, (items) => {
   background: color-mix(in srgb, var(--primary-color, #3b82f6) 20%, transparent);
 }
 
-:global(.reaction-users-popover) {
+:global(.reaction-users-popover),
+:global(.v-binder-follower-content.reaction-users-popover) {
   width: min(320px, 86vw);
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 20px;
   border: 1px solid var(--chat-border-mute, rgba(15, 23, 42, 0.08));
   background: var(--sc-bg-elevated, #fff);
   color: var(--chat-text-primary, #1f2937);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  box-sizing: border-box;
+}
+
+:global(.reaction-users-follower) {
+  border-radius: 20px;
+  --n-border-radius: 20px;
+  background: transparent !important;
+}
+
+:global(.reaction-users-follower .n-popover) {
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+:global(.reaction-users-follower .n-popover__content) {
+  border-radius: 20px;
 }
 
 :global([data-display-palette='night']) .reaction-users-popover {
@@ -601,6 +647,51 @@ watch(reactionItems, (items) => {
   border-color: rgba(148, 163, 184, 0.35);
   color: #e2e8f0;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 640px) {
+  :global(.reaction-users-popover),
+  :global(.v-binder-follower-content.reaction-users-popover) {
+    width: min(260px, calc(100vw - 24px));
+    padding: 8px 10px;
+    border-radius: 18px;
+  }
+
+  :global(.reaction-users-follower) {
+    border-radius: 18px;
+    --n-border-radius: 18px;
+    background: transparent !important;
+  }
+
+  :global(.reaction-users-follower .n-popover) {
+    border-radius: 18px;
+  }
+
+  :global(.reaction-users-follower .n-popover__content) {
+    border-radius: 18px;
+  }
+
+  .reaction-users-popover__summary {
+    gap: 6px;
+  }
+
+  .reaction-users-popover__emoji {
+    width: 30px;
+    height: 30px;
+  }
+
+  .reaction-users-popover__emoji-text {
+    font-size: 30px;
+  }
+
+  .reaction-users-popover__emoji-img {
+    width: 30px;
+    height: 30px;
+  }
+
+  .reaction-users-popover__text {
+    font-size: 12px;
+  }
 }
 
 .reaction-users-popover__panel {
