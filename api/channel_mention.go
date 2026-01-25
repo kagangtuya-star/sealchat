@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -333,6 +334,8 @@ func ChannelMentionableMembersAll(c *fiber.Ctx) error {
 	// 检查是否可以 @all（管理员权限）
 	canAtAll := pm.CanWithChannelRole(user.ID, channelID, pm.PermFuncChannelManageInfo)
 
+	sortMentionableItems(items)
+
 	return c.JSON(fiber.Map{
 		"items":    items,
 		"total":    len(items),
@@ -360,6 +363,49 @@ func getOnlineUserIDsInChannel(channelID string) map[string]bool {
 	})
 
 	return result
+}
+
+func sortMentionableItems(items []MentionableMemberItem) {
+	if len(items) <= 1 {
+		return
+	}
+	userHasIC := make(map[string]bool)
+	for _, item := range items {
+		if item.UserID == "" {
+			continue
+		}
+		if item.IdentityType == "ic" {
+			userHasIC[item.UserID] = true
+		} else if _, ok := userHasIC[item.UserID]; !ok {
+			userHasIC[item.UserID] = false
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		leftIC := userHasIC[left.UserID]
+		rightIC := userHasIC[right.UserID]
+		if leftIC != rightIC {
+			return leftIC
+		}
+		leftWeight := mentionIdentityTypeWeight(left.IdentityType)
+		rightWeight := mentionIdentityTypeWeight(right.IdentityType)
+		if leftWeight != rightWeight {
+			return leftWeight < rightWeight
+		}
+		return strings.ToLower(left.DisplayName) < strings.ToLower(right.DisplayName)
+	})
+}
+
+func mentionIdentityTypeWeight(identityType string) int {
+	switch identityType {
+	case "ic":
+		return 0
+	case "ooc":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func isExcludedMentionRoleID(roleID string) bool {

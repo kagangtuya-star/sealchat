@@ -6449,6 +6449,8 @@ const whisperSearchInputRef = ref<any>(null);
 const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
 const whisperMentionableCandidates = ref<WhisperCandidate[]>([]);
 
+type WhisperIdentityType = 'ic' | 'ooc' | 'user';
+
 interface WhisperCandidate {
   raw: any;
   id: string;
@@ -6456,26 +6458,102 @@ interface WhisperCandidate {
   displayName: string;
   secondaryName: string;
   color: string;
+  identityTypes: WhisperIdentityType[];
 }
 
-const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string }>) => {
-  const deduped = new Map<string, WhisperCandidate>();
+const whisperIdentityTypeOrder: Record<WhisperIdentityType, number> = {
+  ic: 0,
+  ooc: 1,
+  user: 2,
+};
+
+const normalizeWhisperIdentityType = (value?: string): WhisperIdentityType => {
+  if (value === 'ic' || value === 'ooc') {
+    return value;
+  }
+  return 'user';
+};
+
+const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
+  switch (type) {
+    case 'ic':
+      return '场内';
+    case 'ooc':
+      return '场外';
+    default:
+      return '用户';
+  }
+};
+
+const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string; identityType?: string }>) => {
+  const deduped = new Map<string, { candidate: WhisperCandidate; primaryWeight: number; types: Set<WhisperIdentityType> }>();
   for (const item of items) {
     const userId = String(item?.userId || '').trim();
-    if (!userId || userId === user.info.id || deduped.has(userId)) {
+    if (!userId || userId === user.info.id) {
       continue;
     }
+    const identityType = normalizeWhisperIdentityType(item?.identityType);
     const displayName = item?.displayName || '未知成员';
-    deduped.set(userId, {
-      raw: item,
-      id: userId,
-      avatar: item?.avatar || '',
-      displayName,
-      secondaryName: '',
-      color: normalizeHexColor(item?.color || '') || '',
-    });
+    const avatar = item?.avatar || '';
+    const color = normalizeHexColor(item?.color || '') || '';
+    const weight = whisperIdentityTypeOrder[identityType];
+
+    const existing = deduped.get(userId);
+    if (!existing) {
+      deduped.set(userId, {
+        primaryWeight: weight,
+        types: new Set<WhisperIdentityType>([identityType]),
+        candidate: {
+          raw: {
+            id: userId,
+            name: displayName,
+            nick: displayName,
+            avatar,
+            color,
+          },
+          id: userId,
+          avatar,
+          displayName,
+          secondaryName: '',
+          color,
+          identityTypes: [identityType],
+        },
+      });
+      continue;
+    }
+
+    existing.types.add(identityType);
+    if (weight < existing.primaryWeight) {
+      existing.primaryWeight = weight;
+      existing.candidate.avatar = avatar;
+      existing.candidate.displayName = displayName;
+      existing.candidate.color = color;
+      existing.candidate.raw = {
+        id: userId,
+        name: displayName,
+        nick: displayName,
+        avatar,
+        color,
+      };
+    }
   }
-  return Array.from(deduped.values());
+
+  const candidates = Array.from(deduped.values()).map((entry) => {
+    const types = Array.from(entry.types).sort((a, b) => whisperIdentityTypeOrder[a] - whisperIdentityTypeOrder[b]);
+    entry.candidate.identityTypes = types;
+    return entry.candidate;
+  });
+
+  candidates.sort((a, b) => {
+    const aHasIc = a.identityTypes.includes('ic');
+    const bHasIc = b.identityTypes.includes('ic');
+    if (aHasIc !== bHasIc) {
+      return aHasIc ? -1 : 1;
+    }
+    return a.displayName.localeCompare(b.displayName);
+  });
+
+  return candidates;
 };
 
 const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
@@ -6881,19 +6959,15 @@ const loadWhisperCandidateColors = async () => {
   try {
     const resp = await chat.fetchMentionableMembers(channelId);
     const items = resp?.items || [];
+    const candidates = buildWhisperCandidates(items);
     const nextMap = new Map<string, string>();
-    for (const item of items) {
-      const userId = item?.userId;
-      if (!userId || nextMap.has(String(userId))) {
-        continue;
-      }
-      const color = normalizeHexColor(item?.color || '') || '';
-      if (color) {
-        nextMap.set(String(userId), color);
+    for (const candidate of candidates) {
+      if (candidate.color) {
+        nextMap.set(candidate.id, candidate.color);
       }
     }
     whisperCandidateColorMap.value = nextMap;
-    whisperMentionableCandidates.value = buildWhisperCandidates(items);
+    whisperMentionableCandidates.value = candidates;
   } catch (error) {
     console.warn('获取悄悄话候选成员颜色失败', error);
     whisperMentionableCandidates.value = [];
@@ -10046,7 +10120,19 @@ onBeforeUnmount(() => {
                 @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
                 <div class="whisper-panel__meta">
-                  <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
+                  <div class="whisper-panel__name-row">
+                    <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
+                    <div v-if="candidate.identityTypes.length" class="whisper-panel__tags">
+                      <span
+                        v-for="type in candidate.identityTypes"
+                        :key="type"
+                        class="whisper-panel__tag"
+                        :class="`whisper-panel__tag--${type}`"
+                      >
+                        {{ whisperIdentityTypeLabel(type) }}
+                      </span>
+                    </div>
+                  </div>
                   <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
                 </div>
                 <n-checkbox
@@ -13437,10 +13523,51 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.whisper-panel__name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .whisper-panel__name {
+  flex: 1;
+  min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
   color: #4338ca;
+}
+
+.whisper-panel__tags {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.whisper-panel__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.35rem;
+  border-radius: 0.35rem;
+  font-size: 0.65rem;
+  line-height: 1.4;
+  background: rgba(67, 56, 202, 0.12);
+  color: #4338ca;
+}
+
+.whisper-panel__tag--ic {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.whisper-panel__tag--ooc {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}
+
+.whisper-panel__tag--user {
+  background: rgba(107, 114, 128, 0.16);
+  color: #4b5563;
 }
 
 .whisper-panel__sub {
