@@ -2934,7 +2934,7 @@ export const useChatStore = defineStore({
         }>;
         total: number;
         canAtAll: boolean;
-      }>(`api/v1/channels/${channelId}/mentionable-members`, {
+      }>(`api/v1/channels/${channelId}/mentionable-members-all`, {
         params: icMode ? { icMode } : undefined,
       });
       return resp.data;

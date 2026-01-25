@@ -6447,6 +6447,7 @@ const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
 const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
+const whisperMentionableCandidates = ref<WhisperCandidate[]>([]);
 
 interface WhisperCandidate {
   raw: any;
@@ -6457,26 +6458,24 @@ interface WhisperCandidate {
   color: string;
 }
 
-const candidateDisplayName = (candidate: any) => candidate?.nick || candidate?.name || candidate?.username || '未知成员';
-const candidateSecondaryName = (candidate: any) => {
-  const primary = candidateDisplayName(candidate);
-  const backup = candidate?.username || candidate?.name || '';
-  if (backup && backup !== primary) {
-    return backup;
-  }
-  return '';
-};
-
-const resolveWhisperCandidateColor = (candidate: any) => {
-  const id = candidate?.id;
-  if (id) {
-    const mapped = whisperCandidateColorMap.value.get(String(id));
-    if (mapped) {
-      return mapped;
+const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string }>) => {
+  const deduped = new Map<string, WhisperCandidate>();
+  for (const item of items) {
+    const userId = String(item?.userId || '').trim();
+    if (!userId || userId === user.info.id || deduped.has(userId)) {
+      continue;
     }
+    const displayName = item?.displayName || '未知成员';
+    deduped.set(userId, {
+      raw: item,
+      id: userId,
+      avatar: item?.avatar || '',
+      displayName,
+      secondaryName: '',
+      color: normalizeHexColor(item?.color || '') || '',
+    });
   }
-  const fallback = candidate?.nick_color || candidate?.nickColor || candidate?.color || '';
-  return normalizeHexColor(fallback) || '';
+  return Array.from(deduped.values());
 };
 
 const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
@@ -6496,17 +6495,7 @@ const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color
   return color ? { color } : undefined;
 };
 
-const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
-  .filter((i: any) => i?.id && i.id !== user.info.id)
-  .map((candidate: any) => ({
-    raw: candidate,
-    id: candidate.id,
-    avatar: candidate.avatar || '',
-    displayName: candidateDisplayName(candidate),
-    secondaryName: candidateSecondaryName(candidate),
-    color: resolveWhisperCandidateColor(candidate),
-  }))
-);
+const whisperCandidates = computed<WhisperCandidate[]>(() => whisperMentionableCandidates.value);
 
 const filteredWhisperCandidates = computed(() => {
   const keyword = whisperQuery.value.trim().toLowerCase();
@@ -6523,7 +6512,10 @@ const filteredWhisperCandidates = computed(() => {
   });
 });
 
-const canOpenWhisperPanel = computed(() => whisperCandidates.value.length > 0);
+const canOpenWhisperPanel = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  return Boolean(channelId) && channelId.length < 30;
+});
 const whisperTargets = computed(() => chat.whisperTargets);
 const isWhisperTarget = (u: { id?: string } | null | undefined) => (
   Boolean(u?.id) && whisperTargets.value.some((item) => item.id === u?.id)
@@ -6883,6 +6875,7 @@ const loadWhisperCandidateColors = async () => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId || channelId.length >= 30) {
     whisperCandidateColorMap.value = new Map();
+    whisperMentionableCandidates.value = [];
     return;
   }
   try {
@@ -6900,8 +6893,10 @@ const loadWhisperCandidateColors = async () => {
       }
     }
     whisperCandidateColorMap.value = nextMap;
+    whisperMentionableCandidates.value = buildWhisperCandidates(items);
   } catch (error) {
     console.warn('获取悄悄话候选成员颜色失败', error);
+    whisperMentionableCandidates.value = [];
   }
 };
 
@@ -7753,6 +7748,7 @@ watch(
       return;
     }
     whisperCandidateColorMap.value = new Map();
+    whisperMentionableCandidates.value = [];
     if (whisperPanelVisible.value) {
       void loadWhisperCandidateColors();
     }

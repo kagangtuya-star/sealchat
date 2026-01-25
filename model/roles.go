@@ -314,6 +314,16 @@ func UserRoleMappingListByChannelID(chId string, page, pageSize int) ([]*UserRol
 	})
 }
 
+// UserRoleMappingListByChannelIDAll 获取频道内所有用户-角色关联
+func UserRoleMappingListByChannelIDAll(chId string) ([]*UserRoleMappingModel, error) {
+	var items []*UserRoleMappingModel
+	err := db.Model(&UserRoleMappingModel{}).
+		Where("role_type = ?", "channel").
+		Where("role_id LIKE ?", "ch-"+chId+"-%").
+		Find(&items).Error
+	return items, err
+}
+
 // UserRoleMappingUserIdListByRoleId 获取用户-角色关联列表
 func UserRoleMappingUserIdListByRoleId(roleId string) ([]string, error) {
 	var ids []string

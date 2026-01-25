@@ -333,6 +333,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/messages/:messageId/reactions/users", MessageReactionUsers)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
+	v1Auth.Get("/channels/:channelId/mentionable-members-all", ChannelMentionableMembersAll)
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
