@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { NBadge, NButton, NIcon, NInput, NRadioButton, NRadioGroup, NSelect } from 'naive-ui';
+import { NBadge, NButton, NIcon, NInput, NRadioButton, NRadioGroup } from 'naive-ui';
 import { ArrowsLeftRight } from '@vicons/tabler';
+import { matchText } from '@/utils/pinyinMatch';
 
 export type PaneId = 'A' | 'B';
 type PaneMode = 'chat' | 'web';
@@ -71,11 +72,11 @@ const clearWebUrl = () => {
 };
 
 const filteredTree = computed(() => {
-  const keyword = channelFilter.value.trim().toLowerCase();
+  const keyword = channelFilter.value.trim();
   if (!keyword) return props.channelTree;
 
   const filterNode = (node: SplitChannelNode): SplitChannelNode | null => {
-    const selfMatch = (node.name || '').toLowerCase().includes(keyword);
+    const selfMatch = matchText(keyword, node.name || '');
     const children = Array.isArray(node.children) ? node.children : [];
     const nextChildren = children.map(filterNode).filter(Boolean) as SplitChannelNode[];
     if (selfMatch || nextChildren.length > 0) {

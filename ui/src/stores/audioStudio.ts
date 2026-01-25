@@ -6,6 +6,7 @@ import { useUserStore } from './user';
 import { useUtilsStore } from './utils';
 import { useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
+import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import type {
   AudioAsset,
   AudioAssetMutationPayload,
@@ -1615,13 +1616,28 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.filteredAssets = this.assets;
         return;
       }
-      const lower = keyword.toLowerCase();
+      const normalizedKeyword = keyword.trim();
+      const loadPromise = ensurePinyinLoaded();
       const lookup = this.folderPathLookup;
-      this.filteredAssets = this.assets.filter((asset) => {
-        const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
-        const description = asset.description ?? '';
-        const joined = `${asset.name} ${asset.tags.join(' ')} ${asset.createdBy} ${folderPath} ${description}`.toLowerCase();
-        return joined.includes(lower);
+      const applyLocalFilter = () => {
+        this.filteredAssets = this.assets.filter((asset) => {
+          const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
+          const description = asset.description ?? '';
+          const targets = [
+            asset.name,
+            asset.tags.join(' '),
+            asset.createdBy,
+            folderPath,
+            description,
+          ];
+          return targets.some((target) => matchText(normalizedKeyword, target || ''));
+        });
+      };
+      applyLocalFilter();
+      void loadPromise.then((loaded) => {
+        if (!loaded) return;
+        if (this.filters.query !== keyword) return;
+        applyLocalFilter();
       });
       if (this.filteredAssets.length === 0) {
         try {

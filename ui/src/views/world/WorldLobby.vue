@@ -4,6 +4,7 @@ import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { Star, StarOff, Search } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
+import { matchText } from '@/utils/pinyinMatch';
 
 const chat = useChatStore();
 const message = useMessage();
@@ -138,26 +139,26 @@ const consumeInvite = async () => {
 const lobbyMode = computed(() => chat.worldLobbyMode);
 
 const filteredMineWorlds = computed(() => {
-  const keyword = searchKeyword.value.trim().toLowerCase();
+  const keyword = searchKeyword.value.trim();
   const items = (chat.myWorldCache.owned || []).concat(chat.myWorldCache.joined || []);
   if (!keyword) return items;
   return items.filter((item: any) => {
-    const name = item.world?.name?.toLowerCase() || '';
-    const desc = item.world?.description?.toLowerCase() || '';
-    return name.includes(keyword) || desc.includes(keyword);
+    const name = item.world?.name || '';
+    const desc = item.world?.description || '';
+    return matchText(keyword, name) || matchText(keyword, desc);
   });
 });
 
 const exploreWorlds = computed(() => {
   const cache = chat.exploreWorldCache;
   const items = cache?.items || [];
-  const keyword = searchKeyword.value.trim().toLowerCase();
+  const keyword = searchKeyword.value.trim();
   const favoriteSet = new Set(chat.favoriteWorldIds);
   const filtered = keyword
     ? items.filter((item: any) => {
-        const name = item.world?.name?.toLowerCase() || '';
-        const desc = item.world?.description?.toLowerCase() || '';
-        return name.includes(keyword) || desc.includes(keyword);
+        const name = item.world?.name || '';
+        const desc = item.world?.description || '';
+        return matchText(keyword, name) || matchText(keyword, desc);
       })
     : items;
   return [...filtered].sort((a, b) => {

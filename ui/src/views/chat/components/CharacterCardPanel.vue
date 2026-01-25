@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NSelect, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Unlink, Eye } from '@vicons/tabler';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';

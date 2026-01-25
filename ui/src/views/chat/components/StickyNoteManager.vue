@@ -378,6 +378,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useStickyNoteStore, type StickyNoteType } from '@/stores/stickyNote'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import { matchText } from '@/utils/pinyinMatch'
 import StickyNote from './StickyNote.vue'
 import StickyNoteTypeSelector from './sticky-notes/StickyNoteTypeSelector.vue'
 import { useMessage } from 'naive-ui'
@@ -476,7 +477,7 @@ const uncategorizedNotes = computed(() => {
 })
 
 const filteredMigrationNotes = computed(() => {
-  const keyword = migrationNoteKeyword.value.trim().toLowerCase()
+  const keyword = migrationNoteKeyword.value.trim()
   const sorted = [...stickyNoteStore.noteList].sort((a, b) => {
     const aTime = typeof a.updatedAt === 'number' ? a.updatedAt : 0
     const bTime = typeof b.updatedAt === 'number' ? b.updatedAt : 0
@@ -485,11 +486,9 @@ const filteredMigrationNotes = computed(() => {
   if (!keyword) {
     return sorted
   }
-  return sorted.filter(note => {
-    const title = (note.title || '').toLowerCase()
-    const contentText = (note.contentText || '').toLowerCase()
-    return title.includes(keyword) || contentText.includes(keyword)
-  })
+  return sorted.filter(note => (
+    matchText(keyword, note.title || '') || matchText(keyword, note.contentText || '')
+  ))
 })
 
 const filteredMigrationNoteIds = computed(() => filteredMigrationNotes.value.map(note => note.id))

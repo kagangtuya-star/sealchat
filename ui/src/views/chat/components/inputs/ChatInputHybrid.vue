@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import type { MentionOption } from 'naive-ui';
 import { nanoid } from 'nanoid';
+import { matchText } from '@/utils/pinyinMatch';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -73,11 +74,11 @@ const getMentionOptionText = (option: MentionOption) => {
 
 const mentionFilteredOptions = computed(() => {
   const options = props.mentionOptions || [];
-  const keyword = mentionSearchValue.value.trim().toLowerCase();
+  const keyword = mentionSearchValue.value.trim();
   if (!keyword) {
     return options;
   }
-  return options.filter((option) => getMentionOptionText(option).includes(keyword));
+  return options.filter((option) => matchText(keyword, getMentionOptionText(option)));
 });
 
 const PLACEHOLDER_PREFIX = '[[图片:';

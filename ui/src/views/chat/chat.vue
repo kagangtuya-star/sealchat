@@ -1040,7 +1040,7 @@ const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
 };
 
 const filteredEmojiItems = computed(() => {
-  const query = emojiSearchQuery.value.trim().toLowerCase();
+  const query = emojiSearchQuery.value.trim();
   const tabId = activeEmojiTab.value;
 
   // 根据选项卡筛选
@@ -1054,7 +1054,7 @@ const filteredEmojiItems = computed(() => {
   // 搜索过滤
   const filtered = !query ? items : items.filter((item, idx) => {
     const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
-    return remark.toLowerCase().includes(query);
+    return matchText(query, remark);
   });
   return sortByUsage(filtered);
 });
@@ -3118,13 +3118,13 @@ const toArchivedPanelEntry = (message: Message): ArchivedPanelMessage => {
 };
 
 const filteredArchivedMessages = computed(() => {
-  const keyword = archivedSearchQuery.value.trim().toLowerCase();
+  const keyword = archivedSearchQuery.value.trim();
   if (!keyword) {
     return [...archivedMessagesRaw.value];
   }
   return archivedMessagesRaw.value.filter((item) => {
     const fields = [item.content, item.sender?.name, item.archivedBy];
-    return fields.some((field) => field?.toLowerCase().includes(keyword));
+    return fields.some((field) => (field ? matchText(keyword, field) : false));
   });
 });
 
@@ -6576,7 +6576,7 @@ const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color
 const whisperCandidates = computed<WhisperCandidate[]>(() => whisperMentionableCandidates.value);
 
 const filteredWhisperCandidates = computed(() => {
-  const keyword = whisperQuery.value.trim().toLowerCase();
+  const keyword = whisperQuery.value.trim();
   if (!keyword) {
     return whisperCandidates.value;
   }
@@ -6585,8 +6585,8 @@ const filteredWhisperCandidates = computed(() => {
       candidate.displayName,
       candidate.secondaryName,
       candidate.id,
-    ].filter(Boolean).map((str) => String(str).toLowerCase());
-    return candidates.some((name) => name.includes(keyword));
+    ].filter(Boolean).map((str) => String(str));
+    return candidates.some((name) => matchText(keyword, name));
   });
 });
 

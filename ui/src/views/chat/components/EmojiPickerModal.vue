@@ -7,6 +7,7 @@ import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUpl
 import { useGalleryStore } from '@/stores/gallery';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
+import { matchText } from '@/utils/pinyinMatch';
 import 'emoji-picker-element';
 
 const emit = defineEmits<{
@@ -34,11 +35,11 @@ const pendingCustomEmojiMeta = new Set<string>();
 
 const filteredCustomEmojiItems = computed(() => {
   const list = customEmojiItems.value;
-  const keyword = searchKeyword.value.trim().toLowerCase();
+  const keyword = searchKeyword.value.trim();
   if (!keyword) return list;
   return list.filter((item) => {
-    const haystack = `${item.remark || ''} ${item.attachmentId || ''} ${item.id || ''}`.toLowerCase();
-    return haystack.includes(keyword);
+    const haystack = `${item.remark || ''} ${item.attachmentId || ''} ${item.id || ''}`;
+    return matchText(keyword, haystack);
   });
 });
 

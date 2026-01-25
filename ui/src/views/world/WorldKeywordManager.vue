@@ -8,6 +8,7 @@ import { triggerBlobDownload } from '@/utils/download'
 import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
+import { matchText } from '@/utils/pinyinMatch'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
@@ -64,12 +65,12 @@ const filteredKeywords = computed(() => {
   }
   
   // Then filter by search query
-  const q = filterValue.value.trim().toLowerCase()
+  const q = filterValue.value.trim()
   if (!q) return items
   return items.filter((item) => {
     const description = getDescriptionPlainText(item)
-    const haystack = [item.keyword, ...(item.aliases || []), description].join(' ').toLowerCase()
-    return haystack.includes(q)
+    const targets = [item.keyword, ...(item.aliases || []), description]
+    return targets.some((target) => matchText(q, target || ''))
   })
 })
 
