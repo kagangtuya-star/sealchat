@@ -53,7 +53,32 @@ const isComposing = ref(false);
 // Mention 面板状态
 const mentionVisible = ref(false);
 const mentionActiveIndex = ref(0);
-const mentionTriggerInfo = ref<{ prefix: string; startIndex: number } | null>(null);
+const mentionTriggerInfo = ref<{ prefix: string; startIndex: number; cursorPosition: number } | null>(null);
+const mentionSearchValue = ref('');
+const mentionDropdownRef = ref<HTMLDivElement | null>(null);
+
+const getMentionOptionText = (option: MentionOption) => {
+  const data = (option as any)?.data || {};
+  const candidates = [
+    option.label,
+    option.value,
+    data.displayName,
+    data.userId,
+    data.identityId,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  return candidates.join(' ');
+};
+
+const mentionFilteredOptions = computed(() => {
+  const options = props.mentionOptions || [];
+  const keyword = mentionSearchValue.value.trim().toLowerCase();
+  if (!keyword) {
+    return options;
+  }
+  return options.filter((option) => getMentionOptionText(option).includes(keyword));
+});
 
 const PLACEHOLDER_PREFIX = '[[图片:';
 const PLACEHOLDER_SUFFIX = ']]';
@@ -657,7 +682,8 @@ const checkMentionTrigger = (text: string, cursorPosition: number) => {
     // 显示 mention 面板并触发搜索
     mentionVisible.value = true;
     mentionActiveIndex.value = 0;
-    mentionTriggerInfo.value = { prefix: prefixStr, startIndex: lastPrefixIndex };
+    mentionSearchValue.value = pattern;
+    mentionTriggerInfo.value = { prefix: prefixStr, startIndex: lastPrefixIndex, cursorPosition };
     emit('mention-search', pattern, prefixStr);
     return;
   }
@@ -671,6 +697,7 @@ const closeMentionPanel = () => {
   mentionVisible.value = false;
   mentionTriggerInfo.value = null;
   mentionActiveIndex.value = 0;
+  mentionSearchValue.value = '';
 };
 
 // 处理 mention 选择
@@ -678,7 +705,7 @@ const handleMentionSelect = (option: MentionOption) => {
   if (!mentionTriggerInfo.value) return;
 
   const { startIndex } = mentionTriggerInfo.value;
-  const cursorPosition = getCursorPosition();
+  const cursorPosition = mentionTriggerInfo.value.cursorPosition;
   const text = props.modelValue;
 
   // 替换 @ 触发词和搜索模式为选中的值
@@ -702,27 +729,57 @@ const handleMentionSelect = (option: MentionOption) => {
   });
 };
 
+const scrollActiveMentionIntoView = () => {
+  nextTick(() => {
+    const container = mentionDropdownRef.value;
+    if (!container) {
+      return;
+    }
+    const items = container.querySelectorAll('.mention-dropdown__item');
+    const target = items[mentionActiveIndex.value] as HTMLElement | undefined;
+    if (target?.scrollIntoView) {
+      target.scrollIntoView({ block: 'nearest' });
+    }
+  });
+};
+
+const handleMentionHover = (index: number) => {
+  mentionActiveIndex.value = index;
+  scrollActiveMentionIntoView();
+};
+
+const handleMentionSearchKeydown = (event: KeyboardEvent) => {
+  if (handleMentionKeydown(event)) {
+    return;
+  }
+};
+
 // Mention 面板键盘导航
 const handleMentionKeydown = (event: KeyboardEvent): boolean => {
-  if (!mentionVisible.value || !props.mentionOptions?.length) {
+  if (!mentionVisible.value) {
     return false;
   }
 
-  const optionsCount = props.mentionOptions.length;
+  const optionsCount = mentionFilteredOptions.value.length;
+  if (!optionsCount) {
+    return false;
+  }
 
   switch (event.key) {
     case 'ArrowUp':
       event.preventDefault();
-      mentionActiveIndex.value = (mentionActiveIndex.value - 1 + optionsCount) % optionsCount;
+      mentionActiveIndex.value = Math.max(0, mentionActiveIndex.value - 1);
+      scrollActiveMentionIntoView();
       return true;
     case 'ArrowDown':
       event.preventDefault();
-      mentionActiveIndex.value = (mentionActiveIndex.value + 1) % optionsCount;
+      mentionActiveIndex.value = Math.min(optionsCount - 1, mentionActiveIndex.value + 1);
+      scrollActiveMentionIntoView();
       return true;
     case 'Enter':
     case 'Tab':
       event.preventDefault();
-      const selectedOption = props.mentionOptions[mentionActiveIndex.value];
+      const selectedOption = mentionFilteredOptions.value[mentionActiveIndex.value];
       if (selectedOption) {
         handleMentionSelect(selectedOption);
       }
@@ -735,6 +792,21 @@ const handleMentionKeydown = (event: KeyboardEvent): boolean => {
 
   return false;
 };
+
+watch([mentionVisible, mentionFilteredOptions], () => {
+  if (!mentionVisible.value) {
+    return;
+  }
+  const optionCount = mentionFilteredOptions.value.length;
+  if (!optionCount) {
+    mentionActiveIndex.value = 0;
+    return;
+  }
+  if (mentionActiveIndex.value >= optionCount) {
+    mentionActiveIndex.value = 0;
+  }
+  scrollActiveMentionIntoView();
+});
 
 const extractContentWithLineBreaks = () => {
   const root = editorRef.value;
@@ -1013,16 +1085,27 @@ defineExpose({
     <!-- Mention 下拉面板 -->
     <Transition name="mention-fade">
       <div
-        v-if="mentionVisible && mentionOptions && mentionOptions.length > 0"
+        v-if="mentionVisible"
         class="mention-dropdown"
         tabindex="-1"
+        ref="mentionDropdownRef"
+        @pointerdown.stop
       >
+        <input
+          v-model="mentionSearchValue"
+          class="mention-dropdown__search"
+          type="text"
+          placeholder="搜索成员"
+          @keydown="handleMentionSearchKeydown"
+          @pointerdown.stop
+        />
         <div
-          v-for="(option, index) in mentionOptions"
+          v-for="(option, index) in mentionFilteredOptions"
           :key="option.value"
           :class="['mention-dropdown__item', { 'is-active': index === mentionActiveIndex }]"
+          @pointerdown.stop
           @mousedown.prevent="handleMentionSelect(option)"
-          @mouseenter="mentionActiveIndex = index"
+          @mouseenter="handleMentionHover(index)"
         >
           <component
             :is="mentionRenderLabel ? mentionRenderLabel(option) : undefined"
@@ -1032,6 +1115,9 @@ defineExpose({
         </div>
         <div v-if="mentionLoading" class="mention-dropdown__loading">
           加载中...
+        </div>
+        <div v-else-if="mentionFilteredOptions.length === 0" class="mention-dropdown__empty">
+          无匹配成员
         </div>
       </div>
     </Transition>
@@ -1257,6 +1343,23 @@ defineExpose({
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
 
+  &__search {
+    width: calc(100% - 16px);
+    margin: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--sc-border-mute, #e5e7eb);
+    border-radius: 6px;
+    background: var(--sc-bg-input, #ffffff);
+    color: var(--text-color-1);
+    font-size: 0.75rem;
+    outline: none;
+  }
+
+  &__search:focus {
+    border-color: rgba(99, 102, 241, 0.6);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.16);
+  }
+
   &__item {
     display: flex;
     align-items: center;
@@ -1277,6 +1380,13 @@ defineExpose({
   &__loading {
     padding: 8px 12px;
     color: var(--sc-text-secondary, #6b7280);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  &__empty {
+    padding: 8px 12px;
+    color: var(--sc-text-secondary, #9ca3af);
     font-size: 0.875rem;
     text-align: center;
   }
