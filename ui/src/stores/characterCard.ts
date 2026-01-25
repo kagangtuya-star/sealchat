@@ -356,6 +356,15 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         payload.id = cardIdOrName;
       }
 
+      if (!payload.id && !payload.name) {
+        throw new Error('角色卡ID或名称不能为空');
+      }
+
+      const untagResp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string } }>('character.untagAll', payload);
+      if (!untagResp?.data?.ok) {
+        throw new Error(untagResp?.data?.error || '解绑失败');
+      }
+
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string; binding_groups?: string[] } }>('character.delete', payload);
       if (resp?.data?.ok) {
         await loadCardList();

@@ -302,7 +302,7 @@ const handleDeleteCard = async (card: CharacterCard) => {
     await cardStore.deleteCard(card.id);
     message.success('已删除');
   } catch (e: any) {
-    message.error(e?.response?.data?.error || '删除失败');
+    message.error(e?.response?.data?.error || e?.message || '删除失败');
   }
 };
 
@@ -474,7 +474,7 @@ const openPreview = async (card: CharacterCard) => {
                   <template #icon><n-icon :component="Trash" /></template>
                 </n-button>
               </template>
-              确定删除此人物卡？
+              删除前将从所有群解绑此人物卡，确定删除？
             </n-popconfirm>
           </template>
           <div class="card-attrs">{{ formatAttrs(card.attrs) }}</div>
