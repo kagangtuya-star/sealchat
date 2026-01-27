@@ -7,7 +7,12 @@ import { useUserStore } from '@/stores/user';
 
 type RangeOption = '1h' | '24h' | '7d';
 
-type ChartMetricKey = 'concurrentConnections' | 'onlineUsers' | 'messagesPerMinute';
+type ChartMetricKey =
+  | 'concurrentConnections'
+  | 'onlineUsers'
+  | 'messagesPerMinute'
+  | 'attachmentCount'
+  | 'attachmentBytes';
 
 interface StatusSummary {
   timestamp: number;
@@ -19,6 +24,8 @@ interface StatusSummary {
   channelCount: number;
   privateChannelCount: number;
   messageCount: number;
+  attachmentCount: number;
+  attachmentBytes: number;
   intervalSeconds: number;
   retentionDays: number;
 }
@@ -33,6 +40,8 @@ interface StatusHistoryPoint {
   channelCount: number;
   privateChannelCount: number;
   messageCount: number;
+  attachmentCount: number;
+  attachmentBytes: number;
 }
 
 const user = useUserStore();
@@ -51,14 +60,31 @@ const rangeOptions = [
   { label: '近 7 天', value: '7d' },
 ];
 
-const chartMetrics: { key: ChartMetricKey; label: string; color: string }[] = [
-  { key: 'concurrentConnections', label: '并发连接', color: '#2563eb' },
-  { key: 'onlineUsers', label: '在线用户', color: '#059669' },
-  { key: 'messagesPerMinute', label: '消息/分钟', color: '#f97316' },
-];
-
 const numberFormatter = new Intl.NumberFormat('zh-CN');
 const formatNumber = (value?: number) => numberFormatter.format(value || 0);
+const formatBytes = (value?: number) => {
+  const size = value || 0;
+  if (size <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let cursor = size;
+  let unitIndex = 0;
+  while (cursor >= 1024 && unitIndex < units.length - 1) {
+    cursor /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 ? 0 : cursor >= 100 ? 0 : cursor >= 10 ? 1 : 2;
+  return `${cursor.toFixed(precision)} ${units[unitIndex]}`;
+};
+
+const chartMetrics: { key: ChartMetricKey; label: string; color: string; format: (value: number) => string }[] = [
+  { key: 'concurrentConnections', label: '并发连接', color: '#2563eb', format: formatNumber },
+  { key: 'onlineUsers', label: '在线用户', color: '#059669', format: formatNumber },
+  { key: 'messagesPerMinute', label: '消息/分钟', color: '#f97316', format: formatNumber },
+  { key: 'attachmentCount', label: '附件数量', color: '#0ea5e9', format: formatNumber },
+  { key: 'attachmentBytes', label: '附件总大小', color: '#ca8a04', format: formatBytes },
+];
 
 const lastUpdatedText = computed(() => {
   if (!summary.value?.timestamp) {
@@ -81,6 +107,8 @@ const summaryCards = computed(() => {
     { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
     { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
     { label: '消息总数', value: formatNumber(data.messageCount), hint: '未被删除的历史消息' },
+    { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '已确认的附件记录' },
+    { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '已确认附件的汇总体积' },
   ];
 });
 
@@ -108,9 +136,9 @@ const chartSeries = computed(() => {
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     });
     const ticks = [
-      { value: maxValue, label: formatNumber(maxValue) },
-      { value: maxValue / 2, label: formatNumber(Math.round(maxValue / 2)) },
-      { value: 0, label: '0' },
+      { value: maxValue, label: metric.format(maxValue) },
+      { value: maxValue / 2, label: metric.format(Math.round(maxValue / 2)) },
+      { value: 0, label: metric.format(0) },
     ];
     return {
       ...metric,

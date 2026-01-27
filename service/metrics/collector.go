@@ -144,6 +144,14 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 	if err != nil {
 		return nil, err
 	}
+	attachmentCount, err := model.CountAttachments()
+	if err != nil {
+		return nil, err
+	}
+	attachmentBytes, err := model.SumAttachmentSizes()
+	if err != nil {
+		return nil, err
+	}
 
 	sample := &model.ServiceMetricSample{
 		TimestampMs:           timestamp,
@@ -155,6 +163,8 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 		ChannelCount:          channelCount,
 		PrivateChannelCount:   privateChannelCount,
 		MessageCount:          messageCount,
+		AttachmentCount:       attachmentCount,
+		AttachmentBytes:       attachmentBytes,
 	}
 	return sample, nil
 }

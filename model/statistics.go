@@ -34,3 +34,20 @@ func CountMessages() (int64, error) {
 	err := db.Model(&MessageModel{}).Where("is_deleted = ?", false).Count(&count).Error
 	return count, err
 }
+
+// CountAttachments 返回正式附件数量（不含临时附件）。
+func CountAttachments() (int64, error) {
+	var count int64
+	err := db.Model(&AttachmentModel{}).Where("is_temp = ?", false).Count(&count).Error
+	return count, err
+}
+
+// SumAttachmentSizes 返回正式附件总大小（不含临时附件）。
+func SumAttachmentSizes() (int64, error) {
+	var total int64
+	err := db.Model(&AttachmentModel{}).
+		Where("is_temp = ?", false).
+		Select("COALESCE(SUM(size), 0)").
+		Scan(&total).Error
+	return total, err
+}
