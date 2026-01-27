@@ -50,6 +50,7 @@
   audio:
     storageDir: ./static/audio
     tempDir: ./data/audio-temp
+    importDir: ./static/audio/import # 读取数据目录导入的扫描路径
     maxUploadSizeMB: 80
     allowedMimeTypes:
       - audio/mpeg

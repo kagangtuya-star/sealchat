@@ -380,6 +380,9 @@ SealChat 支持将附件/图片与音频存入 S3（或兼容协议的对象存�
   - `storage.local.uploadDir`：附件/图片目录
   - `storage.local.audioDir`：音频目录
   - `storage.local.tempDir`：临时目录
+- 音频导入目录（用于素材库“读取数据目录”功能）
+  - `audio.importDir`：扫描导入目录，默认 `${audio.storageDir}/import`
+  - 手工验证：放入音频文件 → 管理端“读取数据目录”预览 → 选择导入并确认原文件清理
 
 ### 4.2 S3 通用配置项（含分类开关）
 
