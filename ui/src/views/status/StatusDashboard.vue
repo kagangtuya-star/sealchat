@@ -107,8 +107,8 @@ const summaryCards = computed(() => {
     { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
     { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
     { label: '消息总数', value: formatNumber(data.messageCount), hint: '未被删除的历史消息' },
-    { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '已确认的附件记录' },
-    { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '已确认附件的汇总体积' },
+    { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '附件目录内文件数量' },
+    { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '附件目录占用空间' },
   ];
 });
 
