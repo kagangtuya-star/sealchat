@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +41,44 @@ type AudioAssetUpdateInput struct {
 	WorldID     *string
 	UpdatedBy   string
 	Variants    []model.AudioAssetVariant
+}
+
+type AudioImportPreviewItem struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"modTime"`
+	MimeType string `json:"mimeType,omitempty"`
+	Valid    bool   `json:"valid"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type AudioImportPreview struct {
+	Items   []AudioImportPreviewItem `json:"items"`
+	Total   int                      `json:"total"`
+	Valid   int                      `json:"valid"`
+	Invalid int                      `json:"invalid"`
+}
+
+type AudioImportRequest struct {
+	All     bool
+	Paths   []string
+	Options AudioUploadOptions
+}
+
+type AudioImportResultItem struct {
+	Path    string `json:"path"`
+	Name    string `json:"name,omitempty"`
+	AssetID string `json:"assetId,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Warning string `json:"warning,omitempty"`
+}
+
+type AudioImportResult struct {
+	Imported []AudioImportResultItem `json:"imported"`
+	Failed   []AudioImportResultItem `json:"failed"`
+	Skipped  []AudioImportResultItem `json:"skipped"`
 }
 
 type AudioFolderNode struct {
@@ -131,6 +172,38 @@ func AudioCreateAssetFromUpload(file *multipart.FileHeader, opts AudioUploadOpti
 	return asset, nil
 }
 
+func AudioCreateAssetFromImport(filePath string, opts AudioUploadOptions) (*model.AudioAsset, error) {
+	if opts.CreatedBy == "" {
+		return nil, errors.New("缺少上传者标识")
+	}
+	if opts.FolderID != nil && strings.TrimSpace(*opts.FolderID) != "" {
+		trimmed := strings.TrimSpace(*opts.FolderID)
+		folder, err := getAudioFolder(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateFolderScopeMatch(folder, opts.Scope, opts.WorldID); err != nil {
+			return nil, err
+		}
+		opts.FolderID = &trimmed
+	}
+	svc := GetAudioService()
+	if svc == nil {
+		return nil, errors.New("音频服务未初始化")
+	}
+	asset, err := svc.importFromPath(filePath, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := model.GetDB().Create(asset).Error; err != nil {
+		return nil, err
+	}
+	if asset.TranscodeStatus == model.AudioTranscodePending {
+		svc.scheduleTranscode(asset.ID, asset.ObjectKey)
+	}
+	return asset, nil
+}
+
 func AudioGetAsset(id string) (*model.AudioAsset, error) {
 	var asset model.AudioAsset
 	if err := model.GetDB().Where("id = ? AND deleted_at IS NULL", id).First(&asset).Error; err != nil {
@@ -200,7 +273,232 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			}
 		}
 		return q.Order("updated_at DESC")
+		})
+}
+
+func GetAudioImportPreview() (*AudioImportPreview, error) {
+	svc := GetAudioService()
+	if svc == nil {
+		return nil, errors.New("音频服务未初始化")
+	}
+	importDir, err := getAudioImportDir(svc)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(importDir)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]AudioImportPreviewItem, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if shouldSkipImportEntry(name, entry) {
+			continue
+		}
+		fullPath := filepath.Join(importDir, name)
+		item := buildAudioImportPreviewItem(svc, fullPath, name)
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
 	})
+	validCount := 0
+	for _, item := range items {
+		if item.Valid {
+			validCount++
+		}
+	}
+	return &AudioImportPreview{
+		Items:   items,
+		Total:   len(items),
+		Valid:   validCount,
+		Invalid: len(items) - validCount,
+	}, nil
+}
+
+func AudioImportFromDir(req AudioImportRequest) (*AudioImportResult, error) {
+	svc := GetAudioService()
+	if svc == nil {
+		return nil, errors.New("音频服务未初始化")
+	}
+	importDir, err := getAudioImportDir(svc)
+	if err != nil {
+		return nil, err
+	}
+	result := &AudioImportResult{}
+	paths := make([]string, 0)
+	seen := map[string]struct{}{}
+	if req.All {
+		preview, err := GetAudioImportPreview()
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range preview.Items {
+			if !item.Valid {
+				result.Skipped = append(result.Skipped, AudioImportResultItem{
+					Path:   item.Path,
+					Name:   item.Name,
+					Reason: item.Reason,
+				})
+				continue
+			}
+			if _, ok := seen[item.Path]; ok {
+				continue
+			}
+			seen[item.Path] = struct{}{}
+			paths = append(paths, item.Path)
+		}
+	} else {
+		for _, raw := range req.Paths {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			paths = append(paths, name)
+		}
+	}
+	for _, name := range paths {
+		fullPath, err := resolveAudioImportPath(importDir, name)
+		if err != nil {
+			result.Skipped = append(result.Skipped, AudioImportResultItem{
+				Path:   name,
+				Name:   name,
+				Reason: err.Error(),
+			})
+			continue
+		}
+		previewItem := buildAudioImportPreviewItem(svc, fullPath, name)
+		if !previewItem.Valid {
+			result.Skipped = append(result.Skipped, AudioImportResultItem{
+				Path:   name,
+				Name:   previewItem.Name,
+				Reason: previewItem.Reason,
+			})
+			continue
+		}
+		asset, err := AudioCreateAssetFromImport(fullPath, req.Options)
+		if err != nil {
+			if errors.Is(err, ErrAudioTooLarge) || errors.Is(err, ErrAudioUnsupportedMime) {
+				result.Skipped = append(result.Skipped, AudioImportResultItem{
+					Path:   name,
+					Name:   previewItem.Name,
+					Reason: err.Error(),
+				})
+				continue
+			}
+			result.Failed = append(result.Failed, AudioImportResultItem{
+				Path:  name,
+				Name:  previewItem.Name,
+				Error: err.Error(),
+			})
+			continue
+		}
+		item := AudioImportResultItem{
+			Path:    name,
+			Name:    asset.Name,
+			AssetID: asset.ID,
+		}
+		if err := os.Remove(fullPath); err != nil {
+			item.Warning = fmt.Sprintf("导入成功但清理失败: %v", err)
+		}
+		result.Imported = append(result.Imported, item)
+	}
+	return result, nil
+}
+
+func getAudioImportDir(svc *audioService) (string, error) {
+	if svc == nil {
+		return "", errors.New("音频服务未初始化")
+	}
+	importDir := strings.TrimSpace(svc.cfg.ImportDir)
+	if importDir == "" {
+		return "", errors.New("音频导入目录未配置")
+	}
+	return importDir, nil
+}
+
+func shouldSkipImportEntry(name string, entry os.DirEntry) bool {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return true
+	}
+	if strings.HasPrefix(trimmed, ".") {
+		return true
+	}
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink != 0 {
+		return true
+	}
+	return false
+}
+
+func resolveAudioImportPath(importDir, name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errors.New("文件名为空")
+	}
+	if filepath.Base(trimmed) != trimmed {
+		return "", errors.New("非法文件路径")
+	}
+	if strings.HasPrefix(trimmed, ".") {
+		return "", errors.New("隐藏文件")
+	}
+	fullPath := filepath.Join(importDir, trimmed)
+	relPath, err := filepath.Rel(importDir, fullPath)
+	if err != nil {
+		return "", errors.New("非法文件路径")
+	}
+	if relPath == "." || strings.HasPrefix(relPath, "..") || strings.HasPrefix(filepath.Clean(relPath), "..") {
+		return "", errors.New("非法文件路径")
+	}
+	return fullPath, nil
+}
+
+func buildAudioImportPreviewItem(svc *audioService, fullPath, name string) AudioImportPreviewItem {
+	item := AudioImportPreviewItem{
+		Path: name,
+		Name: name,
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		item.Valid = false
+		item.Reason = "读取文件信息失败"
+		return item
+	}
+	if !info.Mode().IsRegular() {
+		item.Valid = false
+		item.Reason = "不是普通文件"
+		return item
+	}
+	item.Size = info.Size()
+	item.ModTime = info.ModTime().UnixMilli()
+	if item.Size > svc.maxUploadBytes() {
+		item.Valid = false
+		item.Reason = fmt.Sprintf("文件超过最大限制（%d MB）", svc.cfg.MaxUploadSizeMB)
+		return item
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		item.Valid = false
+		item.Reason = "读取文件失败"
+		return item
+	}
+	defer file.Close()
+	mimeType, err := svc.validateMime(file)
+	if err != nil {
+		item.Valid = false
+		item.Reason = err.Error()
+		return item
+	}
+	item.MimeType = mimeType
+	item.Valid = true
+	return item
 }
 
 func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {

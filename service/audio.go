@@ -373,6 +373,58 @@ func (svc *audioService) Upload(fileHeader *multipart.FileHeader, opts AudioUplo
 	return asset, nil
 }
 
+func (svc *audioService) importFromPath(filePath string, opts AudioUploadOptions) (*model.AudioAsset, error) {
+	if audioSvc == nil {
+		return nil, errors.New("audio service not initialized")
+	}
+	trimmed := strings.TrimSpace(filePath)
+	if trimmed == "" {
+		return nil, errors.New("文件路径为空")
+	}
+	if strings.TrimSpace(svc.cfg.TempDir) == "" {
+		return nil, errors.New("音频临时目录未配置")
+	}
+	info, err := os.Stat(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, errors.New("不是有效的音频文件")
+	}
+	if info.Size() > svc.maxUploadBytes() {
+		return nil, fmt.Errorf("%w (最大 %d MB)", ErrAudioTooLarge, svc.cfg.MaxUploadSizeMB)
+	}
+	src, err := os.Open(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	mimeType, err := svc.validateMime(src)
+	if err != nil {
+		return nil, err
+	}
+	tempName := fmt.Sprintf("import-%s", utils.NewID())
+	tempPath := filepath.Join(svc.cfg.TempDir, tempName)
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		return nil, err
+	}
+	_, copyErr := io.Copy(tempFile, src)
+	if closeErr := tempFile.Close(); copyErr == nil && closeErr != nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		_ = os.Remove(tempPath)
+		return nil, copyErr
+	}
+	asset, err := svc.persistTempFile(tempPath, filepath.Base(trimmed), mimeType, opts)
+	_ = os.Remove(tempPath)
+	if err != nil {
+		return nil, err
+	}
+	return asset, nil
+}
+
 func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string, opts AudioUploadOptions) (*model.AudioAsset, error) {
 	asset := svc.newAssetRecord(originalName, opts)
 	if svc.shouldUseObjectStore() {

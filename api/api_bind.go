@@ -232,14 +232,20 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		if svc := service.GetAudioService(); svc != nil {
 			ffmpegAvailable = svc.FFmpegAvailable()
 		}
+		audioImportEnabled := false
+		if appConfig != nil && strings.TrimSpace(appConfig.Audio.ImportDir) != "" {
+			audioImportEnabled = true
+		}
 		resp := struct {
 			utils.AppConfig
 			FFmpegAvailable          bool `json:"ffmpegAvailable"`
 			AllowWorldAudioWorkbench bool `json:"allowWorldAudioWorkbench"`
+			AudioImportEnabled       bool `json:"audioImportEnabled"`
 		}{
 			AppConfig:                ret,
 			FFmpegAvailable:          ffmpegAvailable,
 			AllowWorldAudioWorkbench: ret.Audio.AllowWorldAudioWorkbench,
+			AudioImportEnabled:       audioImportEnabled,
 		}
 		return c.Status(http.StatusOK).JSON(resp)
 	})
@@ -378,6 +384,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	audio.Get("/state", AudioPlaybackStateGet)
 	audioAdmin := audio.Group("", AudioWorkbenchMiddleware)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
+	audioAdmin.Get("/assets/import/preview", AudioAssetImportPreview)
+	audioAdmin.Post("/assets/import", AudioAssetImport)
 	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
 	audioAdmin.Delete("/assets/:id", AudioAssetDelete)
 	audioAdmin.Post("/folders", AudioFolderCreate)

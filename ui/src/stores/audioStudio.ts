@@ -19,6 +19,8 @@ import type {
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
+  AudioImportPreview,
+  AudioImportResult,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
   PaginatedResult,
@@ -71,6 +73,11 @@ interface AudioStudioState {
   folderActionLoading: boolean;
   filters: AudioSearchFilters;
   uploadTasks: UploadTaskState[];
+  importPreview: AudioImportPreview | null;
+  importPreviewLoading: boolean;
+  importLoading: boolean;
+  importResult: AudioImportResult | null;
+  importError: string | null;
   networkMode: 'normal' | 'constrained' | 'minimal';
   bufferMessage: string;
   isPlaying: boolean;
@@ -306,6 +313,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       includeCommon: true,
     },
     uploadTasks: [],
+    importPreview: null,
+    importPreviewLoading: false,
+    importLoading: false,
+    importResult: null,
+    importError: null,
     networkMode: 'normal',
     bufferMessage: '',
     isPlaying: false,
@@ -362,6 +374,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     ffmpegAvailable(): boolean {
       const utils = useUtilsStore();
       return utils.config?.ffmpegAvailable === true;
+    },
+
+    importEnabled(): boolean {
+      const utils = useUtilsStore();
+      return utils.config?.audioImportEnabled === true;
     },
 
     hasAnyTrackPlaying(): boolean {
@@ -1906,6 +1923,59 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       };
       await doUpload();
+    },
+
+    async previewImport() {
+      if (!this.canManage) return null;
+      if (!this.importEnabled) {
+        this.importError = '未启用导入目录';
+        return null;
+      }
+      this.importPreviewLoading = true;
+      this.importError = null;
+      this.importResult = null;
+      try {
+        const resp = await api.get('/api/v1/audio/assets/import/preview');
+        this.importPreview = resp.data as AudioImportPreview;
+        return this.importPreview;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '读取导入目录失败';
+        this.importPreview = null;
+        return null;
+      } finally {
+        this.importPreviewLoading = false;
+      }
+    },
+
+    async importFromDir(options: { all: boolean; paths?: string[]; scope?: AudioAssetScope; worldId?: string }) {
+      if (!this.canManage) return null;
+      if (!this.importEnabled) {
+        this.importError = '未启用导入目录';
+        return null;
+      }
+      this.importLoading = true;
+      this.importError = null;
+      this.importResult = null;
+      try {
+        const resp = await api.post('/api/v1/audio/assets/import', {
+          all: options.all,
+          paths: options.paths || [],
+          scope: options.scope,
+          worldId: options.worldId,
+        });
+        this.importResult = resp.data as AudioImportResult;
+        try {
+          await this.fetchAssets();
+        } catch (err) {
+          console.warn('refresh assets after import failed', err);
+        }
+        return this.importResult;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '导入失败';
+        return null;
+      } finally {
+        this.importLoading = false;
+      }
     },
 
     async refreshTranscodeTasks() {
