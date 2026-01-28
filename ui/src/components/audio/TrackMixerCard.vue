@@ -377,7 +377,7 @@ function handleNext() {
 }
 
 .track-card__speed {
-  width: 70px;
+  width: 96px;
   flex-shrink: 0;
 }
 
