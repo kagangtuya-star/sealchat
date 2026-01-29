@@ -65,6 +65,17 @@ func AudioAssetList(c *fiber.Ctx) error {
 		filters.WorldID = &worldID
 	}
 	filters.IncludeCommon = c.QueryBool("includeCommon", true)
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if !isSystemAdmin {
+		worldID := strings.TrimSpace(c.Query("worldId"))
+		if worldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界ID不能为空")
+		}
+		filters.Scope = model.AudioScopeWorld
+		filters.WorldID = &worldID
+		filters.IncludeCommon = true
+	}
 	items, total, err := service.AudioListAssets(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载音频素材失败")

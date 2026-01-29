@@ -392,14 +392,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
   actions: {
     setCurrentWorld(worldId: string | null) {
       this.currentWorldId = worldId;
-      if (worldId && !this.isSystemAdmin) {
-        this.filters.scope = 'world';
+      if (worldId) {
         this.filters.worldId = worldId;
         this.filters.includeCommon = true;
+        if (!this.isSystemAdmin) {
+          this.filters.scope = 'world';
+        }
       } else {
-        this.filters.scope = undefined;
         this.filters.worldId = null;
         this.filters.includeCommon = true;
+        if (!this.isSystemAdmin) {
+          this.filters.scope = undefined;
+        }
       }
     },
 
@@ -1829,10 +1833,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.persistAssetsToCache();
     },
 
-    async handleUpload(files: FileList | File[], options?: { scope?: AudioAssetScope; worldId?: string }) {
+    async handleUpload(
+      files: FileList | File[],
+      options?: { scope?: AudioAssetScope; worldId?: string; folderId?: string | null }
+    ) {
       if (!this.canManage && !this.canManageCurrentWorld) return;
       const uploadScope = options?.scope ?? (this.isSystemAdmin ? 'common' : 'world');
       const uploadWorldId = options?.worldId ?? (uploadScope === 'world' ? this.currentWorldId : null);
+      const uploadFolderId = normalizeFolderId(options?.folderId) ?? null;
       const list = Array.from(files);
       const tasks: UploadTaskState[] = [];
       for (const file of list) {
@@ -1850,7 +1858,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       const concurrency = 2;
       const uploadTask = async (file: File, task: UploadTaskState) => {
-        await this.uploadSingleFile(file, task, { scope: uploadScope, worldId: uploadWorldId ?? undefined });
+        await this.uploadSingleFile(file, task, {
+          scope: uploadScope,
+          worldId: uploadWorldId ?? undefined,
+          folderId: uploadFolderId ?? undefined,
+        });
       };
       const queue = list.map((file, i) => ({ file, task: tasks[i] }));
       const running: Promise<void>[] = [];
@@ -1872,7 +1884,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async uploadSingleFile(file: File, task: UploadTaskState, options?: { scope?: AudioAssetScope; worldId?: string }) {
+    async uploadSingleFile(
+      file: File,
+      task: UploadTaskState,
+      options?: { scope?: AudioAssetScope; worldId?: string; folderId?: string }
+    ) {
       const maxRetries = 2;
       const doUpload = async (): Promise<boolean> => {
         try {
@@ -1886,6 +1902,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           }
           if (options?.worldId) {
             formData.append('worldId', options.worldId);
+          }
+          if (options?.folderId) {
+            formData.append('folderId', options.folderId);
           }
           const resp = await api.post('/api/v1/audio/assets/upload', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },

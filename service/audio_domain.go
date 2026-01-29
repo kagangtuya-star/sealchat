@@ -271,6 +271,12 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			} else {
 				q = q.Where("scope = ?", filters.Scope)
 			}
+		} else if filters.WorldID != nil {
+			if filters.IncludeCommon {
+				q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+			} else {
+				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
+			}
 		}
 		return q.Order("updated_at DESC")
 		})
@@ -723,6 +729,12 @@ func AudioListFoldersWithFilters(filters AudioFolderFilters) ([]*AudioFolderNode
 			}
 		} else {
 			q = q.Where("scope = ?", filters.Scope)
+		}
+	} else if filters.WorldID != nil {
+		if filters.IncludeCommon {
+			q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+		} else {
+			q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 		}
 	}
 	if err := q.Find(&folders).Error; err != nil {

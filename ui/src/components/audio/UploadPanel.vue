@@ -120,6 +120,7 @@ const importSelection = ref<string[]>([]);
 const uploadOptions = computed(() => ({
   scope: uploadScope.value,
   worldId: uploadScope.value === 'world' ? audio.currentWorldId ?? undefined : undefined,
+  folderId: audio.filters.folderId ?? undefined,
 }));
 
 const canUpload = computed(() => {

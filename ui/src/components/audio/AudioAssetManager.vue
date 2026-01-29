@@ -319,6 +319,17 @@
             placeholder="根目录"
           />
         </n-form-item>
+        <template v-if="folderModalMode === 'create' && audio.isSystemAdmin">
+          <n-form-item label="级别" path="scope">
+            <n-radio-group v-model:value="folderForm.scope">
+              <n-radio value="common">通用级</n-radio>
+              <n-radio value="world">世界级</n-radio>
+            </n-radio-group>
+          </n-form-item>
+          <n-form-item v-if="folderForm.scope === 'world'" label="所属世界" path="worldId">
+            <n-select v-model:value="folderForm.worldId" filterable :options="worldOptions" placeholder="选择世界" />
+          </n-form-item>
+        </template>
       </n-form>
       <template #action>
         <n-space justify="end">
@@ -433,6 +444,8 @@ const folderForm = reactive({
   id: '',
   name: '',
   parentId: null as string | null,
+  scope: null as AudioAssetScope | null,
+  worldId: null as string | null,
 });
 const folderFormRules: FormRules = {
   name: [
@@ -676,6 +689,13 @@ const rowProps = (row: AudioAsset) => ({
   },
 });
 
+const worldOptions = computed(() => {
+  const list = Object.values(chat.worldMap || {}) as Array<{ id?: string; name?: string }>;
+  return list
+    .filter((item) => item && item.id)
+    .map((item) => ({ label: item.name || item.id!, value: item.id! }));
+});
+
 function handleCheckedRowKeysChange(keys: Array<string | number>) {
   if (!Array.isArray(keys)) {
     checkedRowKeys.value = [];
@@ -821,6 +841,17 @@ function openCreateFolder() {
   folderForm.id = '';
   folderForm.name = '';
   folderForm.parentId = currentFolder.value?.id ?? null;
+  if (currentFolder.value) {
+    folderForm.scope = currentFolder.value.scope;
+    folderForm.worldId = currentFolder.value.worldId ?? null;
+  } else if (audio.isSystemAdmin) {
+    const preferredScope = selectedScope.value === 'all' ? audio.filters.scope : selectedScope.value;
+    folderForm.scope = preferredScope ?? (audio.currentWorldId ? 'world' : 'common');
+    folderForm.worldId = folderForm.scope === 'world' ? (audio.currentWorldId ?? audio.filters.worldId ?? null) : null;
+  } else {
+    folderForm.scope = 'world';
+    folderForm.worldId = audio.currentWorldId ?? audio.filters.worldId ?? null;
+  }
   folderModalVisible.value = true;
 }
 
@@ -830,6 +861,8 @@ function openRenameFolder() {
   folderForm.id = currentFolder.value.id;
   folderForm.name = currentFolder.value.name;
   folderForm.parentId = currentFolder.value.parentId;
+  folderForm.scope = currentFolder.value.scope;
+  folderForm.worldId = currentFolder.value.worldId ?? null;
   folderModalVisible.value = true;
 }
 
@@ -841,7 +874,27 @@ async function handleSaveFolder() {
   await folderFormRef.value?.validate();
   try {
     if (folderModalMode.value === 'create') {
-      await audio.createFolder({ name: folderForm.name.trim(), parentId: folderForm.parentId });
+      const trimmedName = folderForm.name.trim();
+      const targetScope = folderForm.scope ?? (selectedScope.value === 'all' ? audio.filters.scope : selectedScope.value);
+      if (folderForm.parentId && currentFolder.value?.scope === 'common' && targetScope === 'world') {
+        message.warning('通用文件夹下不能创建世界级子文件夹');
+        return;
+      }
+      const payload: AudioFolderPayload = { name: trimmedName, parentId: folderForm.parentId };
+      if (!audio.isSystemAdmin || targetScope === 'world') {
+        const worldId =
+          folderForm.worldId ?? currentFolder.value?.worldId ?? audio.filters.worldId ?? audio.currentWorldId;
+        if (!worldId) {
+          message.warning('请先进入一个世界后再创建世界级文件夹');
+          return;
+        }
+        payload.scope = 'world';
+        payload.worldId = worldId;
+      } else if (targetScope === 'common') {
+        payload.scope = 'common';
+        payload.worldId = null;
+      }
+      await audio.createFolder(payload);
       message.success('文件夹已创建');
     } else {
       await audio.updateFolder(folderForm.id, { name: folderForm.name.trim(), parentId: folderForm.parentId });
