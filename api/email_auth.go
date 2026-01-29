@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -401,9 +402,25 @@ func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 		nickname = req.Username
 	}
 
+	count := model.UserCount()
 	user, err := model.UserCreateWithEmail(req.Username, req.Password, nickname, req.Email)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "注册失败，请稍后再试"})
+	}
+
+	if count == 0 {
+		// 首个用户，设置为管理员
+		_, _ = service.UserRoleLink([]string{"sys-admin"}, []string{user.ID})
+		user.RoleIds = []string{"sys-admin"}
+		if _, err := service.BootstrapDefaultWorldForOwner(user.ID); err != nil {
+			log.Printf("初始化默认世界失败: %v", err)
+		}
+	} else {
+		_, _ = service.UserRoleLink([]string{"sys-user"}, []string{user.ID})
+		user.RoleIds = []string{"sys-user"}
+		if world, err := service.GetOrCreateDefaultWorld(); err == nil {
+			_, _ = service.WorldJoin(world.ID, user.ID, model.WorldRoleMember)
+		}
 	}
 
 	token, err := model.UserGenerateAccessToken(user.ID)
