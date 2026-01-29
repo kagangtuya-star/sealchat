@@ -193,6 +193,7 @@
           <ul class="audio-library__detail-list">
             <li>时长：{{ formatDuration(selectedAsset.duration) }}</li>
             <li>上传者：{{ formatUserLabel(selectedAsset.createdBy) }}</li>
+            <li>所属世界：{{ assetWorldLabel }}</li>
             <li>更新时间：{{ formatDate(selectedAsset.updatedAt) }}</li>
             <li>素材级别：{{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}</li>
             <li>存储：{{ selectedAsset.storageType === 's3' ? '对象存储 (支持跳转)' : '本地文件' }}</li>
@@ -481,6 +482,13 @@ const assetDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 360));
 
 const tableData = computed(() => audio.filteredAssets);
 const selectedAsset = computed(() => audio.selectedAsset);
+const assetWorldLabel = computed(() => {
+  const worldId = selectedAsset.value?.worldId;
+  if (!worldId) return '全局 (common)';
+  const world = chat.worldMap?.[worldId];
+  const name = world?.name || '未知世界';
+  return `${name} (${worldId})`;
+});
 const folderWorldLabel = computed(() => {
   const worldId = currentFolder.value?.worldId;
   if (!worldId) return '全局 (common)';
