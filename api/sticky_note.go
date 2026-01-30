@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,6 +80,80 @@ func ensureStickyNoteChannelMembership(userID, channelID string) error {
 	return nil
 }
 
+func parseStickyNoteUserIDs(raw string) map[string]struct{} {
+	result := make(map[string]struct{})
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return result
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err == nil {
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			result[id] = struct{}{}
+		}
+		return result
+	}
+	for _, part := range strings.Split(raw, ",") {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		result[id] = struct{}{}
+	}
+	return result
+}
+
+func buildStickyNoteUserIDs(ids map[string]struct{}) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	list := make([]string, 0, len(ids))
+	for id := range ids {
+		list = append(list, id)
+	}
+	sort.Strings(list)
+	encoded, err := json.Marshal(list)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func canViewStickyNote(note *model.StickyNoteModel, userID string) bool {
+	if note == nil {
+		return false
+	}
+	if note.Visibility == "" || note.Visibility == model.StickyNoteVisibilityAll {
+		return true
+	}
+	if userID == "" {
+		return false
+	}
+	if note.CreatorID == userID {
+		return true
+	}
+	editors := parseStickyNoteUserIDs(note.EditorIDs)
+	if _, ok := editors[userID]; ok {
+		return true
+	}
+	switch note.Visibility {
+	case model.StickyNoteVisibilityOwner:
+		return false
+	case model.StickyNoteVisibilityEditors:
+		return false
+	case model.StickyNoteVisibilityViewers:
+		viewers := parseStickyNoteUserIDs(note.ViewerIDs)
+		_, ok := viewers[userID]
+		return ok
+	default:
+		return true
+	}
+}
+
 // apiChannelStickyNoteList 获取频道的所有便签
 func apiChannelStickyNoteList(c *fiber.Ctx) error {
 	channelID := c.Params("channelId")
@@ -90,6 +166,14 @@ func apiChannelStickyNoteList(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
+
+	visibleNotes := make([]*model.StickyNoteModel, 0, len(notes))
+	for _, note := range notes {
+		if canViewStickyNote(note, user.ID) {
+			visibleNotes = append(visibleNotes, note)
+		}
+	}
+	notes = visibleNotes
 
 	// 加载创建者信息
 	for _, note := range notes {
@@ -413,10 +497,18 @@ func apiChannelStickyNoteMigrate(c *fiber.Ctx) error {
 // apiStickyNoteGet 获取单个便签
 func apiStickyNoteGet(c *fiber.Ctx) error {
 	noteID := c.Params("noteId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
 
 	note, err := model.StickyNoteGet(noteID)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+
+	if !canViewStickyNote(note, user.ID) {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
 	}
 
 	note.LoadCreator()
@@ -637,7 +729,7 @@ func apiStickyNotePushRest(c *fiber.Ctx) error {
 	noteID := c.Params("noteId")
 
 	var req struct {
-		TargetUserIDs []string `json:"targetUserIds"`
+		TargetUserIDs []string                   `json:"targetUserIds"`
 		Layout        *protocol.StickyNoteLayout `json:"layout"`
 	}
 
@@ -652,6 +744,30 @@ func apiStickyNotePushRest(c *fiber.Ctx) error {
 	note, err := model.StickyNoteGet(noteID)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+
+	if note.Visibility != model.StickyNoteVisibilityAll {
+		viewerSet := parseStickyNoteUserIDs(note.ViewerIDs)
+		for _, id := range req.TargetUserIDs {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			viewerSet[id] = struct{}{}
+		}
+		visibility := note.Visibility
+		if visibility != model.StickyNoteVisibilityViewers {
+			visibility = model.StickyNoteVisibilityViewers
+		}
+		updates := map[string]interface{}{
+			"visibility": visibility,
+			"viewer_ids": buildStickyNoteUserIDs(viewerSet),
+			"updated_at": time.Now(),
+		}
+		if err := model.StickyNoteUpdate(note.ID, updates); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		note, _ = model.StickyNoteGet(noteID)
 	}
 
 	note.LoadCreator()
@@ -741,8 +857,8 @@ func apiStickyNoteDeleteWs(ctx *ChatContext, data *struct {
 
 // apiStickyNotePushWs WebSocket API: 推送便签
 func apiStickyNotePushWs(ctx *ChatContext, data *struct {
-	NoteID        string   `json:"noteId"`
-	TargetUserIDs []string `json:"targetUserIds"`
+	NoteID        string                     `json:"noteId"`
+	TargetUserIDs []string                   `json:"targetUserIds"`
 	Layout        *protocol.StickyNoteLayout `json:"layout"`
 }) (any, error) {
 	if len(data.TargetUserIDs) == 0 {

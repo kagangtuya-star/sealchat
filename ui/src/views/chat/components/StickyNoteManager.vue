@@ -92,6 +92,24 @@
               </button>
               <button
                 class="sticky-note-rail__action"
+                :class="{ 'sticky-note-rail__action--active': stickyNoteStore.privateCreateEnabled }"
+                :title="stickyNoteStore.privateCreateEnabled ? '私密创建已开启：新建便签仅自己可见' : '私密创建已关闭'"
+                :aria-pressed="stickyNoteStore.privateCreateEnabled"
+                @click="togglePrivateCreate"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path
+                    v-if="stickyNoteStore.privateCreateEnabled"
+                    d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2zm-6 0V6a2 2 0 1 1 4 0v2h-4z"
+                  />
+                  <path
+                    v-else
+                    d="M17 8h-1V6a4 4 0 1 0-8 0h2a2 2 0 1 1 4 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2z"
+                  />
+                </svg>
+              </button>
+              <button
+                class="sticky-note-rail__action"
                 title="重置位置"
                 @click="resetOpenNotes"
               >
@@ -779,6 +797,10 @@ function formatCreator(note: { creator?: { nickname?: string; nick?: string; nam
   return creator?.nickname || creator?.nick || creator?.name || '未知用户'
 }
 
+function togglePrivateCreate() {
+  stickyNoteStore.setPrivateCreateEnabled(!stickyNoteStore.privateCreateEnabled)
+}
+
 // 创建新便签
 async function createNote(event?: MouseEvent) {
   showTypeSelector.value = true
@@ -815,6 +837,7 @@ async function handleTypeSelect(type: StickyNoteType) {
   closeTypeSelector()
   const offset = stickyNoteStore.activeNoteIds.length * 30
   const typeData = stickyNoteStore.getDefaultTypeData(type)
+  const visibility = stickyNoteStore.privateCreateEnabled ? 'owner' : 'all'
   await stickyNoteStore.createNote({
     title: '',
     content: '',
@@ -822,7 +845,8 @@ async function handleTypeSelect(type: StickyNoteType) {
     defaultX: 100 + offset,
     defaultY: 100 + offset,
     noteType: type,
-    typeData: typeData ? JSON.stringify(typeData) : undefined
+    typeData: typeData ? JSON.stringify(typeData) : undefined,
+    visibility
   })
 }
 
@@ -1054,6 +1078,12 @@ onUnmounted(() => {
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sticky-note-rail__action--active {
+  border-color: rgba(245, 158, 11, 0.6);
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.18);
 }
 
 .sticky-note-rail__action--add {
