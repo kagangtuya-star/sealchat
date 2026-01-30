@@ -33,6 +33,7 @@ const props = defineProps<{
   lockSameWorld: boolean;
   notifyOwnerPaneId: PaneId | null;
   operationTarget: OperationTarget;
+  audioPlaybackTarget: OperationTarget;
   worldName: string;
   channelTree: SplitChannelNode[];
   webTargetPaneId: PaneId;
@@ -46,6 +47,7 @@ const emit = defineEmits<{
   (e: 'set-world', worldId: string): void;
   (e: 'toggle-lock-same-world', enabled: boolean): void;
   (e: 'set-notify-owner', paneId: PaneId | null): void;
+  (e: 'set-audio-playback-target', target: OperationTarget): void;
   (e: 'open-channel', channelId: string): void;
   (e: 'set-web-target', paneId: PaneId): void;
   (e: 'set-pane-mode', paneId: PaneId, mode: PaneMode): void;
@@ -95,6 +97,12 @@ const setNotifyValue = (value: string) => {
     return;
   }
   emit('set-notify-owner', null);
+};
+
+const setAudioPlaybackTarget = (value: string) => {
+  if (value === 'follow' || value === 'A' || value === 'B') {
+    emit('set-audio-playback-target', value);
+  }
 };
 
 watch(
@@ -204,6 +212,15 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
         <div class="sc-split-sidebar__label">通知窗格</div>
         <n-radio-group size="small" :value="notifyValue" @update:value="setNotifyValue">
           <n-radio-button value="">无</n-radio-button>
+          <n-radio-button value="A">A</n-radio-button>
+          <n-radio-button value="B">B</n-radio-button>
+        </n-radio-group>
+      </div>
+
+      <div class="sc-split-sidebar__row">
+        <div class="sc-split-sidebar__label">音频播放</div>
+        <n-radio-group size="small" :value="audioPlaybackTarget" @update:value="setAudioPlaybackTarget">
+          <n-radio-button value="follow">跟随焦点</n-radio-button>
           <n-radio-button value="A">A</n-radio-button>
           <n-radio-button value="B">B</n-radio-button>
         </n-radio-group>
