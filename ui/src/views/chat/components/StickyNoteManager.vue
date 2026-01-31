@@ -10,7 +10,14 @@
 
       <!-- 最小化的便签列表 -->
       <Transition name="slide-up">
-        <div v-if="minimizedNotes.length > 0" class="sticky-note-minimized-bar">
+        <div
+          v-if="minimizedNotes.length > 0"
+          ref="minimizedBarRef"
+          class="sticky-note-minimized-bar"
+          :class="{ 'sticky-note-minimized-bar--dragging': minimizedBarDragging }"
+          :style="minimizedBarStyle"
+          @pointerdown="startMinimizedBarDrag"
+        >
           <div
             v-for="note in minimizedNotes"
             :key="note.id"
@@ -438,6 +445,21 @@ const migrationTargets = ref<string[]>([])
 const migrationMode = ref<'copy' | 'move'>('copy')
 const migrationNoteIds = ref<string[]>([])
 const migrationNoteKeyword = ref('')
+const minimizedBarRef = ref<HTMLElement | null>(null)
+const minimizedBarPosition = ref<{ x: number; y: number } | null>(null)
+const minimizedBarDragging = ref(false)
+const minimizedBarDragMoved = ref(false)
+const minimizedBarClickBlocked = ref(false)
+const minimizedBarDragPointerId = ref<number | null>(null)
+const minimizedBarDragOffset = ref({ x: 0, y: 0 })
+const minimizedBarDragStart = ref({ x: 0, y: 0 })
+
+const MINIMIZED_BAR_STORAGE_PREFIX = 'sealchat_sticky_note_minimized_bar'
+const MINIMIZED_BAR_PADDING = 8
+const MINIMIZED_BAR_DEFAULT_RIGHT = 24
+const MINIMIZED_BAR_DEFAULT_BOTTOM = 140
+const MINIMIZED_BAR_FALLBACK_WIDTH = 240
+const MINIMIZED_BAR_FALLBACK_HEIGHT = 200
 
 const noteTypePreloaders: Partial<Record<StickyNoteType, () => Promise<unknown>>> = {
   counter: () => import('./sticky-notes/StickyNoteCounter.vue'),
@@ -487,6 +509,16 @@ const minimizedNotes = computed(() => {
   return stickyNoteStore.activeNoteIds
     .map(id => stickyNoteStore.notes[id])
     .filter(note => note && stickyNoteStore.userStates[note.id]?.minimized)
+})
+
+const minimizedBarStyle = computed(() => {
+  if (!minimizedBarPosition.value) return {}
+  return {
+    left: `${minimizedBarPosition.value.x}px`,
+    top: `${minimizedBarPosition.value.y}px`,
+    right: 'auto',
+    bottom: 'auto'
+  }
 })
 
 // 未分类便签
@@ -899,13 +931,144 @@ async function handleMigration() {
   }
 }
 
+function buildMinimizedBarStorageKey() {
+  const userId = userStore.info?.id
+  if (!userId || !props.channelId) return ''
+  return `${MINIMIZED_BAR_STORAGE_PREFIX}:${userId}:${props.channelId}`
+}
+
+function getMinimizedBarSize() {
+  const rect = minimizedBarRef.value?.getBoundingClientRect()
+  if (!rect) {
+    return { width: MINIMIZED_BAR_FALLBACK_WIDTH, height: MINIMIZED_BAR_FALLBACK_HEIGHT }
+  }
+  return { width: rect.width, height: rect.height }
+}
+
+function clampMinimizedBarPosition(position: { x: number; y: number }) {
+  if (typeof window === 'undefined') return position
+  const viewportW = Math.max(window.innerWidth, 1)
+  const viewportH = Math.max(window.innerHeight, 1)
+  const size = getMinimizedBarSize()
+  const maxX = Math.max(MINIMIZED_BAR_PADDING, viewportW - size.width - MINIMIZED_BAR_PADDING)
+  const maxY = Math.max(MINIMIZED_BAR_PADDING, viewportH - size.height - MINIMIZED_BAR_PADDING)
+  const x = Math.min(Math.max(MINIMIZED_BAR_PADDING, Math.round(position.x)), maxX)
+  const y = Math.min(Math.max(MINIMIZED_BAR_PADDING, Math.round(position.y)), maxY)
+  return { x, y }
+}
+
+function initMinimizedBarPositionIfNeeded() {
+  if (typeof window === 'undefined') return
+  if (!minimizedNotes.value.length) return
+  if (!minimizedBarPosition.value) {
+    const size = getMinimizedBarSize()
+    const viewportW = Math.max(window.innerWidth, 1)
+    const viewportH = Math.max(window.innerHeight, 1)
+    const defaultPosition = {
+      x: viewportW - size.width - MINIMIZED_BAR_DEFAULT_RIGHT,
+      y: viewportH - size.height - MINIMIZED_BAR_DEFAULT_BOTTOM
+    }
+    minimizedBarPosition.value = clampMinimizedBarPosition(defaultPosition)
+    return
+  }
+  minimizedBarPosition.value = clampMinimizedBarPosition(minimizedBarPosition.value)
+}
+
+function readMinimizedBarPosition() {
+  if (typeof window === 'undefined') return
+  const key = buildMinimizedBarStorageKey()
+  minimizedBarPosition.value = null
+  if (!key) return
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as { x?: number; y?: number } | null
+    if (parsed && Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+      minimizedBarPosition.value = { x: parsed.x as number, y: parsed.y as number }
+    }
+  } catch {
+    minimizedBarPosition.value = null
+  }
+}
+
+function persistMinimizedBarPosition() {
+  if (typeof window === 'undefined') return
+  const key = buildMinimizedBarStorageKey()
+  if (!key || !minimizedBarPosition.value) return
+  try {
+    localStorage.setItem(key, JSON.stringify(minimizedBarPosition.value))
+  } catch {
+    // ignore
+  }
+}
+
+function startMinimizedBarDrag(e: PointerEvent) {
+  if (e.button !== 0) return
+  if (!minimizedBarRef.value) return
+  if (minimizedBarDragging.value) return
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.sticky-note-minimized-close')) return
+  e.preventDefault()
+  minimizedBarDragging.value = true
+  minimizedBarDragMoved.value = false
+  minimizedBarDragPointerId.value = e.pointerId
+  minimizedBarDragStart.value = { x: e.clientX, y: e.clientY }
+  const rect = minimizedBarRef.value.getBoundingClientRect()
+  minimizedBarDragOffset.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  document.addEventListener('pointermove', onMinimizedBarDrag)
+  document.addEventListener('pointerup', stopMinimizedBarDrag)
+  document.addEventListener('pointercancel', stopMinimizedBarDrag)
+}
+
+function onMinimizedBarDrag(e: PointerEvent) {
+  if (!minimizedBarDragging.value) return
+  if (minimizedBarDragPointerId.value !== e.pointerId) return
+  const nextPosition = clampMinimizedBarPosition({
+    x: e.clientX - minimizedBarDragOffset.value.x,
+    y: e.clientY - minimizedBarDragOffset.value.y
+  })
+  minimizedBarPosition.value = nextPosition
+  if (!minimizedBarDragMoved.value) {
+    const dx = Math.abs(e.clientX - minimizedBarDragStart.value.x)
+    const dy = Math.abs(e.clientY - minimizedBarDragStart.value.y)
+    if (dx > 3 || dy > 3) {
+      minimizedBarDragMoved.value = true
+    }
+  }
+}
+
+function stopMinimizedBarDrag(e: PointerEvent) {
+  if (!minimizedBarDragging.value) return
+  if (minimizedBarDragPointerId.value !== e.pointerId) return
+  minimizedBarDragging.value = false
+  minimizedBarDragPointerId.value = null
+  document.removeEventListener('pointermove', onMinimizedBarDrag)
+  document.removeEventListener('pointerup', stopMinimizedBarDrag)
+  document.removeEventListener('pointercancel', stopMinimizedBarDrag)
+  if (minimizedBarDragMoved.value) {
+    minimizedBarClickBlocked.value = true
+    persistMinimizedBarPosition()
+    setTimeout(() => {
+      minimizedBarClickBlocked.value = false
+    }, 0)
+  }
+}
+
+function handleMinimizedBarResize() {
+  if (!minimizedBarPosition.value) return
+  minimizedBarPosition.value = clampMinimizedBarPosition(minimizedBarPosition.value)
+  persistMinimizedBarPosition()
+}
+
 // 恢复最小化的便签
 function restore(noteId: string) {
+  if (minimizedBarClickBlocked.value) return
   stickyNoteStore.restoreNote(noteId)
 }
 
 // 关闭便签
 function close(noteId: string) {
+  if (minimizedBarClickBlocked.value) return
   stickyNoteStore.closeNote(noteId)
 }
 
@@ -915,6 +1078,20 @@ watch(() => props.channelId, (newChannelId) => {
     stickyNoteStore.loadChannelNotes(newChannelId)
   }
 }, { immediate: true })
+
+watch(() => [props.channelId, userStore.info?.id], () => {
+  readMinimizedBarPosition()
+  nextTick(() => {
+    initMinimizedBarPositionIfNeeded()
+  })
+}, { immediate: true })
+
+watch(minimizedNotes, () => {
+  if (!minimizedNotes.value.length) return
+  nextTick(() => {
+    initMinimizedBarPositionIfNeeded()
+  })
+})
 
 function openRail() {
   railOpen.value = true
@@ -949,6 +1126,9 @@ onMounted(() => {
   chatEvent.on('sticky-note-updated', handleEvent)
   chatEvent.on('sticky-note-deleted', handleEvent)
   chatEvent.on('sticky-note-pushed', handleEvent)
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', handleMinimizedBarResize)
+  }
 })
 
 onUnmounted(() => {
@@ -957,6 +1137,12 @@ onUnmounted(() => {
   chatEvent.off('sticky-note-updated', handleEvent)
   chatEvent.off('sticky-note-deleted', handleEvent)
   chatEvent.off('sticky-note-pushed', handleEvent)
+  document.removeEventListener('pointermove', onMinimizedBarDrag)
+  document.removeEventListener('pointerup', stopMinimizedBarDrag)
+  document.removeEventListener('pointercancel', stopMinimizedBarDrag)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleMinimizedBarResize)
+  }
 })
 </script>
 
@@ -1517,13 +1703,21 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
   z-index: 998;
   max-height: 45vh;
   overflow-y: auto;
+  pointer-events: auto;
+  user-select: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sticky-note-minimized-bar--dragging {
+  cursor: grabbing;
 }
 
 .sticky-note-minimized-item {
@@ -1543,12 +1737,12 @@ onUnmounted(() => {
   transform: translateX(-2px);
 }
 
-.sticky-note-minimized-item--yellow { background: #fff9c4; }
-.sticky-note-minimized-item--pink { background: #f8bbd9; }
-.sticky-note-minimized-item--green { background: #c8e6c9; }
-.sticky-note-minimized-item--blue { background: #bbdefb; }
-.sticky-note-minimized-item--purple { background: #e1bee7; }
-.sticky-note-minimized-item--orange { background: #ffe0b2; }
+.sticky-note-minimized-item--yellow { background: var(--sc-sticky-note-yellow, #fff9c4); }
+.sticky-note-minimized-item--pink { background: var(--sc-sticky-note-pink, #f8bbd9); }
+.sticky-note-minimized-item--green { background: var(--sc-sticky-note-green, #c8e6c9); }
+.sticky-note-minimized-item--blue { background: var(--sc-sticky-note-blue, #bbdefb); }
+.sticky-note-minimized-item--purple { background: var(--sc-sticky-note-purple, #e1bee7); }
+.sticky-note-minimized-item--orange { background: var(--sc-sticky-note-orange, #ffe0b2); }
 
 .sticky-note-minimized-title {
   max-width: 120px;
