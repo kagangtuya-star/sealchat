@@ -468,14 +468,16 @@ onBeforeUnmount(() => {
 
               <!-- 本地验证码 -->
               <NFormItem v-if="captchaMode === 'local'" label="图形验证码">
-                <div class="flex w-full items-center gap-3">
+                <div class="flex w-full flex-col gap-2">
                   <NInput v-model:value="captchaInput" placeholder="请输入验证码" />
-                  <div class="sc-captcha-box rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center cursor-pointer"
-                    title="点击刷新" @click.prevent="reloadCaptchaImage">
-                    <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
-                    <span v-else class="text-xs text-gray-500">加载中</span>
+                  <div class="flex items-center gap-3">
+                    <div class="sc-captcha-box rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center cursor-pointer"
+                      title="点击刷新" @click.prevent="reloadCaptchaImage">
+                      <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
+                      <span v-else class="text-xs text-gray-500">加载中</span>
+                    </div>
+                    <NButton text size="tiny" :loading="captchaLoading" @click.prevent="reloadCaptchaImage">刷新</NButton>
                   </div>
-                  <NButton text size="tiny" :loading="captchaLoading" @click.prevent="reloadCaptchaImage">刷新</NButton>
                 </div>
                 <div v-if="captchaError" class="text-xs text-red-500 mt-1">{{ captchaError }}</div>
               </NFormItem>

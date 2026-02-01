@@ -502,12 +502,12 @@ onBeforeUnmount(() => {
             <!-- 基础验证码（发送邮箱验证码前需要，验证通过后隐藏） -->
             <div class="w-full mt-4" v-if="captchaMode === 'local' && !captchaVerified">
               <label class="block text-xs text-gray-500 dark:text-gray-300">图形验证码</label>
-              <div class="flex items-center gap-3 mt-2">
+              <div class="flex flex-col gap-2 mt-2">
                 <input v-model="captchaInput"
                   class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                   type="text" placeholder="请输入图形验证码" aria-label="图形验证码"
                 />
-                <div class="flex flex-col items-center gap-1">
+                <div class="flex items-center gap-3">
                   <div class="sc-captcha-box bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
                     @click.prevent="reloadCaptchaImage" title="点击刷新">
                     <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
@@ -556,12 +556,12 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="w-full mt-4" v-if="captchaMode === 'local'">
             <label class="block text-xs text-gray-500 dark:text-gray-300">验证码</label>
-            <div class="flex items-center gap-3 mt-2">
+            <div class="flex flex-col gap-2 mt-2">
               <input v-model="captchaInput"
                 class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                 type="text" placeholder="请输入验证码" aria-label="验证码"
               />
-              <div class="flex flex-col items-center gap-1">
+              <div class="flex items-center gap-3">
                 <div class="sc-captcha-box bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
                   @click.prevent="reloadCaptchaImage" title="点击刷新">
                   <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
