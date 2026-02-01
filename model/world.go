@@ -30,6 +30,7 @@ type WorldModel struct {
 	EnforceMembership       bool   `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
 	AllowAdminEditMessages  bool   `json:"allowAdminEditMessages" gorm:"default:false"`    // 允许管理员编辑成员发言
 	AllowMemberEditKeywords bool   `json:"allowMemberEditKeywords" gorm:"default:false"`   // 允许成员编辑世界术语
+	CharacterCardBadgeTemplate string `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
 	IsSystemDefault         bool   `json:"isSystemDefault" gorm:"default:false;index"`     // 系统默认世界标识，仅允许一个
 	OwnerID                 string `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID        string `json:"defaultChannelId" gorm:"size:100"`

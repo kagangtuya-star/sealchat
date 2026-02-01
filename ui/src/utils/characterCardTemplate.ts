@@ -51,3 +51,20 @@ export function renderCardTemplate(template: string, data: Record<string, any>):
     ALLOWED_ATTR: ['class', 'style'],
   });
 }
+
+/**
+ * Extract placeholder keys from a character card template.
+ */
+export function extractTemplateKeys(template: string): string[] {
+  if (!template) return [];
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  template.replace(/\{([^{}]+)\}/g, (_match, rawKey) => {
+    const key = String(rawKey).trim();
+    if (!key || seen.has(key)) return '';
+    seen.add(key);
+    keys.push(key);
+    return '';
+  });
+  return keys;
+}

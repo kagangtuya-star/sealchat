@@ -12,6 +12,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
@@ -46,19 +47,19 @@ func WorldList(c *fiber.Ctx) error {
 	}
 	offset := (page - 1) * pageSize
 
-	q := db.Model(&model.WorldModel{}).Where("status = ?", "active")
+	q := db.Table("worlds").Where("worlds.status = ?", "active")
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		q = q.Where("name LIKE ? OR description LIKE ?", like, like)
+		q = q.Where("worlds.name LIKE ? OR worlds.description LIKE ?", like, like)
 	}
 	memberSub := db.Table("world_members").Select("world_id").Where("user_id = ?", user.ID)
 	if joinedOnly {
-		q = q.Where("id IN (?)", memberSub)
+		q = q.Where("worlds.id IN (?)", memberSub)
 	} else {
 		if visibility != "" {
-			q = q.Where("visibility = ?", visibility)
+			q = q.Where("worlds.visibility = ?", visibility)
 		} else {
-			q = q.Where("visibility = ? OR id IN (?)", model.WorldVisibilityPublic, memberSub)
+			q = q.Where("worlds.visibility = ? OR worlds.id IN (?)", model.WorldVisibilityPublic, memberSub)
 		}
 	}
 
@@ -67,8 +68,19 @@ func WorldList(c *fiber.Ctx) error {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界列表失败"})
 	}
 
+	lastActiveSub := db.Table("channels").
+		Select("world_id, MAX(recent_sent_at) as last_active").
+		Group("world_id")
+
 	var worlds []*model.WorldModel
-	if err := q.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&worlds).Error; err != nil {
+	if err := q.Joins("LEFT JOIN (?) as world_last_activity ON world_last_activity.world_id = worlds.id", lastActiveSub).
+		Joins("LEFT JOIN world_favorites wf ON wf.world_id = worlds.id AND wf.user_id = ?", user.ID).
+		Order("CASE WHEN wf.world_id IS NULL THEN 0 ELSE 1 END DESC").
+		Order("COALESCE(world_last_activity.last_active, 0) DESC").
+		Order("worlds.created_at DESC").
+		Select("worlds.*").
+		Offset(offset).Limit(pageSize).
+		Find(&worlds).Error; err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界列表失败"})
 	}
 	if len(worlds) == 0 {
@@ -254,7 +266,25 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新世界失败"})
 		}
 	}
+	if world != nil && world.ID != "" {
+		broadcastWorldUpdated(world)
+	}
 	return c.JSON(fiber.Map{"world": world})
+}
+
+func broadcastWorldUpdated(world *model.WorldModel) {
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return
+	}
+	event := &protocol.Event{
+		Type: protocol.EventWorldUpdated,
+		Argv: &protocol.Argv{
+			Options: map[string]interface{}{
+				"world": world,
+			},
+		},
+	}
+	broadcastEventToWorld(world.ID, event)
 }
 
 func WorldDeleteHandler(c *fiber.Ctx) error {

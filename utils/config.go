@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -29,6 +30,7 @@ type LogUploadConfig struct {
 type AudioConfig struct {
 	StorageDir               string   `json:"storageDir" yaml:"storageDir"`
 	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
+	ImportDir                string   `json:"importDir" yaml:"importDir"`
 	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
 	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
 	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
@@ -282,6 +284,7 @@ func ReadConfig() *AppConfig {
 		Audio: AudioConfig{
 			StorageDir:               "./static/audio",
 			TempDir:                  "./data/audio-temp",
+			ImportDir:                "./static/audio/import",
 			MaxUploadSizeMB:          80,
 			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
 			EnableTranscode:          true,
@@ -418,13 +421,16 @@ func ReadConfig() *AppConfig {
 
 	config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 	config.Storage.normalize()
-	applyStorageEnvOverrides(&config.Storage)
-	if strings.TrimSpace(config.Storage.Local.AudioDir) == "" {
-		config.Storage.Local.AudioDir = config.Audio.StorageDir
-	}
-	applyImageBaseURLFallback(&config)
-	applySQLiteDefaults(&config.SQLite)
-	applyExportDefaults(&config.Export)
+		applyStorageEnvOverrides(&config.Storage)
+		if strings.TrimSpace(config.Storage.Local.AudioDir) == "" {
+			config.Storage.Local.AudioDir = config.Audio.StorageDir
+		}
+		if strings.TrimSpace(config.Audio.ImportDir) == "" && strings.TrimSpace(config.Audio.StorageDir) != "" {
+			config.Audio.ImportDir = filepath.Join(config.Audio.StorageDir, "import")
+		}
+		applyImageBaseURLFallback(&config)
+		applySQLiteDefaults(&config.SQLite)
+		applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
 	applyEmailAuthDefaults(&config.EmailAuth)
@@ -656,6 +662,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("logUpload.note", config.LogUpload.Note)
 		_ = k.Set("audio.storageDir", config.Audio.StorageDir)
 		_ = k.Set("audio.tempDir", config.Audio.TempDir)
+		_ = k.Set("audio.importDir", config.Audio.ImportDir)
 		_ = k.Set("audio.maxUploadSizeMB", config.Audio.MaxUploadSizeMB)
 		_ = k.Set("audio.allowedMimeTypes", config.Audio.AllowedMimeTypes)
 		_ = k.Set("audio.enableTranscode", config.Audio.EnableTranscode)
@@ -1167,6 +1174,9 @@ func EnsureDataDirs(cfg *AppConfig) {
 	}
 	if cfg.Audio.TempDir != "" {
 		dirs = append(dirs, cfg.Audio.TempDir)
+	}
+	if cfg.Audio.ImportDir != "" {
+		dirs = append(dirs, cfg.Audio.ImportDir)
 	}
 	if cfg.Export.StorageDir != "" {
 		dirs = append(dirs, cfg.Export.StorageDir)

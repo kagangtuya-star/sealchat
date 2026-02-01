@@ -53,6 +53,120 @@ func (m *ChannelModel) UpdateRecentSent() {
 	db.Model(m).Update("recent_sent_at", m.RecentSentAt)
 }
 
+func parseSQLiteTime(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, true
+	}
+	layoutsWithZone := []string{
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999Z07:00",
+		"2006-01-02 15:04:05.999Z07:00",
+		"2006-01-02 15:04:05Z07:00",
+	}
+	for _, layout := range layoutsWithZone {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, true
+		}
+	}
+	layouts := []string{
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05.999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// BackfillChannelRecentSentAt 根据历史消息回填频道最近发言时间。
+func BackfillChannelRecentSentAt() error {
+	const batchSize = 500
+	updateRecentSentAt := func(channelID string, lastCreated time.Time) error {
+		if channelID == "" || lastCreated.IsZero() {
+			return nil
+		}
+		return db.Model(&ChannelModel{}).
+			Where("id = ?", channelID).
+			UpdateColumn("recent_sent_at", lastCreated.UnixMilli()).Error
+	}
+	for {
+		var rows []struct {
+			ID string `gorm:"column:id"`
+		}
+		if err := db.Table("channels").
+			Select("channels.id").
+			Joins("JOIN messages ON messages.channel_id = channels.id").
+			Where("channels.recent_sent_at IS NULL OR channels.recent_sent_at = 0").
+			Group("channels.id").
+			Limit(batchSize).
+			Scan(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			if row.ID != "" {
+				ids = append(ids, row.ID)
+			}
+		}
+		if len(ids) == 0 {
+			break
+		}
+		if IsSQLite() {
+			var msgRows []struct {
+				ChannelID   string `gorm:"column:channel_id"`
+				LastCreated string `gorm:"column:last_created"`
+			}
+			if err := db.Table("messages").
+				Select("channel_id, MAX(created_at) as last_created").
+				Where("channel_id IN ?", ids).
+				Group("channel_id").
+				Scan(&msgRows).Error; err != nil {
+				return err
+			}
+			for _, row := range msgRows {
+				lastCreated, ok := parseSQLiteTime(row.LastCreated)
+				if !ok {
+					continue
+				}
+				if err := updateRecentSentAt(row.ChannelID, lastCreated); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		var msgRows []struct {
+			ChannelID   string    `gorm:"column:channel_id"`
+			LastCreated time.Time `gorm:"column:last_created"`
+		}
+		if err := db.Table("messages").
+			Select("channel_id, MAX(created_at) as last_created").
+			Where("channel_id IN ?", ids).
+			Group("channel_id").
+			Scan(&msgRows).Error; err != nil {
+			return err
+		}
+		for _, row := range msgRows {
+			if err := updateRecentSentAt(row.ChannelID, row.LastCreated); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ChannelBackgroundEdit 仅更新频道背景相关字段
 func ChannelBackgroundEdit(channelId string, updates *ChannelBackgroundUpdate) error {
 	return db.Model(&ChannelModel{}).

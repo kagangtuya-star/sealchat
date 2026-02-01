@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import type { WorldKeywordItem } from '@/models/worldGlossary'
 
 // pinyin-pro 类型定义
@@ -8,6 +9,11 @@ interface PinyinProModule {
 // 懒加载状态
 let pinyinModule: PinyinProModule | null = null
 let loadPromise: Promise<boolean> | null = null
+const pinyinReadyVersion = ref(0)
+
+const markPinyinReady = () => {
+  pinyinReadyVersion.value += 1
+}
 
 // CDN 地址（UMD，全局暴露 window.pinyinPro）
 const CDN_URL = 'https://npm.elemecdn.com/pinyin-pro/dist/index.js'
@@ -101,6 +107,7 @@ export async function ensurePinyinLoaded(): Promise<boolean> {
     pinyinModule = await loadFromCDN()
     if (pinyinModule) {
       console.info('[pinyinMatch] Loaded pinyin-pro from CDN')
+      markPinyinReady()
       return true
     }
 
@@ -108,6 +115,7 @@ export async function ensurePinyinLoaded(): Promise<boolean> {
     pinyinModule = await loadFromLocal()
     if (pinyinModule) {
       console.info('[pinyinMatch] Loaded pinyin-pro from local module')
+      markPinyinReady()
       return true
     }
 
@@ -321,6 +329,10 @@ export function matchKeywords(
 
 // 通用文本拼音匹配（用于成员搜索等场景）
 export function matchText(query: string, text: string): boolean {
+  void pinyinReadyVersion.value
+  if (!pinyinModule) {
+    void ensurePinyinLoaded()
+  }
   if (!query || !text) {
     return !query // 空查询匹配所有
   }
@@ -352,4 +364,8 @@ export function matchText(query: string, text: string): boolean {
 // 检查拼音库是否已加载
 export function isPinyinLoaded(): boolean {
   return pinyinModule !== null
+}
+
+export function usePinyinReadyVersion() {
+  return pinyinReadyVersion
 }

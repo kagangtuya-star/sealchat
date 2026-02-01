@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
+import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
@@ -22,6 +23,7 @@ watch(() => props.worldId, async (id) => {
     visibility: detail.world?.visibility,
     allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
     allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
+    characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
   };
 }, { immediate: true });
 
@@ -95,6 +97,15 @@ const confirmRemove = () => {
           <n-switch v-model:value="form.allowMemberEditKeywords" />
           <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
             允许成员编辑世界术语
+          </span>
+        </n-form-item>
+        <n-form-item label="徽章模板">
+          <n-input
+            v-model:value="form.characterCardBadgeTemplate"
+            placeholder="留空则使用个人模板"
+          />
+          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
+            示例：{{ DEFAULT_CARD_TEMPLATE }}
           </span>
         </n-form-item>
       </n-form>

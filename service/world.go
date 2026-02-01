@@ -42,6 +42,7 @@ type WorldUpdateParams struct {
 	EnforceMembership      *bool
 	AllowAdminEditMessages *bool
 	AllowMemberEditKeywords *bool
+	CharacterCardBadgeTemplate *string
 }
 
 func normalizeWorldDescription(desc string) (string, error) {
@@ -50,6 +51,14 @@ func normalizeWorldDescription(desc string) (string, error) {
 		return "", ErrWorldDescriptionTooLong
 	}
 	return desc, nil
+}
+
+func normalizeWorldBadgeTemplate(template string) (string, error) {
+	template = strings.TrimSpace(template)
+	if utf8.RuneCountInString(template) > 512 {
+		return "", errors.New("徽章模板长度需在512个字符以内")
+	}
+	return template, nil
 }
 
 func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
@@ -286,11 +295,21 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	if params.AllowMemberEditKeywords != nil {
 		updates["allow_member_edit_keywords"] = *params.AllowMemberEditKeywords
 	}
+	if params.CharacterCardBadgeTemplate != nil {
+		template, err := normalizeWorldBadgeTemplate(*params.CharacterCardBadgeTemplate)
+		if err != nil {
+			return nil, err
+		}
+		updates["character_card_badge_template"] = template
+	}
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()
 		if err := model.GetDB().Model(world).Updates(updates).Error; err != nil {
 			return nil, err
 		}
+	}
+	if err := model.GetDB().Where("id = ? AND status = ?", worldID, "active").Limit(1).Find(world).Error; err != nil {
+		return nil, err
 	}
 	return world, nil
 }

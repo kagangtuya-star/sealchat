@@ -131,6 +131,7 @@ export interface StickyNoteWithState {
 interface StickyNoteLocalCache {
     version: number
     uiVisible: boolean
+    privateCreateEnabled?: boolean
     notes: StickyNote[]
     userStates: StickyNoteUserState[]
     activeNoteIds: string[]
@@ -165,6 +166,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     const loading = ref(false)
     // 便签界面可见状态
     const uiVisible = ref(false)
+    // 新建便签仅自己可见开关
+    const privateCreateEnabled = ref(false)
     // 每频道远端持久化开关缓存
     const persistRemoteStateByChannel = ref<Record<string, boolean>>({})
 
@@ -244,6 +247,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         userStates.value = {}
         activeNoteIds.value = []
         maxZIndex.value = 1000
+        privateCreateEnabled.value = false
 
         if (Array.isArray(cache.notes)) {
             for (const note of cache.notes) {
@@ -276,6 +280,9 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         if (typeof cache.uiVisible === 'boolean') {
             uiVisible.value = cache.uiVisible
         }
+        if (typeof cache.privateCreateEnabled === 'boolean') {
+            privateCreateEnabled.value = cache.privateCreateEnabled
+        }
     }
 
     function persistLocalCache() {
@@ -285,6 +292,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         const payload: StickyNoteLocalCache = {
             version: LOCAL_CACHE_VERSION,
             uiVisible: uiVisible.value,
+            privateCreateEnabled: privateCreateEnabled.value,
             notes: Object.values(notes.value),
             userStates: Object.values(userStates.value),
             activeNoteIds: activeNoteIds.value.slice()
@@ -350,6 +358,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
             userStates.value = {}
             activeNoteIds.value = []
             maxZIndex.value = 1000
+            privateCreateEnabled.value = false
             const storedVisible = readUiVisible(channelId)
             if (storedVisible === null) {
                 uiVisible.value = false
@@ -376,29 +385,30 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
             }
             folders.value = mergedFolders
 
-            const mergedNotes: Record<string, StickyNote> = { ...notes.value }
-            const mergedStates: Record<string, StickyNoteUserState> = { ...userStates.value }
-            const mergedActive = new Set(activeNoteIds.value)
-            let mergedMaxZIndex = maxZIndex.value
+            const existingStates: Record<string, StickyNoteUserState> = { ...userStates.value }
+            const existingActive = new Set(activeNoteIds.value)
+            const mergedNotes: Record<string, StickyNote> = {}
+            const mergedStates: Record<string, StickyNoteUserState> = {}
+            const mergedActive = new Set<string>()
+            let mergedMaxZIndex = 1000
 
             // 填充数据
             for (const item of items) {
                 if (!item?.note?.id) continue
                 const noteId = item.note.id
-                const existing = mergedNotes[noteId]
-                if (!existing || (typeof item.note.updatedAt === 'number' && typeof existing.updatedAt === 'number' && item.note.updatedAt > existing.updatedAt)) {
-                    mergedNotes[noteId] = item.note
-                } else if (!existing) {
-                    mergedNotes[noteId] = item.note
+                mergedNotes[noteId] = item.note
+                const state = item.userState || existingStates[noteId]
+                if (state) {
+                    mergedStates[noteId] = state
+                    if (typeof state.zIndex === 'number' && state.zIndex > mergedMaxZIndex) {
+                        mergedMaxZIndex = state.zIndex
+                    }
                 }
-                if (!mergedStates[noteId] && item.userState) {
-                    mergedStates[noteId] = item.userState
+                if (existingActive.has(noteId)) {
+                    mergedActive.add(noteId)
                 }
                 if (!hasLocalCache && item.userState?.isOpen) {
                     mergedActive.add(noteId)
-                }
-                if (typeof item.userState?.zIndex === 'number' && item.userState.zIndex > mergedMaxZIndex) {
-                    mergedMaxZIndex = item.userState.zIndex
                 }
             }
 
@@ -797,6 +807,11 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         setVisible(!uiVisible.value)
     }
 
+    function setPrivateCreateEnabled(value: boolean) {
+        privateCreateEnabled.value = value
+        persistLocalCache()
+    }
+
     // 清理状态
     function reset() {
         notes.value = {}
@@ -808,6 +823,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         maxZIndex.value = 1000
         loading.value = false
         uiVisible.value = false
+        privateCreateEnabled.value = false
     }
 
     // 解析 typeData
@@ -904,6 +920,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         loading,
         maxZIndex,
         uiVisible,
+        privateCreateEnabled,
 
         // Computed
         noteList,
@@ -932,6 +949,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         handleStickyNoteEvent,
         setVisible,
         toggleVisible,
+        setPrivateCreateEnabled,
         reset,
         parseTypeData,
         updateTypeData,

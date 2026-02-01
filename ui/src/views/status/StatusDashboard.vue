@@ -7,7 +7,12 @@ import { useUserStore } from '@/stores/user';
 
 type RangeOption = '1h' | '24h' | '7d';
 
-type ChartMetricKey = 'concurrentConnections' | 'onlineUsers' | 'messagesPerMinute';
+type ChartMetricKey =
+  | 'concurrentConnections'
+  | 'onlineUsers'
+  | 'messagesPerMinute'
+  | 'attachmentCount'
+  | 'attachmentBytes';
 
 interface StatusSummary {
   timestamp: number;
@@ -19,6 +24,8 @@ interface StatusSummary {
   channelCount: number;
   privateChannelCount: number;
   messageCount: number;
+  attachmentCount: number;
+  attachmentBytes: number;
   intervalSeconds: number;
   retentionDays: number;
 }
@@ -33,6 +40,8 @@ interface StatusHistoryPoint {
   channelCount: number;
   privateChannelCount: number;
   messageCount: number;
+  attachmentCount: number;
+  attachmentBytes: number;
 }
 
 const user = useUserStore();
@@ -51,14 +60,31 @@ const rangeOptions = [
   { label: '近 7 天', value: '7d' },
 ];
 
-const chartMetrics: { key: ChartMetricKey; label: string; color: string }[] = [
-  { key: 'concurrentConnections', label: '并发连接', color: '#2563eb' },
-  { key: 'onlineUsers', label: '在线用户', color: '#059669' },
-  { key: 'messagesPerMinute', label: '消息/分钟', color: '#f97316' },
-];
-
 const numberFormatter = new Intl.NumberFormat('zh-CN');
 const formatNumber = (value?: number) => numberFormatter.format(value || 0);
+const formatBytes = (value?: number) => {
+  const size = value || 0;
+  if (size <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let cursor = size;
+  let unitIndex = 0;
+  while (cursor >= 1024 && unitIndex < units.length - 1) {
+    cursor /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 ? 0 : cursor >= 100 ? 0 : cursor >= 10 ? 1 : 2;
+  return `${cursor.toFixed(precision)} ${units[unitIndex]}`;
+};
+
+const chartMetrics: { key: ChartMetricKey; label: string; color: string; format: (value: number) => string }[] = [
+  { key: 'concurrentConnections', label: '并发连接', color: '#2563eb', format: formatNumber },
+  { key: 'onlineUsers', label: '在线用户', color: '#059669', format: formatNumber },
+  { key: 'messagesPerMinute', label: '消息/分钟', color: '#f97316', format: formatNumber },
+  { key: 'attachmentCount', label: '附件数量', color: '#0ea5e9', format: formatNumber },
+  { key: 'attachmentBytes', label: '附件总大小', color: '#ca8a04', format: formatBytes },
+];
 
 const lastUpdatedText = computed(() => {
   if (!summary.value?.timestamp) {
@@ -81,6 +107,8 @@ const summaryCards = computed(() => {
     { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
     { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
     { label: '消息总数', value: formatNumber(data.messageCount), hint: '未被删除的历史消息' },
+    { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '附件目录内文件数量' },
+    { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '附件目录占用空间' },
   ];
 });
 
@@ -108,9 +136,9 @@ const chartSeries = computed(() => {
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     });
     const ticks = [
-      { value: maxValue, label: formatNumber(maxValue) },
-      { value: maxValue / 2, label: formatNumber(Math.round(maxValue / 2)) },
-      { value: 0, label: '0' },
+      { value: maxValue, label: metric.format(maxValue) },
+      { value: maxValue / 2, label: metric.format(Math.round(maxValue / 2)) },
+      { value: 0, label: metric.format(0) },
     ];
     return {
       ...metric,
@@ -291,6 +319,10 @@ onBeforeUnmount(() => {
   gap: 1rem;
   padding: 1.25rem;
   color: var(--sc-text-primary);
+  background-color: var(--sc-bg-surface);
+  background-image:
+    radial-gradient(1200px circle at 0% -20%, color-mix(in srgb, var(--sc-bg-elevated) 60%, transparent) 0%, transparent 55%),
+    linear-gradient(180deg, color-mix(in srgb, var(--sc-bg-header, var(--sc-bg-surface)) 70%, transparent) 0%, var(--sc-bg-surface) 45%, color-mix(in srgb, var(--sc-bg-elevated) 40%, var(--sc-bg-surface) 60%) 100%);
   height: 100vh;
   box-sizing: border-box;
   overflow-y: auto;
@@ -298,8 +330,13 @@ onBeforeUnmount(() => {
 
 .status-card {
   border-radius: 1rem;
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(248, 250, 252, 0.9) 100%);
+  border: 1px solid var(--sc-border-mute);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--sc-bg-elevated) 85%, var(--sc-bg-surface) 15%) 0%,
+    color-mix(in srgb, var(--sc-bg-elevated) 55%, var(--sc-bg-surface) 45%) 100%
+  );
+  box-shadow: 0 18px 30px color-mix(in srgb, var(--sc-border-strong) 18%, transparent);
 }
 
 .status-card__label {
@@ -321,6 +358,8 @@ onBeforeUnmount(() => {
 
 .status-chart-card {
   border-radius: 1rem;
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-elevated);
 }
 
 .chart-wrapper {
@@ -331,7 +370,7 @@ onBeforeUnmount(() => {
 .chart-wrapper__series {
   margin-bottom: 1.5rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .chart-wrapper__series:last-child {
@@ -362,7 +401,7 @@ svg {
 }
 
 .chart-grid line {
-  stroke: rgba(148, 163, 184, 0.35);
+  stroke: color-mix(in srgb, var(--sc-border-mute) 65%, transparent);
   stroke-dasharray: 4 6;
 }
 
@@ -385,6 +424,8 @@ svg {
 
 .status-history-card {
   border-radius: 1rem;
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-elevated);
 }
 
 .status-history-card table {
@@ -396,9 +437,10 @@ svg {
 .status-history-card td {
   padding: 0.35rem 0.5rem;
   text-align: left;
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .status-history-card thead {
-  background-color: rgba(148, 163, 184, 0.2);
+  background-color: color-mix(in srgb, var(--sc-bg-elevated) 75%, var(--sc-border-mute) 25%);
 }
 </style>

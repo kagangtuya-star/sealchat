@@ -152,6 +152,20 @@ img.emoji {
   display: inline-block;
 }
 
+/* Captcha image sizing */
+.sc-captcha-box {
+  width: clamp(8rem, 20vw, 12rem);
+  height: clamp(3rem, 8vw, 4.5rem);
+  flex: 0 0 auto;
+}
+
+.sc-captcha-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
 /* Global minimal scrollbar */
 * {
   scrollbar-width: thin;

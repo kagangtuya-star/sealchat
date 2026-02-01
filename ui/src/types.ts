@@ -170,6 +170,7 @@ export interface ServerConfig {
   backup?: BackupConfig;
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
+  audioImportEnabled?: boolean;
   loginBackground?: {
     attachmentId?: string;
     mode?: 'cover' | 'contain' | 'tile' | 'center';

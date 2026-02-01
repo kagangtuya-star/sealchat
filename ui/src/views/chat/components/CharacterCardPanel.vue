@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NSelect, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Unlink, Eye } from '@vicons/tabler';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
@@ -44,6 +44,13 @@ const badgeEnabled = computed({
 
 const badgeTemplate = ref('');
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
+const canSyncBadgeTemplate = computed(() => {
+  const worldId = currentWorldId.value;
+  if (!worldId) return false;
+  const detail = chatStore.worldDetailMap[worldId];
+  const role = detail?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
 
 const syncBadgeTemplate = () => {
   const worldId = currentWorldId.value;
@@ -74,6 +81,20 @@ const resetBadgeTemplate = () => {
   persistBadgeTemplate();
 };
 
+const syncBadgeTemplateToWorld = async () => {
+  const worldId = currentWorldId.value;
+  if (!worldId) return;
+  const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
+  badgeTemplate.value = normalized;
+  persistBadgeTemplate();
+  try {
+    await chatStore.worldUpdate(worldId, { characterCardBadgeTemplate: normalized });
+    message.success('模板已同步');
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '模板同步失败');
+  }
+};
+
 watch(() => props.visible, async (val) => {
   if (val && resolvedChannelId.value) {
     await cardStore.loadCards(resolvedChannelId.value);
@@ -95,6 +116,17 @@ watch(
   },
   { immediate: true },
 );
+
+watch(badgeEnabled, (enabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  if (enabled) {
+    void cardStore.requestBadgeSnapshot(channelId);
+    void cardStore.getActiveCard(channelId);
+    return;
+  }
+  void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
+});
 
 const handleClose = () => {
   emit('update:visible', false);
@@ -302,7 +334,7 @@ const handleDeleteCard = async (card: CharacterCard) => {
     await cardStore.deleteCard(card.id);
     message.success('已删除');
   } catch (e: any) {
-    message.error(e?.response?.data?.error || '删除失败');
+    message.error(e?.response?.data?.error || e?.message || '删除失败');
   }
 };
 
@@ -442,6 +474,12 @@ const openPreview = async (card: CharacterCard) => {
               @blur="persistBadgeTemplate"
             />
             <n-button size="small" quaternary @click="resetBadgeTemplate">恢复默认</n-button>
+            <n-button
+              v-if="canSyncBadgeTemplate"
+              size="small"
+              tertiary
+              @click="syncBadgeTemplateToWorld"
+            >模板同步</n-button>
           </div>
         </div>
       </div>
@@ -474,7 +512,7 @@ const openPreview = async (card: CharacterCard) => {
                   <template #icon><n-icon :component="Trash" /></template>
                 </n-button>
               </template>
-              确定删除此人物卡？
+              删除前将从所有群解绑此人物卡，确定删除？
             </n-popconfirm>
           </template>
           <div class="card-attrs">{{ formatAttrs(card.attrs) }}</div>

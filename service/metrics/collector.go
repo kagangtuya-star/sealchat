@@ -2,13 +2,18 @@ package metrics
 
 import (
 	"context"
+	"io/fs"
 	"log"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"sealchat/model"
+	"sealchat/utils"
 )
 
 // Config 定义采样周期、保留时间等行为。
@@ -144,6 +149,7 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 	if err != nil {
 		return nil, err
 	}
+	attachmentCount, attachmentBytes := getAttachmentDiskStats()
 
 	sample := &model.ServiceMetricSample{
 		TimestampMs:           timestamp,
@@ -155,6 +161,8 @@ func (c *Collector) buildSample() (*model.ServiceMetricSample, error) {
 		ChannelCount:          channelCount,
 		PrivateChannelCount:   privateChannelCount,
 		MessageCount:          messageCount,
+		AttachmentCount:       attachmentCount,
+		AttachmentBytes:       attachmentBytes,
 	}
 	return sample, nil
 }
@@ -289,4 +297,86 @@ func (c *Collector) OnlineTTL() time.Duration {
 		return 2 * time.Minute
 	}
 	return c.cfg.OnlineTTL
+}
+
+const attachmentDiskStatsTTL = 24 * time.Hour
+
+var attachmentDiskStatsCache struct {
+	mu        sync.Mutex
+	updatedAt time.Time
+	count     int64
+	bytes     int64
+}
+
+func getAttachmentDiskStats() (int64, int64) {
+	uploadDir := resolveAttachmentUploadDir()
+	if strings.TrimSpace(uploadDir) == "" {
+		return 0, 0
+	}
+	now := time.Now()
+	attachmentDiskStatsCache.mu.Lock()
+	if !attachmentDiskStatsCache.updatedAt.IsZero() && now.Sub(attachmentDiskStatsCache.updatedAt) < attachmentDiskStatsTTL {
+		count := attachmentDiskStatsCache.count
+		bytes := attachmentDiskStatsCache.bytes
+		attachmentDiskStatsCache.mu.Unlock()
+		return count, bytes
+	}
+	attachmentDiskStatsCache.mu.Unlock()
+
+	count, bytes, err := scanDirStats(uploadDir)
+	if err != nil {
+		log.Printf("metrics: scan attachments failed: %v", err)
+		attachmentDiskStatsCache.mu.Lock()
+		cachedCount := attachmentDiskStatsCache.count
+		cachedBytes := attachmentDiskStatsCache.bytes
+		attachmentDiskStatsCache.mu.Unlock()
+		return cachedCount, cachedBytes
+	}
+
+	attachmentDiskStatsCache.mu.Lock()
+	attachmentDiskStatsCache.updatedAt = now
+	attachmentDiskStatsCache.count = count
+	attachmentDiskStatsCache.bytes = bytes
+	attachmentDiskStatsCache.mu.Unlock()
+	return count, bytes
+}
+
+func resolveAttachmentUploadDir() string {
+	cfg := utils.GetConfig()
+	if cfg != nil {
+		if dir := strings.TrimSpace(cfg.Storage.Local.UploadDir); dir != "" {
+			return dir
+		}
+	}
+	return "./data/upload"
+}
+
+func scanDirStats(root string) (int64, int64, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !info.IsDir() {
+		return 0, 0, nil
+	}
+	var count int64
+	var bytes int64
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.Type().IsRegular() {
+			fileInfo, err := entry.Info()
+			if err != nil {
+				return nil
+			}
+			count += 1
+			bytes += fileInfo.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, bytes, nil
 }

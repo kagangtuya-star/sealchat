@@ -795,6 +795,73 @@ watch(
   { immediate: true },
 );
 
+const initCharacterCardBadge = (
+  channelId?: string,
+  enabled = display.settings.characterCardBadgeEnabled,
+  options?: { skipActiveCard?: boolean },
+) => {
+  if (!channelId) return;
+  if (!enabled) return;
+  void characterCardStore.requestBadgeSnapshot(channelId);
+  if (!options?.skipActiveCard) {
+    void characterCardStore.getActiveCard(channelId);
+  }
+};
+
+let identitySelectionEpoch = 0;
+const simulateCurrentIdentitySelection = async (channelId?: string) => {
+  if (!channelId || chat.isObserver) {
+    return false;
+  }
+  const currentEpoch = ++identitySelectionEpoch;
+  try {
+    await chat.loadChannelIdentities(channelId, false);
+    if (currentEpoch !== identitySelectionEpoch || channelId !== chat.curChannel?.id) {
+      return false;
+    }
+    const identityId = chat.getActiveIdentityId(channelId);
+    if (!identityId) {
+      return false;
+    }
+    const boundCardId = characterCardStore.getBoundCardId(identityId);
+    if (boundCardId) {
+      await characterCardStore.tagCard(channelId, undefined, boundCardId);
+    } else {
+      await characterCardStore.tagCard(channelId);
+    }
+    await characterCardStore.loadCards(channelId);
+    emitTypingPreview();
+    return true;
+  } catch (e) {
+    console.warn('Failed to simulate identity selection', e);
+    return false;
+  }
+};
+
+let presenceBadgeChannelId = '';
+let presenceBadgeInitialized = false;
+const presenceBadgeUsers = new Set<string>();
+
+watch(
+  () => chat.curChannel?.id,
+  (channelId) => {
+    if (!channelId) return;
+    void (async () => {
+      const didSync = await simulateCurrentIdentitySelection(channelId);
+      initCharacterCardBadge(channelId, undefined, { skipActiveCard: didSync });
+    })();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => display.settings.characterCardBadgeEnabled,
+  (enabled) => {
+    if (!enabled) return;
+    initCharacterCardBadge(chat.curChannel?.id, enabled);
+  },
+);
+
 const syncActionRibbonState = () => {
   chatEvent.emit('action-ribbon-state', showActionRibbon.value);
 };
@@ -1040,7 +1107,7 @@ const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
 };
 
 const filteredEmojiItems = computed(() => {
-  const query = emojiSearchQuery.value.trim().toLowerCase();
+  const query = emojiSearchQuery.value.trim();
   const tabId = activeEmojiTab.value;
 
   // 根据选项卡筛选
@@ -1054,7 +1121,7 @@ const filteredEmojiItems = computed(() => {
   // 搜索过滤
   const filtered = !query ? items : items.filter((item, idx) => {
     const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
-    return remark.toLowerCase().includes(query);
+    return matchText(query, remark);
   });
   return sortByUsage(filtered);
 });
@@ -1277,6 +1344,7 @@ const isResizingInput = ref(false);
 const resizeStartY = ref(0);
 const resizeStartHeight = ref(0);
 const resizePointerId = ref<number | null>(null);
+const shouldExitWideInput = ref(false);
 const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
 const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
 
@@ -1318,9 +1386,16 @@ const handleInputResizeMove = (e: PointerEvent) => {
   const deltaY = resizeStartY.value - e.clientY;
   const rawHeight = resizeStartHeight.value + deltaY;
   if (rawHeight <= INPUT_AREA_HEIGHT_LIMITS.MIN) {
-    inputAreaHeightPreview.value = 0;
+    if (wideInputMode.value) {
+      shouldExitWideInput.value = true;
+      inputAreaHeightPreview.value = INPUT_AREA_HEIGHT_LIMITS.MIN;
+    } else {
+      shouldExitWideInput.value = false;
+      inputAreaHeightPreview.value = 0;
+    }
     return;
   }
+  shouldExitWideInput.value = false;
   const newHeight = Math.min(INPUT_AREA_HEIGHT_LIMITS.MAX, rawHeight);
   inputAreaHeightPreview.value = Math.round(newHeight);
 };
@@ -1330,6 +1405,8 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   isResizingInput.value = false;
 
   const container = inputContainerRef.value;
+  const exitWideInput = shouldExitWideInput.value && wideInputMode.value;
+  shouldExitWideInput.value = false;
   const finalHeight = inputAreaHeightPreview.value ?? display.settings.inputAreaHeight;
   inputAreaHeightPreview.value = null;
   if (container) {
@@ -1347,6 +1424,19 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   resizePointerId.value = null;
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
+  if (exitWideInput) {
+    if (finalHeight !== display.settings.inputAreaHeight) {
+      display.updateSettings({ inputAreaHeight: finalHeight });
+    }
+    wideInputMode.value = false;
+    nextTick(() => {
+      textInputRef.value?.focus?.();
+      updateWideInputViewportHeight();
+      requestAnimationFrame(updateWideInputViewportHeight);
+      window.setTimeout(updateWideInputViewportHeight, 160);
+    });
+    return;
+  }
   if (finalHeight !== display.settings.inputAreaHeight) {
     display.updateSettings({ inputAreaHeight: finalHeight });
   }
@@ -2491,7 +2581,20 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return;
     }
 
-    await chat.loadChannelIdentities(targetChannelId, true);
+    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
+    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
+    const normalizeIdentityName = (name: string) => name.trim().toLowerCase();
+    const targetIdentityByName = new Map<string, (typeof targetList)[number]>();
+    const duplicateTargetNames = new Set<string>();
+    for (const identity of targetList) {
+      const key = normalizeIdentityName(identity.displayName || '');
+      if (!key) continue;
+      if (targetIdentityByName.has(key)) {
+        duplicateTargetNames.add(key);
+        continue;
+      }
+      targetIdentityByName.set(key, identity);
+    }
 
     const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
     const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
@@ -2519,9 +2622,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     }
 
     let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
     let failedCount = 0;
     let emptyNameCount = 0;
-    const identityIdMap = new Map<string, string>();
+    const processedIdentityByName = new Map<string, string>();
 
     for (const identity of sourceList) {
       const displayName = (identity.displayName || '').trim();
@@ -2529,6 +2634,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         emptyNameCount += 1;
         continue;
       }
+      const nameKey = normalizeIdentityName(displayName);
+      const matchedIdentity = nameKey ? targetIdentityByName.get(nameKey) : undefined;
       const avatarPayload = identity.avatarAttachmentId
         ? {
             attachmentId: normalizeAttachmentId(identity.avatarAttachmentId),
@@ -2545,6 +2652,25 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         .filter((id): id is string => !!id);
       try {
         const avatarId = await ensureImportAttachment(avatarPayload);
+        if (matchedIdentity) {
+          if (mode === 'append') {
+            skippedCount += 1;
+            continue;
+          }
+          const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
+            channelId: targetChannelId,
+            displayName,
+            color: identity.color || '',
+            avatarAttachmentId: avatarId,
+            isDefault: !!identity.isDefault,
+            folderIds: mappedFolderIds,
+          });
+          if (nameKey) {
+            processedIdentityByName.set(nameKey, updated.id);
+          }
+          updatedCount += 1;
+          continue;
+        }
         const created = await chat.channelIdentityCreate({
           channelId: targetChannelId,
           displayName,
@@ -2553,7 +2679,12 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
           isDefault: !!identity.isDefault,
           folderIds: mappedFolderIds,
         });
-        identityIdMap.set(identity.id, created.id);
+        if (nameKey && !targetIdentityByName.has(nameKey)) {
+          targetIdentityByName.set(nameKey, created);
+        }
+        if (nameKey) {
+          processedIdentityByName.set(nameKey, created.id);
+        }
         createdCount += 1;
       } catch (error) {
         failedCount += 1;
@@ -2563,7 +2694,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
 
     const resolveMappedIdentityId = (sourceId?: string | null) => {
       if (!sourceId) return null;
-      return identityIdMap.get(sourceId) || null;
+      const sourceIdentity = sourceList.find(item => item.id === sourceId);
+      if (!sourceIdentity) return null;
+      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
+      if (!nameKey) return null;
+      return processedIdentityByName.get(nameKey) || targetIdentityByName.get(nameKey)?.id || null;
     };
 
     const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
@@ -2596,18 +2731,25 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     await chat.loadChannelIdentities(targetChannelId, true);
     identitySyncDialogVisible.value = false;
 
-    const syncedCount = createdCount;
-    if (syncedCount === 0 && !mappingChanged) {
+    const syncedCount = createdCount + updatedCount;
+    const hasAnyWork = syncedCount > 0 || skippedCount > 0 || mappingChanged;
+    if (!hasAnyWork) {
       message.warning('没有可同步的角色或映射');
       return;
     }
     const details: string[] = [];
     if (createdCount) details.push(`新增 ${createdCount}`);
+    if (updatedCount) details.push(`覆盖 ${updatedCount}`);
+    if (skippedCount) details.push(`跳过 ${skippedCount}`);
     if (failedCount) details.push(`失败 ${failedCount}`);
     if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
     const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
     const detailNote = details.length ? `（${details.join('，')}）` : '';
-    message.success(`已同步 ${syncedCount} 个角色${detailNote}${mappingNote}`);
+    const summaryText = syncedCount > 0 ? `已同步 ${syncedCount} 个角色` : '没有新增角色';
+    message.success(`${summaryText}${detailNote}${mappingNote}`);
+    if (duplicateTargetNames.size > 0) {
+      message.warning(`目标频道存在 ${duplicateTargetNames.size} 个重名角色，同步时按第一个匹配处理`);
+    }
   } catch (error) {
     console.error('同步频道角色失败', error);
     message.error('同步失败，请稍后重试');
@@ -3118,13 +3260,13 @@ const toArchivedPanelEntry = (message: Message): ArchivedPanelMessage => {
 };
 
 const filteredArchivedMessages = computed(() => {
-  const keyword = archivedSearchQuery.value.trim().toLowerCase();
+  const keyword = archivedSearchQuery.value.trim();
   if (!keyword) {
     return [...archivedMessagesRaw.value];
   }
   return archivedMessagesRaw.value.filter((item) => {
     const fields = [item.content, item.sender?.name, item.archivedBy];
-    return fields.some((field) => field?.toLowerCase().includes(keyword));
+    return fields.some((field) => (field ? matchText(keyword, field) : false));
   });
 });
 
@@ -6447,6 +6589,9 @@ const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
 const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
+const whisperMentionableCandidates = ref<WhisperCandidate[]>([]);
+
+type WhisperIdentityType = 'ic' | 'ooc' | 'user';
 
 interface WhisperCandidate {
   raw: any;
@@ -6455,28 +6600,102 @@ interface WhisperCandidate {
   displayName: string;
   secondaryName: string;
   color: string;
+  identityTypes: WhisperIdentityType[];
 }
 
-const candidateDisplayName = (candidate: any) => candidate?.nick || candidate?.name || candidate?.username || '未知成员';
-const candidateSecondaryName = (candidate: any) => {
-  const primary = candidateDisplayName(candidate);
-  const backup = candidate?.username || candidate?.name || '';
-  if (backup && backup !== primary) {
-    return backup;
-  }
-  return '';
+const whisperIdentityTypeOrder: Record<WhisperIdentityType, number> = {
+  ic: 0,
+  ooc: 1,
+  user: 2,
 };
 
-const resolveWhisperCandidateColor = (candidate: any) => {
-  const id = candidate?.id;
-  if (id) {
-    const mapped = whisperCandidateColorMap.value.get(String(id));
-    if (mapped) {
-      return mapped;
+const normalizeWhisperIdentityType = (value?: string): WhisperIdentityType => {
+  if (value === 'ic' || value === 'ooc') {
+    return value;
+  }
+  return 'user';
+};
+
+const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
+  switch (type) {
+    case 'ic':
+      return '场内';
+    case 'ooc':
+      return '场外';
+    default:
+      return '用户';
+  }
+};
+
+const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string; identityType?: string }>) => {
+  const deduped = new Map<string, { candidate: WhisperCandidate; primaryWeight: number; types: Set<WhisperIdentityType> }>();
+  for (const item of items) {
+    const userId = String(item?.userId || '').trim();
+    if (!userId || userId === user.info.id) {
+      continue;
+    }
+    const identityType = normalizeWhisperIdentityType(item?.identityType);
+    const displayName = item?.displayName || '未知成员';
+    const avatar = item?.avatar || '';
+    const color = normalizeHexColor(item?.color || '') || '';
+    const weight = whisperIdentityTypeOrder[identityType];
+
+    const existing = deduped.get(userId);
+    if (!existing) {
+      deduped.set(userId, {
+        primaryWeight: weight,
+        types: new Set<WhisperIdentityType>([identityType]),
+        candidate: {
+          raw: {
+            id: userId,
+            name: displayName,
+            nick: displayName,
+            avatar,
+            color,
+          },
+          id: userId,
+          avatar,
+          displayName,
+          secondaryName: '',
+          color,
+          identityTypes: [identityType],
+        },
+      });
+      continue;
+    }
+
+    existing.types.add(identityType);
+    if (weight < existing.primaryWeight) {
+      existing.primaryWeight = weight;
+      existing.candidate.avatar = avatar;
+      existing.candidate.displayName = displayName;
+      existing.candidate.color = color;
+      existing.candidate.raw = {
+        id: userId,
+        name: displayName,
+        nick: displayName,
+        avatar,
+        color,
+      };
     }
   }
-  const fallback = candidate?.nick_color || candidate?.nickColor || candidate?.color || '';
-  return normalizeHexColor(fallback) || '';
+
+  const candidates = Array.from(deduped.values()).map((entry) => {
+    const types = Array.from(entry.types).sort((a, b) => whisperIdentityTypeOrder[a] - whisperIdentityTypeOrder[b]);
+    entry.candidate.identityTypes = types;
+    return entry.candidate;
+  });
+
+  candidates.sort((a, b) => {
+    const aHasIc = a.identityTypes.includes('ic');
+    const bHasIc = b.identityTypes.includes('ic');
+    if (aHasIc !== bHasIc) {
+      return aHasIc ? -1 : 1;
+    }
+    return a.displayName.localeCompare(b.displayName);
+  });
+
+  return candidates;
 };
 
 const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
@@ -6496,20 +6715,10 @@ const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color
   return color ? { color } : undefined;
 };
 
-const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
-  .filter((i: any) => i?.id && i.id !== user.info.id)
-  .map((candidate: any) => ({
-    raw: candidate,
-    id: candidate.id,
-    avatar: candidate.avatar || '',
-    displayName: candidateDisplayName(candidate),
-    secondaryName: candidateSecondaryName(candidate),
-    color: resolveWhisperCandidateColor(candidate),
-  }))
-);
+const whisperCandidates = computed<WhisperCandidate[]>(() => whisperMentionableCandidates.value);
 
 const filteredWhisperCandidates = computed(() => {
-  const keyword = whisperQuery.value.trim().toLowerCase();
+  const keyword = whisperQuery.value.trim();
   if (!keyword) {
     return whisperCandidates.value;
   }
@@ -6518,17 +6727,21 @@ const filteredWhisperCandidates = computed(() => {
       candidate.displayName,
       candidate.secondaryName,
       candidate.id,
-    ].filter(Boolean).map((str) => String(str).toLowerCase());
-    return candidates.some((name) => name.includes(keyword));
+    ].filter(Boolean).map((str) => String(str));
+    return candidates.some((name) => matchText(keyword, name));
   });
 });
 
-const canOpenWhisperPanel = computed(() => whisperCandidates.value.length > 0);
+const canOpenWhisperPanel = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  return Boolean(channelId) && channelId.length < 30;
+});
 const whisperTargets = computed(() => chat.whisperTargets);
 const isWhisperTarget = (u: { id?: string } | null | undefined) => (
   Boolean(u?.id) && whisperTargets.value.some((item) => item.id === u?.id)
 );
 const whisperMode = computed(() => whisperTargets.value.length > 0);
+const whisperToggleActive = computed(() => whisperPanelVisible.value || whisperTargets.value.length > 0);
 const whisperPlaceholderText = computed(() => {
   if (!whisperMode.value) {
     return '';
@@ -6562,6 +6775,24 @@ const getInputSelection = (): SelectionRange => {
   }
   const length = textToSend.value.length;
   return { start: length, end: length };
+};
+
+const isInputEffectivelyEmpty = () => {
+  if (inlineImages.size > 0) {
+    return false;
+  }
+  const raw = textToSend.value;
+  if (!raw) {
+    return true;
+  }
+  if (inputMode.value === 'rich') {
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      return editorInstance.isEmpty;
+    }
+    return isRichContentEmpty(raw);
+  }
+  return raw.trim().length === 0;
 };
 
 const setInputSelection = (start: number, end: number) => {
@@ -6883,25 +7114,24 @@ const loadWhisperCandidateColors = async () => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId || channelId.length >= 30) {
     whisperCandidateColorMap.value = new Map();
+    whisperMentionableCandidates.value = [];
     return;
   }
   try {
     const resp = await chat.fetchMentionableMembers(channelId);
     const items = resp?.items || [];
+    const candidates = buildWhisperCandidates(items);
     const nextMap = new Map<string, string>();
-    for (const item of items) {
-      const userId = item?.userId;
-      if (!userId || nextMap.has(String(userId))) {
-        continue;
-      }
-      const color = normalizeHexColor(item?.color || '') || '';
-      if (color) {
-        nextMap.set(String(userId), color);
+    for (const candidate of candidates) {
+      if (candidate.color) {
+        nextMap.set(candidate.id, candidate.color);
       }
     }
     whisperCandidateColorMap.value = nextMap;
+    whisperMentionableCandidates.value = candidates;
   } catch (error) {
     console.warn('获取悄悄话候选成员颜色失败', error);
+    whisperMentionableCandidates.value = [];
   }
 };
 
@@ -6989,6 +7219,11 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
 const startWhisperSelection = () => {
   if (!canOpenWhisperPanel.value) {
     message.warning(t('inputBox.whisperNoOnline'));
+    return;
+  }
+  if (whisperPanelVisible.value || chat.whisperTargets.length > 0) {
+    closeWhisperPanel();
+    clearWhisperTargets();
     return;
   }
   openWhisperPanel('manual');
@@ -7753,6 +7988,7 @@ watch(
       return;
     }
     whisperCandidateColorMap.value = new Map();
+    whisperMentionableCandidates.value = [];
     if (whisperPanelVisible.value) {
       void loadWhisperCandidateColors();
     }
@@ -8292,9 +8528,16 @@ chatEvent.on('typing-preview', (e?: Event) => {
 
 chatEvent.off('channel-presence-updated', '*');
 chatEvent.on('channel-presence-updated', (e?: Event) => {
-  if (!e?.presence || e.channel?.id !== chat.curChannel?.id) {
+  const channelId = e?.channel?.id || '';
+  if (!e?.presence || channelId !== chat.curChannel?.id) {
     return;
   }
+  if (channelId !== presenceBadgeChannelId) {
+    presenceBadgeChannelId = channelId;
+    presenceBadgeInitialized = false;
+    presenceBadgeUsers.clear();
+  }
+  let hasNewPresence = false;
   if (typeof (e as any)?.timestamp === 'number') {
     chat.syncServerTime((e as any).timestamp);
   }
@@ -8303,12 +8546,25 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (!userId) {
       return;
     }
+    if (!presenceBadgeUsers.has(userId)) {
+      presenceBadgeUsers.add(userId);
+      if (presenceBadgeInitialized) {
+        hasNewPresence = true;
+      }
+    }
     chat.updatePresence(userId, {
       lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
       latencyMs: typeof item?.latency === 'number' ? item.latency : Number(item?.latency) || 0,
       isFocused: !!item?.focused,
     });
   });
+  if (!presenceBadgeInitialized) {
+    presenceBadgeInitialized = true;
+    return;
+  }
+  if (hasNewPresence) {
+    initCharacterCardBadge(channelId);
+  }
 });
 
   chatEvent.off('channel-deleted', '*');
@@ -8942,10 +9198,6 @@ const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
     return true;
   },
   whisper: () => {
-    if (whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
-      closeWhisperPanel();
-      return true;
-    }
     startWhisperSelection();
     return true;
   },
@@ -9024,6 +9276,16 @@ const keyDown = function (e: KeyboardEvent) {
     const selection = getInputSelection();
     if (selection.start === 0 && selection.end === 0 && textToSend.value.length === 0) {
       clearWhisperTargets();
+      e.preventDefault();
+      return;
+    }
+  }
+
+  if (!e.isComposing && e.key === 'Backspace' && chat.curReplyTo) {
+    const selection = getInputSelection();
+    const atStart = selection.start <= 1 && selection.end <= 1;
+    if (atStart && isInputEffectivelyEmpty()) {
+      chat.curReplyTo = null;
       e.preventDefault();
       return;
     }
@@ -10030,9 +10292,15 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
 
-      <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; right: 1rem" v-if="chat.curReplyTo">
-        正在回复: {{ chat.curReplyTo.member?.nick }}
-        <n-button @click="chat.curReplyTo = null">取消</n-button>
+      <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; left: 1rem" v-if="chat.curReplyTo">
+        <div class="reply-banner__main">
+          <span class="reply-banner__badge">回复中</span>
+          <span class="reply-banner__target">{{ chat.curReplyTo.member?.nick }}</span>
+        </div>
+        <div class="reply-banner__actions">
+          <span class="reply-banner__hint">Backspace</span>
+          <n-button size="small" quaternary @click="chat.curReplyTo = null">取消</n-button>
+        </div>
       </div>
 
       <div class="chat-input-wrapper flex flex-col w-full relative">
@@ -10050,12 +10318,25 @@ onBeforeUnmount(() => {
                 @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
                 <div class="whisper-panel__meta">
-                  <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
+                  <div class="whisper-panel__name-row">
+                    <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
+                    <div v-if="candidate.identityTypes.length" class="whisper-panel__tags">
+                      <span
+                        v-for="type in candidate.identityTypes"
+                        :key="type"
+                        class="whisper-panel__tag"
+                        :class="`whisper-panel__tag--${type}`"
+                      >
+                        {{ whisperIdentityTypeLabel(type) }}
+                      </span>
+                    </div>
+                  </div>
                   <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
                 </div>
                 <n-checkbox
                   class="whisper-panel__checkbox"
                   :checked="isWhisperTarget(candidate.raw)"
+                  @update:checked="() => onWhisperTargetToggle(candidate)"
                   @click.stop
                 />
               </div>
@@ -10292,7 +10573,7 @@ onBeforeUnmount(() => {
                <div class="chat-input-actions__cell">
                  <n-tooltip trigger="hover">
                    <template #trigger>
-                     <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
+                     <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperToggleActive }"
                        @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
                         <span class="chat-input-actions__icon">W</span>
                       </n-button>
@@ -12624,9 +12905,46 @@ onBeforeUnmount(() => {
 }
 
 .reply-banner {
-  background-color: var(--sc-chip-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background-color: var(--sc-bg-layer-strong, rgba(248, 250, 252, 0.85));
   color: var(--sc-text-primary);
   border: 1px solid var(--sc-border-mute);
+  border-left: 3px solid var(--sc-primary, #3b82f6);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.reply-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-banner__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sc-primary-color, #2563eb);
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
+  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+}
+
+.reply-banner__target {
+  font-weight: 600;
+}
+
+.reply-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-banner__hint {
+  font-size: 12px;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .scroll-bottom-button {
@@ -13441,10 +13759,51 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.whisper-panel__name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .whisper-panel__name {
+  flex: 1;
+  min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
   color: #4338ca;
+}
+
+.whisper-panel__tags {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.whisper-panel__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.35rem;
+  border-radius: 0.35rem;
+  font-size: 0.65rem;
+  line-height: 1.4;
+  background: rgba(67, 56, 202, 0.12);
+  color: #4338ca;
+}
+
+.whisper-panel__tag--ic {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.whisper-panel__tag--ooc {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}
+
+.whisper-panel__tag--user {
+  background: rgba(107, 114, 128, 0.16);
+  color: #4b5563;
 }
 
 .whisper-panel__sub {

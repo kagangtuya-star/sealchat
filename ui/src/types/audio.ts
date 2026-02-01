@@ -135,6 +135,38 @@ export interface UploadTaskState {
   createdAt?: number;
 }
 
+export interface AudioImportPreviewItem {
+  path: string;
+  name: string;
+  size: number;
+  modTime: number;
+  mimeType?: string;
+  valid: boolean;
+  reason?: string;
+}
+
+export interface AudioImportPreview {
+  items: AudioImportPreviewItem[];
+  total: number;
+  valid: number;
+  invalid: number;
+}
+
+export interface AudioImportResultItem {
+  path: string;
+  name?: string;
+  assetId?: string;
+  error?: string;
+  reason?: string;
+  warning?: string;
+}
+
+export interface AudioImportResult {
+  imported: AudioImportResultItem[];
+  failed: AudioImportResultItem[];
+  skipped: AudioImportResultItem[];
+}
+
 export interface AudioTrackStatePayload {
   type: AudioTrackType;
   assetId: string | null;
@@ -161,6 +193,7 @@ export interface AudioPlaybackStatePayload {
   position: number;
   loopEnabled: boolean;
   playbackRate: number;
+  worldPlaybackEnabled?: boolean;
   updatedBy?: string;
   updatedAt?: string;
 }

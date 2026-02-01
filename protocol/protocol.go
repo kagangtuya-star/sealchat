@@ -170,6 +170,7 @@ type AudioPlaybackStatePayload struct {
 	Position     float64           `json:"position"`
 	LoopEnabled  bool              `json:"loopEnabled"`
 	PlaybackRate float64           `json:"playbackRate"`
+	WorldPlaybackEnabled bool      `json:"worldPlaybackEnabled"`
 	UpdatedBy    string            `json:"updatedBy"`
 	UpdatedAt    int64             `json:"updatedAt"`
 }
@@ -305,6 +306,7 @@ const (
 	EventChannelIFormUpdated    EventName = "channel-iform-updated"
 	EventChannelIFormPushed     EventName = "channel-iform-pushed"
 	EventWorldKeywordsUpdated   EventName = "world-keywords-updated"
+	EventWorldUpdated           EventName = "world-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"
@@ -314,6 +316,9 @@ const (
 	EventCharacterCardCreated EventName = "character-card-created"
 	EventCharacterCardUpdated EventName = "character-card-updated"
 	EventCharacterCardDeleted EventName = "character-card-deleted"
+	// Character Card Badge Events
+	EventCharacterCardBadgeUpdated  EventName = "character-card-badge-updated"
+	EventCharacterCardBadgeSnapshot EventName = "character-card-badge-snapshot"
 )
 
 // MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
@@ -357,6 +362,8 @@ type Event struct {
 	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
 	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
 	CharacterCard  *CharacterCardEventPayload `json:"characterCard,omitempty"`
+	CharacterCardBadge         *CharacterCardBadgeEventPayload         `json:"characterCardBadge,omitempty"`
+	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload       `json:"characterCardBadgeSnapshot,omitempty"`
 	MessageContext *MessageContext            `json:"messageContext,omitempty"`
 	MessageReaction *MessageReactionEvent     `json:"messageReaction,omitempty"`
 }
@@ -515,4 +522,17 @@ type StickyNoteEventPayload struct {
 type CharacterCardEventPayload struct {
 	Card   *CharacterCard `json:"card,omitempty"`
 	Action string         `json:"action,omitempty"` // create/update/delete
+}
+
+// CharacterCardBadgeEventPayload 角色徽章事件载荷
+type CharacterCardBadgeEventPayload struct {
+	IdentityID string         `json:"identityId,omitempty"`
+	Template   string         `json:"template,omitempty"`
+	Attrs      map[string]any `json:"attrs,omitempty"`
+	Action     string         `json:"action,omitempty"` // update/clear
+}
+
+// CharacterCardBadgeSnapshotPayload 角色徽章快照载荷
+type CharacterCardBadgeSnapshotPayload struct {
+	Items []*CharacterCardBadgeEventPayload `json:"items,omitempty"`
 }

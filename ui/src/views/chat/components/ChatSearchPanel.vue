@@ -6,6 +6,7 @@ import { useDraggable, useWindowSize } from '@vueuse/core'
 import { SearchOutline, CloseOutline, ChevronDownOutline, ChevronUpOutline } from '@vicons/ionicons5'
 import { useChannelSearchStore } from '@/stores/channelSearch'
 import { useChatStore } from '@/stores/chat'
+import { matchText } from '@/utils/pinyinMatch'
 
 interface JumpPayload {
   messageId: string
@@ -63,11 +64,11 @@ const speakerSelectorLabel = computed(() => {
   return count ? `已选 ${count} 人` : '全部成员'
 })
 const filteredSpeakerOptions = computed(() => {
-  const keyword = speakerKeyword.value.trim().toLowerCase()
+  const keyword = speakerKeyword.value.trim()
   if (!keyword) {
     return memberOptions.value
   }
-  return memberOptions.value.filter((option) => option.label.toLowerCase().includes(keyword))
+  return memberOptions.value.filter((option) => matchText(keyword, option.label))
 })
 const selectedSpeakerCount = computed(() => filters.value.speakerIds.length)
 

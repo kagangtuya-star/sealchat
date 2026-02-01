@@ -687,6 +687,12 @@ func websocketWorks(app *fiber.App) {
 					case "character.delete":
 						apiCharacterDelete(ctx, msg)
 						solved = true
+					case "character.badge.broadcast":
+						apiWrap(ctx, msg, apiCharacterBadgeBroadcast)
+						solved = true
+					case "character.badge.snapshot":
+						apiWrap(ctx, msg, apiCharacterBadgeSnapshot)
+						solved = true
 					}
 				}
 			}

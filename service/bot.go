@@ -1,13 +1,45 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 
 	"github.com/samber/lo"
 
 	"sealchat/model"
 )
+
+func SelectedBotIdByChannelId(channelId string) (string, error) {
+	channelId = strings.TrimSpace(channelId)
+	if channelId == "" {
+		return "", errors.New("缺少频道ID")
+	}
+	roleId := fmt.Sprintf("ch-%s-%s", channelId, "bot")
+	ids, _ := model.UserRoleMappingUserIdListByRoleId(roleId)
+	if len(ids) == 0 {
+		return "", errors.New("未选择频道机器人")
+	}
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		user := model.UserGet(id)
+		if user != nil && user.IsBot {
+			filtered = append(filtered, id)
+		}
+	}
+	ids = lo.Uniq(filtered)
+	if len(ids) == 0 {
+		return "", errors.New("未选择频道机器人")
+	}
+	sort.Strings(ids)
+	selected := ids[0]
+	if len(ids) > 1 {
+		log.Printf("[bot] channel %s has multiple bot bindings: %v, selecting %s", channelId, ids, selected)
+	}
+	return selected, nil
+}
 
 func BotListByChannelId(curUserId, channelId string) []string {
 	var ids []string

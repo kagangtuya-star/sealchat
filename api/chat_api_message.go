@@ -1220,6 +1220,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 		ctx.TagCheck(data.ChannelID, m.ID, content)
 		member.UpdateRecentSent()
+		channel.UpdateRecentSent()
 
 		userData := ctx.User.ToProtocolType()
 

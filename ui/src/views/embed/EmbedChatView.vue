@@ -40,10 +40,15 @@ const paneId = computed(() => (typeof route.query.paneId === 'string' ? route.qu
 const initialWorldId = computed(() => (typeof route.query.worldId === 'string' ? route.query.worldId : ''));
 const initialChannelId = computed(() => (typeof route.query.channelId === 'string' ? route.query.channelId : ''));
 const initialNotifyOwner = computed(() => (route.query.notifyOwner === '1' || route.query.notifyOwner === 'true'));
+const initialAudioOwner = computed(() => {
+  if (route.query.audioOwner === undefined) return true;
+  return route.query.audioOwner === '1' || route.query.audioOwner === 'true';
+});
 
 const chatViewRef = ref<any>(null);
 const initializing = ref(false);
 const roleOptions = ref<RoleOption[]>([]);
+const audioOwner = ref(initialAudioOwner.value);
 
 const isOwnerOrAdmin = computed(() => {
   const worldId = chat.currentWorldId;
@@ -194,6 +199,13 @@ const postStateThrottled = throttle((type: 'sealchat.embed.ready' | 'sealchat.em
   trailing: true,
 });
 
+const syncAudioStudioContext = () => {
+  if (!audioOwner.value) return;
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  audioStudio.setActiveChannel(channelId || null);
+  audioStudio.setCurrentWorld(chat.currentWorldId || null);
+};
+
 const postFocus = () => {
   if (!paneId.value) return;
   postToParent({ type: 'sealchat.embed.focus', paneId: paneId.value });
@@ -214,6 +226,18 @@ const handleMessage = async (event: MessageEvent) => {
 
   if (data.type === 'sealchat.embed.setNotifyOwner') {
     pushStore.setEmbedNotifyOwner(!!data.enabled);
+    postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.setAudioOwner') {
+    const enabled = !!data.enabled;
+    audioOwner.value = enabled;
+    if (enabled) {
+      syncAudioStudioContext();
+    } else {
+      audioStudio.setActiveChannel(null);
+    }
     postStateThrottled('sealchat.embed.state');
     return;
   }
@@ -359,8 +383,21 @@ watch(
 );
 
 watch(
+  audioOwner,
+  (enabled) => {
+    if (enabled) {
+      syncAudioStudioContext();
+    } else {
+      audioStudio.setActiveChannel(null);
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   () => chat.curChannel?.id,
   (channelId) => {
+    if (!audioOwner.value) return;
     audioStudio.setActiveChannel(channelId ? String(channelId) : null);
   },
   { immediate: true },
@@ -369,6 +406,7 @@ watch(
 watch(
   () => chat.currentWorldId,
   (worldId) => {
+    if (!audioOwner.value) return;
     audioStudio.setCurrentWorld(worldId || null);
   },
   { immediate: true },

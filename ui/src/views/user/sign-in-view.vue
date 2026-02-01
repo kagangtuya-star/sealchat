@@ -349,9 +349,9 @@ onBeforeUnmount(() => {
         <n-form-item v-if="captchaMode === 'local'" label="验证码">
           <div class="flex w-full items-center gap-3">
             <n-input v-model:value="captchaInput" placeholder="请输入验证码" />
-            <div class="w-28 h-12 rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center cursor-pointer"
+            <div class="sc-captcha-box rounded bg-gray-100 dark:bg-gray-700 flex items-center justify-center cursor-pointer"
               title="点击刷新" @click.prevent="reloadCaptchaImage">
-              <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="max-h-full" />
+              <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
               <span v-else class="text-xs text-gray-500">加载中</span>
             </div>
             <n-button text size="tiny" :loading="captchaLoading" @click.prevent="reloadCaptchaImage">刷新</n-button>

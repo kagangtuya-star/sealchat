@@ -232,6 +232,30 @@ export const chatEvent = new Emitter<{
   // 'message-created': (msg: Event) => void;
 }>();
 
+let worldGatewayBound = false;
+const ensureWorldGateway = () => {
+  if (worldGatewayBound) return;
+  chatEvent.on('world-updated' as any, (event: any) => {
+    const rawArgv = event?.argv || {};
+    const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, any>;
+    const world = options.world;
+    if (!world || !world.id) {
+      return;
+    }
+    const store = useChatStore();
+    store.$patch((state) => {
+      state.worldMap[world.id] = world;
+      if (state.worldDetailMap[world.id]) {
+        state.worldDetailMap[world.id] = {
+          ...state.worldDetailMap[world.id],
+          world,
+        };
+      }
+    });
+  });
+  worldGatewayBound = true;
+};
+
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
@@ -1016,7 +1040,7 @@ export const useChatStore = defineStore({
       }
     },
 
-    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean; allowMemberEditKeywords?: boolean }) {
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean; allowMemberEditKeywords?: boolean; characterCardBadgeTemplate?: string }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
@@ -2934,7 +2958,7 @@ export const useChatStore = defineStore({
         }>;
         total: number;
         canAtAll: boolean;
-      }>(`api/v1/channels/${channelId}/mentionable-members`, {
+      }>(`api/v1/channels/${channelId}/mentionable-members-all`, {
         params: icMode ? { icMode } : undefined,
       });
       return resp.data;
@@ -3694,3 +3718,5 @@ chatEvent.on('channel-updated', (event) => {
   }
   chat.patchChannelAttributes(channelId, patch);
 });
+
+ensureWorldGateway();

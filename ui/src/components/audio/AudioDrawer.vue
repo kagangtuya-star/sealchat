@@ -26,7 +26,23 @@
         <div class="audio-drawer__header">
           <div>
             <p class="audio-drawer__subtitle">多音轨播放 / 素材管理</p>
-            <n-tag size="small">{{ audio.networkMode === 'normal' ? '标准模式' : '弱网模式' }}</n-tag>
+            <div class="audio-drawer__modes">
+              <n-tag size="small">{{ audio.worldPlaybackEnabled ? '世界模式' : '频道模式' }}</n-tag>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <div class="audio-drawer__world-mode">
+                    <span>世界模式</span>
+                    <n-switch
+                      size="small"
+                      :value="audio.worldPlaybackEnabled"
+                      :disabled="!audio.canManage"
+                      @update:value="audio.setWorldPlaybackEnabled"
+                    />
+                  </div>
+                </template>
+                开启后，音频播放在同一世界内跨频道保持一致，切换频道不会中断。
+              </n-tooltip>
+            </div>
           </div>
           <n-button quaternary size="small" @click="audio.ensureInitialized">刷新数据</n-button>
         </div>
@@ -124,6 +140,22 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 0.85rem;
   color: var(--sc-text-secondary);
+}
+
+.audio-drawer__modes {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.audio-drawer__world-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+  cursor: help;
 }
 
 .audio-drawer__player {

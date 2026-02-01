@@ -12,7 +12,6 @@ import {
   NSwitch,
   NCard,
   NInput,
-  NSelect,
   NPopconfirm,
   useMessage,
   type UploadFileInfo,

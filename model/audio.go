@@ -159,6 +159,7 @@ type AudioPlaybackState struct {
 	Position     float64                   `json:"position"`
 	LoopEnabled  bool                      `json:"loopEnabled"`
 	PlaybackRate float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled" gorm:"default:false"`
 	UpdatedBy    string                    `json:"updatedBy"`
 	UpdatedAt    time.Time                 `json:"updatedAt"`
 	CreatedAt    time.Time                 `json:"createdAt"`

@@ -6,6 +6,7 @@ import { useUserStore } from './user';
 import { useUtilsStore } from './utils';
 import { useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
+import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import type {
   AudioAsset,
   AudioAssetMutationPayload,
@@ -18,6 +19,8 @@ import type {
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
+  AudioImportPreview,
+  AudioImportResult,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
   PaginatedResult,
@@ -70,12 +73,18 @@ interface AudioStudioState {
   folderActionLoading: boolean;
   filters: AudioSearchFilters;
   uploadTasks: UploadTaskState[];
+  importPreview: AudioImportPreview | null;
+  importPreviewLoading: boolean;
+  importLoading: boolean;
+  importResult: AudioImportResult | null;
+  importError: string | null;
   networkMode: 'normal' | 'constrained' | 'minimal';
   bufferMessage: string;
   isPlaying: boolean;
   loopEnabled: boolean;
   playbackRate: number;
   masterVolume: number;
+  worldPlaybackEnabled: boolean;
   error: string | null;
   currentChannelId: string | null;
   currentWorldId: string | null;
@@ -305,12 +314,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       includeCommon: true,
     },
     uploadTasks: [],
+    importPreview: null,
+    importPreviewLoading: false,
+    importLoading: false,
+    importResult: null,
+    importError: null,
     networkMode: 'normal',
     bufferMessage: '',
     isPlaying: false,
     loopEnabled: false,
     playbackRate: 1,
     masterVolume: 1,
+    worldPlaybackEnabled: false,
     error: null,
     currentChannelId: null,
     currentWorldId: null,
@@ -363,6 +378,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return utils.config?.ffmpegAvailable === true;
     },
 
+    importEnabled(): boolean {
+      const utils = useUtilsStore();
+      return utils.config?.audioImportEnabled === true;
+    },
+
     hasAnyTrackPlaying(): boolean {
       return DEFAULT_TRACK_TYPES.some((type) => {
         const track = this.tracks[type];
@@ -374,14 +394,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
   actions: {
     setCurrentWorld(worldId: string | null) {
       this.currentWorldId = worldId;
-      if (worldId && !this.isSystemAdmin) {
-        this.filters.scope = 'world';
+      if (worldId) {
         this.filters.worldId = worldId;
         this.filters.includeCommon = true;
+        if (!this.isSystemAdmin) {
+          this.filters.scope = 'world';
+        }
       } else {
-        this.filters.scope = undefined;
         this.filters.worldId = null;
         this.filters.includeCommon = true;
+        if (!this.isSystemAdmin) {
+          this.filters.scope = undefined;
+        }
       }
     },
 
@@ -413,7 +437,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.remoteState = null;
         return;
       }
+      if (this.worldPlaybackEnabled) {
+        return;
+      }
       this.fetchPlaybackState(channelId);
+    },
+
+    setWorldPlaybackEnabled(enabled: boolean) {
+      if (this.worldPlaybackEnabled === enabled) {
+        return;
+      }
+      this.worldPlaybackEnabled = enabled;
+      if (this.canManage) {
+        this.queuePlaybackSync();
+      }
     },
 
     ensureInteractionListener() {
@@ -439,10 +476,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async applyRemotePlayback(payload: AudioPlaybackStatePayload | null) {
-      if (!this.currentChannelId) {
+      if (payload && typeof payload.worldPlaybackEnabled === 'boolean') {
+        this.worldPlaybackEnabled = payload.worldPlaybackEnabled;
+      }
+      const allowWorld = !!payload?.worldPlaybackEnabled;
+      if (!this.currentChannelId && !allowWorld) {
         return;
       }
-      if (payload && payload.channelId !== this.currentChannelId) {
+      if (payload && !allowWorld && payload.channelId !== this.currentChannelId) {
         return;
       }
       const user = useUserStore();
@@ -733,6 +774,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         position: this.estimatePlaybackPosition(),
         loopEnabled: this.loopEnabled,
         playbackRate: this.playbackRate,
+        worldPlaybackEnabled: this.worldPlaybackEnabled,
       };
     },
 
@@ -1615,13 +1657,28 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.filteredAssets = this.assets;
         return;
       }
-      const lower = keyword.toLowerCase();
+      const normalizedKeyword = keyword.trim();
+      const loadPromise = ensurePinyinLoaded();
       const lookup = this.folderPathLookup;
-      this.filteredAssets = this.assets.filter((asset) => {
-        const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
-        const description = asset.description ?? '';
-        const joined = `${asset.name} ${asset.tags.join(' ')} ${asset.createdBy} ${folderPath} ${description}`.toLowerCase();
-        return joined.includes(lower);
+      const applyLocalFilter = () => {
+        this.filteredAssets = this.assets.filter((asset) => {
+          const folderPath = asset.folderId ? lookup[asset.folderId] ?? '' : '';
+          const description = asset.description ?? '';
+          const targets = [
+            asset.name,
+            asset.tags.join(' '),
+            asset.createdBy,
+            folderPath,
+            description,
+          ];
+          return targets.some((target) => matchText(normalizedKeyword, target || ''));
+        });
+      };
+      applyLocalFilter();
+      void loadPromise.then((loaded) => {
+        if (!loaded) return;
+        if (this.filters.query !== keyword) return;
+        applyLocalFilter();
       });
       if (this.filteredAssets.length === 0) {
         try {
@@ -1796,10 +1853,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.persistAssetsToCache();
     },
 
-    async handleUpload(files: FileList | File[], options?: { scope?: AudioAssetScope; worldId?: string }) {
+    async handleUpload(
+      files: FileList | File[],
+      options?: { scope?: AudioAssetScope; worldId?: string; folderId?: string | null }
+    ) {
       if (!this.canManage && !this.canManageCurrentWorld) return;
       const uploadScope = options?.scope ?? (this.isSystemAdmin ? 'common' : 'world');
       const uploadWorldId = options?.worldId ?? (uploadScope === 'world' ? this.currentWorldId : null);
+      const uploadFolderId = normalizeFolderId(options?.folderId) ?? null;
       const list = Array.from(files);
       const tasks: UploadTaskState[] = [];
       for (const file of list) {
@@ -1817,7 +1878,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       const concurrency = 2;
       const uploadTask = async (file: File, task: UploadTaskState) => {
-        await this.uploadSingleFile(file, task, { scope: uploadScope, worldId: uploadWorldId ?? undefined });
+        await this.uploadSingleFile(file, task, {
+          scope: uploadScope,
+          worldId: uploadWorldId ?? undefined,
+          folderId: uploadFolderId ?? undefined,
+        });
       };
       const queue = list.map((file, i) => ({ file, task: tasks[i] }));
       const running: Promise<void>[] = [];
@@ -1839,7 +1904,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async uploadSingleFile(file: File, task: UploadTaskState, options?: { scope?: AudioAssetScope; worldId?: string }) {
+    async uploadSingleFile(
+      file: File,
+      task: UploadTaskState,
+      options?: { scope?: AudioAssetScope; worldId?: string; folderId?: string }
+    ) {
       const maxRetries = 2;
       const doUpload = async (): Promise<boolean> => {
         try {
@@ -1853,6 +1922,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           }
           if (options?.worldId) {
             formData.append('worldId', options.worldId);
+          }
+          if (options?.folderId) {
+            formData.append('folderId', options.folderId);
           }
           const resp = await api.post('/api/v1/audio/assets/upload', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
@@ -1890,6 +1962,59 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       };
       await doUpload();
+    },
+
+    async previewImport() {
+      if (!this.canManage) return null;
+      if (!this.importEnabled) {
+        this.importError = '未启用导入目录';
+        return null;
+      }
+      this.importPreviewLoading = true;
+      this.importError = null;
+      this.importResult = null;
+      try {
+        const resp = await api.get('/api/v1/audio/assets/import/preview');
+        this.importPreview = resp.data as AudioImportPreview;
+        return this.importPreview;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '读取导入目录失败';
+        this.importPreview = null;
+        return null;
+      } finally {
+        this.importPreviewLoading = false;
+      }
+    },
+
+    async importFromDir(options: { all: boolean; paths?: string[]; scope?: AudioAssetScope; worldId?: string }) {
+      if (!this.canManage) return null;
+      if (!this.importEnabled) {
+        this.importError = '未启用导入目录';
+        return null;
+      }
+      this.importLoading = true;
+      this.importError = null;
+      this.importResult = null;
+      try {
+        const resp = await api.post('/api/v1/audio/assets/import', {
+          all: options.all,
+          paths: options.paths || [],
+          scope: options.scope,
+          worldId: options.worldId,
+        });
+        this.importResult = resp.data as AudioImportResult;
+        try {
+          await this.fetchAssets();
+        } catch (err) {
+          console.warn('refresh assets after import failed', err);
+        }
+        return this.importResult;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '导入失败';
+        return null;
+      } finally {
+        this.importLoading = false;
+      }
     },
 
     async refreshTranscodeTasks() {

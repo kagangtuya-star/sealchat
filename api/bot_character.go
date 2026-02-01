@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,10 +44,10 @@ func apiCharacterGet(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	// Find connected BOT for this channel
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	// Find selected BOT for this channel
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -76,9 +78,9 @@ func apiCharacterSet(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -97,7 +99,8 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 	data := struct {
 		Echo string `json:"echo"`
 		Data struct {
-			UserID string `json:"user_id"`
+			UserID  string `json:"user_id"`
+			GroupID string `json:"group_id"`
 		} `json:"data"`
 	}{}
 	if err := json.Unmarshal(msg, &data); err != nil {
@@ -105,10 +108,16 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	// For character.list, we need to find any connected BOT
-	botConn := findAnyBotConnection(ctx)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	channelID := resolveCharacterChannelID(ctx, data.Data.GroupID)
+	if channelID == "" {
+		sendCharacterError(ctx, data.Echo, "缺少频道ID")
+		return
+	}
+	data.Data.GroupID = channelID
+
+	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -122,39 +131,40 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 }
 
 // findBotConnectionForChannel finds a BOT WebSocket connection for a specific channel
-func findBotConnectionForChannel(ctx *ChatContext, channelID string) *WsSyncConn {
-	if ctx == nil || ctx.User == nil || userId2ConnInfoGlobal == nil {
-		return nil
+func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncConn, error) {
+	if userId2ConnInfoGlobal == nil {
+		return nil, errors.New("未找到可用的 BOT 连接")
 	}
-
-	botIds := service.BotListByChannelId(ctx.User.ID, channelID)
-	if len(botIds) == 0 {
-		return nil
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, errors.New("缺少频道ID")
 	}
-
-	var activeConn *WsSyncConn
-	var activeAt int64 = -1
-
-	for _, id := range botIds {
-		if x, ok := userId2ConnInfoGlobal.Load(id); ok {
-			x.Range(func(conn *WsSyncConn, value *ConnInfo) bool {
-				if value == nil {
-					return true
-				}
-				lastAlive := value.LastAliveTime
-				if lastAlive == 0 {
-					lastAlive = value.LastPingTime
-				}
-				if lastAlive > activeAt {
-					activeAt = lastAlive
-					activeConn = conn
-				}
+	botID, err := service.SelectedBotIdByChannelId(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if x, ok := userId2ConnInfoGlobal.Load(botID); ok {
+		var activeConn *WsSyncConn
+		var activeAt int64 = -1
+		x.Range(func(conn *WsSyncConn, value *ConnInfo) bool {
+			if value == nil {
 				return true
-			})
+			}
+			lastAlive := value.LastAliveTime
+			if lastAlive == 0 {
+				lastAlive = value.LastPingTime
+			}
+			if lastAlive > activeAt {
+				activeAt = lastAlive
+				activeConn = conn
+			}
+			return true
+		})
+		if activeConn != nil {
+			return activeConn, nil
 		}
 	}
-
-	return activeConn
+	return nil, errors.New("所选 BOT 未在线")
 }
 
 // findAnyBotConnection finds any available BOT WebSocket connection
@@ -185,6 +195,14 @@ func findAnyBotConnection(ctx *ChatContext) *WsSyncConn {
 	})
 
 	return activeConn
+}
+
+func resolveCharacterChannelID(ctx *ChatContext, groupID string) string {
+	channelID := strings.TrimSpace(groupID)
+	if channelID == "" && ctx != nil && ctx.ConnInfo != nil {
+		channelID = strings.TrimSpace(ctx.ConnInfo.ChannelId)
+	}
+	return channelID
 }
 
 // forwardCharacterRequest forwards a character API request to a BOT
@@ -286,9 +304,9 @@ func apiCharacterNew(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -317,9 +335,9 @@ func apiCharacterSave(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -348,9 +366,9 @@ func apiCharacterTag(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -379,9 +397,15 @@ func apiCharacterUntagAll(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findAnyBotConnection(ctx)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	channelID := resolveCharacterChannelID(ctx, data.Data.GroupID)
+	if channelID == "" {
+		sendCharacterError(ctx, data.Echo, "缺少频道ID")
+		return
+	}
+	data.Data.GroupID = channelID
+	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -410,9 +434,9 @@ func apiCharacterLoad(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findBotConnectionForChannel(ctx, data.Data.GroupID)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 
@@ -430,9 +454,10 @@ func apiCharacterDelete(ctx *ChatContext, msg []byte) {
 	data := struct {
 		Echo string `json:"echo"`
 		Data struct {
-			UserID string `json:"user_id"`
-			Name   string `json:"name"`
-			ID     string `json:"id"`
+			UserID  string `json:"user_id"`
+			GroupID string `json:"group_id"`
+			Name    string `json:"name"`
+			ID      string `json:"id"`
 		} `json:"data"`
 	}{}
 	if err := json.Unmarshal(msg, &data); err != nil {
@@ -440,9 +465,16 @@ func apiCharacterDelete(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn := findAnyBotConnection(ctx)
-	if botConn == nil {
-		sendCharacterError(ctx, data.Echo, "未找到可用的 BOT 连接")
+	channelID := resolveCharacterChannelID(ctx, data.Data.GroupID)
+	if channelID == "" {
+		sendCharacterError(ctx, data.Echo, "缺少频道ID")
+		return
+	}
+	data.Data.GroupID = channelID
+
+	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
 		return
 	}
 

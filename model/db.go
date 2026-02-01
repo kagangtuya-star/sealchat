@@ -158,6 +158,10 @@ func DBInit(cfg *utils.AppConfig) {
 		log.Printf("补齐消息 display_order 失败: %v", err)
 	}
 
+	if err := BackfillChannelRecentSentAt(); err != nil {
+		log.Printf("回填频道最近发言时间失败: %v", err)
+	}
+
 	if err := BackfillWorldData(); err != nil {
 		log.Printf("初始化世界数据失败: %v", err)
 	}

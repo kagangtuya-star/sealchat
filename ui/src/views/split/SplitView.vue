@@ -91,6 +91,7 @@ const isMobileViewport = computed(() => width.value < 700);
 
 const activePaneId = ref<PaneId>('A');
 const operationTarget = ref<OperationTarget>('follow');
+const audioPlaybackTarget = ref<OperationTarget>('follow');
 const lockSameWorld = ref(false);
 const notifyOwnerPaneId = ref<PaneId | null>(null);
 const webTargetPaneId = ref<PaneId>('A');
@@ -210,6 +211,7 @@ const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
 const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
 const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
 const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
+const effectiveAudioPaneId = computed<PaneId>(() => (audioPlaybackTarget.value === 'follow' ? activePaneId.value : audioPlaybackTarget.value));
 const activePaneHasChannel = computed(() => activePane.value.mode === 'chat' && !!activePane.value.channelId);
 
 const activeChannelTitle = computed(() => {
@@ -237,12 +239,14 @@ watch(
   { immediate: true },
 );
 
+
 const buildEmbedSrc = (pane: PaneState) => {
   const params = new URLSearchParams();
   params.set('paneId', pane.id);
   if (pane.worldId) params.set('worldId', pane.worldId);
   if (pane.channelId) params.set('channelId', pane.channelId);
   if (notifyOwnerPaneId.value === pane.id) params.set('notifyOwner', '1');
+  params.set('audioOwner', effectiveAudioPaneId.value === pane.id ? '1' : '0');
   // 不能直接用 import.meta.env.BASE_URL（vite base='./' 时会变成 ./#/embed，导致 iframe 请求落到 /app/ 而非 /app/index.html）
   // 这里用当前页面的 pathname+search，确保与 split 同一份 HTML（支持 /index.html#/split、/subdir/#/split 等部署形态）
   const base = typeof window === 'undefined' ? '/' : `${window.location.pathname}${window.location.search}`;
@@ -399,6 +403,20 @@ const setNotifyOwner = (paneId: PaneId | null) => {
   postToPane('B', { type: 'sealchat.embed.setNotifyOwner', paneId: 'B', enabled: paneId === 'B' });
 };
 
+const syncAudioOwner = () => {
+  const owner = effectiveAudioPaneId.value;
+  postToPane('A', { type: 'sealchat.embed.setAudioOwner', paneId: 'A', enabled: owner === 'A' });
+  postToPane('B', { type: 'sealchat.embed.setAudioOwner', paneId: 'B', enabled: owner === 'B' });
+};
+
+watch(
+  () => effectiveAudioPaneId.value,
+  () => {
+    syncAudioOwner();
+  },
+  { immediate: true },
+);
+
 const toggleLockSameWorld = (enabled: boolean) => {
   lockSameWorld.value = enabled;
   if (enabled) {
@@ -437,8 +455,9 @@ const toggleSearch = () => {
 };
 
 const openAudioStudio = () => {
-  if (!canOperateChatPane(activePaneId.value)) return;
-  postToPane(activePaneId.value, { type: 'sealchat.embed.openAudioStudio', paneId: activePaneId.value });
+  const targetPaneId = effectiveAudioPaneId.value;
+  if (!canOperateChatPane(targetPaneId)) return;
+  postToPane(targetPaneId, { type: 'sealchat.embed.openAudioStudio', paneId: targetPaneId });
 };
 
 const openEmbedPanel = () => {
@@ -571,6 +590,7 @@ const collapsedWidth = computed(() => 0);
           :lock-same-world="lockSameWorld"
           :notify-owner-pane-id="notifyOwnerPaneId"
           :operation-target="operationTarget"
+          :audio-playback-target="audioPlaybackTarget"
           :world-name="operationPane.worldName"
           :web-target-pane-id="webTargetPaneId"
           :pane-modes="{ A: paneA.mode, B: paneB.mode }"
@@ -578,6 +598,7 @@ const collapsedWidth = computed(() => 0);
           :channel-tree="operationPane.channelTree"
           @set-active-pane="setActivePane"
           @set-operation-target="operationTarget = $event"
+          @set-audio-playback-target="audioPlaybackTarget = $event"
           @set-world="setWorldForTargetPane"
           @toggle-lock-same-world="toggleLockSameWorld"
           @set-notify-owner="setNotifyOwner"
@@ -688,6 +709,7 @@ const collapsedWidth = computed(() => 0);
               :lock-same-world="lockSameWorld"
               :notify-owner-pane-id="notifyOwnerPaneId"
               :operation-target="operationTarget"
+              :audio-playback-target="audioPlaybackTarget"
               :world-name="operationPane.worldName"
               :web-target-pane-id="webTargetPaneId"
               :pane-modes="{ A: paneA.mode, B: paneB.mode }"
@@ -695,6 +717,7 @@ const collapsedWidth = computed(() => 0);
               :channel-tree="operationPane.channelTree"
               @set-active-pane="setActivePane"
               @set-operation-target="operationTarget = $event"
+              @set-audio-playback-target="audioPlaybackTarget = $event"
               @set-world="setWorldForTargetPane"
               @toggle-lock-same-world="toggleLockSameWorld"
               @set-notify-owner="setNotifyOwner"

@@ -83,7 +83,7 @@ declare module 'vue' {
     NResult: typeof import('naive-ui')['NResult']
     NRow: typeof import('naive-ui')['NRow']
     NScrollbar: typeof import('naive-ui')['NScrollbar']
-    NSelect: typeof import('naive-ui')['NSelect']
+    NSelect: typeof import('./src/components/NSelect.vue')['default']
     NSlider: typeof import('naive-ui')['NSlider']
     NSpace: typeof import('naive-ui')['NSpace']
     NSpin: typeof import('naive-ui')['NSpin']

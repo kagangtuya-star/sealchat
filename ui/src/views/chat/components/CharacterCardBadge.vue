@@ -24,9 +24,35 @@ const card = computed(() => {
   return cardStore.getCardById(boundCardId.value);
 });
 
+const badgeEntry = computed(() => {
+  if (!props.identityId) return null;
+  const entry = cardStore.getBadgeByIdentity(props.identityId);
+  if (!entry) return null;
+  const channelId = chatStore.curChannel?.id || '';
+  if (entry.channelId && channelId && entry.channelId !== channelId) {
+    return null;
+  }
+  return entry;
+});
+
+const worldTemplate = computed(() => {
+  const worldId = chatStore.currentWorldId;
+  const world = chatStore.currentWorld;
+  const template = typeof world?.characterCardBadgeTemplate === 'string' ? world.characterCardBadgeTemplate.trim() : '';
+  if (template) return template;
+  const fromDetail = (chatStore as any).worldDetailMap?.[worldId]?.world?.characterCardBadgeTemplate;
+  if (typeof fromDetail === 'string' && fromDetail.trim()) {
+    return fromDetail.trim();
+  }
+  return '';
+});
+
 const template = computed(() => {
   const worldId = chatStore.currentWorldId;
-  return displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId] ?? getWorldCardTemplate(worldId);
+  if (worldTemplate.value) return worldTemplate.value;
+  return badgeEntry.value?.template
+    || displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId]
+    || getWorldCardTemplate(worldId);
 });
 
 const renderedContent = computed(() => {
@@ -44,6 +70,9 @@ const renderedContent = computed(() => {
     }
   }
   attrs = attrs || card.value?.attrs;
+  if (!attrs && badgeEntry.value?.attrs) {
+    attrs = badgeEntry.value.attrs;
+  }
   if (!attrs) return '';
   return renderCardTemplate(template.value, attrs);
 });

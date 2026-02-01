@@ -194,7 +194,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NInput, useMessage, useDialog, NModal, NForm, NFormItem, NInputNumber, NSelect, NIcon, NProgress } from 'naive-ui';
+import { NDrawer, NDrawerContent, NButton, NInput, useMessage, useDialog, NModal, NForm, NFormItem, NInputNumber, NIcon, NProgress } from 'naive-ui';
 import { ChevronBack } from '@vicons/ionicons5';
 import type { UploadFileInfo } from 'naive-ui';
 import type { GalleryItem } from '@/types';

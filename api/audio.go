@@ -19,6 +19,7 @@ import (
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/service/storage"
+	"sealchat/utils"
 )
 
 func AudioAssetList(c *fiber.Ctx) error {
@@ -64,6 +65,17 @@ func AudioAssetList(c *fiber.Ctx) error {
 		filters.WorldID = &worldID
 	}
 	filters.IncludeCommon = c.QueryBool("includeCommon", true)
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if !isSystemAdmin {
+		worldID := strings.TrimSpace(c.Query("worldId"))
+		if worldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界ID不能为空")
+		}
+		filters.Scope = model.AudioScopeWorld
+		filters.WorldID = &worldID
+		filters.IncludeCommon = true
+	}
 	items, total, err := service.AudioListAssets(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载音频素材失败")
@@ -168,6 +180,89 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 		"needsTranscode": needsTranscode,
 		"status":         status,
 	})
+}
+
+func AudioAssetImportPreview(c *fiber.Ctx) error {
+	cfg := utils.GetConfig()
+	if cfg == nil || strings.TrimSpace(cfg.Audio.ImportDir) == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
+	}
+	preview, err := service.GetAudioImportPreview()
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取导入目录失败")
+	}
+	return c.JSON(preview)
+}
+
+func AudioAssetImport(c *fiber.Ctx) error {
+	cfg := utils.GetConfig()
+	if cfg == nil || strings.TrimSpace(cfg.Audio.ImportDir) == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
+	}
+	var req struct {
+		All         bool                        `json:"all"`
+		Paths       []string                    `json:"paths"`
+		Scope       model.AudioAssetScope       `json:"scope"`
+		WorldID     string                      `json:"worldId"`
+		FolderID    string                      `json:"folderId"`
+		Tags        []string                    `json:"tags"`
+		Visibility  model.AudioAssetVisibility  `json:"visibility"`
+		Description string                      `json:"description"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "导入请求解析失败")
+	}
+	if !req.All && len(req.Paths) == 0 {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "请指定要导入的文件")
+	}
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	scope := req.Scope
+	if scope == "" {
+		if isSystemAdmin {
+			scope = model.AudioScopeCommon
+		} else {
+			scope = model.AudioScopeWorld
+		}
+	}
+	var worldID *string
+	if strings.TrimSpace(req.WorldID) != "" {
+		val := strings.TrimSpace(req.WorldID)
+		worldID = &val
+	}
+	if scope == model.AudioScopeCommon {
+		if !isSystemAdmin {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可导入通用素材")
+		}
+	} else if scope == model.AudioScopeWorld {
+		if worldID == nil || *worldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级素材必须指定 worldId")
+		}
+		if !isSystemAdmin && !service.IsWorldAdmin(*worldID, user.ID) {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅世界管理员可导入此世界的素材")
+		}
+	}
+	visibility := req.Visibility
+	if visibility == "" {
+		visibility = model.AudioVisibilityPublic
+	}
+	result, err := service.AudioImportFromDir(service.AudioImportRequest{
+		All:   req.All,
+		Paths: req.Paths,
+		Options: service.AudioUploadOptions{
+			FolderID:    parseOptionalString(req.FolderID),
+			Tags:        req.Tags,
+			Description: req.Description,
+			Visibility:  visibility,
+			CreatedBy:   user.ID,
+			Scope:       scope,
+			WorldID:     worldID,
+		},
+	})
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "导入音频失败")
+	}
+	return c.JSON(result)
 }
 
 func AudioAssetUpdate(c *fiber.Ctx) error {
@@ -370,17 +465,51 @@ func AudioFolderUpdate(c *fiber.Ctx) error {
 		}
 	}
 	var req struct {
-		Name     string  `json:"name"`
-		ParentID *string `json:"parentId"`
+		Name     string                 `json:"name"`
+		ParentID *string                `json:"parentId"`
+		Scope    *model.AudioAssetScope `json:"scope"`
+		WorldID  *string                `json:"worldId"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
-	updated, err := service.AudioUpdateFolder(id, service.AudioFolderPayload{
+	var normalizedScope model.AudioAssetScope
+	var normalizedWorldID *string
+	if req.Scope != nil || req.WorldID != nil {
+		if !isSystemAdmin {
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅平台管理员可调整文件夹级别")
+		}
+		if req.Scope == nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "更新文件夹级别需要 scope")
+		}
+		trimmedScope := model.AudioAssetScope(strings.TrimSpace(string(*req.Scope)))
+		if trimmedScope != model.AudioScopeCommon && trimmedScope != model.AudioScopeWorld {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "文件夹级别无效")
+		}
+		normalizedScope = trimmedScope
+		if req.WorldID != nil {
+			trimmedWorld := strings.TrimSpace(*req.WorldID)
+			if trimmedWorld != "" {
+				normalizedWorldID = &trimmedWorld
+			}
+		}
+		if trimmedScope == model.AudioScopeWorld && normalizedWorldID == nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界级文件夹必须指定 worldId")
+		}
+		if trimmedScope == model.AudioScopeCommon {
+			normalizedWorldID = nil
+		}
+	}
+	payload := service.AudioFolderPayload{
 		Name:     req.Name,
 		ParentID: req.ParentID,
 		ActorID:  user.ID,
-	})
+	}
+	if req.Scope != nil || req.WorldID != nil {
+		payload.Scope = normalizedScope
+		payload.WorldID = normalizedWorldID
+	}
+	updated, err := service.AudioUpdateFolder(id, payload)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
 	}
@@ -602,6 +731,7 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		Position:     req.Position,
 		LoopEnabled:  req.LoopEnabled,
 		PlaybackRate: req.PlaybackRate,
+		WorldPlaybackEnabled: req.WorldPlaybackEnabled,
 		ActorID:      user.ID,
 	})
 	if err != nil {
@@ -735,6 +865,7 @@ type audioPlaybackStateRequest struct {
 	Position     float64                   `json:"position"`
 	LoopEnabled  bool                      `json:"loopEnabled"`
 	PlaybackRate float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
 }
 
 func ensureChannelMembership(userID, channelID string) error {
@@ -761,6 +892,7 @@ func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
 		"position":     state.Position,
 		"loopEnabled":  state.LoopEnabled,
 		"playbackRate": state.PlaybackRate,
+		"worldPlaybackEnabled": state.WorldPlaybackEnabled,
 		"updatedBy":    state.UpdatedBy,
 		"updatedAt":    state.UpdatedAt,
 	}
@@ -781,6 +913,7 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		Position:     state.Position,
 		LoopEnabled:  state.LoopEnabled,
 		PlaybackRate: state.PlaybackRate,
+		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
 		UpdatedBy:    state.UpdatedBy,
 		UpdatedAt:    state.UpdatedAt.Unix(),
 	}
@@ -801,6 +934,12 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		User:            operator,
 		ChannelUsersMap: channelUsersMapGlobal,
 		UserId2ConnInfo: userId2ConnInfoGlobal,
+	}
+	if state.WorldPlaybackEnabled {
+		if ch, err := model.ChannelGet(state.ChannelID); err == nil && ch != nil && ch.WorldID != "" {
+			broadcastEventToWorld(ch.WorldID, event)
+			return
+		}
 	}
 	ctx.BroadcastEventInChannel(state.ChannelID, event)
 }

@@ -508,9 +508,9 @@ onBeforeUnmount(() => {
                   type="text" placeholder="请输入图形验证码" aria-label="图形验证码"
                 />
                 <div class="flex flex-col items-center gap-1">
-                  <div class="w-28 h-12 bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
+                  <div class="sc-captcha-box bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
                     @click.prevent="reloadCaptchaImage" title="点击刷新">
-                    <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="max-h-full" />
+                    <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
                     <span v-else class="text-xs text-gray-500">加载中</span>
                   </div>
                   <button type="button" @click.prevent="reloadCaptchaImage"
@@ -562,9 +562,9 @@ onBeforeUnmount(() => {
                 type="text" placeholder="请输入验证码" aria-label="验证码"
               />
               <div class="flex flex-col items-center gap-1">
-                <div class="w-28 h-12 bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
+                <div class="sc-captcha-box bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
                   @click.prevent="reloadCaptchaImage" title="点击刷新">
-                  <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="max-h-full" />
+                  <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="sc-captcha-img" />
                   <span v-else class="text-xs text-gray-500">加载中</span>
                 </div>
                 <button type="button" @click.prevent="reloadCaptchaImage"

@@ -124,53 +124,56 @@ func (ctx *ChatContext) BroadcastEventInChannel(channelId string, data *protocol
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *protocol.Event) {
-	// 获取频道下的bot，这样做的原因是，bot实际上没有进入channel这个行为，所以需要主动推送
+	if ctx == nil || ctx.UserId2ConnInfo == nil || channelId == "" || data == nil {
+		return
+	}
+	// 只向频道选中的 BOT 推送事件，避免多 BOT 实例导致数据不同步
 	data.Timestamp = time.Now().Unix()
-	botIds := service.BotListByChannelId(ctx.User.ID, channelId)
-
-	for _, id := range botIds {
-		if x, ok := ctx.UserId2ConnInfo.Load(id); ok {
-			var active *ConnInfo
-			var activeAt int64 = -1
-			x.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
-				if value == nil {
-					return true
-				}
-				lastAlive := value.LastAliveTime
-				if lastAlive == 0 {
-					lastAlive = value.LastPingTime
-				}
-				if lastAlive > activeAt {
-					activeAt = lastAlive
-					active = value
-				}
+	botID, err := service.SelectedBotIdByChannelId(channelId)
+	if err != nil {
+		return
+	}
+	if x, ok := ctx.UserId2ConnInfo.Load(botID); ok {
+		var active *ConnInfo
+		var activeAt int64 = -1
+		x.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
+			if value == nil {
 				return true
-			})
-			if active != nil {
-				if data != nil && data.MessageContext != nil {
-					if active.BotLastMessageContext == nil {
-						active.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
-					}
-					active.BotLastMessageContext.Store(channelId, data.MessageContext)
-					if data.MessageContext.IsHiddenDice && data.MessageContext.SenderUserID != "" {
-						if active.BotHiddenDicePending == nil {
-							active.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
-						}
-						active.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
-							TargetUserID: data.MessageContext.SenderUserID,
-							Count:        0,
-						})
-					}
-				}
-				_ = active.Conn.WriteJSON(struct {
-					protocol.Event
-					Op protocol.Opcode `json:"op"`
-				}{
-					// 协议规定: 事件中必须含有 channel，message，user
-					Event: *data,
-					Op:    protocol.OpEvent,
-				})
 			}
+			lastAlive := value.LastAliveTime
+			if lastAlive == 0 {
+				lastAlive = value.LastPingTime
+			}
+			if lastAlive > activeAt {
+				activeAt = lastAlive
+				active = value
+			}
+			return true
+		})
+		if active != nil {
+			if data.MessageContext != nil {
+				if active.BotLastMessageContext == nil {
+					active.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
+				}
+				active.BotLastMessageContext.Store(channelId, data.MessageContext)
+				if data.MessageContext.IsHiddenDice && data.MessageContext.SenderUserID != "" {
+					if active.BotHiddenDicePending == nil {
+						active.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
+					}
+					active.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
+						TargetUserID: data.MessageContext.SenderUserID,
+						Count:        0,
+					})
+				}
+			}
+			_ = active.Conn.WriteJSON(struct {
+				protocol.Event
+				Op protocol.Opcode `json:"op"`
+			}{
+				// 协议规定: 事件中必须含有 channel，message，user
+				Event: *data,
+				Op:    protocol.OpEvent,
+			})
 		}
 	}
 }
