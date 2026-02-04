@@ -3576,6 +3576,10 @@ watch(() => chat.curChannel?.id, () => {
 const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 30;
 const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
+const UNREAD_FETCH_BUFFER = 5;
+const UNREAD_FETCH_MIN = 10;
+const UNREAD_FETCH_MAX = 200;
+const CACHED_SYNC_MAX_COUNT = 120;
 const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
 const SEARCH_JUMP_LIMIT_PRIMARY = 30;
 const SEARCH_JUMP_LIMIT_RETRY = 50;
@@ -5543,7 +5547,16 @@ const isMessageInChannel = (msg: any, channelId: string) => {
 
 const normalizeMessageList = (items: any[] = [], channelId = ''): Message[] =>
   items
-    .map((item) => normalizeMessageShape(item))
+    .map((item) => {
+      const normalized = normalizeMessageShape(item);
+      if (channelId) {
+        const resolved = resolveMessageChannelId(normalized);
+        if (!resolved) {
+          (normalized as any).channel_id = channelId;
+        }
+      }
+      return normalized;
+    })
     .filter((item) => !(item as any)?.is_deleted)
     .filter((item) => isMessageInChannel(item, channelId));
 
@@ -9161,7 +9174,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     });
   });
 
-  chatEvent.on('channel-switch-to', async (e) => {
+  chatEvent.on('channel-switch-to', async (e: any) => {
     if (!firstLoad) return;
     const viewEpoch = bumpMessageViewEpoch();
     const nextChannelId = chat.curChannel?.id || '';
@@ -9202,10 +9215,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
-    const fetchTask = fetchLatestMessages({ merge: restored });
+    const unreadHint = typeof e?.unreadCount === 'number' ? e.unreadCount : 0;
+    const limit = resolveSwitchFetchLimit(unreadHint, restored);
+    const requestKey = buildMessageCacheKey(nextChannelId);
+    const fetchTask = fetchLatestMessages({ merge: restored, limit });
     fetchTask.finally(() => {
       void maybePromptIdentitySync();
     });
+    if (nextChannelId) {
+      void fetchTask.finally(() => refreshCachedMessages(nextChannelId, viewEpoch, requestKey));
+    }
   })
 
   let initialRestored = false;
@@ -9373,7 +9392,69 @@ const autoFillIfNeeded = async () => {
   }
 };
 
-const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
+const resolveSwitchFetchLimit = (unreadHint: number, restored: boolean) => {
+  if (!restored) {
+    return INITIAL_MESSAGE_LOAD_LIMIT;
+  }
+  const base = Math.max(0, Math.floor(unreadHint || 0));
+  const target = base + UNREAD_FETCH_BUFFER;
+  const bounded = Math.min(UNREAD_FETCH_MAX, Math.max(UNREAD_FETCH_MIN, target));
+  return bounded;
+};
+
+const refreshCachedMessages = async (channelId: string, requestEpoch: number, requestKey: string) => {
+  if (!channelId) {
+    return;
+  }
+  const candidates = rows.value.filter((msg) => isMessageInChannel(msg, channelId));
+  if (candidates.length === 0) {
+    return;
+  }
+  const sliceStart = Math.max(0, candidates.length - CACHED_SYNC_MAX_COUNT);
+  const sample = candidates.slice(sliceStart);
+  const cachedIds = new Set<string>();
+  let from: number | null = null;
+  let to: number | null = null;
+  sample.forEach((msg) => {
+    if (msg?.id) {
+      cachedIds.add(String(msg.id));
+    }
+    const createdAt = normalizeTimestamp(msg.createdAt) ?? normalizeTimestamp(msg.updatedAt);
+    if (createdAt === null) {
+      return;
+    }
+    if (from === null || createdAt < from) {
+      from = createdAt;
+    }
+    if (to === null || createdAt > to) {
+      to = createdAt;
+    }
+  });
+  if (!cachedIds.size || from === null || to === null) {
+    return;
+  }
+  try {
+    const resp = await chat.messageListDuring(channelId, from, to, {
+      includeArchived: true,
+      includeOoc: true,
+      ...buildRoleFilterOptions(),
+    });
+    if (isMessageViewStale(requestEpoch, requestKey)) {
+      return;
+    }
+    const normalized = normalizeMessageList(resp?.data || [], channelId);
+    const filtered = normalized.filter((msg) => msg?.id && cachedIds.has(String(msg.id)));
+    if (filtered.length) {
+      mergeIncomingMessages(filtered, undefined, channelId);
+      updateWindowAnchorsFromRows();
+      saveMessageCache(channelId);
+    }
+  } catch (error) {
+    console.warn('sync cached messages failed', error);
+  }
+};
+
+const fetchLatestMessages = async (options: { merge?: boolean; limit?: number } = {}) => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId) {
     return;
@@ -9395,7 +9476,7 @@ const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
   try {
     const resp = await chat.messageList(channelId, undefined, {
       includeArchived: chat.filterState.showArchived,
-      limit: INITIAL_MESSAGE_LOAD_LIMIT,
+      limit: options.limit ?? INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
     if (isMessageViewStale(requestEpoch, requestKey)) {

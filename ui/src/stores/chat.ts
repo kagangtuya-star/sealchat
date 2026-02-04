@@ -1352,6 +1352,7 @@ export const useChatStore = defineStore({
       writeScopedLocalStorage('lastChannel', id);
       this.curChannelUsers = [];
       this.whisperTargets = [];
+      const unreadCount = this.unreadCountMap[id] ?? 0;
       this.setChannelUnreadCount(id, 0);
       if (isStale()) {
         return true;
@@ -1364,7 +1365,7 @@ export const useChatStore = defineStore({
       if (isStale()) {
         return true;
       }
-      chatEvent.emit('channel-switch-to', undefined);
+      chatEvent.emit('channel-switch-to', { channelId: id, unreadCount } as any);
       void import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
         if (this.curChannel?.id !== id) {
           return;
