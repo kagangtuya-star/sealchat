@@ -3648,6 +3648,9 @@ export const useChatStore = defineStore({
         return null;
       }
 
+      // 确保身份列表已加载，避免并发导致误判为空
+      await this.loadChannelIdentities(channelId);
+
       // 获取已加载的角色列表
       const identities = this.channelIdentities[channelId] || [];
 
@@ -3674,6 +3677,15 @@ export const useChatStore = defineStore({
       if (identities.length > 0) {
         // 优先使用第一个角色作为默认 OOC 角色
         const firstRole = identities[0];
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
+        return firstRole.id;
+      }
+
+      // 二次确认：强制刷新身份列表，避免并发/缓存导致误判为空
+      await this.loadChannelIdentities(channelId, true);
+      const refreshed = this.channelIdentities[channelId] || [];
+      if (refreshed.length > 0) {
+        const firstRole = refreshed[0];
         this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
         return firstRole.id;
       }
