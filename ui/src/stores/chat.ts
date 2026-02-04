@@ -1356,6 +1356,14 @@ export const useChatStore = defineStore({
       if (isStale()) {
         return true;
       }
+      try {
+        await this.ensureChannelPermissionCache(id);
+      } catch (error) {
+        console.warn('ensureChannelPermissionCache failed', error);
+      }
+      if (isStale()) {
+        return true;
+      }
       chatEvent.emit('channel-switch-to', undefined);
       void import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
         if (this.curChannel?.id !== id) {
@@ -1371,7 +1379,6 @@ export const useChatStore = defineStore({
         this.loadChannelIdentities(id),
         this.ensureDefaultOocRole(id),
         this.fetchChannelOnlineMembers(id, { updateCurrent: true }),
-        this.ensureChannelPermissionCache(id),
       ]).then(() => {
         if (this.curChannel?.id !== id) {
           return;
