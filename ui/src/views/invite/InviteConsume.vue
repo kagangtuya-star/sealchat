@@ -49,12 +49,12 @@ const processInvite = async () => {
       status.value = 'success';
       message.success('已加入世界');
       try {
-        await router.replace({ name: 'home' });
+        await router.replace({ name: 'world-channel', params: { worldId: respWorldId } });
       } catch (err) {
         console.warn('router replace failed', err);
       }
-      if (router.currentRoute.value.name !== 'home') {
-        window.location.hash = '#/';
+      if (router.currentRoute.value.name !== 'world-channel') {
+        window.location.hash = `#/${respWorldId}`;
       }
     } else {
       status.value = 'error';
@@ -79,7 +79,7 @@ const gotoWorld = async () => {
   }
   try {
     await chat.switchWorld(worldId.value, { force: true });
-    await router.replace({ name: 'home' });
+    await router.replace({ name: 'world-channel', params: { worldId: worldId.value } });
   } catch (err) {
     message.error('跳转失败，请稍后重试');
   }

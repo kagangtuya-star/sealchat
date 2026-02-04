@@ -869,8 +869,12 @@ export const useChatStore = defineStore({
         return;
       }
       if (this.joinedWorldIds.length) {
+        const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
+        if (current && this.joinedWorldIds.includes(current)) {
+          return;
+        }
         const stored = readScopedLocalStorage('currentWorldId');
-        if (stored) {
+        if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;
         }
         return;
@@ -884,6 +888,11 @@ export const useChatStore = defineStore({
             this.worldMap[item.world.id] = item.world;
           }
         });
+        const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
+        if (current && this.joinedWorldIds.includes(current)) {
+          this.currentWorldId = current;
+          return;
+        }
         const stored = readScopedLocalStorage('currentWorldId');
         if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;

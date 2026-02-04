@@ -120,13 +120,13 @@ const consumeInvite = async () => {
     if (resp.already_joined && worldId) {
       message.info(`您已经加入了「${worldName}」`);
       await chat.switchWorld(worldId, { force: true });
-      await router.push({ name: 'home' });
+      await router.push({ name: 'world-channel', params: { worldId } });
       return;
     }
     if (worldId) {
       await chat.switchWorld(worldId, { force: true });
       message.success('已加入世界');
-      await router.push({ name: 'home' });
+      await router.push({ name: 'world-channel', params: { worldId } });
     }
   } catch (e: any) {
     const msg = e?.response?.data?.message || '加入失败';
