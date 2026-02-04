@@ -820,8 +820,8 @@ const clearLoginBg = () => {
 </script>
 
 <template>
-  <div class="overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
-    <n-form label-placement="left" label-width="auto">
+  <div class="admin-settings-scroll overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
+    <n-form label-placement="left" label-width="120">
       <n-form-item label="服务地址" :feedback="serveAtHelp">
         <div class="flex gap-2 items-center w-full">
           <n-select
@@ -896,116 +896,121 @@ const clearLoginBg = () => {
       </n-form-item>
 
       <!-- Login Background Section -->
-      <n-divider>登录页背景</n-divider>
-      <input ref="loginBgFileInput" type="file" accept="image/*" class="hidden" @change="handleLoginBgFileChange">
-      <n-form-item label="背景图片">
-        <div class="flex gap-3 items-center">
-          <div
-            class="login-bg-no-option"
-            :class="{ active: !loginBgAttachmentId }"
-            @click="clearLoginBg"
-          >
-            <NIcon :component="X" :size="16" />
-            <span>无</span>
-          </div>
-          <div v-if="loginBgUrl" class="login-bg-thumb-wrapper">
-            <img :src="loginBgUrl" alt="登录背景" class="login-bg-thumb" />
-          </div>
-          <n-button size="small" :loading="loginBgUploading" @click="triggerLoginBgUpload">
-            <template #icon><NIcon :component="ImageIcon" /></template>
-            {{ loginBgUrl ? '更换' : '上传' }}
-          </n-button>
-        </div>
-      </n-form-item>
-
-      <template v-if="loginBgAttachmentId">
-        <n-form-item label="显示模式">
-          <n-select v-model:value="loginBgMode" :options="loginBgModeOptions" style="width: 180px;" />
-        </n-form-item>
-        <n-form-item label="透明度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginBgOpacity" :min="0" :max="100" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginBgOpacity }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="模糊度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginBgBlur" :min="0" :max="20" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginBgBlur }}px</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="亮度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginBgBrightness" :min="50" :max="150" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginBgBrightness }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="叠加层颜色">
-          <n-color-picker v-model:value="loginBgOverlayColor" :show-alpha="false" style="width: 100px;" />
-          <n-button v-if="loginBgOverlayColor" size="tiny" quaternary class="ml-2" @click="loginBgOverlayColor = ''">清除</n-button>
-        </n-form-item>
-        <n-form-item v-if="loginBgOverlayColor" label="叠加层透明度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginBgOverlayOpacity" :min="0" :max="100" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginBgOverlayOpacity }}%</span>
-          </div>
-        </n-form-item>
-        <n-divider>玻璃卡片</n-divider>
-        <n-form-item label="自动色调">
-          <n-switch v-model:value="loginPanelAutoTint" />
-        </n-form-item>
-        <n-form-item label="玻璃色">
-          <n-color-picker v-model:value="loginPanelTintColor" :show-alpha="false" style="width: 100px;" />
-          <n-button v-if="loginPanelTintColor" size="tiny" quaternary class="ml-2" @click="loginPanelTintColor = ''">清除</n-button>
-        </n-form-item>
-        <n-form-item label="玻璃透明度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelTintOpacity" :min="30" :max="95" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelTintOpacity }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="玻璃模糊">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelBlur" :min="0" :max="30" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelBlur }}px</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="饱和度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelSaturate" :min="80" :max="180" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelSaturate }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="对比度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelContrast" :min="90" :max="140" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelContrast }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="边框强度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelBorderOpacity" :min="0" :max="60" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelBorderOpacity }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="阴影强度">
-          <div class="flex items-center">
-            <n-slider v-model:value="loginPanelShadowStrength" :min="0" :max="60" :step="1" style="width: 200px;" />
-            <span class="login-bg-value">{{ loginPanelShadowStrength }}%</span>
-          </div>
-        </n-form-item>
-        <n-form-item label="预览">
-          <div class="login-bg-preview">
-            <div class="login-bg-preview-layer" :style="loginBgPreviewStyle"></div>
-            <div v-if="loginBgOverlayStyle" class="login-bg-preview-overlay" :style="loginBgOverlayStyle"></div>
-            <div class="login-bg-preview-card sc-glass-panel" :style="loginGlassPreviewStyle">
-              <div class="login-bg-preview-input"></div>
-              <div class="login-bg-preview-input"></div>
-              <div class="login-bg-preview-btn"></div>
+      <n-collapse class="settings-collapse" :default-expanded-names="[]">
+        <n-collapse-item title="登录页背景" name="login-bg">
+          <input ref="loginBgFileInput" type="file" accept="image/*" class="hidden" @change="handleLoginBgFileChange">
+          <n-form-item label="背景图片">
+            <div class="flex gap-3 items-center">
+              <div
+                class="login-bg-no-option"
+                :class="{ active: !loginBgAttachmentId }"
+                @click="clearLoginBg"
+              >
+                <NIcon :component="X" :size="16" />
+                <span>无</span>
+              </div>
+              <div v-if="loginBgUrl" class="login-bg-thumb-wrapper">
+                <img :src="loginBgUrl" alt="登录背景" class="login-bg-thumb" />
+              </div>
+              <n-button size="small" :loading="loginBgUploading" @click="triggerLoginBgUpload">
+                <template #icon><NIcon :component="ImageIcon" /></template>
+                {{ loginBgUrl ? '更换' : '上传' }}
+              </n-button>
             </div>
-          </div>
-        </n-form-item>
-      </template>
+          </n-form-item>
+
+          <template v-if="loginBgAttachmentId">
+            <n-form-item label="显示模式">
+              <n-select v-model:value="loginBgMode" :options="loginBgModeOptions" style="width: 180px;" />
+            </n-form-item>
+            <n-form-item label="透明度">
+              <div class="login-bg-control-row">
+                <n-slider class="login-bg-slider" v-model:value="loginBgOpacity" :min="0" :max="100" :step="1" :tooltip="false" />
+                <span class="login-bg-value">{{ loginBgOpacity }}%</span>
+              </div>
+            </n-form-item>
+            <n-form-item label="模糊度">
+              <div class="login-bg-control-row">
+                <n-slider class="login-bg-slider" v-model:value="loginBgBlur" :min="0" :max="20" :step="1" :tooltip="false" />
+                <span class="login-bg-value">{{ loginBgBlur }}px</span>
+              </div>
+            </n-form-item>
+            <n-form-item label="亮度">
+              <div class="login-bg-control-row">
+                <n-slider class="login-bg-slider" v-model:value="loginBgBrightness" :min="50" :max="150" :step="1" :tooltip="false" />
+                <span class="login-bg-value">{{ loginBgBrightness }}%</span>
+              </div>
+            </n-form-item>
+            <n-form-item label="叠加层颜色">
+              <n-color-picker v-model:value="loginBgOverlayColor" :show-alpha="false" style="width: 100px;" />
+              <n-button v-if="loginBgOverlayColor" size="tiny" quaternary class="ml-2" @click="loginBgOverlayColor = ''">清除</n-button>
+            </n-form-item>
+            <n-form-item v-if="loginBgOverlayColor" label="叠加层透明度">
+              <div class="login-bg-control-row">
+                <n-slider class="login-bg-slider" v-model:value="loginBgOverlayOpacity" :min="0" :max="100" :step="1" :tooltip="false" />
+                <span class="login-bg-value">{{ loginBgOverlayOpacity }}%</span>
+              </div>
+            </n-form-item>
+          </template>
+        </n-collapse-item>
+
+        <n-collapse-item v-if="loginBgAttachmentId" title="玻璃卡片" name="login-glass">
+          <n-form-item label="自动色调">
+            <n-switch v-model:value="loginPanelAutoTint" />
+          </n-form-item>
+          <n-form-item label="玻璃色">
+            <n-color-picker v-model:value="loginPanelTintColor" :show-alpha="false" style="width: 100px;" />
+            <n-button v-if="loginPanelTintColor" size="tiny" quaternary class="ml-2" @click="loginPanelTintColor = ''">清除</n-button>
+          </n-form-item>
+          <n-form-item label="玻璃透明度">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelTintOpacity" :min="30" :max="95" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelTintOpacity }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="玻璃模糊">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelBlur" :min="0" :max="30" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelBlur }}px</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="饱和度">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelSaturate" :min="80" :max="180" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelSaturate }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="对比度">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelContrast" :min="90" :max="140" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelContrast }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="边框强度">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelBorderOpacity" :min="0" :max="60" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelBorderOpacity }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="阴影强度">
+            <div class="login-bg-control-row">
+              <n-slider class="login-bg-slider" v-model:value="loginPanelShadowStrength" :min="0" :max="60" :step="1" :tooltip="false" />
+              <span class="login-bg-value">{{ loginPanelShadowStrength }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="预览">
+            <div class="login-bg-preview">
+              <div class="login-bg-preview-layer" :style="loginBgPreviewStyle"></div>
+              <div v-if="loginBgOverlayStyle" class="login-bg-preview-overlay" :style="loginBgOverlayStyle"></div>
+              <div class="login-bg-preview-card sc-glass-panel" :style="loginGlassPreviewStyle">
+                <div class="login-bg-preview-input"></div>
+                <div class="login-bg-preview-input"></div>
+                <div class="login-bg-preview-btn"></div>
+              </div>
+            </div>
+          </n-form-item>
+        </n-collapse-item>
+      </n-collapse>
 
       <n-divider>版本检测</n-divider>
       <n-form-item label="更新状态">
@@ -1205,6 +1210,16 @@ const clearLoginBg = () => {
   margin: 0.35rem 0;
 }
 
+.admin-settings-scroll {
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+.settings-collapse {
+  width: 100%;
+}
+
 /* Login Background Styles */
 .login-bg-no-option {
   display: flex;
@@ -1310,13 +1325,27 @@ const clearLoginBg = () => {
   margin-top: 4px;
 }
 
+.login-bg-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.login-bg-slider {
+  flex: 1;
+  min-width: 200px;
+}
+
 .login-bg-value {
   display: inline-block;
-  width: 50px;
+  width: 56px;
   margin-left: 8px;
   font-size: 12px;
   color: #6b7280;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .dark .login-bg-value {
   color: #9ca3af;
