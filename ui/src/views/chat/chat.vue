@@ -3602,6 +3602,7 @@ const messageWindow = reactive({
   lockedHistory: false,
   beforeCursorExhausted: false,
 });
+const MESSAGE_CACHE_VERSION = 2;
 const DEFAULT_MESSAGE_CACHE_CONFIG = {
   maxChannels: 12,
   maxMessages: 200,
@@ -3680,6 +3681,28 @@ interface MessageCacheEntry {
 }
 const messageCache = new Map<string, MessageCacheEntry>();
 let lastChannelId = '';
+let messageViewEpoch = 0;
+let latestFetchSeq = 0;
+let latestFetchKey = '';
+
+const bumpMessageViewEpoch = () => {
+  messageViewEpoch += 1;
+  return messageViewEpoch;
+};
+
+const isMessageViewStale = (epoch: number, key?: string) => {
+  if (epoch !== messageViewEpoch) {
+    return true;
+  }
+  if (key) {
+    const currentChannelId = chat.curChannel?.id || '';
+    if (!currentChannelId) {
+      return true;
+    }
+    return buildMessageCacheKey(currentChannelId) !== key;
+  }
+  return false;
+};
 const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
@@ -3828,7 +3851,7 @@ const buildRoleFilterOptions = () => {
 };
 
 const buildMessageCacheKey = (channelId: string) =>
-  `${channelId}|archived:${chat.filterState.showArchived ? '1' : '0'}|role:${roleFilterSignature.value}`;
+  `v${MESSAGE_CACHE_VERSION}|${channelId}|archived:${chat.filterState.showArchived ? '1' : '0'}|role:${roleFilterSignature.value}`;
 
 const getScrollSnapshot = () => {
   const container = messagesListRef.value;
@@ -3908,7 +3931,7 @@ const sanitizeCacheValue = (input: any) => {
   return walk(input);
 };
 
-const sanitizeMessageForCache = (message: Message) => {
+const sanitizeMessageForCache = (message: Message, channelId: string) => {
   const sanitized = sanitizeCacheValue(message);
   if (!sanitized || typeof sanitized !== 'object') {
     return null;
@@ -3917,6 +3940,12 @@ const sanitizeMessageForCache = (message: Message) => {
     const fallbackId = (sanitized as any).message_id || (sanitized as any).messageId || (sanitized as any)._id || '';
     if (fallbackId) {
       sanitized.id = String(fallbackId);
+    }
+  }
+  if (channelId) {
+    const existingChannelId = resolveMessageChannelId(sanitized);
+    if (!existingChannelId) {
+      (sanitized as any).channel_id = channelId;
     }
   }
   return sanitized as Message;
@@ -3939,7 +3968,7 @@ const buildMessageCacheEntry = (channelId: string): MessageCacheEntry | null => 
     return null;
   }
   const sanitizedRows = snapshot
-    .map((msg) => sanitizeMessageForCache(msg))
+    .map((msg) => sanitizeMessageForCache(msg, channelId))
     .filter((msg): msg is Message => !!msg && !!msg.id);
   if (sanitizedRows.length === 0) {
     return null;
@@ -4153,13 +4182,16 @@ const cleanupMessageCacheDb = async () => {
   const cutoff = Date.now() - ttlMs;
   try {
     await db.chatMessageCache.where('updatedAt').below(cutoff).delete();
+    const prefix = `v${MESSAGE_CACHE_VERSION}|`;
+    await db.chatMessageCache.filter((record) => !record.key.startsWith(prefix)).delete();
   } catch (error) {
     console.warn('cleanup chat message cache failed', error);
   }
 };
 
 const applyMessageCache = (entry: MessageCacheEntry) => {
-  rows.value = entry.rows.slice();
+  const targetChannelId = chat.curChannel?.id || '';
+  rows.value = entry.rows.filter((msg) => isMessageInChannel(msg, targetChannelId));
   messageWindow.viewMode = entry.viewMode;
   messageWindow.lockedHistory = entry.lockedHistory;
   messageWindow.anchorMessageId = entry.anchorMessageId;
@@ -4546,14 +4578,19 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
 
-const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | null; after?: string | null }) => {
+const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | null; after?: string | null }, channelId?: string) => {
   if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+  const targetChannelId = channelId ?? (chat.curChannel?.id || '');
+  const filtered = items.filter((incoming) => isMessageInChannel(incoming, targetChannelId));
+  if (filtered.length === 0) {
     return;
   }
   const nextRows = rows.value.slice();
   const prevFirst = nextRows[0];
   let mutated = false;
-  items.forEach((incoming) => {
+  filtered.forEach((incoming) => {
     if (!incoming || !incoming.id) {
       return;
     }
@@ -4598,7 +4635,7 @@ const loadSearchJumpWindow = async (from: number, to: number, limit: number) => 
   });
   return {
     resp,
-    normalized: normalizeMessageList(resp?.data || []),
+    normalized: normalizeMessageList(resp?.data || [], chat.curChannel?.id || ''),
   };
 };
 
@@ -4754,7 +4791,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
       limit: SEARCH_JUMP_LIMIT_PRIMARY,
       ...buildRoleFilterOptions(),
     });
-    let incoming = normalizeMessageList(firstResp?.data || []);
+    let incoming = normalizeMessageList(firstResp?.data || [], chat.curChannel?.id || '');
     if (!incoming.length) {
       return null;
     }
@@ -4767,7 +4804,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
         limit: SEARCH_JUMP_LIMIT_RETRY,
         ...buildRoleFilterOptions(),
       });
-      incoming = normalizeMessageList(retryResp?.data || []);
+      incoming = normalizeMessageList(retryResp?.data || [], chat.curChannel?.id || '');
       if (!incoming.length) {
         return null;
       }
@@ -5485,10 +5522,30 @@ const applyReorderPayload = (payload: any) => {
   sortRowsByDisplayOrder();
 };
 
-const normalizeMessageList = (items: any[] = []): Message[] =>
+const resolveMessageChannelId = (msg: any): string => {
+  const raw = msg?.channel?.id ?? msg?.channel_id ?? msg?.channelId ?? msg?.channel?.channel_id ?? msg?.channel?.channelId ?? '';
+  if (raw === null || raw === undefined) {
+    return '';
+  }
+  return typeof raw === 'string' ? raw : String(raw);
+};
+
+const isMessageInChannel = (msg: any, channelId: string) => {
+  if (!channelId) {
+    return true;
+  }
+  const resolved = resolveMessageChannelId(msg);
+  if (!resolved) {
+    return true;
+  }
+  return resolved === channelId;
+};
+
+const normalizeMessageList = (items: any[] = [], channelId = ''): Message[] =>
   items
     .map((item) => normalizeMessageShape(item))
-    .filter((item) => !(item as any)?.is_deleted);
+    .filter((item) => !(item as any)?.is_deleted)
+    .filter((item) => isMessageInChannel(item, channelId));
 
 const upsertMessage = (incoming?: Message) => {
   if (!incoming || !incoming.id) {
@@ -9053,6 +9110,9 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   chatEvent.on('channel-identity-updated', handleIdentityUpdated);
 
   chatEvent.on('connected', async (e) => {
+    const requestEpoch = messageViewEpoch;
+    const channelId = chat.curChannel?.id || '';
+    const requestKey = channelId ? buildMessageCacheKey(channelId) : '';
     // 重连了之后，重新加载这之间的数据
     console.log('尝试获取重连数据')
     stopTypingPreviewNow();
@@ -9062,9 +9122,12 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       const lastCreatedAt = rows.value[rows.value.length - 1].createdAt || now;
 
       // 获取断线期间消息
-      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now, {
+      const messages = await chat.messageListDuring(channelId, lastCreatedAt, now, {
         ...buildRoleFilterOptions(),
       })
+      if (isMessageViewStale(requestEpoch, requestKey)) {
+        return;
+      }
       console.log('时间起始', lastCreatedAt, now)
       console.log('相关数据', messages)
       if (messages.next) {
@@ -9073,7 +9136,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
         rows.value = rows.value.filter((i) => (i.createdAt || now) > lastCreatedAt);
       }
       // 插入新数据
-      rows.value.push(...normalizeMessageList(messages.data));
+      rows.value.push(...normalizeMessageList(messages.data, channelId));
       sortRowsByDisplayOrder();
       computeAfterCursorFromRows();
 
@@ -9100,6 +9163,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   chatEvent.on('channel-switch-to', async (e) => {
     if (!firstLoad) return;
+    const viewEpoch = bumpMessageViewEpoch();
     const nextChannelId = chat.curChannel?.id || '';
     if (lastChannelId && lastChannelId !== nextChannelId) {
       saveMessageCache(lastChannelId);
@@ -9118,8 +9182,10 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (nextChannelId) {
       const cached = loadMessageCache(nextChannelId);
       if (cached) {
-        applyMessageCache(cached);
-        restored = true;
+        if (!isMessageViewStale(viewEpoch, buildMessageCacheKey(nextChannelId))) {
+          applyMessageCache(cached);
+          restored = true;
+        }
       }
     }
     if (!restored) {
@@ -9127,7 +9193,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     }
     if (!restored && nextChannelId) {
       const dbCached = await loadMessageCacheFromDb(nextChannelId);
-      if (dbCached && chat.curChannel?.id === nextChannelId) {
+      if (dbCached && !isMessageViewStale(viewEpoch, buildMessageCacheKey(nextChannelId))) {
         applyMessageCache(dbCached);
         restored = true;
       }
@@ -9229,7 +9295,7 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
         includeOoc: true,
         ...buildRoleFilterOptions(),
       });
-      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
+      const normalized = normalizeMessageList(resp?.data || [], chat.curChannel?.id || '').filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
         return created < anchorTimestamp;
       });
@@ -9262,7 +9328,7 @@ const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
         includeOoc: true,
         ...buildRoleFilterOptions(),
       });
-      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
+      const normalized = normalizeMessageList(resp?.data || [], chat.curChannel?.id || '').filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
         return created > anchorTimestamp;
       });
@@ -9308,9 +9374,17 @@ const autoFillIfNeeded = async () => {
 };
 
 const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
-  if (!chat.curChannel?.id || messageWindow.loadingLatest) {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) {
     return;
   }
+  const requestKey = buildMessageCacheKey(channelId);
+  if (messageWindow.loadingLatest && latestFetchKey === requestKey) {
+    return;
+  }
+  const requestEpoch = messageViewEpoch;
+  const seq = ++latestFetchSeq;
+  latestFetchKey = requestKey;
   const mergeMode = options.merge === true && rows.value.length > 0;
   const previousRows = rows.value.slice();
   if (!mergeMode) {
@@ -9319,14 +9393,17 @@ const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
   }
   messageWindow.loadingLatest = true;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, undefined, {
+    const resp = await chat.messageList(channelId, undefined, {
       includeArchived: chat.filterState.showArchived,
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
-    const normalized = normalizeMessageList(resp.data);
+    if (isMessageViewStale(requestEpoch, requestKey)) {
+      return;
+    }
+    const normalized = normalizeMessageList(resp.data, channelId);
     if (mergeMode) {
-      mergeIncomingMessages(normalized, { before: resp?.next ?? '' });
+      mergeIncomingMessages(normalized, { before: resp?.next ?? '' }, channelId);
       updateWindowAnchorsFromRows();
     } else {
       rows.value = normalized;
@@ -9339,15 +9416,21 @@ const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
       await autoFillIfNeeded();
       tryAutoRestoreHistory();
     }
-    saveMessageCache(chat.curChannel.id);
+    if (!isMessageViewStale(requestEpoch, requestKey)) {
+      saveMessageCache(channelId);
+    }
   } catch (error) {
-    rows.value = previousRows;
-    if (!mergeMode) {
-      resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+    if (!isMessageViewStale(requestEpoch, requestKey)) {
+      rows.value = previousRows;
+      if (!mergeMode) {
+        resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+      }
     }
     throw error;
   } finally {
-    messageWindow.loadingLatest = false;
+    if (seq === latestFetchSeq) {
+      messageWindow.loadingLatest = false;
+    }
   }
 };
 
@@ -9387,6 +9470,8 @@ const loadOlderMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart) {
     return false;
   }
+  const requestEpoch = messageViewEpoch;
+  const requestKey = buildMessageCacheKey(chat.curChannel.id);
   messageWindow.loadingBefore = true;
   try {
     const container = messagesListRef.value;
@@ -9403,17 +9488,26 @@ const loadOlderMessages = async () => {
         limit: PAGINATED_MESSAGE_LOAD_LIMIT,
         ...buildRoleFilterOptions(),
       });
-      normalized = normalizeMessageList(resp.data);
+      if (isMessageViewStale(requestEpoch, requestKey)) {
+        return false;
+      }
+      normalized = normalizeMessageList(resp.data, chat.curChannel?.id || '');
       nextCursor = resp?.next ?? '';
       if (!normalized.length && !nextCursor) {
         // Cursor已耗尽但仍有可能存在历史数据，改用时间窗口重试
         const fallback = await loadOlderMessagesByWindow();
+        if (isMessageViewStale(requestEpoch, requestKey)) {
+          return false;
+        }
         normalized = fallback.messages;
         nextCursor = fallback.cursor;
         reachedStart = fallback.reachedStart;
       }
     } else {
       const fallback = await loadOlderMessagesByWindow();
+      if (isMessageViewStale(requestEpoch, requestKey)) {
+        return false;
+      }
       normalized = fallback.messages;
       nextCursor = fallback.cursor;
       reachedStart = fallback.reachedStart;
@@ -9425,7 +9519,7 @@ const loadOlderMessages = async () => {
 
     if (normalized.length) {
       const cursorPayload = nextCursor !== undefined ? { before: nextCursor ?? '' } : undefined;
-      mergeIncomingMessages(normalized, cursorPayload);
+      mergeIncomingMessages(normalized, cursorPayload, chat.curChannel?.id || '');
       updateWindowAnchorsFromRows();
       messageWindow.hasReachedStart = false;
     }
@@ -9454,6 +9548,8 @@ const loadNewerMessages = async () => {
   ) {
     return false;
   }
+  const requestEpoch = messageViewEpoch;
+  const requestKey = buildMessageCacheKey(chat.curChannel.id);
   const anchor =
     messageWindow.latestTimestamp ??
     normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
@@ -9463,8 +9559,11 @@ const loadNewerMessages = async () => {
   messageWindow.loadingAfter = true;
   try {
     const result = await fetchNewerThanTimestamp(anchor);
+    if (isMessageViewStale(requestEpoch, requestKey)) {
+      return false;
+    }
     if (result.messages.length) {
-      mergeIncomingMessages(result.messages);
+      mergeIncomingMessages(result.messages, undefined, chat.curChannel?.id || '');
       updateWindowAnchorsFromRows();
       messageWindow.hasReachedLatest = false;
       return true;
