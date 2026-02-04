@@ -39,7 +39,7 @@ import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
 import { useObservable } from "@vueuse/rxjs";
-import { db, getSrc, type Thumb } from '@/models';
+import { db, getSrc, type Thumb, type ChatMessageCacheRecord } from '@/models';
 import { throttle } from 'lodash-es';
 import AvatarVue from '@/components/avatar.vue';
 import { Howl, Howler } from 'howler';
@@ -3602,6 +3602,84 @@ const messageWindow = reactive({
   lockedHistory: false,
   beforeCursorExhausted: false,
 });
+const DEFAULT_MESSAGE_CACHE_CONFIG = {
+  maxChannels: 12,
+  maxMessages: 200,
+  ttlMs: 10 * 60 * 1000,
+};
+const MESSAGE_CACHE_CONFIG_LIMITS = {
+  maxChannels: { min: 1, max: 50 },
+  maxMessages: { min: 20, max: 2000 },
+  ttlMs: { min: 60 * 1000, max: 24 * 60 * 60 * 1000 },
+};
+let cachedMessageCacheConfig = { ...DEFAULT_MESSAGE_CACHE_CONFIG };
+let lastCacheConfigReadAt = 0;
+const readCacheConfigNumber = (key: string, fallback: number, min: number, max: number) => {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  const raw = localStorage.getItem(key);
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const rounded = Math.floor(value);
+  return Math.min(max, Math.max(min, rounded));
+};
+const getMessageCacheConfig = () => {
+  if (typeof window === 'undefined') {
+    return cachedMessageCacheConfig;
+  }
+  const now = Date.now();
+  if (now - lastCacheConfigReadAt < 2000) {
+    return cachedMessageCacheConfig;
+  }
+  lastCacheConfigReadAt = now;
+  cachedMessageCacheConfig = {
+    maxChannels: readCacheConfigNumber(
+      'sealchat.messageCache.maxChannels',
+      DEFAULT_MESSAGE_CACHE_CONFIG.maxChannels,
+      MESSAGE_CACHE_CONFIG_LIMITS.maxChannels.min,
+      MESSAGE_CACHE_CONFIG_LIMITS.maxChannels.max,
+    ),
+    maxMessages: readCacheConfigNumber(
+      'sealchat.messageCache.maxMessages',
+      DEFAULT_MESSAGE_CACHE_CONFIG.maxMessages,
+      MESSAGE_CACHE_CONFIG_LIMITS.maxMessages.min,
+      MESSAGE_CACHE_CONFIG_LIMITS.maxMessages.max,
+    ),
+    ttlMs: readCacheConfigNumber(
+      'sealchat.messageCache.ttlMs',
+      DEFAULT_MESSAGE_CACHE_CONFIG.ttlMs,
+      MESSAGE_CACHE_CONFIG_LIMITS.ttlMs.min,
+      MESSAGE_CACHE_CONFIG_LIMITS.ttlMs.max,
+    ),
+  };
+  return cachedMessageCacheConfig;
+};
+interface MessageCacheEntry {
+  rows: Message[];
+  beforeCursor: string;
+  afterCursor: string;
+  earliestTimestamp: number | null;
+  latestTimestamp: number | null;
+  hasReachedStart: boolean;
+  hasReachedLatest: boolean;
+  beforeCursorExhausted: boolean;
+  viewMode: ViewMode;
+  lockedHistory: boolean;
+  anchorMessageId: string | null;
+  scrollTop: number;
+  nearBottom: boolean;
+  filterSignature: string;
+  showArchived: boolean;
+  updatedAt: number;
+}
+const messageCache = new Map<string, MessageCacheEntry>();
+let lastChannelId = '';
 const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
@@ -3747,6 +3825,275 @@ const buildRoleFilterOptions = () => {
     return {};
   }
   return { roleIds, includeRoleless };
+};
+
+const buildMessageCacheKey = (channelId: string) =>
+  `${channelId}|archived:${chat.filterState.showArchived ? '1' : '0'}|role:${roleFilterSignature.value}`;
+
+const getScrollSnapshot = () => {
+  const container = messagesListRef.value;
+  if (!container) {
+    return { scrollTop: 0, nearBottom: true };
+  }
+  const offset = container.scrollHeight - (container.clientHeight + container.scrollTop);
+  return {
+    scrollTop: container.scrollTop,
+    nearBottom: offset <= SCROLL_STICKY_THRESHOLD,
+  };
+};
+
+const trimMessageCacheRows = (items: Message[]) => {
+  const { maxMessages } = getMessageCacheConfig();
+  if (!Array.isArray(items) || items.length <= maxMessages) {
+    return { rows: items.slice(), trimmed: false };
+  }
+  return { rows: items.slice(items.length - maxMessages), trimmed: true };
+};
+
+const buildMessageCacheEntry = (channelId: string): MessageCacheEntry | null => {
+  if (!channelId || rows.value.length === 0) {
+    return null;
+  }
+  const { rows: snapshot, trimmed } = trimMessageCacheRows(rows.value);
+  if (snapshot.length === 0) {
+    return null;
+  }
+  const earliest = normalizeTimestamp(snapshot[0]?.createdAt);
+  const latest = normalizeTimestamp(snapshot[snapshot.length - 1]?.createdAt);
+  const scroll = getScrollSnapshot();
+  return {
+    rows: snapshot,
+    beforeCursor: trimmed ? '' : (messageWindow.beforeCursor || ''),
+    afterCursor: messageWindow.afterCursor || '',
+    earliestTimestamp: earliest ?? null,
+    latestTimestamp: latest ?? null,
+    hasReachedStart: trimmed ? false : messageWindow.hasReachedStart,
+    hasReachedLatest: messageWindow.hasReachedLatest,
+    beforeCursorExhausted: trimmed ? false : messageWindow.beforeCursorExhausted,
+    viewMode: messageWindow.viewMode,
+    lockedHistory: messageWindow.lockedHistory,
+    anchorMessageId: messageWindow.anchorMessageId,
+    scrollTop: scroll.scrollTop,
+    nearBottom: scroll.nearBottom,
+    filterSignature: roleFilterSignature.value,
+    showArchived: chat.filterState.showArchived,
+    updatedAt: Date.now(),
+  };
+};
+
+const persistMessageCacheToDb = async (key: string, channelId: string) => {
+  const entry = messageCache.get(key);
+  if (!entry) {
+    return;
+  }
+  const record: ChatMessageCacheRecord = {
+    key,
+    channelId,
+    filterSignature: entry.filterSignature,
+    showArchived: entry.showArchived,
+    updatedAt: entry.updatedAt,
+    rows: entry.rows,
+    beforeCursor: entry.beforeCursor,
+    afterCursor: entry.afterCursor,
+    earliestTimestamp: entry.earliestTimestamp,
+    latestTimestamp: entry.latestTimestamp,
+    hasReachedStart: entry.hasReachedStart,
+    hasReachedLatest: entry.hasReachedLatest,
+    beforeCursorExhausted: entry.beforeCursorExhausted,
+    viewMode: entry.viewMode,
+    lockedHistory: entry.lockedHistory,
+    anchorMessageId: entry.anchorMessageId,
+    scrollTop: entry.scrollTop,
+    nearBottom: entry.nearBottom,
+  };
+  try {
+    await db.chatMessageCache.put(record);
+  } catch (error) {
+    console.warn('persist chat message cache failed', error);
+  }
+};
+
+const schedulePersistMessageCache = throttle((key: string, channelId: string) => {
+  if (!key || !channelId) {
+    return;
+  }
+  void persistMessageCacheToDb(key, channelId);
+}, 1000);
+
+const scheduleMessageCacheUpdate = throttle(() => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  saveMessageCache(chat.curChannel.id);
+}, 800);
+
+const restoreCachedScroll = async (entry: MessageCacheEntry) => {
+  await nextTick();
+  const container = messagesListRef.value;
+  if (!container) {
+    return;
+  }
+  const anchorId = entry.anchorMessageId || '';
+  if (anchorId) {
+    for (let i = 0; i < 6; i += 1) {
+      const target = messageRowRefs.get(anchorId);
+      if (target) {
+        VueScrollTo.scrollTo(target, {
+          container,
+          duration: 0,
+          offset: -60,
+          easing: 'ease-in-out',
+        });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  const shouldStickBottom = entry.viewMode === 'live' || entry.nearBottom;
+  if (shouldStickBottom) {
+    scrollToBottom();
+  } else {
+    container.scrollTop = entry.scrollTop ?? 0;
+  }
+};
+
+const saveMessageCache = (channelId: string) => {
+  if (!channelId) {
+    return;
+  }
+  const key = buildMessageCacheKey(channelId);
+  const entry = buildMessageCacheEntry(channelId);
+  if (!entry) {
+    return;
+  }
+  messageCache.delete(key);
+  messageCache.set(key, entry);
+  const { maxChannels } = getMessageCacheConfig();
+  if (messageCache.size > maxChannels) {
+    const oldestKey = messageCache.keys().next().value as string | undefined;
+    if (oldestKey) {
+      messageCache.delete(oldestKey);
+    }
+  }
+  schedulePersistMessageCache(key, channelId);
+};
+
+const loadMessageCache = (channelId: string): MessageCacheEntry | null => {
+  if (!channelId) {
+    return null;
+  }
+  const key = buildMessageCacheKey(channelId);
+  const entry = messageCache.get(key);
+  if (!entry) {
+    return null;
+  }
+  const { ttlMs } = getMessageCacheConfig();
+  if (Date.now() - entry.updatedAt > ttlMs) {
+    messageCache.delete(key);
+    return null;
+  }
+  if (entry.rows.length > getMessageCacheConfig().maxMessages) {
+    const { rows: snapshot, trimmed } = trimMessageCacheRows(entry.rows);
+    if (snapshot.length === 0) {
+      messageCache.delete(key);
+      return null;
+    }
+    const earliest = normalizeTimestamp(snapshot[0]?.createdAt);
+    const latest = normalizeTimestamp(snapshot[snapshot.length - 1]?.createdAt);
+    entry.rows = snapshot;
+    entry.earliestTimestamp = earliest ?? entry.earliestTimestamp;
+    entry.latestTimestamp = latest ?? entry.latestTimestamp;
+    if (trimmed) {
+      entry.beforeCursor = '';
+      entry.beforeCursorExhausted = false;
+      entry.hasReachedStart = false;
+    }
+  }
+  messageCache.delete(key);
+  messageCache.set(key, entry);
+  return entry;
+};
+
+const loadMessageCacheFromDb = async (channelId: string): Promise<MessageCacheEntry | null> => {
+  if (!channelId) {
+    return null;
+  }
+  const key = buildMessageCacheKey(channelId);
+  try {
+    const record = await db.chatMessageCache.get(key);
+    if (!record) {
+      return null;
+    }
+    const { ttlMs } = getMessageCacheConfig();
+    if (Date.now() - record.updatedAt > ttlMs) {
+      await db.chatMessageCache.delete(key);
+      return null;
+    }
+    const { rows: snapshot, trimmed } = trimMessageCacheRows((record.rows || []) as Message[]);
+    if (snapshot.length === 0) {
+      return null;
+    }
+    const earliest = normalizeTimestamp(snapshot[0]?.createdAt);
+    const latest = normalizeTimestamp(snapshot[snapshot.length - 1]?.createdAt);
+    const entry: MessageCacheEntry = {
+      rows: snapshot,
+      beforeCursor: trimmed ? '' : (record.beforeCursor || ''),
+      afterCursor: record.afterCursor || '',
+      earliestTimestamp: earliest ?? (record.earliestTimestamp ?? null),
+      latestTimestamp: latest ?? (record.latestTimestamp ?? null),
+      hasReachedStart: trimmed ? false : record.hasReachedStart,
+      hasReachedLatest: record.hasReachedLatest,
+      beforeCursorExhausted: trimmed ? false : record.beforeCursorExhausted,
+      viewMode: record.viewMode || 'live',
+      lockedHistory: record.lockedHistory,
+      anchorMessageId: record.anchorMessageId || null,
+      scrollTop: record.scrollTop ?? 0,
+      nearBottom: record.nearBottom ?? true,
+      filterSignature: record.filterSignature,
+      showArchived: record.showArchived,
+      updatedAt: record.updatedAt,
+    };
+    messageCache.delete(key);
+    messageCache.set(key, entry);
+    return entry;
+  } catch (error) {
+    console.warn('load chat message cache failed', error);
+    return null;
+  }
+};
+
+const cleanupMessageCacheDb = async () => {
+  const { ttlMs } = getMessageCacheConfig();
+  const cutoff = Date.now() - ttlMs;
+  try {
+    await db.chatMessageCache.where('updatedAt').below(cutoff).delete();
+  } catch (error) {
+    console.warn('cleanup chat message cache failed', error);
+  }
+};
+
+const applyMessageCache = (entry: MessageCacheEntry) => {
+  rows.value = entry.rows.slice();
+  messageWindow.viewMode = entry.viewMode;
+  messageWindow.lockedHistory = entry.lockedHistory;
+  messageWindow.anchorMessageId = entry.anchorMessageId;
+  messageWindow.beforeCursor = entry.beforeCursor || '';
+  messageWindow.beforeCursorExhausted = entry.beforeCursorExhausted;
+  messageWindow.afterCursor = entry.afterCursor || '';
+  messageWindow.earliestTimestamp = entry.earliestTimestamp;
+  messageWindow.latestTimestamp = entry.latestTimestamp;
+  messageWindow.hasReachedStart = entry.hasReachedStart;
+  messageWindow.hasReachedLatest = entry.hasReachedLatest;
+  messageWindow.loadingLatest = false;
+  messageWindow.loadingBefore = false;
+  messageWindow.loadingAfter = false;
+  messageWindow.autoFillPending = false;
+  sortRowsByDisplayOrder();
+  if (!messageWindow.latestTimestamp) {
+    updateWindowAnchorsFromRows();
+  }
+  showButton.value = entry.viewMode === 'history' || entry.lockedHistory;
+  void restoreCachedScroll(entry);
 };
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
@@ -4153,6 +4500,7 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
       messageWindow.afterCursor = cursor.after || '';
     }
   }
+  scheduleMessageCacheUpdate();
 };
 
 const loadSearchJumpWindow = async (from: number, to: number, limit: number) => {
@@ -8216,6 +8564,7 @@ onMounted(async () => {
   if (!chat.isObserver) {
     await utils.commandsRefresh();
   }
+  void cleanupMessageCacheDb();
 
   chat.channelRefreshSetup()
 
@@ -8663,30 +9012,68 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     });
   });
 
-  chatEvent.on('channel-switch-to', (e) => {
+  chatEvent.on('channel-switch-to', async (e) => {
     if (!firstLoad) return;
-  stopTypingPreviewNow();
-  resetTypingPreview();
-  stopEditingPreviewNow();
-  chat.cancelEditing();
-  textToSend.value = '';
-  clearInputModeCache();
-  resetWindowState('live');
-  resetDragState();
-  localReorderOps.clear();
-  showButton.value = false;
+    const nextChannelId = chat.curChannel?.id || '';
+    if (lastChannelId && lastChannelId !== nextChannelId) {
+      saveMessageCache(lastChannelId);
+    }
+    lastChannelId = nextChannelId;
+    stopTypingPreviewNow();
+    resetTypingPreview();
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    textToSend.value = '';
+    clearInputModeCache();
+    resetDragState();
+    localReorderOps.clear();
+    showButton.value = false;
+    let restored = false;
+    if (nextChannelId) {
+      const cached = loadMessageCache(nextChannelId);
+      if (cached) {
+        applyMessageCache(cached);
+        restored = true;
+      }
+    }
+    if (!restored) {
+      resetWindowState('live');
+    }
+    if (!restored && nextChannelId) {
+      const dbCached = await loadMessageCacheFromDb(nextChannelId);
+      if (dbCached && chat.curChannel?.id === nextChannelId) {
+        applyMessageCache(dbCached);
+        restored = true;
+      }
+    }
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
-    const fetchTask = fetchLatestMessages();
+    const fetchTask = fetchLatestMessages({ merge: restored });
     fetchTask.finally(() => {
       void maybePromptIdentitySync();
     });
   })
 
-  await fetchLatestMessages();
+  let initialRestored = false;
+  const initialChannelId = chat.curChannel?.id || '';
+  if (initialChannelId) {
+    const cached = loadMessageCache(initialChannelId);
+    if (cached) {
+      applyMessageCache(cached);
+      initialRestored = true;
+    } else {
+      const dbCached = await loadMessageCacheFromDb(initialChannelId);
+      if (dbCached) {
+        applyMessageCache(dbCached);
+        initialRestored = true;
+      }
+    }
+  }
+  await fetchLatestMessages({ merge: initialRestored });
   firstLoad = true;
+  lastChannelId = chat.curChannel?.id || '';
   await maybePromptIdentitySync();
 })
 
@@ -8702,6 +9089,11 @@ onBeforeUnmount(() => {
   if (stRefreshTimer) {
     clearTimeout(stRefreshTimer);
     stRefreshTimer = null;
+  }
+  if (chat.curChannel?.id) {
+    const key = buildMessageCacheKey(chat.curChannel.id);
+    saveMessageCache(chat.curChannel.id);
+    void persistMessageCacheToDb(key, chat.curChannel.id);
   }
 });
 
@@ -8829,13 +9221,16 @@ const autoFillIfNeeded = async () => {
   }
 };
 
-const fetchLatestMessages = async () => {
+const fetchLatestMessages = async (options: { merge?: boolean } = {}) => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
     return;
   }
+  const mergeMode = options.merge === true && rows.value.length > 0;
   const previousRows = rows.value.slice();
-  resetWindowState('live', { preserveRows: true });
-  resetTypingPreview();
+  if (!mergeMode) {
+    resetWindowState('live', { preserveRows: true });
+    resetTypingPreview();
+  }
   messageWindow.loadingLatest = true;
   try {
     const resp = await chat.messageList(chat.curChannel.id, undefined, {
@@ -8843,18 +9238,27 @@ const fetchLatestMessages = async () => {
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
-    rows.value = normalizeMessageList(resp.data);
-    sortRowsByDisplayOrder();
-    applyCursorUpdate({ before: resp?.next ?? '' });
-    computeAfterCursorFromRows();
-    await nextTick();
-    scrollToBottom();
-    showButton.value = false;
-    await autoFillIfNeeded();
-    tryAutoRestoreHistory();
+    const normalized = normalizeMessageList(resp.data);
+    if (mergeMode) {
+      mergeIncomingMessages(normalized, { before: resp?.next ?? '' });
+      updateWindowAnchorsFromRows();
+    } else {
+      rows.value = normalized;
+      sortRowsByDisplayOrder();
+      applyCursorUpdate({ before: resp?.next ?? '' });
+      computeAfterCursorFromRows();
+      await nextTick();
+      scrollToBottom();
+      showButton.value = false;
+      await autoFillIfNeeded();
+      tryAutoRestoreHistory();
+    }
+    saveMessageCache(chat.curChannel.id);
   } catch (error) {
     rows.value = previousRows;
-    resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+    if (!mergeMode) {
+      resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
+    }
     throw error;
   } finally {
     messageWindow.loadingLatest = false;
@@ -9016,6 +9420,7 @@ const onScroll = () => {
     updateViewMode('live');
   }
   // Removed duplicate trigger - IntersectionObserver on topSentinelRef handles loading older messages
+  scheduleMessageCacheUpdate();
 };
 
 const pauseKeydown = ref(false);

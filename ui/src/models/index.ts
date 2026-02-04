@@ -10,15 +10,41 @@ export interface Thumb {
   mimeType: string;
 }
 
+export interface ChatMessageCacheRecord {
+  key: string;
+  channelId: string;
+  filterSignature: string;
+  showArchived: boolean;
+  updatedAt: number;
+  rows: any[];
+  beforeCursor: string;
+  afterCursor: string;
+  earliestTimestamp: number | null;
+  latestTimestamp: number | null;
+  hasReachedStart: boolean;
+  hasReachedLatest: boolean;
+  beforeCursorExhausted: boolean;
+  viewMode: 'live' | 'history';
+  lockedHistory: boolean;
+  anchorMessageId: string | null;
+  scrollTop: number;
+  nearBottom: boolean;
+}
+
 export class MySubClassedDexie extends Dexie {
   // 'friends' is added by dexie when declaring the stores()
   // We just tell the typing system this is the case
   thumbs!: Table<Thumb>;
+  chatMessageCache!: Table<ChatMessageCacheRecord>;
 
   constructor() {
     super('myDatabase');
     this.version(1).stores({
       thumbs: '++id, recentUsed, filename, data, mimeType' // Primary key and indexed props
+    });
+    this.version(2).stores({
+      thumbs: '++id, recentUsed, filename, data, mimeType',
+      chatMessageCache: 'key, updatedAt, channelId'
     });
   }
 }
