@@ -4929,6 +4929,13 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     }
   }
   if (messagesListRef.value) {
+    const skipHistoryHint = isNearBottom() && isMessageVisibleInViewport(targetId);
+    if (skipHistoryHint) {
+      unlockHistoryView();
+      showButton.value = false;
+      setMessageHighlight(targetId);
+      return;
+    }
     lockHistoryView();
     updateAnchorMessage(targetId);
     computeAfterCursorFromRows();
@@ -9182,6 +9189,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       saveMessageCache(lastChannelId);
     }
     lastChannelId = nextChannelId;
+    returnToPrevious.value = null;
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
@@ -9192,12 +9200,14 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     localReorderOps.clear();
     showButton.value = false;
     let restored = false;
+    let restoredEntry: MessageCacheEntry | null = null;
     if (nextChannelId) {
       const cached = loadMessageCache(nextChannelId);
       if (cached) {
         if (!isMessageViewStale(viewEpoch, buildMessageCacheKey(nextChannelId))) {
           applyMessageCache(cached);
           restored = true;
+          restoredEntry = cached;
         }
       }
     }
@@ -9209,6 +9219,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       if (dbCached && !isMessageViewStale(viewEpoch, buildMessageCacheKey(nextChannelId))) {
         applyMessageCache(dbCached);
         restored = true;
+        restoredEntry = dbCached;
       }
     }
     // 具体不知道原因，但是必须在这个位置reset才行
@@ -9218,9 +9229,33 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     const unreadHint = typeof e?.unreadCount === 'number' ? e.unreadCount : 0;
     const limit = resolveSwitchFetchLimit(unreadHint, restored);
     const requestKey = buildMessageCacheKey(nextChannelId);
+    const shouldAutoStickBottom = !!(restoredEntry && (restoredEntry.viewMode === 'live' || restoredEntry.nearBottom));
+    if (shouldAutoStickBottom) {
+      messageWindow.lockedHistory = false;
+      updateViewMode('live', { force: true });
+      updateAnchorMessage(null);
+      showButton.value = false;
+    }
     const fetchTask = fetchLatestMessages({ merge: restored, limit });
     fetchTask.finally(() => {
       void maybePromptIdentitySync();
+    });
+    fetchTask.finally(() => {
+      if (!shouldAutoStickBottom || !nextChannelId) {
+        return;
+      }
+      if (isMessageViewStale(viewEpoch, requestKey)) {
+        return;
+      }
+      void nextTick().then(() => {
+        if (isMessageViewStale(viewEpoch, requestKey)) {
+          return;
+        }
+        scrollToBottom();
+        showButton.value = false;
+        updateViewMode('live');
+        updateAnchorMessage(null);
+      });
     });
     if (nextChannelId) {
       void fetchTask.finally(() => refreshCachedMessages(nextChannelId, viewEpoch, requestKey));
@@ -9272,11 +9307,21 @@ const showButton = ref(false);
 const historyHintVisible = computed(() => inHistoryMode.value || historyLocked.value);
 const historyHintLabel = computed(() => (isMobileUa ? '历史' : '当前浏览历史消息'));
 
+const returnToPrevious = ref<{ channelId: string; messageId: string; createdAt?: number } | null>(null);
+
 // 跳转到第一条未读消息相关
 const hasFirstUnread = computed(() => {
   const info = chat.firstUnreadInfo;
   return !!(info && info.channelId === chat.curChannel?.id && info.messageId);
 });
+
+const hasReturnAnchor = computed(() => {
+  const target = returnToPrevious.value;
+  return !!(target && target.channelId === chat.curChannel?.id && target.messageId);
+});
+
+const jumpHintVisible = computed(() => hasReturnAnchor.value || hasFirstUnread.value);
+const jumpHintLabel = computed(() => (hasReturnAnchor.value ? '回到之前位置' : '跳转到未读'));
 
 const jumpToFirstUnread = async () => {
   const info = chat.firstUnreadInfo;
@@ -9291,8 +9336,41 @@ const jumpToFirstUnread = async () => {
   chat.firstUnreadInfo = null;
 };
 
+const jumpToPreviousPosition = async () => {
+  const target = returnToPrevious.value;
+  if (!target || target.channelId !== chat.curChannel?.id || !target.messageId) {
+    return;
+  }
+  await handleSearchJump({
+    messageId: target.messageId,
+    createdAt: target.createdAt,
+  });
+  chat.firstUnreadInfo = null;
+  returnToPrevious.value = null;
+};
+
 const dismissFirstUnread = () => {
   chat.firstUnreadInfo = null;
+};
+
+const dismissReturnAnchor = () => {
+  returnToPrevious.value = null;
+};
+
+const handleJumpHintClick = async () => {
+  if (hasReturnAnchor.value) {
+    await jumpToPreviousPosition();
+    return;
+  }
+  await jumpToFirstUnread();
+};
+
+const handleJumpHintDismiss = () => {
+  if (hasReturnAnchor.value) {
+    dismissReturnAnchor();
+    return;
+  }
+  dismissFirstUnread();
 };
 
 const computeAfterCursorFromRows = () => {
@@ -9400,6 +9478,59 @@ const resolveSwitchFetchLimit = (unreadHint: number, restored: boolean) => {
   const target = base + UNREAD_FETCH_BUFFER;
   const bounded = Math.min(UNREAD_FETCH_MAX, Math.max(UNREAD_FETCH_MIN, target));
   return bounded;
+};
+
+const isMessageVisibleInViewport = (messageId: string) => {
+  if (!messageId) {
+    return false;
+  }
+  const container = messagesListRef.value;
+  const el = messageRowRefs.get(messageId);
+  if (!container || !el) {
+    return false;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  return rect.bottom > containerRect.top && rect.top < containerRect.bottom;
+};
+
+const buildReturnAnchorFromCache = (entry: MessageCacheEntry, channelId: string) => {
+  if (!entry || !Array.isArray(entry.rows) || entry.rows.length === 0) {
+    return null;
+  }
+  const last = entry.rows[entry.rows.length - 1];
+  if (!last?.id) {
+    return null;
+  }
+  const createdAt = normalizeTimestamp(last.createdAt) ?? normalizeTimestamp(last.updatedAt) ?? undefined;
+  return { channelId, messageId: String(last.id), createdAt };
+};
+
+const markReturnAnchorIfNeeded = (anchor: { channelId: string; messageId: string; createdAt?: number } | null) => {
+  if (!anchor || anchor.channelId !== chat.curChannel?.id || !anchor.messageId) {
+    returnToPrevious.value = null;
+    return;
+  }
+  if (!rows.value.length) {
+    returnToPrevious.value = null;
+    return;
+  }
+  const anchorId = String(anchor.messageId);
+  const lastId = rows.value[rows.value.length - 1]?.id ? String(rows.value[rows.value.length - 1].id) : '';
+  if (!lastId || anchorId === lastId) {
+    returnToPrevious.value = null;
+    return;
+  }
+  const exists = rows.value.some((msg) => msg?.id && String(msg.id) === anchorId);
+  if (!exists) {
+    returnToPrevious.value = null;
+    return;
+  }
+  if (isMessageVisibleInViewport(anchorId)) {
+    returnToPrevious.value = null;
+    return;
+  }
+  returnToPrevious.value = anchor;
 };
 
 const refreshCachedMessages = async (channelId: string, requestEpoch: number, requestKey: string) => {
@@ -9678,12 +9809,17 @@ const onScroll = () => {
   hideSelectionBar()
   const offset = container.scrollHeight - (container.clientHeight + container.scrollTop);
   const stuckToBottom = offset <= SCROLL_STICKY_THRESHOLD;
-  showButton.value = !stuckToBottom || historyLocked.value;
   if (!stuckToBottom) {
+    showButton.value = true;
     updateViewMode('history');
     computeAfterCursorFromRows();
-  } else if (!historyLocked.value) {
-    updateViewMode('live');
+  } else {
+    showButton.value = false;
+    if (historyLocked.value) {
+      unlockHistoryView();
+    } else {
+      updateViewMode('live');
+    }
   }
   // Removed duplicate trigger - IntersectionObserver on topSentinelRef handles loading older messages
   scheduleMessageCacheUpdate();
@@ -10930,18 +11066,18 @@ onBeforeUnmount(() => {
       <div class="history-floating space-y-3 flex flex-col items-end">
         <!-- 跳转到第一条未读消息按钮 -->
         <n-button
-          v-if="hasFirstUnread"
+          v-if="jumpHintVisible"
           class="jump-to-unread-button history-floating__button"
           size="small"
           type="info"
-          @click="jumpToFirstUnread"
+          @click="handleJumpHintClick"
         >
-          跳转到未读
+          {{ jumpHintLabel }}
           <span
             class="jump-to-unread-close"
             role="button"
-            aria-label="关闭未读跳转"
-            @click.stop="dismissFirstUnread"
+            aria-label="关闭跳转提示"
+            @click.stop="handleJumpHintDismiss"
           >X</span>
         </n-button>
         <div
