@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
-import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive, toRaw } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
@@ -3842,6 +3842,86 @@ const getScrollSnapshot = () => {
   };
 };
 
+const sanitizeCacheValue = (input: any) => {
+  const seen = new WeakMap<object, any>();
+  const walk = (value: any): any => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    const valueType = typeof value;
+    if (valueType === 'function' || valueType === 'symbol') {
+      return undefined;
+    }
+    if (valueType !== 'object') {
+      return value;
+    }
+    if (typeof Element !== 'undefined' && value instanceof Element) {
+      return undefined;
+    }
+    if (typeof Node !== 'undefined' && value instanceof Node) {
+      return undefined;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (value instanceof RegExp) {
+      return value.toString();
+    }
+    if (value instanceof Blob || value instanceof File) {
+      return undefined;
+    }
+    if (value instanceof Map) {
+      const mapped = Array.from(value.entries()).map(([k, v]) => [walk(k), walk(v)]);
+      return mapped;
+    }
+    if (value instanceof Set) {
+      return Array.from(value.values()).map((v) => walk(v));
+    }
+    const raw = toRaw(value);
+    if (typeof raw !== 'object' || raw === null) {
+      return raw;
+    }
+    if (seen.has(raw)) {
+      return seen.get(raw);
+    }
+    if (Array.isArray(raw)) {
+      const arr: any[] = [];
+      seen.set(raw, arr);
+      raw.forEach((item) => {
+        const next = walk(item);
+        if (next !== undefined) {
+          arr.push(next);
+        }
+      });
+      return arr;
+    }
+    const obj: Record<string, any> = {};
+    seen.set(raw, obj);
+    Object.keys(raw).forEach((key) => {
+      const next = walk(raw[key]);
+      if (next !== undefined) {
+        obj[key] = next;
+      }
+    });
+    return obj;
+  };
+  return walk(input);
+};
+
+const sanitizeMessageForCache = (message: Message) => {
+  const sanitized = sanitizeCacheValue(message);
+  if (!sanitized || typeof sanitized !== 'object') {
+    return null;
+  }
+  if (!sanitized.id) {
+    const fallbackId = (sanitized as any).message_id || (sanitized as any).messageId || (sanitized as any)._id || '';
+    if (fallbackId) {
+      sanitized.id = String(fallbackId);
+    }
+  }
+  return sanitized as Message;
+};
+
 const trimMessageCacheRows = (items: Message[]) => {
   const { maxMessages } = getMessageCacheConfig();
   if (!Array.isArray(items) || items.length <= maxMessages) {
@@ -3858,11 +3938,17 @@ const buildMessageCacheEntry = (channelId: string): MessageCacheEntry | null => 
   if (snapshot.length === 0) {
     return null;
   }
-  const earliest = normalizeTimestamp(snapshot[0]?.createdAt);
-  const latest = normalizeTimestamp(snapshot[snapshot.length - 1]?.createdAt);
+  const sanitizedRows = snapshot
+    .map((msg) => sanitizeMessageForCache(msg))
+    .filter((msg): msg is Message => !!msg && !!msg.id);
+  if (sanitizedRows.length === 0) {
+    return null;
+  }
+  const earliest = normalizeTimestamp(sanitizedRows[0]?.createdAt);
+  const latest = normalizeTimestamp(sanitizedRows[sanitizedRows.length - 1]?.createdAt);
   const scroll = getScrollSnapshot();
   return {
-    rows: snapshot,
+    rows: sanitizedRows,
     beforeCursor: trimmed ? '' : (messageWindow.beforeCursor || ''),
     afterCursor: messageWindow.afterCursor || '',
     earliestTimestamp: earliest ?? null,
@@ -8840,20 +8926,6 @@ chatEvent.on('typing-preview', (e?: Event) => {
   const identityAvatar = identity?.avatarAttachmentId
     ? resolveAttachmentUrl(identity.avatarAttachmentId)
     : '';
-  const debugEnabled =
-    typeof window !== 'undefined' &&
-    (window as any).__SC_DEBUG_TYPING__ === true;
-  if (debugEnabled) {
-    console.debug(
-      '[typing-preview]',
-      'user=', typingUserId,
-      'mode=', mode,
-      'state=', typingState,
-      'messageId=', e.typing?.messageId,
-      'identityId=', identity?.id || '(none)',
-      'identityName=', identity?.displayName || '(none)',
-    );
-  }
   const typingState: TypingBroadcastState = (() => {
     const candidate = (e.typing?.state || '').toLowerCase();
     switch (candidate) {
@@ -8872,6 +8944,20 @@ chatEvent.on('typing-preview', (e?: Event) => {
         return 'indicator';
     }
   })();
+  const debugEnabled =
+    typeof window !== 'undefined' &&
+    (window as any).__SC_DEBUG_TYPING__ === true;
+  if (debugEnabled) {
+    console.debug(
+      '[typing-preview]',
+      'user=', typingUserId,
+      'mode=', mode,
+      'state=', typingState,
+      'messageId=', e.typing?.messageId,
+      'identityId=', identity?.id || '(none)',
+      'identityName=', identity?.displayName || '(none)',
+    );
+  }
   if (typingState === 'silent') {
     removeTypingPreview(typingUserId, mode);
     return;
