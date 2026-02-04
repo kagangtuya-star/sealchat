@@ -379,6 +379,7 @@ export const useChatStore = defineStore({
         customClass: "class-a",
         zIndex: 3,
         minWidth: 230,
+        closeWhenScroll: false,
         x: 500,
         y: 200,
       } as MenuOptions,
