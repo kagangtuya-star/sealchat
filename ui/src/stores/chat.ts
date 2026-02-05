@@ -786,8 +786,6 @@ export const useChatStore = defineStore({
       await this.ensureWorldReady();
       if (this.curChannel?.id) {
         await this.channelSwitchTo(this.curChannel?.id);
-        const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': this.curChannel?.id });
-        this.curChannelUsers = resp2.data.data;
       }
       await this.channelList(this.currentWorldId, true);
       await this.ChannelPrivateList();
@@ -1349,37 +1347,58 @@ export const useChatStore = defineStore({
         this.firstUnreadInfo = null;
       }
 
-      await this.loadChannelIdentities(id);
-      if (isStale()) {
-        return true;
-      }
-      // 确保默认场外角色存在
-      await this.ensureDefaultOocRole(id);
-      if (isStale()) {
-        return true;
-      }
       writeScopedLocalStorage('lastChannel', id);
-
-      const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
-      if (isStale()) {
-        return true;
-      }
-      this.curChannelUsers = resp2.data.data;
+      this.setChannelUnreadCount(id, 0);
+      this.curChannelUsers = [];
       this.whisperTargets = [];
 
       if (isStale()) {
         return true;
       }
-      try {
-        await this.ensureChannelPermissionCache(id);
-      } catch (error) {
-        console.warn('ensureChannelPermissionCache failed', error);
-      }
-      if (isStale()) {
-        return true;
-      }
+      chatEvent.emit('channel-switch-to', undefined);
 
-      this.setChannelUnreadCount(id, 0);
+      const postEnterChannelId = id;
+      void (async () => {
+        let identitiesLoaded = false;
+        try {
+          await this.loadChannelIdentities(postEnterChannelId);
+          identitiesLoaded = true;
+        } catch (error) {
+          console.warn('loadChannelIdentities failed', error);
+        }
+        if (isStale()) {
+          return;
+        }
+        if (identitiesLoaded) {
+          try {
+            // 确保默认场外角色存在
+            await this.ensureDefaultOocRole(postEnterChannelId);
+          } catch (error) {
+            console.warn('ensureDefaultOocRole failed', error);
+          }
+        }
+        if (isStale()) {
+          return;
+        }
+        try {
+          const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': postEnterChannelId });
+          if (isStale()) {
+            return;
+          }
+          this.curChannelUsers = resp2.data.data;
+          this.whisperTargets = [];
+        } catch (error) {
+          console.warn('channel.member.list.online failed', error);
+        }
+        if (isStale()) {
+          return;
+        }
+        try {
+          await this.ensureChannelPermissionCache(postEnterChannelId);
+        } catch (error) {
+          console.warn('ensureChannelPermissionCache failed', error);
+        }
+      })();
 
       // 设置网页标题为频道名字，并检查是否需要清除未读通知
       import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
@@ -1394,10 +1413,6 @@ export const useChatStore = defineStore({
         }
       });
 
-      if (isStale()) {
-        return true;
-      }
-      chatEvent.emit('channel-switch-to', undefined);
       if (isStale()) {
         return true;
       }
