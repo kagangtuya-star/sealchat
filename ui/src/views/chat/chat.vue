@@ -2282,7 +2282,9 @@ const maybePromptIdentitySync = async () => {
     return;
   }
   try {
-    await chat.loadChannelIdentities(channelId, true);
+    const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
+    const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
+    await chat.loadChannelIdentities(channelId, shouldForce);
   } catch (error) {
     console.warn('加载频道角色失败', error);
     return;

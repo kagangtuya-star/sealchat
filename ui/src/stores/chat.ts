@@ -19,6 +19,9 @@ import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 
+const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
+const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
+
 interface ChatState {
   subject: WebSocketSubject<any> | null;
   // user: User,
@@ -89,6 +92,7 @@ interface ChatState {
   channelIdentityFolders: Record<string, ChannelIdentityFolder[]>;
   channelIdentityFavorites: Record<string, string[]>;
   channelIdentityMembership: Record<string, Record<string, string[]>>;
+  channelIdentityLoadedAt: Record<string, number>;
 
   // 新增状态
   icMode: 'ic' | 'ooc';
@@ -406,6 +410,7 @@ export const useChatStore = defineStore({
     channelIdentityFolders: {},
     channelIdentityFavorites: {},
     channelIdentityMembership: {},
+    channelIdentityLoadedAt: {},
 
     // 新增状态初始值
     icMode: 'ic',
@@ -1567,24 +1572,44 @@ export const useChatStore = defineStore({
         }
         return this.channelIdentities[channelId];
       }
-      const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
-      const membership = resp.data.membership || {};
-      const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
-      items.forEach(item => {
-        item.folderIds = membership[item.id] ? [...membership[item.id]] : [];
-      });
-      this.channelIdentities = {
-        ...this.channelIdentities,
-        [channelId]: items,
-      };
-      this.channelIdentityFolders = {
-        ...this.channelIdentityFolders,
-        [channelId]: resp.data.folders || [],
-      };
-      this.channelIdentityFavorites = {
-        ...this.channelIdentityFavorites,
-        [channelId]: resp.data.favorites || [],
-      };
+      const existing = inFlightChannelIdentityLoads.get(channelId);
+      if (existing) {
+        return await existing;
+      }
+      const task = (async () => {
+        const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
+        const membership = resp.data.membership || {};
+        const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+        items.forEach(item => {
+          item.folderIds = membership[item.id] ? [...membership[item.id]] : [];
+        });
+        this.channelIdentities = {
+          ...this.channelIdentities,
+          [channelId]: items,
+        };
+        this.channelIdentityFolders = {
+          ...this.channelIdentityFolders,
+          [channelId]: resp.data.folders || [],
+        };
+        this.channelIdentityFavorites = {
+          ...this.channelIdentityFavorites,
+          [channelId]: resp.data.favorites || [],
+        };
+        this.channelIdentityLoadedAt = {
+          ...this.channelIdentityLoadedAt,
+          [channelId]: Date.now(),
+        };
+        return items;
+      })();
+      inFlightChannelIdentityLoads.set(channelId, task);
+      try {
+        return await task;
+      } finally {
+        const inflight = inFlightChannelIdentityLoads.get(channelId);
+        if (inflight === task) {
+          inFlightChannelIdentityLoads.delete(channelId);
+        }
+      }
       this.channelIdentityMembership = {
         ...this.channelIdentityMembership,
         [channelId]: membership,
@@ -1824,38 +1849,53 @@ export const useChatStore = defineStore({
       if (!force && this.channelMemberRoleMap[channelId]) {
         return this.channelMemberRoleMap[channelId];
       }
-      const pageSize = 200;
-      let page = 1;
-      const aggregated: Record<string, string[]> = {};
-      while (true) {
-        const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
-          params: { id: channelId, page, pageSize },
-        });
-        const items = resp.data?.items || [];
-        for (const item of items) {
-          if (item.roleType !== 'channel') {
-            continue;
-          }
-          if (!aggregated[item.userId]) {
-            aggregated[item.userId] = [];
-          }
-          aggregated[item.userId].push(item.roleId);
-        }
-        const total = resp.data?.total ?? items.length;
-        if (!total || page * pageSize >= total || items.length === 0) {
-          break;
-        }
-        page += 1;
+      const existing = inFlightChannelMemberRoleLoads.get(channelId);
+      if (existing) {
+        return await existing;
       }
-      this.channelMemberRoleMap = {
-        ...this.channelMemberRoleMap,
-        [channelId]: aggregated,
-      };
-      this.channelMemberPermMap = {
-        ...this.channelMemberPermMap,
-        [channelId]: {},
-      };
-      return aggregated;
+      const task = (async () => {
+        const pageSize = 200;
+        let page = 1;
+        const aggregated: Record<string, string[]> = {};
+        while (true) {
+          const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+            params: { id: channelId, page, pageSize },
+          });
+          const items = resp.data?.items || [];
+          for (const item of items) {
+            if (item.roleType !== 'channel') {
+              continue;
+            }
+            if (!aggregated[item.userId]) {
+              aggregated[item.userId] = [];
+            }
+            aggregated[item.userId].push(item.roleId);
+          }
+          const total = resp.data?.total ?? items.length;
+          if (!total || page * pageSize >= total || items.length === 0) {
+            break;
+          }
+          page += 1;
+        }
+        this.channelMemberRoleMap = {
+          ...this.channelMemberRoleMap,
+          [channelId]: aggregated,
+        };
+        this.channelMemberPermMap = {
+          ...this.channelMemberPermMap,
+          [channelId]: {},
+        };
+        return aggregated;
+      })();
+      inFlightChannelMemberRoleLoads.set(channelId, task);
+      try {
+        return await task;
+      } finally {
+        const inflight = inFlightChannelMemberRoleLoads.get(channelId);
+        if (inflight === task) {
+          inFlightChannelMemberRoleLoads.delete(channelId);
+        }
+      }
     },
 
     async updateChannelAdminMap(channelId: string, force = false) {
