@@ -574,6 +574,22 @@ const handleAvatarSetup = () => {
 
 /* Mobile responsive adjustments */
 @media (max-width: 768px) {
+  .identity-switcher {
+    gap: 0.3rem;
+    padding: 0.25rem 0.4rem;
+  }
+
+  .identity-switcher__label,
+  .identity-switcher__favorite {
+    display: none;
+  }
+
+  .identity-switcher__color {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+  }
+
   .identity-switcher-wrapper {
     gap: 0.25rem;
   }
