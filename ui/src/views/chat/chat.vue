@@ -4112,6 +4112,11 @@ interface SearchJumpWindow {
   fromTime?: number;
 }
 
+interface SearchJumpContextResult {
+  messages: Message[];
+  notFoundReason?: string;
+}
+
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
 
@@ -4394,6 +4399,41 @@ const locateMessageForJump = async (payload: { messageId: string; displayOrder?:
   return loadMessagesByCursor(payload);
 };
 
+const loadJumpContextByMessageId = async (
+  payload: { messageId: string },
+): Promise<SearchJumpContextResult | null> => {
+  if (!chat.curChannel?.id || !payload.messageId) {
+    return null;
+  }
+  try {
+    const resp = await chat.messageContext(chat.curChannel.id, payload.messageId, {
+      before: SEARCH_ANCHOR_WINDOW_LIMIT,
+      after: SEARCH_ANCHOR_WINDOW_LIMIT,
+      includeArchived: true,
+      includeOoc: true,
+    });
+    if (!resp) {
+      return null;
+    }
+    const normalized = normalizeMessageList(Array.isArray(resp.data) ? resp.data : []);
+    const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (containsTarget) {
+      return { messages: normalized };
+    }
+    const notFoundReason = typeof resp.not_found_reason === 'string' ? resp.not_found_reason : '';
+    if (notFoundReason) {
+      return {
+        messages: [],
+        notFoundReason,
+      };
+    }
+    return null;
+  } catch (error) {
+    console.warn('按消息上下文定位失败', error);
+    return null;
+  }
+};
+
 const ensureSearchTargetVisible = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   if (messageExistsLocally(payload.messageId)) {
     return true;
@@ -4405,6 +4445,30 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
   searchJumping.value = true;
   const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
   try {
+    const contextResult = await loadJumpContextByMessageId(payload);
+    if (contextResult?.messages?.length) {
+      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload);
+      if (applied) {
+        return true;
+      }
+    } else if (contextResult?.notFoundReason) {
+      switch (contextResult.notFoundReason) {
+        case 'deleted':
+          message.warning('消息已被删除，无法跳转');
+          break;
+        case 'no_permission':
+          message.warning('无法访问该消息，可能没有权限');
+          break;
+        case 'not_exists':
+          message.warning('未找到该消息');
+          break;
+        default:
+          message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+          break;
+      }
+      return false;
+    }
+
     const mounted = await mountHistoricalWindow(payload);
     if (mounted) {
       return true;
@@ -4444,7 +4508,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     }
   }
 
-  // 如果没有 createdAt，先通过 API 获取消息详情
+  // 如果没有 createdAt，尝试通过 API 获取消息详情，失败时继续走上下文定位
   let enrichedPayload = { ...payload };
   if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
     try {
@@ -4452,9 +4516,6 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       if (msgInfo) {
         enrichedPayload.createdAt = msgInfo.created_at;
         enrichedPayload.displayOrder = msgInfo.display_order;
-      } else {
-        message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
-        return;
       }
     } catch (error) {
       console.warn('获取消息详情失败', error);

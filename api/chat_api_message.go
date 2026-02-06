@@ -188,6 +188,225 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func clampMessageContextWindow(value int, defaultValue int) int {
+	if value <= 0 {
+		return defaultValue
+	}
+	if value > 50 {
+		return 50
+	}
+	return value
+}
+
+func apiMessageContext(ctx *ChatContext, data *struct {
+	ChannelID       string `json:"channel_id"`
+	MessageID       string `json:"message_id"`
+	Before          int    `json:"before"`
+	After           int    `json:"after"`
+	IncludeArchived *bool  `json:"include_archived"`
+	IncludeOOC      *bool  `json:"include_ooc"`
+	ICOnly          bool   `json:"ic_only"`
+}) (any, error) {
+	db := model.GetDB()
+	channelID := strings.TrimSpace(data.ChannelID)
+	messageID := strings.TrimSpace(data.MessageID)
+	if channelID == "" || messageID == "" {
+		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	}
+
+	// 权限检查（与 message.get 保持一致）
+	if ctx.IsReadOnly() {
+		if len(channelID) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelID); err != nil {
+			return nil, err
+		}
+	} else if len(channelID) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	includeArchived := true
+	if data.IncludeArchived != nil {
+		includeArchived = *data.IncludeArchived
+	}
+	includeOOC := true
+	if data.IncludeOOC != nil {
+		includeOOC = *data.IncludeOOC
+	}
+	beforeLimit := clampMessageContextWindow(data.Before, 12)
+	afterLimit := clampMessageContextWindow(data.After, 12)
+
+	baseQuery := func() *gorm.DB {
+		q := db.Model(&model.MessageModel{}).
+			Where("channel_id = ?", channelID).
+			Where("is_deleted = ?", false).
+			Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+		))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+		if !includeArchived {
+			q = q.Where("is_archived = ?", false)
+		}
+		if data.ICOnly {
+			q = q.Where("ic_mode = ?", "ic")
+		} else if !includeOOC {
+			q = q.Where("ic_mode <> ?", "ooc")
+		}
+		return q
+	}
+
+	var raw model.MessageModel
+	db.Model(&model.MessageModel{}).
+		Where("channel_id = ? AND id = ?", channelID, messageID).
+		Limit(1).
+		Find(&raw)
+	if raw.ID == "" {
+		return &struct {
+			Data           []*model.MessageModel `json:"data"`
+			TargetID       string                `json:"target_id"`
+			NotFoundReason string                `json:"not_found_reason,omitempty"`
+		}{
+			Data:           []*model.MessageModel{},
+			TargetID:       messageID,
+			NotFoundReason: "not_exists",
+		}, nil
+	}
+	if raw.IsDeleted {
+		return &struct {
+			Data           []*model.MessageModel `json:"data"`
+			TargetID       string                `json:"target_id"`
+			NotFoundReason string                `json:"not_found_reason,omitempty"`
+		}{
+			Data:           []*model.MessageModel{},
+			TargetID:       messageID,
+			NotFoundReason: "deleted",
+		}, nil
+	}
+
+	var target model.MessageModel
+	targetQuery := baseQuery().
+		Where("id = ?", messageID).
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, username, nickname, avatar, is_bot")
+		}).
+		Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id")
+		}).
+		Limit(1)
+	targetQuery.Find(&target)
+	if target.ID == "" {
+		return &struct {
+			Data           []*model.MessageModel `json:"data"`
+			TargetID       string                `json:"target_id"`
+			NotFoundReason string                `json:"not_found_reason,omitempty"`
+		}{
+			Data:           []*model.MessageModel{},
+			TargetID:       messageID,
+			NotFoundReason: "no_permission",
+		}, nil
+	}
+
+	beforeItems := make([]*model.MessageModel, 0, beforeLimit)
+	if beforeLimit > 0 {
+		baseQuery().
+			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc").
+			Preload("User", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, username, nickname, avatar, is_bot")
+			}).
+			Preload("Member", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, channel_id")
+			}).
+			Limit(beforeLimit).
+			Find(&beforeItems)
+		beforeItems = lo.Reverse(beforeItems)
+	}
+
+	afterItems := make([]*model.MessageModel, 0, afterLimit)
+	if afterLimit > 0 {
+		baseQuery().
+			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc").
+			Preload("User", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, username, nickname, avatar, is_bot")
+			}).
+			Preload("Member", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, channel_id")
+			}).
+			Limit(afterLimit).
+			Find(&afterItems)
+	}
+
+	items := make([]*model.MessageModel, 0, len(beforeItems)+1+len(afterItems))
+	items = append(items, beforeItems...)
+	items = append(items, &target)
+	items = append(items, afterItems...)
+
+	for _, item := range items {
+		if item.IsRevoked || item.IsDeleted {
+			item.Content = ""
+		}
+		item.EnsureWhisperMeta()
+	}
+
+	if ctx.User != nil && len(items) > 0 {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			if item.ID != "" {
+				ids = append(ids, item.ID)
+			}
+		}
+		if len(ids) > 0 {
+			reactionMap, err := service.ListMessageReactionsForMessages(ids, ctx.User.ID)
+			if err != nil {
+				log.Printf("加载消息上下文反应摘要失败: %v", err)
+			} else {
+				for _, item := range items {
+					if list, ok := reactionMap[item.ID]; ok {
+						item.Reactions = list
+					} else {
+						item.Reactions = []model.MessageReactionListItem{}
+					}
+				}
+			}
+		}
+	}
+
+	return &struct {
+		Data           []*model.MessageModel `json:"data"`
+		TargetID       string                `json:"target_id"`
+		NotFoundReason string                `json:"not_found_reason,omitempty"`
+	}{
+		Data:     items,
+		TargetID: target.ID,
+	}, nil
+}
+
 func apiMessageDelete(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`

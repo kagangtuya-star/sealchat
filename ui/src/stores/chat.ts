@@ -2476,6 +2476,44 @@ export const useChatStore = defineStore({
       return (resp as any)?.data || null;
     },
 
+    async messageContext(
+      channel_id: string,
+      message_id: string,
+      options?: {
+        before?: number;
+        after?: number;
+        includeArchived?: boolean;
+        includeOoc?: boolean;
+        icOnly?: boolean;
+      }
+    ): Promise<{
+      data: any[];
+      target_id?: string;
+      not_found_reason?: 'deleted' | 'no_permission' | 'not_exists' | string;
+    } | null> {
+      const payload: Record<string, any> = {
+        channel_id,
+        message_id,
+      };
+      if (typeof options?.before === 'number') {
+        payload.before = options.before;
+      }
+      if (typeof options?.after === 'number') {
+        payload.after = options.after;
+      }
+      if (typeof options?.includeArchived === 'boolean') {
+        payload.include_archived = options.includeArchived;
+      }
+      if (typeof options?.includeOoc === 'boolean') {
+        payload.include_ooc = options.includeOoc;
+      }
+      if (typeof options?.icOnly === 'boolean') {
+        payload.ic_only = options.icOnly;
+      }
+      const resp = await this.sendAPI<{ data: any }>('message.context', payload as APIMessage);
+      return (resp as any)?.data || null;
+    },
+
     async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
       const payload: Record<string, any> = { channel_id, message_id, content };
       if (options?.icMode) {
