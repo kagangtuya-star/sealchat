@@ -15,6 +15,11 @@ import (
 	"sealchat/utils"
 )
 
+func resolveAuthTokenMaxAgeDuration() time.Duration {
+	maxAgeDays := utils.ResolveAuthSessionMaxAgeDays()
+	return time.Duration(maxAgeDays*24) * time.Hour
+}
+
 // UserModel 用户表
 type UserModel struct {
 	StringPKBaseModel
@@ -249,7 +254,7 @@ func AcessTokenDeleteAllByUserID(userID string) error {
 
 // UserGenerateAccessToken 生成 access_token
 func UserGenerateAccessToken(userID string) (string, error) {
-	expiredAt := time.Now().Add(time.Duration(15*24) * time.Hour)
+	expiredAt := time.Now().Add(resolveAuthTokenMaxAgeDuration())
 
 	token := utils.NewID()
 	accessToken := &AccessTokenModel{
@@ -305,7 +310,7 @@ func UserVerifyAccessToken(tokenString string) (*UserModel, error) {
 
 // UserRefreshAccessToken 刷新 access_token
 func UserRefreshAccessToken(tokenID string) (string, error) {
-	expiredAt := time.Now().Add(time.Duration(15*24) * time.Hour)
+	expiredAt := time.Now().Add(resolveAuthTokenMaxAgeDuration())
 
 	var accessToken AccessTokenModel
 	if err := db.Where("id = ?", tokenID).First(&accessToken).Error; err != nil {

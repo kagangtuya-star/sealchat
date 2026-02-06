@@ -119,4 +119,9 @@ backup:
   retentionCount: 5                            # 保留备份数量
   path: ./backups                              # 备份文件存储路径
 
+# 登录会话配置（滑动续期）
+authSession:
+  maxAgeDays: 15                               # token 最大有效期（天）
+  refreshThresholdDays: 7                      # 剩余有效期小于等于该值时自动续签（天）
+
 version: 1

@@ -1,5 +1,6 @@
 import axiosFactory, { Axios } from "axios"
 import Cookies from "js-cookie"
+import { persistAccessToken } from "@/utils/authToken";
 const axios = axiosFactory.create()
 axios.defaults.withCredentials = true;
 
@@ -37,4 +38,13 @@ api.interceptors.request.use(config => {
   }
   config.headers = headers;
   return config;
+});
+
+api.interceptors.response.use(resp => {
+  const headers = (resp.headers || {}) as Record<string, any>;
+  const refreshedToken = headers['x-access-token-refresh'] || headers['X-Access-Token-Refresh'];
+  if (typeof refreshedToken === 'string' && refreshedToken.trim() !== '') {
+    persistAccessToken(refreshedToken);
+  }
+  return resp;
 });

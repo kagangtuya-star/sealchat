@@ -1,12 +1,12 @@
 import { defineStore } from "pinia"
 import type { UserEmojiModel, UserInfo } from "@/types";
-import Cookies from 'js-cookie';
 // import router from "@/router";
 import type { AxiosResponse } from "axios";
 import { api } from "./_config";
 import { useChatStore } from "./chat";
 import { PermResult, type PermCheckKey } from "@/types-perm";
 import type { SystemRolePermSheet } from "@/types-perm-system";
+import { clearPersistedAccessToken, getStoredAccessToken, persistAccessToken } from "@/utils/authToken";
 
 interface UserState {
   _accessToken: string
@@ -44,13 +44,9 @@ export const useUserStore = defineStore({
 
   getters: {
     token: (state) => {
-      const storedToken = localStorage.getItem('accessToken') || '';
-      const cookieToken = Cookies.get('Authorization') || '';
-      const latestToken = storedToken || cookieToken;
+      const latestToken = getStoredAccessToken();
       if (latestToken && latestToken !== state._accessToken) {
-        state._accessToken = latestToken;
-        localStorage.setItem('accessToken', state._accessToken);
-        Cookies.set('Authorization', state._accessToken);
+        state._accessToken = persistAccessToken(latestToken);
       }
       return state._accessToken;
     },
@@ -95,10 +91,7 @@ export const useUserStore = defineStore({
 
       // 将 accessToken 存入 localStorage 中
       // Cookies.set('accessToken', accessToken, { expires: 7 })
-      localStorage.setItem('accessToken', accessToken);
-
-      // 更新 state 中的 accessToken
-      this._accessToken = accessToken;
+      this._accessToken = persistAccessToken(accessToken);
 
       return resp;
     },
@@ -175,9 +168,7 @@ export const useUserStore = defineStore({
         }
         if (statusCode === 401 || statusCode === 403) {
           this.info.id = '';
-          localStorage.removeItem('accessToken');
-          Cookies.remove('Authorization');
-          Cookies.remove('accessToken');
+          clearPersistedAccessToken();
           this._accessToken = '';
         }
         this.lastCheckTime = 0;
@@ -201,11 +192,8 @@ export const useUserStore = defineStore({
         const accessToken = data.token;
 
         // 将 accessToken 存入 localStorage 中
-        localStorage.setItem('accessToken', accessToken)
+        this._accessToken = persistAccessToken(accessToken)
         // Cookies.set('accessToken', accessToken, { expires: 7 })
-
-        // 更新 state 中的 accessToken
-        this._accessToken = accessToken
 
         return ''
       } catch (err) {
@@ -216,9 +204,7 @@ export const useUserStore = defineStore({
 
     logout() {
       // 将 accessToken 从 localStorage 中删除
-      localStorage.removeItem('accessToken')
-      Cookies.remove('Authorization');
-      Cookies.remove('accessToken');
+      clearPersistedAccessToken()
       this.info.id = ''
       // 更新 state 中的 accessToken
       this._accessToken = ''
@@ -279,8 +265,7 @@ export const useUserStore = defineStore({
       const resp = await api.post('api/v1/email-auth/signup', payload);
       const data = resp.data as { token: string; user: any };
       if (data.token) {
-        localStorage.setItem('accessToken', data.token);
-        this._accessToken = data.token;
+        this._accessToken = persistAccessToken(data.token);
       }
       return resp;
     },
