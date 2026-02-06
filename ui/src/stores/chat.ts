@@ -398,6 +398,15 @@ const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) =>
   return { action: 'block' as const, ids: uniqueIds };
 };
 
+const createChannelSwitchEvent = (channelId: string, previousChannelId?: string | null) => ({
+  type: 'channel-switch-to',
+  argv: {
+    channelId: channelId || '',
+    previousChannelId: previousChannelId || '',
+    reenter: !!channelId && !!previousChannelId && channelId === previousChannelId,
+  },
+});
+
 export const useChatStore = defineStore({
   id: 'chat',
   state: (): ChatState => ({
@@ -1290,10 +1299,7 @@ export const useChatStore = defineStore({
       if (guard.action !== 'allow') {
         channelSwitchEpoch += 1;
         if (guard.action === 'reload') {
-          console.warn('[channel-switch-guard] rapid toggling detected, reloading', guard.ids || []);
-          if (typeof window !== 'undefined') {
-            window.location.reload();
-          }
+          console.warn('[channel-switch-guard] rapid toggling detected, reload skipped to preserve draft', guard.ids || []);
         } else {
           console.warn('[channel-switch-guard] rapid toggling detected, blocking', guard.ids || []);
         }
@@ -1377,7 +1383,7 @@ export const useChatStore = defineStore({
           if (isStale()) {
             return true;
           }
-          chatEvent.emit('channel-switch-to', undefined);
+          chatEvent.emit('channel-switch-to', createChannelSwitchEvent(id, previousChannelId) as any);
           return true;
         } catch (error) {
           console.warn('[observer] channel.enter failed', error);
@@ -1440,7 +1446,7 @@ export const useChatStore = defineStore({
         switchEpoch,
         ts: Date.now(),
       });
-      chatEvent.emit('channel-switch-to', undefined);
+      chatEvent.emit('channel-switch-to', createChannelSwitchEvent(id, previousChannelId) as any);
 
       const postEnterChannelId = id;
       void (async () => {

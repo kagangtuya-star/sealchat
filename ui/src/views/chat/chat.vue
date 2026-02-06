@@ -6098,6 +6098,9 @@ const HISTORY_PREVIEW_MAX = 120;
 const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
 const pendingHistoryRestoreChannelKey = ref<string | null>(null);
 const HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
+const HISTORY_SESSION_DRAFT_PREFIX = 'sealchat_input_session_draft_v1';
+const HISTORY_SESSION_DRAFT_WINDOW_PREFIX = 'sealchat_input_session_draft_window_v1:';
+const HISTORY_SESSION_DRAFT_TTL = 24 * 60 * 60 * 1000;
 
 interface HistoryAutoRestoreEntry {
   entryId: string;
@@ -6120,6 +6123,13 @@ interface HistoryImageInfo {
   attachmentId: string;
 }
 
+interface SessionDraftEntry {
+  mode: 'plain' | 'rich';
+  content: string;
+  updatedAt: number;
+  images?: HistoryImageInfo[];
+}
+
 interface InputHistoryEntry {
   id: string;
   channelKey: string;
@@ -6130,6 +6140,8 @@ interface InputHistoryEntry {
 }
 
 type HistoryStore = Record<string, InputHistoryEntry[]>;
+
+type SessionDraftStore = Record<string, SessionDraftEntry>;
 
 interface HistoryEntryView extends InputHistoryEntry {
   preview: string;
@@ -6144,6 +6156,115 @@ const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curCh
 const lastHistorySignature = ref<string | null>(null);
 
 const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
+
+const resolveSessionDraftStorageKey = () => {
+  if (typeof window === 'undefined') {
+    return HISTORY_SESSION_DRAFT_PREFIX;
+  }
+  try {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#/embed')) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    const params = new URLSearchParams(hash.slice(queryIndex + 1));
+    const paneId = params.get('paneId')?.trim();
+    if (!paneId) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    return `${HISTORY_SESSION_DRAFT_WINDOW_PREFIX}${paneId}`;
+  } catch {
+    return HISTORY_SESSION_DRAFT_PREFIX;
+  }
+};
+
+const readSessionDraftStore = (): SessionDraftStore => {
+  try {
+    const raw = sessionStorage.getItem(resolveSessionDraftStorageKey());
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as SessionDraftStore;
+    }
+  } catch (e) {
+    console.warn('读取会话草稿失败', e);
+  }
+  return {};
+};
+
+const writeSessionDraftStore = (store: SessionDraftStore) => {
+  try {
+    sessionStorage.setItem(resolveSessionDraftStorageKey(), JSON.stringify(store));
+  } catch (e) {
+    console.warn('写入会话草稿失败', e);
+  }
+};
+
+const sanitizeSessionDraftStore = (store: SessionDraftStore) => {
+  const now = Date.now();
+  let changed = false;
+  Object.keys(store).forEach((channelKey) => {
+    const entry = store[channelKey];
+    if (!entry || typeof entry !== 'object') {
+      delete store[channelKey];
+      changed = true;
+      return;
+    }
+    if (!entry.content || typeof entry.content !== 'string') {
+      delete store[channelKey];
+      changed = true;
+      return;
+    }
+    const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
+    if (!updatedAt || now - updatedAt > HISTORY_SESSION_DRAFT_TTL) {
+      delete store[channelKey];
+      changed = true;
+    }
+  });
+  return changed;
+};
+
+const writeSessionDraftForChannel = (channelKey: string, draft: SessionDraftEntry | null) => {
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return;
+  }
+  const store = readSessionDraftStore();
+  const changed = sanitizeSessionDraftStore(store);
+  if (draft) {
+    store[channelKey] = draft;
+    writeSessionDraftStore(store);
+    return;
+  }
+  if (store[channelKey]) {
+    delete store[channelKey];
+    writeSessionDraftStore(store);
+    return;
+  }
+  if (changed) {
+    writeSessionDraftStore(store);
+  }
+};
+
+const readSessionDraftForChannel = (channelKey: string): SessionDraftEntry | null => {
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return null;
+  }
+  const store = readSessionDraftStore();
+  const changed = sanitizeSessionDraftStore(store);
+  if (changed) {
+    writeSessionDraftStore(store);
+  }
+  const entry = store[channelKey];
+  if (!entry || typeof entry.content !== 'string') {
+    return null;
+  }
+  return entry;
+};
 
 const readHistoryStore = (): HistoryStore => {
   try {
@@ -6518,6 +6639,48 @@ const tryAutoRestoreHistory = () => {
   message.info('已自动恢复上次输入');
 };
 
+const syncSessionDraftSnapshot = () => {
+  const channelKey = currentChannelKey.value;
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK || isEditing.value) {
+    return;
+  }
+  if (!isContentMeaningful(inputMode.value, textToSend.value)) {
+    writeSessionDraftForChannel(channelKey, null);
+    return;
+  }
+  const images = inputMode.value === 'plain' ? collectCurrentImageInfo() : undefined;
+  writeSessionDraftForChannel(channelKey, {
+    mode: inputMode.value,
+    content: textToSend.value,
+    updatedAt: Date.now(),
+    images: images?.length ? images : undefined,
+  });
+};
+
+const tryAutoRestoreSessionDraft = () => {
+  const channelKey = currentChannelKey.value;
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return;
+  }
+  if (textToSend.value.trim().length > 0) {
+    return;
+  }
+  const draft = readSessionDraftForChannel(channelKey);
+  if (!draft || !isContentMeaningful(draft.mode, draft.content)) {
+    writeSessionDraftForChannel(channelKey, null);
+    return;
+  }
+  const entry: InputHistoryEntry = {
+    id: `session:${channelKey}`,
+    channelKey,
+    mode: draft.mode,
+    content: draft.content,
+    createdAt: draft.updatedAt,
+    images: draft.images,
+  };
+  applyHistoryEntry(entry, { silent: true });
+};
+
 const scheduleHistorySnapshot = throttle(
   () => {
     if (isEditing.value) {
@@ -6533,6 +6696,9 @@ watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
 });
 
 const handleHistoryPopoverShow = (show: boolean) => {
@@ -6551,6 +6717,9 @@ watch(hasHistoryEntries, (has) => {
 onMounted(() => {
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
 });
 
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
@@ -7067,6 +7236,7 @@ const cancelEditing = () => {
   stopEditingPreviewNow();
   chat.cancelEditing();
   textToSend.value = '';
+  syncSessionDraftSnapshot();
   stopTypingPreviewNow();
   resetInlineImages();
   ensureInputFocus();
@@ -7138,6 +7308,7 @@ const saveEdit = async () => {
     stopEditingPreviewNow();
     chat.cancelEditing();
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     resetInlineImages();
     ensureInputFocus();
   } catch (error: any) {
@@ -7214,6 +7385,7 @@ const confirmWhisperSelection = () => {
   closeWhisperPanel();
   if (source === 'slash') {
     textToSend.value = '';
+    syncSessionDraftSnapshot();
   }
   ensureInputFocus();
 };
@@ -7265,6 +7437,7 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
     closeWhisperPanel();
     if (source === 'slash') {
       textToSend.value = '';
+      syncSessionDraftSnapshot();
     }
     event.preventDefault();
     return true;
@@ -7577,10 +7750,12 @@ const startInlineImageUpload = async (markerId: string, draft: InlineImageDraft)
     draft.attachmentId = result.attachmentId;
     draft.status = 'uploaded';
     draft.error = '';
+    syncSessionDraftSnapshot();
   } catch (error: any) {
     draft.status = 'failed';
     draft.error = error?.message || '上传失败';
     message.error('图片上传失败，请删除占位符后重试');
+    syncSessionDraftSnapshot();
   }
 };
 
@@ -7865,6 +8040,7 @@ const send = throttle(async () => {
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
+  syncSessionDraftSnapshot();
   clearInputModeCache();
   suspendInlineSync = false;
   chat.curReplyTo = null;
@@ -7952,6 +8128,7 @@ const send = throttle(async () => {
       clearAutoRestoreEntry(channelKey);
     }
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     clearInputModeCache();
     ensureInputFocus();
   } catch (e) {
@@ -7961,6 +8138,7 @@ const send = throttle(async () => {
     textToSend.value = draft;
     suspendInlineSync = false;
     syncInlineMarkersWithText(draft);
+    syncSessionDraftSnapshot();
     const index = rows.value.findIndex(msg => msg.id === tmpMsg.id);
     if (index !== -1) {
       (rows.value[index] as any).failed = true;
@@ -7991,6 +8169,7 @@ const handleDiceRollNow = (expr: string) => {
   // 发送后立即清空，为下次点击做准备
   nextTick(() => {
     textToSend.value = '';
+    syncSessionDraftSnapshot();
   });
 };
 
@@ -8006,6 +8185,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
+  syncSessionDraftSnapshot();
   checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
@@ -8050,6 +8230,10 @@ watch(
     }
   },
 );
+
+watch(inputMode, () => {
+  syncSessionDraftSnapshot();
+});
 
 watch([
   inputPreviewEnabled,
@@ -8428,6 +8612,7 @@ chatEvent.on('message-updated', (e?: Event) => {
     chat.cancelEditing();
     clearInputModeCache();
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     ensureInputFocus();
   }
 });
@@ -8684,11 +8869,15 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
+    const payload = (e as any)?.argv || {};
+    const isReenter = !!payload?.reenter;
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
     chat.cancelEditing();
-    textToSend.value = '';
+    if (!isReenter) {
+      textToSend.value = '';
+    }
     clearInputModeCache();
     resetWindowState('live');
     resetDragState();
@@ -8725,6 +8914,7 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  syncSessionDraftSnapshot();
   disposeSelfPreviewObserver();
   disposeTypingViewportObserver();
   cancelDrag();
