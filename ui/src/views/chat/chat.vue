@@ -14634,8 +14634,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .emoji-grid {
-    grid-template-columns: repeat(3, minmax(60px, 1fr));
-    gap: 0.4rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.3rem;
   }
 }
 
@@ -14703,9 +14703,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .emoji-item {
+    gap: 0.15rem;
+    padding: 0.1rem;
+  }
+
   .emoji-item img {
-    width: 4.8rem;
-    height: 4.8rem;
+    width: 2.8rem;
+    height: 2.8rem;
   }
 }
 
