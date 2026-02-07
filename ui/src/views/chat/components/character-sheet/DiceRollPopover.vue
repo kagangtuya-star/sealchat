@@ -156,16 +156,14 @@ const previewExpression = computed(() => {
     body = '';
   }
   const modText = modifier.value === 0 ? '' : `${modifier.value > 0 ? '+' : ''}${modifier.value}`;
-  const commandWithMod = `${command}${modText}`;
-  if (modifier.value !== 0) {
-    body = body.trim();
-  }
   body = body.trim();
+  const bodyWithMod = body && modText ? `${body}${modText}` : body;
   const modeToken = mode.value === 'adv' ? 'b' : mode.value === 'dis' ? 'p' : '';
-  if (!body) {
+  if (!bodyWithMod) {
+    const commandWithMod = `${command}${modText}`;
     return modeToken ? `${commandWithMod} ${modeToken}` : commandWithMod;
   }
-  return modeToken ? `${commandWithMod} ${modeToken} ${body}` : `${commandWithMod} ${body}`;
+  return modeToken ? `${command} ${modeToken} ${bodyWithMod}` : `${command} ${bodyWithMod}`;
 });
 
 const handleConfirm = () => {
