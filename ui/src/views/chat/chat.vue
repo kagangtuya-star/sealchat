@@ -81,7 +81,7 @@ import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 import CharacterCardPanel from './components/CharacterCardPanel.vue';
-import { useCharacterCardStore } from '@/stores/characterCard';
+import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
@@ -126,7 +126,7 @@ const scheduleCharacterSheetRefresh = () => {
   if (stRefreshTimer) clearTimeout(stRefreshTimer);
   stRefreshTimer = setTimeout(() => {
     const channelId = chat.curChannel?.id;
-    if (channelId) {
+    if (channelId && !characterCardStore.isBotCharacterDisabled(channelId)) {
       void characterCardStore.getActiveCard(channelId);
     }
     if (characterSheetStore.activeWindowIds.length > 0) {
@@ -197,7 +197,7 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       openChannelImagesPanel();
       return;
     case 'character-card':
-      characterCardPanelVisible.value = true;
+      openCharacterCardPanel();
       return;
     case 'sticky-note':
       setStickyNoteVisible(true);
@@ -216,7 +216,11 @@ const setStickyNoteVisible = (visible: boolean) => {
 };
 
 const setCharacterCardVisible = (visible: boolean) => {
-  characterCardPanelVisible.value = visible;
+  if (!visible) {
+    characterCardPanelVisible.value = false;
+    return;
+  }
+  openCharacterCardPanel();
 };
 
 const getStickyNoteVisible = () => stickyNoteStore.uiVisible.value;
@@ -439,6 +443,24 @@ const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
 const emailNotificationDrawerVisible = ref(false);
 const characterCardPanelVisible = ref(false);
+const characterCardAvailable = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) return false;
+  return !characterCardStore.isBotCharacterDisabled(channelId);
+});
+
+const openCharacterCardPanel = () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  characterCardPanelVisible.value = true;
+  if (!characterCardAvailable.value) {
+    const tip = characterCardStore.getCharacterApiDisabledReason(channelId) || characterApiUnsupportedText;
+    message.warning(tip);
+  }
+};
 let webhookPermissionSeq = 0;
 
 watch(
@@ -955,6 +977,7 @@ const initCharacterCardBadge = (
   options?: { skipActiveCard?: boolean },
 ) => {
   if (!channelId) return;
+  if (characterCardStore.isBotCharacterDisabled(channelId)) return;
   if (!enabled) return;
   void characterCardStore.requestBadgeSnapshot(channelId);
   if (!options?.skipActiveCard) {
@@ -965,6 +988,9 @@ const initCharacterCardBadge = (
 let identitySelectionEpoch = 0;
 const simulateCurrentIdentitySelection = async (channelId?: string) => {
   if (!channelId || chat.isObserver) {
+    return false;
+  }
+  if (characterCardStore.isBotCharacterDisabled(channelId)) {
     return false;
   }
   const currentEpoch = ++identitySelectionEpoch;
@@ -997,9 +1023,9 @@ let presenceBadgeInitialized = false;
 const presenceBadgeUsers = new Set<string>();
 
 watch(
-  () => chat.curChannel?.id,
-  (channelId) => {
-    if (!channelId) return;
+  () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled] as const,
+  ([channelId, characterApiEnabled]) => {
+    if (!channelId || characterApiEnabled !== true) return;
     void (async () => {
       const didSync = await simulateCurrentIdentitySelection(channelId);
       initCharacterCardBadge(channelId, undefined, { skipActiveCard: didSync });
@@ -3116,7 +3142,9 @@ const openIdentityCreate = async () => {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
   // Load character cards for the channel
-  await characterCardStore.loadCards(chat.curChannel.id);
+  if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+    await characterCardStore.loadCards(chat.curChannel.id);
+  }
   identityForm.characterCardId = '';
   identityOriginalCardId.value = '';
   identityDialogVisible.value = true;
@@ -3128,7 +3156,9 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
-    await characterCardStore.loadCards(chat.curChannel.id);
+    if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+      await characterCardStore.loadCards(chat.curChannel.id);
+    }
     identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
     identityOriginalCardId.value = identityForm.characterCardId;
   }
@@ -3238,14 +3268,18 @@ const submitIdentityForm = async () => {
       const createdIdentity = await chat.channelIdentityCreate(payload);
       // Handle character card binding for new identity
       if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
-        try {
-          if (identityForm.characterCardId) {
-            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
-          } else {
-            await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+        if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+          message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+        } else {
+          try {
+            if (identityForm.characterCardId) {
+              await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
+            } else {
+              await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+            }
+          } catch (e) {
+            console.warn('Failed to bind character card', e);
           }
-        } catch (e) {
-          console.warn('Failed to bind character card', e);
         }
       }
       message.success('频道角色已创建');
@@ -3253,14 +3287,18 @@ const submitIdentityForm = async () => {
       await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
       // Handle character card binding changes for existing identity
       if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
-        try {
-          if (identityForm.characterCardId) {
-            await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
-          } else {
-            await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+        if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+          message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+        } else {
+          try {
+            if (identityForm.characterCardId) {
+              await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+            } else {
+              await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+            }
+          } catch (e) {
+            console.warn('Failed to update character card binding', e);
           }
-        } catch (e) {
-          console.warn('Failed to update character card binding', e);
         }
       }
       message.success('频道角色已更新');
@@ -10362,7 +10400,7 @@ onBeforeUnmount(() => {
         :webhook-active="webhookDrawerVisible"
         :email-notification-enabled="true"
         :email-notification-active="emailNotificationDrawerVisible"
-        :character-card-enabled="true"
+        :character-card-enabled="!!chat.curChannel?.id"
         :character-card-active="characterCardPanelVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
@@ -10377,7 +10415,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
-        @open-character-card="characterCardPanelVisible = true"
+        @open-character-card="openCharacterCardPanel"
         @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>

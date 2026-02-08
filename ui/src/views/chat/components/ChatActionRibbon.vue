@@ -89,13 +89,21 @@ interface ActionButton {
   emitEvent: string
   activeKey: keyof Props
   condition?: () => boolean
+  disabled?: () => boolean
 }
 
 const allActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
     { key: 'display', label: '显示设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
     { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
-    { key: 'character-card', label: '人物卡', icon: CharacterCardIcon, emitEvent: 'open-character-card', activeKey: 'characterCardActive' },
+    {
+      key: 'character-card',
+      label: '人物卡',
+      icon: CharacterCardIcon,
+      emitEvent: 'open-character-card',
+      activeKey: 'characterCardActive',
+      disabled: () => props.characterCardEnabled === false,
+    },
     { key: 'export', label: '导出记录', icon: DownloadIcon, emitEvent: 'open-export', activeKey: 'exportActive' },
     { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
     { key: 'channel-images', label: '图片浏览', icon: PhotoIcon, emitEvent: 'open-channel-images', activeKey: 'channelImagesActive' },
@@ -159,17 +167,22 @@ const moreMenuOptions = computed(() => {
     key: btn.key,
     label: btn.label,
     icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
+    disabled: btn.disabled?.() === true,
   }))
 })
 
 const handleMoreMenuSelect = (key: string) => {
   const button = allActionButtons.value.find(btn => btn.key === key)
-  if (button) {
-    emit(button.emitEvent as any)
+  if (!button || button.disabled?.() === true) {
+    return
   }
+  emit(button.emitEvent as any)
 }
 
 const handleButtonClick = (button: ActionButton) => {
+  if (button.disabled?.() === true) {
+    return
+  }
   emit(button.emitEvent as any)
 }
 
@@ -369,6 +382,7 @@ const cycleIcFilter = () => {
           type="tertiary"
           class="ribbon-action-button"
           :class="{ 'is-active': props[button.activeKey] }"
+          :disabled="button.disabled?.() === true"
           @click="handleButtonClick(button)"
         >
           <template #icon>

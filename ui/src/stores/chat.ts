@@ -1365,6 +1365,16 @@ export const useChatStore = defineStore({
 
       let oldChannel = this.curChannel;
       this.curChannel = nextChannel;
+      const syncCharacterCapabilityFromEnter = (payload: any) => {
+        const enabled = payload?.character_api_enabled === true;
+        const reason = typeof payload?.character_api_reason === 'string'
+          ? payload.character_api_reason.trim()
+          : '';
+        this.patchChannelAttributes(id, {
+          characterApiEnabled: enabled,
+          characterApiReason: enabled ? '' : reason,
+        });
+      };
       if (this.observerMode) {
         try {
           const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
@@ -1376,6 +1386,7 @@ export const useChatStore = defineStore({
             return false;
           }
           this.curMember = resp.data.member;
+          syncCharacterCapabilityFromEnter(resp.data);
           this.curChannelUsers = [];
           this.whisperTargets = [];
           writeScopedLocalStorage('lastChannel', id);
@@ -1419,6 +1430,7 @@ export const useChatStore = defineStore({
       }
 
       this.curMember = resp.data.member;
+      syncCharacterCapabilityFromEnter(resp.data);
 
       // 保存第一条未读消息信息（在标记已读之前）
       const firstUnreadMsgId = resp.data.first_unread_message_id;
@@ -3965,6 +3977,12 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (typeof event.channel?.botFeatureEnabled === 'boolean') {
     patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  if (typeof (event.channel as any)?.characterApiEnabled === 'boolean') {
+    patch.characterApiEnabled = (event.channel as any).characterApiEnabled;
+  }
+  if (typeof (event.channel as any)?.characterApiReason === 'string') {
+    patch.characterApiReason = (event.channel as any).characterApiReason;
   }
   if (typeof event.channel?.backgroundAttachmentId === 'string') {
     patch.backgroundAttachmentId = event.channel.backgroundAttachmentId;

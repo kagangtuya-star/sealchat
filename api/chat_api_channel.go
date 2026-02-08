@@ -345,10 +345,17 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		Member                *protocol.GuildMember `json:"member"`
 		FirstUnreadMessageId  string                `json:"first_unread_message_id,omitempty"`
 		FirstUnreadMsgTime    int64                 `json:"first_unread_msg_time,omitempty"`
+		CharacterAPIEnabled   bool                  `json:"character_api_enabled"`
+		CharacterAPIReason    string                `json:"character_api_reason,omitempty"`
 	}{
 		Member:                memberPT,
 		FirstUnreadMessageId:  firstUnreadMsgId,
 		FirstUnreadMsgTime:    firstUnreadMsgTime,
+	}
+	characterEnabled, characterReason := GetChannelCharacterAPICapability(channelId, nil)
+	rData.CharacterAPIEnabled = characterEnabled
+	if !characterEnabled && characterReason != "" {
+		rData.CharacterAPIReason = characterReason
 	}
 	return rData, nil
 }

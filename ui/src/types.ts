@@ -28,6 +28,8 @@ declare module '@satorijs/protocol' {
     defaultDiceExpr?: string;
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
+    characterApiEnabled?: boolean;
+    characterApiReason?: string;
   }
 }
 
@@ -263,6 +265,8 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  characterApiEnabled?: boolean;
+  characterApiReason?: string;
   backgroundAttachmentId?: string;
   backgroundSettings?: ChannelBackgroundSettings | string;
 }

@@ -2,7 +2,7 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
-import { useCharacterCardStore } from '@/stores/characterCard';
+import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
 import { useChatStore } from '@/stores/chat';
@@ -36,6 +36,35 @@ const isMobile = computed(() => viewportWidth.value < 768);
 const drawerWidth = computed(() => (isMobile.value ? `${Math.max(320, viewportWidth.value)}px` : 420));
 
 const resolvedChannelId = computed(() => props.channelId || chatStore.curChannel?.id || '');
+
+const characterApiDisabled = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return true;
+  return cardStore.isBotCharacterDisabled(channelId);
+});
+
+const characterApiUnavailableText = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return '请先选择频道';
+  return cardStore.getCharacterApiDisabledReason(channelId) || characterApiUnsupportedText;
+});
+
+const ensureCharacterApiEnabled = (showMessage = true) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    if (showMessage) {
+      message.warning('请先选择频道');
+    }
+    return false;
+  }
+  if (!characterApiDisabled.value) {
+    return true;
+  }
+  if (showMessage) {
+    message.warning(characterApiUnavailableText.value);
+  }
+  return false;
+};
 
 const channelCards = computed(() => cardStore.getCardsByChannel(resolvedChannelId.value));
 
@@ -106,7 +135,7 @@ const syncBadgeTemplateToWorld = async () => {
 };
 
 watch(() => props.visible, async (val) => {
-  if (val && resolvedChannelId.value) {
+  if (val && resolvedChannelId.value && !characterApiDisabled.value) {
     await cardStore.loadCards(resolvedChannelId.value);
     await templateStore.ensureTemplatesLoaded();
     await templateStore.loadBindings(resolvedChannelId.value);
@@ -119,7 +148,7 @@ watch(() => props.visible, async (val) => {
 }, { immediate: true });
 
 watch(resolvedChannelId, async (newId) => {
-  if (props.visible && newId) {
+  if (props.visible && newId && !characterApiDisabled.value) {
     await cardStore.loadCards(newId);
     await templateStore.ensureTemplatesLoaded();
     await templateStore.loadBindings(newId);
@@ -135,7 +164,7 @@ watch(
   [() => props.visible, channelCards],
   async ([visible, cards]) => {
     const channelId = resolvedChannelId.value;
-    if (!visible || !channelId || !cards.length) return;
+    if (!visible || !channelId || !cards.length || characterApiDisabled.value) return;
     await templateStore.migrateLocalTemplatesIfNeeded(
       channelId,
       cards.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
@@ -170,7 +199,7 @@ watch(channelCards, (cards) => {
 
 watch(badgeEnabled, (enabled) => {
   const channelId = resolvedChannelId.value;
-  if (!channelId) return;
+  if (!channelId || characterApiDisabled.value) return;
   if (enabled) {
     void cardStore.requestBadgeSnapshot(channelId);
     void cardStore.getActiveCard(channelId);
@@ -274,11 +303,13 @@ const setTemplateSheetType = (value: string) => {
 const resolveTemplateSheetType = () => resolveSheetType(templateSheetTypePreset.value, templateSheetTypeCustom.value);
 
 const openTemplateManager = async () => {
+  if (!ensureCharacterApiEnabled()) return;
   await templateStore.ensureTemplatesLoaded();
   templateManagerVisible.value = true;
 };
 
 const openTemplateCreateModal = () => {
+  if (!ensureCharacterApiEnabled()) return;
   templateEditingId.value = '';
   templateName.value = '';
   setTemplateSheetType('coc7');
@@ -289,6 +320,7 @@ const openTemplateCreateModal = () => {
 };
 
 const openTemplateEditModal = (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
   templateEditingId.value = item.id;
   templateName.value = item.name;
   setTemplateSheetType(item.sheetType || '');
@@ -299,6 +331,7 @@ const openTemplateEditModal = (item: CharacterCardTemplate) => {
 };
 
 const handleSaveTemplate = async () => {
+  if (!ensureCharacterApiEnabled()) return;
   const name = templateName.value.trim();
   const sheetType = resolveTemplateSheetType();
   const content = templateContent.value.trim();
@@ -340,6 +373,7 @@ const handleSaveTemplate = async () => {
 };
 
 const handleDeleteTemplate = async (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
   try {
     await templateStore.deleteTemplate(item.id);
     message.success('模板已删除');
@@ -349,6 +383,7 @@ const handleDeleteTemplate = async (item: CharacterCardTemplate) => {
 };
 
 const handleCopyTemplate = async (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
   try {
     await templateStore.createTemplate({
       name: `${item.name}-副本`,
@@ -362,6 +397,7 @@ const handleCopyTemplate = async (item: CharacterCardTemplate) => {
 };
 
 const setAsGlobalDefault = async (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
   try {
     await templateStore.setTemplateDefault(item.id, 'global');
     message.success('已设为全局默认模板');
@@ -371,6 +407,7 @@ const setAsGlobalDefault = async (item: CharacterCardTemplate) => {
 };
 
 const setAsSheetDefault = async (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
   if (!(item.sheetType || '').trim()) {
     message.warning('该模板缺少规制类型，无法设为规制默认');
     return;
@@ -411,6 +448,7 @@ const resolveSheetType = (preset: string, custom: string) => {
 };
 
 const openCreateModal = () => {
+  if (!ensureCharacterApiEnabled()) return;
   newCardName.value = '';
   newCardSheetTypePreset.value = 'coc7';
   newCardSheetTypeCustom.value = '';
@@ -419,6 +457,7 @@ const openCreateModal = () => {
 };
 
 const handleCreateCard = async () => {
+  if (!ensureCharacterApiEnabled()) return;
   if (!newCardName.value.trim()) {
     message.warning('请输入角色名称');
     return;
@@ -484,6 +523,10 @@ const syncEditOriginals = () => {
 };
 
 const rememberActiveCard = async (channelId: string) => {
+  if (cardStore.isBotCharacterDisabled(channelId)) {
+    pendingRestore.value = null;
+    return;
+  }
   await cardStore.getActiveCard(channelId);
   const active = cardStore.activeCards[channelId];
   const activeId = cardStore.getActiveCardId(channelId);
@@ -504,6 +547,9 @@ const restoreActiveCard = async () => {
   const pending = pendingRestore.value;
   if (!pending) return;
   pendingRestore.value = null;
+  if (cardStore.isBotCharacterDisabled(pending.channelId)) {
+    return;
+  }
   try {
     if (pending.cardId) {
       await cardStore.tagCard(pending.channelId, undefined, pending.cardId);
@@ -519,6 +565,7 @@ const restoreActiveCard = async () => {
 };
 
 const openEditModal = async (card: CharacterCard) => {
+  if (!ensureCharacterApiEnabled()) return;
   editingCard.value = card;
   editCardName.value = card.name;
   setEditSheetType(card.sheetType || 'coc7');
@@ -556,6 +603,7 @@ watch(editModalVisible, async (val, oldVal) => {
 });
 
 const handleSaveCard = async () => {
+  if (!ensureCharacterApiEnabled()) return;
   if (!editingCard.value) return;
   if (!resolvedChannelId.value) {
     message.warning('请先选择频道');
@@ -587,6 +635,7 @@ const handleSaveCard = async () => {
 };
 
 const handleDeleteCard = async (card: CharacterCard) => {
+  if (!ensureCharacterApiEnabled()) return;
   try {
     await cardStore.deleteCard(card.id);
     message.success('已删除');
@@ -608,12 +657,14 @@ const identityOptions = computed(() => {
 });
 
 const openBindModal = (card: CharacterCard) => {
+  if (!ensureCharacterApiEnabled()) return;
   bindingCard.value = card;
   selectedIdentityId.value = null;
   bindModalVisible.value = true;
 };
 
 const handleBind = async () => {
+  if (!ensureCharacterApiEnabled()) return;
   if (!bindingCard.value || !selectedIdentityId.value || !resolvedChannelId.value) return;
   try {
     await cardStore.bindIdentity(resolvedChannelId.value, selectedIdentityId.value, bindingCard.value.id);
@@ -643,6 +694,7 @@ const resolveCardAvatarUrl = (cardId: string) => {
 };
 
 const handleUnbind = async (identityId: string) => {
+  if (!ensureCharacterApiEnabled()) return;
   if (!resolvedChannelId.value) return;
   try {
     await cardStore.unbindIdentity(resolvedChannelId.value, identityId);
@@ -661,6 +713,19 @@ const openPreview = async (card: CharacterCard) => {
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
+    return;
+  }
+  if (characterApiDisabled.value) {
+    const avatarUrl = resolveCardAvatarUrl(card.id);
+    sheetStore.openSheet(card, channelId, {
+      name: card.name,
+      type: card.sheetType,
+      attrs: card.attrs || {},
+      avatarUrl: avatarUrl || undefined,
+    });
+    if (isMobile.value) {
+      handleClose();
+    }
     return;
   }
   try {
@@ -731,8 +796,8 @@ const openPreview = async (card: CharacterCard) => {
             <span>人物卡管理</span>
           </div>
           <div class="character-card-header__actions">
-            <n-button size="small" type="primary" @click="openTemplateManager">模板管理器</n-button>
-            <n-button size="small" type="primary" @click="openCreateModal">
+            <n-button size="small" type="primary" :disabled="characterApiDisabled" @click="openTemplateManager">模板管理器</n-button>
+            <n-button size="small" type="primary" :disabled="characterApiDisabled" @click="openCreateModal">
               <template #icon><n-icon :component="Plus" /></template>
               新建
             </n-button>
@@ -740,13 +805,17 @@ const openPreview = async (card: CharacterCard) => {
         </div>
       </template>
 
+      <div v-if="characterApiDisabled" class="character-api-unavailable">
+        {{ characterApiUnavailableText }}
+      </div>
+
       <div class="character-card-settings">
         <div class="settings-row">
           <div>
             <p class="settings-title">聊天角色徽章</p>
             <p class="settings-desc">开启后且可读到人物卡数据时，在昵称后显示简洁属性</p>
           </div>
-          <n-switch v-model:value="badgeEnabled">
+          <n-switch v-model:value="badgeEnabled" :disabled="characterApiDisabled">
             <template #checked>已启用</template>
             <template #unchecked>已关闭</template>
           </n-switch>
@@ -760,14 +829,16 @@ const openPreview = async (card: CharacterCard) => {
             <n-input
               v-model:value="badgeTemplate"
               size="small"
+              :disabled="characterApiDisabled"
               placeholder="HP{生命值} SAN{理智} 闪避{闪避}"
               @blur="persistBadgeTemplate"
             />
-            <n-button size="small" quaternary @click="resetBadgeTemplate">恢复默认</n-button>
+            <n-button size="small" quaternary :disabled="characterApiDisabled" @click="resetBadgeTemplate">恢复默认</n-button>
             <n-button
               v-if="canSyncBadgeTemplate"
               size="small"
               tertiary
+              :disabled="characterApiDisabled"
               @click="syncBadgeTemplateToWorld"
             >模板同步</n-button>
           </div>
@@ -781,6 +852,7 @@ const openPreview = async (card: CharacterCard) => {
           v-model:value="cardSearchKeyword"
           size="small"
           clearable
+          :disabled="characterApiDisabled"
           placeholder="搜索人物卡（名称/规制/属性）"
         />
       </div>
@@ -802,15 +874,15 @@ const openPreview = async (card: CharacterCard) => {
             <n-button text size="small" title="预览" @click="openPreview(card)">
               <template #icon><n-icon :component="Eye" /></template>
             </n-button>
-            <n-button text size="small" @click="openEditModal(card)">
+            <n-button text size="small" :disabled="characterApiDisabled" @click="openEditModal(card)">
               <template #icon><n-icon :component="Edit" /></template>
             </n-button>
-            <n-button text size="small" @click="openBindModal(card)">
+            <n-button text size="small" :disabled="characterApiDisabled" @click="openBindModal(card)">
               <template #icon><n-icon :component="Link" /></template>
             </n-button>
             <n-popconfirm @positive-click="handleDeleteCard(card)">
               <template #trigger>
-                <n-button text size="small" type="error">
+                <n-button text size="small" type="error" :disabled="characterApiDisabled">
                   <template #icon><n-icon :component="Trash" /></template>
                 </n-button>
               </template>
@@ -824,7 +896,7 @@ const openPreview = async (card: CharacterCard) => {
               v-for="identity in getBoundIdentities(card.id)"
               :key="identity.id"
               size="small"
-              closable
+              :closable="!characterApiDisabled"
               @close="handleUnbind(identity.id)"
             >
               {{ identity.displayName }}
@@ -842,7 +914,7 @@ const openPreview = async (card: CharacterCard) => {
     :show-icon="false"
     title="新建人物卡"
     :positive-text="creating ? '创建中…' : '创建'"
-    :positive-button-props="{ loading: creating }"
+    :positive-button-props="{ loading: creating, disabled: characterApiDisabled }"
     negative-text="取消"
     @positive-click="handleCreateCard"
   >
@@ -851,12 +923,13 @@ const openPreview = async (card: CharacterCard) => {
         <n-input v-model:value="newCardName" maxlength="32" placeholder="请输入角色名称" />
       </n-form-item>
       <n-form-item label="卡片类型">
-        <n-select v-model:value="newCardSheetTypePreset" :options="sheetTypeOptions" />
+        <n-select v-model:value="newCardSheetTypePreset" :options="sheetTypeOptions" :disabled="characterApiDisabled" />
         <n-input
           v-if="newCardSheetTypePreset === 'custom'"
           v-model:value="newCardSheetTypeCustom"
           placeholder="输入自定义规制类型"
           class="sheet-type-custom-input"
+          :disabled="characterApiDisabled"
         />
       </n-form-item>
     </n-form>
@@ -878,14 +951,16 @@ const openPreview = async (card: CharacterCard) => {
           placeholder="筛选规制"
           size="small"
           clearable
+          :disabled="characterApiDisabled"
         />
         <n-input
           v-model:value="templateSearchKeyword"
           size="small"
           clearable
           placeholder="搜索模板（名称/内容）"
+          :disabled="characterApiDisabled"
         />
-        <n-button size="small" type="primary" @click="openTemplateCreateModal">新增模板</n-button>
+        <n-button size="small" type="primary" :disabled="characterApiDisabled" @click="openTemplateCreateModal">新增模板</n-button>
       </div>
 
       <n-empty v-if="filteredManagedTemplates.length === 0" description="暂无模板" />
@@ -902,13 +977,13 @@ const openPreview = async (card: CharacterCard) => {
         </template>
         <div class="template-manager__preview">{{ formatTemplatePreview(tpl.content) || '空模板' }}</div>
         <div class="template-manager__actions">
-          <n-button text size="small" @click="openTemplateEditModal(tpl)">编辑</n-button>
-          <n-button text size="small" @click="handleCopyTemplate(tpl)">复制</n-button>
-          <n-button text size="small" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
-          <n-button text size="small" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
+          <n-button text size="small" :disabled="characterApiDisabled" @click="openTemplateEditModal(tpl)">编辑</n-button>
+          <n-button text size="small" :disabled="characterApiDisabled" @click="handleCopyTemplate(tpl)">复制</n-button>
+          <n-button text size="small" :disabled="characterApiDisabled" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
+          <n-button text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
           <n-popconfirm @positive-click="handleDeleteTemplate(tpl)">
             <template #trigger>
-              <n-button text size="small" type="error">删除</n-button>
+              <n-button text size="small" type="error" :disabled="characterApiDisabled">删除</n-button>
             </template>
             删除模板后，已引用卡片会转为脱离模板快照，确认删除？
           </n-popconfirm>
@@ -924,21 +999,22 @@ const openPreview = async (card: CharacterCard) => {
     :show-icon="false"
     :title="templateEditingId ? '编辑模板' : '新建模板'"
     :positive-text="templateSaving ? '保存中…' : '保存'"
-    :positive-button-props="{ loading: templateSaving }"
+    :positive-button-props="{ loading: templateSaving, disabled: characterApiDisabled }"
     negative-text="取消"
     @positive-click="handleSaveTemplate"
   >
     <n-form label-width="90">
       <n-form-item label="模板名称">
-        <n-input v-model:value="templateName" maxlength="100" placeholder="输入模板名称" />
+        <n-input v-model:value="templateName" maxlength="100" placeholder="输入模板名称" :disabled="characterApiDisabled" />
       </n-form-item>
       <n-form-item label="规制类型">
-        <n-select v-model:value="templateSheetTypePreset" :options="sheetTypeOptions" />
+        <n-select v-model:value="templateSheetTypePreset" :options="sheetTypeOptions" :disabled="characterApiDisabled" />
         <n-input
           v-if="templateSheetTypePreset === 'custom'"
           v-model:value="templateSheetTypeCustom"
           placeholder="输入自定义规制类型"
           class="sheet-type-custom-input"
+          :disabled="characterApiDisabled"
         />
       </n-form-item>
       <n-form-item label="模板内容">
@@ -947,12 +1023,13 @@ const openPreview = async (card: CharacterCard) => {
           type="textarea"
           :autosize="{ minRows: 8, maxRows: 16 }"
           placeholder="输入 HTML 模板"
+          :disabled="characterApiDisabled"
         />
       </n-form-item>
       <n-form-item label="默认设置">
         <div class="template-manager__defaults">
-          <n-checkbox v-model:checked="templateGlobalDefault">设为全局默认</n-checkbox>
-          <n-checkbox v-model:checked="templateSheetDefault">设为规制默认</n-checkbox>
+          <n-checkbox v-model:checked="templateGlobalDefault" :disabled="characterApiDisabled">设为全局默认</n-checkbox>
+          <n-checkbox v-model:checked="templateSheetDefault" :disabled="characterApiDisabled">设为规制默认</n-checkbox>
         </div>
       </n-form-item>
     </n-form>
@@ -965,7 +1042,7 @@ const openPreview = async (card: CharacterCard) => {
     :show-icon="false"
     title="编辑人物卡"
     :positive-text="saving ? '保存中…' : '保存'"
-    :positive-button-props="{ loading: saving }"
+    :positive-button-props="{ loading: saving, disabled: characterApiDisabled }"
     negative-text="取消"
     @positive-click="handleSaveCard"
   >
@@ -989,6 +1066,7 @@ const openPreview = async (card: CharacterCard) => {
           type="textarea"
           :autosize="{ minRows: 4, maxRows: 10 }"
           placeholder='例如: {"hp": 10, "hpmax": 10, "san": 50}'
+          :disabled="characterApiDisabled"
         />
       </n-form-item>
     </n-form>
@@ -1002,6 +1080,7 @@ const openPreview = async (card: CharacterCard) => {
     title="绑定身份"
     positive-text="绑定"
     negative-text="取消"
+    :positive-button-props="{ disabled: characterApiDisabled }"
     @positive-click="handleBind"
   >
     <n-form label-width="80">
@@ -1010,6 +1089,7 @@ const openPreview = async (card: CharacterCard) => {
           v-model:value="selectedIdentityId"
           :options="identityOptions"
           placeholder="选择要绑定的频道身份"
+          :disabled="characterApiDisabled"
         />
       </n-form-item>
     </n-form>
@@ -1051,6 +1131,17 @@ const openPreview = async (card: CharacterCard) => {
   padding: 0.25rem 0 1rem;
   border-bottom: 1px solid var(--sc-border-color);
   margin-bottom: 1rem;
+}
+
+.character-api-unavailable {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--sc-text-primary);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .settings-row {

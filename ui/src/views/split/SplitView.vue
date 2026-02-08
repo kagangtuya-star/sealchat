@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent } from 'naive-ui';
+import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent, useMessage } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
 import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
 import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
 import { setChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
+import { characterApiUnsupportedText } from '@/stores/characterCard';
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 type PaneMode = 'chat' | 'web';
@@ -39,6 +40,8 @@ type EmbedStateMessage = {
   searchPanelVisible?: boolean;
   stickyNoteVisible?: boolean;
   characterCardVisible?: boolean;
+  characterCardEnabled?: boolean;
+  characterCardReason?: string;
   iFormButtonActive?: boolean;
   iFormHasAttention?: boolean;
 };
@@ -78,6 +81,8 @@ interface PaneState {
   searchPanelVisible: boolean;
   stickyNoteVisible: boolean;
   characterCardVisible: boolean;
+  characterCardEnabled: boolean;
+  characterCardReason: string;
   embedPanelActive: boolean;
   embedPanelHasAttention: boolean;
   notifyOwner: boolean;
@@ -89,6 +94,7 @@ const router = useRouter();
 const route = useRoute();
 // 分屏壳页面自身不需要 WS：关闭主实例连接，避免占用连接数导致 iframe embed 连接失败
 useChatStore().disconnect('split-shell');
+const message = useMessage();
 const { width } = useWindowSize();
 
 const isMobileViewport = computed(() => width.value < 700);
@@ -190,6 +196,8 @@ const paneA = reactive<PaneState>({
   searchPanelVisible: false,
   stickyNoteVisible: false,
   characterCardVisible: false,
+  characterCardEnabled: false,
+  characterCardReason: characterApiUnsupportedText,
   embedPanelActive: false,
   embedPanelHasAttention: false,
   notifyOwner: false,
@@ -218,6 +226,8 @@ const paneB = reactive<PaneState>({
   searchPanelVisible: false,
   stickyNoteVisible: false,
   characterCardVisible: false,
+  characterCardEnabled: false,
+  characterCardReason: characterApiUnsupportedText,
   embedPanelActive: false,
   embedPanelHasAttention: false,
   notifyOwner: false,
@@ -247,7 +257,17 @@ const activePaneOnlineMembersCount = computed(() => (activePane.value.mode === '
 const activePaneAudioStudioActive = computed(() => activePane.value.mode === 'chat' && activePane.value.audioStudioDrawerVisible);
 const activePaneSearchActive = computed(() => activePane.value.mode === 'chat' && activePane.value.searchPanelVisible);
 const activePaneStickyNoteActive = computed(() => activePane.value.mode === 'chat' && activePane.value.stickyNoteVisible);
-const activePaneCharacterCardActive = computed(() => activePane.value.mode === 'chat' && activePane.value.characterCardVisible);
+const activePaneCharacterCardEnabled = computed(
+  () => activePane.value.mode === 'chat' && !!activePane.value.channelId && activePane.value.characterCardEnabled !== false,
+);
+const activePaneCharacterCardUnavailableReason = computed(() => {
+  if (!activePaneHasChannel.value) {
+    return '请先选择频道';
+  }
+  const reason = (activePane.value.characterCardReason || '').trim();
+  return reason || characterApiUnsupportedText;
+});
+const activePaneCharacterCardActive = computed(() => activePaneCharacterCardEnabled.value && activePane.value.characterCardVisible);
 const activePaneEmbedPanelActive = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelActive);
 const activePaneEmbedPanelHasAttention = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelHasAttention);
 
@@ -368,6 +388,11 @@ const handleEmbedMessage = (event: MessageEvent) => {
       if (typeof msg.stickyNoteVisible === 'boolean') target.stickyNoteVisible = msg.stickyNoteVisible;
       if (typeof msg.characterCardVisible === 'boolean') target.characterCardVisible = msg.characterCardVisible;
     }
+    if (typeof msg.characterCardEnabled === 'boolean') target.characterCardEnabled = msg.characterCardEnabled;
+    if (typeof msg.characterCardReason === 'string') target.characterCardReason = msg.characterCardReason;
+    if (!target.characterCardEnabled) {
+      target.characterCardVisible = false;
+    }
     if (typeof msg.iFormButtonActive === 'boolean') target.embedPanelActive = msg.iFormButtonActive;
     if (typeof msg.iFormHasAttention === 'boolean') target.embedPanelHasAttention = msg.iFormHasAttention;
 
@@ -394,7 +419,7 @@ const syncPanePanelVisibility = (pane: PaneState) => {
     paneId: pane.id,
     visible: !!pane.stickyNoteVisible,
   });
-  if (pane.characterCardVisible) {
+  if (pane.characterCardVisible && pane.characterCardEnabled) {
     postToPane(pane.id, {
       type: 'sealchat.embed.setCharacterCardVisible',
       paneId: pane.id,
@@ -522,7 +547,14 @@ const toggleStickyNoteForActivePane = () => {
 };
 
 const openCharacterCardForActivePane = () => {
-  if (!activePaneHasChannel.value) return;
+  if (!activePaneHasChannel.value) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!activePaneCharacterCardEnabled.value) {
+    message.warning(activePaneCharacterCardUnavailableReason.value);
+    return;
+  }
   if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.setCharacterCardVisible', paneId: activePaneId.value, visible: true });
 };

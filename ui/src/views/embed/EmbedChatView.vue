@@ -191,6 +191,8 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     searchPanelVisible: !!channelSearch.panelVisible,
     stickyNoteVisible: !!chatViewRef.value?.getStickyNoteVisible?.(),
     characterCardVisible: !!chatViewRef.value?.getCharacterCardVisible?.(),
+    characterCardEnabled: !!channelId && chat.curChannel?.characterApiEnabled !== false,
+    characterCardReason: typeof chat.curChannel?.characterApiReason === 'string' ? chat.curChannel.characterApiReason : '',
     iFormButtonActive: !!iFormButtonActive.value,
     iFormHasAttention: !!iFormHasAttention.value,
   });
@@ -355,6 +357,11 @@ watch(
     fetchRoleOptions(channelId ? String(channelId) : '');
     postStateThrottled('sealchat.embed.state');
   },
+);
+
+watch(
+  () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled, chat.curChannel?.characterApiReason] as const,
+  () => postStateThrottled('sealchat.embed.state'),
 );
 
 watch(

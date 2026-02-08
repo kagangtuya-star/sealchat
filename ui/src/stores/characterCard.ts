@@ -52,7 +52,7 @@ const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
 });
 
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
-const botCharacterUnsupportedText = 'BOT未启用角色卡功能';
+export const characterApiUnsupportedText = '当前BOT不支持人物卡API、未开启或未启用。';
 
 export const useCharacterCardStore = defineStore('characterCard', () => {
   // List of user's character cards
@@ -78,7 +78,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const isBotCharacterDisabled = (channelId?: string) => {
     if (!channelId) {
-      return false;
+      return true;
+    }
+    const channel = chatStore.findChannelById(channelId) as any;
+    if (channel && channel.characterApiEnabled !== true) {
+      return true;
     }
     return botCharacterDisabledByChannel.value[channelId] === true;
   };
@@ -98,7 +102,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const maybeDisableFromResponse = (channelId: string, resp: any) => {
     const err = resp?.data?.error;
-    if (resp?.data?.ok === false && err === botCharacterUnsupportedText) {
+    if (resp?.data?.ok === false && err === characterApiUnsupportedText) {
       markBotCharacterDisabled(channelId);
     }
   };
@@ -118,10 +122,21 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const assertCharacterApiEnabled = (channelId: string, label: string) => {
     if (shouldSkipCharacterApi(channelId, label)) {
-      const error = new Error(botCharacterUnsupportedText);
-      (error as any).response = { data: { error: botCharacterUnsupportedText } };
+      const error = new Error(characterApiUnsupportedText);
+      (error as any).response = { data: { error: characterApiUnsupportedText } };
       throw error;
     }
+  };
+
+  const getCharacterApiDisabledReason = (channelId?: string) => {
+    if (!channelId) {
+      return characterApiUnsupportedText;
+    }
+    const channel = chatStore.findChannelById(channelId) as any;
+    if (typeof channel?.characterApiReason === 'string' && channel.characterApiReason.trim()) {
+      return channel.characterApiReason.trim();
+    }
+    return characterApiUnsupportedText;
   };
 
   const getBindingsStorageKey = () => {
@@ -908,5 +923,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     unbindIdentity,
     requestBadgeSnapshot,
     broadcastActiveBadge,
+    isBotCharacterDisabled,
+    getCharacterApiDisabledReason,
   };
 });

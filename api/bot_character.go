@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"sealchat/model"
 	"sealchat/service"
 	"sealchat/utils"
 )
@@ -40,7 +41,7 @@ const (
 	botCharacterProbeTimeout    = characterRequestTimeout
 	botCharacterProbeMaxAttempts = 3
 	botCharacterProbeRetryDelay  = 2 * time.Second
-	botCharacterUnsupportedText = "BOT未启用角色卡功能"
+	botCharacterUnsupportedText = "当前BOT不支持人物卡API、未开启或未启用。"
 )
 
 // apiCharacterGet handles character.get requests
@@ -156,15 +157,15 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 // findBotConnectionForChannel finds a BOT WebSocket connection for a specific channel
 func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncConn, *ConnInfo, error) {
 	if userId2ConnInfoGlobal == nil {
-		return nil, nil, errors.New("未找到可用的 BOT 连接")
+		return nil, nil, errors.New(botCharacterUnsupportedText)
 	}
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
-		return nil, nil, errors.New("缺少频道ID")
+		return nil, nil, errors.New(botCharacterUnsupportedText)
 	}
 	botID, err := service.SelectedBotIdByChannelId(channelID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.New(botCharacterUnsupportedText)
 	}
 	if x, ok := userId2ConnInfoGlobal.Load(botID); ok {
 		var activeConn *WsSyncConn
@@ -189,15 +190,75 @@ func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncCon
 			return activeConn, activeInfo, nil
 		}
 	}
-	return nil, nil, errors.New("所选 BOT 未在线")
+	return nil, nil, errors.New(botCharacterUnsupportedText)
+}
+
+func GetChannelCharacterAPICapability(channelID string, channel *model.ChannelModel) (bool, string) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return false, botCharacterUnsupportedText
+	}
+
+	if channel == nil {
+		if fetched, err := model.ChannelGet(channelID); err == nil && fetched != nil && fetched.ID != "" {
+			channel = fetched
+		}
+	}
+
+	if channel != nil && !channel.IsPrivate && !channel.BotFeatureEnabled {
+		return false, botCharacterUnsupportedText
+	}
+
+	if userId2ConnInfoGlobal == nil {
+		return false, botCharacterUnsupportedText
+	}
+
+	botID, err := service.SelectedBotIdByChannelId(channelID)
+	if err != nil || strings.TrimSpace(botID) == "" {
+		return false, botCharacterUnsupportedText
+	}
+
+	connMap, ok := userId2ConnInfoGlobal.Load(botID)
+	if !ok || connMap == nil {
+		return false, botCharacterUnsupportedText
+	}
+
+	var activeInfo *ConnInfo
+	var activeAt int64 = -1
+	connMap.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
+		if value == nil {
+			return true
+		}
+		lastAlive := value.LastAliveTime
+		if lastAlive == 0 {
+			lastAlive = value.LastPingTime
+		}
+		if lastAlive > activeAt {
+			activeAt = lastAlive
+			activeInfo = value
+		}
+		return true
+	})
+
+	if activeInfo == nil {
+		return false, botCharacterUnsupportedText
+	}
+
+	startBotCharacterCapabilityProbe(activeInfo)
+	if activeInfo.BotCharacterSupport == BotCharacterSupportYes {
+		return true, ""
+	}
+
+	return false, botCharacterUnsupportedText
 }
 
 func gateBotCharacterSupport(ctx *ChatContext, echo string, info *ConnInfo) bool {
 	if info == nil {
-		return true
+		sendCharacterError(ctx, echo, botCharacterUnsupportedText)
+		return false
 	}
 	startBotCharacterCapabilityProbe(info)
-	if info.BotCharacterSupport == BotCharacterSupportNo {
+	if info.BotCharacterSupport != BotCharacterSupportYes {
 		sendCharacterError(ctx, echo, botCharacterUnsupportedText)
 		return false
 	}
@@ -347,7 +408,39 @@ func HandleCharacterResponse(echo string, data json.RawMessage) bool {
 	return true
 }
 
+func normalizeCharacterErr(errMsg string) string {
+	msg := strings.TrimSpace(errMsg)
+	if msg == "" {
+		return "请求失败"
+	}
+	if msg == botCharacterUnsupportedText {
+		return botCharacterUnsupportedText
+	}
+
+	lower := strings.ToLower(msg)
+	unsupportedHints := []string{
+		"bot未启用角色卡功能",
+		"当前bot不支持人物卡api",
+		"未选择bot",
+		"未绑定bot",
+		"bot未连接",
+		"bot离线",
+		"bot不在线",
+		"no bot",
+		"selected bot",
+		"bot offline",
+	}
+	for _, hint := range unsupportedHints {
+		if strings.Contains(lower, hint) {
+			return botCharacterUnsupportedText
+		}
+	}
+
+	return msg
+}
+
 func sendCharacterError(ctx *ChatContext, echo, errMsg string) {
+	errMsg = normalizeCharacterErr(errMsg)
 	resp := map[string]any{
 		"api":  "",
 		"echo": echo,
