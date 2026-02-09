@@ -816,6 +816,8 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
 export const useDisplayStore = defineStore('display', {
   state: () => ({
     settings: loadSettings(),
+    customThemePreviewEnabled: false,
+    customThemePreviewColors: {} as CustomThemeColors,
   }),
   getters: {
     layout: (state) => state.settings.layout,
@@ -1027,48 +1029,76 @@ export const useDisplayStore = defineStore('display', {
         '--chat-text-primary', '--chat-text-secondary',
         '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
         '--sc-border-mute', '--sc-border-strong',
-        '--primary-color', '--primary-color-hover'
+        '--primary-color', '--primary-color-hover',
+        '--custom-keyword-bg', '--custom-keyword-border'
       ]
       // Clear previous custom colors first
       customColorVars.forEach(v => removeVar(v))
 
-      if (effective.customThemeEnabled && effective.activeCustomThemeId) {
-        const activeTheme = effective.customThemes.find(t => t.id === effective.activeCustomThemeId)
-        if (activeTheme?.colors) {
-          const c = activeTheme.colors
-          if (c.bgSurface) setVar('--sc-bg-surface', c.bgSurface)
-          if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
-          if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
-          if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
-          if (c.textPrimary) {
-            setVar('--sc-text-primary', c.textPrimary)
-            // Also set --chat-text-primary for chat message content area
-            setVar('--chat-text-primary', c.textPrimary)
-          }
-          if (c.textSecondary) {
-            setVar('--sc-text-secondary', c.textSecondary)
-            // Also set --chat-text-secondary for chat message content area
-            setVar('--chat-text-secondary', c.textSecondary)
-          }
-          // Use --custom-* prefix for chat colors so they can override scoped class variables
-          if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
-          if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
-          const stageBg = c.chatStageBg || c.chatIcBg
-          if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
-          if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
-          if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
-          if (c.borderMute) setVar('--sc-border-mute', c.borderMute)
-          if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
-          if (c.primaryColor) setVar('--primary-color', c.primaryColor)
-          if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
-          // Keyword highlight colors
-          if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
-          if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
-          // Mark custom theme active for CSS selectors
-          root.dataset.customTheme = 'true'
+      const activeThemeColors =
+        effective.customThemeEnabled && effective.activeCustomThemeId
+          ? effective.customThemes.find(t => t.id === effective.activeCustomThemeId)?.colors
+          : null
+
+      const previewColors = this.customThemePreviewEnabled ? this.customThemePreviewColors : null
+      const sourceColors = previewColors || activeThemeColors
+
+      if (sourceColors) {
+        const c = sourceColors
+        if (c.bgSurface) setVar('--sc-bg-surface', c.bgSurface)
+        if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
+        if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
+        if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
+        if (c.textPrimary) {
+          setVar('--sc-text-primary', c.textPrimary)
+          // Also set --chat-text-primary for chat message content area
+          setVar('--chat-text-primary', c.textPrimary)
         }
+        if (c.textSecondary) {
+          setVar('--sc-text-secondary', c.textSecondary)
+          // Also set --chat-text-secondary for chat message content area
+          setVar('--chat-text-secondary', c.textSecondary)
+        }
+        // Use --custom-* prefix for chat colors so they can override scoped class variables
+        if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
+        if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
+        const stageBg = c.chatStageBg || c.chatIcBg
+        if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
+        if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
+        if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
+        if (c.borderMute) setVar('--sc-border-mute', c.borderMute)
+        if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
+        if (c.primaryColor) setVar('--primary-color', c.primaryColor)
+        if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
+        // Keyword highlight colors
+        if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
+        if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
+        // Mark custom theme active for CSS selectors
+        root.dataset.customTheme = 'true'
       } else {
         delete root.dataset.customTheme
+      }
+    },
+    startCustomThemePreview(colors?: CustomThemeColors) {
+      this.customThemePreviewEnabled = true
+      this.customThemePreviewColors = { ...(colors || {}) }
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
+      }
+    },
+    updateCustomThemePreview(colors?: CustomThemeColors) {
+      if (!this.customThemePreviewEnabled) return
+      this.customThemePreviewColors = { ...(colors || {}) }
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
+      }
+    },
+    stopCustomThemePreview() {
+      if (!this.customThemePreviewEnabled && Object.keys(this.customThemePreviewColors).length === 0) return
+      this.customThemePreviewEnabled = false
+      this.customThemePreviewColors = {}
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
       }
     },
     // Custom theme management

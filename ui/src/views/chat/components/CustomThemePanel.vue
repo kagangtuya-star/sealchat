@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useWindowSize } from '@vueuse/core'
+import { useMessage } from 'naive-ui'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
-import { presetThemes, type PresetTheme } from '@/config/presetThemes'
+import { presetThemes, dayBaseTheme, nightBaseTheme } from '@/config/presetThemes'
+import ThemeLivePreviewFloating from './ThemeLivePreviewFloating.vue'
 
 interface Props {
   show: boolean
@@ -13,7 +15,12 @@ const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
 }>()
 
+const message = useMessage()
 const display = useDisplayStore()
+const livePreviewFloatingVisible = ref(false)
+const livePreviewBaseColors = ref<CustomThemeColors | null>(null)
+const selectedImportSource = ref<string | null>(null)
+const selectedThemeId = ref<string | null>(null)
 
 // 响应式 drawer 宽度
 const { width: windowWidth } = useWindowSize()
@@ -75,6 +82,16 @@ const colorGroups = computed(() => {
 // 主题列表
 const themes = computed(() => display.settings.customThemes)
 const activeThemeId = computed(() => display.settings.activeCustomThemeId)
+const selectedSavedTheme = computed(() => {
+  if (!selectedThemeId.value) return null
+  return themes.value.find(t => t.id === selectedThemeId.value) || null
+})
+const savedThemeOptions = computed(() =>
+  themes.value.map((theme) => ({
+    label: activeThemeId.value === theme.id ? `${theme.name}（当前）` : theme.name,
+    value: theme.id,
+  })),
+)
 
 // 初始化表单
 const resetForm = () => {
@@ -96,55 +113,157 @@ const startEdit = (theme: CustomTheme) => {
   themeColors.value = { ...theme.colors }
 }
 
-// 预设主题选项
-const presetOptions = computed(() => 
-  presetThemes.map(p => ({ label: p.name, value: p.id, description: p.description }))
-)
+const importThemeOptions = computed(() => {
+  const presetChildren = presetThemes.map(preset => ({
+    label: preset.name,
+    value: `preset:${preset.id}`,
+  }))
+  const savedChildren = themes.value.map(theme => ({
+    label: activeThemeId.value === theme.id ? `${theme.name}（当前）` : theme.name,
+    value: `saved:${theme.id}`,
+  }))
 
-// 导入预设主题
-const importPreset = (presetId: string) => {
-  const preset = presetThemes.find(p => p.id === presetId)
-  if (!preset) return
-  
-  // 检查是否已存在同名主题
-  const existingTheme = themes.value.find(t => t.name === preset.name)
-  const uniqueName = existingTheme 
-    ? `${preset.name} ${Date.now().toString(36).slice(-4)}`
-    : preset.name
-  
-  const theme: CustomTheme = {
-    id: `preset_${Date.now()}`,
-    name: uniqueName,
-    colors: { ...preset.colors },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+  const options: Array<{ label: string; type: 'group'; key: string; children: Array<{ label: string; value: string }> }> = []
+  if (presetChildren.length > 0) {
+    options.push({
+      label: '预设主题',
+      type: 'group',
+      key: 'preset-group',
+      children: presetChildren,
+    })
   }
-  
-  // 先确保自定义主题功能已启用，这样后续的 applyTheme 才能生效
+  if (savedChildren.length > 0) {
+    options.push({
+      label: '已保存主题',
+      type: 'group',
+      key: 'saved-group',
+      children: savedChildren,
+    })
+  }
+  return options
+})
+
+const buildUniqueThemeName = (baseName: string) => {
+  const normalized = baseName.trim()
+  const fallback = `自定义主题 ${themes.value.length + 1}`
+  const sourceName = normalized || fallback
+  const hasSameName = themes.value.some(theme => theme.name === sourceName)
+  if (!hasSameName) return sourceName
+  return `${sourceName} ${Date.now().toString(36).slice(-4)}`
+}
+
+const fillEditorByTemplate = (sourceName: string, sourceColors: CustomThemeColors) => {
+  editMode.value = 'create'
+  editingThemeId.value = null
+  themeName.value = buildUniqueThemeName(sourceName)
+  themeColors.value = { ...sourceColors }
+  selectedImportSource.value = null
+}
+
+const importThemeFromSource = (sourceValue: string | null) => {
+  if (typeof sourceValue !== 'string' || !sourceValue.trim()) {
+    selectedImportSource.value = null
+    return
+  }
+
+  const separatorIndex = sourceValue.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex >= sourceValue.length - 1) {
+    selectedImportSource.value = null
+    return
+  }
+
+  const sourceType = sourceValue.slice(0, separatorIndex)
+  const sourceId = sourceValue.slice(separatorIndex + 1)
+
+  if (sourceType === 'preset') {
+    const preset = presetThemes.find(p => p.id === sourceId)
+    if (!preset) {
+      selectedImportSource.value = null
+      return
+    }
+    fillEditorByTemplate(preset.name, preset.colors)
+    return
+  }
+
+  if (sourceType === 'saved') {
+    const savedTheme = themes.value.find(t => t.id === sourceId)
+    if (!savedTheme) {
+      selectedImportSource.value = null
+      return
+    }
+    fillEditorByTemplate(savedTheme.name, savedTheme.colors)
+    return
+  }
+
+  selectedImportSource.value = null
+}
+
+const handleThemeSelect = (themeId: string | null) => {
+  selectedThemeId.value = themeId
+  if (!themeId) return
+  handleActivate(themeId)
+}
+
+const handleEditSelectedTheme = () => {
+  if (!selectedSavedTheme.value) return
+  startEdit(selectedSavedTheme.value)
+}
+
+const handleExportSelectedTheme = () => {
+  if (!selectedSavedTheme.value) return
+  exportTheme(selectedSavedTheme.value)
+}
+
+const handleDeleteSelectedTheme = () => {
+  if (!selectedSavedTheme.value) return
+  handleDelete(selectedSavedTheme.value.id)
+}
+
+const saveCurrentTheme = (options?: { keepEditing?: boolean }) => {
+  const keepEditing = options?.keepEditing === true
+  let name = themeName.value.trim()
+  if (!name) {
+    if (!keepEditing) return
+    const fallbackName = `自定义主题 ${themes.value.length + 1}`
+    name = fallbackName
+    themeName.value = fallbackName
+  }
+
+  const now = Date.now()
+  const id = editingThemeId.value || `theme_${now}`
+  const existingTheme = themes.value.find(t => t.id === id)
+
+  const theme: CustomTheme = {
+    id,
+    name,
+    colors: { ...themeColors.value },
+    createdAt: existingTheme?.createdAt ?? now,
+    updatedAt: now,
+  }
+
   if (!display.settings.customThemeEnabled) {
     display.setCustomThemeEnabled(true)
   }
-  
+
   display.saveCustomTheme(theme)
-  display.activateCustomTheme(theme.id)
+  display.activateCustomTheme(id)
+  message.success(existingTheme ? `主题已更新：${name}` : `主题已保存：${name}`)
+
+  if (keepEditing) {
+    editMode.value = 'edit'
+    editingThemeId.value = id
+    return
+  }
+
+  resetForm()
 }
 
 const handleSave = () => {
-  if (!themeName.value.trim()) return
-  const id = editingThemeId.value || `theme_${Date.now()}`
-  const theme: CustomTheme = {
-    id,
-    name: themeName.value.trim(),
-    colors: { ...themeColors.value },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
-  display.saveCustomTheme(theme)
-  // 自动激活新创建的主题
-  if (editMode.value === 'create') {
-    display.activateCustomTheme(id)
-  }
-  resetForm()
+  saveCurrentTheme({ keepEditing: false })
+}
+
+const handleSaveFromLivePreviewFloating = () => {
+  saveCurrentTheme({ keepEditing: true })
 }
 
 const handleDelete = (id: string) => {
@@ -159,9 +278,176 @@ const handleClose = () => {
   emit('update:show', false)
 }
 
+const stopLivePreviewSafely = () => {
+  clearPreviewThemeVars()
+  if (typeof display.applyTheme === 'function') {
+    display.applyTheme()
+  }
+}
+
+const previewCssVars = [
+  '--sc-bg-surface', '--sc-bg-elevated', '--sc-bg-input', '--sc-bg-header',
+  '--sc-text-primary', '--sc-text-secondary',
+  '--chat-text-primary', '--chat-text-secondary',
+  '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
+  '--sc-border-mute', '--sc-border-strong',
+  '--primary-color', '--primary-color-hover',
+  '--custom-keyword-bg', '--custom-keyword-border',
+]
+
+const clearPreviewThemeVars = () => {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  previewCssVars.forEach((name) => {
+    root.style.removeProperty(name)
+  })
+  delete root.dataset.customTheme
+}
+
+const applyPreviewColorsToRoot = (colors: CustomThemeColors) => {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  const setVar = (name: string, value?: string) => {
+    if (!value) return
+    root.style.setProperty(name, value)
+  }
+
+  clearPreviewThemeVars()
+
+  setVar('--sc-bg-surface', colors.bgSurface)
+  setVar('--sc-bg-elevated', colors.bgElevated)
+  setVar('--sc-bg-input', colors.bgInput)
+  setVar('--sc-bg-header', colors.bgHeader)
+
+  setVar('--sc-text-primary', colors.textPrimary)
+  setVar('--chat-text-primary', colors.textPrimary)
+  setVar('--sc-text-secondary', colors.textSecondary)
+  setVar('--chat-text-secondary', colors.textSecondary)
+
+  setVar('--custom-chat-ic-bg', colors.chatIcBg)
+  setVar('--custom-chat-ooc-bg', colors.chatOocBg)
+  setVar('--custom-chat-stage-bg', colors.chatStageBg || colors.chatIcBg)
+  setVar('--custom-chat-preview-bg', colors.chatPreviewBg)
+  setVar('--custom-chat-preview-dot', colors.chatPreviewDot)
+
+  setVar('--sc-border-mute', colors.borderMute)
+  setVar('--sc-border-strong', colors.borderStrong)
+
+  setVar('--primary-color', colors.primaryColor)
+  setVar('--primary-color-hover', colors.primaryColorHover)
+
+  setVar('--custom-keyword-bg', colors.keywordBg)
+  setVar('--custom-keyword-border', colors.keywordBorder)
+
+  root.dataset.customTheme = 'true'
+}
+
+const previewColorVarMap: Record<keyof CustomThemeColors, string[]> = {
+  bgSurface: ['--sc-bg-surface'],
+  bgElevated: ['--sc-bg-elevated'],
+  bgInput: ['--sc-bg-input'],
+  bgHeader: ['--sc-bg-header'],
+  textPrimary: ['--sc-text-primary'],
+  textSecondary: ['--sc-text-secondary'],
+  chatIcBg: ['--custom-chat-ic-bg', '--chat-ic-bg'],
+  chatOocBg: ['--custom-chat-ooc-bg', '--chat-ooc-bg'],
+  chatStageBg: ['--custom-chat-stage-bg', '--chat-stage-bg'],
+  chatPreviewBg: ['--custom-chat-preview-bg', '--chat-preview-bg'],
+  chatPreviewDot: ['--custom-chat-preview-dot', '--chat-preview-dot'],
+  borderMute: ['--sc-border-mute'],
+  borderStrong: ['--sc-border-strong'],
+  primaryColor: ['--primary-color'],
+  primaryColorHover: ['--primary-color-hover'],
+  keywordBg: ['--custom-keyword-bg'],
+  keywordBorder: ['--custom-keyword-border'],
+}
+
+const readCurrentThemeColorsFromCss = (): CustomThemeColors => {
+  if (typeof document === 'undefined') return {}
+  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return {}
+  const style = window.getComputedStyle(document.documentElement)
+  const result: CustomThemeColors = {}
+
+  const colorKeys = Object.keys(previewColorVarMap) as Array<keyof CustomThemeColors>
+  colorKeys.forEach((key) => {
+    const candidates = previewColorVarMap[key]
+    const value = candidates
+      .map(v => style.getPropertyValue(v).trim())
+      .find(v => !!v)
+    if (value) {
+      result[key] = value
+    }
+  })
+
+  return result
+}
+
+const getPaletteBaseColors = (): CustomThemeColors => {
+  return display.settings.palette === 'night'
+    ? { ...nightBaseTheme.colors }
+    : { ...dayBaseTheme.colors }
+}
+
+const buildLivePreviewColors = (): CustomThemeColors => {
+  const base = livePreviewBaseColors.value || getPaletteBaseColors()
+  return {
+    ...base,
+    ...themeColors.value,
+  }
+}
+
+const handleOpenLivePreview = () => {
+  try {
+    const currentCssColors = readCurrentThemeColorsFromCss()
+    const activeTheme = typeof display.getActiveCustomTheme === 'function'
+      ? display.getActiveCustomTheme()
+      : null
+    livePreviewBaseColors.value = {
+      ...getPaletteBaseColors(),
+      ...(activeTheme?.colors || {}),
+      ...currentCssColors,
+    }
+    livePreviewFloatingVisible.value = true
+    applyPreviewColorsToRoot(buildLivePreviewColors())
+  } catch (error) {
+    console.error('[CustomThemePanel] 开启实时预览失败', error)
+    livePreviewFloatingVisible.value = false
+    livePreviewBaseColors.value = null
+  }
+}
+
+const handleCloseLivePreview = () => {
+  try {
+    livePreviewFloatingVisible.value = false
+    livePreviewBaseColors.value = null
+    stopLivePreviewSafely()
+  } catch (error) {
+    console.error('[CustomThemePanel] 关闭实时预览失败', error)
+  }
+}
+
+const toggleLivePreview = () => {
+  if (livePreviewFloatingVisible.value) {
+    handleCloseLivePreview()
+    return
+  }
+  handleOpenLivePreview()
+}
+
+const handleLivePreviewFloatingShowUpdate = (visible: boolean) => {
+  if (!visible) {
+    handleCloseLivePreview()
+  }
+}
+
+const handleLivePreviewFloatingColorUpdate = (payload: { key: keyof CustomThemeColors; value: string | null }) => {
+  updateColor(payload.key, payload.value)
+}
+
 // 监听显示状态
 watch(() => props.show, (visible) => {
   if (visible) {
+    selectedThemeId.value = activeThemeId.value || themes.value[0]?.id || null
     // 默认进入新建模式
     if (themes.value.length === 0) {
       startCreate()
@@ -169,6 +455,33 @@ watch(() => props.show, (visible) => {
       resetForm()
     }
   }
+})
+
+watch(
+  () => [activeThemeId.value, themes.value.map(theme => theme.id).join(',')],
+  () => {
+    if (activeThemeId.value) {
+      selectedThemeId.value = activeThemeId.value
+      return
+    }
+    const fallbackId = themes.value[0]?.id || null
+    selectedThemeId.value = fallbackId
+  },
+  { immediate: true },
+)
+
+watch(
+  () => themeColors.value,
+  () => {
+    if (!livePreviewFloatingVisible.value) return
+    applyPreviewColorsToRoot(buildLivePreviewColors())
+  },
+  { deep: true },
+)
+
+onBeforeUnmount(() => {
+  livePreviewBaseColors.value = null
+  stopLivePreviewSafely()
 })
 
 const updateColor = (key: keyof CustomThemeColors, value: string | null) => {
@@ -271,26 +584,24 @@ const handleImportFile = (event: Event) => {
   <n-drawer :show="props.show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
     <n-drawer-content closable title="自定义主题">
       <div class="custom-theme-panel">
-        <!-- 主题列表 -->
+        <!-- 主题选择 -->
         <section class="theme-section" v-if="themes.length > 0">
           <p class="section-title">已保存的主题</p>
-          <div class="theme-list">
-            <div
-              v-for="theme in themes"
-              :key="theme.id"
-              class="theme-item"
-              :class="{ 'is-active': activeThemeId === theme.id }"
-              @click="handleActivate(theme.id)"
-            >
-              <div class="theme-item__info">
-                <span class="theme-item__name">{{ theme.name }}</span>
-                <n-tag v-if="activeThemeId === theme.id" size="small" type="success">当前</n-tag>
-              </div>
-              <div class="theme-item__actions">
-                <n-button text size="small" @click.stop="exportTheme(theme)">导出</n-button>
-                <n-button text size="small" @click.stop="startEdit(theme)">编辑</n-button>
-                <n-button text size="small" type="error" @click.stop="handleDelete(theme.id)">删除</n-button>
-              </div>
+          <div class="theme-selector-row">
+            <n-select
+              v-model:value="selectedThemeId"
+              :options="savedThemeOptions"
+              filterable
+              clearable
+              placeholder="搜索并选择已保存主题..."
+              size="small"
+              class="theme-select"
+              @update:value="handleThemeSelect"
+            />
+            <div class="theme-selector-actions">
+              <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleExportSelectedTheme">导出</n-button>
+              <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleEditSelectedTheme">编辑</n-button>
+              <n-button text size="small" type="error" :disabled="!selectedSavedTheme" @click="handleDeleteSelectedTheme">删除</n-button>
             </div>
           </div>
         </section>
@@ -315,20 +626,21 @@ const handleImportFile = (event: Event) => {
 
         <n-divider />
 
-        <!-- 预设主题 -->
+        <!-- 导入主题模板 -->
         <section class="theme-section">
-          <p class="section-title">导入预设主题</p>
+          <p class="section-title">导入主题模板</p>
           <div class="preset-import">
             <n-select
-              :options="presetOptions"
-              placeholder="选择预设主题..."
+              v-model:value="selectedImportSource"
+              :options="importThemeOptions"
+              filterable
+              clearable
+              placeholder="搜索并选择主题模板..."
               size="small"
-              :render-label="(option: any) => option.label"
-              @update:value="importPreset"
-              :value="null"
+              @update:value="importThemeFromSource"
               class="preset-select"
             />
-            <p class="preset-hint">选择后将自动导入并激活该预设主题</p>
+            <p class="preset-hint">支持预设主题和已保存主题，选择后仅填充编辑器，确认保存后才写入主题列表</p>
           </div>
         </section>
 
@@ -339,6 +651,20 @@ const handleImportFile = (event: Event) => {
           <div class="section-header">
             <p class="section-title">{{ editMode === 'edit' ? '编辑主题' : '新建主题' }}</p>
             <n-button v-if="editMode === 'edit'" text size="small" @click="startCreate">取消编辑</n-button>
+          </div>
+
+          <div class="theme-live-preview-row">
+            <n-button
+              size="small"
+              secondary
+              :type="livePreviewFloatingVisible ? 'warning' : 'primary'"
+              @click="toggleLivePreview"
+            >
+              {{ livePreviewFloatingVisible ? '关闭实时预览' : '开启实时预览' }}
+            </n-button>
+            <span class="theme-live-preview-hint">
+              {{ livePreviewFloatingVisible ? '预览悬浮窗已开启，可持续对照当前调色效果' : '点击开启后，颜色修改将实时渲染到当前页面' }}
+            </span>
           </div>
 
           <n-form label-placement="left" label-width="80">
@@ -398,6 +724,14 @@ const handleImportFile = (event: Event) => {
       </template>
     </n-drawer-content>
   </n-drawer>
+  <ThemeLivePreviewFloating
+    :show="livePreviewFloatingVisible"
+    :color-fields="colorFields"
+    :theme-colors="themeColors"
+    @update:show="handleLivePreviewFloatingShowUpdate"
+    @update:theme-color="handleLivePreviewFloatingColorUpdate"
+    @save-theme="handleSaveFromLivePreviewFloating"
+  />
 </template>
 
 <style scoped lang="scss">
@@ -425,47 +759,34 @@ const handleImportFile = (event: Event) => {
   color: var(--sc-text-primary);
 }
 
-.theme-list {
+.theme-selector-row {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.theme-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.6rem 0.75rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--sc-border-mute);
-  cursor: pointer;
-  transition: all 0.15s ease;
-
-  &:hover {
-    border-color: var(--sc-border-strong);
-    background: rgba(0, 0, 0, 0.02);
-  }
-
-  &.is-active {
-    border-color: var(--primary-color, #3388de);
-    background: rgba(51, 136, 222, 0.05);
-  }
+.theme-select {
+  width: 100%;
 }
 
-.theme-item__info {
+.theme-selector-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-
-.theme-item__name {
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.theme-item__actions {
-  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.25rem;
+}
+
+.theme-live-preview-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.theme-live-preview-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
 }
 
 .preset-import {
@@ -532,10 +853,6 @@ const handleImportFile = (event: Event) => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-:root[data-display-palette='night'] .theme-item:hover {
-  background: rgba(255, 255, 255, 0.03);
 }
 
 .color-swatch-trigger {
@@ -620,18 +937,7 @@ const handleImportFile = (event: Event) => {
     font-size: 0.85rem;
   }
 
-  .theme-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
-    padding: 0.75rem;
-  }
-
-  .theme-item__info {
-    width: 100%;
-  }
-
-  .theme-item__actions {
+  .theme-selector-actions {
     width: 100%;
     justify-content: flex-end;
     gap: 0.5rem;
@@ -665,8 +971,12 @@ const handleImportFile = (event: Event) => {
     width: 100%;
   }
 
+  .theme-live-preview-row .n-button {
+    width: 100%;
+  }
+
   /* 更大的触摸目标 */
-  .theme-item__actions .n-button {
+  .theme-selector-actions .n-button {
     padding: 0.35rem 0.5rem;
     font-size: 0.8rem;
   }

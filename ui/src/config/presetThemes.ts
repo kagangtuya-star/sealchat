@@ -15,6 +15,66 @@ export interface PresetTheme {
 }
 
 /**
+ * 日间基础模板
+ *
+ * 基于 `main.css` 的 :root 默认变量。
+ */
+export const dayBaseTheme: PresetTheme = {
+    id: 'preset_day_base',
+    name: '日间基础模板',
+    description: '基于系统默认日间配色，适合作为浅色主题二次调整起点',
+    colors: {
+        bgSurface: '#ffffff',
+        bgElevated: '#ffffff',
+        bgInput: '#ffffff',
+        bgHeader: '#fafafa',
+        textPrimary: '#0f172a',
+        textSecondary: '#475569',
+        chatIcBg: '#fbfdf7',
+        chatOocBg: '#ffffff',
+        chatStageBg: '#fbfdf7',
+        chatPreviewBg: '#fafafa',
+        chatPreviewDot: '#dcdcdc',
+        borderMute: 'rgba(15, 23, 42, 0.06)',
+        borderStrong: 'rgba(15, 23, 42, 0.12)',
+        primaryColor: '#3388de',
+        primaryColorHover: '#3388de',
+        keywordBg: 'rgba(51, 136, 222, 0.2)',
+        keywordBorder: '#3388de',
+    },
+}
+
+/**
+ * 夜间基础模板
+ *
+ * 基于 `main.css` 的 :root[data-display-palette='night'] 变量。
+ */
+export const nightBaseTheme: PresetTheme = {
+    id: 'preset_night_base',
+    name: '夜间基础模板',
+    description: '基于系统默认夜间配色，适合作为深色主题二次调整起点',
+    colors: {
+        bgSurface: '#1b1b20',
+        bgElevated: '#26262c',
+        bgInput: '#3f3f46',
+        bgHeader: '#262626',
+        textPrimary: '#f4f4f5',
+        textSecondary: '#b5b5c5',
+        chatIcBg: '#3f3f46',
+        chatOocBg: '#000000',
+        chatStageBg: '#0f1117',
+        chatPreviewBg: '#3f3f46',
+        chatPreviewDot: '#55555c',
+        borderMute: 'rgba(255, 255, 255, 0.08)',
+        borderStrong: 'rgba(255, 255, 255, 0.16)',
+        primaryColor: '#3388de',
+        primaryColorHover: '#3388de',
+        keywordBg: 'rgba(120, 174, 230, 0.22)',
+        keywordBorder: '#7aaee6',
+    },
+}
+
+/**
  * 豆沙绿护眼主题 (Dusha Green Eye-Care Theme)
  * 
  * 参考菠萝平台的护眼豆沙绿颜色设计
@@ -55,6 +115,8 @@ export const dushaGreenTheme: PresetTheme = {
  * 所有预设主题列表
  */
 export const presetThemes: PresetTheme[] = [
+    dayBaseTheme,
+    nightBaseTheme,
     dushaGreenTheme,
 ]
 
