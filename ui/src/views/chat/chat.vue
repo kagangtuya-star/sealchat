@@ -5405,7 +5405,7 @@ const resolveTypingPreviewMode = (): TypingBroadcastState => {
   if (legacy === 'false') {
     return 'indicator';
   }
-  return 'indicator';
+  return 'content';
 };
 const typingPreviewMode = ref<TypingBroadcastState>(resolveTypingPreviewMode());
 if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
