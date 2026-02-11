@@ -2139,7 +2139,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if prevContent != newContent {
 		updates["content"] = msg.Content
-		rebuiltWidgetData := service.BuildStateWidgetDataFromContent(msg.Content)
+		rebuiltWidgetData := service.BuildStateWidgetDataFromContentWithPrevious(msg.Content, msg.WidgetData)
 		updates["widget_data"] = rebuiltWidgetData
 		msg.WidgetData = rebuiltWidgetData
 	}

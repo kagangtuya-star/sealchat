@@ -994,6 +994,115 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
 
 const STATE_WIDGET_REGEX = /\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
 
+type StateWidgetTextSegment = {
+  node: Text;
+  start: number;
+  end: number;
+  text: string;
+};
+
+type StateWidgetRange = {
+  start: number;
+  end: number;
+  isMarkdownLink: boolean;
+};
+
+type StateWidgetRenderItem = {
+  node: Text;
+  from: number;
+  to: number;
+  keepText?: string;
+  widgetIndex?: number;
+};
+
+const collectStateWidgetTextSegments = (host: HTMLElement): StateWidgetTextSegment[] => {
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+  const segments: StateWidgetTextSegment[] = [];
+  let cursor = 0;
+  let textNode: Text | null;
+
+  while ((textNode = walker.nextNode() as Text | null)) {
+    const parent = textNode.parentElement;
+    if (parent?.closest('.state-text-widget, a')) {
+      continue;
+    }
+    const text = textNode.textContent || '';
+    if (!text) {
+      continue;
+    }
+    const start = cursor;
+    const end = start + text.length;
+    segments.push({ node: textNode, start, end, text });
+    cursor = end;
+  }
+
+  return segments;
+};
+
+const collectStateWidgetRanges = (fullText: string): StateWidgetRange[] => {
+  const ranges: StateWidgetRange[] = [];
+  STATE_WIDGET_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = STATE_WIDGET_REGEX.exec(fullText)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const isMarkdownLink = end < fullText.length && fullText[end] === '(';
+    ranges.push({ start, end, isMarkdownLink });
+  }
+  return ranges;
+};
+
+const buildStateWidgetRenderMap = (
+  segments: StateWidgetTextSegment[],
+  ranges: StateWidgetRange[],
+  entries: Array<{ type: string; options: string[]; index: number }>,
+): Map<Text, StateWidgetRenderItem[]> => {
+  const renderMap = new Map<Text, StateWidgetRenderItem[]>();
+  const pushItem = (node: Text, item: StateWidgetRenderItem) => {
+    const list = renderMap.get(node) || [];
+    list.push(item);
+    renderMap.set(node, list);
+  };
+
+  let widgetCounter = 0;
+  for (const range of ranges) {
+    const targetWidgetIndex = !range.isMarkdownLink && widgetCounter < entries.length
+      ? widgetCounter
+      : undefined;
+    let widgetInserted = false;
+
+    for (const seg of segments) {
+      if (seg.end <= range.start || seg.start >= range.end) {
+        continue;
+      }
+      const from = Math.max(seg.start, range.start) - seg.start;
+      const to = Math.min(seg.end, range.end) - seg.start;
+      if (from >= to) {
+        continue;
+      }
+      if (range.isMarkdownLink) {
+        const keepText = seg.text.slice(from, to);
+        pushItem(seg.node, { node: seg.node, from, to, keepText });
+        continue;
+      }
+
+      if (!widgetInserted && targetWidgetIndex !== undefined) {
+        pushItem(seg.node, { node: seg.node, from, to, widgetIndex: targetWidgetIndex });
+        widgetInserted = true;
+      } else {
+        // 非首段：删除匹配区间，避免跨节点重复插入 widget
+        pushItem(seg.node, { node: seg.node, from, to, keepText: '' });
+      }
+    }
+
+    if (!range.isMarkdownLink && targetWidgetIndex !== undefined) {
+      widgetCounter++;
+    }
+  }
+
+  return renderMap;
+};
+
 const processStateTextWidgets = () => {
   nextTick(() => {
     const host = messageContentRef.value;
@@ -1031,48 +1140,55 @@ const processStateTextWidgets = () => {
     }
     const canInteract = isSender || isMentioned || isAdmin;
 
-    // TreeWalker: find text nodes matching widget patterns
-    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
-    const nodesToProcess: { node: Text; matches: RegExpExecArray[] }[] = [];
-    let textNode: Text | null;
-    while ((textNode = walker.nextNode() as Text | null)) {
-      if (textNode.parentElement?.closest('.state-text-widget, a')) continue;
-      const text = textNode.textContent || '';
-      STATE_WIDGET_REGEX.lastIndex = 0;
-      const matches: RegExpExecArray[] = [];
-      let match: RegExpExecArray | null;
-      while ((match = STATE_WIDGET_REGEX.exec(text)) !== null) {
-        // Skip markdown links: [a|b](url)
-        const endPos = match.index + match[0].length;
-        if (endPos < text.length && text[endPos] === '(') continue;
-        matches.push({ ...match, index: match.index } as RegExpExecArray);
-      }
-      if (matches.length) nodesToProcess.push({ node: textNode, matches });
+    const segments = collectStateWidgetTextSegments(host);
+    if (!segments.length) {
+      return;
     }
 
-    let widgetCounter = 0;
-    for (const { node, matches } of nodesToProcess) {
+    const fullText = segments.map(seg => seg.text).join('');
+    const ranges = collectStateWidgetRanges(fullText);
+    if (!ranges.length) {
+      return;
+    }
+
+    const renderMap = buildStateWidgetRenderMap(segments, ranges, entries);
+    renderMap.forEach((items, node) => {
       const text = node.textContent || '';
       const fragment = document.createDocumentFragment();
       let lastIndex = 0;
 
-      for (const match of matches) {
-        if (widgetCounter >= entries.length) break;
-        const entry = entries[widgetCounter];
-
-        if (match.index > lastIndex) {
-          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const sorted = items.slice().sort((a, b) => a.from - b.from || a.to - b.to);
+      for (const renderItem of sorted) {
+        if (renderItem.from > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, renderItem.from)));
         }
+
+        if (renderItem.keepText !== undefined) {
+          if (renderItem.keepText) {
+            fragment.appendChild(document.createTextNode(renderItem.keepText));
+          }
+          lastIndex = renderItem.to;
+          continue;
+        }
+
+        const widgetIdx = renderItem.widgetIndex;
+        if (widgetIdx === undefined || widgetIdx >= entries.length) {
+          fragment.appendChild(document.createTextNode(text.slice(renderItem.from, renderItem.to)));
+          lastIndex = renderItem.to;
+          continue;
+        }
+
+        const entry = entries[widgetIdx];
 
         const span = document.createElement('span');
         span.className = 'state-text-widget' + (canInteract ? ' state-text-widget--active' : '');
-        span.dataset.widgetIndex = String(widgetCounter);
+        span.dataset.widgetIndex = String(widgetIdx);
         const currentIndex = entry.index ?? 0;
         span.textContent = entry.options[currentIndex] || entry.options[0] || '';
 
         if (canInteract) {
           const msgId = item.id;
-          const wIdx = widgetCounter;
+          const wIdx = widgetIdx;
           span.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1081,15 +1197,14 @@ const processStateTextWidgets = () => {
         }
 
         fragment.appendChild(span);
-        lastIndex = match.index + match[0].length;
-        widgetCounter++;
+        lastIndex = renderItem.to;
       }
 
       if (lastIndex < text.length) {
         fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
       }
       node.replaceWith(fragment);
-    }
+    });
   });
 };
 

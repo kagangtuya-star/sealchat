@@ -23,6 +23,8 @@ func TestBuildStateWidgetDataFromContent(t *testing.T) {
 		{"empty content", "", 0, nil},
 		{"emoji options", "[⭕|❌|✓]", 1, [][]string{{"⭕", "❌", "✓"}}},
 		{"spaces in options", "[ 待办 | 进行中 | 已完成 ]", 1, [][]string{{"待办", "进行中", "已完成"}}},
+		{"tiptap rich text", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"状态 "},{"type":"text","marks":[{"type":"bold"}],"text":"[待办|完成]"}]}]}`, 1, [][]string{{"待办", "完成"}}},
+		{"tiptap split by marks", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"[待办"},{"type":"text","marks":[{"type":"bold"}],"text":"|进行中"},{"type":"text","text":"|完成]"}]}]}`, 1, [][]string{{"待办", "进行中", "完成"}}},
 	}
 
 	for _, tt := range tests {
@@ -129,5 +131,40 @@ func TestBuildStateWidgetDataIdempotent(t *testing.T) {
 	r2 := BuildStateWidgetDataFromContent(content)
 	if r1 != r2 {
 		t.Errorf("parse not idempotent:\n  r1=%s\n  r2=%s", r1, r2)
+	}
+}
+
+func TestBuildStateWidgetDataFromContentWithPrevious(t *testing.T) {
+	content := "状态: [待办|进行中|已完成] 优先级: [高|低]"
+	prev := `[{"type":"state","options":["待办","进行中","已完成"],"index":2},{"type":"state","options":["高","低"],"index":1}]`
+	result := BuildStateWidgetDataFromContentWithPrevious(content, prev)
+	var entries []StateWidgetEntry
+	if err := json.Unmarshal([]byte(result), &entries); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Index != 2 {
+		t.Fatalf("expected entry[0].Index=2, got %d", entries[0].Index)
+	}
+	if entries[1].Index != 1 {
+		t.Fatalf("expected entry[1].Index=1, got %d", entries[1].Index)
+	}
+}
+
+func TestBuildStateWidgetDataFromContentWithPreviousFallback(t *testing.T) {
+	content := "状态: [待办|完成]"
+	prev := `[{"type":"state","options":["A","B"],"index":1}]`
+	result := BuildStateWidgetDataFromContentWithPrevious(content, prev)
+	var entries []StateWidgetEntry
+	if err := json.Unmarshal([]byte(result), &entries); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Index != 0 {
+		t.Fatalf("expected fallback index=0, got %d", entries[0].Index)
 	}
 }
