@@ -2483,6 +2483,15 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async interactWithWidget(messageId: string, widgetIndex: number) {
+      if (this.connectState !== 'connected') return
+      await this.sendAPI('widget.interact', {
+        message_id: messageId,
+        widget_index: widgetIndex,
+        operation: 'rotate',
+      })
+    },
+
     async messageGetById(channel_id: string, message_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
       const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.get', { channel_id, message_id });
       return (resp as any)?.data || null;

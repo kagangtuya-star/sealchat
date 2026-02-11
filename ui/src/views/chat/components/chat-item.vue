@@ -992,6 +992,107 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
   }
 };
 
+const STATE_WIDGET_REGEX = /\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
+
+const processStateTextWidgets = () => {
+  nextTick(() => {
+    const host = messageContentRef.value;
+    if (!host) return;
+    const item = props.item as any;
+    if (!item?.widgetData) return;
+
+    let entries: Array<{ type: string; options: string[]; index: number }>;
+    try {
+      entries = typeof item.widgetData === 'string' ? JSON.parse(item.widgetData) : item.widgetData;
+    } catch { return; }
+    if (!entries?.length) return;
+
+    // Permission pre-check
+    const userId = user.info.id;
+    const isSender = item.user?.id === userId || item.userId === userId || item.user_id === userId;
+    let isMentioned = false;
+    if (!isSender) {
+      const content = item.content || '';
+      const atRegex = /<at\s[^>]*id="([^"]*)"[^>]*\/?>/g;
+      let m: RegExpExecArray | null;
+      while ((m = atRegex.exec(content)) !== null) {
+        if (m[1] === userId) { isMentioned = true; break; }
+      }
+    }
+    let isAdmin = false;
+    if (!isSender && !isMentioned) {
+      const worldId = chat.currentWorldId;
+      if (worldId) {
+        const detail = chat.worldDetailMap[worldId];
+        const memberRole = detail?.memberRole;
+        const ownerId = detail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+        isAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === userId;
+      }
+    }
+    const canInteract = isSender || isMentioned || isAdmin;
+
+    // TreeWalker: find text nodes matching widget patterns
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+    const nodesToProcess: { node: Text; matches: RegExpExecArray[] }[] = [];
+    let textNode: Text | null;
+    while ((textNode = walker.nextNode() as Text | null)) {
+      if (textNode.parentElement?.closest('.state-text-widget, a')) continue;
+      const text = textNode.textContent || '';
+      STATE_WIDGET_REGEX.lastIndex = 0;
+      const matches: RegExpExecArray[] = [];
+      let match: RegExpExecArray | null;
+      while ((match = STATE_WIDGET_REGEX.exec(text)) !== null) {
+        // Skip markdown links: [a|b](url)
+        const endPos = match.index + match[0].length;
+        if (endPos < text.length && text[endPos] === '(') continue;
+        matches.push({ ...match, index: match.index } as RegExpExecArray);
+      }
+      if (matches.length) nodesToProcess.push({ node: textNode, matches });
+    }
+
+    let widgetCounter = 0;
+    for (const { node, matches } of nodesToProcess) {
+      const text = node.textContent || '';
+      const fragment = document.createDocumentFragment();
+      let lastIndex = 0;
+
+      for (const match of matches) {
+        if (widgetCounter >= entries.length) break;
+        const entry = entries[widgetCounter];
+
+        if (match.index > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+
+        const span = document.createElement('span');
+        span.className = 'state-text-widget' + (canInteract ? ' state-text-widget--active' : '');
+        span.dataset.widgetIndex = String(widgetCounter);
+        const currentIndex = entry.index ?? 0;
+        span.textContent = entry.options[currentIndex] || entry.options[0] || '';
+
+        if (canInteract) {
+          const msgId = item.id;
+          const wIdx = widgetCounter;
+          span.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            chat.interactWithWidget(msgId, wIdx);
+          });
+        }
+
+        fragment.appendChild(span);
+        lastIndex = match.index + match[0].length;
+        widgetCounter++;
+      }
+
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+      node.replaceWith(fragment);
+    }
+  });
+};
+
 const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId: string; isCurrentWorld: boolean }) => {
   // 内联跳转，不开新标签页
   if (!info.isCurrentWorld) {
@@ -1243,6 +1344,7 @@ onMounted(() => {
   applyDiceTone();
   ensureImageViewer();
   processMessageLinks();
+  processStateTextWidgets();
 
   timestampInterval = setInterval(() => {
     timestampTicker.value = Date.now();
@@ -1262,7 +1364,28 @@ watch([displayContent, () => props.tone], () => {
   applyDiceTone();
   ensureImageViewer();
   processMessageLinks();
+  processStateTextWidgets();
 }, { immediate: true });
+
+watch(() => (props.item as any)?.widgetData, (newData) => {
+  nextTick(() => {
+    const host = messageContentRef.value;
+    if (!host || !newData) return;
+    let entries: Array<{ type: string; options: string[]; index: number }>;
+    try {
+      entries = typeof newData === 'string' ? JSON.parse(newData) : newData;
+    } catch { return; }
+    if (!entries?.length) return;
+    const spans = host.querySelectorAll<HTMLSpanElement>('.state-text-widget');
+    spans.forEach((span) => {
+      const idx = parseInt(span.dataset.widgetIndex || '', 10);
+      if (isNaN(idx) || idx >= entries.length) return;
+      const entry = entries[idx];
+      const currentIndex = entry.index ?? 0;
+      span.textContent = entry.options[currentIndex] || entry.options[0] || '';
+    });
+  });
+});
 
 watch(() => otherEditingPreview.value?.previewHtml, () => {
   applyDiceTone();
@@ -2294,5 +2417,38 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 
 :root[data-display-palette='night'] .mention-capsule--all:hover {
   background-color: rgba(239, 68, 68, 0.3);
+}
+
+.state-text-widget {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border-bottom: 2px dashed var(--primary-color, #4098fc);
+  background-color: rgba(64, 152, 252, 0.08);
+  font-weight: 500;
+  user-select: none;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.state-text-widget--active {
+  cursor: pointer;
+}
+
+.state-text-widget--active:hover {
+  background-color: rgba(64, 152, 252, 0.18);
+  border-bottom-style: solid;
+}
+
+.state-text-widget--active:active {
+  background-color: rgba(64, 152, 252, 0.28);
+}
+
+:root[data-display-palette='night'] .state-text-widget {
+  background-color: rgba(64, 152, 252, 0.12);
+  border-bottom-color: rgba(64, 152, 252, 0.6);
+}
+
+:root[data-display-palette='night'] .state-text-widget--active:hover {
+  background-color: rgba(64, 152, 252, 0.25);
 }
 </style>

@@ -614,6 +614,9 @@ func websocketWorks(app *fiber.App) {
 					case "message.update":
 						apiWrap(ctx, msg, apiMessageUpdate)
 						solved = true
+					case "widget.interact":
+						apiWrap(ctx, msg, apiWidgetInteract)
+						solved = true
 					case "message.delete":
 						apiWrap(ctx, msg, apiMessageDelete)
 						solved = true

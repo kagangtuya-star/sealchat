@@ -11,7 +11,8 @@ const displayOrderBaseGap = 1024.0
 
 type MessageModel struct {
 	StringPKBaseModel
-	Content      string  `json:"content"`
+	Content    string `json:"content"`
+	WidgetData string `json:"widget_data" gorm:"type:text;not null;default:''"`
 	ChannelID    string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1"`
 	GuildID      string  `json:"guild_id" gorm:"null;size:100"`
 	MemberID     string  `json:"member_id" gorm:"null;size:100"`
@@ -102,6 +103,7 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 		IsDeleted:        m.IsDeleted,
 		DeletedAt:        deletedAt,
 		DeletedBy:        m.DeletedBy,
+		WidgetData:       m.WidgetData,
 		WhisperTo: func() *protocol.User {
 			if m.WhisperTarget != nil {
 				return m.WhisperTarget.ToProtocolType()

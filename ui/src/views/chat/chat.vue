@@ -4106,6 +4106,9 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.isDeleted === undefined && msg.is_deleted !== undefined) {
     msg.isDeleted = msg.is_deleted;
   }
+  if (msg.widgetData === undefined && msg.widget_data !== undefined) {
+    msg.widgetData = msg.widget_data;
+  }
 
   if (msg.senderRoleId === undefined && msg.sender_role_id !== undefined) {
     msg.senderRoleId = msg.sender_role_id;
@@ -8812,6 +8815,13 @@ chatEvent.on('message-created', (e?: Event) => {
 chatEvent.off('message-updated', '*');
 chatEvent.on('message-updated', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  if ((e as any).is_interactive_update) {
+    const idx = rows.value.findIndex((m: any) => m.id === e.message!.id);
+    if (idx >= 0) {
+      rows.value[idx] = { ...rows.value[idx], widgetData: (e.message as any).widgetData };
+    }
     return;
   }
   const incoming = normalizeMessageShape(e.message);

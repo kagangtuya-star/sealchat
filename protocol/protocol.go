@@ -109,6 +109,7 @@ type Message struct {
 	SenderRoleID  string           `json:"senderRoleId,omitempty"`
 	Member        *GuildMember     `json:"member"`
 	Content       string           `json:"content"`
+	WidgetData    string           `json:"widgetData,omitempty"`
 	Elements      []*Element       `json:"elements"`
 	Timestamp     int64            `json:"timestamp"`
 	Quote         *Message         `json:"quote"`
@@ -366,6 +367,7 @@ type Event struct {
 	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload       `json:"characterCardBadgeSnapshot,omitempty"`
 	MessageContext *MessageContext            `json:"messageContext,omitempty"`
 	MessageReaction *MessageReactionEvent     `json:"messageReaction,omitempty"`
+	IsInteractiveUpdate bool                  `json:"is_interactive_update,omitempty"`
 }
 
 type TypingState string

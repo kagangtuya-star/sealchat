@@ -17,6 +17,7 @@ import (
 	"github.com/samber/lo"
 	ds "github.com/sealdice/dicescript"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/pm"
@@ -1372,6 +1373,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 	}
 
+	widgetData := service.BuildStateWidgetDataFromContent(content)
+
 	m := model.MessageModel{
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
@@ -1381,6 +1384,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		MemberID:     member.ID,
 		QuoteID:      data.QuoteID,
 		Content:      content,
+		WidgetData:   widgetData,
 		DisplayOrder: displayOrder,
 		ICMode:       icMode,
 
@@ -2135,6 +2139,9 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if prevContent != newContent {
 		updates["content"] = msg.Content
+		rebuiltWidgetData := service.BuildStateWidgetDataFromContent(msg.Content)
+		updates["widget_data"] = rebuiltWidgetData
+		msg.WidgetData = rebuiltWidgetData
 	}
 	if icModeChanged {
 		updates["ic_mode"] = msg.ICMode
@@ -2966,4 +2973,164 @@ func apiUnreadCount(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 	return lst, err
+}
+
+func apiWidgetInteract(ctx *ChatContext, data *struct {
+	MessageID   string `json:"message_id"`
+	WidgetIndex int    `json:"widget_index"`
+	Operation   string `json:"operation"`
+}) (any, error) {
+	if data.Operation != "rotate" {
+		return nil, fmt.Errorf("unsupported operation: %s", data.Operation)
+	}
+
+	db := model.GetDB()
+	var msg model.MessageModel
+	db.Select("id, user_id, content, channel_id, guild_id, widget_data, is_whisper, whisper_to, is_revoked, is_deleted").
+		Where("id = ?", data.MessageID).Limit(1).Find(&msg)
+	if msg.ID == "" {
+		return nil, fmt.Errorf("message not found")
+	}
+	if msg.IsRevoked || msg.IsDeleted {
+		return nil, fmt.Errorf("message unavailable")
+	}
+	if msg.WidgetData == "" {
+		return nil, fmt.Errorf("message has no widget data")
+	}
+
+	// Channel access check
+	if !pm.CanWithChannelRole(ctx.User.ID, msg.ChannelID, pm.PermFuncChannelRead) {
+		return nil, fmt.Errorf("forbidden")
+	}
+
+	// Whisper check
+	if msg.IsWhisper {
+		recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+		isParticipant := msg.UserID == ctx.User.ID || msg.WhisperTo == ctx.User.ID
+		if !isParticipant {
+			for _, rid := range recipientIDs {
+				if rid == ctx.User.ID {
+					isParticipant = true
+					break
+				}
+			}
+		}
+		if !isParticipant {
+			return nil, fmt.Errorf("forbidden")
+		}
+	}
+
+	// Permission check: sender / @mentioned / admin
+	allowed := msg.UserID == ctx.User.ID
+	if !allowed {
+		root := protocol.ElementParse(msg.Content)
+		if root != nil {
+			root.Traverse(func(el *protocol.Element) {
+				if el.Type == "at" {
+					if id, ok := el.Attrs["id"].(string); ok && id == ctx.User.ID {
+						allowed = true
+					}
+				}
+			})
+		}
+	}
+	if !allowed {
+		channel, _ := model.ChannelGet(msg.ChannelID)
+		worldID := ""
+		if channel != nil {
+			worldID = channel.WorldID
+		}
+		role := service.ResolveMemberRoleForProtocol(ctx.User.ID, msg.ChannelID, worldID)
+		if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return nil, fmt.Errorf("forbidden")
+	}
+
+	// Rotate widget in transaction
+	var newJSON string
+	var txErr error
+	if model.IsSQLite() {
+		txErr = db.Transaction(func(tx *gorm.DB) error {
+			var fresh model.MessageModel
+			if err := tx.Select("widget_data").Where("id = ?", msg.ID).Take(&fresh).Error; err != nil {
+				return err
+			}
+			var err error
+			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			if err != nil {
+				return err
+			}
+			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
+		})
+	} else {
+		txErr = db.Transaction(func(tx *gorm.DB) error {
+			var fresh model.MessageModel
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("widget_data").Where("id = ?", msg.ID).Take(&fresh).Error; err != nil {
+				return err
+			}
+			var err error
+			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			if err != nil {
+				return err
+			}
+			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
+		})
+	}
+	if txErr != nil {
+		return nil, txErr
+	}
+
+	// Reload full message for broadcast
+	var fullMsg model.MessageModel
+	db.Preload("User").Preload("Member").Where("id = ?", msg.ID).Limit(1).Find(&fullMsg)
+	if fullMsg.IsWhisper {
+		fullMsg.WhisperTarget = model.UserGet(fullMsg.WhisperTo)
+		fullMsg.WhisperTargets = loadWhisperTargetsForMessage(fullMsg.ChannelID, fullMsg.ID, fullMsg.WhisperTarget)
+	}
+
+	channel, _ := model.ChannelGet(fullMsg.ChannelID)
+	channelData := channel.ToProtocolType()
+	messageData := fullMsg.ToProtocolType2(channelData)
+	messageData.Content = fullMsg.Content
+	if fullMsg.User != nil {
+		messageData.User = fullMsg.User.ToProtocolType()
+	}
+	if fullMsg.Member != nil {
+		messageData.Member = fullMsg.Member.ToProtocolType()
+	}
+	if fullMsg.WhisperTarget != nil {
+		messageData.WhisperTo = fullMsg.WhisperTarget.ToProtocolType()
+	}
+
+	ev := &protocol.Event{
+		Type:                protocol.EventMessageUpdated,
+		Message:             messageData,
+		Channel:             channelData,
+		User:                ctx.User.ToProtocolType(),
+		IsInteractiveUpdate: true,
+	}
+
+	if fullMsg.IsWhisper {
+		recipients := []string{fullMsg.UserID}
+		if fullMsg.WhisperTo != "" {
+			recipients = append(recipients, fullMsg.WhisperTo)
+		}
+		recipientIDs := model.GetWhisperRecipientIDs(fullMsg.ID)
+		if len(recipientIDs) > 0 {
+			recipients = append(recipients, recipientIDs...)
+		}
+		recipients = lo.Uniq(recipients)
+		ctx.BroadcastEventInChannelToUsers(fullMsg.ChannelID, recipients, ev)
+	} else {
+		ctx.BroadcastEventInChannel(fullMsg.ChannelID, ev)
+		ctx.BroadcastEventInChannelForBot(fullMsg.ChannelID, ev)
+	}
+
+	return &struct {
+		Message *protocol.Message `json:"message"`
+	}{Message: messageData}, nil
 }
