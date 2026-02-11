@@ -2044,6 +2044,76 @@ const handleSlashInput = (e: InputEvent) => {
     });
   }
 };
+
+type IdentityShortcutMatchResult = {
+  matched: ChannelIdentity | null;
+  restContent: string;
+  ambiguous: boolean;
+};
+
+const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdentity[]): IdentityShortcutMatchResult | null => {
+  const shortcutMatch = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(rawDraft);
+  if (!shortcutMatch) {
+    return null;
+  }
+  const targetNameRaw = (shortcutMatch[1] || '').trim();
+  if (!targetNameRaw) {
+    return null;
+  }
+  const restContent = shortcutMatch[2] ?? '';
+  const targetName = targetNameRaw.toLowerCase();
+  const normalizedCandidates = identities
+    .map((item, index) => {
+      const displayName = (item.displayName || '').trim();
+      return {
+        item,
+        index,
+        normalizedName: displayName.toLowerCase(),
+        length: displayName.length,
+      };
+    })
+    .filter(item => !!item.normalizedName);
+
+  const exact = normalizedCandidates.find(item => item.normalizedName === targetName);
+  if (exact) {
+    return {
+      matched: exact.item,
+      restContent,
+      ambiguous: false,
+    };
+  }
+
+  const prefixCandidates = normalizedCandidates.filter(item => item.normalizedName.startsWith(targetName));
+  if (!prefixCandidates.length) {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: false,
+    };
+  }
+
+  const sortedCandidates = prefixCandidates.slice().sort((a, b) => {
+    if (a.length !== b.length) {
+      return a.length - b.length;
+    }
+    return a.index - b.index;
+  });
+  const best = sortedCandidates[0];
+  const hasAmbiguousShortest = sortedCandidates.some((item, index) => index > 0 && item.length === best.length && item.normalizedName !== best.normalizedName);
+  if (hasAmbiguousShortest) {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: true,
+    };
+  }
+
+  return {
+    matched: best.item,
+    restContent,
+    ambiguous: false,
+  };
+};
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
@@ -8223,20 +8293,23 @@ const send = throttle(async () => {
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
 
-  // 仅纯文本模式支持 `/角色名 内容` 快捷切换
+  // 仅纯文本模式支持 `/角色名` 或 `/角色名 内容` 快捷切换
   if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
-    const shortcutMatch = /^\/(\S+)\s+([\s\S]*)$/.exec(draft);
-    if (shortcutMatch) {
-      const targetName = shortcutMatch[1];
-      const restContent = shortcutMatch[2] || '';
-      const identities = chat.channelIdentities[chat.curChannel.id] || [];
-      const matched = identities.find(item => item.displayName === targetName);
-      if (matched) {
-        chat.setActiveIdentity(chat.curChannel.id, matched.id);
-        draft = restContent;
-        textToSend.value = restContent;
-        emitTypingPreview();
-        identityIdOverride = matched.id;
+    const identities = chat.channelIdentities[chat.curChannel.id] || [];
+    const shortcutResult = resolveIdentityShortcutMatch(draft, identities);
+    if (shortcutResult?.ambiguous) {
+      message.warning('匹配到多个同长度角色，请输入更长名称');
+      return;
+    }
+    if (shortcutResult?.matched) {
+      chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
+      draft = shortcutResult.restContent;
+      textToSend.value = shortcutResult.restContent;
+      emitTypingPreview();
+      identityIdOverride = shortcutResult.matched.id;
+      if (!shortcutResult.restContent.trim()) {
+        stopTypingPreviewNow();
+        return;
       }
     }
   }
