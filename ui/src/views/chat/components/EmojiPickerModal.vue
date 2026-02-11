@@ -10,6 +10,16 @@ import { useChatStore } from '@/stores/chat';
 import { matchText } from '@/utils/pinyinMatch';
 import 'emoji-picker-element';
 
+const props = withDefaults(defineProps<{
+  mode?: 'all' | 'emoji-only';
+  initialTab?: 'emoji' | 'reaction';
+  embedded?: boolean;
+}>(), {
+  mode: 'all',
+  initialTab: 'emoji',
+  embedded: false,
+});
+
 const emit = defineEmits<{
   (e: 'select', emoji: string): void;
   (e: 'close'): void;
@@ -29,7 +39,7 @@ const searchKeyword = ref('');
 const displayLimit = ref(120);
 const customGridRef = ref<HTMLElement | null>(null);
 const PAGE_SIZE = 120;
-const activeTab = ref<'emoji' | 'reaction'>('emoji');
+const activeTab = ref<'emoji' | 'reaction'>(props.mode === 'emoji-only' ? 'emoji' : props.initialTab);
 const customEmojiMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
 const pendingCustomEmojiMeta = new Set<string>();
 
@@ -54,7 +64,9 @@ const handleEmojiClick = (event: CustomEvent) => {
   if (emoji) {
     addRecentEmoji(emoji);
     emit('select', emoji);
-    emit('close');
+    if (!props.embedded) {
+      emit('close');
+    }
   }
 };
 
@@ -73,7 +85,9 @@ const handleCustomSelect = (attachmentId: string) => {
   const value = `id:${normalizeAttachmentId(attachmentId)}`;
   addRecentEmoji(value);
   emit('select', value);
-  emit('close');
+  if (!props.embedded) {
+    emit('close');
+  }
 };
 
 const triggerUpload = () => {
@@ -251,7 +265,9 @@ onMounted(() => {
     picker.addEventListener('emoji-click', handleEmojiClick as EventListener);
   }
   void loadRecentEmojis();
-  void ensureCustomEmojis();
+  if (props.mode !== 'emoji-only') {
+    void ensureCustomEmojis();
+  }
   searchBindingCleanup = bindPickerSearch() ?? null;
   emojiFallbackCleanup = bindPickerEmojiFallback() ?? null;
 });
@@ -281,12 +297,29 @@ watch(searchKeyword, () => {
     customGridRef.value.scrollTop = 0;
   }
 });
+
+watch(
+  () => props.mode,
+  (mode) => {
+    if (mode === 'emoji-only' && activeTab.value !== 'emoji') {
+      activeTab.value = 'emoji';
+    }
+  },
+);
 </script>
 
 <template>
-  <div class="emoji-picker-modal" @click.self="emit('close')">
-    <div ref="pickerRef" class="emoji-picker-container">
-      <div class="emoji-picker-tabs">
+  <div
+    class="emoji-picker-modal"
+    :class="{ 'emoji-picker-modal--embedded': props.embedded }"
+    @click.self="!props.embedded && emit('close')"
+  >
+    <div
+      ref="pickerRef"
+      class="emoji-picker-container"
+      :class="{ 'emoji-picker-container--embedded': props.embedded }"
+    >
+      <div v-if="!props.embedded" class="emoji-picker-tabs">
         <button class="emoji-picker-close" type="button" @click="emit('close')">
           返回
         </button>
@@ -299,6 +332,7 @@ watch(searchKeyword, () => {
           表情
         </button>
         <button
+          v-if="props.mode !== 'emoji-only'"
           class="emoji-picker-tab"
           :class="{ 'emoji-picker-tab--active': activeTab === 'reaction' }"
           type="button"
@@ -308,7 +342,7 @@ watch(searchKeyword, () => {
         </button>
       </div>
       <div class="emoji-picker-body">
-        <div v-show="activeTab === 'reaction'" class="custom-emoji-section">
+        <div v-if="props.mode !== 'emoji-only'" v-show="activeTab === 'reaction'" class="custom-emoji-section">
           <div class="custom-emoji-header">
             <span>自定义表情反应</span>
             <button class="custom-emoji-upload" type="button" :disabled="uploading" @click="triggerUpload">
@@ -377,6 +411,14 @@ watch(searchKeyword, () => {
   background: rgba(0, 0, 0, 0.3);
 }
 
+.emoji-picker-modal--embedded {
+  position: static;
+  inset: auto;
+  background: transparent;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
 .emoji-picker-container {
   border-radius: 12px;
   overflow: hidden;
@@ -388,6 +430,24 @@ watch(searchKeyword, () => {
   max-height: min(720px, 92vh);
   display: flex;
   flex-direction: column;
+}
+
+.emoji-picker-container--embedded {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  height: 100%;
+  overflow: hidden;
+}
+
+.emoji-picker-container--embedded .emoji-picker-body {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .emoji-picker-tabs {

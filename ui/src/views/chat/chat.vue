@@ -33,6 +33,7 @@ import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
+import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
@@ -1158,6 +1159,7 @@ const emojiPopoverY = ref<number | null>(null);
 const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
+const emojiPanelTab = ref<'gallery' | 'utf'>('gallery');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
 
@@ -1964,8 +1966,35 @@ const handleEmojiTriggerClick = () => {
     emojiPopoverShow.value = false;
     return;
   }
+  emojiPanelTab.value = 'gallery';
   syncEmojiPopoverPosition();
   emojiPopoverShow.value = true;
+};
+
+const switchEmojiPanelTab = (tab: 'gallery' | 'utf') => {
+  emojiPanelTab.value = tab;
+  if (tab !== 'gallery') {
+    isManagingEmoji.value = false;
+  }
+};
+
+const handleUtfEmojiSelect = (emoji: string) => {
+  if (!emoji || emoji.startsWith('id:')) {
+    return;
+  }
+  if (inputMode.value === 'rich') {
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      editorInstance.chain().focus().insertContent(emoji).run();
+      return;
+    }
+  }
+  const selection = getInputSelection();
+  const text = textToSend.value;
+  textToSend.value = text.slice(0, selection.start) + emoji + text.slice(selection.end);
+  const cursor = selection.start + emoji.length;
+  nextTick(() => setInputSelection(cursor, cursor));
+  ensureInputFocus();
 };
 
 
@@ -11253,27 +11282,38 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
 
-                        <div v-if="hasEmojiItems && hasMultipleTabs" class="emoji-panel__tabs">
+                        <div class="emoji-panel__tabs emoji-panel__tabs--with-utf">
+                          <template v-if="hasEmojiItems && hasMultipleTabs">
+                            <button
+                              class="emoji-panel__tab"
+                              :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === null }"
+                              @click="switchEmojiPanelTab('gallery'); activeEmojiTab = null"
+                            >
+                              全部
+                            </button>
+                            <button
+                              v-for="tab in emojiTabOptions"
+                              :key="tab.id"
+                              class="emoji-panel__tab"
+                              :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === tab.id }"
+                              :title="tab.name"
+                              @click="switchEmojiPanelTab('gallery'); activeEmojiTab = tab.id"
+                            >
+                              <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                            </button>
+                          </template>
                           <button
-                            class="emoji-panel__tab"
-                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === null }"
-                            @click="activeEmojiTab = null"
+                            class="emoji-panel__tab emoji-panel__tab--utf"
+                            :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'utf' }"
+                            title="UTF 表情"
+                            @click="switchEmojiPanelTab('utf')"
                           >
-                            全部
-                          </button>
-                          <button
-                            v-for="tab in emojiTabOptions"
-                            :key="tab.id"
-                            class="emoji-panel__tab"
-                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === tab.id }"
-                            :title="tab.name"
-                            @click="activeEmojiTab = tab.id"
-                          >
-                            <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                            <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
+                            <span class="emoji-panel__tab-text">UTF</span>
                           </button>
                         </div>
 
-                        <div v-if="hasEmojiItems" class="emoji-panel__search">
+                        <div v-if="emojiPanelTab === 'gallery' && hasEmojiItems" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
@@ -11282,11 +11322,25 @@ onBeforeUnmount(() => {
                           />
                         </div>
 
-                        <div v-if="!hasEmojiItems" class="emoji-panel__empty">
+                        <div v-if="emojiPanelTab === 'gallery' && !hasEmojiItems" class="emoji-panel__empty">
                           当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
                         </div>
 
-                        <div v-else class="emoji-panel__content">
+                        <div
+                          class="emoji-panel__content"
+                          :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
+                        >
+                          <template v-if="emojiPanelTab === 'utf'">
+                            <div class="emoji-panel__utf-host">
+                              <EmojiPickerModal
+                                embedded
+                                mode="emoji-only"
+                                initial-tab="emoji"
+                                @select="handleUtfEmojiSelect"
+                              />
+                            </div>
+                          </template>
+                          <template v-else>
                           <template v-if="isManagingEmoji">
                             <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
                               没有匹配的表情
@@ -11340,6 +11394,7 @@ onBeforeUnmount(() => {
                                 </div>
                               </div>
                             </div>
+                          </template>
                           </template>
                         </div>
                       </div>
@@ -14949,6 +15004,20 @@ onBeforeUnmount(() => {
   padding-right: 4px;
 }
 
+.emoji-panel__content--utf {
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.emoji-panel__utf-host {
+  height: 320px;
+  min-height: 0;
+}
+
+.emoji-panel__utf-host :deep(.emoji-picker-container--embedded) {
+  height: 100%;
+}
+
 @media (max-width: 768px) {
   .emoji-panel {
     width: calc(100vw - 32px);
@@ -15028,6 +15097,21 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.emoji-panel__tabs--with-utf {
+  align-items: center;
+}
+
+.emoji-panel__tab--utf {
+  margin-left: auto;
+  gap: 4px;
+  min-width: 64px;
+}
+
+.emoji-panel__tab-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .emoji-panel__search {
