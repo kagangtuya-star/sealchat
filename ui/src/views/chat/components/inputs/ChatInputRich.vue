@@ -411,6 +411,16 @@ const setTextAlign = (align: 'left' | 'center' | 'right' | 'justify') => editor.
 const toggleHighlight = () => editor.value?.chain().focus().toggleHighlight().run();
 const insertHorizontalRule = () => editor.value?.chain().focus().setHorizontalRule().run();
 const clearFormatting = () => editor.value?.chain().focus().clearNodes().unsetAllMarks().run();
+const insertStateWidgetTemplate = () => {
+  if (!editor.value) return;
+  const { from, to } = editor.value.state.selection;
+  const selectedText = from !== to
+    ? editor.value.state.doc.textBetween(from, to, ' ').trim()
+    : '';
+  const firstOption = selectedText || '选项1';
+  const template = `[${firstOption}|选项2|选项3]`;
+  editor.value.chain().focus().insertContent(template).run();
+};
 
 // 高亮颜色操作
 const setHighlightColor = (color: string) => {
@@ -811,6 +821,19 @@ defineExpose({
           >
             🖼
           </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                @click="insertStateWidgetTemplate"
+                title="插入三段状态文本"
+              >
+                ◫
+              </n-button>
+            </template>
+            插入三段状态文本：`[选项1|选项2|选项3]`
+          </n-tooltip>
           <n-button
             size="small"
             text
