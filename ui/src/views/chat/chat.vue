@@ -1,14 +1,13 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
-import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
-import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
+import { NIcon, c, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
