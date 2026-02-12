@@ -77,6 +77,12 @@ export interface RoundCounterTypeData {
 
 export type StickyNoteTypeData = CounterTypeData | ListTypeData | SliderTypeData | TimerTypeData | ClockTypeData | RoundCounterTypeData | null
 
+export interface StickyNoteEmbedLayoutState {
+    collapsed?: boolean
+    width?: number
+    height?: number
+}
+
 // 便签类型定义
 export interface StickyNote {
     id: string
@@ -158,6 +164,7 @@ const STORAGE_KEY_PREFIX = 'sealchat_sticky_notes'
 const MIN_NOTE_WIDTH = 200
 const MIN_NOTE_HEIGHT = 150
 const VIEWPORT_PADDING = 8
+const STICKY_NOTE_EMBED_LAYOUT_KEY = '__embedLayout'
 let viewportListenerBound = false
 
 export const useStickyNoteStore = defineStore('stickyNote', () => {
@@ -922,19 +929,119 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         privateCreateEnabled.value = false
     }
 
-    // 解析 typeData
+    function parseRawTypeDataObject(note?: StickyNote | null): Record<string, any> {
+        if (!note?.typeData) return {}
+        try {
+            const parsed = JSON.parse(note.typeData)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, any>
+            }
+        } catch {
+            // ignore
+        }
+        return {}
+    }
+
+    function normalizeEmbedLayoutState(raw: any): StickyNoteEmbedLayoutState {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return {}
+        }
+        const layout: StickyNoteEmbedLayoutState = {}
+        if (typeof raw.collapsed === 'boolean') {
+            layout.collapsed = raw.collapsed
+        }
+        if (Number.isFinite(raw.width) && raw.width > 0) {
+            layout.width = Math.round(raw.width)
+        }
+        if (Number.isFinite(raw.height) && raw.height > 0) {
+            layout.height = Math.round(raw.height)
+        }
+        return layout
+    }
+
+    // 解析 typeData（不包含嵌入布局内部字段）
     function parseTypeData<T extends StickyNoteTypeData>(note: StickyNote): T | null {
         if (!note.typeData) return null
         try {
-            return JSON.parse(note.typeData) as T
+            const parsed = JSON.parse(note.typeData)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                const record = parsed as Record<string, any>
+                if (Object.prototype.hasOwnProperty.call(record, STICKY_NOTE_EMBED_LAYOUT_KEY)) {
+                    const { [STICKY_NOTE_EMBED_LAYOUT_KEY]: _ignored, ...rest } = record
+                    if (Object.keys(rest).length === 0) {
+                        return null
+                    }
+                    return rest as T
+                }
+            }
+            return parsed as T
         } catch {
             return null
         }
     }
 
+    function getEmbedLayoutState(noteId: string): StickyNoteEmbedLayoutState {
+        const note = notes.value[noteId]
+        if (!note) return {}
+        const raw = parseRawTypeDataObject(note)[STICKY_NOTE_EMBED_LAYOUT_KEY]
+        return normalizeEmbedLayoutState(raw)
+    }
+
+    async function updateEmbedLayoutState(noteId: string, updates: StickyNoteEmbedLayoutState) {
+        const note = notes.value[noteId]
+        if (!note) return false
+
+        const patch = normalizeEmbedLayoutState(updates)
+        const current = getEmbedLayoutState(noteId)
+        const next: StickyNoteEmbedLayoutState = {
+            ...current,
+            ...patch,
+        }
+        if (
+            current.collapsed === next.collapsed &&
+            current.width === next.width &&
+            current.height === next.height
+        ) {
+            return true
+        }
+
+        const record = parseRawTypeDataObject(note)
+        record[STICKY_NOTE_EMBED_LAYOUT_KEY] = next
+
+        const noteUpdates: Partial<StickyNote> = {
+            typeData: JSON.stringify(record)
+        }
+        if (typeof next.width === 'number') {
+            noteUpdates.defaultW = next.width
+        }
+        if (typeof next.height === 'number') {
+            noteUpdates.defaultH = next.height
+        }
+        const result = await updateNoteWithOptions(noteId, noteUpdates)
+        return result.ok
+    }
+
     // 更新 typeData
     async function updateTypeData(noteId: string, typeData: StickyNoteTypeData) {
-        const typeDataStr = JSON.stringify(typeData)
+        const note = notes.value[noteId]
+        const embedLayout = getEmbedLayoutState(noteId)
+        const hasEmbedLayout = Boolean(
+            note &&
+                (embedLayout.collapsed !== undefined || embedLayout.width !== undefined || embedLayout.height !== undefined)
+        )
+
+        let nextTypeData: any
+        if (hasEmbedLayout) {
+            if (typeData && typeof typeData === 'object' && !Array.isArray(typeData)) {
+                nextTypeData = { ...typeData, [STICKY_NOTE_EMBED_LAYOUT_KEY]: embedLayout }
+            } else {
+                nextTypeData = { [STICKY_NOTE_EMBED_LAYOUT_KEY]: embedLayout }
+            }
+        } else {
+            nextTypeData = typeData
+        }
+
+        const typeDataStr = JSON.stringify(nextTypeData)
         await updateNote(noteId, { typeData: typeDataStr })
     }
 
@@ -1052,6 +1159,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         setPrivateCreateEnabled,
         reset,
         parseTypeData,
+        getEmbedLayoutState,
+        updateEmbedLayoutState,
         updateTypeData,
         getDefaultTypeData,
         // 文件夹操作

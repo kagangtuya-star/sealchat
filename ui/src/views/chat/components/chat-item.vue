@@ -7,7 +7,7 @@ import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
-import { useStickyNoteStore, type StickyNote, type StickyNoteType } from '@/stores/stickyNote';
+import { useStickyNoteStore, type StickyNote, type StickyNoteType, type StickyNoteEmbedLayoutState } from '@/stores/stickyNote';
 import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
@@ -150,11 +150,31 @@ const resolveStickyNoteEmbedComponent = (type: StickyNoteType) => {
   }
 };
 
-const stickyNoteEmbedCollapsedState = new Map<string, boolean>();
+const STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH = 150;
+const STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT = 60;
+const STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH = 760;
+const STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT = 680;
 
-const resolveStickyNoteEmbedCollapseKey = (payload: any, noteId: string, rawLink: string) => {
-  const messageId = String(payload?.id || payload?.messageId || payload?.createdAt || payload?.displayOrder || '').trim();
-  return `${messageId || rawLink}:${noteId}`;
+const clampStickyNoteEmbedSize = (value: number, min: number, max: number): number => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+};
+
+const handleStickyNoteEmbedResizePersist = (noteId: string, event: Event) => {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) {
+    return;
+  }
+  const width = clampStickyNoteEmbedSize(target.clientWidth, STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH, STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH);
+  const height = clampStickyNoteEmbedSize(target.clientHeight, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT);
+  const current = stickyNoteStore.getEmbedLayoutState(noteId);
+  if (current.width === width && current.height === height) {
+    return;
+  }
+  const patch: StickyNoteEmbedLayoutState = { width, height };
+  void stickyNoteStore.updateEmbedLayoutState(noteId, patch);
 };
 
 const resolveSingleIFormLinkFromContent = (content: string) => {
@@ -190,8 +210,15 @@ const parseContent = (payload: any, overrideContent?: string) => {
       const fullText = resolveStickyNoteContentText(liveNote);
       const accentColor = resolveStickyNoteAccent(liveNote?.color || 'blue');
       const previewTitle = fullText || '点击打开便签';
-      const collapseKey = resolveStickyNoteEmbedCollapseKey(payload, singleStickyNoteLink.noteId, singleStickyNoteLink.rawLink);
-      const isCollapsed = stickyNoteEmbedCollapsedState.get(collapseKey) === true;
+      const noteId = singleStickyNoteLink.noteId;
+      const embedState = stickyNoteStore.getEmbedLayoutState(noteId);
+      const isCollapsed = embedState.collapsed === true;
+      const widgetWidth = Number.isFinite(embedState.width)
+        ? clampStickyNoteEmbedSize(embedState.width as number, STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH, STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH)
+        : undefined;
+      const widgetHeight = Number.isFinite(embedState.height)
+        ? clampStickyNoteEmbedSize(embedState.height as number, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT)
+        : undefined;
       const openStickyNote = (event?: MouseEvent | KeyboardEvent) => {
         event?.preventDefault();
         event?.stopPropagation();
@@ -209,7 +236,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
           } as Record<string, string>,
           onToggle: (event: Event) => {
             const target = event.currentTarget as HTMLDetailsElement | null;
-            stickyNoteEmbedCollapsedState.set(collapseKey, !(target?.open ?? true));
+            const collapsed = !(target?.open ?? true);
+            const patch: StickyNoteEmbedLayoutState = { collapsed };
+            void stickyNoteStore.updateEmbedLayoutState(noteId, patch);
           },
           onClick: (event: MouseEvent) => {
             event.stopPropagation();
@@ -259,17 +288,25 @@ const parseContent = (payload: any, overrideContent?: string) => {
             ]),
           ]),
           h('div', { class: 'message-sticky-note-embed__panel' }, [
-            isInteractiveType && liveNote && embedComponent
-              ? h(
-                'div',
-                {
-                  class: 'message-sticky-note-embed__widget',
-                  onClick: (event: MouseEvent) => event.stopPropagation(),
-                  onPointerdown: (event: PointerEvent) => event.stopPropagation(),
-                },
-                [h(embedComponent, { note: liveNote as StickyNote, isEditing: false })],
-              )
-              : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
+            h(
+              'div',
+              {
+                class: 'message-sticky-note-embed__widget',
+                style: {
+                  width: widgetWidth ? `${widgetWidth}px` : undefined,
+                  height: widgetHeight ? `${widgetHeight}px` : undefined,
+                } as Record<string, string | undefined>,
+                onClick: (event: MouseEvent) => event.stopPropagation(),
+                onPointerdown: (event: PointerEvent) => event.stopPropagation(),
+                onMouseup: (event: MouseEvent) => handleStickyNoteEmbedResizePersist(noteId, event),
+                onPointerup: (event: PointerEvent) => handleStickyNoteEmbedResizePersist(noteId, event),
+              },
+              [
+                isInteractiveType && liveNote && embedComponent
+                  ? h(embedComponent, { note: liveNote as StickyNote, isEditing: false })
+                  : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
+              ],
+            ),
           ]),
         ],
       );
@@ -3118,6 +3155,12 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 .message-sticky-note-embed__widget {
   width: min(430px, 100%);
   max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 680px;
+  resize: both;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
 .message-sticky-note-embed__widget :deep(.sticky-note-counter),
