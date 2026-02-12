@@ -1,12 +1,13 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick } from 'vue';
+import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
 import type { PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
+import { useStickyNoteStore, type StickyNote, type StickyNoteType } from '@/stores/stickyNote';
 import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
@@ -26,6 +27,8 @@ import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
+import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import CharacterCardBadge from './CharacterCardBadge.vue'
 import MessageReactions from './MessageReactions.vue'
@@ -46,6 +49,7 @@ type EditingPreviewInfo = {
 
 const user = useUserStore();
 const chat = useChatStore();
+const stickyNoteStore = useStickyNoteStore();
 const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
@@ -89,6 +93,69 @@ const diceChipHtmlPattern = /<span[^>]*class="[^"]*dice-chip[^"]*"/i;
 const MESSAGE_IFORM_MIN_WIDTH = 120;
 const MESSAGE_IFORM_MIN_HEIGHT = 72;
 const MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE = 480;
+const StickyNoteCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteCounter.vue'));
+const StickyNoteListEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteList.vue'));
+const StickyNoteSliderEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteSlider.vue'));
+const StickyNoteTimerEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteTimer.vue'));
+const StickyNoteClockEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteClock.vue'));
+const StickyNoteRoundCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteRoundCounter.vue'));
+
+const resolveStickyNoteAccent = (color: string): string => {
+  const colorMap: Record<string, string> = {
+    yellow: '#ffc107',
+    pink: '#e91e63',
+    green: '#4caf50',
+    blue: '#2196f3',
+    purple: '#9c27b0',
+    orange: '#ff9800',
+  };
+  return colorMap[color] || '#64748b';
+};
+
+const resolveStickyNoteContentText = (note: any): string => {
+  const contentText = String(note?.contentText || '').trim();
+  if (contentText) {
+    return contentText;
+  }
+  const rawContent = String(note?.content || '').trim();
+  if (!rawContent) {
+    return '';
+  }
+  if (isTipTapJson(rawContent)) {
+    try {
+      return tiptapJsonToPlainText(rawContent).trim();
+    } catch {
+      return rawContent;
+    }
+  }
+  return rawContent;
+};
+
+const resolveStickyNoteEmbedComponent = (type: StickyNoteType) => {
+  switch (type) {
+    case 'counter':
+      return StickyNoteCounterEmbed;
+    case 'list':
+      return StickyNoteListEmbed;
+    case 'slider':
+      return StickyNoteSliderEmbed;
+    case 'timer':
+      return StickyNoteTimerEmbed;
+    case 'clock':
+      return StickyNoteClockEmbed;
+    case 'roundCounter':
+      return StickyNoteRoundCounterEmbed;
+    default:
+      return null;
+  }
+};
+
+const stickyNoteEmbedCollapsedState = new Map<string, boolean>();
+
+const resolveStickyNoteEmbedCollapseKey = (payload: any, noteId: string, rawLink: string) => {
+  const messageId = String(payload?.id || payload?.messageId || payload?.createdAt || payload?.displayOrder || '').trim();
+  return `${messageId || rawLink}:${noteId}`;
+};
 
 const resolveSingleIFormLinkFromContent = (content: string) => {
   let singleIFormLink = parseSingleIFormEmbedLinkText(content);
@@ -99,8 +166,115 @@ const resolveSingleIFormLinkFromContent = (content: string) => {
   return singleIFormLink;
 };
 
+const resolveSingleStickyNoteLinkFromContent = (content: string) => {
+  let singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(content);
+  if (!singleStickyNoteLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(plainText);
+  }
+  return singleStickyNoteLink;
+};
+
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
+  if (singleStickyNoteLink) {
+    const isCurrentChannel = chat.curChannel?.id === singleStickyNoteLink.channelId;
+    if (isCurrentChannel) {
+      const liveNote = stickyNoteStore.notes[singleStickyNoteLink.noteId];
+      const noteType = (liveNote?.noteType || 'text') as StickyNoteType;
+      const embedComponent = resolveStickyNoteEmbedComponent(noteType);
+      const isInteractiveType = Boolean(embedComponent && liveNote);
+      const title = String(liveNote?.title || '').trim() || '未命名便签';
+      const fullText = resolveStickyNoteContentText(liveNote);
+      const accentColor = resolveStickyNoteAccent(liveNote?.color || 'blue');
+      const previewTitle = fullText || '点击打开便签';
+      const collapseKey = resolveStickyNoteEmbedCollapseKey(payload, singleStickyNoteLink.noteId, singleStickyNoteLink.rawLink);
+      const isCollapsed = stickyNoteEmbedCollapsedState.get(collapseKey) === true;
+      const openStickyNote = (event?: MouseEvent | KeyboardEvent) => {
+        event?.preventDefault();
+        event?.stopPropagation();
+        void handleStickyNoteEmbedClick(singleStickyNoteLink);
+      };
+      return h(
+        'details',
+        {
+          class: ['message-sticky-note-embed', isInteractiveType ? 'message-sticky-note-embed--interactive' : ''],
+          open: !isCollapsed,
+          title: previewTitle,
+          'data-sticky-note-link': singleStickyNoteLink.rawLink,
+          style: {
+            '--sticky-note-accent': accentColor,
+          } as Record<string, string>,
+          onToggle: (event: Event) => {
+            const target = event.currentTarget as HTMLDetailsElement | null;
+            stickyNoteEmbedCollapsedState.set(collapseKey, !(target?.open ?? true));
+          },
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation();
+          },
+        },
+        [
+          h('summary', { class: 'message-sticky-note-embed__summary-row' }, [
+            h('span', { class: 'message-sticky-note-embed__fold-icon' }, '▾'),
+            h('span', { class: 'message-sticky-note-embed__body' }, [
+              isInteractiveType
+                ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'message-sticky-note-embed__title-btn',
+                    onClick: openStickyNote,
+                  },
+                  title,
+                )
+                : h('span', { class: 'message-sticky-note-embed__title' }, title),
+            ]),
+            h('span', { class: 'message-sticky-note-embed__side' }, [
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'message-sticky-note-embed__copy-btn',
+                  title: '打开便签',
+                  onClick: openStickyNote,
+                },
+                '↗',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'message-sticky-note-embed__copy-btn',
+                  title: '复制便签链接',
+                  onClick: (event: MouseEvent) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void copyStickyNoteEmbedLinkFromCard(singleStickyNoteLink.rawLink);
+                  },
+                },
+                '⧉',
+              ),
+            ]),
+          ]),
+          h('div', { class: 'message-sticky-note-embed__panel' }, [
+            isInteractiveType && liveNote && embedComponent
+              ? h(
+                'div',
+                {
+                  class: 'message-sticky-note-embed__widget',
+                  onClick: (event: MouseEvent) => event.stopPropagation(),
+                  onPointerdown: (event: PointerEvent) => event.stopPropagation(),
+                },
+                [h(embedComponent, { note: liveNote as StickyNote, isEditing: false })],
+              )
+              : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
+          ]),
+        ],
+      );
+    }
+  }
 
   const singleIFormLink = resolveSingleIFormLinkFromContent(content);
   if (singleIFormLink) {
@@ -1467,6 +1641,44 @@ const handleMessageLinkClick = async (info: { worldId: string; channelId: string
   });
 };
 
+const handleStickyNoteEmbedClick = async (info: StickyNoteEmbedLinkParams) => {
+  if (!info.worldId || !info.channelId || !info.noteId) {
+    return;
+  }
+
+  if (chat.currentWorldId !== info.worldId || chat.curChannel?.id !== info.channelId) {
+    message.warning('仅支持当前频道便签链接');
+    return;
+  }
+
+  await nextTick();
+  if (stickyNoteStore.currentChannelId !== info.channelId || !stickyNoteStore.notes[info.noteId]) {
+    await stickyNoteStore.loadChannelNotes(info.channelId);
+  }
+
+  const targetNote = stickyNoteStore.notes[info.noteId];
+  if (!targetNote) {
+    message.warning('便签不存在或无权限访问');
+    return;
+  }
+
+  stickyNoteStore.setVisible(true);
+  stickyNoteStore.openNote(info.noteId);
+  chatEvent.emit('sticky-note-highlight' as any, { noteId: info.noteId, ttlMs: 3000 } as any);
+};
+
+const copyStickyNoteEmbedLinkFromCard = async (rawLink: string) => {
+  if (!rawLink) {
+    return;
+  }
+  const copied = await copyTextWithFallback(rawLink);
+  if (copied) {
+    message.success('便签链接已复制');
+    return;
+  }
+  message.error('复制失败');
+};
+
 const openContextMenu = (point: { x: number, y: number }, item: any) => {
   chat.avatarMenu.show = false;
   chat.messageMenu.optionsComponent.x = point.x;
@@ -2802,6 +3014,242 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
   border-bottom-style: solid;
 }
 
+.message-sticky-note-embed {
+  --sticky-note-accent: #64748b;
+  display: block;
+  max-width: min(500px, 100%);
+  width: auto;
+  padding: 0.05rem 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity 0.15s ease;
+}
+
+.message-sticky-note-embed:hover {
+  opacity: 0.96;
+}
+
+.message-sticky-note-embed--interactive {
+  cursor: default;
+}
+
+.message-sticky-note-embed:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--primary-color, #4098fc) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.message-sticky-note-embed__summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.32rem;
+  list-style: none;
+  cursor: pointer;
+}
+
+.message-sticky-note-embed__summary-row::-webkit-details-marker {
+  display: none;
+}
+
+.message-sticky-note-embed__fold-icon {
+  margin-top: 0.1rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--chat-text-secondary, #64748b);
+  transition: transform 0.16s ease;
+}
+
+.message-sticky-note-embed:not([open]) .message-sticky-note-embed__fold-icon {
+  transform: rotate(-90deg);
+}
+
+.message-sticky-note-embed__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.message-sticky-note-embed__title {
+  display: block;
+  white-space: normal;
+  font-weight: 600;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--sticky-note-accent) 78%, currentColor);
+}
+
+.message-sticky-note-embed__title-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  white-space: normal;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--sticky-note-accent) 78%, currentColor);
+  cursor: pointer;
+}
+
+.message-sticky-note-embed__title-btn:hover {
+  text-decoration: underline;
+}
+
+.message-sticky-note-embed__content {
+  display: block;
+  font-size: 0.71rem;
+  color: var(--chat-text-secondary, #64748b);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-sticky-note-embed__panel {
+  margin-left: 0.92rem;
+  margin-top: 0.08rem;
+}
+
+.message-sticky-note-embed__widget {
+  width: min(430px, 100%);
+  max-width: 100%;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter),
+.message-sticky-note-embed__widget :deep(.sticky-note-slider),
+.message-sticky-note-embed__widget :deep(.sticky-note-list),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer),
+.message-sticky-note-embed__widget :deep(.sticky-note-clock),
+.message-sticky-note-embed__widget :deep(.sticky-note-round) {
+  padding: 4px 0;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__btn) {
+  width: 34px;
+  height: 34px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__value) {
+  width: 80px;
+  height: 34px;
+  font-size: 18px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__hint) {
+  margin-top: 6px;
+  font-size: 10px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__value-input) {
+  width: 58px;
+  padding: 4px;
+  font-size: 14px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__settings-trigger) {
+  height: 18px;
+  margin-top: 4px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__settings-hint) {
+  font-size: 10px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list) {
+  max-height: 200px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__item) {
+  padding: 4px 6px;
+  gap: 6px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__content),
+.message-sticky-note-embed__widget :deep(.sticky-note-list__edit-input) {
+  font-size: 12px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__footer-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-list__add-btn) {
+  font-size: 11px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__display) {
+  font-size: 24px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__dir-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__adj-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__set-reset) {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__circle) {
+  width: 92px;
+  height: 92px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__count) {
+  font-size: 9px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__adj) {
+  font-size: 11px;
+  padding: 3px 7px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__value) {
+  font-size: 26px;
+  min-width: 62px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__nav) {
+  width: 30px;
+  height: 30px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-round__limit),
+.message-sticky-note-embed__widget :deep(.sticky-note-round__limit-input) {
+  font-size: 11px;
+}
+
+.message-sticky-note-embed__side {
+  margin-top: 0.02rem;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.message-sticky-note-embed__copy-btn {
+  width: 1rem;
+  height: 1rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: color-mix(in srgb, var(--chat-text-secondary, #64748b) 90%, transparent);
+  font-size: 0.66rem;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.72;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.message-sticky-note-embed__copy-btn:hover {
+  opacity: 1;
+  color: var(--chat-text-primary, #0f172a);
+}
+
 .message-iform-embed {
   position: relative;
   overflow: auto;
@@ -2846,6 +3294,22 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 :root[data-display-palette='night'] .message-iform-embed {
   border-color: color-mix(in srgb, var(--chat-border-mute, rgba(148, 163, 184, 0.35)) 85%, transparent);
   background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.45)) 75%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed {
+  background: transparent;
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__content {
+  color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 95%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__copy-btn {
+  color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 92%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__copy-btn:hover {
+  color: color-mix(in srgb, var(--chat-text-primary, #e2e8f0) 96%, transparent);
 }
 
 .state-text-widget--active:active {

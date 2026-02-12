@@ -6,7 +6,7 @@
       class="sticky-note"
       :class="[
         `sticky-note--${note.color || 'yellow'}`,
-        { 'sticky-note--editing': isEditing }
+        { 'sticky-note--editing': isEditing, 'sticky-note--highlight': isHighlighted }
       ]"
       :style="noteStyle"
       @pointerdown="handlePointerDown"
@@ -93,6 +93,17 @@
               </div>
             </div>
           </n-popover>
+          <button
+            class="sticky-note__action-btn"
+            :disabled="!defaultStickyNoteEmbedLink"
+            :title="defaultStickyNoteEmbedLink ? '复制便签嵌入链接' : '无法生成便签链接'"
+            @click="copyStickyNoteEmbedLink"
+            @pointerdown.stop
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3zM5 5h6v2H7v10h10v-4h2v6H5V5z"/>
+            </svg>
+          </button>
           <button
             class="sticky-note__action-btn"
             title="复制内容"
@@ -240,11 +251,12 @@
 import { ref, computed, watch, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
-import { useChatStore } from '@/stores/chat'
+import { useChatStore, chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { useIFormStore } from '@/stores/iform'
 import { useUtilsStore } from '@/stores/utils'
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink'
+import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import StickyNoteEditor from './StickyNoteEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
@@ -298,6 +310,8 @@ const richMode = ref(false) // 富文本模式，默认关闭
 const currentEditSessionId = ref<string | null>(null)
 const autoSaveTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const AUTO_SAVE_IDLE_MS = 10_000
+const isHighlighted = ref(false)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -360,6 +374,66 @@ const isTextType = computed(() => {
   const type = note.value?.noteType || 'text'
   return type === 'text' || type === 'chat'
 })
+
+const defaultStickyNoteEmbedLink = computed(() => {
+  const currentNote = note.value
+  if (!currentNote?.id) {
+    return ''
+  }
+  const worldId = (currentNote.worldId || '').trim()
+  const channelId = (currentNote.channelId || '').trim()
+  if (!worldId || !channelId) {
+    return ''
+  }
+  return generateStickyNoteEmbedLink(
+    {
+      worldId,
+      channelId,
+      noteId: currentNote.id,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  )
+})
+
+const copyStickyNoteEmbedLink = async () => {
+  const link = defaultStickyNoteEmbedLink.value
+  if (!link) {
+    message.warning('无法生成便签嵌入链接')
+    return
+  }
+  const copied = await copyTextWithFallback(link)
+  if (copied) {
+    message.success('便签嵌入链接已复制')
+  } else {
+    message.error('复制失败')
+  }
+}
+
+const clearHighlightTimer = () => {
+  if (!highlightTimer) {
+    return
+  }
+  clearTimeout(highlightTimer)
+  highlightTimer = null
+}
+
+const triggerHighlight = (ttlMs = 3000) => {
+  isHighlighted.value = true
+  clearHighlightTimer()
+  highlightTimer = setTimeout(() => {
+    isHighlighted.value = false
+    highlightTimer = null
+  }, Math.max(300, Number(ttlMs) || 3000))
+}
+
+const handleStickyNoteHighlight = (event: any) => {
+  if (!event || event.noteId !== props.noteId) {
+    return
+  }
+  triggerHighlight(event.ttlMs)
+}
+
+chatEvent.on('sticky-note-highlight' as any, handleStickyNoteHighlight as any)
 
 
 const resolveIFormEmbedLinkBase = () => {
@@ -985,6 +1059,8 @@ watch(() => allTargetIds.value, () => {
 })
 
 onUnmounted(() => {
+  clearHighlightTimer()
+  chatEvent.off('sticky-note-highlight' as any, handleStickyNoteHighlight as any)
   if (saveTimeout) {
     clearTimeout(saveTimeout)
     saveTimeout = null
@@ -1030,6 +1106,22 @@ if (typeof window !== 'undefined') {
 
 .sticky-note--editing {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.sticky-note--highlight {
+  animation: sticky-note-highlight-pulse 3s ease-out 1;
+}
+
+@keyframes sticky-note-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(64, 152, 252, 0.55), 0 6px 24px rgba(0, 0, 0, 0.24);
+  }
+  28% {
+    box-shadow: 0 0 0 4px rgba(64, 152, 252, 0.42), 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
 }
 
 /* 颜色主题 */
