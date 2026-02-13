@@ -175,6 +175,7 @@ type AudioPlaybackStatePayload struct {
 	LoopEnabled          bool              `json:"loopEnabled"`
 	PlaybackRate         float64           `json:"playbackRate"`
 	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
+	Revision             int64             `json:"revision"`
 	UpdatedBy            string            `json:"updatedBy"`
 	UpdatedAt            int64             `json:"updatedAt"`
 }

@@ -200,14 +200,14 @@ func AudioAssetImport(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
 	}
 	var req struct {
-		All         bool                        `json:"all"`
-		Paths       []string                    `json:"paths"`
-		Scope       model.AudioAssetScope       `json:"scope"`
-		WorldID     string                      `json:"worldId"`
-		FolderID    string                      `json:"folderId"`
-		Tags        []string                    `json:"tags"`
-		Visibility  model.AudioAssetVisibility  `json:"visibility"`
-		Description string                      `json:"description"`
+		All         bool                       `json:"all"`
+		Paths       []string                   `json:"paths"`
+		Scope       model.AudioAssetScope      `json:"scope"`
+		WorldID     string                     `json:"worldId"`
+		FolderID    string                     `json:"folderId"`
+		Tags        []string                   `json:"tags"`
+		Visibility  model.AudioAssetVisibility `json:"visibility"`
+		Description string                     `json:"description"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "导入请求解析失败")
@@ -724,15 +724,16 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusForbidden, err, "仅频道成员可更新播放状态")
 	}
 	state, err := service.AudioUpsertPlaybackState(service.AudioPlaybackUpdateInput{
-		ChannelID:    req.ChannelID,
-		SceneID:      req.SceneID,
-		Tracks:       req.Tracks,
-		IsPlaying:    req.IsPlaying,
-		Position:     req.Position,
-		LoopEnabled:  req.LoopEnabled,
-		PlaybackRate: req.PlaybackRate,
+		ChannelID:            req.ChannelID,
+		SceneID:              req.SceneID,
+		Tracks:               req.Tracks,
+		IsPlaying:            req.IsPlaying,
+		Position:             req.Position,
+		LoopEnabled:          req.LoopEnabled,
+		PlaybackRate:         req.PlaybackRate,
 		WorldPlaybackEnabled: req.WorldPlaybackEnabled,
-		ActorID:      user.ID,
+		BaseRevision:         req.BaseRevision,
+		ActorID:              user.ID,
 	})
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新播放状态失败")
@@ -858,14 +859,15 @@ func strPtr(value string) *string {
 }
 
 type audioPlaybackStateRequest struct {
-	ChannelID    string                    `json:"channelId"`
-	SceneID      *string                   `json:"sceneId"`
-	Tracks       []service.AudioTrackState `json:"tracks"`
-	IsPlaying    bool                      `json:"isPlaying"`
-	Position     float64                   `json:"position"`
-	LoopEnabled  bool                      `json:"loopEnabled"`
-	PlaybackRate float64                   `json:"playbackRate"`
-	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
+	ChannelID            string                    `json:"channelId"`
+	SceneID              *string                   `json:"sceneId"`
+	Tracks               []service.AudioTrackState `json:"tracks"`
+	IsPlaying            bool                      `json:"isPlaying"`
+	Position             float64                   `json:"position"`
+	LoopEnabled          bool                      `json:"loopEnabled"`
+	PlaybackRate         float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool                      `json:"worldPlaybackEnabled"`
+	BaseRevision         int64                     `json:"baseRevision"`
 }
 
 func ensureChannelMembership(userID, channelID string) error {
@@ -885,16 +887,17 @@ func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
 	}
 	tracks := []model.AudioTrackState(state.Tracks)
 	return fiber.Map{
-		"channelId":    state.ChannelID,
-		"sceneId":      state.SceneID,
-		"tracks":       tracks,
-		"isPlaying":    state.IsPlaying,
-		"position":     state.Position,
-		"loopEnabled":  state.LoopEnabled,
-		"playbackRate": state.PlaybackRate,
+		"channelId":            state.ChannelID,
+		"sceneId":              state.SceneID,
+		"tracks":               tracks,
+		"isPlaying":            state.IsPlaying,
+		"position":             state.Position,
+		"loopEnabled":          state.LoopEnabled,
+		"playbackRate":         state.PlaybackRate,
 		"worldPlaybackEnabled": state.WorldPlaybackEnabled,
-		"updatedBy":    state.UpdatedBy,
-		"updatedAt":    state.UpdatedAt,
+		"revision":             state.Revision,
+		"updatedBy":            state.UpdatedBy,
+		"updatedAt":            state.UpdatedAt.Unix(),
 	}
 }
 
@@ -906,16 +909,17 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		return
 	}
 	payload := &protocol.AudioPlaybackStatePayload{
-		ChannelID:    state.ChannelID,
-		SceneID:      state.SceneID,
-		Tracks:       convertTrackStates(state.Tracks),
-		IsPlaying:    state.IsPlaying,
-		Position:     state.Position,
-		LoopEnabled:  state.LoopEnabled,
-		PlaybackRate: state.PlaybackRate,
+		ChannelID:            state.ChannelID,
+		SceneID:              state.SceneID,
+		Tracks:               convertTrackStates(state.Tracks),
+		IsPlaying:            state.IsPlaying,
+		Position:             state.Position,
+		LoopEnabled:          state.LoopEnabled,
+		PlaybackRate:         state.PlaybackRate,
 		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
-		UpdatedBy:    state.UpdatedBy,
-		UpdatedAt:    state.UpdatedAt.Unix(),
+		Revision:             state.Revision,
+		UpdatedBy:            state.UpdatedBy,
+		UpdatedAt:            state.UpdatedAt.Unix(),
 	}
 	event := &protocol.Event{
 		Type: protocol.EventAudioStateUpdated,

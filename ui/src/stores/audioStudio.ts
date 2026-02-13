@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import { api, urlBase } from './_config';
 import { useUserStore } from './user';
 import { useUtilsStore } from './utils';
-import { useChatStore } from './chat';
+import { chatEvent, useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import type {
@@ -93,6 +93,34 @@ interface AudioStudioState {
   pendingSyncHandle: number | null;
   pendingRemotePlay: boolean;
   interactionListenerBound: boolean;
+  syncLifecycleBound: boolean;
+  retrySyncHandle: number | null;
+  syncRetryAttempt: number;
+  pendingCommitPayload: PlaybackSyncPayload | null;
+  lastAppliedRevisionByScope: Record<string, number>;
+  lastSnapshotFetchedAtByScope: Record<string, number>;
+}
+
+interface PlaybackSyncPayload {
+  channelId: string;
+  sceneId: string | null;
+  tracks: AudioTrackStatePayload[];
+  isPlaying: boolean;
+  position: number;
+  loopEnabled: boolean;
+  playbackRate: number;
+  worldPlaybackEnabled: boolean;
+  baseRevision: number;
+}
+
+interface PlaybackFetchOptions {
+  force?: boolean;
+  reason?: string;
+}
+
+interface RemotePlaybackApplyOptions {
+  source?: 'push' | 'pull' | 'ack';
+  reason?: string;
 }
 
 export const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
@@ -118,6 +146,9 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
 let progressTimer: number | null = null;
 let transcodeTimer: number | null = null;
 const SYNC_DEBOUNCE_MS = 300;
+const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
+const SYNC_RETRY_BASE_MS = 600;
+const SYNC_RETRY_MAX_MS = 10_000;
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 const logAudioSync = (...args: unknown[]) => {
   if (isDebugEnabled()) {
@@ -345,6 +376,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     pendingSyncHandle: null,
     pendingRemotePlay: false,
     interactionListenerBound: false,
+    syncLifecycleBound: false,
+    retrySyncHandle: null,
+    syncRetryAttempt: 0,
+    pendingCommitPayload: null,
+    lastAppliedRevisionByScope: {},
+    lastSnapshotFetchedAtByScope: {},
   }),
 
   getters: {
@@ -403,6 +440,133 @@ export const useAudioStudioStore = defineStore('audioStudio', {
   },
 
   actions: {
+    getScopeKey(channelId?: string | null, worldPlaybackEnabled?: boolean) {
+      if (worldPlaybackEnabled) {
+        return `world:${this.currentWorldId || 'unknown'}`;
+      }
+      const normalizedChannelId = String(channelId || this.currentChannelId || '').trim();
+      return `channel:${normalizedChannelId || 'unknown'}`;
+    },
+
+    getRevisionFromPayload(payload: AudioPlaybackStatePayload | null | undefined) {
+      const raw = (payload as any)?.revision;
+      if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+        return Math.floor(raw);
+      }
+      if (typeof raw === 'string') {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          return Math.floor(parsed);
+        }
+      }
+      return 0;
+    },
+
+    markAppliedRevision(scopeKey: string, revision: number) {
+      if (!scopeKey || !Number.isFinite(revision) || revision <= 0) {
+        return;
+      }
+      const current = this.lastAppliedRevisionByScope[scopeKey] || 0;
+      if (revision <= current) {
+        return;
+      }
+      this.lastAppliedRevisionByScope = {
+        ...this.lastAppliedRevisionByScope,
+        [scopeKey]: revision,
+      };
+    },
+
+    clearRetrySyncTimer() {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      if (this.retrySyncHandle) {
+        window.clearTimeout(this.retrySyncHandle);
+        this.retrySyncHandle = null;
+      }
+    },
+
+    ensureSyncLifecycleBindings() {
+      if (this.syncLifecycleBound) {
+        return;
+      }
+      this.syncLifecycleBound = true;
+      chatEvent.on('connected', () => {
+        if (!this.currentChannelId) {
+          return;
+        }
+        void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'connected' });
+      });
+      chatEvent.on('channel-switch-to' as any, (event: any) => {
+        const channelId = String(event?.argv?.channelId || '').trim();
+        if (!channelId || this.currentChannelId !== channelId) {
+          return;
+        }
+        const reason = event?.argv?.reenter ? 'channel-reenter' : 'channel-switch';
+        void this.fetchPlaybackState(channelId, { force: true, reason });
+      });
+      if (typeof document !== 'undefined') {
+        document.addEventListener(
+          'visibilitychange',
+          () => {
+            if (document.visibilityState !== 'visible' || !this.currentChannelId) {
+              return;
+            }
+            void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'visible' });
+          },
+          { capture: true },
+        );
+      }
+    },
+
+    scheduleRetrySync() {
+      if (!this.pendingCommitPayload || typeof window === 'undefined') {
+        return;
+      }
+      this.clearRetrySyncTimer();
+      const attempt = this.syncRetryAttempt;
+      const baseDelay = Math.min(SYNC_RETRY_MAX_MS, SYNC_RETRY_BASE_MS * 2 ** attempt);
+      const jitter = Math.floor(Math.random() * 250);
+      const delay = baseDelay + jitter;
+      this.syncRetryAttempt = Math.min(attempt + 1, 6);
+      this.retrySyncHandle = window.setTimeout(() => {
+        this.retrySyncHandle = null;
+        void this.flushPendingPlaybackSync('retry');
+      }, delay);
+      warnAudioSync('[AudioSync] schedule retry', { attempt: this.syncRetryAttempt, delay });
+    },
+
+    async flushPendingPlaybackSync(source: 'commit' | 'retry' = 'commit') {
+      const payload = this.pendingCommitPayload;
+      if (!payload) {
+        return;
+      }
+      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+        return;
+      }
+      if (payload.channelId !== this.currentChannelId) {
+        this.pendingCommitPayload = null;
+        this.clearRetrySyncTimer();
+        this.syncRetryAttempt = 0;
+        return;
+      }
+      try {
+        const resp = await api.post('/api/v1/audio/state', payload);
+        this.pendingCommitPayload = null;
+        this.clearRetrySyncTimer();
+        this.syncRetryAttempt = 0;
+        const state = resp?.data?.state as AudioPlaybackStatePayload | undefined;
+        if (state) {
+          const scopeKey = this.getScopeKey(state.channelId, !!state.worldPlaybackEnabled);
+          this.markAppliedRevision(scopeKey, this.getRevisionFromPayload(state));
+        }
+        logAudioSync('[AudioSync] sync committed', { source });
+      } catch (err) {
+        console.warn('同步音频状态失败', err);
+        this.scheduleRetrySync();
+      }
+    },
+
     setCurrentWorld(worldId: string | null) {
       this.currentWorldId = worldId;
       if (worldId) {
@@ -417,6 +581,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (!this.isSystemAdmin) {
           this.filters.scope = undefined;
         }
+      }
+      if (this.worldPlaybackEnabled && this.currentChannelId) {
+        void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
       }
     },
 
@@ -433,6 +600,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     setActiveChannel(channelId: string | null) {
       this.ensureInteractionListener();
+      this.ensureSyncLifecycleBindings();
       if (typeof window !== 'undefined' && this.pendingSyncHandle) {
         window.clearTimeout(this.pendingSyncHandle);
         this.pendingSyncHandle = null;
@@ -440,18 +608,24 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.canManage && this.activeTab !== 'player') {
         this.activeTab = 'player';
       }
-      if (this.currentChannelId === channelId) {
+      const normalizedChannelId = channelId ? String(channelId).trim() : null;
+      if (this.currentChannelId === normalizedChannelId) {
+        if (normalizedChannelId) {
+          void this.fetchPlaybackState(normalizedChannelId, { force: true, reason: 'channel-reenter' });
+        }
         return;
       }
-      this.currentChannelId = channelId;
-      if (!channelId) {
+      this.currentChannelId = normalizedChannelId;
+      if (this.pendingCommitPayload && this.pendingCommitPayload.channelId !== (normalizedChannelId || '')) {
+        this.pendingCommitPayload = null;
+        this.clearRetrySyncTimer();
+        this.syncRetryAttempt = 0;
+      }
+      if (!normalizedChannelId) {
         this.remoteState = null;
         return;
       }
-      if (this.worldPlaybackEnabled) {
-        return;
-      }
-      this.fetchPlaybackState(channelId);
+      void this.fetchPlaybackState(normalizedChannelId, { force: true, reason: 'channel-changed' });
     },
 
     setWorldPlaybackEnabled(enabled: boolean) {
@@ -476,17 +650,32 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.interactionListenerBound = true;
     },
 
-    async fetchPlaybackState(channelId: string) {
-      if (!channelId) return;
+    async fetchPlaybackState(channelId: string, options?: PlaybackFetchOptions) {
+      const normalizedChannelId = String(channelId || '').trim();
+      if (!normalizedChannelId) return;
+      const scopeKey = this.getScopeKey(normalizedChannelId, this.worldPlaybackEnabled);
+      const now = Date.now();
+      const lastFetchedAt = this.lastSnapshotFetchedAtByScope[scopeKey] || 0;
+      if (!options?.force && now - lastFetchedAt < SNAPSHOT_FETCH_MIN_INTERVAL_MS) {
+        return;
+      }
+      this.lastSnapshotFetchedAtByScope = {
+        ...this.lastSnapshotFetchedAtByScope,
+        [scopeKey]: now,
+      };
       try {
-        const resp = await api.get('/api/v1/audio/state', { params: { channelId } });
-        await this.applyRemotePlayback(resp.data?.state || null);
+        const resp = await api.get('/api/v1/audio/state', { params: { channelId: normalizedChannelId } });
+        await this.applyRemotePlayback(resp.data?.state || null, {
+          source: 'pull',
+          reason: options?.reason || 'snapshot',
+        });
       } catch (err) {
         console.warn('fetchPlaybackState failed', err);
       }
     },
 
-    async applyRemotePlayback(payload: AudioPlaybackStatePayload | null) {
+    async applyRemotePlayback(payload: AudioPlaybackStatePayload | null, options?: RemotePlaybackApplyOptions) {
+      const source = options?.source || 'push';
       if (payload && typeof payload.worldPlaybackEnabled === 'boolean') {
         this.worldPlaybackEnabled = payload.worldPlaybackEnabled;
       }
@@ -497,8 +686,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (payload && !allowWorld && payload.channelId !== this.currentChannelId) {
         return;
       }
+      const scopeKey = this.getScopeKey(payload?.channelId || this.currentChannelId, allowWorld);
+      const incomingRevision = this.getRevisionFromPayload(payload);
+      const lastAppliedRevision = this.lastAppliedRevisionByScope[scopeKey] || 0;
+      if (incomingRevision > 0 && incomingRevision <= lastAppliedRevision) {
+        logAudioSync('[AudioSync] Skip stale remote state', { scopeKey, incomingRevision, lastAppliedRevision });
+        return;
+      }
+      const hasRevisionGap = incomingRevision > 0 && lastAppliedRevision > 0 && incomingRevision > lastAppliedRevision + 1;
       const user = useUserStore();
-      if (payload && payload.updatedBy && payload.updatedBy === user.info.id) {
+      if (payload && payload.updatedBy && payload.updatedBy === user.info.id && source === 'push') {
+        this.markAppliedRevision(scopeKey, incomingRevision);
         return;
       }
 
@@ -689,6 +887,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       } finally {
         this.isApplyingRemoteState = false;
+        this.markAppliedRevision(scopeKey, incomingRevision);
+      }
+
+      if (hasRevisionGap && payload?.channelId) {
+        void this.fetchPlaybackState(payload.channelId, { force: true, reason: 'revision-gap' });
       }
     },
 
@@ -755,6 +958,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const payload = this.serializePlaybackState();
       if (!payload) return;
 
+      this.pendingCommitPayload = payload;
       logAudioSync('[AudioSync] Sending state:', {
         isPlaying: payload.isPlaying,
         tracks: payload.tracks.map(t => ({
@@ -766,17 +970,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         })),
       });
 
-      try {
-        await api.post('/api/v1/audio/state', payload);
-      } catch (err) {
-        console.warn('同步音频状态失败', err);
-      }
+      await this.flushPendingPlaybackSync('commit');
     },
 
-    serializePlaybackState() {
+    serializePlaybackState(): PlaybackSyncPayload | null {
       if (!this.currentChannelId) return null;
       // 使用实际播放状态而不是 this.isPlaying，避免状态不同步
       const actuallyPlaying = this.anyTrackPlaying();
+      const scopeKey = this.getScopeKey(this.currentChannelId, this.worldPlaybackEnabled);
+      const baseRevision = this.lastAppliedRevisionByScope[scopeKey] || 0;
       return {
         channelId: this.currentChannelId,
         sceneId: this.currentSceneId,
@@ -786,6 +988,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         loopEnabled: this.loopEnabled,
         playbackRate: this.playbackRate,
         worldPlaybackEnabled: this.worldPlaybackEnabled,
+        baseRevision,
       };
     },
 

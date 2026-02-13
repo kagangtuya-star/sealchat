@@ -194,6 +194,7 @@ export interface AudioPlaybackStatePayload {
   loopEnabled: boolean;
   playbackRate: number;
   worldPlaybackEnabled?: boolean;
+  revision?: number;
   updatedBy?: string;
-  updatedAt?: string;
+  updatedAt?: number | string;
 }

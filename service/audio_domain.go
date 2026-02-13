@@ -122,15 +122,16 @@ type AudioSceneFilters struct {
 type AudioTrackState = model.AudioTrackState
 
 type AudioPlaybackUpdateInput struct {
-	ChannelID    string
-	SceneID      *string
-	Tracks       []AudioTrackState
-	IsPlaying    bool
-	Position     float64
-	LoopEnabled  bool
-	PlaybackRate float64
+	ChannelID            string
+	SceneID              *string
+	Tracks               []AudioTrackState
+	IsPlaying            bool
+	Position             float64
+	LoopEnabled          bool
+	PlaybackRate         float64
 	WorldPlaybackEnabled bool
-	ActorID      string
+	BaseRevision         int64
+	ActorID              string
 }
 
 func (f *AudioAssetFilters) normalize() {
@@ -280,7 +281,7 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 			}
 		}
 		return q.Order("updated_at DESC")
-		})
+	})
 }
 
 func GetAudioImportPreview() (*AudioImportPreview, error) {
@@ -617,6 +618,10 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlayb
 	state.LoopEnabled = input.LoopEnabled
 	state.PlaybackRate = input.PlaybackRate
 	state.WorldPlaybackEnabled = input.WorldPlaybackEnabled
+	if state.Revision < 0 {
+		state.Revision = 0
+	}
+	state.Revision += 1
 	state.UpdatedBy = input.ActorID
 	state.UpdatedAt = time.Now()
 	if err := db.Save(&state).Error; err != nil {

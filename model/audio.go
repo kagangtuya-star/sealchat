@@ -152,17 +152,18 @@ type AudioTrackState struct {
 }
 
 type AudioPlaybackState struct {
-	ChannelID    string                    `json:"channelId" gorm:"primaryKey"`
-	SceneID      *string                   `json:"sceneId"`
-	Tracks       JSONList[AudioTrackState] `json:"tracks" gorm:"type:json"`
-	IsPlaying    bool                      `json:"isPlaying"`
-	Position     float64                   `json:"position"`
-	LoopEnabled  bool                      `json:"loopEnabled"`
-	PlaybackRate float64                   `json:"playbackRate"`
-	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled" gorm:"default:false"`
-	UpdatedBy    string                    `json:"updatedBy"`
-	UpdatedAt    time.Time                 `json:"updatedAt"`
-	CreatedAt    time.Time                 `json:"createdAt"`
+	ChannelID            string                    `json:"channelId" gorm:"primaryKey"`
+	SceneID              *string                   `json:"sceneId"`
+	Tracks               JSONList[AudioTrackState] `json:"tracks" gorm:"type:json"`
+	IsPlaying            bool                      `json:"isPlaying"`
+	Position             float64                   `json:"position"`
+	LoopEnabled          bool                      `json:"loopEnabled"`
+	PlaybackRate         float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool                      `json:"worldPlaybackEnabled" gorm:"default:false"`
+	Revision             int64                     `json:"revision" gorm:"not null;default:0"`
+	UpdatedBy            string                    `json:"updatedBy"`
+	UpdatedAt            time.Time                 `json:"updatedAt"`
+	CreatedAt            time.Time                 `json:"createdAt"`
 }
 
 func (*AudioPlaybackState) TableName() string { return "audio_playback_states" }
