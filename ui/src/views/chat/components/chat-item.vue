@@ -99,6 +99,9 @@ const imageResizeDraftLayouts = ref<Record<string, { width: number; height: numb
 const imageResizeFreeScaling = ref(false);
 let imageResizePointerState: {
   pointerId: number;
+  pointerType: string;
+  moveThreshold: number;
+  movementScale: number;
   attachmentId: string;
   startX: number;
   startY: number;
@@ -637,13 +640,19 @@ const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
     const host = messageContentRef.value;
     const image = target?.closest<HTMLImageElement>('img');
     if (host && image && host.contains(image)) {
+      if ('button' in event && typeof event.button === 'number' && event.button !== 0) {
+        return;
+      }
       const attachmentId = normalizeAttachmentId(image.dataset.attachmentId || image.getAttribute('data-attachment-id') || image.getAttribute('src') || '');
       if (attachmentId) {
         imageResizeSelectedAttachmentId.value = attachmentId;
         if ('pointerId' in event) {
           startImageResizePointer(event as PointerEvent, image, attachmentId);
         }
-        event.preventDefault();
+        if (event.cancelable) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
         return;
       }
     }
@@ -1462,8 +1471,13 @@ const handleImageResizeEnterRequest = (payload?: any) => {
 
 const startImageResizePointer = (event: PointerEvent, image: HTMLImageElement, attachmentId: string) => {
   const rect = image.getBoundingClientRect();
+  const pointerType = event.pointerType || 'mouse';
+  const isTouchPointer = pointerType === 'touch';
   imageResizePointerState = {
     pointerId: event.pointerId,
+    pointerType,
+    moveThreshold: isTouchPointer ? 4 : 1.5,
+    movementScale: isTouchPointer ? 0.82 : 1,
     attachmentId,
     startX: event.clientX,
     startY: event.clientY,
@@ -1481,12 +1495,17 @@ const handleImageResizePointerMove = (event: PointerEvent) => {
   if (event.pointerId !== imageResizePointerState.pointerId) {
     return;
   }
-  const dx = event.clientX - imageResizePointerState.startX;
-  const dy = event.clientY - imageResizePointerState.startY;
-  if (!imageResizePointerState.moved && Math.abs(dx) < 1.5 && Math.abs(dy) < 1.5) {
+  const rawDx = event.clientX - imageResizePointerState.startX;
+  const rawDy = event.clientY - imageResizePointerState.startY;
+  const threshold = imageResizePointerState.moveThreshold;
+  if (!imageResizePointerState.moved && Math.abs(rawDx) < threshold && Math.abs(rawDy) < threshold) {
     return;
   }
   imageResizePointerState.moved = true;
+
+  const scale = imageResizePointerState.movementScale;
+  const dx = rawDx * scale;
+  const dy = rawDy * scale;
 
   const nextWidthByPointer = clampImageLayoutSize(imageResizePointerState.startWidth + dx);
   const nextHeightByPointer = clampImageLayoutSize(imageResizePointerState.startHeight + dy);
@@ -1512,7 +1531,9 @@ const handleImageResizePointerMove = (event: PointerEvent) => {
       height: nextHeight,
     },
   };
-  event.preventDefault();
+  if (event.cancelable) {
+    event.preventDefault();
+  }
   void applyImageLayoutToDom();
 };
 
@@ -2138,6 +2159,9 @@ const copyStickyNoteEmbedLinkFromCard = async (rawLink: string) => {
 };
 
 const openContextMenu = (point: { x: number, y: number }, item: any) => {
+  if (imageResizeMode.value) {
+    return;
+  }
   chat.avatarMenu.show = false;
   chat.messageMenu.optionsComponent.x = point.x;
   chat.messageMenu.optionsComponent.y = point.y;
@@ -2148,10 +2172,18 @@ const openContextMenu = (point: { x: number, y: number }, item: any) => {
 
 const onContextMenu = (e: MouseEvent, item: any) => {
   e.preventDefault();
+  if (imageResizeMode.value) {
+    e.stopPropagation();
+    return;
+  }
   openContextMenu({ x: e.clientX, y: e.clientY }, item);
 };
 
 const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item: any) => {
+  if (imageResizeMode.value) {
+    event.preventDefault?.();
+    return;
+  }
   const resolvePoint = (): { x: number, y: number } => {
     if ('clientX' in event && typeof event.clientX === 'number') {
       return { x: event.clientX, y: event.clientY };
@@ -3041,7 +3073,9 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 
 .content .message-image-adjustable {
   user-select: none;
-  transition: box-shadow 0.16s ease, transform 0.16s ease;
+  outline: 2px dashed color-mix(in srgb, var(--chat-accent, #3b82f6) 68%, white 32%);
+  outline-offset: 2px;
+  transition: box-shadow 0.16s ease, transform 0.16s ease, outline-color 0.16s ease;
 }
 
 .content .message-image-adjustable:not(.message-image-selected) {
@@ -3050,7 +3084,10 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 
 .content .message-image-selected {
   cursor: nwse-resize;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--chat-accent, #3b82f6) 65%, white 35%);
+  outline-style: solid;
+  outline-width: 2px;
+  outline-color: var(--chat-accent, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--chat-accent, #3b82f6) 82%, white 18%);
   touch-action: none;
 }
 
