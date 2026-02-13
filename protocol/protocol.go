@@ -229,6 +229,20 @@ type ChannelIFormEventPayload struct {
 	TargetUserIDs []string                   `json:"targetUserIds,omitempty"`
 }
 
+type ChannelImageLayoutItem struct {
+	AttachmentID string `json:"attachmentId"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	UpdatedAt    int64  `json:"updatedAt,omitempty"`
+}
+
+type ChannelImageLayoutEventPayload struct {
+	ChannelID  string                   `json:"channelId"`
+	MessageID  string                   `json:"messageId"`
+	Items      []ChannelImageLayoutItem `json:"items"`
+	OperatorID string                   `json:"operatorId,omitempty"`
+}
+
 type WhisperMeta struct {
 	SenderMemberID   string   `json:"senderMemberId,omitempty"`
 	SenderMemberName string   `json:"senderMemberName,omitempty"`
@@ -280,37 +294,38 @@ type Argv struct {
 type EventName string
 
 const (
-	EventGenresAdded            EventName = "genres-added"
-	EventGenresDeleted          EventName = "genres-deleted"
-	EventMessage                EventName = "message"
-	EventMessageCreated         EventName = "message-created"
-	EventMessageDeleted         EventName = "message-deleted"
-	EventMessageUpdated         EventName = "message-updated"
-	EventMessageArchived        EventName = "message-archived"
-	EventMessageUnarchived      EventName = "message-unarchived"
-	EventMessagePinned          EventName = "message-pinned"
-	EventMessageUnpinned        EventName = "message-unpinned"
-	EventMessageReordered       EventName = "message-reordered"
-	EventMessageRemoved         EventName = "message-removed"
-	EventMessageReaction        EventName = "message.reaction"
-	EventInteractionCommand     EventName = "interaction/command"
-	EventReactionAdded          EventName = "reaction-added"
-	EventReactionDeleted        EventName = "reaction-deleted"
-	EventReactionDeletedOne     EventName = "reaction-deleted/one"
-	EventReactionDeletedAll     EventName = "reaction-deleted/all"
-	EventReactionDeletedEmoji   EventName = "reaction-deleted/emoji"
-	EventSend                   EventName = "send"
-	EventFriendRequest          EventName = "friend-request"
-	EventGuildRequest           EventName = "guild-request"
-	EventGuildMemberRequest     EventName = "guild-member-request"
-	EventTypingPreview          EventName = "typing-preview"
-	EventChannelPresenceUpdated EventName = "channel-presence-updated"
-	EventChannelUpdated         EventName = "channel-updated"
-	EventAudioStateUpdated      EventName = "audio-state-updated"
-	EventChannelIFormUpdated    EventName = "channel-iform-updated"
-	EventChannelIFormPushed     EventName = "channel-iform-pushed"
-	EventWorldKeywordsUpdated   EventName = "world-keywords-updated"
-	EventWorldUpdated           EventName = "world-updated"
+	EventGenresAdded               EventName = "genres-added"
+	EventGenresDeleted             EventName = "genres-deleted"
+	EventMessage                   EventName = "message"
+	EventMessageCreated            EventName = "message-created"
+	EventMessageDeleted            EventName = "message-deleted"
+	EventMessageUpdated            EventName = "message-updated"
+	EventMessageArchived           EventName = "message-archived"
+	EventMessageUnarchived         EventName = "message-unarchived"
+	EventMessagePinned             EventName = "message-pinned"
+	EventMessageUnpinned           EventName = "message-unpinned"
+	EventMessageReordered          EventName = "message-reordered"
+	EventMessageRemoved            EventName = "message-removed"
+	EventMessageReaction           EventName = "message.reaction"
+	EventInteractionCommand        EventName = "interaction/command"
+	EventReactionAdded             EventName = "reaction-added"
+	EventReactionDeleted           EventName = "reaction-deleted"
+	EventReactionDeletedOne        EventName = "reaction-deleted/one"
+	EventReactionDeletedAll        EventName = "reaction-deleted/all"
+	EventReactionDeletedEmoji      EventName = "reaction-deleted/emoji"
+	EventSend                      EventName = "send"
+	EventFriendRequest             EventName = "friend-request"
+	EventGuildRequest              EventName = "guild-request"
+	EventGuildMemberRequest        EventName = "guild-member-request"
+	EventTypingPreview             EventName = "typing-preview"
+	EventChannelPresenceUpdated    EventName = "channel-presence-updated"
+	EventChannelUpdated            EventName = "channel-updated"
+	EventAudioStateUpdated         EventName = "audio-state-updated"
+	EventChannelIFormUpdated       EventName = "channel-iform-updated"
+	EventChannelIFormPushed        EventName = "channel-iform-pushed"
+	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
+	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
+	EventWorldUpdated              EventName = "world-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"
@@ -364,6 +379,7 @@ type Event struct {
 	Presence                   []*ChannelPresence                 `json:"presence"`
 	AudioState                 *AudioPlaybackStatePayload         `json:"audioState,omitempty"`
 	IForm                      *ChannelIFormEventPayload          `json:"iform,omitempty"`
+	ChannelImageLayout         *ChannelImageLayoutEventPayload    `json:"channelImageLayout,omitempty"`
 	StickyNote                 *StickyNoteEventPayload            `json:"stickyNote,omitempty"`
 	CharacterCard              *CharacterCardEventPayload         `json:"characterCard,omitempty"`
 	CharacterCardBadge         *CharacterCardBadgeEventPayload    `json:"characterCardBadge,omitempty"`

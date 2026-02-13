@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
-import { useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { computed, ref, defineAsyncComponent } from 'vue';
 import Element from '@satorijs/element'
@@ -536,6 +536,18 @@ const clickEdit = () => {
   chat.messageMenu.show = false;
 }
 
+const clickResizeImage = () => {
+  if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
+    return;
+  }
+  const target = menuMessage.value.raw;
+  chatEvent.emit('message-image-resize-enter' as any, {
+    messageId: target.id,
+    channelId: chat.curChannel.id,
+  } as any);
+  chat.messageMenu.show = false;
+};
+
 const clickCopy = async () => {
   const content = menuMessage.value.raw?.content || '';
   let copyText = '';
@@ -682,6 +694,7 @@ const clickCopyMessageLink = async () => {
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />
     <context-menu-item v-if="showUnarchiveAction" label="取消归档" @click="clickUnarchive" />
     <context-menu-item label="编辑消息" @click="clickEdit" v-if="canEdit" />
+    <context-menu-item label="调整图片大小" @click="clickResizeImage" v-if="chat.messageMenu.hasImage && canEdit" />
     <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />

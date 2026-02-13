@@ -16,12 +16,13 @@ import Avatar from '@/components/avatar.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
 import 'viewerjs/dist/viewer.css';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useDisplayStore, type TimestampFormat } from '@/stores/display'
+import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
@@ -55,6 +56,7 @@ const utils = useUtilsStore();
 const { t } = useI18n();
 const worldGlossary = useWorldGlossaryStore();
 const displayStore = useDisplayStore();
+const channelImageLayout = useChannelImageLayoutStore();
 
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -87,6 +89,22 @@ let hasImage = ref(false);
 const messageContentRef = ref<HTMLElement | null>(null);
 let stopMessageLongPress: (() => void) | null = null;
 let inlineImageViewer: Viewer | null = null;
+
+const IMAGE_LAYOUT_MIN_SIZE = 48;
+const IMAGE_LAYOUT_MAX_SIZE = 4096;
+
+const imageResizeMode = ref(false);
+const imageResizeSelectedAttachmentId = ref('');
+const imageResizeDraftLayouts = ref<Record<string, { width: number; height: number }>>({});
+let imageResizePointerState: {
+  pointerId: number;
+  attachmentId: string;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+  moved: boolean;
+} | null = null;
 
 const diceChipHtmlPattern = /<span[^>]*class="[^"]*dice-chip[^"]*"/i;
 
@@ -386,6 +404,10 @@ const parseContent = (payload: any, overrideContent?: string) => {
     switch (item.type) {
       case 'img':
         if (item.attrs.src) {
+          const attachmentId = normalizeAttachmentId(item.attrs.src || '');
+          if (attachmentId) {
+            item.attrs['data-attachment-id'] = attachmentId;
+          }
           item.attrs.src = resolveAttachmentUrl(item.attrs.src);
         }
         // 添加 lazy loading 优化性能
@@ -608,10 +630,25 @@ const setupMessageIFormResizeSync = () => {
 
 
 const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (imageResizeMode.value) {
+    const host = messageContentRef.value;
+    const image = target?.closest<HTMLImageElement>('img');
+    if (host && image && host.contains(image)) {
+      const attachmentId = normalizeAttachmentId(image.dataset.attachmentId || image.getAttribute('data-attachment-id') || image.getAttribute('src') || '');
+      if (attachmentId) {
+        imageResizeSelectedAttachmentId.value = attachmentId;
+        if ('pointerId' in event) {
+          startImageResizePointer(event as PointerEvent, image, attachmentId);
+        }
+        event.preventDefault();
+        return;
+      }
+    }
+  }
   if (!canEdit.value) {
     return;
   }
-  const target = event.target as HTMLElement | null;
   if (!target?.closest('.message-iform-embed')) {
     return;
   }
@@ -633,6 +670,7 @@ const flushMessageIFormSizeFromDom = () => {
 };
 
 const handleMessageIFormPointerUp = () => {
+  handleImageResizePointerUp();
   if (!messageIFormResizePointerActive) {
     return;
   }
@@ -642,6 +680,7 @@ const handleMessageIFormPointerUp = () => {
 
 const resetMessageIFormPointerState = () => {
   messageIFormResizePointerActive = false;
+  clearImageResizePointerState();
 };
 
 const destroyImageViewer = () => {
@@ -653,6 +692,10 @@ const destroyImageViewer = () => {
 
 const setupImageViewer = async () => {
   await nextTick();
+  if (imageResizeMode.value) {
+    destroyImageViewer();
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) {
     destroyImageViewer();
@@ -703,6 +746,10 @@ const ensureImageViewer = () => {
 };
 
 const handleContentDblclick = async (event: MouseEvent) => {
+  if (imageResizeMode.value) {
+    event.preventDefault();
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) return;
   const target = event.target as HTMLElement | null;
@@ -725,6 +772,20 @@ const handleContentDblclick = async (event: MouseEvent) => {
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  const host = messageContentRef.value;
+  if (imageResizeMode.value && host) {
+    const image = target.closest<HTMLImageElement>('img');
+    if (image && host.contains(image)) {
+      const attachmentId = normalizeAttachmentId(image.dataset.attachmentId || image.getAttribute('data-attachment-id') || image.getAttribute('src') || '');
+      if (attachmentId) {
+        imageResizeSelectedAttachmentId.value = attachmentId;
+        event.preventDefault();
+        event.stopPropagation();
+        void applyImageLayoutToDom();
+      }
+      return;
+    }
+  }
   if (target.closest('a')) return;
   const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null;
   if (!spoiler) return;
@@ -788,6 +849,8 @@ const props = defineProps({
     default: () => [],
   },
 })
+
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change']);
 
 const timestampTicker = ref(Date.now());
 const inlineTimestampText = computed(() => {
@@ -1135,6 +1198,341 @@ const displayContent = computed(() => {
     return draft.replace(inlineImageTokenPattern, '[图片]');
   }
   return props.item?.content ?? props.content ?? '';
+});
+
+const resolveMessageChannelId = () => {
+  const raw = props.item as any;
+  return String(raw?.channel?.id || raw?.channelId || chat.curChannel?.id || '').trim();
+};
+
+const currentMessageId = computed(() => String((props.item as any)?.id || '').trim());
+const currentMessageChannelId = computed(() => resolveMessageChannelId());
+
+const imageAttachmentIDPattern = /id:([a-zA-Z0-9_-]+)/g;
+const imageTagIDPattern = /<(?:img|image)[^>]+src=["']id:([a-zA-Z0-9_-]+)["'][^>]*>/gi;
+
+const extractImageAttachmentIds = (content: string): string[] => {
+  if (!content) {
+    return [];
+  }
+  imageTagIDPattern.lastIndex = 0;
+  imageAttachmentIDPattern.lastIndex = 0;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = imageTagIDPattern.exec(content)) !== null) {
+    const id = normalizeAttachmentId(match[1] || '');
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  if (ids.length > 0) {
+    return ids;
+  }
+  while ((match = imageAttachmentIDPattern.exec(content)) !== null) {
+    const id = normalizeAttachmentId(match[1] || '');
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+};
+
+const messageImageAttachmentIds = computed(() => extractImageAttachmentIds(displayContent.value || ''));
+const imageResizeHasChanges = computed(() => Object.keys(imageResizeDraftLayouts.value).length > 0);
+
+const clampImageLayoutSize = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return IMAGE_LAYOUT_MIN_SIZE;
+  }
+  return Math.max(IMAGE_LAYOUT_MIN_SIZE, Math.min(IMAGE_LAYOUT_MAX_SIZE, Math.round(value)));
+};
+
+const resolveStoredImageLayout = (attachmentId: string) => {
+  const channelId = currentMessageChannelId.value;
+  if (!channelId || !attachmentId) {
+    return null;
+  }
+  return channelImageLayout.getLayout(channelId, attachmentId);
+};
+
+const resolveImageLayoutByAttachmentId = (attachmentId: string) => {
+  if (!attachmentId) {
+    return null;
+  }
+  const draft = imageResizeDraftLayouts.value[attachmentId];
+  if (draft) {
+    return {
+      width: clampImageLayoutSize(draft.width),
+      height: clampImageLayoutSize(draft.height),
+    };
+  }
+  const stored = resolveStoredImageLayout(attachmentId);
+  if (stored) {
+    return {
+      width: clampImageLayoutSize(stored.width),
+      height: clampImageLayoutSize(stored.height),
+    };
+  }
+  return null;
+};
+
+const resolveImageAttachmentIdFromElement = (
+  image: HTMLImageElement,
+  fallbackIds: string[],
+  index: number,
+): string => {
+  const datasetId = normalizeAttachmentId(image.dataset.attachmentId || '');
+  if (datasetId) {
+    return datasetId;
+  }
+  const attrId = normalizeAttachmentId(image.getAttribute('data-attachment-id') || '');
+  if (attrId) {
+    image.dataset.attachmentId = attrId;
+    return attrId;
+  }
+  const srcId = normalizeAttachmentId(image.getAttribute('src') || '');
+  if (srcId) {
+    image.dataset.attachmentId = srcId;
+    return srcId;
+  }
+  if (index < fallbackIds.length) {
+    const fallback = normalizeAttachmentId(fallbackIds[index]);
+    if (fallback) {
+      image.dataset.attachmentId = fallback;
+      return fallback;
+    }
+  }
+  return '';
+};
+
+const applyImageLayoutToDom = async () => {
+  await nextTick();
+  const host = messageContentRef.value;
+  if (!host) {
+    return;
+  }
+  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img'));
+  const fallbackIds = messageImageAttachmentIds.value;
+  images.forEach((image, index) => {
+    const attachmentId = resolveImageAttachmentIdFromElement(image, fallbackIds, index);
+    const layout = resolveImageLayoutByAttachmentId(attachmentId);
+    const unlock = imageResizeMode.value || Boolean(layout);
+
+    image.classList.toggle('message-image-adjustable', imageResizeMode.value && !!attachmentId);
+    image.classList.toggle('message-image-selected', imageResizeMode.value && !!attachmentId && attachmentId === imageResizeSelectedAttachmentId.value);
+    image.classList.toggle('message-image-unlocked', unlock && !!attachmentId);
+    image.draggable = false;
+
+    if (layout && attachmentId) {
+      image.style.width = String(layout.width) + 'px';
+      image.style.height = String(layout.height) + 'px';
+      image.style.maxWidth = 'none';
+      image.style.maxHeight = 'none';
+      image.style.touchAction = imageResizeMode.value && attachmentId === imageResizeSelectedAttachmentId.value ? 'none' : '';
+      return;
+    }
+
+    image.style.width = '';
+    image.style.height = '';
+    image.style.maxWidth = '';
+    image.style.maxHeight = '';
+    image.style.touchAction = '';
+  });
+};
+
+const ensureMessageImageLayoutsLoaded = async () => {
+  const channelId = currentMessageChannelId.value;
+  if (!channelId) {
+    return;
+  }
+  const attachmentIds = messageImageAttachmentIds.value;
+  if (!attachmentIds.length) {
+    return;
+  }
+  await channelImageLayout.ensureLayouts(channelId, attachmentIds);
+};
+
+const clearImageResizePointerState = () => {
+  imageResizePointerState = null;
+};
+
+const emitImageResizeState = (active: boolean) => {
+  const messageId = currentMessageId.value;
+  if (!messageId) {
+    return;
+  }
+  emit('image-layout-edit-state-change', { messageId, active });
+};
+
+const stopImageResizeMode = async (emitState = true, restoreViewer = true) => {
+  imageResizeMode.value = false;
+  imageResizeSelectedAttachmentId.value = '';
+  imageResizeDraftLayouts.value = {};
+  clearImageResizePointerState();
+  if (emitState) {
+    emitImageResizeState(false);
+  }
+  await applyImageLayoutToDom();
+  if (restoreViewer) {
+    ensureImageViewer();
+  }
+};
+
+const enterImageResizeMode = async () => {
+  if (!canEdit.value || !hasImage.value) {
+    return;
+  }
+  const attachmentIds = messageImageAttachmentIds.value;
+  if (!attachmentIds.length) {
+    return;
+  }
+  if (!imageResizeSelectedAttachmentId.value || !attachmentIds.includes(imageResizeSelectedAttachmentId.value)) {
+    imageResizeSelectedAttachmentId.value = attachmentIds[0] || '';
+  }
+  imageResizeMode.value = true;
+  destroyImageViewer();
+  emitImageResizeState(true);
+  await ensureMessageImageLayoutsLoaded();
+  await applyImageLayoutToDom();
+};
+
+const cancelImageResize = () => {
+  void stopImageResizeMode(true, true);
+};
+
+const saveImageResizedLayout = async () => {
+  if (!imageResizeMode.value) {
+    return;
+  }
+  const channelId = currentMessageChannelId.value;
+  const messageId = currentMessageId.value;
+  if (!channelId || !messageId) {
+    return;
+  }
+  const attachmentSet = new Set(messageImageAttachmentIds.value);
+  const payload = Object.entries(imageResizeDraftLayouts.value)
+    .filter(([attachmentId]) => attachmentSet.has(attachmentId))
+    .map(([attachmentId, layout]) => ({
+      attachmentId,
+      width: clampImageLayoutSize(layout.width),
+      height: clampImageLayoutSize(layout.height),
+    }));
+
+  if (payload.length === 0) {
+    await stopImageResizeMode(true, true);
+    return;
+  }
+
+  try {
+    await channelImageLayout.saveMessageLayouts(channelId, messageId, payload);
+    message.success('图片尺寸已保存');
+    await stopImageResizeMode(true, true);
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.message || error?.message || '保存图片尺寸失败';
+    message.error(errMsg);
+  }
+};
+
+const handleImageResizeEnterRequest = (payload?: any) => {
+  const targetMessageId = String(payload?.messageId || payload?.message_id || '').trim();
+  if (!targetMessageId) {
+    return;
+  }
+  if (targetMessageId !== currentMessageId.value) {
+    if (imageResizeMode.value) {
+      void stopImageResizeMode(true, true);
+    }
+    return;
+  }
+  void enterImageResizeMode();
+};
+
+const startImageResizePointer = (event: PointerEvent, image: HTMLImageElement, attachmentId: string) => {
+  const rect = image.getBoundingClientRect();
+  imageResizePointerState = {
+    pointerId: event.pointerId,
+    attachmentId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    moved: false,
+  };
+};
+
+const handleImageResizePointerMove = (event: PointerEvent) => {
+  if (!imageResizeMode.value || !imageResizePointerState) {
+    return;
+  }
+  if (event.pointerId !== imageResizePointerState.pointerId) {
+    return;
+  }
+  const dx = event.clientX - imageResizePointerState.startX;
+  const dy = event.clientY - imageResizePointerState.startY;
+  if (!imageResizePointerState.moved && Math.abs(dx) < 1.5 && Math.abs(dy) < 1.5) {
+    return;
+  }
+  imageResizePointerState.moved = true;
+
+  const nextWidth = clampImageLayoutSize(imageResizePointerState.startWidth + dx);
+  const nextHeight = clampImageLayoutSize(imageResizePointerState.startHeight + dy);
+  const attachmentId = imageResizePointerState.attachmentId;
+  imageResizeDraftLayouts.value = {
+    ...imageResizeDraftLayouts.value,
+    [attachmentId]: {
+      width: nextWidth,
+      height: nextHeight,
+    },
+  };
+  event.preventDefault();
+  void applyImageLayoutToDom();
+};
+
+const handleImageResizePointerUp = () => {
+  clearImageResizePointerState();
+};
+
+const imageResizeLayoutSignature = computed(() => {
+  const channelId = currentMessageChannelId.value;
+  const parts = messageImageAttachmentIds.value.map((attachmentId) => {
+    const draft = imageResizeDraftLayouts.value[attachmentId];
+    if (draft) {
+      return attachmentId + ':' + draft.width + 'x' + draft.height + ':d';
+    }
+    const stored = channelImageLayout.getLayout(channelId, attachmentId);
+    if (!stored) {
+      return attachmentId + ':none';
+    }
+    return attachmentId + ':' + stored.width + 'x' + stored.height + ':' + String(stored.updatedAt || 0);
+  });
+  return [
+    imageResizeMode.value ? '1' : '0',
+    imageResizeSelectedAttachmentId.value,
+    parts.join('|'),
+  ].join('||');
+});
+
+watch([currentMessageChannelId, messageImageAttachmentIds], () => {
+  void ensureMessageImageLayoutsLoaded();
+}, { immediate: true });
+
+watch(imageResizeLayoutSignature, () => {
+  void applyImageLayoutToDom();
+}, { immediate: true });
+
+watch(messageImageAttachmentIds, (ids) => {
+  if (!ids.length && imageResizeMode.value) {
+    void stopImageResizeMode(true, true);
+    return;
+  }
+  if (imageResizeSelectedAttachmentId.value && !ids.includes(imageResizeSelectedAttachmentId.value)) {
+    imageResizeSelectedAttachmentId.value = ids[0] || '';
+  }
 });
 
 const compiledKeywords = computed(() => {
@@ -1826,8 +2224,6 @@ const handleEditCancel = (e: MouseEvent) => {
   emit('edit-cancel', props.item);
 }
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click']);
-
 const handleSelectToggle = (e: MouseEvent) => {
   e.stopPropagation();
   handleMessageClick(e);
@@ -1940,6 +2336,8 @@ onMounted(() => {
 
   applyDiceTone();
   ensureImageViewer();
+  void ensureMessageImageLayoutsLoaded();
+  void applyImageLayoutToDom();
   processMessageLinks();
   processStateTextWidgets();
 
@@ -1955,6 +2353,8 @@ onMounted(() => {
   if (isMobileUa) {
     document.addEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  chatEvent.on('message-image-resize-enter' as any, handleImageResizeEnterRequest as any);
+  window.addEventListener('pointermove', handleImageResizePointerMove, true);
   window.addEventListener('pointerup', handleMessageIFormPointerUp, true);
   window.addEventListener('mouseup', handleMessageIFormPointerUp, true);
   window.addEventListener('pointercancel', resetMessageIFormPointerState, true);
@@ -1964,6 +2364,8 @@ onMounted(() => {
 watch([displayContent, () => props.tone], () => {
   applyDiceTone();
   ensureImageViewer();
+  void ensureMessageImageLayoutsLoaded();
+  void applyImageLayoutToDom();
   processMessageLinks();
   processStateTextWidgets();
   resetMessageIFormSyncBaseline();
@@ -1995,6 +2397,7 @@ watch(() => (props.item as any)?.widgetData, (newData) => {
 watch(() => otherEditingPreview.value?.previewHtml, () => {
   applyDiceTone();
   ensureImageViewer();
+  void applyImageLayoutToDom();
 });
 
 watch(
@@ -2041,11 +2444,14 @@ onBeforeUnmount(() => {
   if (isMobileUa) {
     document.removeEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  chatEvent.off('message-image-resize-enter' as any, handleImageResizeEnterRequest as any);
+  window.removeEventListener('pointermove', handleImageResizePointerMove, true);
   window.removeEventListener('pointerup', handleMessageIFormPointerUp, true);
   window.removeEventListener('mouseup', handleMessageIFormPointerUp, true);
   window.removeEventListener('pointercancel', resetMessageIFormPointerState, true);
   window.removeEventListener('blur', resetMessageIFormPointerState);
   cleanupMessageIFormResizeSync();
+  clearImageResizePointerState();
   destroyImageViewer();
   keywordTooltipInstance.hideAll()
   keywordTooltipInstance.destroy()
@@ -2222,6 +2628,15 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
               </div>
             </div>
             <component :is="parseContent(props, displayContent)" />
+            <div v-if="imageResizeMode" class="image-resize-actions">
+              <n-button size="tiny" type="primary" :disabled="!imageResizeHasChanges" @click.stop="saveImageResizedLayout">
+                保存调整后的大小
+              </n-button>
+              <n-button size="tiny" tertiary @click.stop="cancelImageResize">
+                取消
+              </n-button>
+              <span v-if="messageImageAttachmentIds.length > 1" class="image-resize-actions__tip">单击后拖动已选图片可调整</span>
+            </div>
           </div>
           <div v-if="selfEditingPreview" class="editing-self-actions">
             <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" @click.stop="handleEditSave">
@@ -2584,6 +2999,39 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
   border-radius: 0.375rem;
   vertical-align: middle;
   margin: 0 0.25rem;
+}
+
+.content .message-image-adjustable {
+  user-select: none;
+  transition: box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.content .message-image-adjustable:not(.message-image-selected) {
+  cursor: pointer;
+}
+
+.content .message-image-selected {
+  cursor: nwse-resize;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--chat-accent, #3b82f6) 65%, white 35%);
+  touch-action: none;
+}
+
+.content .message-image-unlocked {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.image-resize-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.image-resize-actions__tip {
+  font-size: 0.72rem;
+  color: var(--chat-text-secondary, #64748b);
 }
 
 .content .rich-inline-image {

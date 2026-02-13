@@ -120,6 +120,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&AccessTokenModel{})
 	db.AutoMigrate(&MemberModel{})
 	db.AutoMigrate(&AttachmentModel{})
+	db.AutoMigrate(&ChannelAttachmentImageLayoutModel{})
 	db.AutoMigrate(&MentionModel{})
 	db.AutoMigrate(&TimelineModel{})
 	db.AutoMigrate(&TimelineUserLastRecordModel{})

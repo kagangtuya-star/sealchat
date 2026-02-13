@@ -72,6 +72,7 @@ import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
+import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
@@ -100,6 +101,7 @@ const display = useDisplayStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
+const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
@@ -4521,6 +4523,85 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   } else {
     messageRowRefs.delete(id);
   }
+  if (id === imageLayoutEditingMessageId) {
+    if (el) {
+      void ensureImageLayoutRowObserver();
+    } else {
+      disconnectImageLayoutRowObserver();
+    }
+  }
+};
+
+let imageLayoutEditingMessageId = "";
+let imageLayoutRowResizeObserver: ResizeObserver | null = null;
+let imageLayoutObservedRowEl: HTMLElement | null = null;
+let imageLayoutObservedRowHeight = 0;
+
+const disconnectImageLayoutRowObserver = () => {
+  if (imageLayoutRowResizeObserver && imageLayoutObservedRowEl) {
+    imageLayoutRowResizeObserver.unobserve(imageLayoutObservedRowEl);
+  }
+  imageLayoutObservedRowEl = null;
+  imageLayoutObservedRowHeight = 0;
+};
+
+const disposeImageLayoutRowObserver = () => {
+  disconnectImageLayoutRowObserver();
+  if (imageLayoutRowResizeObserver) {
+    imageLayoutRowResizeObserver.disconnect();
+    imageLayoutRowResizeObserver = null;
+  }
+};
+
+const ensureImageLayoutRowObserver = async () => {
+  if (!imageLayoutEditingMessageId || typeof ResizeObserver === "undefined") {
+    disconnectImageLayoutRowObserver();
+    return;
+  }
+  await nextTick();
+  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId);
+  if (!rowEl) {
+    disconnectImageLayoutRowObserver();
+    return;
+  }
+  if (!imageLayoutRowResizeObserver) {
+    imageLayoutRowResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+      const nextHeight = entry.contentRect.height;
+      if (nextHeight > imageLayoutObservedRowHeight && isNearBottom()) {
+        scrollToBottom();
+      }
+      imageLayoutObservedRowHeight = nextHeight;
+    });
+  }
+  if (imageLayoutObservedRowEl !== rowEl) {
+    if (imageLayoutObservedRowEl) {
+      imageLayoutRowResizeObserver.unobserve(imageLayoutObservedRowEl);
+    }
+    imageLayoutObservedRowEl = rowEl;
+    imageLayoutObservedRowHeight = rowEl.getBoundingClientRect().height;
+    imageLayoutRowResizeObserver.observe(rowEl);
+  }
+};
+
+const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active?: boolean }) => {
+  const messageId = String(payload?.messageId || "").trim();
+  const active = Boolean(payload?.active);
+  if (!active) {
+    if (!messageId || messageId === imageLayoutEditingMessageId) {
+      imageLayoutEditingMessageId = "";
+      disconnectImageLayoutRowObserver();
+    }
+    return;
+  }
+  if (!messageId) {
+    return;
+  }
+  imageLayoutEditingMessageId = messageId;
+  void ensureImageLayoutRowObserver();
 };
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
@@ -9068,6 +9149,19 @@ chatEvent.on('message-created', (e?: Event) => {
   }
 });
 
+chatEvent.off('channel-image-layout-updated' as any, '*');
+chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
+  const payload = (e as any)?.channelImageLayout || (e as any)?.channel_image_layout;
+  if (!payload) {
+    return;
+  }
+  const channelId = String(payload.channelId || payload.channel_id || e?.channel?.id || '').trim();
+  if (!channelId || channelId !== chat.curChannel?.id) {
+    return;
+  }
+  channelImageLayout.applyRealtimeUpdate(payload);
+});
+
 chatEvent.off('message-updated', '*');
 chatEvent.on('message-updated', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
@@ -9440,6 +9534,7 @@ onBeforeUnmount(() => {
   syncSessionDraftSnapshot();
   disposeSelfPreviewObserver();
   disposeTypingViewportObserver();
+  disposeImageLayoutRowObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
@@ -10831,6 +10926,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(pinItem)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </div>
           </div>
@@ -10900,6 +10996,7 @@ onBeforeUnmount(() => {
                     @edit="beginEdit(entry.message)"
                     @edit-save="saveEdit"
                     @edit-cancel="cancelEditing"
+                    @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                   />
                 </div>
               </div>
@@ -10933,6 +11030,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
             <template v-else>
@@ -10964,6 +11062,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
           </div>
