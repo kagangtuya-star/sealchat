@@ -96,6 +96,7 @@ const IMAGE_LAYOUT_MAX_SIZE = 4096;
 const imageResizeMode = ref(false);
 const imageResizeSelectedAttachmentId = ref('');
 const imageResizeDraftLayouts = ref<Record<string, { width: number; height: number }>>({});
+const imageResizeFreeScaling = ref(false);
 let imageResizePointerState: {
   pointerId: number;
   attachmentId: string;
@@ -103,6 +104,7 @@ let imageResizePointerState: {
   startY: number;
   startWidth: number;
   startHeight: number;
+  aspectRatio: number;
   moved: boolean;
 } | null = null;
 
@@ -1321,7 +1323,7 @@ const applyImageLayoutToDom = async () => {
   images.forEach((image, index) => {
     const attachmentId = resolveImageAttachmentIdFromElement(image, fallbackIds, index);
     const layout = resolveImageLayoutByAttachmentId(attachmentId);
-    const unlock = imageResizeMode.value || Boolean(layout);
+    const unlock = Boolean(layout);
 
     image.classList.toggle('message-image-adjustable', imageResizeMode.value && !!attachmentId);
     image.classList.toggle('message-image-selected', imageResizeMode.value && !!attachmentId && attachmentId === imageResizeSelectedAttachmentId.value);
@@ -1371,6 +1373,7 @@ const emitImageResizeState = (active: boolean) => {
 
 const stopImageResizeMode = async (emitState = true, restoreViewer = true) => {
   imageResizeMode.value = false;
+  imageResizeFreeScaling.value = false;
   imageResizeSelectedAttachmentId.value = '';
   imageResizeDraftLayouts.value = {};
   clearImageResizePointerState();
@@ -1395,10 +1398,15 @@ const enterImageResizeMode = async () => {
     imageResizeSelectedAttachmentId.value = attachmentIds[0] || '';
   }
   imageResizeMode.value = true;
+  imageResizeFreeScaling.value = false;
   destroyImageViewer();
   emitImageResizeState(true);
   await ensureMessageImageLayoutsLoaded();
   await applyImageLayoutToDom();
+};
+
+const toggleImageResizeScaleMode = () => {
+  imageResizeFreeScaling.value = !imageResizeFreeScaling.value;
 };
 
 const cancelImageResize = () => {
@@ -1461,6 +1469,7 @@ const startImageResizePointer = (event: PointerEvent, image: HTMLImageElement, a
     startY: event.clientY,
     startWidth: rect.width,
     startHeight: rect.height,
+    aspectRatio: rect.height > 0 ? rect.width / rect.height : 1,
     moved: false,
   };
 };
@@ -1479,8 +1488,22 @@ const handleImageResizePointerMove = (event: PointerEvent) => {
   }
   imageResizePointerState.moved = true;
 
-  const nextWidth = clampImageLayoutSize(imageResizePointerState.startWidth + dx);
-  const nextHeight = clampImageLayoutSize(imageResizePointerState.startHeight + dy);
+  const nextWidthByPointer = clampImageLayoutSize(imageResizePointerState.startWidth + dx);
+  const nextHeightByPointer = clampImageLayoutSize(imageResizePointerState.startHeight + dy);
+  let nextWidth = nextWidthByPointer;
+  let nextHeight = nextHeightByPointer;
+
+  if (!imageResizeFreeScaling.value) {
+    const aspectRatio = imageResizePointerState.aspectRatio > 0 ? imageResizePointerState.aspectRatio : 1;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      nextWidth = nextWidthByPointer;
+      nextHeight = clampImageLayoutSize(nextWidth / aspectRatio);
+    } else {
+      nextHeight = nextHeightByPointer;
+      nextWidth = clampImageLayoutSize(nextHeight * aspectRatio);
+    }
+  }
+
   const attachmentId = imageResizePointerState.attachmentId;
   imageResizeDraftLayouts.value = {
     ...imageResizeDraftLayouts.value,
@@ -2632,6 +2655,21 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
               <n-button size="tiny" type="primary" :disabled="!imageResizeHasChanges" @click.stop="saveImageResizedLayout">
                 保存调整后的大小
               </n-button>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    size="tiny"
+                    quaternary
+                    circle
+                    class="image-resize-actions__ratio-toggle"
+                    :class="{ 'is-free': imageResizeFreeScaling }"
+                    @click.stop="toggleImageResizeScaleMode"
+                  >
+                    <n-icon :component="Lock" size="14" />
+                  </n-button>
+                </template>
+                {{ imageResizeFreeScaling ? '自由缩放：开（再次点击切回锁定比例）' : '锁定比例：开（点击后可自由缩放）' }}
+              </n-tooltip>
               <n-button size="tiny" tertiary @click.stop="cancelImageResize">
                 取消
               </n-button>
@@ -3032,6 +3070,18 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 .image-resize-actions__tip {
   font-size: 0.72rem;
   color: var(--chat-text-secondary, #64748b);
+}
+
+.image-resize-actions__ratio-toggle {
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+}
+
+.image-resize-actions__ratio-toggle.is-free {
+  color: var(--chat-warning, #f97316);
+  border-color: color-mix(in srgb, var(--chat-warning, #f97316) 50%, transparent 50%);
 }
 
 .content .rich-inline-image {
