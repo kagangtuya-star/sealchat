@@ -415,7 +415,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 </script>
 
 <template>
-  <div class="world-lobby-root p-4 space-y-3">
+  <div class="world-lobby-root p-4">
     <div class="world-lobby-header">
       <h2 class="text-lg font-bold">世界大厅</h2>
       <n-space size="small">
@@ -620,7 +620,15 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 <style scoped>
 .world-lobby-root {
-  min-height: calc(100vh - 120px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .world-lobby-header {
@@ -681,12 +689,38 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 .world-grid-board {
   width: 100%;
-  min-height: calc(100vh - 280px);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
+}
+
+.world-grid-board::-webkit-scrollbar {
+  width: 5px;
+}
+
+.world-grid-board::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.world-grid-board::-webkit-scrollbar-thumb {
+  background: var(--sc-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.world-grid-board::-webkit-scrollbar-thumb:hover {
+  background: var(--sc-scrollbar-thumb-hover);
 }
 
 .world-grid {
   display: grid;
   gap: 12px;
+  align-content: start;
+  grid-auto-rows: minmax(186px, auto);
 }
 
 .world-grid--full {
@@ -791,7 +825,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   }
 
   .world-grid-board {
-    min-height: auto;
+    min-height: 0;
+    padding-right: 2px;
   }
 
   .world-grid--full {
@@ -802,6 +837,10 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   .world-grid-card {
     min-height: 148px;
     padding: 10px;
+  }
+
+  .world-grid {
+    grid-auto-rows: minmax(148px, auto);
   }
 
   .world-grid-card__actions {
