@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -20,11 +20,24 @@ interface FetchOptions {
   pageSize?: number;
 }
 
+interface GridTetherState {
+  worldId: string;
+  mouseX: number;
+  mouseY: number;
+  buttonX: number;
+  buttonY: number;
+  proximity: number;
+  beamWidth: number;
+}
+
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZES = [10, 20, 50];
 const MAX_DESCRIPTION_LENGTH = 30;
 const DESCRIPTION_LINE_LENGTH = 11;
 const WORLD_VIEW_MODE_STORAGE_KEY = 'sc.world-lobby.view-mode';
+const GRID_TETHER_MAX_DISTANCE = 260;
+const GRID_ENTER_PULSE_DELAY_MS = 40;
+const GRID_ENTER_COLLAPSE_DELAY_MS = 90;
 
 const isWorldLobbyViewMode = (value: unknown): value is WorldLobbyViewMode => value === 'list' || value === 'grid';
 
@@ -55,6 +68,10 @@ const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
 const mobileGridActionMode = ref(false);
+const gridTetherState = ref<GridTetherState | null>(null);
+const gridEnterPulseWorldId = ref<string | null>(null);
+const gridEnterCollapseWorldId = ref<string | null>(null);
+const gridEnteringWorldId = ref<string | null>(null);
 let mobileGridActionMediaQuery: MediaQueryList | null = null;
 
 const minePagination = ref<PaginationState>({
@@ -247,17 +264,29 @@ watch(searchKeyword, (val) => {
 
 watch(activeWorlds, (worlds) => {
   if (!gridActionOpenWorldId.value) {
-    return;
+    if (!gridTetherState.value) {
+      return;
+    }
   }
   const hasActive = worlds.some(item => item?.world?.id === gridActionOpenWorldId.value);
   if (!hasActive) {
     gridActionOpenWorldId.value = null;
+  }
+  if (gridTetherState.value) {
+    const hasTetherTarget = worlds.some(item => item?.world?.id === gridTetherState.value?.worldId);
+    if (!hasTetherTarget) {
+      gridTetherState.value = null;
+    }
   }
 });
 
 watch(viewMode, (mode) => {
   if (mode !== 'grid') {
     gridActionOpenWorldId.value = null;
+    gridTetherState.value = null;
+    gridEnterPulseWorldId.value = null;
+    gridEnterCollapseWorldId.value = null;
+    gridEnteringWorldId.value = null;
   }
   if (typeof window === 'undefined') {
     return;
@@ -274,6 +303,10 @@ const syncMobileGridActionMode = () => {
   if (!mobileGridActionMode.value) {
     gridActionOpenWorldId.value = null;
   }
+  gridTetherState.value = null;
+  gridEnterPulseWorldId.value = null;
+  gridEnterCollapseWorldId.value = null;
+  gridEnteringWorldId.value = null;
 };
 
 onMounted(async () => {
@@ -358,6 +391,169 @@ const toggleGridCardActions = (worldId: string) => {
   gridActionOpenWorldId.value = gridActionOpenWorldId.value === worldId ? null : worldId;
 };
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const updateGridTetherState = (worldId: string, event: MouseEvent) => {
+  if (mobileGridActionMode.value) {
+    return;
+  }
+  const cardEl = event.currentTarget;
+  if (!(cardEl instanceof HTMLElement)) {
+    return;
+  }
+  const enterButton = cardEl.querySelector('.world-grid-action-btn--enter');
+  if (!(enterButton instanceof HTMLElement)) {
+    return;
+  }
+
+  const cardRect = cardEl.getBoundingClientRect();
+  const buttonRect = enterButton.getBoundingClientRect();
+  const localWidth = cardEl.clientWidth || cardEl.offsetWidth || cardRect.width;
+  const localHeight = cardEl.clientHeight || cardEl.offsetHeight || cardRect.height;
+  const scaleX = cardRect.width > 0 ? cardRect.width / Math.max(localWidth, 1) : 1;
+  const scaleY = cardRect.height > 0 ? cardRect.height / Math.max(localHeight, 1) : 1;
+  const mouseX = clamp((event.clientX - cardRect.left) / Math.max(scaleX, 0.0001), 0, localWidth);
+  const mouseY = clamp((event.clientY - cardRect.top) / Math.max(scaleY, 0.0001), 0, localHeight);
+  const buttonX = clamp(
+    (buttonRect.left + buttonRect.width / 2 - cardRect.left) / Math.max(scaleX, 0.0001),
+    0,
+    localWidth,
+  );
+  const buttonY = clamp(
+    (buttonRect.top + buttonRect.height / 2 - cardRect.top) / Math.max(scaleY, 0.0001),
+    0,
+    localHeight,
+  );
+  const distance = Math.hypot(buttonX - mouseX, buttonY - mouseY);
+  const proximity = Math.max(0, 1 - Math.min(distance, GRID_TETHER_MAX_DISTANCE) / GRID_TETHER_MAX_DISTANCE);
+
+  gridTetherState.value = {
+    worldId,
+    mouseX,
+    mouseY,
+    buttonX,
+    buttonY,
+    proximity,
+    beamWidth: 1 + proximity * 1.8,
+  };
+};
+
+const handleGridCardMouseEnter = (item: any, event: MouseEvent) => {
+  const worldId = item?.world?.id;
+  if (!worldId) {
+    return;
+  }
+  updateGridTetherState(worldId, event);
+};
+
+const handleGridCardMouseMove = (item: any, event: MouseEvent) => {
+  const worldId = item?.world?.id;
+  if (!worldId) {
+    return;
+  }
+  updateGridTetherState(worldId, event);
+};
+
+const handleGridCardMouseLeave = (item: any) => {
+  const worldId = item?.world?.id;
+  if (!worldId) {
+    return;
+  }
+  if (gridTetherState.value?.worldId === worldId) {
+    gridTetherState.value = null;
+  }
+};
+
+const isGridTetherVisible = (worldId: string) =>
+  !mobileGridActionMode.value && gridTetherState.value?.worldId === worldId;
+
+const getGridCardFxStyle = (worldId: string): CSSProperties => {
+  const state = gridTetherState.value?.worldId === worldId ? gridTetherState.value : null;
+  if (!state) {
+    return {
+      '--world-enter-glow-size': '8px',
+      '--world-enter-glow-alpha': '0.14',
+    } as CSSProperties;
+  }
+  return {
+    '--world-enter-glow-size': `${(8 + state.proximity * 18).toFixed(2)}px`,
+    '--world-enter-glow-alpha': `${(0.18 + state.proximity * 0.58).toFixed(3)}`,
+  } as CSSProperties;
+};
+
+const getGridTetherBeamStyle = (worldId: string): CSSProperties => {
+  const state = gridTetherState.value;
+  if (!state || state.worldId !== worldId) {
+    return {};
+  }
+  const dx = state.buttonX - state.mouseX;
+  const dy = state.buttonY - state.mouseY;
+  const length = Math.hypot(dx, dy);
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const tailAlpha = (0.2 + state.proximity * 0.2).toFixed(3);
+  const headAlpha = (0.58 + state.proximity * 0.42).toFixed(3);
+  return {
+    left: `${state.mouseX.toFixed(2)}px`,
+    top: `${state.mouseY.toFixed(2)}px`,
+    width: `${length.toFixed(2)}px`,
+    transform: `rotate(${angle.toFixed(2)}deg) scaleX(var(--world-tether-scale, 1))`,
+    '--world-tether-width': `${state.beamWidth.toFixed(2)}px`,
+    '--world-tether-tail-alpha': tailAlpha,
+    '--world-tether-head-alpha': headAlpha,
+  } as CSSProperties;
+};
+
+const getGridTetherCursorDotStyle = (worldId: string): CSSProperties => {
+  const state = gridTetherState.value;
+  if (!state || state.worldId !== worldId) {
+    return {};
+  }
+  const size = 3 + state.proximity * 2.2;
+  return {
+    left: `${state.mouseX.toFixed(2)}px`,
+    top: `${state.mouseY.toFixed(2)}px`,
+    width: `${size.toFixed(2)}px`,
+    height: `${size.toFixed(2)}px`,
+    opacity: `${(0.48 + state.proximity * 0.32).toFixed(3)}`,
+  };
+};
+
+const getGridTetherTargetDotStyle = (worldId: string): CSSProperties => {
+  const state = gridTetherState.value;
+  if (!state || state.worldId !== worldId) {
+    return {};
+  }
+  const size = 4.8 + state.proximity * 3.4;
+  return {
+    left: `${state.buttonX.toFixed(2)}px`,
+    top: `${state.buttonY.toFixed(2)}px`,
+    width: `${size.toFixed(2)}px`,
+    height: `${size.toFixed(2)}px`,
+    opacity: `${(0.72 + state.proximity * 0.28).toFixed(3)}`,
+  };
+};
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const runDesktopGridEnterAnimation = async (worldId: string) => {
+  if (gridEnteringWorldId.value) {
+    return;
+  }
+  gridEnteringWorldId.value = worldId;
+  gridEnterPulseWorldId.value = worldId;
+  await sleep(GRID_ENTER_PULSE_DELAY_MS);
+  gridEnterCollapseWorldId.value = worldId;
+  await sleep(GRID_ENTER_COLLAPSE_DELAY_MS);
+  try {
+    await handleGridEnterWorld(worldId);
+  } finally {
+    gridTetherState.value = null;
+    gridEnterPulseWorldId.value = null;
+    gridEnterCollapseWorldId.value = null;
+    gridEnteringWorldId.value = null;
+  }
+};
+
 const handleGridCardClick = (item: any) => {
   const worldId = item?.world?.id;
   if (!worldId) {
@@ -367,7 +563,7 @@ const handleGridCardClick = (item: any) => {
     toggleGridCardActions(worldId);
     return;
   }
-  void handleGridEnterWorld(worldId);
+  void runDesktopGridEnterAnimation(worldId);
 };
 
 const handleGridFavorite = async (worldId: string) => {
@@ -601,9 +797,28 @@ const handleExplorePageSizeChange = (pageSize: number) => {
             v-for="item in activeWorlds"
             :key="item.world.id"
             class="world-grid-card"
-            :class="{ 'world-grid-card--actions-open': isGridCardActionsVisible(item.world.id) }"
+            :class="{
+              'world-grid-card--actions-open': isGridCardActionsVisible(item.world.id),
+              'world-grid-card--enter-pulse': gridEnterPulseWorldId === item.world.id,
+              'world-grid-card--enter-collapse': gridEnterCollapseWorldId === item.world.id,
+            }"
+            :style="getGridCardFxStyle(item.world.id)"
+            @mouseenter="handleGridCardMouseEnter(item, $event)"
+            @mousemove="handleGridCardMouseMove(item, $event)"
+            @mouseleave="handleGridCardMouseLeave(item)"
             @click="handleGridCardClick(item)"
           >
+            <div v-if="isGridTetherVisible(item.world.id)" class="world-grid-card__tether-layer">
+              <span class="world-grid-card__tether-beam" :style="getGridTetherBeamStyle(item.world.id)" />
+              <span
+                class="world-grid-card__tether-dot world-grid-card__tether-dot--cursor"
+                :style="getGridTetherCursorDotStyle(item.world.id)"
+              />
+              <span
+                class="world-grid-card__tether-dot world-grid-card__tether-dot--target"
+                :style="getGridTetherTargetDotStyle(item.world.id)"
+              />
+            </div>
             <div class="world-grid-card__header">
               <div class="world-grid-card__title-wrap">
                 <div class="world-grid-card__title">{{ item.world.name }}</div>
@@ -858,6 +1073,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 .world-grid-card__header {
+  position: relative;
+  z-index: 2;
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -885,6 +1102,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 .world-grid-card__desc {
+  position: relative;
+  z-index: 2;
   flex: 1;
   color: var(--sc-text-secondary);
   font-size: 12px;
@@ -892,10 +1111,70 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   white-space: pre-line;
 }
 
+.world-grid-card__tether-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.world-grid-card__tether-beam {
+  position: absolute;
+  height: var(--world-tether-width, 1px);
+  border-radius: 999px;
+  transform-origin: left center;
+  background: linear-gradient(
+    90deg,
+    rgba(51, 136, 222, var(--world-tether-tail-alpha, 0.2)) 0%,
+    rgba(51, 136, 222, var(--world-tether-head-alpha, 0.95)) 100%
+  );
+  filter: saturate(115%);
+  opacity: 0.92;
+  transition: height 0.12s ease, filter 0.12s ease, opacity 0.12s ease, transform 0.12s ease;
+}
+
+.world-grid-card__tether-dot {
+  position: absolute;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: rgba(51, 136, 222, 0.92);
+  transition: transform 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+}
+
+.world-grid-card__tether-dot--cursor {
+  box-shadow: 0 0 8px rgba(51, 136, 222, 0.35);
+}
+
+.world-grid-card__tether-dot--target {
+  box-shadow: 0 0 14px rgba(51, 136, 222, 0.7);
+}
+
+.world-grid-card--enter-pulse .world-grid-card__tether-beam {
+  height: calc(var(--world-tether-width, 1px) + 1.6px);
+  filter: brightness(1.65) saturate(145%);
+  opacity: 1;
+}
+
+.world-grid-card--enter-pulse .world-grid-card__tether-dot--target {
+  transform: translate(-50%, -50%) scale(1.2);
+  box-shadow: 0 0 18px rgba(51, 136, 222, 0.98);
+}
+
+.world-grid-card--enter-collapse .world-grid-card__tether-beam {
+  transform-origin: right center;
+  --world-tether-scale: 0.08;
+}
+
+.world-grid-card--enter-collapse .world-grid-card__tether-dot--cursor {
+  opacity: 0;
+}
+
 .world-grid-card__actions {
   position: absolute;
   right: 10px;
   bottom: 10px;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -942,6 +1221,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 .world-grid-card :deep(.world-grid-action-btn--enter) {
   color: color-mix(in srgb, #3388de 34%, var(--sc-text-primary));
+  box-shadow: 0 0 var(--world-enter-glow-size, 8px) rgba(51, 136, 222, var(--world-enter-glow-alpha, 0.14));
 }
 
 .world-grid-card :deep(.world-grid-action-btn--danger) {
