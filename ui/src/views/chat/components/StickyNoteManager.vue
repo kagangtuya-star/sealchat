@@ -605,11 +605,13 @@ const migrationChannelOptions = computed(() => {
   const result: Array<{ label: string; value: string }> = []
   const walk = (nodes: any[], depth = 0) => {
     nodes.forEach((node) => {
-      if (!node?.id || node.id === props.channelId) {
+      if (!node?.id) {
         return
       }
-      const indent = depth ? `${'· '.repeat(depth)}` : ''
-      result.push({ label: `${indent}${node.name || node.id}`, value: node.id })
+      if (node.id !== props.channelId) {
+        const indent = depth ? `${'· '.repeat(depth)}` : ''
+        result.push({ label: `${indent}${node.name || node.id}`, value: node.id })
+      }
       if (node.children?.length) {
         walk(node.children, depth + 1)
       }
