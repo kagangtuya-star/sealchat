@@ -2,28 +2,105 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
-import { Star, StarOff, Search } from '@vicons/tabler';
+import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
-import { matchText } from '@/utils/pinyinMatch';
+
+type LobbyMode = 'mine' | 'explore';
+type WorldLobbyViewMode = 'list' | 'grid';
+
+interface PaginationState {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+interface FetchOptions {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+const DEFAULT_PAGE_SIZE = 20;
+const PAGE_SIZES = [10, 20, 50];
+const MAX_DESCRIPTION_LENGTH = 30;
+const DESCRIPTION_LINE_LENGTH = 11;
+const WORLD_VIEW_MODE_STORAGE_KEY = 'sc.world-lobby.view-mode';
+
+const isWorldLobbyViewMode = (value: unknown): value is WorldLobbyViewMode => value === 'list' || value === 'grid';
+
+const readStoredViewMode = (): WorldLobbyViewMode => {
+  if (typeof window === 'undefined') {
+    return 'list';
+  }
+  try {
+    const raw = window.localStorage.getItem(WORLD_VIEW_MODE_STORAGE_KEY);
+    return isWorldLobbyViewMode(raw) ? raw : 'list';
+  } catch {
+    return 'list';
+  }
+};
 
 const chat = useChatStore();
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
+
 const loading = ref(false);
 const inviteSlug = ref('');
 const joining = ref(false);
 const searchKeyword = ref('');
 const createVisible = ref(false);
 const creating = ref(false);
+const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
+const requestSeq = ref(0);
+
+const minePagination = ref<PaginationState>({
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  total: 0,
+});
+
+const explorePagination = ref<PaginationState>({
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  total: 0,
+});
+
 const createForm = ref({
   name: '',
   description: '',
   visibility: 'public',
 });
 
-const MAX_DESCRIPTION_LENGTH = 30;
-const DESCRIPTION_LINE_LENGTH = 11;
+const normalizePositiveInt = (value: unknown, fallback: number) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return fallback;
+  }
+  return Math.floor(num);
+};
+
+const normalizeNonNegativeInt = (value: unknown, fallback: number) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    return fallback;
+  }
+  return Math.floor(num);
+};
+
+const beginRequest = () => {
+  const seq = ++requestSeq.value;
+  loading.value = true;
+  return seq;
+};
+
+const isLatestRequest = (seq: number) => seq === requestSeq.value;
+
+const endRequest = (seq: number) => {
+  if (isLatestRequest(seq)) {
+    loading.value = false;
+  }
+};
 
 const formatWorldDescription = (description?: string) => {
   const value = (description || '暂无简介').trim() || '暂无简介';
@@ -35,69 +112,150 @@ const formatWorldDescription = (description?: string) => {
   return segments.join('\n');
 };
 
-const fetchList = async (keyword?: string) => {
-  loading.value = true;
+const fetchList = async (options: FetchOptions = {}) => {
+  const seq = beginRequest();
   try {
-    const params: { page: number; pageSize: number; joined: boolean; keyword?: string } = {
-      page: 1,
-      pageSize: 50,
+    const keyword = options.keyword ?? searchKeyword.value.trim();
+    const page = options.page ?? minePagination.value.page;
+    const pageSize = options.pageSize ?? minePagination.value.pageSize;
+    const data = await chat.worldList({
+      page,
+      pageSize,
       joined: true,
-    };
-    const effectiveKeyword = keyword ?? searchKeyword.value.trim();
-    if (effectiveKeyword) {
-      params.keyword = effectiveKeyword;
+      keyword: keyword || undefined,
+    });
+    if (!isLatestRequest(seq)) {
+      return;
     }
-    await chat.worldList(params);
-  } catch (e) {
-    message.error('加载世界列表失败');
+    const nextPage = normalizePositiveInt(data?.page, page);
+    const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+    const nextTotal = normalizeNonNegativeInt(data?.total, 0);
+    const maxPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+
+    if (nextTotal > 0 && nextPage > maxPage) {
+      minePagination.value = {
+        page: maxPage,
+        pageSize: nextPageSize,
+        total: nextTotal,
+      };
+      await fetchList({ keyword, page: maxPage, pageSize: nextPageSize });
+      return;
+    }
+
+    minePagination.value = {
+      page: nextPage,
+      pageSize: nextPageSize,
+      total: nextTotal,
+    };
+  } catch {
+    if (isLatestRequest(seq)) {
+      message.error('加载世界列表失败');
+    }
   } finally {
-    loading.value = false;
+    endRequest(seq);
   }
 };
 
-const fetchExploreList = async (keyword?: string) => {
-  loading.value = true;
+const fetchExploreList = async (options: FetchOptions = {}) => {
+  const seq = beginRequest();
   try {
-    const params: { page?: number; pageSize?: number; keyword?: string; visibility?: string; joined?: boolean } = {
-      page: 1,
-      pageSize: 50,
+    const keyword = options.keyword ?? searchKeyword.value.trim();
+    const page = options.page ?? explorePagination.value.page;
+    const pageSize = options.pageSize ?? explorePagination.value.pageSize;
+    const data = await chat.worldListExplore({
+      page,
+      pageSize,
       visibility: 'public',
       joined: false,
-    };
-    const effectiveKeyword = keyword ?? searchKeyword.value.trim();
-    if (effectiveKeyword) {
-      params.keyword = effectiveKeyword;
+      keyword: keyword || undefined,
+    });
+    if (!isLatestRequest(seq)) {
+      return;
     }
-    await chat.worldListExplore(params);
-  } catch (e) {
-    message.error('加载公开世界失败');
+    const nextPage = normalizePositiveInt(data?.page, page);
+    const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+    const nextTotal = normalizeNonNegativeInt(data?.total, 0);
+    const maxPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+
+    if (nextTotal > 0 && nextPage > maxPage) {
+      explorePagination.value = {
+        page: maxPage,
+        pageSize: nextPageSize,
+        total: nextTotal,
+      };
+      await fetchExploreList({ keyword, page: maxPage, pageSize: nextPageSize });
+      return;
+    }
+
+    explorePagination.value = {
+      page: nextPage,
+      pageSize: nextPageSize,
+      total: nextTotal,
+    };
+  } catch {
+    if (isLatestRequest(seq)) {
+      message.error('加载公开世界失败');
+    }
   } finally {
-    loading.value = false;
+    endRequest(seq);
   }
 };
 
-const handleSearch = () => {
-  const keyword = searchKeyword.value.trim();
-  if (chat.worldLobbyMode === 'mine') {
-    fetchList(keyword);
+const lobbyMode = computed<LobbyMode>(() => (chat.worldLobbyMode === 'explore' ? 'explore' : 'mine'));
+
+const mineWorlds = computed<any[]>(() => chat.worldListCache?.items || []);
+const exploreWorlds = computed<any[]>(() => chat.exploreWorldCache?.items || []);
+const activeWorlds = computed<any[]>(() => (lobbyMode.value === 'mine' ? mineWorlds.value : exploreWorlds.value));
+const activeCardTitle = computed(() => (lobbyMode.value === 'mine' ? '世界列表' : '探索世界'));
+const activeEmptyText = computed(() => (lobbyMode.value === 'mine' ? '暂无世界' : '暂无公开世界'));
+const activePagination = computed(() => (lobbyMode.value === 'mine' ? minePagination.value : explorePagination.value));
+const showPagination = computed(() => activePagination.value.total > activePagination.value.pageSize);
+
+const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
+const viewToggleLabel = computed(() => (viewMode.value === 'list' ? '网格视图' : '列表视图'));
+
+const refreshCurrentMode = async () => {
+  if (lobbyMode.value === 'mine') {
+    await fetchList();
   } else {
-    fetchExploreList(keyword);
+    await fetchExploreList();
   }
+};
+
+const resetAndFetchCurrentMode = async () => {
+  if (lobbyMode.value === 'mine') {
+    minePagination.value.page = 1;
+    await fetchList({ page: 1 });
+  } else {
+    explorePagination.value.page = 1;
+    await fetchExploreList({ page: 1 });
+  }
+};
+
+const handleSearch = async () => {
+  await resetAndFetchCurrentMode();
 };
 
 watch(searchKeyword, (val) => {
   if (val === '') {
-    if (chat.worldLobbyMode === 'mine') {
-      fetchList();
-    } else {
-      fetchExploreList();
-    }
+    void resetAndFetchCurrentMode();
+  }
+});
+
+watch(viewMode, (mode) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(WORLD_VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // ignore localStorage failures in private mode or restricted environments
   }
 });
 
 onMounted(async () => {
   await chat.fetchFavoriteWorlds().catch(() => {});
-  await fetchList();
+  await refreshCurrentMode();
 });
 
 const enterWorld = async (worldId: string) => {
@@ -136,39 +294,12 @@ const consumeInvite = async () => {
   }
 };
 
-const lobbyMode = computed(() => chat.worldLobbyMode);
-
-const filteredMineWorlds = computed(() => {
-  const keyword = searchKeyword.value.trim();
-  const items = chat.worldListCache?.items || [];
-  if (!keyword) return items;
-  return items.filter((item: any) => {
-    const name = item.world?.name || '';
-    const desc = item.world?.description || '';
-    return matchText(keyword, name) || matchText(keyword, desc);
-  });
-});
-
-const exploreWorlds = computed(() => {
-  const cache = chat.exploreWorldCache;
-  const items = cache?.items || [];
-  const keyword = searchKeyword.value.trim();
-  if (!keyword) return items;
-  return items.filter((item: any) => {
-    const name = item.world?.name || '';
-    const desc = item.world?.description || '';
-    return matchText(keyword, name) || matchText(keyword, desc);
-  });
-});
+const isWorldFavorited = (worldId: string) => chat.favoriteWorldIds.includes(worldId);
 
 const toggleFavorite = async (worldId: string) => {
   try {
     await chat.toggleWorldFavorite(worldId);
-    if (chat.worldLobbyMode === 'mine') {
-      await fetchList(searchKeyword.value.trim());
-    } else {
-      await fetchExploreList(searchKeyword.value.trim());
-    }
+    await refreshCurrentMode();
   } catch (err: any) {
     message.error(err?.response?.data?.message || '更新收藏失败');
   }
@@ -205,7 +336,7 @@ const confirmLeaveWorld = (item: any) => {
       try {
         await chat.leaveWorld(item.world.id);
         message.success('已退出世界');
-        await fetchList(searchKeyword.value.trim());
+        await refreshCurrentMode();
       } catch (error: any) {
         message.error(error?.response?.data?.message || '退出失败');
       }
@@ -236,7 +367,9 @@ const handleCreateWorld = async () => {
     message.success('创建世界成功');
     createVisible.value = false;
     resetCreateForm();
-    await fetchList();
+    chat.worldLobbyMode = 'mine';
+    minePagination.value.page = 1;
+    await fetchList({ page: 1 });
   } catch (err: any) {
     message.error(err?.response?.data?.message || err?.message || '创建世界失败');
   } finally {
@@ -245,7 +378,7 @@ const handleCreateWorld = async () => {
 };
 
 const switchLobbyMode = async () => {
-  if (chat.worldLobbyMode === 'mine') {
+  if (lobbyMode.value === 'mine') {
     chat.worldLobbyMode = 'explore';
     await fetchExploreList();
   } else {
@@ -253,38 +386,67 @@ const switchLobbyMode = async () => {
     await fetchList();
   }
 };
+
+const toggleViewMode = () => {
+  viewMode.value = viewMode.value === 'list' ? 'grid' : 'list';
+};
+
+const handleMinePageChange = (page: number) => {
+  minePagination.value.page = page;
+  void fetchList({ page });
+};
+
+const handleMinePageSizeChange = (pageSize: number) => {
+  minePagination.value.pageSize = pageSize;
+  minePagination.value.page = 1;
+  void fetchList({ page: 1, pageSize });
+};
+
+const handleExplorePageChange = (page: number) => {
+  explorePagination.value.page = page;
+  void fetchExploreList({ page });
+};
+
+const handleExplorePageSizeChange = (pageSize: number) => {
+  explorePagination.value.pageSize = pageSize;
+  explorePagination.value.page = 1;
+  void fetchExploreList({ page: 1, pageSize });
+};
 </script>
 
 <template>
-  <div class="p-4 space-y-3">
-    <div class="flex justify-between items-center">
+  <div class="world-lobby-root p-4 space-y-3">
+    <div class="world-lobby-header">
       <h2 class="text-lg font-bold">世界大厅</h2>
       <n-space size="small">
-        <n-button
-          size="small"
-          @click="() => (chat.worldLobbyMode === 'mine' ? fetchList() : fetchExploreList())"
-          :loading="loading"
-        >
+        <n-button size="small" quaternary @click="toggleViewMode">
+          <template #icon>
+            <n-icon>
+              <component :is="viewToggleIcon" />
+            </n-icon>
+          </template>
+          {{ viewToggleLabel }}
+        </n-button>
+        <n-button size="small" @click="refreshCurrentMode" :loading="loading">
           刷新
         </n-button>
-        <n-button size="small" type="primary" @click="createVisible = true" v-if="lobbyMode === 'mine'">创建世界</n-button>
-        <n-button
-          size="small"
-          :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'"
-          @click="switchLobbyMode"
-        >
+        <n-button size="small" type="primary" @click="createVisible = true" v-if="lobbyMode === 'mine'">
+          创建世界
+        </n-button>
+        <n-button size="small" :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'" @click="switchLobbyMode">
           {{ lobbyMode === 'mine' ? '探索世界' : '我的世界' }}
         </n-button>
       </n-space>
     </div>
-    <div class="flex gap-2 items-center">
+
+    <div class="world-toolbar-row">
       <n-input
         v-model:value="searchKeyword"
         size="small"
         clearable
         placeholder="搜索世界或频道"
         @keyup.enter="handleSearch"
-        @clear="() => (chat.worldLobbyMode === 'mine' ? fetchList() : fetchExploreList())"
+        @clear="resetAndFetchCurrentMode"
       >
         <template #prefix>
           <n-icon size="14">
@@ -294,99 +456,125 @@ const switchLobbyMode = async () => {
       </n-input>
       <n-button size="small" type="primary" @click="handleSearch" :loading="loading">搜索</n-button>
     </div>
-    <div class="flex gap-2 items-center">
+
+    <div class="world-toolbar-row">
       <n-input v-model:value="inviteSlug" size="small" placeholder="输入邀请码" />
       <n-button size="small" type="primary" :loading="joining" @click="consumeInvite">通过邀请码加入</n-button>
     </div>
-    <template v-if="lobbyMode === 'mine'">
-      <n-grid :cols="1" :x-gap="12" :y-gap="12">
-        <n-gi>
-          <n-card title="世界列表" class="sc-card-scroll">
-            <div class="card-body-scroll space-y-2">
-              <n-empty v-if="!filteredMineWorlds.length" description="暂无世界" />
-              <div v-for="item in filteredMineWorlds" :key="item.world.id" class="world-row">
-                <div class="flex items-start gap-2">
-                  <n-button quaternary circle size="tiny" @click="toggleFavorite(item.world.id)">
-                    <n-icon size="16" :color="chat.favoriteWorldIds.includes(item.world.id) ? '#f59e0b' : '#94a3b8'">
-                      <component :is="chat.favoriteWorldIds.includes(item.world.id) ? Star : StarOff" />
-                    </n-icon>
-                  </n-button>
-                  <div class="flex-1 min-w-0">
-                    <div class="font-bold text-sm flex items-center gap-1">
-                      {{ item.world.name }}
-                      <n-tag v-if="chat.favoriteWorldIds.includes(item.world.id)" size="tiny" type="warning">收藏</n-tag>
-                    </div>
-                    <div class="text-xs text-gray-500 world-desc">{{ formatWorldDescription(item.world.description) }}</div>
+
+    <template v-if="viewMode === 'list'">
+      <n-card :title="activeCardTitle" class="sc-card-scroll">
+        <div class="card-body-scroll">
+          <n-empty v-if="!activeWorlds.length" :description="activeEmptyText" />
+
+          <div v-else class="world-list">
+            <div v-for="item in activeWorlds" :key="item.world.id" class="world-row">
+              <div class="flex items-start gap-2">
+                <n-button quaternary circle size="tiny" @click="toggleFavorite(item.world.id)">
+                  <n-icon
+                    size="16"
+                    :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
+                  >
+                    <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
+                  </n-icon>
+                </n-button>
+                <div class="flex-1 min-w-0">
+                  <div class="font-bold text-sm flex items-center gap-1">
+                    {{ item.world.name }}
+                    <n-tag v-if="isWorldFavorited(item.world.id)" size="tiny" type="warning">收藏</n-tag>
                   </div>
-                </div>
-                <div class="flex items-center gap-2">
-                  <n-tag
-                    v-if="item.isMember"
-                    size="small"
-                    :type="getWorldRoleTag(item.memberRole).type"
-                  >
-                    {{ getWorldRoleTag(item.memberRole).label }}
-                  </n-tag>
-                  <n-button
-                    v-if="item.isMember && item.memberRole !== 'owner'"
-                    size="tiny"
-                    quaternary
-                    type="error"
-                    @click="confirmLeaveWorld(item)"
-                  >
-                    退出
-                  </n-button>
-                  <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
+                  <div class="text-xs world-desc">{{ formatWorldDescription(item.world.description) }}</div>
                 </div>
               </div>
+              <div class="flex items-center gap-2">
+                <n-tag v-if="item.isMember" size="small" :type="getWorldRoleTag(item.memberRole).type">
+                  {{ getWorldRoleTag(item.memberRole).label }}
+                </n-tag>
+                <n-button
+                  v-if="item.isMember && item.memberRole !== 'owner'"
+                  size="tiny"
+                  quaternary
+                  type="error"
+                  @click="confirmLeaveWorld(item)"
+                >
+                  退出
+                </n-button>
+                <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
+              </div>
             </div>
-          </n-card>
-        </n-gi>
-      </n-grid>
+          </div>
+        </div>
+      </n-card>
     </template>
 
     <template v-else>
-      <n-card title="探索世界" class="sc-card-scroll">
-        <div class="card-body-scroll space-y-2">
-          <n-empty v-if="!exploreWorlds.length" description="暂无公开世界" />
-          <div v-for="item in exploreWorlds" :key="item.world.id" class="world-row">
-            <div class="flex items-start gap-2">
+      <div class="world-grid-board">
+        <n-empty v-if="!activeWorlds.length" :description="activeEmptyText" />
+        <div v-else class="world-grid world-grid--full">
+          <div v-for="item in activeWorlds" :key="item.world.id" class="world-grid-card">
+            <div class="world-grid-card__header">
               <n-button quaternary circle size="tiny" @click="toggleFavorite(item.world.id)">
-                <n-icon size="16" :color="chat.favoriteWorldIds.includes(item.world.id) ? '#f59e0b' : '#94a3b8'">
-                  <component :is="chat.favoriteWorldIds.includes(item.world.id) ? Star : StarOff" />
+                <n-icon
+                  size="16"
+                  :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
+                >
+                  <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
                 </n-icon>
               </n-button>
-              <div class="flex-1 min-w-0">
-                <div class="font-bold text-sm flex items-center gap-1">
-                  {{ item.world.name }}
-                  <n-tag v-if="chat.favoriteWorldIds.includes(item.world.id)" size="tiny" type="warning">收藏</n-tag>
+              <div class="world-grid-card__title-wrap">
+                <div class="world-grid-card__title">{{ item.world.name }}</div>
+                <div class="world-grid-card__meta">
+                  <n-tag v-if="isWorldFavorited(item.world.id)" size="tiny" type="warning">收藏</n-tag>
+                  <n-tag v-if="item.isMember" size="tiny" :type="getWorldRoleTag(item.memberRole).type">
+                    {{ getWorldRoleTag(item.memberRole).label }}
+                  </n-tag>
+                  <n-tag size="tiny" :bordered="false">{{ item.memberCount || 0 }} 人</n-tag>
                 </div>
-                <div class="text-xs text-gray-500 world-desc">{{ formatWorldDescription(item.world.description) }}</div>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <n-tag
-                v-if="item.isMember"
-                size="small"
-                :type="getWorldRoleTag(item.memberRole).type"
-              >
-                {{ getWorldRoleTag(item.memberRole).label }}
-              </n-tag>
+            <div class="world-grid-card__desc">{{ formatWorldDescription(item.world.description) }}</div>
+            <div class="world-grid-card__actions">
               <n-button
                 v-if="item.isMember && item.memberRole !== 'owner'"
-                size="tiny"
+                size="small"
                 quaternary
                 type="error"
                 @click="confirmLeaveWorld(item)"
               >
                 退出
               </n-button>
-              <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
+              <n-button size="small" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
             </div>
           </div>
         </div>
-      </n-card>
+      </div>
     </template>
+
+    <div v-if="showPagination" class="world-pagination">
+      <n-pagination
+        v-if="lobbyMode === 'mine'"
+        size="small"
+        :page="minePagination.page"
+        :page-size="minePagination.pageSize"
+        :item-count="minePagination.total"
+        show-size-picker
+        :page-sizes="PAGE_SIZES"
+        @update:page="handleMinePageChange"
+        @update:page-size="handleMinePageSizeChange"
+      />
+      <n-pagination
+        v-else
+        size="small"
+        :page="explorePagination.page"
+        :page-size="explorePagination.pageSize"
+        :item-count="explorePagination.total"
+        show-size-picker
+        :page-sizes="PAGE_SIZES"
+        @update:page="handleExplorePageChange"
+        @update:page-size="handleExplorePageSizeChange"
+      />
+    </div>
+
     <n-modal v-model:show="createVisible" preset="dialog" title="创建世界" style="max-width: 420px">
       <n-form label-width="72">
         <n-form-item label="名称">
@@ -414,7 +602,15 @@ const switchLobbyMode = async () => {
       </n-form>
       <template #action>
         <n-space>
-          <n-button quaternary @click="() => { createVisible = false; resetCreateForm(); }">取消</n-button>
+          <n-button
+            quaternary
+            @click="() => {
+              createVisible = false;
+              resetCreateForm();
+            }"
+          >
+            取消
+          </n-button>
           <n-button type="primary" :loading="creating" @click="handleCreateWorld">创建</n-button>
         </n-space>
       </template>
@@ -423,27 +619,201 @@ const switchLobbyMode = async () => {
 </template>
 
 <style scoped>
-.sc-card-scroll {
-  max-height: 420px;
+.world-lobby-root {
+  min-height: calc(100vh - 120px);
 }
+
+.world-lobby-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.world-toolbar-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.world-toolbar-row :deep(.n-input) {
+  flex: 1;
+  min-width: 220px;
+}
+
+.sc-card-scroll {
+  max-height: 520px;
+}
+
 .card-body-scroll {
   max-height: 360px;
   overflow: auto;
   padding-right: 4px;
 }
+
+.world-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .world-desc {
   white-space: pre-line;
+  color: var(--sc-text-secondary);
 }
+
 .world-row {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: start;
   gap: 8px;
-  padding: 8px;
-  border-radius: 8px;
-  transition: background-color 0.2s ease;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--sc-border-mute);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
+
 .world-row:hover {
-  background-color: rgba(148, 163, 184, 0.12);
+  background-color: var(--sc-chip-bg);
+  border-color: var(--sc-border-strong);
+}
+
+.world-grid-board {
+  width: 100%;
+  min-height: calc(100vh - 280px);
+}
+
+.world-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.world-grid--full {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.world-grid-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 186px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute);
+  background: linear-gradient(160deg, var(--sc-bg-layer-strong), var(--sc-bg-surface));
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.world-grid-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--sc-border-strong);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--sc-fg-primary) 12%, transparent);
+}
+
+.world-grid-card__header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.world-grid-card__title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.world-grid-card__title {
+  color: var(--sc-text-primary);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.world-grid-card__meta {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.world-grid-card__desc {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.world-grid-card__actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.world-pagination {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 960px) {
+  .world-grid--full {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .world-lobby-header {
+    align-items: stretch;
+  }
+
+  .world-lobby-header :deep(.n-space) {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .world-lobby-header :deep(.n-space .n-button) {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .world-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .world-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .world-grid-board {
+    min-height: auto;
+  }
+
+  .world-grid--full {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .world-grid-card {
+    min-height: 148px;
+    padding: 10px;
+  }
+
+  .world-grid-card__actions {
+    justify-content: stretch;
+  }
+
+  .world-grid-card__actions :deep(.n-button) {
+    flex: 1;
+  }
+
+  .world-pagination {
+    justify-content: center;
+  }
 }
 </style>
