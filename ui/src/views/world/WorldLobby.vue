@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -53,6 +53,9 @@ const createVisible = ref(false);
 const creating = ref(false);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
+const gridActionOpenWorldId = ref<string | null>(null);
+const mobileGridActionMode = ref(false);
+let mobileGridActionMediaQuery: MediaQueryList | null = null;
 
 const minePagination = ref<PaginationState>({
   page: 1,
@@ -242,7 +245,20 @@ watch(searchKeyword, (val) => {
   }
 });
 
+watch(activeWorlds, (worlds) => {
+  if (!gridActionOpenWorldId.value) {
+    return;
+  }
+  const hasActive = worlds.some(item => item?.world?.id === gridActionOpenWorldId.value);
+  if (!hasActive) {
+    gridActionOpenWorldId.value = null;
+  }
+});
+
 watch(viewMode, (mode) => {
+  if (mode !== 'grid') {
+    gridActionOpenWorldId.value = null;
+  }
   if (typeof window === 'undefined') {
     return;
   }
@@ -253,9 +269,36 @@ watch(viewMode, (mode) => {
   }
 });
 
+const syncMobileGridActionMode = () => {
+  mobileGridActionMode.value = Boolean(mobileGridActionMediaQuery?.matches);
+  if (!mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
+  }
+};
+
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    mobileGridActionMediaQuery = window.matchMedia('(max-width: 640px), (hover: none), (pointer: coarse)');
+    syncMobileGridActionMode();
+    if (typeof mobileGridActionMediaQuery.addEventListener === 'function') {
+      mobileGridActionMediaQuery.addEventListener('change', syncMobileGridActionMode);
+    } else {
+      mobileGridActionMediaQuery.addListener(syncMobileGridActionMode);
+    }
+  }
   await chat.fetchFavoriteWorlds().catch(() => {});
   await refreshCurrentMode();
+});
+
+onBeforeUnmount(() => {
+  if (!mobileGridActionMediaQuery) {
+    return;
+  }
+  if (typeof mobileGridActionMediaQuery.removeEventListener === 'function') {
+    mobileGridActionMediaQuery.removeEventListener('change', syncMobileGridActionMode);
+  } else {
+    mobileGridActionMediaQuery.removeListener(syncMobileGridActionMode);
+  }
 });
 
 const enterWorld = async (worldId: string) => {
@@ -302,6 +345,49 @@ const toggleFavorite = async (worldId: string) => {
     await refreshCurrentMode();
   } catch (err: any) {
     message.error(err?.response?.data?.message || '更新收藏失败');
+  }
+};
+
+const isGridCardActionsVisible = (worldId: string) =>
+  mobileGridActionMode.value && gridActionOpenWorldId.value === worldId;
+
+const toggleGridCardActions = (worldId: string) => {
+  if (!mobileGridActionMode.value) {
+    return;
+  }
+  gridActionOpenWorldId.value = gridActionOpenWorldId.value === worldId ? null : worldId;
+};
+
+const handleGridCardClick = (item: any) => {
+  const worldId = item?.world?.id;
+  if (!worldId) {
+    return;
+  }
+  if (mobileGridActionMode.value) {
+    toggleGridCardActions(worldId);
+    return;
+  }
+  void handleGridEnterWorld(worldId);
+};
+
+const handleGridFavorite = async (worldId: string) => {
+  await toggleFavorite(worldId);
+  if (mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
+  }
+};
+
+const handleGridLeaveWorld = (item: any) => {
+  confirmLeaveWorld(item);
+  if (mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
+  }
+};
+
+const handleGridEnterWorld = async (worldId: string) => {
+  await enterWorld(worldId);
+  if (mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
   }
 };
 
@@ -511,16 +597,14 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       <div class="world-grid-board">
         <n-empty v-if="!activeWorlds.length" :description="activeEmptyText" />
         <div v-else class="world-grid world-grid--full">
-          <div v-for="item in activeWorlds" :key="item.world.id" class="world-grid-card">
+          <div
+            v-for="item in activeWorlds"
+            :key="item.world.id"
+            class="world-grid-card"
+            :class="{ 'world-grid-card--actions-open': isGridCardActionsVisible(item.world.id) }"
+            @click="handleGridCardClick(item)"
+          >
             <div class="world-grid-card__header">
-              <n-button quaternary circle size="tiny" @click="toggleFavorite(item.world.id)">
-                <n-icon
-                  size="16"
-                  :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
-                >
-                  <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
-                </n-icon>
-              </n-button>
               <div class="world-grid-card__title-wrap">
                 <div class="world-grid-card__title">{{ item.world.name }}</div>
                 <div class="world-grid-card__meta">
@@ -535,15 +619,36 @@ const handleExplorePageSizeChange = (pageSize: number) => {
             <div class="world-grid-card__desc">{{ formatWorldDescription(item.world.description) }}</div>
             <div class="world-grid-card__actions">
               <n-button
+                quaternary
+                circle
+                size="small"
+                class="world-grid-action-btn world-grid-action-btn--icon"
+                @click.stop="handleGridFavorite(item.world.id)"
+              >
+                <n-icon
+                  size="16"
+                  :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
+                >
+                  <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
+                </n-icon>
+              </n-button>
+              <n-button
                 v-if="item.isMember && item.memberRole !== 'owner'"
                 size="small"
                 quaternary
-                type="error"
-                @click="confirmLeaveWorld(item)"
+                class="world-grid-action-btn world-grid-action-btn--danger"
+                @click.stop="handleGridLeaveWorld(item)"
               >
                 退出
               </n-button>
-              <n-button size="small" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
+              <n-button
+                size="small"
+                quaternary
+                class="world-grid-action-btn world-grid-action-btn--enter"
+                @click.stop="handleGridEnterWorld(item.world.id)"
+              >
+                进入
+              </n-button>
             </div>
           </div>
         </div>
@@ -731,18 +836,25 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
   min-height: 186px;
   padding: 12px;
   border-radius: 12px;
   border: 1px solid var(--sc-border-mute);
   background: linear-gradient(160deg, var(--sc-bg-layer-strong), var(--sc-bg-surface));
-  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.18s ease, border-color 0.22s ease, box-shadow 0.22s ease;
 }
 
-.world-grid-card:hover {
-  transform: translateY(-1px);
+.world-grid-card:hover,
+.world-grid-card:focus-within,
+.world-grid-card--actions-open {
+  transform: translateY(-2px) scale(1.012);
   border-color: var(--sc-border-strong);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--sc-fg-primary) 12%, transparent);
+  box-shadow:
+    0 15px 28px color-mix(in srgb, var(--sc-fg-primary) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--sc-fg-primary) 10%, transparent);
 }
 
 .world-grid-card__header {
@@ -773,6 +885,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 .world-grid-card__desc {
+  flex: 1;
   color: var(--sc-text-secondary);
   font-size: 12px;
   line-height: 1.5;
@@ -780,11 +893,59 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 .world-grid-card__actions {
-  margin-top: auto;
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.96);
+  transform-origin: right bottom;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  padding: 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sc-bg-surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 42%, transparent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--sc-fg-primary) 10%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.world-grid-card:hover .world-grid-card__actions,
+.world-grid-card:focus-within .world-grid-card__actions,
+.world-grid-card--actions-open .world-grid-card__actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.world-grid-card :deep(.world-grid-action-btn) {
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 38%, transparent);
+  background: color-mix(in srgb, var(--sc-bg-surface) 80%, var(--sc-chip-bg));
+  color: var(--sc-text-secondary);
+  transition: transform 0.15s ease, border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.world-grid-card :deep(.world-grid-action-btn:hover) {
+  color: var(--sc-text-primary);
+  border-color: color-mix(in srgb, var(--sc-border-strong) 68%, transparent);
+  background: color-mix(in srgb, var(--sc-bg-elevated) 86%, var(--sc-chip-bg));
+}
+
+.world-grid-card :deep(.world-grid-action-btn--icon) {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+.world-grid-card :deep(.world-grid-action-btn--enter) {
+  color: color-mix(in srgb, #3388de 34%, var(--sc-text-primary));
+}
+
+.world-grid-card :deep(.world-grid-action-btn--danger) {
+  color: color-mix(in srgb, #dc2626 60%, var(--sc-text-primary));
 }
 
 .world-pagination {
@@ -844,11 +1005,15 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   }
 
   .world-grid-card__actions {
-    justify-content: stretch;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    justify-content: flex-end;
   }
 
-  .world-grid-card__actions :deep(.n-button) {
+  .world-grid-card__actions :deep(.world-grid-action-btn) {
     flex: 1;
+    min-width: 0;
   }
 
   .world-pagination {
