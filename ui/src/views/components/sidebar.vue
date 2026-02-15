@@ -529,10 +529,10 @@ const handleOpenWorldGlossary = () => {
               :class="chat.temporaryArchivedChannel.id === chat.curChannel?.id ? ['active'] : []"
               @click="doChannelSwitch(chat.temporaryArchivedChannel)"
             >
-              <div class="flex space-x-1 items-center">
+              <div class="channel-item-main">
                 <n-icon :component="IconNumber"></n-icon>
-                <span class="text-more" style="max-width: 7rem">{{ chat.temporaryArchivedChannel.name }}</span>
-                <n-tag size="tiny" type="warning">归档</n-tag>
+                <span class="channel-item-title text-more">{{ chat.temporaryArchivedChannel.name }}</span>
+                <n-tag class="channel-item-meta" size="tiny" type="warning">归档</n-tag>
               </div>
               <div class="right">
                 <div class="flex justify-center space-x-1">
@@ -564,17 +564,17 @@ const handleOpenWorldGlossary = () => {
               <div class="sider-item" :class="i.id === chat.curChannel?.id ? ['active'] : []"
                 @click="doChannelSwitch(i)">
 
-                <div class="flex space-x-1 items-center">
+                <div class="channel-item-main">
                   <template v-if="(i.type === 3 || (i as any).isPrivate)">
                     <!-- 私聊 -->
                     <n-icon :component="IconFluentMention24Filled"></n-icon>
-                    <span>{{ `${i.name}` }}</span>
+                    <span class="channel-item-title text-more">{{ `${i.name}` }}</span>
                   </template>
 
                   <template v-else>
                     <!-- 公开频道 -->
                     <n-icon :component="IconNumber"></n-icon>
-                    <span class="text-more" style="max-width: 10rem">{{ `${i.name}${suffix(i)} (${(i as any).membersCount})` }}</span>
+                    <span class="channel-item-title text-more">{{ `${i.name}${suffix(i)} (${(i as any).membersCount})` }}</span>
                   </template>
                 </div>
 
@@ -624,14 +624,14 @@ const handleOpenWorldGlossary = () => {
                 <template v-for="child in i.children">
                   <div class="sider-item" :class="child.id === chat.curChannel?.id ? ['active'] : []"
                     @click="doChannelSwitch(child)">
-                    <div class="flex space-x-1 items-center pl-4">
+                    <div class="channel-item-main channel-item-main--child">
                       <template v-if="(child.type === 3 || (child as any).isPrivate)">
                         <n-icon :component="IconFluentMention24Filled"></n-icon>
-                        <span>{{ `${child.name}` }}</span>
+                        <span class="channel-item-title text-more">{{ `${child.name}` }}</span>
                       </template>
                       <template v-else>
                         <n-icon :component="IconNumber"></n-icon>
-                        <span class="text-more" style="max-width: 9.5rem">{{ `${child.name}${suffix(child)} (${(child as any).membersCount})` }}</span>
+                        <span class="channel-item-title text-more">{{ `${child.name}${suffix(child)} (${(child as any).membersCount})` }}</span>
                       </template>
                     </div>
 
@@ -814,8 +814,31 @@ const handleOpenWorldGlossary = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-width: 0;
   color: var(--sc-text-primary);
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.channel-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-item-main--child {
+  padding-left: 1rem;
+}
+
+.channel-item-title {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-item-meta {
+  flex-shrink: 0;
 }
 
 .sider-item:hover {
@@ -829,10 +852,12 @@ const handleOpenWorldGlossary = () => {
 .sider-item > .right-num {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .sider-item > .right {
   display: none;
+  flex-shrink: 0;
 }
 
 .sider-item:hover > .right {
