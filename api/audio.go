@@ -736,6 +736,13 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		ActorID:              user.ID,
 	})
 	if err != nil {
+		var conflictErr *service.AudioPlaybackRevisionConflictError
+		if errors.As(err, &conflictErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"message": "播放状态版本冲突",
+				"state":   buildAudioPlaybackResponse(conflictErr.CurrentState),
+			})
+		}
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新播放状态失败")
 	}
 	if state != nil {
@@ -952,17 +959,21 @@ func convertTrackStates(list model.JSONList[model.AudioTrackState]) []protocol.A
 	result := make([]protocol.AudioTrackState, 0, len(list))
 	for _, item := range list {
 		result = append(result, protocol.AudioTrackState{
-			Type:         item.Type,
-			AssetID:      item.AssetID,
-			Volume:       item.Volume,
-			Muted:        item.Muted,
-			Solo:         item.Solo,
-			FadeIn:       item.FadeIn,
-			FadeOut:      item.FadeOut,
-			IsPlaying:    item.IsPlaying,
-			Position:     item.Position,
-			LoopEnabled:  item.LoopEnabled,
-			PlaybackRate: item.PlaybackRate,
+			Type:             item.Type,
+			AssetID:          item.AssetID,
+			Volume:           item.Volume,
+			Muted:            item.Muted,
+			Solo:             item.Solo,
+			FadeIn:           item.FadeIn,
+			FadeOut:          item.FadeOut,
+			IsPlaying:        item.IsPlaying,
+			Position:         item.Position,
+			LoopEnabled:      item.LoopEnabled,
+			PlaybackRate:     item.PlaybackRate,
+			PlaylistFolderID: item.PlaylistFolderID,
+			PlaylistMode:     item.PlaylistMode,
+			PlaylistAssetIDs: append([]string(nil), item.PlaylistAssetIDs...),
+			PlaylistIndex:    item.PlaylistIndex,
 		})
 	}
 	return result

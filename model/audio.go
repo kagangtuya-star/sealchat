@@ -138,17 +138,21 @@ type AudioScene struct {
 func (*AudioScene) TableName() string { return "audio_scenes" }
 
 type AudioTrackState struct {
-	Type         string  `json:"type"`
-	AssetID      *string `json:"assetId"`
-	Volume       float64 `json:"volume"`
-	Muted        bool    `json:"muted"`
-	Solo         bool    `json:"solo"`
-	FadeIn       int     `json:"fadeIn"`
-	FadeOut      int     `json:"fadeOut"`
-	IsPlaying    bool    `json:"isPlaying"`
-	Position     float64 `json:"position"`
-	LoopEnabled  bool    `json:"loopEnabled"`
-	PlaybackRate float64 `json:"playbackRate"`
+	Type             string   `json:"type"`
+	AssetID          *string  `json:"assetId"`
+	Volume           float64  `json:"volume"`
+	Muted            bool     `json:"muted"`
+	Solo             bool     `json:"solo"`
+	FadeIn           int      `json:"fadeIn"`
+	FadeOut          int      `json:"fadeOut"`
+	IsPlaying        bool     `json:"isPlaying"`
+	Position         float64  `json:"position"`
+	LoopEnabled      bool     `json:"loopEnabled"`
+	PlaybackRate     float64  `json:"playbackRate"`
+	PlaylistFolderID *string  `json:"playlistFolderId,omitempty"`
+	PlaylistMode     *string  `json:"playlistMode,omitempty"`
+	PlaylistAssetIDs []string `json:"playlistAssetIds,omitempty"`
+	PlaylistIndex    int      `json:"playlistIndex"`
 }
 
 type AudioPlaybackState struct {

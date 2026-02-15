@@ -99,6 +99,7 @@ interface AudioStudioState {
   pendingCommitPayload: PlaybackSyncPayload | null;
   lastAppliedRevisionByScope: Record<string, number>;
   lastSnapshotFetchedAtByScope: Record<string, number>;
+  channelSwitchSeq: number;
 }
 
 interface PlaybackSyncPayload {
@@ -382,6 +383,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     pendingCommitPayload: null,
     lastAppliedRevisionByScope: {},
     lastSnapshotFetchedAtByScope: {},
+    channelSwitchSeq: 0,
   }),
 
   getters: {
@@ -561,7 +563,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           this.markAppliedRevision(scopeKey, this.getRevisionFromPayload(state));
         }
         logAudioSync('[AudioSync] sync committed', { source });
-      } catch (err) {
+      } catch (err: any) {
+        const status = Number(err?.response?.status || 0);
+        if (status === 409) {
+          const latest = err?.response?.data?.state as AudioPlaybackStatePayload | undefined;
+          this.pendingCommitPayload = null;
+          this.clearRetrySyncTimer();
+          this.syncRetryAttempt = 0;
+          warnAudioSync('[AudioSync] revision conflict, pulling latest state');
+          if (latest) {
+            await this.applyRemotePlayback(latest, { source: 'ack', reason: 'revision-conflict' });
+          } else if (this.currentChannelId) {
+            void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'revision-conflict' });
+          }
+          return;
+        }
         console.warn('同步音频状态失败', err);
         this.scheduleRetrySync();
       }
@@ -598,13 +614,29 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return this.canEditAsset(asset);
     },
 
-    setActiveChannel(channelId: string | null) {
+    resetLocalPlaybackRuntime() {
+      stopProgressWatcher();
+      this.pendingRemotePlay = false;
+      this.remoteState = null;
+      DEFAULT_TRACK_TYPES.forEach((type) => {
+        const track = this.tracks[type];
+        if (track?.howl) {
+          try {
+            track.howl.stop();
+            track.howl.unload();
+          } catch (err) {
+            console.warn(`cleanup track ${type} failed`, err);
+          }
+        }
+        this.tracks[type] = createEmptyTrack(type);
+      });
+      this.isPlaying = false;
+    },
+
+    async setActiveChannel(channelId: string | null) {
+      const switchSeq = ++this.channelSwitchSeq;
       this.ensureInteractionListener();
       this.ensureSyncLifecycleBindings();
-      if (typeof window !== 'undefined' && this.pendingSyncHandle) {
-        window.clearTimeout(this.pendingSyncHandle);
-        this.pendingSyncHandle = null;
-      }
       if (!this.canManage && this.activeTab !== 'player') {
         this.activeTab = 'player';
       }
@@ -615,6 +647,29 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
         return;
       }
+      const previousChannelId = this.currentChannelId;
+      const shouldFlushBeforeSwitch =
+        !!previousChannelId &&
+        !this.worldPlaybackEnabled &&
+        !this.isApplyingRemoteState &&
+        this.canManage &&
+        (!!this.pendingSyncHandle || this.pendingCommitPayload?.channelId === previousChannelId);
+      if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+        window.clearTimeout(this.pendingSyncHandle);
+        this.pendingSyncHandle = null;
+      }
+      if (shouldFlushBeforeSwitch) {
+        await this.commitPlaybackSync();
+        if (switchSeq !== this.channelSwitchSeq) {
+          return;
+        }
+      }
+      if (!this.worldPlaybackEnabled || !normalizedChannelId) {
+        this.resetLocalPlaybackRuntime();
+      }
+      if (switchSeq !== this.channelSwitchSeq) {
+        return;
+      }
       this.currentChannelId = normalizedChannelId;
       if (this.pendingCommitPayload && this.pendingCommitPayload.channelId !== (normalizedChannelId || '')) {
         this.pendingCommitPayload = null;
@@ -622,7 +677,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.syncRetryAttempt = 0;
       }
       if (!normalizedChannelId) {
-        this.remoteState = null;
         return;
       }
       void this.fetchPlaybackState(normalizedChannelId, { force: true, reason: 'channel-changed' });
@@ -689,7 +743,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const scopeKey = this.getScopeKey(payload?.channelId || this.currentChannelId, allowWorld);
       const incomingRevision = this.getRevisionFromPayload(payload);
       const lastAppliedRevision = this.lastAppliedRevisionByScope[scopeKey] || 0;
-      if (incomingRevision > 0 && incomingRevision <= lastAppliedRevision) {
+      const reason = options?.reason || '';
+      const allowReplayOnSnapshotPull =
+        source === 'pull' &&
+        (reason === 'channel-changed' ||
+          reason === 'channel-reenter' ||
+          reason === 'channel-switch' ||
+          reason === 'connected' ||
+          reason === 'visible');
+      if (incomingRevision > 0 && incomingRevision <= lastAppliedRevision && !allowReplayOnSnapshotPull) {
         logAudioSync('[AudioSync] Skip stale remote state', { scopeKey, incomingRevision, lastAppliedRevision });
         return;
       }

@@ -134,6 +134,14 @@ type AudioPlaybackUpdateInput struct {
 	ActorID              string
 }
 
+type AudioPlaybackRevisionConflictError struct {
+	CurrentState *model.AudioPlaybackState
+}
+
+func (e *AudioPlaybackRevisionConflictError) Error() string {
+	return "audio playback revision conflict"
+}
+
 func (f *AudioAssetFilters) normalize() {
 	f.Query = strings.TrimSpace(f.Query)
 	if f.Page <= 0 {
@@ -516,16 +524,18 @@ func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
 	result := make([]AudioTrackState, 0, len(items))
 	for _, item := range items {
 		t := AudioTrackState{
-			Type:         strings.TrimSpace(item.Type),
-			Volume:       item.Volume,
-			Muted:        item.Muted,
-			Solo:         item.Solo,
-			FadeIn:       item.FadeIn,
-			FadeOut:      item.FadeOut,
-			IsPlaying:    item.IsPlaying,
-			Position:     item.Position,
-			LoopEnabled:  item.LoopEnabled,
-			PlaybackRate: item.PlaybackRate,
+			Type:             strings.TrimSpace(item.Type),
+			Volume:           item.Volume,
+			Muted:            item.Muted,
+			Solo:             item.Solo,
+			FadeIn:           item.FadeIn,
+			FadeOut:          item.FadeOut,
+			IsPlaying:        item.IsPlaying,
+			Position:         item.Position,
+			LoopEnabled:      item.LoopEnabled,
+			PlaybackRate:     item.PlaybackRate,
+			PlaylistAssetIDs: append([]string(nil), item.PlaylistAssetIDs...),
+			PlaylistIndex:    item.PlaylistIndex,
 		}
 		if t.PlaybackRate <= 0 {
 			t.PlaybackRate = 1
@@ -533,12 +543,46 @@ func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
 		if t.Position < 0 {
 			t.Position = 0
 		}
+		if t.PlaylistIndex < 0 {
+			t.PlaylistIndex = 0
+		}
 		if item.AssetID != nil {
 			trimmed := strings.TrimSpace(*item.AssetID)
 			if trimmed != "" {
 				val := trimmed
 				t.AssetID = &val
 			}
+		}
+		if item.PlaylistFolderID != nil {
+			trimmed := strings.TrimSpace(*item.PlaylistFolderID)
+			if trimmed != "" {
+				val := trimmed
+				t.PlaylistFolderID = &val
+			}
+		}
+		if item.PlaylistMode != nil {
+			trimmed := strings.TrimSpace(*item.PlaylistMode)
+			if trimmed != "" {
+				val := trimmed
+				t.PlaylistMode = &val
+			}
+		}
+		if len(t.PlaylistAssetIDs) > 0 {
+			filtered := make([]string, 0, len(t.PlaylistAssetIDs))
+			for _, id := range t.PlaylistAssetIDs {
+				trimmed := strings.TrimSpace(id)
+				if trimmed != "" {
+					filtered = append(filtered, trimmed)
+				}
+			}
+			t.PlaylistAssetIDs = filtered
+			if len(t.PlaylistAssetIDs) == 0 {
+				t.PlaylistIndex = 0
+			} else if t.PlaylistIndex >= len(t.PlaylistAssetIDs) {
+				t.PlaylistIndex = len(t.PlaylistAssetIDs) - 1
+			}
+		} else {
+			t.PlaylistIndex = 0
 		}
 		result = append(result, t)
 	}
@@ -594,7 +638,12 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlayb
 	db := model.GetDB()
 	var state model.AudioPlaybackState
 	err := db.Where("channel_id = ?", input.ChannelID).First(&state).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	isNew := errors.Is(err, gorm.ErrRecordNotFound)
+	if err == nil && input.BaseRevision > 0 && state.Revision > 0 && input.BaseRevision != state.Revision {
+		current := state
+		return nil, &AudioPlaybackRevisionConflictError{CurrentState: &current}
+	}
+	if isNew {
 		state = model.AudioPlaybackState{
 			ChannelID: input.ChannelID,
 			CreatedAt: time.Now(),
