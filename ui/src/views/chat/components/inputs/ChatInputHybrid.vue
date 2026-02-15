@@ -750,7 +750,12 @@ const insertPlainTextAtCursor = (text: string) => {
 const handleInput = () => {
   if (!editorRef.value) return;
 
-  const text = extractContentWithLineBreaks();
+  let text = extractContentWithLineBreaks();
+  // contenteditable 为空时浏览器常保留占位 <br>，提取逻辑会把它映射成 "\n"。
+  // 若不处理，会把这个换行持久化到 modelValue，表现为“空输入退格多出删不掉的换行”。
+  if (/^\n+$/.test(text)) {
+    text = '';
+  }
 
   // 添加到历史记录
   const cursorPosition = getCursorPosition();
