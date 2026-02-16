@@ -655,20 +655,6 @@ const insertLineBreakAtSelection = () => {
   commitInputMutation(nextValue, start + 1);
 };
 
-const deleteLineBreakBeforeCursor = (): boolean => {
-  const selection = getSelectionRange();
-  if (selection.start !== selection.end || selection.start <= 0) {
-    return false;
-  }
-  const breakIndex = selection.start - 1;
-  if (props.modelValue[breakIndex] !== '\n') {
-    return false;
-  }
-  const nextValue = `${props.modelValue.slice(0, breakIndex)}${props.modelValue.slice(selection.start)}`;
-  commitInputMutation(nextValue, breakIndex);
-  return true;
-};
-
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -1140,25 +1126,40 @@ const handleKeydown = (event: KeyboardEvent) => {
 
   if (!composing && event.key === 'Backspace') {
     const selection = getSelectionRange();
-    if (selection.start === selection.end) {
-      const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, selection.start);
-      if (boundaryDelete) {
-        event.preventDefault();
-        applyQuickFormatBoundaryDelete(boundaryDelete);
-        return;
-      }
+    const start = Math.min(selection.start, selection.end);
+    const end = Math.max(selection.start, selection.end);
+    if (start !== end) {
+      event.preventDefault();
+      const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
+      commitInputMutation(nextValue, start);
+      return;
     }
-  }
-
-  if (!composing && event.key === 'Backspace' && deleteLineBreakBeforeCursor()) {
+    const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, start);
+    if (boundaryDelete) {
+      event.preventDefault();
+      applyQuickFormatBoundaryDelete(boundaryDelete);
+      return;
+    }
+    const marker = findMarkerInfoAt(start - 1);
+    if (marker) {
+      event.preventDefault();
+      removeImageMarker(marker);
+      return;
+    }
+    if (start <= 0) {
+      return;
+    }
     event.preventDefault();
+    const cursor = start - 1;
+    const nextValue = `${props.modelValue.slice(0, cursor)}${props.modelValue.slice(start)}`;
+    commitInputMutation(nextValue, cursor);
     return;
   }
 
-  if (!composing && (event.key === 'Backspace' || event.key === 'Delete')) {
+  if (!composing && event.key === 'Delete') {
     const selection = getSelectionRange();
     if (selection.start === selection.end) {
-      const position = event.key === 'Backspace' ? selection.start - 1 : selection.start;
+      const position = selection.start;
       const marker = findMarkerInfoAt(position);
       if (marker) {
         event.preventDefault();
