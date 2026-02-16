@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   autosize?: boolean | { minRows?: number; maxRows?: number }
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
+  sendShortcut?: 'enter' | 'ctrlEnter'
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
   defaultIFormEmbedLink?: string
 }>(), {
@@ -33,6 +34,7 @@ const props = withDefaults(defineProps<{
   autosize: true,
   rows: 1,
   inputClass: () => [],
+  sendShortcut: 'enter',
   inlineImages: () => ({}),
   defaultIFormEmbedLink: '',
 });
@@ -214,6 +216,7 @@ defineExpose({
     :autosize="autosize"
     :rows="rows"
     :input-class="inputClass"
+    :send-shortcut="sendShortcut"
     :inline-images="inlineImages"
     @mention-search="handleSearch"
     @mention-select="handleSelect"

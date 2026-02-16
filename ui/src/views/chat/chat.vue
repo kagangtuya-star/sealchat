@@ -10310,9 +10310,10 @@ const keyDown = function (e: KeyboardEvent) {
     }
     const shortcut = display.settings.sendShortcut || 'enter';
     const ctrlLike = e.ctrlKey || e.metaKey;
+    const isBareEnter = !ctrlLike && !e.shiftKey && !e.altKey;
     let shouldSend = false;
     if (shortcut === 'enter') {
-      shouldSend = !ctrlLike && !e.shiftKey && !e.altKey;
+      shouldSend = isBareEnter;
     } else {
       shouldSend = ctrlLike && !e.shiftKey && !e.altKey;
     }
@@ -12151,6 +12152,7 @@ onBeforeUnmount(() => {
                   :mention-render-label="atRenderLabel"
                   :rows="1"
                   :input-class="chatInputClassList"
+                  :send-shortcut="display.settings.sendShortcut"
                   :inline-images="inlineImagePreviewMap"
                   :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"

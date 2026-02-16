@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
   autosize?: boolean | { minRows?: number; maxRows?: number }
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
+  sendShortcut?: 'enter' | 'ctrlEnter'
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
 }>(), {
   modelValue: '',
@@ -28,6 +29,7 @@ const props = withDefaults(defineProps<{
   autosize: true,
   rows: 1,
   inputClass: () => [],
+  sendShortcut: 'enter',
   inlineImages: () => ({}),
 });
 
@@ -655,6 +657,13 @@ const insertLineBreakAtSelection = () => {
   commitInputMutation(nextValue, start + 1);
 };
 
+const insertLineBreak = () => {
+  if (props.disabled) {
+    return;
+  }
+  insertLineBreakAtSelection();
+};
+
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -1118,9 +1127,19 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   const composing = event.isComposing || isComposing.value;
+  const bareEnter = !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+  if (!composing && event.key === 'Enter' && bareEnter && props.sendShortcut === 'ctrlEnter') {
+    emit('keydown', event);
+    if (event.defaultPrevented) {
+      return;
+    }
+    event.preventDefault();
+    insertLineBreak();
+    return;
+  }
   if (!composing && event.key === 'Enter' && event.shiftKey) {
     event.preventDefault();
-    insertLineBreakAtSelection();
+    insertLineBreak();
     return;
   }
 
@@ -1248,6 +1267,7 @@ onBeforeUnmount(() => {
 defineExpose({
   focus,
   blur,
+  insertLineBreak,
   getTextarea,
   getSelectionRange,
   setSelectionRange,
