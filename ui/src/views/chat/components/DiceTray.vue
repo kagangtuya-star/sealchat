@@ -38,11 +38,9 @@
         </div>
         <div class="dice-tray__macro-panel">
           <div class="dice-tray__macro-header">
-            <div>
+            <div class="dice-tray__macro-info">
               <span class="dice-tray__macro-title">数字指令</span>
-              <span class="dice-tray__macro-sequence" :class="{ 'is-active': digitSequence }">
-                {{ digitSequence || '待输入' }}
-              </span>
+              <span class="dice-tray__macro-sequence" :class="{ 'is-active': digitSequence }">{{ digitSequence || '待输入' }}</span>
             </div>
             <div class="dice-tray__macro-actions">
               <n-button text size="tiny" :disabled="!digitSequence" @click="resetDigitSequence">清空</n-button>
@@ -918,21 +916,37 @@ const handleSaveDefault = () => {
 .dice-tray__macro-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 0.5rem;
   font-size: 0.82rem;
+}
+
+.dice-tray__macro-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  min-width: 0;
 }
 
 .dice-tray__macro-title {
   font-weight: 600;
-  margin-right: 0.4rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .dice-tray__macro-sequence {
   font-family: var(--sc-code-font, 'SFMono-Regular', Menlo, Consolas, monospace);
-  padding: 0.1rem 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.1rem 0.35rem 0.1rem 0;
   border-radius: 4px;
   background: rgba(15, 23, 42, 0.05);
   color: var(--sc-fg-primary, #111);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dice-tray__macro-sequence.is-active {
@@ -943,6 +957,7 @@ const handleSaveDefault = () => {
 .dice-tray__macro-actions {
   display: flex;
   gap: 0.25rem;
+  flex-shrink: 0;
 }
 
 .dice-tray__macro-keypad {
