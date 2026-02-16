@@ -7144,6 +7144,30 @@ const handleManualHistoryRecord = () => {
   }
 };
 
+const hasMeaningfulDraftInInput = () => isContentMeaningful(inputMode.value, textToSend.value);
+let lastAutoRestoreNoticeAt = 0;
+let lastAutoRestoreNoticeChannelKey = '';
+
+const notifyAutoRestoreSuccess = (channelKey: string) => {
+  const now = Date.now();
+  if (lastAutoRestoreNoticeChannelKey === channelKey && now - lastAutoRestoreNoticeAt < 1500) {
+    return;
+  }
+  lastAutoRestoreNoticeChannelKey = channelKey;
+  lastAutoRestoreNoticeAt = now;
+  message.info('已自动恢复上次输入');
+};
+
+const findHistoryEntryById = (channelKey: string, entryId: string): InputHistoryEntry | null => {
+  const inMemory = historyEntries.value.find((entry) => entry.id === entryId);
+  if (inMemory) {
+    return inMemory;
+  }
+  const store = readHistoryStore();
+  const candidates = normalizeHistoryEntries(store[channelKey] || []);
+  return candidates.find((entry) => entry.id === entryId) || null;
+};
+
 const tryAutoRestoreHistory = () => {
   const channelKey = currentChannelKey.value;
   if (
@@ -7153,29 +7177,32 @@ const tryAutoRestoreHistory = () => {
   ) {
     return;
   }
-  pendingHistoryRestoreChannelKey.value = null;
-  if (!chat.curChannel?.id) {
+  if (!chat.curChannel?.id || isEditing.value) {
     return;
   }
-  if (textToSend.value.trim().length > 0) {
+  if (hasMeaningfulDraftInInput()) {
     return;
   }
   const autoRestoreEntry = getAutoRestoreEntryForChannel(channelKey);
   if (!autoRestoreEntry) {
-    return;
-  }
-  const target = historyEntries.value.find((entry) => entry.id === autoRestoreEntry.entryId);
-  if (!target) {
-    clearAutoRestoreEntry(channelKey);
+    pendingHistoryRestoreChannelKey.value = null;
     return;
   }
   const withinWindow = Date.now() - autoRestoreEntry.updatedAt <= HISTORY_AUTO_RESTORE_WINDOW;
   if (!withinWindow) {
     clearAutoRestoreEntry(channelKey);
+    pendingHistoryRestoreChannelKey.value = null;
+    return;
+  }
+  const target = findHistoryEntryById(channelKey, autoRestoreEntry.entryId);
+  if (!target) {
+    clearAutoRestoreEntry(channelKey);
+    pendingHistoryRestoreChannelKey.value = null;
     return;
   }
   applyHistoryEntry(target, { silent: true });
-  message.info('已自动恢复上次输入');
+  pendingHistoryRestoreChannelKey.value = null;
+  notifyAutoRestoreSuccess(channelKey);
 };
 
 const syncSessionDraftSnapshot = () => {
@@ -7209,7 +7236,7 @@ const tryAutoRestoreSessionDraft = () => {
   if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
     return;
   }
-  if (textToSend.value.trim().length > 0) {
+  if (isEditing.value || hasMeaningfulDraftInInput()) {
     return;
   }
   const draft = readSessionDraftForChannel(channelKey);
@@ -7226,6 +7253,7 @@ const tryAutoRestoreSessionDraft = () => {
     images: draft.images,
   };
   applyHistoryEntry(entry, { silent: true });
+  notifyAutoRestoreSuccess(channelKey);
 };
 
 const scheduleHistorySnapshot = throttle(
@@ -7245,6 +7273,7 @@ watch(currentChannelKey, () => {
   scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
+    tryAutoRestoreHistory();
   });
 });
 
@@ -7266,6 +7295,7 @@ onMounted(() => {
   scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
+    tryAutoRestoreHistory();
   });
 });
 
@@ -9583,6 +9613,10 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
+    nextTick(() => {
+      tryAutoRestoreSessionDraft();
+      tryAutoRestoreHistory();
+    });
     const fetchTask = fetchLatestMessages();
     fetchTask.finally(() => {
       void fetchPinnedMessages();
@@ -9784,6 +9818,7 @@ const fetchLatestMessages = async () => {
     scrollToBottom();
     showButton.value = false;
     await autoFillIfNeeded();
+    tryAutoRestoreSessionDraft();
     tryAutoRestoreHistory();
     console.info('[channel-load] messages-rendered', {
       channelId: chat.curChannel?.id || '',
@@ -10275,9 +10310,10 @@ const keyDown = function (e: KeyboardEvent) {
     }
     const shortcut = display.settings.sendShortcut || 'enter';
     const ctrlLike = e.ctrlKey || e.metaKey;
+    const isBareEnter = !ctrlLike && !e.shiftKey && !e.altKey;
     let shouldSend = false;
     if (shortcut === 'enter') {
-      shouldSend = !ctrlLike && !e.shiftKey && !e.altKey;
+      shouldSend = isBareEnter;
     } else {
       shouldSend = ctrlLike && !e.shiftKey && !e.altKey;
     }
@@ -12116,6 +12152,7 @@ onBeforeUnmount(() => {
                   :mention-render-label="atRenderLabel"
                   :rows="1"
                   :input-class="chatInputClassList"
+                  :send-shortcut="display.settings.sendShortcut"
                   :inline-images="inlineImagePreviewMap"
                   :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"
