@@ -50,6 +50,7 @@ const wrapperRef = ref<HTMLDivElement | null>(null);
 const isFocused = ref(false);
 const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更新
 const isComposing = ref(false);
+let latestInputRenderTaskId = 0;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -398,16 +399,16 @@ const classList = computed(() => {
 
 // 渲染内容（解析文本中的图片标记和 @提及）
 // 使用可选 sourceText，避免内部输入时被异步旧值回写覆盖
-const renderContent = (preserveCursor = false, sourceText?: string) => {
+const renderContent = (preserveCursor = false, sourceText?: string, cursorOverride?: number) => {
   if (!editorRef.value) return;
+  const text = sourceText ?? props.modelValue;
 
   // 保存光标位置
   let savedPosition = 0;
   if (preserveCursor && isFocused.value) {
-    savedPosition = getCursorPosition();
+    savedPosition = clamp(cursorOverride ?? getCursorPosition(), 0, text.length);
   }
 
-  const text = sourceText ?? props.modelValue;
   // 匹配图片标记和 Satori <at> 标签
   const combinedRegex = /\[\[图片:([^\]]+)\]\]|<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*\/>/g;
 
@@ -768,11 +769,15 @@ const handleInput = () => {
   // 检测 @ 提及触发
   checkMentionTrigger(text, cursorPosition);
 
+  const renderTaskId = ++latestInputRenderTaskId;
   // 在下一个 tick 后重置标志
   nextTick(() => {
+    if (renderTaskId !== latestInputRenderTaskId) {
+      return;
+    }
     isInternalUpdate.value = false;
     if (!isComposing.value) {
-      renderContent(true, text);
+      renderContent(true, text, cursorPosition);
     }
   });
 };
