@@ -729,11 +729,14 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		Tracks:               req.Tracks,
 		IsPlaying:            req.IsPlaying,
 		Position:             req.Position,
+		CapturedAtMs:         req.CapturedAtMs,
 		LoopEnabled:          req.LoopEnabled,
 		PlaybackRate:         req.PlaybackRate,
 		WorldPlaybackEnabled: req.WorldPlaybackEnabled,
 		BaseRevision:         req.BaseRevision,
 		ActorID:              user.ID,
+		Persist:              req.Persist,
+		SyncReason:           req.SyncReason,
 	})
 	if err != nil {
 		var conflictErr *service.AudioPlaybackRevisionConflictError
@@ -871,10 +874,13 @@ type audioPlaybackStateRequest struct {
 	Tracks               []service.AudioTrackState `json:"tracks"`
 	IsPlaying            bool                      `json:"isPlaying"`
 	Position             float64                   `json:"position"`
+	CapturedAtMs         int64                     `json:"capturedAtMs"`
 	LoopEnabled          bool                      `json:"loopEnabled"`
 	PlaybackRate         float64                   `json:"playbackRate"`
 	WorldPlaybackEnabled bool                      `json:"worldPlaybackEnabled"`
 	BaseRevision         int64                     `json:"baseRevision"`
+	Persist              bool                      `json:"persist"`
+	SyncReason           string                    `json:"syncReason"`
 }
 
 func ensureChannelMembership(userID, channelID string) error {
@@ -888,27 +894,31 @@ func ensureChannelMembership(userID, channelID string) error {
 	return nil
 }
 
-func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
+func buildAudioPlaybackResponse(state *service.AudioPlaybackStateSnapshot) interface{} {
 	if state == nil {
 		return nil
 	}
-	tracks := []model.AudioTrackState(state.Tracks)
+	tracks := []service.AudioTrackState(state.Tracks)
 	return fiber.Map{
 		"channelId":            state.ChannelID,
 		"sceneId":              state.SceneID,
 		"tracks":               tracks,
 		"isPlaying":            state.IsPlaying,
 		"position":             state.Position,
+		"basePositionSec":      state.BasePositionSec,
+		"capturedAtMs":         state.CapturedAtMs,
 		"loopEnabled":          state.LoopEnabled,
 		"playbackRate":         state.PlaybackRate,
 		"worldPlaybackEnabled": state.WorldPlaybackEnabled,
 		"revision":             state.Revision,
 		"updatedBy":            state.UpdatedBy,
-		"updatedAt":            state.UpdatedAt.Unix(),
+		"updatedAt":            state.UpdatedAt.UnixMilli(),
+		"scopeType":            state.ScopeType,
+		"scopeId":              state.ScopeID,
 	}
 }
 
-func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPlaybackState) {
+func broadcastAudioPlaybackState(operator *model.UserModel, state *service.AudioPlaybackStateSnapshot) {
 	if operator == nil || state == nil {
 		return
 	}
@@ -921,12 +931,16 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		Tracks:               convertTrackStates(state.Tracks),
 		IsPlaying:            state.IsPlaying,
 		Position:             state.Position,
+		BasePositionSec:      state.BasePositionSec,
+		CapturedAtMs:         state.CapturedAtMs,
 		LoopEnabled:          state.LoopEnabled,
 		PlaybackRate:         state.PlaybackRate,
 		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
 		Revision:             state.Revision,
 		UpdatedBy:            state.UpdatedBy,
-		UpdatedAt:            state.UpdatedAt.Unix(),
+		UpdatedAt:            state.UpdatedAt.UnixMilli(),
+		ScopeType:            state.ScopeType,
+		ScopeID:              state.ScopeID,
 	}
 	event := &protocol.Event{
 		Type: protocol.EventAudioStateUpdated,
@@ -955,7 +969,7 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 	ctx.BroadcastEventInChannel(state.ChannelID, event)
 }
 
-func convertTrackStates(list model.JSONList[model.AudioTrackState]) []protocol.AudioTrackState {
+func convertTrackStates(list []service.AudioTrackState) []protocol.AudioTrackState {
 	result := make([]protocol.AudioTrackState, 0, len(list))
 	for _, item := range list {
 		result = append(result, protocol.AudioTrackState{

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -127,19 +128,70 @@ type AudioPlaybackUpdateInput struct {
 	Tracks               []AudioTrackState
 	IsPlaying            bool
 	Position             float64
+	CapturedAtMs         int64
 	LoopEnabled          bool
 	PlaybackRate         float64
 	WorldPlaybackEnabled bool
 	BaseRevision         int64
 	ActorID              string
+	Persist              bool
+	SyncReason           string
 }
 
 type AudioPlaybackRevisionConflictError struct {
-	CurrentState *model.AudioPlaybackState
+	CurrentState *AudioPlaybackStateSnapshot
 }
 
 func (e *AudioPlaybackRevisionConflictError) Error() string {
 	return "audio playback revision conflict"
+}
+
+const (
+	AudioPlaybackScopeChannel = "channel"
+	AudioPlaybackScopeWorld   = "world"
+	audioWorldScopeRowPrefix  = "__world__:"
+)
+
+type AudioPlaybackStateSnapshot struct {
+	ChannelID            string
+	SceneID              *string
+	Tracks               []AudioTrackState
+	IsPlaying            bool
+	Position             float64
+	BasePositionSec      float64
+	CapturedAtMs         int64
+	LoopEnabled          bool
+	PlaybackRate         float64
+	WorldPlaybackEnabled bool
+	Revision             int64
+	UpdatedBy            string
+	UpdatedAt            time.Time
+	ScopeType            string
+	ScopeID              string
+}
+
+type audioPlaybackRuntimeState struct {
+	ChannelID            string
+	SceneID              *string
+	Tracks               []AudioTrackState
+	IsPlaying            bool
+	BasePositionSec      float64
+	CapturedAtMs         int64
+	LoopEnabled          bool
+	PlaybackRate         float64
+	WorldPlaybackEnabled bool
+	Revision             int64
+	UpdatedBy            string
+	UpdatedAt            time.Time
+	ScopeType            string
+	ScopeID              string
+}
+
+var audioPlaybackRuntimeStore = struct {
+	sync.RWMutex
+	states map[string]*audioPlaybackRuntimeState
+}{
+	states: map[string]*audioPlaybackRuntimeState{},
 }
 
 func (f *AudioAssetFilters) normalize() {
@@ -589,10 +641,131 @@ func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
 	return result
 }
 
-func AudioGetPlaybackState(channelID string) (*model.AudioPlaybackState, error) {
-	if strings.TrimSpace(channelID) == "" {
-		return nil, errors.New("channelId 必填")
+func playbackScopeKey(scopeType, scopeID string) string {
+	return scopeType + ":" + scopeID
+}
+
+func resolvePlaybackScope(channelID string, worldPlaybackEnabled bool) (scopeType string, scopeID string, err error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return "", "", errors.New("channelId 必填")
 	}
+	if !worldPlaybackEnabled {
+		return AudioPlaybackScopeChannel, channelID, nil
+	}
+	channel, getErr := model.ChannelGet(channelID)
+	if getErr != nil {
+		return "", "", getErr
+	}
+	if channel == nil || strings.TrimSpace(channel.WorldID) == "" {
+		return "", "", errors.New("世界模式缺少 worldId")
+	}
+	return AudioPlaybackScopeWorld, strings.TrimSpace(channel.WorldID), nil
+}
+
+func worldScopeRowID(worldID string) string {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return ""
+	}
+	return audioWorldScopeRowPrefix + worldID
+}
+
+func calcPlaybackPosition(basePositionSec float64, capturedAtMs int64, isPlaying bool, rate float64, nowMs int64) float64 {
+	position := basePositionSec
+	if position < 0 {
+		position = 0
+	}
+	if !isPlaying || capturedAtMs <= 0 || nowMs <= capturedAtMs {
+		return position
+	}
+	if rate <= 0 {
+		rate = 1
+	}
+	position += float64(nowMs-capturedAtMs) / 1000 * rate
+	if position < 0 {
+		return 0
+	}
+	return position
+}
+
+func projectTrackStates(base []AudioTrackState, isPlaying bool, capturedAtMs int64, nowMs int64, fallbackRate float64) []AudioTrackState {
+	tracks := append([]AudioTrackState(nil), base...)
+	if !isPlaying || capturedAtMs <= 0 || nowMs <= capturedAtMs {
+		return tracks
+	}
+	deltaSec := float64(nowMs-capturedAtMs) / 1000
+	for i := range tracks {
+		if !tracks[i].IsPlaying || tracks[i].Muted {
+			continue
+		}
+		rate := tracks[i].PlaybackRate
+		if rate <= 0 {
+			rate = fallbackRate
+		}
+		if rate <= 0 {
+			rate = 1
+		}
+		tracks[i].Position += deltaSec * rate
+		if tracks[i].Position < 0 {
+			tracks[i].Position = 0
+		}
+	}
+	return tracks
+}
+
+func runtimeToSnapshot(runtime *audioPlaybackRuntimeState, now time.Time) *AudioPlaybackStateSnapshot {
+	if runtime == nil {
+		return nil
+	}
+	nowMs := now.UnixMilli()
+	tracks := projectTrackStates(runtime.Tracks, runtime.IsPlaying, runtime.CapturedAtMs, nowMs, runtime.PlaybackRate)
+	return &AudioPlaybackStateSnapshot{
+		ChannelID:            runtime.ChannelID,
+		SceneID:              cloneStringPtr(runtime.SceneID),
+		Tracks:               tracks,
+		IsPlaying:            runtime.IsPlaying,
+		Position:             calcPlaybackPosition(runtime.BasePositionSec, runtime.CapturedAtMs, runtime.IsPlaying, runtime.PlaybackRate, nowMs),
+		BasePositionSec:      runtime.BasePositionSec,
+		CapturedAtMs:         runtime.CapturedAtMs,
+		LoopEnabled:          runtime.LoopEnabled,
+		PlaybackRate:         runtime.PlaybackRate,
+		WorldPlaybackEnabled: runtime.WorldPlaybackEnabled,
+		Revision:             runtime.Revision,
+		UpdatedBy:            runtime.UpdatedBy,
+		UpdatedAt:            runtime.UpdatedAt,
+		ScopeType:            runtime.ScopeType,
+		ScopeID:              runtime.ScopeID,
+	}
+}
+
+func modelToRuntimeState(state *model.AudioPlaybackState, scopeType, scopeID string) *audioPlaybackRuntimeState {
+	if state == nil {
+		return nil
+	}
+	capturedAtMs := state.UpdatedAt.UnixMilli()
+	if capturedAtMs <= 0 {
+		capturedAtMs = time.Now().UnixMilli()
+	}
+	return &audioPlaybackRuntimeState{
+		ChannelID:            state.ChannelID,
+		SceneID:              cloneStringPtr(state.SceneID),
+		Tracks:               normalizeTrackStates([]AudioTrackState(state.Tracks)),
+		IsPlaying:            state.IsPlaying,
+		BasePositionSec:      state.Position,
+		CapturedAtMs:         capturedAtMs,
+		LoopEnabled:          state.LoopEnabled,
+		PlaybackRate:         state.PlaybackRate,
+		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
+		Revision:             state.Revision,
+		UpdatedBy:            state.UpdatedBy,
+		UpdatedAt:            state.UpdatedAt,
+		ScopeType:            scopeType,
+		ScopeID:              scopeID,
+	}
+}
+
+func loadPlaybackStateFromDB(channelID string) (*model.AudioPlaybackState, string, string, error) {
 	db := model.GetDB()
 	var state model.AudioPlaybackState
 	err := db.Where("channel_id = ?", channelID).
@@ -600,33 +773,211 @@ func AudioGetPlaybackState(channelID string) (*model.AudioPlaybackState, error) 
 		Limit(1).
 		First(&state).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+		return nil, "", "", err
 	}
-	// 查找频道所属世界，世界模式下优先返回最新的世界状态
-	ch, chErr := model.ChannelGet(channelID)
-	if chErr == nil && ch != nil && ch.WorldID != "" {
+	scopeType := AudioPlaybackScopeChannel
+	scopeID := channelID
+	channel, chErr := model.ChannelGet(channelID)
+	if chErr == nil && channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+		worldID := strings.TrimSpace(channel.WorldID)
+		scopeRowID := worldScopeRowID(worldID)
+		if scopeRowID != "" {
+			var worldScopeState model.AudioPlaybackState
+			scopeErr := db.Where("channel_id = ?", scopeRowID).First(&worldScopeState).Error
+			if scopeErr != nil && !errors.Is(scopeErr, gorm.ErrRecordNotFound) {
+				return nil, "", "", scopeErr
+			}
+			if scopeErr == nil {
+				if worldScopeState.WorldPlaybackEnabled {
+					if err != nil || worldScopeState.UpdatedAt.After(state.UpdatedAt) {
+						return &worldScopeState, AudioPlaybackScopeWorld, worldID, nil
+					}
+				} else {
+					if err != nil {
+						return nil, scopeType, scopeID, nil
+					}
+					return &state, scopeType, scopeID, nil
+				}
+			}
+		}
 		var worldState model.AudioPlaybackState
 		worldErr := db.Table("audio_playback_states AS aps").
 			Joins("JOIN channels c ON c.id = aps.channel_id").
-			Where("c.world_id = ?", ch.WorldID).
+			Where("c.world_id = ?", worldID).
 			Order("aps.updated_at desc").
 			Limit(1).
 			First(&worldState).Error
 		if worldErr != nil && !errors.Is(worldErr, gorm.ErrRecordNotFound) {
-			return nil, worldErr
+			return nil, "", "", worldErr
 		}
 		if worldErr == nil && worldState.WorldPlaybackEnabled {
-			return &worldState, nil
+			if err != nil || worldState.UpdatedAt.After(state.UpdatedAt) {
+				return &worldState, AudioPlaybackScopeWorld, worldID, nil
+			}
 		}
 	}
 	if err != nil {
-		return nil, nil
+		return nil, scopeType, scopeID, nil
 	}
-	return &state, nil
+	return &state, scopeType, scopeID, nil
 }
 
-func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlaybackState, error) {
-	if strings.TrimSpace(input.ChannelID) == "" {
+func upsertRuntimeState(scopeType, scopeID string, seeded *audioPlaybackRuntimeState) *audioPlaybackRuntimeState {
+	key := playbackScopeKey(scopeType, scopeID)
+	audioPlaybackRuntimeStore.Lock()
+	defer audioPlaybackRuntimeStore.Unlock()
+	existing := audioPlaybackRuntimeStore.states[key]
+	if existing != nil {
+		return existing
+	}
+	if seeded != nil {
+		audioPlaybackRuntimeStore.states[key] = seeded
+		return seeded
+	}
+	created := &audioPlaybackRuntimeState{
+		ScopeType: scopeType,
+		ScopeID:   scopeID,
+	}
+	audioPlaybackRuntimeStore.states[key] = created
+	return created
+}
+
+func getRuntimeState(scopeType, scopeID string) *audioPlaybackRuntimeState {
+	key := playbackScopeKey(scopeType, scopeID)
+	audioPlaybackRuntimeStore.RLock()
+	defer audioPlaybackRuntimeStore.RUnlock()
+	return audioPlaybackRuntimeStore.states[key]
+}
+
+func persistPlaybackState(input AudioPlaybackUpdateInput, snapshot *AudioPlaybackStateSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	channelID := strings.TrimSpace(input.ChannelID)
+	if channelID == "" {
+		channelID = strings.TrimSpace(snapshot.ChannelID)
+	}
+	if snapshot.ScopeType == AudioPlaybackScopeWorld {
+		if worldScopeID := strings.TrimSpace(snapshot.ScopeID); worldScopeID != "" {
+			channelID = worldScopeRowID(worldScopeID)
+		}
+	}
+	if channelID == "" {
+		return nil
+	}
+	db := model.GetDB()
+	var state model.AudioPlaybackState
+	err := db.Where("channel_id = ?", channelID).First(&state).Error
+	isNew := errors.Is(err, gorm.ErrRecordNotFound)
+	if isNew {
+		state = model.AudioPlaybackState{
+			ChannelID: channelID,
+			CreatedAt: time.Now(),
+		}
+	} else if err != nil {
+		return err
+	}
+	state.SceneID = cloneStringPtr(snapshot.SceneID)
+	state.Tracks = model.JSONList[AudioTrackState](normalizeTrackStates(snapshot.Tracks))
+	state.IsPlaying = snapshot.IsPlaying
+	state.Position = snapshot.BasePositionSec
+	state.LoopEnabled = snapshot.LoopEnabled
+	state.PlaybackRate = snapshot.PlaybackRate
+	state.WorldPlaybackEnabled = snapshot.WorldPlaybackEnabled
+	state.Revision = snapshot.Revision
+	state.UpdatedBy = snapshot.UpdatedBy
+	if snapshot.UpdatedAt.IsZero() {
+		state.UpdatedAt = time.Now()
+	} else {
+		state.UpdatedAt = snapshot.UpdatedAt
+	}
+	return db.Save(&state).Error
+}
+
+func persistWorldScopeModeOff(channelID, actorID string, updatedAt time.Time) error {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil || channel == nil || strings.TrimSpace(channel.WorldID) == "" {
+		return err
+	}
+	scopeRowID := worldScopeRowID(channel.WorldID)
+	if scopeRowID == "" {
+		return nil
+	}
+	db := model.GetDB()
+	var state model.AudioPlaybackState
+	findErr := db.Where("channel_id = ?", scopeRowID).First(&state).Error
+	isNew := errors.Is(findErr, gorm.ErrRecordNotFound)
+	if isNew {
+		state = model.AudioPlaybackState{
+			ChannelID: scopeRowID,
+			CreatedAt: time.Now(),
+			Revision:  0,
+		}
+	} else if findErr != nil {
+		return findErr
+	}
+	state.SceneID = nil
+	state.Tracks = nil
+	state.IsPlaying = false
+	state.Position = 0
+	state.LoopEnabled = false
+	state.PlaybackRate = 1
+	state.WorldPlaybackEnabled = false
+	if state.Revision < 0 {
+		state.Revision = 0
+	}
+	state.Revision += 1
+	state.UpdatedBy = actorID
+	if updatedAt.IsZero() {
+		state.UpdatedAt = time.Now()
+	} else {
+		state.UpdatedAt = updatedAt
+	}
+	return db.Save(&state).Error
+}
+
+func AudioGetPlaybackState(channelID string) (*AudioPlaybackStateSnapshot, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, errors.New("channelId 必填")
+	}
+	var worldRuntime *audioPlaybackRuntimeState
+	channel, chErr := model.ChannelGet(channelID)
+	if chErr == nil && channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+		worldScopeID := strings.TrimSpace(channel.WorldID)
+		worldRuntime = getRuntimeState(AudioPlaybackScopeWorld, worldScopeID)
+	}
+	channelRuntime := getRuntimeState(AudioPlaybackScopeChannel, channelID)
+	now := time.Now()
+	if worldRuntime != nil && worldRuntime.WorldPlaybackEnabled {
+		if channelRuntime == nil || worldRuntime.UpdatedAt.After(channelRuntime.UpdatedAt) {
+			return runtimeToSnapshot(worldRuntime, now), nil
+		}
+	}
+	if channelRuntime != nil {
+		return runtimeToSnapshot(channelRuntime, now), nil
+	}
+	if worldRuntime != nil && worldRuntime.WorldPlaybackEnabled {
+		return runtimeToSnapshot(worldRuntime, now), nil
+	}
+	state, scopeType, scopeID, err := loadPlaybackStateFromDB(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
+		return nil, nil
+	}
+	runtime := upsertRuntimeState(scopeType, scopeID, modelToRuntimeState(state, scopeType, scopeID))
+	return runtimeToSnapshot(runtime, time.Now()), nil
+}
+
+func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*AudioPlaybackStateSnapshot, error) {
+	input.ChannelID = strings.TrimSpace(input.ChannelID)
+	if input.ChannelID == "" {
 		return nil, errors.New("channelId 必填")
 	}
 	if input.PlaybackRate <= 0 {
@@ -635,48 +986,97 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlayb
 	if input.Position < 0 {
 		input.Position = 0
 	}
-	db := model.GetDB()
-	var state model.AudioPlaybackState
-	err := db.Where("channel_id = ?", input.ChannelID).First(&state).Error
-	isNew := errors.Is(err, gorm.ErrRecordNotFound)
-	if err == nil && input.BaseRevision > 0 && state.Revision > 0 && input.BaseRevision != state.Revision {
-		current := state
-		return nil, &AudioPlaybackRevisionConflictError{CurrentState: &current}
-	}
-	if isNew {
-		state = model.AudioPlaybackState{
-			ChannelID: input.ChannelID,
-			CreatedAt: time.Now(),
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	state.SceneID = input.SceneID
-	if state.SceneID != nil {
-		trimmed := strings.TrimSpace(*state.SceneID)
-		if trimmed == "" {
-			state.SceneID = nil
-		} else {
-			val := trimmed
-			state.SceneID = &val
+	worldScopeIDForDisable := ""
+	if !input.WorldPlaybackEnabled {
+		if channel, chErr := model.ChannelGet(input.ChannelID); chErr == nil && channel != nil {
+			worldScopeIDForDisable = strings.TrimSpace(channel.WorldID)
 		}
 	}
-	state.Tracks = model.JSONList[AudioTrackState](normalizeTrackStates(input.Tracks))
-	state.IsPlaying = input.IsPlaying
-	state.Position = input.Position
-	state.LoopEnabled = input.LoopEnabled
-	state.PlaybackRate = input.PlaybackRate
-	state.WorldPlaybackEnabled = input.WorldPlaybackEnabled
-	if state.Revision < 0 {
-		state.Revision = 0
-	}
-	state.Revision += 1
-	state.UpdatedBy = input.ActorID
-	state.UpdatedAt = time.Now()
-	if err := db.Save(&state).Error; err != nil {
+	scopeType, scopeID, err := resolvePlaybackScope(input.ChannelID, input.WorldPlaybackEnabled)
+	if err != nil {
 		return nil, err
 	}
-	return &state, nil
+	seededRuntime := getRuntimeState(scopeType, scopeID)
+	if seededRuntime == nil {
+		if persistedState, persistedScopeType, _, loadErr := loadPlaybackStateFromDB(input.ChannelID); loadErr != nil {
+			return nil, loadErr
+		} else if persistedState != nil {
+			seedScopeType := scopeType
+			seedScopeID := scopeID
+			if persistedScopeType == scopeType {
+				seedScopeID = scopeID
+			}
+			seededRuntime = modelToRuntimeState(persistedState, seedScopeType, seedScopeID)
+		}
+	}
+	runtime := upsertRuntimeState(scopeType, scopeID, seededRuntime)
+	audioPlaybackRuntimeStore.Lock()
+	if input.BaseRevision > 0 && runtime.Revision > 0 && input.BaseRevision != runtime.Revision {
+		current := runtimeToSnapshot(runtime, time.Now())
+		audioPlaybackRuntimeStore.Unlock()
+		return nil, &AudioPlaybackRevisionConflictError{CurrentState: current}
+	}
+	now := time.Now()
+	capturedAtMs := input.CapturedAtMs
+	if capturedAtMs <= 0 {
+		capturedAtMs = now.UnixMilli()
+	}
+	runtime.ChannelID = input.ChannelID
+	runtime.SceneID = cloneStringPtr(input.SceneID)
+	runtime.Tracks = normalizeTrackStates(input.Tracks)
+	runtime.IsPlaying = input.IsPlaying
+	runtime.BasePositionSec = input.Position
+	runtime.CapturedAtMs = capturedAtMs
+	runtime.LoopEnabled = input.LoopEnabled
+	runtime.PlaybackRate = input.PlaybackRate
+	runtime.WorldPlaybackEnabled = input.WorldPlaybackEnabled
+	runtime.ScopeType = scopeType
+	runtime.ScopeID = scopeID
+	if !input.WorldPlaybackEnabled && worldScopeIDForDisable != "" {
+		targetRevision := runtime.Revision + 1
+		worldKey := playbackScopeKey(AudioPlaybackScopeWorld, worldScopeIDForDisable)
+		worldRuntime := audioPlaybackRuntimeStore.states[worldKey]
+		if worldRuntime == nil {
+			worldRuntime = &audioPlaybackRuntimeState{
+				ScopeType: AudioPlaybackScopeWorld,
+				ScopeID:   worldScopeIDForDisable,
+			}
+			audioPlaybackRuntimeStore.states[worldKey] = worldRuntime
+		}
+		worldRuntime.ChannelID = input.ChannelID
+		worldRuntime.SceneID = nil
+		worldRuntime.Tracks = nil
+		worldRuntime.IsPlaying = false
+		worldRuntime.BasePositionSec = 0
+		worldRuntime.CapturedAtMs = capturedAtMs
+		worldRuntime.LoopEnabled = false
+		worldRuntime.PlaybackRate = 1
+		worldRuntime.WorldPlaybackEnabled = false
+		if worldRuntime.Revision < targetRevision {
+			worldRuntime.Revision = targetRevision
+		}
+		worldRuntime.UpdatedBy = input.ActorID
+		worldRuntime.UpdatedAt = now
+	}
+	if runtime.Revision < 0 {
+		runtime.Revision = 0
+	}
+	runtime.Revision += 1
+	runtime.UpdatedBy = input.ActorID
+	runtime.UpdatedAt = now
+	snapshot := runtimeToSnapshot(runtime, now)
+	audioPlaybackRuntimeStore.Unlock()
+	if input.Persist {
+		if persistErr := persistPlaybackState(input, snapshot); persistErr != nil {
+			return nil, persistErr
+		}
+		if !input.WorldPlaybackEnabled {
+			if persistErr := persistWorldScopeModeOff(input.ChannelID, input.ActorID, snapshot.UpdatedAt); persistErr != nil {
+				return nil, persistErr
+			}
+		}
+	}
+	return snapshot, nil
 }
 
 func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset, error) {
