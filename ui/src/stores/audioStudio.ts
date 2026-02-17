@@ -157,6 +157,7 @@ const SYNC_DEBOUNCE_MS = 300;
 const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
 const SYNC_RETRY_MAX_MS = 10_000;
+const DEFAULT_WORLD_PLAYBACK_ENABLED = true;
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 const logAudioSync = (...args: unknown[]) => {
   if (isDebugEnabled()) {
@@ -375,7 +376,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     loopEnabled: false,
     playbackRate: 1,
     masterVolume: 1,
-    worldPlaybackEnabled: false,
+    worldPlaybackEnabled: DEFAULT_WORLD_PLAYBACK_ENABLED,
     error: null,
     currentChannelId: null,
     currentWorldId: null,
@@ -657,7 +658,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     setCurrentWorld(worldId: string | null) {
+      const changed = this.currentWorldId !== worldId;
       this.currentWorldId = worldId;
+      if (changed) {
+        // 世界切换时先回到默认值；若服务端有显式配置，后续快照会覆盖。
+        this.worldPlaybackEnabled = DEFAULT_WORLD_PLAYBACK_ENABLED;
+      }
       if (worldId) {
         this.filters.worldId = worldId;
         this.filters.includeCommon = true;
@@ -879,6 +885,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.isApplyingRemoteState = true;
 
       if (!payload) {
+        if (source === 'pull') {
+          // 对于无历史状态的新频道/新世界，使用默认世界模式。
+          this.worldPlaybackEnabled = DEFAULT_WORLD_PLAYBACK_ENABLED;
+        }
         // 清空所有轨道
         stopProgressWatcher();
         DEFAULT_TRACK_TYPES.forEach((type) => {
