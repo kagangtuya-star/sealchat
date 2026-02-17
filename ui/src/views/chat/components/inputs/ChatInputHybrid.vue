@@ -53,6 +53,7 @@ const isFocused = ref(false);
 const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更新
 const isComposing = ref(false);
 let latestInputRenderTaskId = 0;
+let latestCursorRestoreTaskId = 0;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -511,7 +512,11 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
   // 恢复光标位置
   if (preserveCursor && isFocused.value) {
+    const cursorRestoreTaskId = ++latestCursorRestoreTaskId;
     nextTick(() => {
+      if (cursorRestoreTaskId !== latestCursorRestoreTaskId) {
+        return;
+      }
       setCursorPosition(savedPosition);
     });
   }
@@ -787,6 +792,8 @@ const insertPlainTextAtCursor = (text: string) => {
 // 处理输入事件
 const handleInput = (event?: InputEvent) => {
   if (!editorRef.value) return;
+  // 进入新的输入周期，取消所有已排队的旧光标恢复任务。
+  latestCursorRestoreTaskId++;
 
   let text = extractContentWithLineBreaks();
   // 删除到空时，浏览器经常遗留一个占位换行；仅在非“主动插入换行”场景下归零。
