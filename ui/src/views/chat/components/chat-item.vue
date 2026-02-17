@@ -800,7 +800,34 @@ const handleContentClick = (event: MouseEvent) => {
   if (target.closest('a')) return;
   const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null;
   if (!spoiler) return;
-  spoiler.classList.toggle('is-revealed');
+  const lifecycle = spoilerVisibilityState.value;
+  if (lifecycle === 'none') {
+    spoiler.classList.toggle('is-revealed');
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (lifecycle === SPOILER_VISIBILITY_LOCKED) {
+    if (!isMessageSender.value) {
+      message.info('等待发送者揭示');
+      return;
+    }
+    const messageId = (props.item as any)?.id;
+    const widgetIndex = spoilerVisibilityWidgetRawIndex.value;
+    if (!messageId || widgetIndex < 0) {
+      message.warning('无法解锁该消息');
+      return;
+    }
+    void chat.interactWithWidget(messageId, widgetIndex, 'reveal').catch(() => {
+      message.error('解锁失败');
+    });
+    return;
+  }
+
+  localSpoilerExpanded.value = !(localSpoilerExpanded.value !== false);
+  applySpoilerVisibilityToDom();
 };
 
 const props = defineProps({
@@ -1879,6 +1906,10 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
 };
 
 const STATE_WIDGET_REGEX = /\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
+const STATE_WIDGET_TYPE = 'state';
+const SPOILER_VISIBILITY_WIDGET_TYPE = 'spoiler_visibility';
+const SPOILER_VISIBILITY_LOCKED = 'locked';
+const SPOILER_VISIBILITY_PUBLIC = 'public';
 
 type StateWidgetTextSegment = {
   node: Text;
@@ -1898,7 +1929,37 @@ type StateWidgetRenderItem = {
   from: number;
   to: number;
   keepText?: string;
-  widgetIndex?: number;
+  widgetRawIndex?: number;
+};
+
+type MessageWidgetEntry = {
+  type: string;
+  options: string[];
+  index: number;
+};
+
+const parseMessageWidgetEntries = (raw: unknown): MessageWidgetEntry[] => {
+  if (!raw) {
+    return [];
+  }
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry: any) => ({
+      type: String(entry.type || '').trim(),
+      options: Array.isArray(entry.options) ? entry.options.map((opt: unknown) => String(opt ?? '')) : [],
+      index: Number.isInteger(entry.index) ? entry.index : 0,
+    }));
 };
 
 const collectStateWidgetTextSegments = (host: HTMLElement): StateWidgetTextSegment[] => {
@@ -1941,7 +2002,7 @@ const collectStateWidgetRanges = (fullText: string): StateWidgetRange[] => {
 const buildStateWidgetRenderMap = (
   segments: StateWidgetTextSegment[],
   ranges: StateWidgetRange[],
-  entries: Array<{ type: string; options: string[]; index: number }>,
+  stateWidgetRawIndexes: number[],
 ): Map<Text, StateWidgetRenderItem[]> => {
   const renderMap = new Map<Text, StateWidgetRenderItem[]>();
   const pushItem = (node: Text, item: StateWidgetRenderItem) => {
@@ -1952,8 +2013,8 @@ const buildStateWidgetRenderMap = (
 
   let widgetCounter = 0;
   for (const range of ranges) {
-    const targetWidgetIndex = !range.isMarkdownLink && widgetCounter < entries.length
-      ? widgetCounter
+    const targetWidgetRawIndex = !range.isMarkdownLink && widgetCounter < stateWidgetRawIndexes.length
+      ? stateWidgetRawIndexes[widgetCounter]
       : undefined;
     let widgetInserted = false;
 
@@ -1971,9 +2032,14 @@ const buildStateWidgetRenderMap = (
         pushItem(seg.node, { node: seg.node, from, to, keepText });
         continue;
       }
+      if (targetWidgetRawIndex === undefined) {
+        const keepText = seg.text.slice(from, to);
+        pushItem(seg.node, { node: seg.node, from, to, keepText });
+        continue;
+      }
 
-      if (!widgetInserted && targetWidgetIndex !== undefined) {
-        pushItem(seg.node, { node: seg.node, from, to, widgetIndex: targetWidgetIndex });
+      if (!widgetInserted && targetWidgetRawIndex !== undefined) {
+        pushItem(seg.node, { node: seg.node, from, to, widgetRawIndex: targetWidgetRawIndex });
         widgetInserted = true;
       } else {
         // 非首段：删除匹配区间，避免跨节点重复插入 widget
@@ -1981,7 +2047,7 @@ const buildStateWidgetRenderMap = (
       }
     }
 
-    if (!range.isMarkdownLink && targetWidgetIndex !== undefined) {
+    if (!range.isMarkdownLink && targetWidgetRawIndex !== undefined) {
       widgetCounter++;
     }
   }
@@ -2043,6 +2109,43 @@ const collectMentionIdsFromContent = (content: string) => {
   return output;
 };
 
+const messageWidgetEntries = computed(() => parseMessageWidgetEntries((props.item as any)?.widgetData));
+const spoilerVisibilityWidgetRawIndex = computed(() => (
+  messageWidgetEntries.value.findIndex((entry) => entry.type === SPOILER_VISIBILITY_WIDGET_TYPE)
+));
+const spoilerVisibilityState = computed<'none' | 'locked' | 'public'>(() => {
+  const widgetRawIndex = spoilerVisibilityWidgetRawIndex.value;
+  if (widgetRawIndex < 0) {
+    return 'none';
+  }
+  const entry = messageWidgetEntries.value[widgetRawIndex];
+  if (!entry || entry.options.length === 0) {
+    return 'locked';
+  }
+  const rawIndex = Number.isInteger(entry.index) ? entry.index : 0;
+  const normalizedIndex = rawIndex < 0 || rawIndex >= entry.options.length ? 0 : rawIndex;
+  const value = String(entry.options[normalizedIndex] || '').trim().toLowerCase();
+  return value === SPOILER_VISIBILITY_PUBLIC ? 'public' : 'locked';
+});
+const isMessageSender = computed(() => Boolean(targetUserId.value) && targetUserId.value === user.info.id);
+const localSpoilerExpanded = ref<boolean | null>(null);
+
+const applySpoilerVisibilityToDom = () => {
+  const host = messageContentRef.value;
+  if (!host) {
+    return;
+  }
+  const lifecycle = spoilerVisibilityState.value;
+  if (lifecycle === 'none') {
+    return;
+  }
+  const shouldReveal = lifecycle === 'public' && localSpoilerExpanded.value !== false;
+  const spoilers = host.querySelectorAll<HTMLElement>('.tiptap-spoiler');
+  spoilers.forEach((el) => {
+    el.classList.toggle('is-revealed', shouldReveal);
+  });
+};
+
 const processStateTextWidgets = () => {
   nextTick(() => {
     const host = messageContentRef.value;
@@ -2050,11 +2153,14 @@ const processStateTextWidgets = () => {
     const item = props.item as any;
     if (!item?.widgetData) return;
 
-    let entries: Array<{ type: string; options: string[]; index: number }>;
-    try {
-      entries = typeof item.widgetData === 'string' ? JSON.parse(item.widgetData) : item.widgetData;
-    } catch { return; }
+    const entries = parseMessageWidgetEntries(item.widgetData);
     if (!entries?.length) return;
+    const stateWidgetRawIndexes = entries
+      .map((entry, index) => (entry.type === STATE_WIDGET_TYPE ? index : -1))
+      .filter((index) => index >= 0);
+    if (!stateWidgetRawIndexes.length) {
+      return;
+    }
 
     // Permission pre-check
     const userId = user.info.id;
@@ -2086,7 +2192,7 @@ const processStateTextWidgets = () => {
       return;
     }
 
-    const renderMap = buildStateWidgetRenderMap(segments, ranges, entries);
+    const renderMap = buildStateWidgetRenderMap(segments, ranges, stateWidgetRawIndexes);
     renderMap.forEach((items, node) => {
       const text = node.textContent || '';
       const fragment = document.createDocumentFragment();
@@ -2106,7 +2212,7 @@ const processStateTextWidgets = () => {
           continue;
         }
 
-        const widgetIdx = renderItem.widgetIndex;
+        const widgetIdx = renderItem.widgetRawIndex;
         if (widgetIdx === undefined || widgetIdx >= entries.length) {
           fragment.appendChild(document.createTextNode(text.slice(renderItem.from, renderItem.to)));
           lastIndex = renderItem.to;
@@ -2114,6 +2220,11 @@ const processStateTextWidgets = () => {
         }
 
         const entry = entries[widgetIdx];
+        if (entry.type !== STATE_WIDGET_TYPE) {
+          fragment.appendChild(document.createTextNode(text.slice(renderItem.from, renderItem.to)));
+          lastIndex = renderItem.to;
+          continue;
+        }
 
         const span = document.createElement('span');
         span.className = 'state-text-widget' + (canInteract ? ' state-text-widget--active' : '');
@@ -2421,6 +2532,40 @@ const doAvatarDblClick = (e: MouseEvent) => {
   avatarViewer.show();
 };
 
+watch(
+  () => ({
+    messageId: String((props.item as any)?.id || ''),
+    lifecycle: spoilerVisibilityState.value,
+  }),
+  (next, prev) => {
+    if (!prev || next.messageId !== prev.messageId) {
+      if (next.lifecycle === 'public') {
+        localSpoilerExpanded.value = true;
+      } else if (next.lifecycle === 'locked') {
+        localSpoilerExpanded.value = false;
+      } else {
+        localSpoilerExpanded.value = null;
+      }
+    } else if (next.lifecycle === 'locked') {
+      localSpoilerExpanded.value = false;
+    } else if (next.lifecycle === 'public' && prev.lifecycle !== 'public') {
+      localSpoilerExpanded.value = true;
+    } else if (next.lifecycle === 'none') {
+      localSpoilerExpanded.value = null;
+    }
+    nextTick(() => {
+      applySpoilerVisibilityToDom();
+    });
+  },
+  { immediate: true },
+);
+
+watch(() => localSpoilerExpanded.value, () => {
+  nextTick(() => {
+    applySpoilerVisibilityToDom();
+  });
+});
+
 onMounted(() => {
   stopMessageLongPress = onLongPress(
     messageContentRef,
@@ -2444,6 +2589,7 @@ onMounted(() => {
   void applyImageLayoutToDom();
   processMessageLinks();
   processStateTextWidgets();
+  applySpoilerVisibilityToDom();
 
   timestampInterval = setInterval(() => {
     timestampTicker.value = Date.now();
@@ -2472,6 +2618,7 @@ watch([displayContent, () => props.tone], () => {
   void applyImageLayoutToDom();
   processMessageLinks();
   processStateTextWidgets();
+  applySpoilerVisibilityToDom();
   resetMessageIFormSyncBaseline();
   nextTick(() => {
     setupMessageIFormResizeSync();
@@ -2481,20 +2628,22 @@ watch([displayContent, () => props.tone], () => {
 watch(() => (props.item as any)?.widgetData, (newData) => {
   nextTick(() => {
     const host = messageContentRef.value;
-    if (!host || !newData) return;
-    let entries: Array<{ type: string; options: string[]; index: number }>;
-    try {
-      entries = typeof newData === 'string' ? JSON.parse(newData) : newData;
-    } catch { return; }
+    if (!host || !newData) {
+      applySpoilerVisibilityToDom();
+      return;
+    }
+    const entries = parseMessageWidgetEntries(newData);
     if (!entries?.length) return;
     const spans = host.querySelectorAll<HTMLSpanElement>('.state-text-widget');
     spans.forEach((span) => {
       const idx = parseInt(span.dataset.widgetIndex || '', 10);
       if (isNaN(idx) || idx >= entries.length) return;
       const entry = entries[idx];
+      if (entry.type !== STATE_WIDGET_TYPE) return;
       const currentIndex = entry.index ?? 0;
       span.textContent = entry.options[currentIndex] || entry.options[0] || '';
     });
+    applySpoilerVisibilityToDom();
   });
 });
 

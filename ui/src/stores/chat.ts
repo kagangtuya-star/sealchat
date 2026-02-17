@@ -2485,12 +2485,12 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async interactWithWidget(messageId: string, widgetIndex: number) {
+    async interactWithWidget(messageId: string, widgetIndex: number, operation: 'rotate' | 'reveal' = 'rotate') {
       if (this.connectState !== 'connected') return
       await this.sendAPI('widget.interact', {
         message_id: messageId,
         widget_index: widgetIndex,
-        operation: 'rotate',
+        operation,
       })
     },
 

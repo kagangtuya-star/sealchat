@@ -10,21 +10,24 @@ func TestBuildStateWidgetDataFromContent(t *testing.T) {
 		name     string
 		content  string
 		wantN    int // expected number of widgets
+		wantType []string
 		wantOpts [][]string
 	}{
-		{"plain text no widget", "hello world", 0, nil},
-		{"single widget", "[待办|进行中|已完成]", 1, [][]string{{"待办", "进行中", "已完成"}}},
-		{"two options", "[是|否]", 1, [][]string{{"是", "否"}}},
-		{"multiple widgets", "状态:[待办|完成] 类型:[bug|feat]", 2, [][]string{{"待办", "完成"}, {"bug", "feat"}}},
-		{"single option no pipe - not a widget", "[单选项]", 0, nil},
-		{"markdown link - skip", "[选项A|选项B](https://example.com)", 0, nil},
-		{"widget + markdown link", "[待办|完成] 和 [链接|文本](url)", 1, [][]string{{"待办", "完成"}}},
-		{"with satori at tag", `任务 <at id="123" name="test"/> [待办|完成]`, 1, [][]string{{"待办", "完成"}}},
-		{"empty content", "", 0, nil},
-		{"emoji options", "[⭕|❌|✓]", 1, [][]string{{"⭕", "❌", "✓"}}},
-		{"spaces in options", "[ 待办 | 进行中 | 已完成 ]", 1, [][]string{{"待办", "进行中", "已完成"}}},
-		{"tiptap rich text", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"状态 "},{"type":"text","marks":[{"type":"bold"}],"text":"[待办|完成]"}]}]}`, 1, [][]string{{"待办", "完成"}}},
-		{"tiptap split by marks", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"[待办"},{"type":"text","marks":[{"type":"bold"}],"text":"|进行中"},{"type":"text","text":"|完成]"}]}]}`, 1, [][]string{{"待办", "进行中", "完成"}}},
+		{"plain text no widget", "hello world", 0, nil, nil},
+		{"single widget", "[待办|进行中|已完成]", 1, []string{WidgetTypeState}, [][]string{{"待办", "进行中", "已完成"}}},
+		{"two options", "[是|否]", 1, []string{WidgetTypeState}, [][]string{{"是", "否"}}},
+		{"multiple widgets", "状态:[待办|完成] 类型:[bug|feat]", 2, []string{WidgetTypeState, WidgetTypeState}, [][]string{{"待办", "完成"}, {"bug", "feat"}}},
+		{"single option no pipe - not a widget", "[单选项]", 0, nil, nil},
+		{"markdown link - skip", "[选项A|选项B](https://example.com)", 0, nil, nil},
+		{"widget + markdown link", "[待办|完成] 和 [链接|文本](url)", 1, []string{WidgetTypeState}, [][]string{{"待办", "完成"}}},
+		{"with satori at tag", `任务 <at id="123" name="test"/> [待办|完成]`, 1, []string{WidgetTypeState}, [][]string{{"待办", "完成"}}},
+		{"empty content", "", 0, nil, nil},
+		{"emoji options", "[⭕|❌|✓]", 1, []string{WidgetTypeState}, [][]string{{"⭕", "❌", "✓"}}},
+		{"spaces in options", "[ 待办 | 进行中 | 已完成 ]", 1, []string{WidgetTypeState}, [][]string{{"待办", "进行中", "已完成"}}},
+		{"tiptap rich text", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"状态 "},{"type":"text","marks":[{"type":"bold"}],"text":"[待办|完成]"}]}]}`, 1, []string{WidgetTypeState}, [][]string{{"待办", "完成"}}},
+		{"tiptap split by marks", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"[待办"},{"type":"text","marks":[{"type":"bold"}],"text":"|进行中"},{"type":"text","text":"|完成]"}]}]}`, 1, []string{WidgetTypeState}, [][]string{{"待办", "进行中", "完成"}}},
+		{"tiptap spoiler only", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","marks":[{"type":"spoiler"}],"text":"秘密内容"}]}]}`, 1, []string{WidgetTypeSpoilerVisibility}, [][]string{{SpoilerVisibilityLocked, SpoilerVisibilityPublic}}},
+		{"tiptap spoiler and state", `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"状态[待办|完成] "},{"type":"text","marks":[{"type":"spoiler"}],"text":"秘密"}]}]}`, 2, []string{WidgetTypeState, WidgetTypeSpoilerVisibility}, [][]string{{"待办", "完成"}, {SpoilerVisibilityLocked, SpoilerVisibilityPublic}}},
 	}
 
 	for _, tt := range tests {
@@ -46,8 +49,12 @@ func TestBuildStateWidgetDataFromContent(t *testing.T) {
 				t.Fatalf("expected %d entries, got %d", tt.wantN, len(entries))
 			}
 			for i, entry := range entries {
-				if entry.Type != "state" {
-					t.Errorf("entry[%d].Type = %q, want \"state\"", i, entry.Type)
+				wantType := WidgetTypeState
+				if len(tt.wantType) > i {
+					wantType = tt.wantType[i]
+				}
+				if entry.Type != wantType {
+					t.Errorf("entry[%d].Type = %q, want %q", i, entry.Type, wantType)
 				}
 				if entry.Index != 0 {
 					t.Errorf("entry[%d].Index = %d, want 0", i, entry.Index)
@@ -166,5 +173,61 @@ func TestBuildStateWidgetDataFromContentWithPreviousFallback(t *testing.T) {
 	}
 	if entries[0].Index != 0 {
 		t.Fatalf("expected fallback index=0, got %d", entries[0].Index)
+	}
+}
+
+func TestBuildStateWidgetDataFromContentWithPreviousPreserveSpoilerState(t *testing.T) {
+	content := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","marks":[{"type":"spoiler"}],"text":"秘密内容"}]}]}`
+	prev := `[{"type":"spoiler_visibility","options":["locked","public"],"index":1}]`
+	result := BuildStateWidgetDataFromContentWithPrevious(content, prev)
+	var entries []StateWidgetEntry
+	if err := json.Unmarshal([]byte(result), &entries); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Type != WidgetTypeSpoilerVisibility {
+		t.Fatalf("expected spoiler visibility entry, got %s", entries[0].Type)
+	}
+	if entries[0].Index != 1 {
+		t.Fatalf("expected spoiler visibility index to be preserved as 1, got %d", entries[0].Index)
+	}
+}
+
+func TestApplyWidgetOperationReveal(t *testing.T) {
+	initial := `[{"type":"state","options":["A","B"],"index":0},{"type":"spoiler_visibility","options":["locked","public"],"index":0}]`
+	updated, changed, err := ApplyWidgetOperation(initial, 1, WidgetOperationReveal)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true when revealing locked spoiler")
+	}
+
+	var entries []StateWidgetEntry
+	if err := json.Unmarshal([]byte(updated), &entries); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if entries[1].Index != 1 {
+		t.Fatalf("expected spoiler index=1 after reveal, got %d", entries[1].Index)
+	}
+
+	updated2, changed2, err := ApplyWidgetOperation(updated, 1, WidgetOperationReveal)
+	if err != nil {
+		t.Fatalf("unexpected idempotent reveal error: %v", err)
+	}
+	if changed2 {
+		t.Fatal("expected changed=false when spoiler already public")
+	}
+	if updated2 != updated {
+		t.Fatal("expected idempotent reveal to keep same widget data")
+	}
+
+	if _, _, err := ApplyWidgetOperation(initial, 0, WidgetOperationReveal); err == nil {
+		t.Fatal("expected reveal on non-spoiler widget to fail")
+	}
+	if _, _, err := ApplyWidgetOperation(initial, 0, "invalid-op"); err == nil {
+		t.Fatal("expected unsupported operation to fail")
 	}
 }

@@ -3281,7 +3281,7 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 	WidgetIndex int    `json:"widget_index"`
 	Operation   string `json:"operation"`
 }) (any, error) {
-	if data.Operation != "rotate" {
+	if data.Operation != service.WidgetOperationRotate && data.Operation != service.WidgetOperationReveal {
 		return nil, fmt.Errorf("unsupported operation: %s", data.Operation)
 	}
 
@@ -3321,46 +3321,54 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		}
 	}
 
-	// Permission check:
-	// - no @ mention: allow channel/world member with read access (already verified above)
-	// - has @ mention: only sender, mentioned user, or world admin/owner
-	hasMention := false
-	isMentioned := false
-	root := protocol.ElementParse(msg.Content)
-	if root != nil {
-		root.Traverse(func(el *protocol.Element) {
-			if el.Type != "at" {
-				return
+	if data.Operation == service.WidgetOperationReveal {
+		// Reveal is one-way transition for spoiler visibility and only sender can trigger.
+		if msg.UserID != ctx.User.ID {
+			return nil, fmt.Errorf("forbidden")
+		}
+	} else {
+		// Permission check:
+		// - no @ mention: allow channel/world member with read access (already verified above)
+		// - has @ mention: only sender, mentioned user, or world admin/owner
+		hasMention := false
+		isMentioned := false
+		root := protocol.ElementParse(msg.Content)
+		if root != nil {
+			root.Traverse(func(el *protocol.Element) {
+				if el.Type != "at" {
+					return
+				}
+				id, ok := el.Attrs["id"].(string)
+				if !ok || strings.TrimSpace(id) == "" {
+					return
+				}
+				hasMention = true
+				if id == ctx.User.ID {
+					isMentioned = true
+				}
+			})
+		}
+
+		allowed := !hasMention || msg.UserID == ctx.User.ID || isMentioned
+		if !allowed {
+			channel, _ := model.ChannelGet(msg.ChannelID)
+			worldID := ""
+			if channel != nil {
+				worldID = channel.WorldID
 			}
-			id, ok := el.Attrs["id"].(string)
-			if !ok || strings.TrimSpace(id) == "" {
-				return
+			role := service.ResolveMemberRoleForProtocol(ctx.User.ID, msg.ChannelID, worldID)
+			if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
+				allowed = true
 			}
-			hasMention = true
-			if id == ctx.User.ID {
-				isMentioned = true
-			}
-		})
+		}
+		if !allowed {
+			return nil, fmt.Errorf("forbidden")
+		}
 	}
 
-	allowed := !hasMention || msg.UserID == ctx.User.ID || isMentioned
-	if !allowed {
-		channel, _ := model.ChannelGet(msg.ChannelID)
-		worldID := ""
-		if channel != nil {
-			worldID = channel.WorldID
-		}
-		role := service.ResolveMemberRoleForProtocol(ctx.User.ID, msg.ChannelID, worldID)
-		if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return nil, fmt.Errorf("forbidden")
-	}
-
-	// Rotate widget in transaction
+	// Apply widget operation in transaction
 	var newJSON string
+	var changed bool
 	var txErr error
 	if model.IsSQLite() {
 		txErr = db.Transaction(func(tx *gorm.DB) error {
@@ -3369,9 +3377,13 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 				return err
 			}
 			var err error
-			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			newJSON, changed, err = service.ApplyWidgetOperation(fresh.WidgetData, data.WidgetIndex, data.Operation)
 			if err != nil {
 				return err
+			}
+			if !changed {
+				newJSON = fresh.WidgetData
+				return nil
 			}
 			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
 		})
@@ -3383,9 +3395,13 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 				return err
 			}
 			var err error
-			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			newJSON, changed, err = service.ApplyWidgetOperation(fresh.WidgetData, data.WidgetIndex, data.Operation)
 			if err != nil {
 				return err
+			}
+			if !changed {
+				newJSON = fresh.WidgetData
+				return nil
 			}
 			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
 		})
@@ -3424,20 +3440,22 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		IsInteractiveUpdate: true,
 	}
 
-	if fullMsg.IsWhisper {
-		recipients := []string{fullMsg.UserID}
-		if fullMsg.WhisperTo != "" {
-			recipients = append(recipients, fullMsg.WhisperTo)
+	if changed {
+		if fullMsg.IsWhisper {
+			recipients := []string{fullMsg.UserID}
+			if fullMsg.WhisperTo != "" {
+				recipients = append(recipients, fullMsg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(fullMsg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(fullMsg.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(fullMsg.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(fullMsg.ChannelID, ev)
 		}
-		recipientIDs := model.GetWhisperRecipientIDs(fullMsg.ID)
-		if len(recipientIDs) > 0 {
-			recipients = append(recipients, recipientIDs...)
-		}
-		recipients = lo.Uniq(recipients)
-		ctx.BroadcastEventInChannelToUsers(fullMsg.ChannelID, recipients, ev)
-	} else {
-		ctx.BroadcastEventInChannel(fullMsg.ChannelID, ev)
-		ctx.BroadcastEventInChannelForBot(fullMsg.ChannelID, ev)
 	}
 
 	return &struct {

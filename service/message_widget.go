@@ -16,6 +16,17 @@ type StateWidgetEntry struct {
 	Index   int      `json:"index"`
 }
 
+const (
+	WidgetTypeState             = "state"
+	WidgetTypeSpoilerVisibility = "spoiler_visibility"
+
+	SpoilerVisibilityLocked = "locked"
+	SpoilerVisibilityPublic = "public"
+
+	WidgetOperationRotate = "rotate"
+	WidgetOperationReveal = "reveal"
+)
+
 var stateWidgetPattern = regexp.MustCompile(`\[([^\[\]\|]+(?:\|[^\[\]\|]+)+)\]`)
 
 // BuildStateWidgetDataFromContent parses content for [opt1|opt2|opt3] patterns
@@ -78,28 +89,37 @@ func BuildStateWidgetDataFromContentWithPrevious(content string, previousWidgetD
 
 func buildStateWidgetEntries(content string) []StateWidgetEntry {
 	var entries []StateWidgetEntry
+	hasSpoilerVisibility := false
 	if LooksLikeTipTapJSON(content) {
 		if plain, ok := extractTipTapPlainText(content); ok && plain != "" {
 			appendStateWidgetEntriesFromText(plain, &entries)
 		}
-		return entries
+		hasSpoilerVisibility = containsTipTapSpoilerMark(content)
+	} else {
+		root := protocol.ElementParse(content)
+		if root == nil {
+			return entries
+		}
+
+		root.Traverse(func(el *protocol.Element) {
+			if el.Type != "text" {
+				return
+			}
+			text, ok := el.Attrs["content"].(string)
+			if !ok || text == "" {
+				return
+			}
+			appendStateWidgetEntriesFromText(text, &entries)
+		})
 	}
 
-	root := protocol.ElementParse(content)
-	if root == nil {
-		return entries
+	if hasSpoilerVisibility {
+		entries = append(entries, StateWidgetEntry{
+			Type:    WidgetTypeSpoilerVisibility,
+			Options: []string{SpoilerVisibilityLocked, SpoilerVisibilityPublic},
+			Index:   0,
+		})
 	}
-
-	root.Traverse(func(el *protocol.Element) {
-		if el.Type != "text" {
-			return
-		}
-		text, ok := el.Attrs["content"].(string)
-		if !ok || text == "" {
-			return
-		}
-		appendStateWidgetEntriesFromText(text, &entries)
-	})
 
 	return entries
 }
@@ -131,7 +151,7 @@ func appendStateWidgetEntriesFromText(text string, entries *[]StateWidgetEntry) 
 		}
 
 		*entries = append(*entries, StateWidgetEntry{
-			Type:    "state",
+			Type:    WidgetTypeState,
 			Options: opts,
 			Index:   0,
 		})
@@ -196,4 +216,101 @@ func RotateWidgetIndex(widgetDataJSON string, widgetIndex int) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ApplyWidgetOperation applies widget interaction operations and returns:
+// - updated JSON
+// - whether the widget data changed
+func ApplyWidgetOperation(widgetDataJSON string, widgetIndex int, operation string) (string, bool, error) {
+	switch operation {
+	case WidgetOperationRotate:
+		updated, err := RotateWidgetIndex(widgetDataJSON, widgetIndex)
+		if err != nil {
+			return "", false, err
+		}
+		return updated, true, nil
+	case WidgetOperationReveal:
+		return RevealSpoilerVisibilityWidget(widgetDataJSON, widgetIndex)
+	default:
+		return "", false, fmt.Errorf("unsupported operation: %s", operation)
+	}
+}
+
+// RevealSpoilerVisibilityWidget updates a spoiler_visibility widget from locked to public.
+// If it's already public, returns changed=false.
+func RevealSpoilerVisibilityWidget(widgetDataJSON string, widgetIndex int) (string, bool, error) {
+	if widgetDataJSON == "" {
+		return "", false, errors.New("empty widget data")
+	}
+
+	var entries []StateWidgetEntry
+	if err := json.Unmarshal([]byte(widgetDataJSON), &entries); err != nil {
+		return "", false, fmt.Errorf("invalid widget data: %w", err)
+	}
+	if widgetIndex < 0 || widgetIndex >= len(entries) {
+		return "", false, fmt.Errorf("widget_index %d out of range [0, %d)", widgetIndex, len(entries))
+	}
+
+	entry := &entries[widgetIndex]
+	if entry.Type != WidgetTypeSpoilerVisibility {
+		return "", false, errors.New("widget is not spoiler visibility")
+	}
+	if len(entry.Options) == 0 {
+		return "", false, errors.New("spoiler visibility widget has no options")
+	}
+
+	currentIdx := entry.Index
+	if currentIdx < 0 || currentIdx >= len(entry.Options) {
+		currentIdx = 0
+	}
+	current := strings.TrimSpace(strings.ToLower(entry.Options[currentIdx]))
+	if current == SpoilerVisibilityPublic {
+		return widgetDataJSON, false, nil
+	}
+
+	publicIdx := -1
+	for i, opt := range entry.Options {
+		if strings.TrimSpace(strings.ToLower(opt)) == SpoilerVisibilityPublic {
+			publicIdx = i
+			break
+		}
+	}
+	if publicIdx < 0 {
+		return "", false, errors.New("spoiler visibility widget missing public option")
+	}
+
+	entry.Index = publicIdx
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", false, err
+	}
+	return string(data), true, nil
+}
+
+func containsTipTapSpoilerMark(content string) bool {
+	var node tiptapNode
+	if err := json.Unmarshal([]byte(content), &node); err != nil {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(node.Type)) != "doc" {
+		return false
+	}
+	return hasSpoilerMarkInTipTapNode(&node)
+}
+
+func hasSpoilerMarkInTipTapNode(node *tiptapNode) bool {
+	if node == nil {
+		return false
+	}
+	for _, mark := range node.Marks {
+		if mark != nil && strings.ToLower(strings.TrimSpace(mark.Type)) == "spoiler" {
+			return true
+		}
+	}
+	for _, child := range node.Content {
+		if hasSpoilerMarkInTipTapNode(child) {
+			return true
+		}
+	}
+	return false
 }
