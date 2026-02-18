@@ -48,17 +48,32 @@ func (el *Element) ToString() string {
 			for k, v := range el.Attrs {
 				sb.WriteString(fmt.Sprintf(" %s=\"%s\"", k, html.EscapeString(fmt.Sprint(v))))
 			}
-			sb.WriteString(">")
+			if isSelfClosingSatoriTag(el.Type) {
+				sb.WriteString(" />")
+			} else {
+				sb.WriteString(">")
+			}
 		}
 	}, func(el *Element) {
 		switch el.Type {
 		case "root", "text":
 			break
 		default:
-			sb.WriteString(fmt.Sprintf("</%s>", el.Type))
+			if !isSelfClosingSatoriTag(el.Type) {
+				sb.WriteString(fmt.Sprintf("</%s>", el.Type))
+			}
 		}
 	})
 	return sb.String()
+}
+
+func isSelfClosingSatoriTag(tag string) bool {
+	switch strings.ToLower(strings.TrimSpace(tag)) {
+	case "at", "br", "img", "audio", "video", "file":
+		return true
+	default:
+		return false
+	}
 }
 
 type Dict map[string]interface{}

@@ -103,6 +103,8 @@ func EncodeCQCode(elements []*protocol.Element) string {
 			if content, ok := el.Attrs["content"].(string); ok {
 				sb.WriteString(content)
 			}
+		case "br":
+			sb.WriteString("\n")
 		case "at":
 			id := getStringAttr(el.Attrs, "id")
 			name := getStringAttr(el.Attrs, "name")

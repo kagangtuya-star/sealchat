@@ -1,12 +1,19 @@
 package api
 
 import (
+	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
+)
+
+var (
+	botCommandTailCleanupPattern = regexp.MustCompile(`(?i)(?:\s|&nbsp;|<br\s*/?>)+$`)
 )
 
 type ChatContext struct {
@@ -127,6 +134,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 	if ctx == nil || ctx.UserId2ConnInfo == nil || channelId == "" || data == nil {
 		return
 	}
+	data = normalizeEventForBot(data)
 	// 只向频道选中的 BOT 推送事件，避免多 BOT 实例导致数据不同步
 	data.Timestamp = time.Now().Unix()
 	botID, err := service.SelectedBotIdByChannelId(channelId)
@@ -176,6 +184,45 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 		}
 	}
+}
+
+func normalizeEventForBot(event *protocol.Event) *protocol.Event {
+	if event == nil || event.Message == nil {
+		return event
+	}
+	if event.Type != protocol.EventMessageCreated && event.Type != protocol.EventMessageUpdated {
+		return event
+	}
+	content := normalizeBotCommandContent(event.Message.Content)
+	if content == event.Message.Content {
+		return event
+	}
+	cloned := *event
+	if event.Message != nil {
+		msgCopy := *event.Message
+		msgCopy.Content = content
+		cloned.Message = &msgCopy
+	}
+	return &cloned
+}
+
+func normalizeBotCommandContent(content string) string {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" || service.LooksLikeTipTapJSON(leading) {
+		return content
+	}
+	firstRune, _ := utf8.DecodeRuneInString(leading)
+	switch firstRune {
+	case '.', '/', '。', '．', '｡':
+	default:
+		return content
+	}
+	normalized := botCommandTailCleanupPattern.ReplaceAllString(content, "")
+	normalized = strings.TrimRight(normalized, " \t\r\n")
+	if normalized == "" {
+		return content
+	}
+	return normalized
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelExcept(channelId string, ignoredUserIds []string, data *protocol.Event) {
