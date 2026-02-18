@@ -178,6 +178,24 @@ const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
   && (node.parentElement?.classList.contains('empty-line') ?? false)
 );
 
+const resolveEmptyLinePlaceholderPosition = (node: Node | null): { node: Node; offset: number } | null => {
+  if (!node) {
+    return null;
+  }
+  if (isEmptyLinePlaceholderTextNode(node)) {
+    const length = node.textContent?.length ?? 1;
+    return { node, offset: Math.max(1, length) };
+  }
+  if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('empty-line')) {
+    const textNode = node.firstChild;
+    if (textNode && isEmptyLinePlaceholderTextNode(textNode)) {
+      const length = textNode.textContent?.length ?? 1;
+      return { node: textNode, offset: Math.max(1, length) };
+    }
+  }
+  return null;
+};
+
 // 从 mention 元素构建原始 Satori 标签
 const buildMentionToken = (element: HTMLElement): string => {
   const atId = element.dataset.atId || '';
@@ -289,7 +307,8 @@ const calculateModelIndexForPosition = (container: Node, offset: number): number
 const resolvePositionByIndex = (node: Node, position: number): { node: Node; offset: number } => {
   if (node.nodeType === Node.TEXT_NODE) {
     if (isEmptyLinePlaceholderTextNode(node)) {
-      return { node, offset: 0 };
+      const length = node.textContent?.length ?? 1;
+      return { node, offset: Math.max(1, length) };
     }
     const length = node.textContent?.length ?? 0;
     return { node, offset: clamp(position, 0, length) };
@@ -300,6 +319,10 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
     const index = Array.prototype.indexOf.call(parent.childNodes, node);
     if (position <= 0) {
       return { node: parent, offset: index };
+    }
+    const placeholderPosition = resolveEmptyLinePlaceholderPosition(parent.childNodes[index + 1] ?? null);
+    if (placeholderPosition) {
+      return placeholderPosition;
     }
     return { node: parent, offset: index + 1 };
   }
@@ -352,6 +375,33 @@ const getSelectionRange = () => {
   return { start, end };
 };
 
+const ensureCaretVisible = () => {
+  if (!editorRef.value) return;
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0).cloneRange();
+  range.collapse(false);
+  const editorRect = editorRef.value.getBoundingClientRect();
+  let caretRect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  if (!caretRect || (!caretRect.width && !caretRect.height)) {
+    const focusNode = selection.focusNode;
+    if (focusNode && focusNode.nodeType === Node.TEXT_NODE) {
+      caretRect = (focusNode.parentElement?.getBoundingClientRect() as DOMRect) ?? caretRect;
+    } else if (focusNode && focusNode.nodeType === Node.ELEMENT_NODE) {
+      caretRect = (focusNode as Element).getBoundingClientRect();
+    }
+  }
+  if (!caretRect) return;
+  const padding = 8;
+  const lower = editorRect.bottom - padding;
+  const upper = editorRect.top + padding;
+  if (caretRect.bottom > lower) {
+    editorRef.value.scrollTop += caretRect.bottom - lower;
+  } else if (caretRect.top < upper) {
+    editorRef.value.scrollTop -= upper - caretRect.top;
+  }
+};
+
 const setSelectionRange = (start: number, end: number) => {
   if (!editorRef.value) return;
   const selection = window.getSelection();
@@ -368,6 +418,7 @@ const setSelectionRange = (start: number, end: number) => {
   range.setEnd(endPosition.node, endPosition.offset);
   selection.removeAllRanges();
   selection.addRange(range);
+  ensureCaretVisible();
 };
 
 const moveCursorToEnd = () => {
