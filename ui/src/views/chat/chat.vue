@@ -5177,6 +5177,162 @@ const resetDragState = () => {
 
 const canReorderAll = computed(() => chat.canReorderAllMessages);
 const isSelfMessage = (item?: Message) => item?.user?.id === user.info.id;
+type LocalMessageSendStatus = 'sending' | 'sent' | 'failed';
+const SEND_STATUS_SPINNER_DELAY_MS = 1000;
+const sendStatusDelayTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+const resolveMessageSendStatus = (messageData?: any): LocalMessageSendStatus => {
+  const rawStatus = String(messageData?.sendStatus || '').toLowerCase();
+  if (rawStatus === 'sending' || rawStatus === 'failed' || rawStatus === 'sent') {
+    return rawStatus as LocalMessageSendStatus;
+  }
+  if (messageData?.failed === true) {
+    return 'failed';
+  }
+  return 'sent';
+};
+
+const resolveSendStatusTimerKey = (messageData?: any) => {
+  const key = String(
+    messageData?.clientId
+    || messageData?.client_id
+    || messageData?.id
+    || '',
+  ).trim();
+  return key;
+};
+
+const clearSendStatusDelayTimer = (messageData?: any) => {
+  const key = resolveSendStatusTimerKey(messageData);
+  if (!key) {
+    return;
+  }
+  const timer = sendStatusDelayTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    sendStatusDelayTimers.delete(key);
+  }
+};
+
+const scheduleSendStatusDelayTimer = (messageData: any) => {
+  const key = resolveSendStatusTimerKey(messageData);
+  messageData.showSendIndicator = false;
+  if (!key) {
+    return;
+  }
+  clearSendStatusDelayTimer(messageData);
+  const timer = setTimeout(() => {
+    sendStatusDelayTimers.delete(key);
+    if (resolveMessageSendStatus(messageData) !== 'sending') {
+      return;
+    }
+    messageData.showSendIndicator = true;
+  }, SEND_STATUS_SPINNER_DELAY_MS);
+  sendStatusDelayTimers.set(key, timer);
+};
+
+const shouldRenderSendingIndicator = (messageData?: any) => (
+  resolveMessageSendStatus(messageData) === 'sending' && messageData?.showSendIndicator === true
+);
+
+const setMessageSendStatus = (messageData: any, status: LocalMessageSendStatus, reason = '') => {
+  if (!messageData) {
+    return;
+  }
+  messageData.sendStatus = status;
+  messageData.failed = status === 'failed';
+  if (status === 'sending') {
+    messageData.sendErrorReason = '';
+    scheduleSendStatusDelayTimer(messageData);
+    return;
+  }
+  clearSendStatusDelayTimer(messageData);
+  messageData.showSendIndicator = false;
+  messageData.sendErrorReason = status === 'failed'
+    ? (reason || '发送失败，点击重试')
+    : '';
+};
+
+const getMessageSendErrorReason = (messageData?: any) => {
+  const reason = typeof messageData?.sendErrorReason === 'string' ? messageData.sendErrorReason.trim() : '';
+  return reason || '发送失败，点击重试';
+};
+
+const shouldShowMessageSendStatus = (messageData?: Message) => {
+  if (!messageData || !isSelfMessage(messageData)) {
+    return false;
+  }
+  const status = resolveMessageSendStatus(messageData as any);
+  if (status === 'failed') {
+    return true;
+  }
+  if (status === 'sending') {
+    return shouldRenderSendingIndicator(messageData as any);
+  }
+  return false;
+};
+
+const canRetrySendMessage = (messageData?: Message) => {
+  if (!messageData || !isSelfMessage(messageData)) {
+    return false;
+  }
+  return resolveMessageSendStatus(messageData as any) === 'failed';
+};
+
+const resolveMessageSendFailureReason = (error: any): string => {
+  const respErr = String(error?.response?.err || error?.response?.error || '').trim();
+  const raw = String(error?.message || respErr || '').trim();
+  if (!raw) {
+    return '服务器未返回成功确认';
+  }
+  const lower = raw.toLowerCase();
+  if (lower.includes('timeout')) {
+    return '发送超时，服务器未返回成功确认';
+  }
+  if (lower.includes('returned empty result')) {
+    return '服务器未返回成功确认，可能没有发送权限';
+  }
+  if (lower.includes('ws not connected') || lower.includes('ws connection') || lower.includes('disconnected')) {
+    return '连接已断开，请等待重连后重试';
+  }
+  if (raw.includes('没有权限') || lower.includes('forbidden') || lower.includes('permission')) {
+    return '你可能没有权限在此频道发送消息';
+  }
+  return raw;
+};
+
+const resolveWhisperTargetIdsFromMessage = (messageData: any): string[] => {
+  const resolved = new Set<string>();
+  const collect = (raw: any) => {
+    if (!Array.isArray(raw)) {
+      return;
+    }
+    raw.forEach((item) => {
+      const candidate = typeof item === 'string'
+        ? item
+        : (item?.id || item?.userId || item?.user_id || '');
+      const id = String(candidate || '').trim();
+      if (id) {
+        resolved.add(id);
+      }
+    });
+  };
+  collect(messageData?.whisperToIds);
+  collect(messageData?.whisper_to_ids);
+  collect(messageData?.whisper_targets);
+  collect(messageData?.whisperMeta?.targetUserIds);
+  const direct = String(
+    messageData?.whisperTo?.id
+    || messageData?.whisper_to
+    || messageData?.whisperMeta?.targetUserId
+    || '',
+  ).trim();
+  if (direct) {
+    resolved.add(direct);
+  }
+  return Array.from(resolved);
+};
+
 const canDragMessage = (item: Message) => {
   if (!item?.id) return false;
   if (chat.connectState !== 'connected') {
@@ -5195,7 +5351,7 @@ const canDragMessage = (item: Message) => {
 };
 
 const shouldShowHandle = (item: Message) => canDragMessage(item);
-const shouldShowInlineHeader = (entry: VisibleRowEntry) => !entry.mergedWithPrev;
+const shouldShowInlineHeader = (entry: VisibleRowEntry) => !entry.mergedWithPrev || shouldShowMessageSendStatus(entry.message);
 
 const rowClass = (item: Message) => ({
   'message-row': true,
@@ -8615,6 +8771,70 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
   }
 });
 
+const retrySendMessage = async (target?: Message) => {
+  if (!target?.id) {
+    return;
+  }
+  const current = rows.value.find((msg) => msg.id === target.id) || target;
+  if (!canRetrySendMessage(current)) {
+    return;
+  }
+  const currentData = current as any;
+  const content = String(current.content || '').trim();
+  if (!content) {
+    message.error('消息内容为空，无法重试');
+    return;
+  }
+  const clientId = String(currentData.clientId || currentData.client_id || current.id || '').trim();
+  if (!clientId) {
+    message.error('缺少 client_id，无法重试');
+    return;
+  }
+  const quoteId = current.quote?.id || currentData.quote_id || undefined;
+  const whisperTargetIds = resolveWhisperTargetIdsFromMessage(currentData);
+  const whisperTo = whisperTargetIds[0] || undefined;
+  const identityId = String(
+    currentData.senderRoleId
+    || currentData.sender_role_id
+    || currentData.sender_identity_id
+    || current.identity?.id
+    || '',
+  ).trim() || undefined;
+  const displayOrder = Number(currentData.displayOrder);
+  const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
+    ? displayOrder
+    : undefined;
+
+  setMessageSendStatus(currentData, 'sending');
+  instantMessages.add(current);
+
+  try {
+    const newMsg = await chat.messageCreate(
+      content,
+      quoteId,
+      whisperTo,
+      clientId,
+      identityId,
+      validDisplayOrder,
+      whisperTargetIds,
+    );
+    if (!newMsg) {
+      throw new Error('message.create returned empty result');
+    }
+    Object.entries(newMsg as Record<string, any>).forEach(([k, v]) => {
+      (current as any)[k] = v;
+    });
+    setMessageSendStatus(current as any, 'sent');
+    instantMessages.delete(current);
+    upsertMessage(current);
+    toBottom();
+  } catch (error) {
+    const reason = resolveMessageSendFailureReason(error);
+    setMessageSendStatus(current as any, 'failed', reason);
+    message.error(`发送失败：${reason}`);
+  }
+};
+
 const send = throttle(async () => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
@@ -8701,15 +8921,15 @@ const send = throttle(async () => {
   const now = Date.now();
   const clientId = nanoid();
   const wasAtBottom = isNearBottom();
-	const tmpMsg: Message = {
-		id: clientId,
-		createdAt: now,
-		updatedAt: now,
-		content: draft,
+  const tmpMsg: Message = {
+    id: clientId,
+    createdAt: now,
+    updatedAt: now,
+    content: draft,
     user: user.info,
-		member: chat.curMember || undefined,
-		quote: replyTo,
-	};
+    member: chat.curMember || undefined,
+    quote: replyTo,
+  };
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
@@ -8739,10 +8959,10 @@ const send = throttle(async () => {
     (tmpMsg as any).whisperToIds = whisperTargetsForSend;
   }
 
-	(tmpMsg as any).failed = false;
-	rows.value.push(tmpMsg);
-	sortRowsByDisplayOrder();
-	instantMessages.add(tmpMsg);
+  setMessageSendStatus(tmpMsg as any, 'sending');
+  rows.value.push(tmpMsg);
+  sortRowsByDisplayOrder();
+  instantMessages.add(tmpMsg);
 
   try {
     let finalContent: string;
@@ -8756,13 +8976,18 @@ const send = throttle(async () => {
     }
 
     tmpMsg.content = finalContent;
-		const newMsg = await chat.messageCreate(
-			finalContent,
-			replyTo?.id,
-			whisperTargetsForSend[0]?.id,
-			clientId,
-			identityIdOverride,
-		);
+    const whisperTargetIds = whisperTargetsForSend
+      .map((target) => String(target?.id || '').trim())
+      .filter(Boolean);
+    const newMsg = await chat.messageCreate(
+      finalContent,
+      replyTo?.id,
+      whisperTargetIds[0],
+      clientId,
+      identityIdOverride,
+      undefined,
+      whisperTargetIds,
+    );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
     }
@@ -8772,6 +8997,7 @@ const send = throttle(async () => {
     if (diceMatchesInDraft.length) {
       diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
+    setMessageSendStatus(tmpMsg as any, 'sent');
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
     resetInlineImages();
@@ -8785,7 +9011,8 @@ const send = throttle(async () => {
     clearInputModeCache();
     ensureInputFocus();
   } catch (e) {
-    message.error('发送失败,您可能没有权限在此频道发送消息');
+    const reason = resolveMessageSendFailureReason(e);
+    message.error(`发送失败：${reason}`);
     console.error('消息发送失败', e);
     suspendInlineSync = true;
     textToSend.value = draft;
@@ -8794,7 +9021,9 @@ const send = throttle(async () => {
     syncSessionDraftSnapshot();
     const index = rows.value.findIndex(msg => msg.id === tmpMsg.id);
     if (index !== -1) {
-      (rows.value[index] as any).failed = true;
+      setMessageSendStatus(rows.value[index] as any, 'failed', reason);
+    } else {
+      setMessageSendStatus(tmpMsg as any, 'failed', reason);
     }
   }
 
@@ -9176,6 +9405,7 @@ chatEvent.on('message-created', (e?: Event) => {
     if (matchedPending) {
       instantMessages.delete(matchedPending);
       Object.assign(matchedPending, incoming);
+      setMessageSendStatus(matchedPending as any, 'sent');
       upsertMessage(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
@@ -10912,6 +11142,8 @@ onBeforeUnmount(() => {
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
+  sendStatusDelayTimers.forEach((timer) => window.clearTimeout(timer));
+  sendStatusDelayTimers.clear();
   markDiceTrayMobileWrapper(false);
 });
 </script>
@@ -11045,6 +11277,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(pinItem)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </div>
@@ -11083,11 +11316,34 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="message-row__grid-name">
-                  <span
+                  <div
                     v-if="shouldShowInlineHeader(entry)"
-                    class="message-row__name"
-                    :style="getMessageIdentityColor(entry.message) ? { color: getMessageIdentityColor(entry.message) } : undefined"
-                  >{{ getMessageDisplayName(entry.message) }}</span>
+                    class="message-row__name-wrap"
+                  >
+                    <span
+                      class="message-row__name"
+                      :style="getMessageIdentityColor(entry.message) ? { color: getMessageIdentityColor(entry.message) } : undefined"
+                    >{{ getMessageDisplayName(entry.message) }}</span>
+                    <span
+                      v-if="shouldRenderSendingIndicator(entry.message) && isSelfMessage(entry.message)"
+                      class="message-row__send-status message-row__send-status--sending"
+                      aria-label="发送中"
+                      title="发送中"
+                    >
+                      <span class="message-row__send-spinner"></span>
+                    </span>
+                    <n-tooltip v-else-if="canRetrySendMessage(entry.message)" trigger="hover">
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="message-row__send-status message-row__send-status--failed"
+                          aria-label="发送失败，点击重试"
+                          @click.stop="retrySendMessage(entry.message)"
+                        >!</button>
+                      </template>
+                      {{ getMessageSendErrorReason(entry.message) }}
+                    </n-tooltip>
+                  </div>
                   <span v-else class="message-row__name message-row__name--placeholder">占位</span>
                 </div>
                 <div class="message-row__grid-colon">
@@ -11115,6 +11371,7 @@ onBeforeUnmount(() => {
                     @edit="beginEdit(entry.message)"
                     @edit-save="saveEdit"
                     @edit-cancel="cancelEditing"
+                    @retry-send="retrySendMessage"
                     @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                   />
                 </div>
@@ -11149,6 +11406,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
@@ -11181,6 +11439,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
@@ -13250,6 +13509,15 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.chat--layout-compact.chat--no-avatar .message-row__name-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .chat--layout-compact.chat--no-avatar .message-row__name {
   font-weight: 600;
   color: var(--chat-text-primary, #1f2937);
@@ -13261,6 +13529,53 @@ onBeforeUnmount(() => {
   pointer-events: none;
   display: inline-block;
   min-width: 2ch;
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__send-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__send-status--sending {
+  color: #64748b;
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__send-spinner {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: message-row-send-spin 0.85s linear infinite;
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__send-status--failed {
+  border: none;
+  background: transparent;
+  color: #dc2626;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__send-status--failed:hover {
+  color: #b91c1c;
+}
+
+@keyframes message-row-send-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chat--layout-compact.chat--no-avatar .message-row__grid-colon {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -31,6 +32,26 @@ const (
 )
 
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "UNIQUE constraint failed") {
+		return true
+	}
+	if strings.Contains(msg, "Error 1062") || strings.Contains(msg, "Duplicate entry") {
+		return true
+	}
+	if strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "duplicate key value") {
+		return true
+	}
+	return false
+}
 
 type typingOrderCandidate struct {
 	userId    string
@@ -1464,6 +1485,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
+	trimmedClientID := strings.TrimSpace(data.ClientID)
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)
@@ -1554,6 +1576,68 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+
+	findExistingByClientID := func(clientID string) (*protocol.Message, error) {
+		var existing model.MessageModel
+		if err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, username, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("channel_id = ? AND user_id = ? AND client_id = ?", channelId, ctx.User.ID, clientID).
+			Order("created_at desc").Limit(1).Find(&existing).Error; err != nil {
+			return nil, err
+		}
+		if existing.ID == "" {
+			return nil, nil
+		}
+		if existing.WhisperTo != "" {
+			existing.WhisperTarget = loadWhisperTargetForChannel(channelId, existing.WhisperTo)
+		}
+		if existing.IsWhisper {
+			existing.WhisperTargets = loadWhisperTargetsForMessage(channelId, existing.ID, existing.WhisperTarget)
+		}
+		if existing.QuoteID != "" {
+			var quote model.MessageModel
+			if err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, username, avatar, is_bot")
+			}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, channel_id, user_id")
+			}).Where("id = ? AND is_deleted = ?", existing.QuoteID, false).Limit(1).Find(&quote).Error; err == nil && quote.ID != "" {
+				if quote.WhisperTo != "" {
+					quote.WhisperTarget = loadWhisperTargetForChannel(channelId, quote.WhisperTo)
+				}
+				if quote.IsWhisper {
+					quote.WhisperTargets = loadWhisperTargetsForMessage(channelId, quote.ID, quote.WhisperTarget)
+				}
+				existing.Quote = &quote
+			}
+		}
+
+		messageData := buildProtocolMessage(&existing, channelData)
+		if messageData.User == nil {
+			messageData.User = ctx.User.ToProtocolType()
+		}
+		if messageData.Member == nil && member != nil {
+			messageData.Member = member.ToProtocolType()
+		}
+		if messageData.Member != nil {
+			messageData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(ctx.User.ID, channelId, channel.WorldID)}
+		}
+		messageData.ClientID = clientID
+		return messageData, nil
+	}
+
+	// 幂等重试：同一用户在同一频道重复提交相同 client_id 时直接返回既有消息。
+	if trimmedClientID != "" {
+		existingMessageData, err := findExistingByClientID(trimmedClientID)
+		if err != nil {
+			return nil, err
+		}
+		if existingMessageData != nil {
+			log.Printf("[message.create] 幂等命中 channel=%s user=%s client_id=%s message=%s", channelId, ctx.User.ID, trimmedClientID, existingMessageData.ID)
+			return existingMessageData, nil
+		}
+	}
 	var renderResult *service.DiceRenderResult
 	var isHiddenDice bool
 	if channel.BuiltInDiceEnabled {
@@ -1712,6 +1796,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		WhisperTo:        whisperTo,
 		WhisperTargets:   whisperTargets,
 	}
+	if trimmedClientID != "" {
+		m.ClientID = &trimmedClientID
+	}
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
@@ -1742,6 +1829,16 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	createResult := db.Create(&m)
 	if createResult.Error != nil {
+		if trimmedClientID != "" && isUniqueConstraintError(createResult.Error) {
+			existingMessageData, err := findExistingByClientID(trimmedClientID)
+			if err != nil {
+				return nil, err
+			}
+			if existingMessageData != nil {
+				log.Printf("[message.create] 唯一键冲突兜底 channel=%s user=%s client_id=%s message=%s", channelId, ctx.User.ID, trimmedClientID, existingMessageData.ID)
+				return existingMessageData, nil
+			}
+		}
 		return nil, createResult.Error
 	}
 	if len(whisperRecipientIDs) > 0 {
@@ -1771,7 +1868,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		messageData.User = userData
 		messageData.Member = member.ToProtocolType()
 		messageData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(ctx.User.ID, data.ChannelID, channel.WorldID)}
-		messageData.ClientID = data.ClientID
+		messageData.ClientID = trimmedClientID
 		if quote.ID != "" {
 			qData := quote.ToProtocolType2(channelData)
 			qData.Content = quote.Content
@@ -1856,7 +1953,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				QuoteID:   data.QuoteID,
 				Content:   data.Content,
 				WhisperTo: whisperTo,
-				ClientID:  data.ClientID,
+				ClientID:  trimmedClientID,
 				ICMode:    icMode,
 			}
 			builtinSealBotSolve(ctx, botReq, channelData, isHiddenDice)

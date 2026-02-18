@@ -225,8 +225,29 @@ interface ChannelCopyResponse {
   };
 }
 
-const apiMap = new Map<string, any>();
+interface PendingApiRequest {
+  resolve: (value: any) => void;
+  reject: (reason?: any) => void;
+}
+
+const apiMap = new Map<string, PendingApiRequest>();
 let _connectResolve: any = null;
+
+const rejectPendingApiRequests = (reason: string) => {
+  if (!apiMap.size) {
+    return;
+  }
+  const error = new Error(reason);
+  const pendingRequests = Array.from(apiMap.values());
+  apiMap.clear();
+  pendingRequests.forEach((pending) => {
+    try {
+      pending.reject(error);
+    } catch {
+      // ignore
+    }
+  });
+};
 
 const ROLELESS_FILTER_ID = '__roleless__';
 const defaultOocRoleCreateTasks = new Map<string, Promise<string | null>>();
@@ -662,6 +683,7 @@ export const useChatStore = defineStore({
       clearWsReconnectTimer(this);
       this.stopPingLoop();
       clearPendingLatencyProbes();
+      rejectPendingApiRequests(reason || 'ws disconnected');
       try {
         this.subject?.complete();
         this.subject?.unsubscribe();
@@ -686,6 +708,7 @@ export const useChatStore = defineStore({
       // 先清理现有连接，防止连接泄漏
       const oldSubject = this.subject;
       if (oldSubject) {
+        rejectPendingApiRequests('ws connection replaced');
         try {
           oldSubject.complete();
           oldSubject.unsubscribe();
@@ -754,8 +777,9 @@ export const useChatStore = defineStore({
           } else if (msg.op === 6) {
             this.handleLatencyResult(msg?.body);
           } else if (apiMap.get(msg.echo)) {
-            apiMap.get(msg.echo).resolve(msg);
+            const pending = apiMap.get(msg.echo);
             apiMap.delete(msg.echo);
+            pending?.resolve(msg);
           }
         },
         error: err => {
@@ -763,6 +787,7 @@ export const useChatStore = defineStore({
             return;
           }
           console.log('[WS] 连接错误', err);
+          rejectPendingApiRequests('ws connection error');
           this.subject = null;
           this.connectState = 'reconnecting';
           this.stopPingLoop();
@@ -785,6 +810,7 @@ export const useChatStore = defineStore({
             return;
           }
           console.log('[WS] 连接关闭');
+          rejectPendingApiRequests('ws connection closed');
           this.subject = null;
           this.connectState = 'reconnecting';
           this.stopPingLoop();
@@ -908,12 +934,43 @@ export const useChatStore = defineStore({
       this.curReplyTo = item;
     },
 
-    async sendAPI<T = any>(api: string, data: APIMessage): Promise<T> {
+    async sendAPI<T = any>(api: string, data: APIMessage, options?: { timeoutMs?: number }): Promise<T> {
       const doSend = () => {
         const echo = nanoid();
         return new Promise((resolve, reject) => {
-          apiMap.set(echo, { resolve, reject });
-          this.subject?.next({ api, data, echo });
+          if (!this.subject) {
+            reject(new Error('ws not connected'));
+            return;
+          }
+          const timeoutMs = Math.max(0, Number(options?.timeoutMs || 0));
+          let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+          const cleanupTimeout = () => {
+            if (timeoutTimer) {
+              clearTimeout(timeoutTimer);
+              timeoutTimer = null;
+            }
+          };
+          apiMap.set(echo, {
+            resolve: (resp: any) => {
+              cleanupTimeout();
+              resolve(resp);
+            },
+            reject: (reason?: any) => {
+              cleanupTimeout();
+              reject(reason);
+            },
+          });
+          if (timeoutMs > 0) {
+            timeoutTimer = setTimeout(() => {
+              const pending = apiMap.get(echo);
+              if (!pending) {
+                return;
+              }
+              apiMap.delete(echo);
+              pending.reject(new Error(`${api} timeout`));
+            }, timeoutMs);
+          }
+          this.subject.next({ api, data, echo });
         });
       };
       const run = isBotRelatedApi(api)
@@ -2775,6 +2832,7 @@ export const useChatStore = defineStore({
       clientId?: string,
       identityId?: string,
       displayOrder?: number,
+      whisperTargetIds?: string[],
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -2784,10 +2842,13 @@ export const useChatStore = defineStore({
       if (quote_id) {
         payload.quote_id = quote_id;
       }
+      const explicitWhisperIds = Array.isArray(whisperTargetIds)
+        ? whisperTargetIds
+        : this.whisperTargets.map((target) => target?.id);
       const whisperIds = [
         whisper_to,
-        ...this.whisperTargets.map((target) => target?.id),
-      ].filter(Boolean) as string[];
+        ...explicitWhisperIds,
+      ].map((id) => String(id || '').trim()).filter(Boolean) as string[];
       const uniqueWhisperIds = Array.from(new Set(whisperIds));
       if (uniqueWhisperIds.length > 0) {
         payload.whisper_to_ids = uniqueWhisperIds;
@@ -2803,7 +2864,7 @@ export const useChatStore = defineStore({
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
       }
-      const resp = await this.sendAPI('message.create', payload);
+      const resp = await this.sendAPI('message.create', payload, { timeoutMs: 5_000 });
       const message = resp?.data;
       if (!message || typeof message !== 'object') {
         return null;

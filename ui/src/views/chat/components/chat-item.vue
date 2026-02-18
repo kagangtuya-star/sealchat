@@ -888,7 +888,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change']);
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change', 'retry-send']);
 
 const timestampTicker = ref(Date.now());
 const inlineTimestampText = computed(() => {
@@ -2763,6 +2763,39 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
 
+type MessageSendStatus = 'sending' | 'sent' | 'failed';
+
+const messageSendStatus = computed<MessageSendStatus>(() => {
+  const rawStatus = String((props.item as any)?.sendStatus || '').toLowerCase();
+  if (rawStatus === 'sending' || rawStatus === 'failed' || rawStatus === 'sent') {
+    return rawStatus as MessageSendStatus;
+  }
+  if ((props.item as any)?.failed === true) {
+    return 'failed';
+  }
+  return 'sent';
+});
+
+const messageSendErrorReason = computed(() => {
+  const raw = (props.item as any)?.sendErrorReason;
+  const normalized = typeof raw === 'string' ? raw.trim() : '';
+  return normalized || '发送失败，点击重试';
+});
+
+const showSendingIndicator = computed(() => (
+  props.isSelf
+  && messageSendStatus.value === 'sending'
+  && (props.item as any)?.showSendIndicator === true
+));
+const canRetrySend = computed(() => props.isSelf && messageSendStatus.value === 'failed');
+
+const handleRetrySend = () => {
+  if (!canRetrySend.value || !props.item) {
+    return;
+  }
+  emit('retry-send', props.item);
+};
+
 
 </script>
 
@@ -2816,11 +2849,53 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
           </template>
           <span>{{ tooltipTimestampText }}</span>
         </n-popover>
-        <span v-if="props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
-        <CharacterCardBadge v-if="props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
+        <template v-if="props.isRtl">
+          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span
+            v-if="showSendingIndicator"
+            class="chat-item__send-status chat-item__send-status--sending"
+            aria-label="发送中"
+            title="发送中"
+          >
+            <span class="chat-item__send-spinner"></span>
+          </span>
+          <n-tooltip v-else-if="canRetrySend" trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="chat-item__send-status chat-item__send-status--failed"
+                aria-label="发送失败，点击重试"
+                @click.stop="handleRetrySend"
+              >!</button>
+            </template>
+            {{ messageSendErrorReason }}
+          </n-tooltip>
+          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+        </template>
 
-        <span v-if="!props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
-        <CharacterCardBadge v-if="!props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
+        <template v-else>
+          <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span
+            v-if="showSendingIndicator"
+            class="chat-item__send-status chat-item__send-status--sending"
+            aria-label="发送中"
+            title="发送中"
+          >
+            <span class="chat-item__send-spinner"></span>
+          </span>
+          <n-tooltip v-else-if="canRetrySend" trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="chat-item__send-status chat-item__send-status--failed"
+                aria-label="发送失败，点击重试"
+                @click.stop="handleRetrySend"
+              >!</button>
+            </template>
+            {{ messageSendErrorReason }}
+          </n-tooltip>
+          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+        </template>
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>
             <span class="time">{{ inlineTimestampText }}</span>
@@ -2941,7 +3016,6 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
             </div>
           </div>
         </template>
-        <div v-if="props.item?.failed" class="failed absolute bg-red-600 rounded-md px-2 text-white">!</div>
       </div>
       <MessageReactions
         v-if="props.item?.id"
@@ -3044,6 +3118,53 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
   color: #94a3b8;
 }
 
+.chat-item__send-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.chat-item__send-status--sending {
+  color: #64748b;
+}
+
+.chat-item__send-spinner {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 999px;
+  animation: chat-item-send-spin 0.85s linear infinite;
+}
+
+.chat-item__send-status--failed {
+  border: none;
+  cursor: pointer;
+  color: #dc2626;
+  background: transparent;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+}
+
+.chat-item__send-status--failed:hover {
+  color: #b91c1c;
+}
+
+@keyframes chat-item-send-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .chat-item > .right > .content {
   position: relative;
   width: fit-content;
@@ -3059,11 +3180,6 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
-}
-
-.chat-item > .right > .content .failed {
-  right: -2rem;
-  top: 0;
 }
 
 .chat-item > .right > .content.whisper-content {
