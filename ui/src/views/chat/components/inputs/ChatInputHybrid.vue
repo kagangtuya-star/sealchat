@@ -669,6 +669,56 @@ const insertLineBreak = () => {
   insertLineBreakAtSelection();
 };
 
+const deleteBackwardAtSelection = (): boolean => {
+  const selection = getSelectionRange();
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  if (start !== end) {
+    const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
+    commitInputMutation(nextValue, start);
+    return true;
+  }
+  const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, start);
+  if (boundaryDelete) {
+    applyQuickFormatBoundaryDelete(boundaryDelete);
+    return true;
+  }
+  const marker = findMarkerInfoAt(start - 1);
+  if (marker) {
+    removeImageMarker(marker);
+    return true;
+  }
+  if (start <= 0) {
+    return false;
+  }
+  const cursor = start - 1;
+  const nextValue = `${props.modelValue.slice(0, cursor)}${props.modelValue.slice(start)}`;
+  commitInputMutation(nextValue, cursor);
+  return true;
+};
+
+const deleteForwardAtSelection = (): boolean => {
+  const selection = getSelectionRange();
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  if (start !== end) {
+    const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
+    commitInputMutation(nextValue, start);
+    return true;
+  }
+  const marker = findMarkerInfoAt(start);
+  if (marker) {
+    removeImageMarker(marker);
+    return true;
+  }
+  if (start >= props.modelValue.length) {
+    return false;
+  }
+  const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(start + 1)}`;
+  commitInputMutation(nextValue, start);
+  return true;
+};
+
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -1113,6 +1163,32 @@ const handleDragOver = (event: DragEvent) => {
   event.stopPropagation();
 };
 
+const handleBeforeInput = (event: InputEvent) => {
+  if (props.disabled) {
+    return;
+  }
+  const composing = event.isComposing || isComposing.value;
+  if (composing) {
+    return;
+  }
+  if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+    event.preventDefault();
+    insertLineBreak();
+    return;
+  }
+  if (event.inputType === 'deleteContentBackward') {
+    if (deleteBackwardAtSelection()) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (event.inputType === 'deleteContentForward') {
+    if (deleteForwardAtSelection()) {
+      event.preventDefault();
+    }
+  }
+};
+
 // 处理按键事件
 const handleKeydown = (event: KeyboardEvent) => {
   // 优先处理 mention 面板键盘导航
@@ -1151,35 +1227,10 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   if (!composing && event.key === 'Backspace') {
-    const selection = getSelectionRange();
-    const start = Math.min(selection.start, selection.end);
-    const end = Math.max(selection.start, selection.end);
-    if (start !== end) {
+    if (deleteBackwardAtSelection()) {
       event.preventDefault();
-      const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
-      commitInputMutation(nextValue, start);
       return;
     }
-    const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, start);
-    if (boundaryDelete) {
-      event.preventDefault();
-      applyQuickFormatBoundaryDelete(boundaryDelete);
-      return;
-    }
-    const marker = findMarkerInfoAt(start - 1);
-    if (marker) {
-      event.preventDefault();
-      removeImageMarker(marker);
-      return;
-    }
-    if (start <= 0) {
-      return;
-    }
-    event.preventDefault();
-    const cursor = start - 1;
-    const nextValue = `${props.modelValue.slice(0, cursor)}${props.modelValue.slice(start)}`;
-    commitInputMutation(nextValue, cursor);
-    return;
   }
 
   if (!composing && event.key === 'Delete') {
@@ -1291,6 +1342,7 @@ defineExpose({
       :data-placeholder="placeholder"
       contenteditable
       :disabled="disabled"
+      @beforeinput="handleBeforeInput"
       @input="handleInput"
       @paste="handlePaste"
       @drop="handleDrop"
