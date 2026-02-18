@@ -9324,10 +9324,10 @@ chatEvent.on('message-reordered', (e?: Event) => {
     return;
   }
   const reorderPayload = (e as any)?.reorder;
-  if (e.message) {
-    upsertMessage(normalizeMessageShape(e.message));
-  } else if (reorderPayload) {
+  if (reorderPayload) {
     applyReorderPayload(reorderPayload);
+  } else if (e.message) {
+    upsertMessage(normalizeMessageShape(e.message));
   }
   const clientOpId = reorderPayload?.clientOpId;
   if (clientOpId && localReorderOps.has(clientOpId)) {
