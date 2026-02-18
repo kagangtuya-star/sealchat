@@ -1027,6 +1027,52 @@ const initCharacterCardBadge = (
   }
 };
 
+const CHARACTER_RESUME_SYNC_MIN_INTERVAL_MS = 1500;
+let lastCharacterResumeSyncAt = 0;
+let characterResumeSyncEpoch = 0;
+const syncCharacterCardAfterResume = async (
+  reason: string,
+  options?: { forceIdentityReload?: boolean; bypassCooldown?: boolean },
+) => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId || chat.isObserver) {
+    return;
+  }
+  if (characterCardStore.isBotCharacterDisabled(channelId)) {
+    return;
+  }
+  const now = Date.now();
+  if (!options?.bypassCooldown && now - lastCharacterResumeSyncAt < CHARACTER_RESUME_SYNC_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastCharacterResumeSyncAt = now;
+  const currentEpoch = ++characterResumeSyncEpoch;
+  try {
+    await chat.loadChannelIdentities(channelId, !!options?.forceIdentityReload);
+  } catch (error) {
+    console.warn('[CharacterCard] resume identity sync failed', reason, error);
+  }
+  if (currentEpoch !== characterResumeSyncEpoch || channelId !== chat.curChannel?.id) {
+    return;
+  }
+  initCharacterCardBadge(channelId);
+};
+
+const handleForegroundResume = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    return;
+  }
+  chat.recoverConnectionOnForeground('chat-view-resume');
+  void syncCharacterCardAfterResume('chat-view-resume');
+};
+
+const handleVisibilityResume = () => {
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+    return;
+  }
+  handleForegroundResume();
+};
+
 let identitySelectionEpoch = 0;
 const simulateCurrentIdentitySelection = async (channelId?: string) => {
   if (!channelId || chat.isObserver) {
@@ -9311,6 +9357,13 @@ onMounted(async () => {
   await chat.tryInit();
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityResume);
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pageshow', handleForegroundResume);
+    window.addEventListener('online', handleForegroundResume);
+  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -9810,6 +9863,10 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       await fetchLatestMessages();
     }
     await fetchPinnedMessages();
+    void syncCharacterCardAfterResume('ws-connected', {
+      forceIdentityReload: true,
+      bypassCooldown: true,
+    });
   })
 
   chatEvent.on('search-jump', async (e: any) => {
@@ -9873,6 +9930,13 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 })
 
 onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityResume);
+  }
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pageshow', handleForegroundResume);
+    window.removeEventListener('online', handleForegroundResume);
+  }
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();

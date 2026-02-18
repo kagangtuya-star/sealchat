@@ -160,6 +160,7 @@ interface ChatState {
   icMode: 'ic' | 'ooc';
   presenceMap: Record<string, { lastPing: number; latencyMs: number; isFocused: boolean }>;
   isAppFocused: boolean;
+  lastGatewayAckAt: number;
   lastPingSentAt: number | null;
   lastLatencyMs: number;
   serverTimeOffsetMs: number;
@@ -350,6 +351,11 @@ let latencyTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
 const pendingLatencyProbes: Record<string, number> = {};
 const LATENCY_PROBE_TIMEOUT = 8000;
+const WS_FOREGROUND_PROBE_TIMEOUT_MS = 7000;
+const WS_FOREGROUND_RECOVERY_DEBOUNCE_MS = 1500;
+const WS_DEFAULT_API_TIMEOUT_MS = 15_000;
+let wsForegroundProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let wsLastForegroundRecoverAt = 0;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
@@ -391,6 +397,13 @@ const cleanupPendingLatencyProbes = () => {
       delete pendingLatencyProbes[key];
     }
   });
+};
+
+const clearForegroundProbeTimer = () => {
+  if (wsForegroundProbeTimer) {
+    clearTimeout(wsForegroundProbeTimer);
+    wsForegroundProbeTimer = null;
+  }
 };
 
 const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) => {
@@ -510,6 +523,7 @@ export const useChatStore = defineStore({
     icMode: 'ic',
     presenceMap: {},
     isAppFocused: true,
+    lastGatewayAckAt: 0,
     lastPingSentAt: null,
     lastLatencyMs: 0,
     serverTimeOffsetMs: 0,
@@ -681,6 +695,7 @@ export const useChatStore = defineStore({
     disconnect(reason?: string) {
       // 用于分屏壳页面等场景：明确关闭当前 WS，避免占用连接数
       clearWsReconnectTimer(this);
+      clearForegroundProbeTimer();
       this.stopPingLoop();
       clearPendingLatencyProbes();
       rejectPendingApiRequests(reason || 'ws disconnected');
@@ -692,6 +707,7 @@ export const useChatStore = defineStore({
       }
       this.subject = null;
       this.connectState = 'disconnected';
+      this.lastGatewayAckAt = 0;
     },
 
     async connect() {
@@ -722,14 +738,36 @@ export const useChatStore = defineStore({
       this.stopPingLoop();
       if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
         focusListenersBound = true;
+        const store = this;
         const updateFocusState = () => {
           const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
           const isVisible = document.visibilityState !== 'hidden';
-          this.setFocusState(hasFocus && isVisible);
+          store.setFocusState(hasFocus && isVisible);
         };
-        window.addEventListener('focus', updateFocusState);
+        const triggerForegroundRecover = (reason: string) => {
+          if (document.visibilityState !== 'visible') {
+            return;
+          }
+          store.recoverConnectionOnForeground(reason);
+        };
+        window.addEventListener('focus', () => {
+          updateFocusState();
+          triggerForegroundRecover('window-focus');
+        });
         window.addEventListener('blur', updateFocusState);
-        document.addEventListener('visibilitychange', updateFocusState);
+        window.addEventListener('online', () => {
+          triggerForegroundRecover('network-online');
+        });
+        window.addEventListener('pageshow', () => {
+          updateFocusState();
+          triggerForegroundRecover('window-pageshow');
+        });
+        document.addEventListener('visibilitychange', () => {
+          updateFocusState();
+          if (document.visibilityState === 'visible') {
+            triggerForegroundRecover('visibility-visible');
+          }
+        });
         updateFocusState();
       }
       const u: User = {
@@ -763,6 +801,7 @@ export const useChatStore = defineStore({
           if (epoch !== wsConnectionEpoch) {
             return;
           }
+          this.markGatewayActivity();
           // Opcode.READY
           if (msg.op === 4) {
             console.log('svr ready', msg);
@@ -790,7 +829,9 @@ export const useChatStore = defineStore({
           rejectPendingApiRequests('ws connection error');
           this.subject = null;
           this.connectState = 'reconnecting';
+          clearForegroundProbeTimer();
           this.stopPingLoop();
+          this.lastGatewayAckAt = 0;
           this.reconnectAfter(5, () => {
             try {
               if (epoch !== wsConnectionEpoch) {
@@ -813,7 +854,9 @@ export const useChatStore = defineStore({
           rejectPendingApiRequests('ws connection closed');
           this.subject = null;
           this.connectState = 'reconnecting';
+          clearForegroundProbeTimer();
           this.stopPingLoop();
+          this.lastGatewayAckAt = 0;
           this.reconnectAfter(5, () => {
             try {
               if (epoch !== wsConnectionEpoch) {
@@ -872,6 +915,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'connected';
+      this.markGatewayActivity();
       clearWsReconnectTimer(this);
 
       chatEvent.emit('connected', undefined);
@@ -942,7 +986,10 @@ export const useChatStore = defineStore({
             reject(new Error('ws not connected'));
             return;
           }
-          const timeoutMs = Math.max(0, Number(options?.timeoutMs || 0));
+          const rawTimeout = options?.timeoutMs;
+          const timeoutMs = rawTimeout === undefined
+            ? WS_DEFAULT_API_TIMEOUT_MS
+            : (Number.isFinite(rawTimeout) ? Math.max(0, Number(rawTimeout)) : WS_DEFAULT_API_TIMEOUT_MS);
           let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
           const cleanupTimeout = () => {
             if (timeoutTimer) {
@@ -1708,14 +1755,17 @@ export const useChatStore = defineStore({
         return [];
       }
       if (!force && this.channelIdentities[channelId]) {
+        const items = this.channelIdentities[channelId];
         const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
-        if (cached) {
+        const defaultItem = items.find(item => item.isDefault) || items[0];
+        const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
+        if (activeId) {
           this.activeChannelIdentity = {
             ...this.activeChannelIdentity,
-            [channelId]: cached,
+            [channelId]: activeId,
           };
         }
-        return this.channelIdentities[channelId];
+        return items;
       }
       const existing = inFlightChannelIdentityLoads.get(channelId);
       if (existing) {
@@ -1740,9 +1790,20 @@ export const useChatStore = defineStore({
           ...this.channelIdentityFavorites,
           [channelId]: resp.data.favorites || [],
         };
+        this.channelIdentityMembership = {
+          ...this.channelIdentityMembership,
+          [channelId]: membership,
+        };
         this.channelIdentityLoadedAt = {
           ...this.channelIdentityLoadedAt,
           [channelId]: Date.now(),
+        };
+        const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
+        const defaultItem = items.find(item => item.isDefault) || items[0];
+        const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
+        this.activeChannelIdentity = {
+          ...this.activeChannelIdentity,
+          [channelId]: activeId,
         };
         return items;
       })();
@@ -1755,18 +1816,6 @@ export const useChatStore = defineStore({
           inFlightChannelIdentityLoads.delete(channelId);
         }
       }
-      this.channelIdentityMembership = {
-        ...this.channelIdentityMembership,
-        [channelId]: membership,
-      };
-      const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
-      const defaultItem = items.find(item => item.isDefault) || items[0];
-      const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
-      this.activeChannelIdentity = {
-        ...this.activeChannelIdentity,
-        [channelId]: activeId,
-      };
-      return items;
     },
 
     async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
@@ -3373,6 +3422,65 @@ export const useChatStore = defineStore({
     // 新增方法
     setIcMode(mode: 'ic' | 'ooc') {
       this.icMode = mode;
+    },
+
+    markGatewayActivity() {
+      this.lastGatewayAckAt = Date.now();
+      clearForegroundProbeTimer();
+    },
+
+    recoverConnectionOnForeground(reason = 'foreground-resume') {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      const now = Date.now();
+      if (now - wsLastForegroundRecoverAt < WS_FOREGROUND_RECOVERY_DEBOUNCE_MS) {
+        return;
+      }
+      wsLastForegroundRecoverAt = now;
+
+      if (this.connectState === 'connecting') {
+        return;
+      }
+
+      if (!this.subject || this.connectState !== 'connected') {
+        if (this.subject) {
+          this.disconnect(`foreground force reconnect:${reason}`);
+        }
+        clearWsReconnectTimer(this);
+        this.connect();
+        return;
+      }
+
+      const probeStartAt = Date.now();
+      try {
+        this.sendPresencePing(true);
+        this.measureLatency();
+      } catch (error) {
+        console.warn('[WS] foreground probe send failed, reconnecting', { reason, error });
+        this.disconnect(`foreground probe send failed:${reason}`);
+        this.connect();
+        return;
+      }
+      clearForegroundProbeTimer();
+      wsForegroundProbeTimer = window.setTimeout(() => {
+        if (this.connectState !== 'connected') {
+          return;
+        }
+        if (this.lastGatewayAckAt >= probeStartAt) {
+          return;
+        }
+        console.warn('[WS] foreground probe timeout, reconnecting', {
+          reason,
+          probeStartAt,
+          lastGatewayAckAt: this.lastGatewayAckAt,
+        });
+        this.disconnect(`foreground probe timeout:${reason}`);
+        this.connect();
+      }, WS_FOREGROUND_PROBE_TIMEOUT_MS);
     },
 
     startPingLoop() {
