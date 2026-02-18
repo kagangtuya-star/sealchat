@@ -484,13 +484,12 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 	operatorID := ctx.User.ID
 	targetUserID := msg.UserID
 	if targetUserID != operatorID {
-		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID) ||
-			service.IsWorldAdmin(channel.WorldID, operatorID)
-		if !operatorIsAdmin && !pm.CanWithSystemRole(operatorID, pm.PermModAdmin) {
+		operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+		operatorIsSystemAdmin := pm.CanWithSystemRole(operatorID, pm.PermModAdmin)
+		if operatorRank < channelMemberRoleRankAdmin && !operatorIsSystemAdmin {
 			return nil, fmt.Errorf("无权限删除该消息")
 		}
-		if isChannelAdminUser(channel, channelID, targetUserID) ||
-			service.IsWorldAdmin(channel.WorldID, targetUserID) {
+		if !operatorIsSystemAdmin && !canModerateTargetByRank(channel, channelID, operatorID, targetUserID) {
 			return nil, fmt.Errorf("无法删除拥有管理员权限的成员消息")
 		}
 	}
@@ -982,26 +981,33 @@ func getChannelMemberRoleRank(channel *model.ChannelModel, channelID, userID str
 		return channelMemberRoleRankOwner
 	}
 	roleIDs, err := model.UserRoleMappingListByUserID(userID, channelID, "channel")
-	if err != nil || len(roleIDs) == 0 {
-		return channelMemberRoleRankNone
-	}
 	rank := channelMemberRoleRankNone
-	for _, roleID := range roleIDs {
-		switch {
-		case strings.HasSuffix(roleID, "-owner"):
+	if err == nil {
+		for _, roleID := range roleIDs {
+			switch {
+			case strings.HasSuffix(roleID, "-owner"):
+				return channelMemberRoleRankOwner
+			case strings.HasSuffix(roleID, "-admin"):
+				if rank < channelMemberRoleRankAdmin {
+					rank = channelMemberRoleRankAdmin
+				}
+			case strings.HasSuffix(roleID, "-member"):
+				if rank < channelMemberRoleRankMember {
+					rank = channelMemberRoleRankMember
+				}
+			case strings.HasSuffix(roleID, "-spectator"):
+				if rank < channelMemberRoleRankSpectator {
+					rank = channelMemberRoleRankSpectator
+				}
+			}
+		}
+	}
+	if channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+		if service.IsWorldOwner(channel.WorldID, userID) {
 			return channelMemberRoleRankOwner
-		case strings.HasSuffix(roleID, "-admin"):
-			if rank < channelMemberRoleRankAdmin {
-				rank = channelMemberRoleRankAdmin
-			}
-		case strings.HasSuffix(roleID, "-member"):
-			if rank < channelMemberRoleRankMember {
-				rank = channelMemberRoleRankMember
-			}
-		case strings.HasSuffix(roleID, "-spectator"):
-			if rank < channelMemberRoleRankSpectator {
-				rank = channelMemberRoleRankSpectator
-			}
+		}
+		if service.IsWorldAdmin(channel.WorldID, userID) && rank < channelMemberRoleRankAdmin {
+			rank = channelMemberRoleRankAdmin
 		}
 	}
 	return rank
@@ -1009,6 +1015,18 @@ func getChannelMemberRoleRank(channel *model.ChannelModel, channelID, userID str
 
 func isChannelMemberOrAbove(channel *model.ChannelModel, channelID, userID string) bool {
 	return getChannelMemberRoleRank(channel, channelID, userID) >= channelMemberRoleRankMember
+}
+
+func canModerateTargetByRank(channel *model.ChannelModel, channelID, operatorID, targetUserID string) bool {
+	if strings.TrimSpace(operatorID) == "" || strings.TrimSpace(targetUserID) == "" {
+		return false
+	}
+	if operatorID == targetUserID {
+		return true
+	}
+	operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+	targetRank := getChannelMemberRoleRank(channel, channelID, targetUserID)
+	return operatorRank > targetRank
 }
 
 func canCancelPinnedMessage(channel *model.ChannelModel, channelID, operatorID, pinnedBy string) bool {
@@ -1298,15 +1316,15 @@ func apiMessageArchive(ctx *ChatContext, data *struct {
 			}
 		}
 	} else {
-		operatorIsAdmin := isChannelAdminUser(channel, data.ChannelID, operatorID)
+		operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, operatorID)
 		for _, msg := range messages {
 			if msg.UserID == operatorID {
 				continue
 			}
-			if !operatorIsAdmin {
+			if operatorRank < channelMemberRoleRankAdmin {
 				return nil, fmt.Errorf("无权限归档目标消息")
 			}
-			if isChannelAdminUser(channel, data.ChannelID, msg.UserID) {
+			if !canModerateTargetByRank(channel, data.ChannelID, operatorID, msg.UserID) {
 				return nil, fmt.Errorf("无法归档同样具有管理员权限的成员消息")
 			}
 		}
@@ -1379,15 +1397,15 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 			}
 		}
 	} else {
-		operatorIsAdmin := isChannelAdminUser(channel, data.ChannelID, operatorID)
+		operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, operatorID)
 		for _, msg := range messages {
 			if msg.UserID == operatorID {
 				continue
 			}
-			if !operatorIsAdmin {
+			if operatorRank < channelMemberRoleRankAdmin {
 				return nil, fmt.Errorf("无权限取消归档目标消息")
 			}
-			if isChannelAdminUser(channel, data.ChannelID, msg.UserID) {
+			if !canModerateTargetByRank(channel, data.ChannelID, operatorID, msg.UserID) {
 				return nil, fmt.Errorf("无法操作同样具有管理员权限的成员消息")
 			}
 		}
@@ -2278,11 +2296,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if !isAuthor && channel.WorldID != "" {
 		world, err := service.GetWorldByID(channel.WorldID)
 		if err == nil && world != nil && world.AllowAdminEditMessages {
-			if service.IsWorldAdmin(channel.WorldID, ctx.User.ID) {
-				// 检查目标消息作者是否为非管理员
-				if !service.IsWorldAdmin(channel.WorldID, msg.UserID) {
-					isAdminEdit = true
-				}
+			operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, ctx.User.ID)
+			if operatorRank >= channelMemberRoleRankAdmin &&
+				canModerateTargetByRank(channel, data.ChannelID, ctx.User.ID, msg.UserID) {
+				isAdminEdit = true
 			}
 		}
 	}

@@ -1127,7 +1127,7 @@ const canEdit = computed(() => {
     const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
     if (isWorldAdmin) {
       const channelId = chat.curChannel?.id;
-      if (channelId && targetUserId.value && chat.isChannelAdmin(channelId, targetUserId.value)) {
+      if (channelId && targetUserId.value && !chat.canModerateTargetByRole(channelId, user.info.id, targetUserId.value)) {
         return false;
       }
       return true; // 后端会进一步验证目标消息作者是否为非管理员

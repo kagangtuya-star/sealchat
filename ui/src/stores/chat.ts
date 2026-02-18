@@ -1893,6 +1893,61 @@ export const useChatStore = defineStore({
       return this.getChannelOwnerId(channelId) === userId;
     },
 
+    getChannelRoleRank(channelId?: string, userId?: string) {
+      if (!channelId || !userId) {
+        return 0;
+      }
+
+      let rank = 0;
+      if (this.isChannelOwner(channelId, userId)) {
+        rank = Math.max(rank, 4);
+      }
+
+      const roleIds = this.channelMemberRoleMap[channelId]?.[userId] || [];
+      if (Array.isArray(roleIds)) {
+        roleIds.forEach((roleId) => {
+          if (typeof roleId !== 'string') {
+            return;
+          }
+          if (roleId.endsWith('-owner')) {
+            rank = Math.max(rank, 4);
+          } else if (roleId.endsWith('-admin')) {
+            rank = Math.max(rank, 3);
+          } else if (roleId.endsWith('-member')) {
+            rank = Math.max(rank, 2);
+          } else if (roleId.endsWith('-spectator')) {
+            rank = Math.max(rank, 1);
+          }
+        });
+      }
+
+      const channelWorldId = (() => {
+        if (this.curChannel?.id === channelId) {
+          return (this.curChannel as any)?.worldId || this.currentWorldId;
+        }
+        const target = this.findChannelById(channelId) as any;
+        return target?.worldId || '';
+      })();
+      if (channelWorldId) {
+        const worldOwnerId = this.worldDetailMap[channelWorldId]?.world?.ownerId || this.worldMap[channelWorldId]?.ownerId;
+        if (worldOwnerId && worldOwnerId === userId) {
+          rank = Math.max(rank, 4);
+        }
+      }
+
+      return rank;
+    },
+
+    canModerateTargetByRole(channelId?: string, operatorUserId?: string, targetUserId?: string) {
+      if (!channelId || !operatorUserId || !targetUserId) {
+        return false;
+      }
+      if (operatorUserId === targetUserId) {
+        return true;
+      }
+      return this.getChannelRoleRank(channelId, operatorUserId) > this.getChannelRoleRank(channelId, targetUserId);
+    },
+
     async ensureRolePermissions(roleId: string): Promise<string[]> {
       if (!roleId) {
         return [];

@@ -126,10 +126,11 @@ func channelMessageCanEditImageLayout(userID string, channel *model.ChannelModel
 	if err != nil || world == nil || !world.AllowAdminEditMessages {
 		return false
 	}
-	if !service.IsWorldAdmin(channel.WorldID, userID) {
+	operatorRank := getChannelMemberRoleRank(channel, channel.ID, userID)
+	if operatorRank < channelMemberRoleRankAdmin {
 		return false
 	}
-	if service.IsWorldAdmin(channel.WorldID, msg.UserID) {
+	if !canModerateTargetByRank(channel, channel.ID, userID, msg.UserID) {
 		return false
 	}
 	return true

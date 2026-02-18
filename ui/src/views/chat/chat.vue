@@ -7770,7 +7770,7 @@ const canEditMessage = (target?: Message) => {
   if (!isWorldAdmin) {
     return false;
   }
-  if (chat.isChannelAdmin(chat.curChannel.id, targetUserId)) {
+  if (!chat.canModerateTargetByRole(chat.curChannel.id, user.info.id, targetUserId)) {
     return false;
   }
   return true;
