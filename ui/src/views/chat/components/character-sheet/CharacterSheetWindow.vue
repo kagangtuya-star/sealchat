@@ -229,6 +229,10 @@ const emit = defineEmits<{
 const handleIframeEvent = (event: SealChatEvent) => {
   if (event.action === 'ROLL_DICE' && event.payload.roll) {
     emit('rollRequest', event.payload.roll);
+  } else if (event.action === 'EDIT_START') {
+    sheetStore.beginEditLock(props.windowId);
+  } else if (event.action === 'EDIT_END') {
+    sheetStore.endEditLock(props.windowId);
   } else if (event.action === 'UPDATE_ATTRS' && event.payload.attrs) {
     sheetStore.updateAttrs(props.windowId, {
       ...windowData.value?.attrs,

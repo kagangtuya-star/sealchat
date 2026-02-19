@@ -24,7 +24,13 @@ export interface CharacterSheetWindow {
   avatarUrl?: string;
   templateMode?: CharacterCardTemplateMode;
   templateId?: string;
+  syncState: CharacterSheetSyncState;
+  hasLocalEditsInLock: boolean;
+  hasSavedAfterEditEnd: boolean;
+  pendingRemoteAttrs?: Record<string, any>;
 }
+
+type CharacterSheetSyncState = 'normal' | 'editing_locked' | 'resume_pending';
 
 const TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const WINDOWS_STORAGE_KEY = 'sealchat_character_sheet_windows';
@@ -38,6 +44,14 @@ const VIEWPORT_PADDING = 16;
 const BUBBLE_PERSIST_THROTTLE = 300;
 const WINDOWS_PERSIST_THROTTLE = 300;
 const ATTRS_SYNC_THROTTLE = 600;
+
+const isAttrsEqual = (a: Record<string, any>, b: Record<string, any>) => {
+  try {
+    return JSON.stringify(a || {}) === JSON.stringify(b || {});
+  } catch {
+    return false;
+  }
+};
 
 let windowIdCounter = 0;
 
@@ -920,6 +934,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     activeWindowIds.value.map(id => windows.value[id]).filter(Boolean)
   );
 
+  const normalizeSyncState = (win: CharacterSheetWindow) => {
+    if (!win.syncState) win.syncState = 'normal';
+    if (typeof win.hasLocalEditsInLock !== 'boolean') win.hasLocalEditsInLock = false;
+    if (typeof win.hasSavedAfterEditEnd !== 'boolean') win.hasSavedAfterEditEnd = false;
+  };
+
   const loadTemplates = (): Record<string, string> => {
     try {
       const raw = localStorage.getItem(TEMPLATE_STORAGE_KEY);
@@ -1055,6 +1075,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         avatarUrl: state.avatarUrl,
         templateMode: state.templateMode,
         templateId: state.templateId,
+        syncState: 'normal',
+        hasLocalEditsInLock: false,
+        hasSavedAfterEditEnd: false,
+        pendingRemoteAttrs: undefined,
       };
       activeWindowIds.value.push(state.id);
       nextMaxZ = Math.max(nextMaxZ, windows.value[state.id].zIndex);
@@ -1170,15 +1194,62 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
 
   let attrsSyncTimer: Record<string, ReturnType<typeof setTimeout> | null> = {};
 
+  const beginEditLock = (windowId: string) => {
+    const win = windows.value[windowId];
+    if (!win) return;
+    normalizeSyncState(win);
+    if (win.syncState === 'normal') {
+      win.hasLocalEditsInLock = false;
+      win.hasSavedAfterEditEnd = false;
+      win.pendingRemoteAttrs = undefined;
+    }
+    win.syncState = 'editing_locked';
+    schedulePersistWindows();
+  };
+
+  const endEditLock = (windowId: string) => {
+    const win = windows.value[windowId];
+    if (!win) return;
+    normalizeSyncState(win);
+    if (!win.hasLocalEditsInLock) {
+      win.syncState = 'normal';
+      win.hasSavedAfterEditEnd = false;
+      win.pendingRemoteAttrs = undefined;
+      schedulePersistWindows();
+      return;
+    }
+    if (win.hasSavedAfterEditEnd) {
+      win.hasLocalEditsInLock = false;
+      win.pendingRemoteAttrs = undefined;
+      win.syncState = 'normal';
+      schedulePersistWindows();
+      return;
+    }
+    win.syncState = 'resume_pending';
+    schedulePersistWindows();
+  };
+
   const scheduleAttrsSync = (windowId: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId || !win.cardName) return;
+    normalizeSyncState(win);
     if (attrsSyncTimer[windowId]) {
       clearTimeout(attrsSyncTimer[windowId] as ReturnType<typeof setTimeout>);
     }
     attrsSyncTimer[windowId] = setTimeout(async () => {
       try {
-        await cardStore.updateCard(win.channelId, win.cardName, win.attrs);
+        const latest = windows.value[windowId];
+        if (!latest) return;
+        const ok = await cardStore.updateCard(latest.channelId, latest.cardName, latest.attrs);
+        if (ok) {
+          latest.hasSavedAfterEditEnd = true;
+          if (latest.syncState === 'resume_pending') {
+            latest.hasLocalEditsInLock = false;
+            latest.pendingRemoteAttrs = undefined;
+            latest.syncState = 'normal';
+          }
+          schedulePersistWindows();
+        }
       } catch (e) {
         console.warn('Failed to sync character sheet attrs', e);
       }
@@ -1188,10 +1259,16 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const refreshWindowAttrs = async (windowId: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId) return;
+    normalizeSyncState(win);
     try {
       const active = await cardStore.getActiveCard(win.channelId);
       if (!active || !active.attrs) return;
       if (active.name && active.name !== win.cardName) return;
+      if (win.syncState !== 'normal') {
+        win.pendingRemoteAttrs = active.attrs;
+        return;
+      }
+      if (isAttrsEqual(win.attrs, active.attrs)) return;
       win.attrs = active.attrs;
       schedulePersistWindows();
     } catch (e) {
@@ -1224,6 +1301,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       const existing = windows.value[existingId];
       const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
       if (existing) {
+        normalizeSyncState(existing);
         if (resolvedSheetType && !existing.sheetType) {
           existing.sheetType = resolvedSheetType;
         }
@@ -1310,6 +1388,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       avatarUrl: cardData?.avatarUrl,
       templateMode: templateMeta?.templateMode,
       templateId: templateMeta?.templateId,
+      syncState: 'normal',
+      hasLocalEditsInLock: false,
+      hasSavedAfterEditEnd: false,
+      pendingRemoteAttrs: undefined,
     };
     activeWindowIds.value.push(windowId);
     schedulePersistWindows();
@@ -1322,6 +1404,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     const idx = activeWindowIds.value.indexOf(windowId);
     if (idx !== -1) {
       activeWindowIds.value.splice(idx, 1);
+    }
+    if (attrsSyncTimer[windowId]) {
+      clearTimeout(attrsSyncTimer[windowId] as ReturnType<typeof setTimeout>);
+      delete attrsSyncTimer[windowId];
     }
     delete windows.value[windowId];
     schedulePersistWindows();
@@ -1373,7 +1459,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const updateAttrs = (windowId: string, attrs: Record<string, any>) => {
     const win = windows.value[windowId];
     if (win) {
+      normalizeSyncState(win);
       win.attrs = attrs;
+      if (win.syncState !== 'normal') {
+        win.hasLocalEditsInLock = true;
+        win.hasSavedAfterEditEnd = false;
+      }
       schedulePersistWindows();
       scheduleAttrsSync(windowId);
     }
@@ -1411,6 +1502,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const reset = () => {
     windows.value = {};
     activeWindowIds.value = [];
+    for (const timer of Object.values(attrsSyncTimer)) {
+      if (timer) clearTimeout(timer as ReturnType<typeof setTimeout>);
+    }
+    attrsSyncTimer = {};
     clearWindowStates();
   };
 
@@ -1467,6 +1562,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     updatePosition,
     updateSize,
     updateAttrs,
+    beginEditLock,
+    endEditLock,
     updateTemplate,
     applyManagedTemplate,
     applyDetachedTemplate,
