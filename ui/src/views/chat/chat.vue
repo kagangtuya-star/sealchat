@@ -289,9 +289,22 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     if (chat.editing) {
       chat.updateEditingIcMode(mode);
     } else {
+      const channelId = chat.curChannel?.id || '';
+      const previousIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
       chat.icMode = mode;
       // 触发自动角色切换
       chat.autoSwitchRoleOnIcOocChange(mode);
+      const nextIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
+      if (channelId && nextIdentityId && nextIdentityId !== previousIdentityId) {
+        void (async () => {
+          const syncResult = await characterCardStore.syncCardForIdentity(channelId, nextIdentityId, {
+            preserveWhenUnbound: true,
+          });
+          if (syncResult.ok) {
+            emitTypingPreview();
+          }
+        })();
+      }
     }
   },
 });
@@ -1091,15 +1104,14 @@ const simulateCurrentIdentitySelection = async (channelId?: string) => {
     if (!identityId) {
       return false;
     }
-    const boundCardId = characterCardStore.getBoundCardId(identityId);
-    if (boundCardId) {
-      await characterCardStore.tagCard(channelId, undefined, boundCardId);
-    } else {
-      await characterCardStore.tagCard(channelId);
+    const syncResult = await characterCardStore.syncCardForIdentity(channelId, identityId, {
+      preserveWhenUnbound: true,
+    });
+    if (!syncResult.ok) {
+      return false;
     }
-    await characterCardStore.loadCards(channelId);
     emitTypingPreview();
-    return true;
+    return syncResult.switched;
   } catch (e) {
     console.warn('Failed to simulate identity selection', e);
     return false;
@@ -8909,6 +8921,9 @@ const send = throttle(async () => {
     }
     if (shortcutResult?.matched) {
       chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
+      await characterCardStore.syncCardForIdentity(chat.curChannel.id, shortcutResult.matched.id, {
+        preserveWhenUnbound: true,
+      });
       draft = shortcutResult.restContent;
       textToSend.value = shortcutResult.restContent;
       emitTypingPreview();
