@@ -663,6 +663,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (changed) {
         // 世界切换时先回到默认值；若服务端有显式配置，后续快照会覆盖。
         this.worldPlaybackEnabled = DEFAULT_WORLD_PLAYBACK_ENABLED;
+        this.currentSceneId = null;
+        this.selectedSceneId = null;
+        this.scenes = [];
+        this.scenePagination = {
+          ...this.scenePagination,
+          page: 1,
+          total: 0,
+        };
       }
       if (worldId) {
         this.filters.worldId = worldId;
@@ -676,6 +684,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (!this.isSystemAdmin) {
           this.filters.scope = undefined;
         }
+      }
+      if (changed && this.initialized) {
+        void this.fetchScenes();
+        void this.fetchFolders();
+        void this.fetchAssets({ pagination: { page: 1 } });
       }
       if (this.worldPlaybackEnabled && this.currentChannelId) {
         void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
@@ -1229,7 +1242,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await Promise.all([this.fetchScenes(), this.fetchFolders()]);
       await this.fetchAssets();
       this.initialized = true;
-      if (!this.currentSceneId && this.scenes.length) {
+      if (this.canManage && !this.currentSceneId && this.scenes.length) {
         this.applyScene(this.scenes[0].id);
       }
     },
@@ -1237,6 +1250,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async fetchScenes(filters?: Partial<AudioStudioState['sceneFilters']>) {
       try {
         this.scenesLoading = true;
+        if (!this.canManage) {
+          this.scenes = [];
+          this.selectedSceneId = null;
+          this.currentSceneId = null;
+          this.scenePagination = {
+            ...this.scenePagination,
+            page: 1,
+            total: 0,
+          };
+          return;
+        }
         if (filters) {
           this.sceneFilters = {
             ...this.sceneFilters,
@@ -1258,8 +1282,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (!params.query) {
           delete params.query;
         }
-        if (!this.canManage) {
-          params.channelScope = this.currentChannelId || undefined;
+        if (!this.isSystemAdmin) {
+          if (!this.currentWorldId) {
+            throw new Error('当前世界上下文缺失，无法加载播放列表');
+          }
+          params.scope = 'world';
+          params.worldId = this.currentWorldId;
+          params.includeCommon = false;
         }
         const resp = await api.get('/api/v1/audio/scenes', { params });
         const raw = resp.data as PaginatedResult<AudioScene> | AudioScene[] | undefined;
@@ -1321,6 +1350,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         channelScope: payload.channelScope ?? this.currentChannelId ?? null,
         order: payload.order,
       };
+      if (this.isSystemAdmin) {
+        if (payload.scope) {
+          scenePayload.scope = payload.scope;
+        }
+        if (payload.worldId !== undefined) {
+          scenePayload.worldId = payload.worldId;
+        }
+      } else {
+        if (!this.currentWorldId) {
+          throw new Error('当前世界上下文缺失，无法创建播放列表');
+        }
+        scenePayload.scope = 'world';
+        scenePayload.worldId = this.currentWorldId;
+      }
       const resp = await api.post('/api/v1/audio/scenes', scenePayload);
       const created = resp.data?.item as AudioScene | undefined;
       if (created) {
@@ -1347,6 +1390,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         channelScope: payload.channelScope ?? existing?.channelScope ?? null,
         order: payload.order ?? existing?.order,
       };
+      if (this.isSystemAdmin) {
+        if (payload.scope) {
+          normalized.scope = payload.scope;
+        }
+        if (payload.worldId !== undefined) {
+          normalized.worldId = payload.worldId;
+        }
+      } else {
+        const effectiveWorldId = this.currentWorldId || existing?.worldId || null;
+        if (!effectiveWorldId) {
+          throw new Error('当前世界上下文缺失，无法更新播放列表');
+        }
+        normalized.scope = 'world';
+        normalized.worldId = effectiveWorldId;
+      }
       if (!normalized.tracks.length) {
         normalized.tracks = existing ? existing.tracks : serializeRuntimeTracks(this.tracks);
       }

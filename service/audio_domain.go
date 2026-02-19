@@ -743,7 +743,10 @@ func modelToRuntimeState(state *model.AudioPlaybackState, scopeType, scopeID str
 	if state == nil {
 		return nil
 	}
-	capturedAtMs := state.UpdatedAt.UnixMilli()
+	capturedAtMs := state.CapturedAtMs
+	if capturedAtMs <= 0 {
+		capturedAtMs = state.UpdatedAt.UnixMilli()
+	}
 	if capturedAtMs <= 0 {
 		capturedAtMs = time.Now().UnixMilli()
 	}
@@ -886,15 +889,20 @@ func persistPlaybackState(input AudioPlaybackUpdateInput, snapshot *AudioPlaybac
 	state.WorldPlaybackEnabled = snapshot.WorldPlaybackEnabled
 	state.Revision = snapshot.Revision
 	state.UpdatedBy = snapshot.UpdatedBy
-	if snapshot.UpdatedAt.IsZero() {
-		state.UpdatedAt = time.Now()
-	} else {
-		state.UpdatedAt = snapshot.UpdatedAt
+	updatedAt := snapshot.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
 	}
+	state.UpdatedAt = updatedAt
+	capturedAtMs := snapshot.CapturedAtMs
+	if capturedAtMs <= 0 {
+		capturedAtMs = updatedAt.UnixMilli()
+	}
+	state.CapturedAtMs = capturedAtMs
 	return db.Save(&state).Error
 }
 
-func persistWorldScopeModeOff(channelID, actorID string, updatedAt time.Time) error {
+func persistWorldScopeModeOff(channelID, actorID string, updatedAt time.Time, capturedAtMs int64) error {
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
 		return nil
@@ -932,11 +940,16 @@ func persistWorldScopeModeOff(channelID, actorID string, updatedAt time.Time) er
 	}
 	state.Revision += 1
 	state.UpdatedBy = actorID
-	if updatedAt.IsZero() {
-		state.UpdatedAt = time.Now()
-	} else {
-		state.UpdatedAt = updatedAt
+	normalizedUpdatedAt := updatedAt
+	if normalizedUpdatedAt.IsZero() {
+		normalizedUpdatedAt = time.Now()
 	}
+	state.UpdatedAt = normalizedUpdatedAt
+	normalizedCapturedAtMs := capturedAtMs
+	if normalizedCapturedAtMs <= 0 {
+		normalizedCapturedAtMs = normalizedUpdatedAt.UnixMilli()
+	}
+	state.CapturedAtMs = normalizedCapturedAtMs
 	return db.Save(&state).Error
 }
 
@@ -1071,7 +1084,7 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*AudioPlaybackSta
 			return nil, persistErr
 		}
 		if !input.WorldPlaybackEnabled {
-			if persistErr := persistWorldScopeModeOff(input.ChannelID, input.ActorID, snapshot.UpdatedAt); persistErr != nil {
+			if persistErr := persistWorldScopeModeOff(input.ChannelID, input.ActorID, snapshot.UpdatedAt, snapshot.CapturedAtMs); persistErr != nil {
 				return nil, persistErr
 			}
 		}
@@ -1460,6 +1473,12 @@ func AudioListScenesWithFilters(filters AudioSceneFilters) ([]*model.AudioScene,
 		} else {
 			q = q.Where("scope = ?", filters.Scope)
 		}
+	} else if filters.WorldID != nil {
+		if filters.IncludeCommon {
+			q = q.Where("(scope = ? AND world_id = ?) OR scope = ?", model.AudioScopeWorld, *filters.WorldID, model.AudioScopeCommon)
+		} else {
+			q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
+		}
 	}
 	var scenes []*model.AudioScene
 	if err := q.Find(&scenes).Error; err != nil {
@@ -1545,9 +1564,49 @@ func normalizeSceneTracks(tracks []model.AudioSceneTrack) []model.AudioSceneTrac
 			FadeIn:  track.FadeIn,
 			FadeOut: track.FadeOut,
 		}
+		playbackRate := 1.0
+		if track.PlaybackRate != nil && *track.PlaybackRate > 0 {
+			playbackRate = *track.PlaybackRate
+		}
+		item.PlaybackRate = &playbackRate
+		loopEnabled := true
+		if track.LoopEnabled != nil {
+			loopEnabled = *track.LoopEnabled
+		}
+		item.LoopEnabled = &loopEnabled
 		if track.AssetID != nil && *track.AssetID != "" {
 			value := strings.TrimSpace(*track.AssetID)
 			item.AssetID = &value
+		}
+		if track.PlaylistFolderID != nil && strings.TrimSpace(*track.PlaylistFolderID) != "" {
+			value := strings.TrimSpace(*track.PlaylistFolderID)
+			item.PlaylistFolderID = &value
+		}
+		if track.PlaylistMode != nil {
+			mode := strings.TrimSpace(*track.PlaylistMode)
+			switch mode {
+			case "single", "sequential", "shuffle":
+				item.PlaylistMode = &mode
+			}
+		}
+		if len(track.PlaylistAssetIDs) > 0 {
+			ids := make([]string, 0, len(track.PlaylistAssetIDs))
+			for _, id := range track.PlaylistAssetIDs {
+				trimmed := strings.TrimSpace(id)
+				if trimmed != "" {
+					ids = append(ids, trimmed)
+				}
+			}
+			item.PlaylistAssetIDs = ids
+		}
+		if len(item.PlaylistAssetIDs) == 0 {
+			item.PlaylistIndex = 0
+		} else if track.PlaylistIndex < 0 {
+			item.PlaylistIndex = 0
+		} else if track.PlaylistIndex >= len(item.PlaylistAssetIDs) {
+			item.PlaylistIndex = len(item.PlaylistAssetIDs) - 1
+		} else {
+			item.PlaylistIndex = track.PlaylistIndex
 		}
 		result = append(result, item)
 	}

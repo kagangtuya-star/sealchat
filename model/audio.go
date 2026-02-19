@@ -114,11 +114,17 @@ type AudioFolder struct {
 func (*AudioFolder) TableName() string { return "audio_folders" }
 
 type AudioSceneTrack struct {
-	Type    string  `json:"type"`
-	AssetID *string `json:"assetId"`
-	Volume  float64 `json:"volume"`
-	FadeIn  int     `json:"fadeIn"`
-	FadeOut int     `json:"fadeOut"`
+	Type             string   `json:"type"`
+	AssetID          *string  `json:"assetId"`
+	Volume           float64  `json:"volume"`
+	FadeIn           int      `json:"fadeIn"`
+	FadeOut          int      `json:"fadeOut"`
+	LoopEnabled      *bool    `json:"loopEnabled,omitempty"`
+	PlaybackRate     *float64 `json:"playbackRate,omitempty"`
+	PlaylistFolderID *string  `json:"playlistFolderId,omitempty"`
+	PlaylistMode     *string  `json:"playlistMode,omitempty"`
+	PlaylistAssetIDs []string `json:"playlistAssetIds,omitempty"`
+	PlaylistIndex    int      `json:"playlistIndex"`
 }
 
 type AudioScene struct {
@@ -165,6 +171,7 @@ type AudioPlaybackState struct {
 	PlaybackRate         float64                   `json:"playbackRate"`
 	WorldPlaybackEnabled bool                      `json:"worldPlaybackEnabled" gorm:"default:true"`
 	Revision             int64                     `json:"revision" gorm:"not null;default:0"`
+	CapturedAtMs         int64                     `json:"capturedAtMs" gorm:"not null;default:0"`
 	UpdatedBy            string                    `json:"updatedBy"`
 	UpdatedAt            time.Time                 `json:"updatedAt"`
 	CreatedAt            time.Time                 `json:"createdAt"`
