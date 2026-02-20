@@ -2660,14 +2660,23 @@ const maybePromptIdentitySync = async () => {
 
   identitySyncPromptPending.value = true;
   const confirmed = await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     dialog.warning({
       title: '同步其他频道角色？',
       content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
       positiveText: '同步',
       negativeText: '暂不',
-      onPositiveClick: () => resolve(true),
-      onNegativeClick: () => resolve(false),
-      onClose: () => resolve(false),
+      maskClosable: false,
+      closeOnEsc: false,
+      closable: false,
+      onPositiveClick: () => settle(true),
+      onNegativeClick: () => settle(false),
+      onClose: () => settle(false),
     });
   });
   identitySyncPromptPending.value = false;
@@ -2675,7 +2684,13 @@ const maybePromptIdentitySync = async () => {
     identitySyncDismissedForSession.value = true;
     return;
   }
-  await openIdentityManager();
+  try {
+    await openIdentityManager();
+  } catch (error) {
+    console.warn('打开角色管理失败', error);
+    message.error('打开角色管理失败，请稍后重试');
+    return;
+  }
   await nextTick();
   await openIdentitySyncDialog();
 };
