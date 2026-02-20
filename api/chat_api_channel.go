@@ -38,6 +38,23 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 	}
 
 	m := service.ChannelNew(utils.NewID(), permType, data.Name, worldID, ctx.User.ID, data.ParentID)
+	if m != nil {
+		ev := &protocol.Event{
+			Type:    protocol.EventChannelUpdated,
+			Channel: m.ToProtocolType(),
+			Argv: &protocol.Argv{
+				Options: map[string]interface{}{
+					"treeChanged": true,
+					"worldId":     worldID,
+					"action":      "create",
+				},
+			},
+		}
+		if ctx.User != nil {
+			ev.User = ctx.User.ToProtocolType()
+		}
+		broadcastEventToWorld(worldID, ev)
+	}
 
 	return &struct {
 		Channel *protocol.Channel `json:"channel"`
@@ -342,15 +359,15 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	})
 
 	rData := &struct {
-		Member                *protocol.GuildMember `json:"member"`
-		FirstUnreadMessageId  string                `json:"first_unread_message_id,omitempty"`
-		FirstUnreadMsgTime    int64                 `json:"first_unread_msg_time,omitempty"`
-		CharacterAPIEnabled   bool                  `json:"character_api_enabled"`
-		CharacterAPIReason    string                `json:"character_api_reason,omitempty"`
+		Member               *protocol.GuildMember `json:"member"`
+		FirstUnreadMessageId string                `json:"first_unread_message_id,omitempty"`
+		FirstUnreadMsgTime   int64                 `json:"first_unread_msg_time,omitempty"`
+		CharacterAPIEnabled  bool                  `json:"character_api_enabled"`
+		CharacterAPIReason   string                `json:"character_api_reason,omitempty"`
 	}{
-		Member:                memberPT,
-		FirstUnreadMessageId:  firstUnreadMsgId,
-		FirstUnreadMsgTime:    firstUnreadMsgTime,
+		Member:               memberPT,
+		FirstUnreadMessageId: firstUnreadMsgId,
+		FirstUnreadMsgTime:   firstUnreadMsgTime,
 	}
 	characterEnabled, characterReason := GetChannelCharacterAPICapability(channelId, nil)
 	rData.CharacterAPIEnabled = characterEnabled

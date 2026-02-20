@@ -349,6 +349,17 @@ const ensureWorldGateway = () => {
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
+let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const scheduleChannelTreeRefresh = (chat: any) => {
+  if (!chat?.currentWorldId) return;
+  if (channelTreeRefreshTimer) return;
+  channelTreeRefreshTimer = setTimeout(() => {
+    channelTreeRefreshTimer = null;
+    if (chat.currentWorldId) {
+      void chat.channelList(chat.currentWorldId, true);
+    }
+  }, 150);
+};
 const pendingLatencyProbes: Record<string, number> = {};
 const LATENCY_PROBE_TIMEOUT = 8000;
 const WS_FOREGROUND_PROBE_TIMEOUT_MS = 7000;
@@ -4226,11 +4237,31 @@ chatEvent.on('message.reaction', (event: any) => {
 });
 
 chatEvent.on('channel-updated', (event) => {
+  const rawArgv = event?.argv || {};
+  const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, any>;
+  const treeChanged = options.treeChanged === true || options.tree_changed === true;
+  const chat = useChatStore();
+  if (treeChanged) {
+    scheduleChannelTreeRefresh(chat);
+    return;
+  }
   const channelId = event?.channel?.id;
   if (!channelId) {
     return;
   }
-  const chat = useChatStore();
+  const existsInTree = (items: SChannel[] | undefined): boolean => {
+    if (!Array.isArray(items)) return false;
+    for (const item of items) {
+      if (!item) continue;
+      if (item.id === channelId) return true;
+      if (existsInTree(item.children as SChannel[] | undefined)) return true;
+    }
+    return false;
+  };
+  if (!existsInTree(chat.channelTree as SChannel[]) && !existsInTree(chat.channelTreePrivate as SChannel[])) {
+    scheduleChannelTreeRefresh(chat);
+    return;
+  }
   const patch: Partial<SChannel> = {};
   if (typeof event.channel?.name === 'string') {
     patch.name = event.channel.name;
