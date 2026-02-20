@@ -10109,12 +10109,35 @@ const autoFillIfNeeded = async () => {
   }
 };
 
+let latestMessagesFetchEpoch = 0;
+let latestMessagesRefetchQueued = false;
+
+const scheduleLatestMessagesRefetch = () => {
+  if (latestMessagesRefetchQueued) {
+    return;
+  }
+  latestMessagesRefetchQueued = true;
+  Promise.resolve().then(() => {
+    latestMessagesRefetchQueued = false;
+    if (!chat.curChannel?.id || messageWindow.loadingLatest) {
+      return;
+    }
+    void fetchLatestMessages().catch((error) => {
+      console.warn('[channel-load] deferred messages fetch failed', error);
+    });
+  });
+};
+
 const fetchLatestMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
     return;
   }
+  const channelIdAtStart = chat.curChannel.id;
+  const fetchEpoch = ++latestMessagesFetchEpoch;
+  const isStale = () => fetchEpoch !== latestMessagesFetchEpoch || chat.curChannel?.id !== channelIdAtStart;
   console.info('[channel-load] messages-fetch-start', {
-    channelId: chat.curChannel?.id || '',
+    channelId: channelIdAtStart,
+    fetchEpoch,
     ts: Date.now(),
   });
   let fetchSucceeded = false;
@@ -10123,14 +10146,18 @@ const fetchLatestMessages = async () => {
   resetTypingPreview();
   messageWindow.loadingLatest = true;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, undefined, {
+    const resp = await chat.messageList(channelIdAtStart, undefined, {
       includeArchived: chat.filterState.showArchived,
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
+    if (isStale()) {
+      return;
+    }
     fetchSucceeded = true;
     console.info('[channel-load] messages-fetch-success', {
-      channelId: chat.curChannel?.id || '',
+      channelId: channelIdAtStart,
+      fetchEpoch,
       count: Array.isArray(resp.data) ? resp.data.length : 0,
       ts: Date.now(),
     });
@@ -10145,21 +10172,31 @@ const fetchLatestMessages = async () => {
     tryAutoRestoreSessionDraft();
     tryAutoRestoreHistory();
     console.info('[channel-load] messages-rendered', {
-      channelId: chat.curChannel?.id || '',
+      channelId: channelIdAtStart,
+      fetchEpoch,
       rows: rows.value.length,
       ts: Date.now(),
     });
   } catch (error) {
+    if (isStale()) {
+      return;
+    }
     rows.value = previousRows;
     resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
     throw error;
   } finally {
+    const stale = isStale();
     messageWindow.loadingLatest = false;
     console.info('[channel-load] messages-fetch-finish', {
-      channelId: chat.curChannel?.id || '',
+      channelId: channelIdAtStart,
+      fetchEpoch,
+      stale,
       ok: fetchSucceeded,
       ts: Date.now(),
     });
+    if (stale) {
+      scheduleLatestMessagesRefetch();
+    }
   }
 };
 

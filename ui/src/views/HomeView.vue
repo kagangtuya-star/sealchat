@@ -152,30 +152,57 @@ onMounted(() => {
   }
 });
 
+let deepLinkTaskEpoch = 0;
+let urlSyncTaskEpoch = 0;
+let pendingInternalRouteSyncKey = '';
+
+const buildRouteSyncKey = (worldId: string, channelId: string) => `${worldId}::${channelId}`;
+
 const handleDeepLink = async () => {
   const worldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
   const channelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
   if (!worldId) return;
+  const routeKey = buildRouteSyncKey(worldId, channelId);
+  if (pendingInternalRouteSyncKey && pendingInternalRouteSyncKey === routeKey) {
+    pendingInternalRouteSyncKey = '';
+    return;
+  }
+  const taskEpoch = ++deepLinkTaskEpoch;
   try {
     if (chat.isObserver) {
       chat.enableObserverMode(worldId, channelId);
       if (chat.connectState === 'connected') {
         await chat.initObserverSession();
+        if (taskEpoch !== deepLinkTaskEpoch) {
+          return;
+        }
       }
       return;
     }
     await chat.ensureWorldReady();
+    if (taskEpoch !== deepLinkTaskEpoch) {
+      return;
+    }
     const currentWorldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
     const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';
     if (worldId === currentWorldId) {
       if (channelId && channelId !== currentChannelId) {
         await chat.channelSwitchTo(channelId);
+        if (taskEpoch !== deepLinkTaskEpoch) {
+          return;
+        }
       }
       return;
     }
     await chat.switchWorld(worldId, { force: true });
+    if (taskEpoch !== deepLinkTaskEpoch) {
+      return;
+    }
     if (channelId) {
       await chat.channelSwitchTo(channelId);
+      if (taskEpoch !== deepLinkTaskEpoch) {
+        return;
+      }
     }
   } catch (error) {
     console.warn('[deep-link] switch failed', error);
@@ -208,6 +235,7 @@ const isChannelInCurrentWorld = (channelId: string) => {
 };
 
 const syncUrlWithSelection = async () => {
+  const taskEpoch = ++urlSyncTaskEpoch;
   if (!isHomeRoute.value) return;
   const worldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
   if (!worldId) return;
@@ -216,13 +244,21 @@ const syncUrlWithSelection = async () => {
   const routeWorldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
   const routeChannelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
   if (routeWorldId === worldId && routeChannelId === channelId) return;
+  const routeKey = buildRouteSyncKey(worldId, channelId);
   const params: { worldId: string; channelId?: string } = { worldId };
   if (channelId) {
     params.channelId = channelId;
   }
   try {
+    pendingInternalRouteSyncKey = routeKey;
     await router.replace({ name: 'world-channel', params });
+    if (taskEpoch !== urlSyncTaskEpoch) {
+      return;
+    }
   } catch (error) {
+    if (pendingInternalRouteSyncKey === routeKey) {
+      pendingInternalRouteSyncKey = '';
+    }
     console.warn('[deep-link] url sync failed', error);
   }
 };
