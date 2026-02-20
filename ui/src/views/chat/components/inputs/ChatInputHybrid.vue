@@ -98,11 +98,52 @@ const QUICK_INLINE_CODE_PATTERN = /`([^`\n]+)`/g;
 const QUICK_LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
 const QUICK_ITALIC_PATTERN = /(^|[^*])\*([^*\n]+)\*/g;
+const ZERO_WIDTH_SPACE = '\u200B';
+const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;
 
 const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const getTextModelLength = (text: string): number => {
+  let total = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== ZERO_WIDTH_SPACE) {
+      total += 1;
+    }
+  }
+  return total;
+};
+
+const getModelOffsetWithinText = (text: string, domOffset: number): number => {
+  const safeOffset = clamp(domOffset, 0, text.length);
+  let modelOffset = 0;
+  for (let i = 0; i < safeOffset; i++) {
+    if (text[i] !== ZERO_WIDTH_SPACE) {
+      modelOffset += 1;
+    }
+  }
+  return modelOffset;
+};
+
+const resolveTextOffsetByModelPosition = (text: string, modelPosition: number): number => {
+  const safeModelPosition = clamp(modelPosition, 0, getTextModelLength(text));
+  if (safeModelPosition <= 0) {
+    return 0;
+  }
+  let modelCount = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === ZERO_WIDTH_SPACE) {
+      continue;
+    }
+    modelCount += 1;
+    if (modelCount >= safeModelPosition) {
+      return i + 1;
+    }
+  }
+  return text.length;
+};
 
 const renderQuickFormatLine = (line: string): string => {
   if (!line) {
@@ -174,7 +215,7 @@ const isMentionElement = (node: Node): node is HTMLElement =>
 
 const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
   node.nodeType === Node.TEXT_NODE
-  && node.textContent === '\u200B'
+  && node.textContent === ZERO_WIDTH_SPACE
   && (node.parentElement?.classList.contains('empty-line') ?? false)
 );
 
@@ -214,7 +255,7 @@ const getNodeModelLength = (node: Node): number => {
     if (isEmptyLinePlaceholderTextNode(node)) {
       return 0;
     }
-    return node.textContent?.length ?? 0;
+    return getTextModelLength(node.textContent ?? '');
   }
   if (node.nodeName === 'BR') {
     return 1;
@@ -238,8 +279,7 @@ const getOffsetWithinNode = (node: Node, offset: number): number => {
     if (isEmptyLinePlaceholderTextNode(node)) {
       return 0;
     }
-    const length = node.textContent?.length ?? 0;
-    return clamp(offset, 0, length);
+    return getModelOffsetWithinText(node.textContent ?? '', offset);
   }
   if (node.nodeName === 'BR') {
     return offset > 0 ? 1 : 0;
@@ -300,7 +340,13 @@ const reduceNode = (node: Node, target: Node, offset: number): { found: boolean;
 
 const calculateModelIndexForPosition = (container: Node, offset: number): number => {
   if (!editorRef.value) return 0;
-  const { length } = reduceNode(editorRef.value, container, offset);
+  if (container !== editorRef.value && !editorRef.value.contains(container)) {
+    return getNodeModelLength(editorRef.value);
+  }
+  const { found, length } = reduceNode(editorRef.value, container, offset);
+  if (!found) {
+    return getNodeModelLength(editorRef.value);
+  }
   return length;
 };
 
@@ -310,8 +356,9 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
       const length = node.textContent?.length ?? 1;
       return { node, offset: Math.max(1, length) };
     }
-    const length = node.textContent?.length ?? 0;
-    return { node, offset: clamp(position, 0, length) };
+    const text = node.textContent ?? '';
+    const offset = resolveTextOffsetByModelPosition(text, position);
+    return { node, offset };
   }
 
   if (node.nodeName === 'BR') {
@@ -370,6 +417,10 @@ const getSelectionRange = () => {
     return { start: length, end: length };
   }
   const range = selection.getRangeAt(0);
+  if (!editorRef.value.contains(range.startContainer) || !editorRef.value.contains(range.endContainer)) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
   const start = calculateModelIndexForPosition(range.startContainer, range.startOffset);
   const end = calculateModelIndexForPosition(range.endContainer, range.endOffset);
   return { start, end };
@@ -1091,7 +1142,7 @@ const extractContentWithLineBreaks = () => {
   });
 
   let result = pieces.join('');
-  result = result.replace(/\u200B/g, '');
+  result = result.replace(ZERO_WIDTH_SPACE_REGEX, '');
   return result;
 };
 
