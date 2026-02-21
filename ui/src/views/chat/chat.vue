@@ -5654,15 +5654,70 @@ const updateOverTarget = (clientY: number) => {
   }
 };
 
-const cancelDrag = () => {
+const onDragWindowBlur = () => {
+  if (!dragState.activeId) {
+    return;
+  }
+  cancelDrag();
+};
+
+const onDragVisibilityChange = () => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  if (document.visibilityState !== 'hidden' || !dragState.activeId) {
+    return;
+  }
+  cancelDrag();
+};
+
+const onDragHandleLostPointerCapture = () => {
+  if (!dragState.activeId) {
+    return;
+  }
+  cancelDrag();
+};
+
+const detachDragListeners = () => {
   window.removeEventListener('pointermove', onDragPointerMove);
   window.removeEventListener('pointerup', onDragPointerUp);
   window.removeEventListener('pointercancel', onDragPointerCancel);
   window.removeEventListener('keydown', onDragKeyDown);
-  stopAutoScroll();
-  if (dragState.snapshot.length > 0) {
-    rows.value = dragState.snapshot.slice();
+  window.removeEventListener('blur', onDragWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onDragVisibilityChange);
   }
+  dragState.handleEl?.removeEventListener('lostpointercapture', onDragHandleLostPointerCapture);
+};
+
+const restoreMessageOrderFromSnapshot = (messageId: string, snapshot: Message[]) => {
+  if (!messageId || snapshot.length === 0) {
+    return;
+  }
+  const source = snapshot.find((item) => item.id === messageId);
+  if (!source) {
+    return;
+  }
+  const previousOrder = getMessageDisplayOrderValue(source);
+  const index = rows.value.findIndex((item) => item.id === messageId);
+  if (index < 0) {
+    return;
+  }
+  const current = rows.value[index];
+  if (previousOrder === null) {
+    delete (current as any).displayOrder;
+    delete (current as any).display_order;
+  } else {
+    (current as any).displayOrder = previousOrder;
+    (current as any).display_order = previousOrder;
+  }
+  rows.value.splice(index, 1, current);
+  sortRowsByDisplayOrder();
+};
+
+const cancelDrag = () => {
+  detachDragListeners();
+  stopAutoScroll();
   resetDragState();
 };
 
@@ -5673,10 +5728,7 @@ const finalizeDrag = async () => {
   const position = dragState.position;
   const originalRows = dragState.snapshot.slice();
 
-  window.removeEventListener('pointermove', onDragPointerMove);
-  window.removeEventListener('pointerup', onDragPointerUp);
-  window.removeEventListener('pointercancel', onDragPointerCancel);
-  window.removeEventListener('keydown', onDragKeyDown);
+  detachDragListeners();
 
   stopAutoScroll();
   clearGhost();
@@ -5737,7 +5789,7 @@ const finalizeDrag = async () => {
       sortRowsByDisplayOrder();
     }
   } catch (error) {
-    rows.value = originalRows;
+    restoreMessageOrderFromSnapshot(activeId, originalRows);
     message.error('消息排序失败，请稍后重试');
   } finally {
     localReorderOps.delete(clientOpId);
@@ -5835,6 +5887,11 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   window.addEventListener('pointerup', onDragPointerUp);
   window.addEventListener('pointercancel', onDragPointerCancel);
   window.addEventListener('keydown', onDragKeyDown);
+  window.addEventListener('blur', onDragWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onDragVisibilityChange);
+  }
+  handleEl?.addEventListener('lostpointercapture', onDragHandleLostPointerCapture);
 
   event.preventDefault();
 };
