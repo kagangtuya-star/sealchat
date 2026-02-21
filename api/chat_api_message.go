@@ -32,6 +32,7 @@ const (
 )
 
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
+var atTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
 
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
@@ -2041,7 +2042,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			go sendHiddenDicePrivateCopy(ctx, channelData, messageData)
 		}
 		if channel.PermType == "private" && ctx.User != nil && ctx.User.IsBot {
-			go forwardHiddenDiceWhisperCopy(ctx, channel, &m, privateOtherUser)
+			go forwardBotWhisperCopy(ctx, channel, &m, privateOtherUser)
 		}
 
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
@@ -3414,25 +3415,23 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
 }
 
-func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
+func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || sourceChannel == nil || msg == nil {
 		return
 	}
 	if sourceChannel.PermType != "private" {
 		return
 	}
+	privateOtherUser = strings.TrimSpace(privateOtherUser)
 	if privateOtherUser == "" {
 		return
 	}
-	if !strings.Contains(msg.Content, "暗骰") {
+	targetChannel, targetChannelID := resolveBotWhisperForwardTargetChannel(ctx, msg.Content, privateOtherUser)
+	if targetChannel == nil || targetChannelID == "" {
 		return
 	}
-	match := hiddenDiceForwardPattern.FindStringSubmatch(msg.Content)
-	if len(match) < 2 {
-		return
-	}
-	targetChannelID := strings.TrimSpace(match[1])
-	if targetChannelID == "" {
+	cfg := parseBotWhisperForwardConfig(targetChannel.BotWhisperForwardConfig)
+	if !shouldForwardBotWhisperMessage(cfg, msg.Content) {
 		return
 	}
 	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); botHiddenDicePendingContainsRecipient(pending, privateOtherUser) {
@@ -3440,23 +3439,10 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 			ctx.ConnInfo.BotHiddenDicePending.Delete(targetChannelID)
 		}
 	}
-	targetChannel, _ := model.ChannelGet(targetChannelID)
-	if targetChannel == nil || targetChannel.ID == "" {
-		return
-	}
 	member, err := model.MemberGetByUserIDAndChannelIDBase(ctx.User.ID, targetChannelID, ctx.User.Nickname, true)
 	if err != nil || member == nil {
 		return
 	}
-	whisperUser := model.UserGet(privateOtherUser)
-	if whisperUser == nil {
-		return
-	}
-	var whisperMember *model.MemberModel
-	if len(targetChannelID) < 30 {
-		whisperMember, _ = model.MemberGetByUserIDAndChannelIDBase(privateOtherUser, targetChannelID, "", false)
-	}
-	setUserNickFromMember(whisperUser, whisperMember)
 
 	msgICMode := strings.TrimSpace(strings.ToLower(msg.ICMode))
 	if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
@@ -3467,15 +3453,20 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 	}
 
 	now := time.Now()
+	dbQuery := model.GetDB().Model(&model.MessageModel{}).
+		Where("channel_id = ? AND user_id = ? AND is_whisper = ? AND content = ? AND created_at >= ?",
+			targetChannelID, ctx.User.ID, cfg.AsWhisper, msg.Content, now.Add(-5*time.Second))
+	if cfg.AsWhisper {
+		dbQuery = dbQuery.Where("whisper_to = ?", privateOtherUser)
+	} else {
+		dbQuery = dbQuery.Where("COALESCE(whisper_to, '') = ''")
+	}
 	var existingCount int64
-	model.GetDB().Model(&model.MessageModel{}).
-		Where("channel_id = ? AND user_id = ? AND is_whisper = ? AND whisper_to = ? AND content = ? AND created_at >= ?",
-			targetChannelID, ctx.User.ID, true, privateOtherUser, msg.Content, now.Add(-5*time.Second)).
-		Count(&existingCount)
+	dbQuery.Count(&existingCount)
 	if existingCount > 0 {
 		return
 	}
-	nowMs := now.UnixMilli()
+
 	m := model.MessageModel{
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
@@ -3484,43 +3475,234 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 		ChannelID:        targetChannelID,
 		MemberID:         member.ID,
 		Content:          msg.Content,
-		DisplayOrder:     float64(nowMs),
+		DisplayOrder:     float64(now.UnixMilli()),
 		ICMode:           msgICMode,
 		SenderMemberName: member.Nickname,
-		IsWhisper:        true,
-		WhisperTo:        privateOtherUser,
+		IsWhisper:        cfg.AsWhisper,
 	}
-	m.WhisperTarget = whisperUser
-	m.WhisperSenderUserNick = ctx.User.Nickname
-	m.WhisperSenderUserName = ctx.User.Username
-	m.WhisperSenderMemberID = member.ID
-	m.WhisperSenderMemberName = m.SenderMemberName
-	m.WhisperTargetUserNick = whisperUser.Nickname
-	m.WhisperTargetUserName = whisperUser.Username
-	if whisperMember != nil {
-		m.WhisperTargetMemberID = whisperMember.ID
-		m.WhisperTargetMemberName = whisperMember.Nickname
+
+	whisperRecipientIDs := make([]string, 0, 4)
+	if cfg.AsWhisper {
+		whisperUser := model.UserGet(privateOtherUser)
+		if whisperUser == nil {
+			return
+		}
+		var whisperMember *model.MemberModel
+		if len(targetChannelID) < 30 {
+			whisperMember, _ = model.MemberGetByUserIDAndChannelIDBase(privateOtherUser, targetChannelID, "", false)
+		}
+		setUserNickFromMember(whisperUser, whisperMember)
+
+		recipientUsers := []*model.UserModel{whisperUser}
+		recipientSeen := map[string]struct{}{whisperUser.ID: {}}
+		if cfg.AppendAtTargetsWhenWhisper {
+			atIDs := extractBotWhisperForwardAtTargetIDs(msg.Content)
+			for _, atID := range atIDs {
+				atID = strings.TrimSpace(atID)
+				if atID == "" || atID == "all" || atID == ctx.User.ID || atID == whisperUser.ID {
+					continue
+				}
+				if _, exists := recipientSeen[atID]; exists {
+					continue
+				}
+				target := loadWhisperTargetForChannel(targetChannelID, atID)
+				if target == nil {
+					continue
+				}
+				recipientSeen[atID] = struct{}{}
+				recipientUsers = append(recipientUsers, target)
+			}
+		}
+		for _, target := range recipientUsers {
+			if target == nil || target.ID == "" || target.ID == ctx.User.ID {
+				continue
+			}
+			whisperRecipientIDs = append(whisperRecipientIDs, target.ID)
+		}
+
+		m.WhisperTo = privateOtherUser
+		m.WhisperTarget = whisperUser
+		m.WhisperTargets = recipientUsers
+		m.WhisperSenderUserNick = ctx.User.Nickname
+		m.WhisperSenderUserName = ctx.User.Username
+		m.WhisperSenderMemberID = member.ID
+		m.WhisperSenderMemberName = m.SenderMemberName
+		m.WhisperTargetUserNick = whisperUser.Nickname
+		m.WhisperTargetUserName = whisperUser.Username
+		if whisperMember != nil {
+			m.WhisperTargetMemberID = whisperMember.ID
+			m.WhisperTargetMemberName = whisperMember.Nickname
+		}
 	}
 
 	if err := model.GetDB().Create(&m).Error; err != nil {
 		return
 	}
+	if cfg.AsWhisper && len(whisperRecipientIDs) > 0 {
+		if err := model.CreateWhisperRecipients(m.ID, whisperRecipientIDs); err != nil {
+			log.Printf("创建 BOT 私聊转发收件人失败: %v", err)
+		}
+	}
+
 	channelData := targetChannel.ToProtocolType()
 	userData := ctx.User.ToProtocolType()
 	messageData := m.ToProtocolType2(channelData)
 	messageData.Content = msg.Content
 	messageData.User = userData
 	messageData.Member = member.ToProtocolType()
-	messageData.WhisperTo = whisperUser.ToProtocolType()
 
-	recipients := lo.Uniq([]string{ctx.User.ID, whisperUser.ID})
-	ctx.BroadcastEventInChannelToUsers(targetChannelID, recipients, &protocol.Event{
-		Type:    protocol.EventMessageCreated,
-		Message: messageData,
-		Channel: channelData,
-		User:    userData,
-	})
+	if cfg.AsWhisper {
+		recipients := lo.Uniq(append([]string{ctx.User.ID}, whisperRecipientIDs...))
+		ctx.BroadcastEventInChannelToUsers(targetChannelID, recipients, &protocol.Event{
+			Type:    protocol.EventMessageCreated,
+			Message: messageData,
+			Channel: channelData,
+			User:    userData,
+		})
+	} else {
+		ctx.BroadcastEventInChannel(targetChannelID, &protocol.Event{
+			Type:    protocol.EventMessageCreated,
+			Message: messageData,
+			Channel: channelData,
+			User:    userData,
+		})
+	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
+}
+
+func resolveBotWhisperForwardTargetChannel(ctx *ChatContext, content, privateOtherUser string) (*model.ChannelModel, string) {
+	match := hiddenDiceForwardPattern.FindStringSubmatch(content)
+	if len(match) >= 2 {
+		if channel := loadBotWhisperForwardTargetChannel(strings.TrimSpace(match[1])); channel != nil {
+			return channel, channel.ID
+		}
+	}
+	fallbackChannelID := resolveActiveChannelIDForUser(ctx, privateOtherUser)
+	if channel := loadBotWhisperForwardTargetChannel(fallbackChannelID); channel != nil {
+		return channel, channel.ID
+	}
+	return nil, ""
+}
+
+func loadBotWhisperForwardTargetChannel(channelID string) *model.ChannelModel {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil || channel == nil || channel.ID == "" {
+		return nil
+	}
+	if channel.IsPrivate || strings.EqualFold(strings.TrimSpace(channel.PermType), "private") {
+		return nil
+	}
+	return channel
+}
+
+func resolveActiveChannelIDForUser(ctx *ChatContext, userID string) string {
+	userID = strings.TrimSpace(userID)
+	if ctx == nil || userID == "" || ctx.UserId2ConnInfo == nil {
+		return ""
+	}
+	connMap, ok := ctx.UserId2ConnInfo.Load(userID)
+	if !ok || connMap == nil {
+		return ""
+	}
+	bestChannelID := ""
+	bestAliveAt := int64(-1)
+	connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+		if info == nil {
+			return true
+		}
+		channelID := strings.TrimSpace(info.ChannelId)
+		if channelID == "" {
+			return true
+		}
+		lastAlive := info.LastAliveTime
+		if lastAlive == 0 {
+			lastAlive = info.LastPingTime
+		}
+		if lastAlive > bestAliveAt {
+			bestAliveAt = lastAlive
+			bestChannelID = channelID
+		}
+		return true
+	})
+	return bestChannelID
+}
+
+func shouldForwardBotWhisperMessage(cfg BotWhisperForwardConfig, content string) bool {
+	if !cfg.Enabled {
+		return false
+	}
+	matchedCount := 0
+	enabledCount := 0
+	for _, rule := range cfg.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		enabledCount++
+		if matchBotWhisperForwardRule(rule, content) {
+			matchedCount++
+		}
+	}
+	if enabledCount == 0 {
+		return false
+	}
+	if cfg.RuleLogic == botWhisperForwardRuleLogicAll {
+		return matchedCount == enabledCount
+	}
+	return matchedCount > 0
+}
+
+func matchBotWhisperForwardRule(rule BotWhisperForwardRule, content string) bool {
+	switch rule.Type {
+	case botWhisperForwardRuleTypeLegacyHiddenDice:
+		return strings.Contains(content, "暗骰")
+	case botWhisperForwardRuleTypeKeyword:
+		keyword := strings.TrimSpace(rule.Keyword)
+		return keyword != "" && strings.Contains(content, keyword)
+	case botWhisperForwardRuleTypeRegex:
+		re, err := compileBotWhisperForwardRegex(rule.Pattern, rule.Flags)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(content)
+	case botWhisperForwardRuleTypeAll:
+		return true
+	default:
+		return false
+	}
+}
+
+func extractBotWhisperForwardAtTargetIDs(content string) []string {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	matches := atTagIDPattern.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(matches))
+	seen := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		id := strings.TrimSpace(match[1])
+		if id == "" {
+			id = strings.TrimSpace(match[2])
+		}
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func resolveWhisperRecipients(whisperTo string, whisperToIds []string, senderID string) []string {

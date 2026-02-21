@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -2612,6 +2612,44 @@ export const useChatStore = defineStore({
       return payload;
     },
 
+    async updateChannelBotWhisperForwardConfig(
+      channelId: string,
+      config: BotWhisperForwardConfig,
+      options?: { applyToWorld?: boolean },
+    ) {
+      if (!channelId) {
+        return null;
+      }
+      const applyToWorld = options?.applyToWorld === true;
+      const configJson = JSON.stringify(config ?? {});
+      const resp = await this.sendAPI('channel.bot_whisper.forward.update', {
+        channel_id: channelId,
+        config_json: configJson,
+        apply_to_world: applyToWorld,
+      }) as {
+        data?: {
+          channel_id?: string;
+          channel_ids?: string[];
+          updated_count?: number;
+          config_json?: string;
+          apply_to_world?: boolean;
+          world_id?: string;
+        };
+      };
+      const payload = resp?.data || {};
+      const patchJson = payload.config_json || configJson;
+      const targetIdsRaw = Array.isArray(payload.channel_ids) && payload.channel_ids.length > 0
+        ? payload.channel_ids
+        : [payload.channel_id || channelId];
+      const targetIds = Array.from(new Set(targetIdsRaw.map((id) => String(id || '').trim()).filter(Boolean)));
+      targetIds.forEach((id) => {
+        this.patchChannelAttributes(id, {
+          botWhisperForwardConfig: patchJson,
+        });
+      });
+      return payload;
+    },
+
     async channelMembersCountRefresh() {
       if (this.observerMode) {
         return;
@@ -4524,6 +4562,9 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (event.channel?.defaultDiceExpr) {
     patch.defaultDiceExpr = event.channel.defaultDiceExpr;
+  }
+  if (typeof (event.channel as any)?.botWhisperForwardConfig === 'string') {
+    patch.botWhisperForwardConfig = (event.channel as any).botWhisperForwardConfig;
   }
   if (typeof event.channel?.builtInDiceEnabled === 'boolean') {
     patch.builtInDiceEnabled = event.channel.builtInDiceEnabled;

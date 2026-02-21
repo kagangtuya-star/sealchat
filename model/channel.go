@@ -16,19 +16,20 @@ const (
 
 type ChannelModel struct {
 	StringPKBaseModel
-	WorldID            string `json:"worldId" gorm:"size:100;index"`
-	Name               string `json:"name"`
-	Note               string `json:"note"`                   // 这是一份注释，用于管理人员辨别数据
-	RootId             string `json:"rootId"`                 // 如果未来有多级子频道，那么rootId指向顶层
-	ParentID           string `json:"parentId" gorm:"null"`   // 好像satori协议这里不统一啊
-	IsPrivate          bool   `json:"isPrivate" gorm:"index"` // 是私聊频道吗？
-	RecentSentAt       int64  `json:"recentSentAt"`           // 最近发送消息的时间
-	UserID             string `json:"userId"`                 // 创建者ID
-	PermType           string `json:"permType"`               // public 公开 non-public 非公开 private 私聊
-	DefaultDiceExpr    string `json:"defaultDiceExpr" gorm:"size:32;not null;default:d20"`
-	BuiltInDiceEnabled bool   `json:"builtInDiceEnabled" gorm:"default:true"`
-	BotFeatureEnabled  bool   `json:"botFeatureEnabled" gorm:"default:false"`
-	Status             string `json:"status" gorm:"size:24;default:active;index"`
+	WorldID                 string `json:"worldId" gorm:"size:100;index"`
+	Name                    string `json:"name"`
+	Note                    string `json:"note"`                   // 这是一份注释，用于管理人员辨别数据
+	RootId                  string `json:"rootId"`                 // 如果未来有多级子频道，那么rootId指向顶层
+	ParentID                string `json:"parentId" gorm:"null"`   // 好像satori协议这里不统一啊
+	IsPrivate               bool   `json:"isPrivate" gorm:"index"` // 是私聊频道吗？
+	RecentSentAt            int64  `json:"recentSentAt"`           // 最近发送消息的时间
+	UserID                  string `json:"userId"`                 // 创建者ID
+	PermType                string `json:"permType"`               // public 公开 non-public 非公开 private 私聊
+	DefaultDiceExpr         string `json:"defaultDiceExpr" gorm:"size:32;not null;default:d20"`
+	BuiltInDiceEnabled      bool   `json:"builtInDiceEnabled" gorm:"default:true"`
+	BotFeatureEnabled       bool   `json:"botFeatureEnabled" gorm:"default:false"`
+	BotWhisperForwardConfig string `json:"botWhisperForwardConfig" gorm:"type:text"`
+	Status                  string `json:"status" gorm:"size:24;default:active;index"`
 
 	SortOrder int `json:"sortOrder" gorm:"index"` // 优先级序号，越大越靠前
 
@@ -195,15 +196,16 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 		channelType = protocol.DirectChannelType
 	}
 	return &protocol.Channel{
-		ID:                 c.ID,
-		WorldID:            c.WorldID,
-		Name:               c.Name,
-		Type:               channelType,
-		DefaultDiceExpr:    c.DefaultDiceExpr,
-		BuiltInDiceEnabled: c.BuiltInDiceEnabled,
-		BotFeatureEnabled:  c.BotFeatureEnabled,
-		BackgroundAttachmentId: c.BackgroundAttachmentId,
-		BackgroundSettings:     c.BackgroundSettings,
+		ID:                      c.ID,
+		WorldID:                 c.WorldID,
+		Name:                    c.Name,
+		Type:                    channelType,
+		DefaultDiceExpr:         c.DefaultDiceExpr,
+		BuiltInDiceEnabled:      c.BuiltInDiceEnabled,
+		BotFeatureEnabled:       c.BotFeatureEnabled,
+		BotWhisperForwardConfig: c.BotWhisperForwardConfig,
+		BackgroundAttachmentId:  c.BackgroundAttachmentId,
+		BackgroundSettings:      c.BackgroundSettings,
 	}
 }
 

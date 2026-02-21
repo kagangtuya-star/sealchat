@@ -591,6 +591,9 @@ func websocketWorks(app *fiber.App) {
 					case "channel.feature.update":
 						apiWrap(ctx, msg, apiChannelFeatureUpdate)
 						solved = true
+					case "channel.bot_whisper.forward.update":
+						apiWrap(ctx, msg, apiChannelBotWhisperForwardUpdate)
+						solved = true
 						// case "guild.list":
 					//	 apiChannelList(c, msg, apiMsg.Echo)
 					//	 solved = true

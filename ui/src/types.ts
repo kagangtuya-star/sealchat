@@ -31,9 +31,30 @@ declare module '@satorijs/protocol' {
     defaultDiceExpr?: string;
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
+    botWhisperForwardConfig?: string;
     characterApiEnabled?: boolean;
     characterApiReason?: string;
   }
+}
+
+export type BotWhisperForwardRuleType = 'legacy_hidden_dice' | 'keyword' | 'regex' | 'all';
+export type BotWhisperForwardRuleLogic = 'any' | 'all';
+
+export interface BotWhisperForwardRule {
+  id: string;
+  type: BotWhisperForwardRuleType;
+  enabled: boolean;
+  keyword?: string;
+  pattern?: string;
+  flags?: string;
+}
+
+export interface BotWhisperForwardConfig {
+  enabled: boolean;
+  asWhisper: boolean;
+  appendAtTargetsWhenWhisper: boolean;
+  ruleLogic: BotWhisperForwardRuleLogic;
+  rules: BotWhisperForwardRule[];
 }
 
 export interface SatoriMessage {
@@ -271,6 +292,7 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  botWhisperForwardConfig?: string;
   characterApiEnabled?: boolean;
   characterApiReason?: string;
   backgroundAttachmentId?: string;
