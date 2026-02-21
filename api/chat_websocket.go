@@ -55,6 +55,7 @@ type ConnInfo struct {
 	TypingOrderKey        float64
 	Focused               bool
 	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastWhisperTargets *utils.SyncMap[string, []string]
 	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
 	BotCharacterSupport   BotCharacterSupportState
 	BotCharacterProbeOn   bool
@@ -62,8 +63,10 @@ type ConnInfo struct {
 }
 
 type BotHiddenDicePending struct {
-	TargetUserID string
-	Count        int
+	TargetUserID  string
+	TargetUserIDs []string
+	Count         int
+	CreatedAt     int64
 }
 
 var commandTips utils.SyncMap[string, map[string]string]

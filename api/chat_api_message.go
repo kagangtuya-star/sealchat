@@ -1724,21 +1724,50 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	hiddenWhisperToSelf := false
 	whisperTo := strings.TrimSpace(data.WhisperTo)
-	if whisperTo == "" && botMsgContext != nil && botMsgContext.IsWhisper && !botMsgContext.IsHiddenDice {
-		if botMsgContext.WhisperToUserID != "" {
-			whisperTo = botMsgContext.WhisperToUserID
+	whisperRecipientIDs := resolveWhisperRecipients(whisperTo, data.WhisperToIds, ctx.User.ID)
+	if whisperTo == "" && len(whisperRecipientIDs) > 0 {
+		whisperTo = whisperRecipientIDs[0]
+	}
+	if len(whisperRecipientIDs) == 0 && ctx.User.IsBot && data.QuoteID != "" {
+		if quoteRecipients := resolveWhisperRecipientsFromQuote(channelId, data.QuoteID, ctx.User.ID); len(quoteRecipients) > 0 {
+			whisperRecipientIDs = quoteRecipients
+			whisperTo = quoteRecipients[0]
+		}
+	}
+	if len(whisperRecipientIDs) == 0 && botMsgContext != nil && botMsgContext.IsWhisper && !botMsgContext.IsHiddenDice {
+		if cachedRecipients := resolveBotWhisperRecipients(ctx, channelId, ctx.User.ID); len(cachedRecipients) > 0 {
+			whisperRecipientIDs = cachedRecipients
+			whisperTo = cachedRecipients[0]
+		} else if botMsgContext.WhisperToUserID != "" {
+			whisperRecipientIDs = resolveWhisperRecipients(botMsgContext.WhisperToUserID, nil, ctx.User.ID)
+			if len(whisperRecipientIDs) > 0 {
+				whisperTo = whisperRecipientIDs[0]
+			} else {
+				whisperTo = botMsgContext.WhisperToUserID
+			}
 		}
 	}
 	if ctx.User.IsBot && channel.BotFeatureEnabled {
-		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && pending.TargetUserID != "" {
-			if whisperTo != "" {
+		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && hasBotHiddenDicePendingTargets(pending) {
+			if len(whisperRecipientIDs) > 0 || whisperTo != "" {
 				if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 					ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
 				}
 			} else {
 				pending.Count++
 				if pending.Count >= 2 {
-					whisperTo = pending.TargetUserID
+					resolvedPending := resolveWhisperRecipients(pending.TargetUserID, pending.TargetUserIDs, ctx.User.ID)
+					if len(resolvedPending) > 0 {
+						whisperRecipientIDs = resolvedPending
+						preferredTarget := strings.TrimSpace(pending.TargetUserID)
+						if preferredTarget != "" {
+							whisperTo = preferredTarget
+						} else {
+							whisperTo = resolvedPending[0]
+						}
+					} else if pending.TargetUserID != "" {
+						whisperTo = pending.TargetUserID
+					}
 					if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 						ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
 					}
@@ -1748,12 +1777,20 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && !channel.BotFeatureEnabled {
+	if ctx.User.IsBot && botMsgContext != nil && botMsgContext.IsWhisper {
+		senderID := strings.TrimSpace(botMsgContext.SenderUserID)
+		if senderID != "" {
+			whisperRecipientIDs = resolveWhisperRecipients(whisperTo, append(whisperRecipientIDs, senderID), ctx.User.ID)
+			if whisperTo == "" && len(whisperRecipientIDs) > 0 {
+				whisperTo = whisperRecipientIDs[0]
+			}
+		}
+	}
+	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !channel.BotFeatureEnabled {
 		hiddenWhisperToSelf = true
 		whisperTo = ctx.User.ID
 	}
 
-	whisperRecipientIDs := resolveWhisperRecipients(whisperTo, data.WhisperToIds, ctx.User.ID)
 	if len(whisperRecipientIDs) > 10 {
 		return nil, fmt.Errorf("悄悄话收件人数量不能超过10人")
 	}
@@ -2038,7 +2075,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		if whisperUser != nil {
-			targets := lo.Uniq([]string{whisperTo})
+			targets := make([]string, 0, len(whisperRecipientIDs)+1)
+			if whisperTo != "" {
+				targets = append(targets, whisperTo)
+			}
+			targets = append(targets, whisperRecipientIDs...)
+			targets = lo.Uniq(targets)
 			for _, uid := range targets {
 				if uid == "" || uid == ctx.User.ID {
 					continue
@@ -3130,6 +3172,73 @@ func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.Mess
 	return msgContext
 }
 
+func resolveBotWhisperRecipients(ctx *ChatContext, channelId, senderID string) []string {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
+		return nil
+	}
+	if ctx.ConnInfo.BotLastWhisperTargets == nil {
+		return nil
+	}
+	targetIDs, ok := ctx.ConnInfo.BotLastWhisperTargets.Load(channelId)
+	if !ok || len(targetIDs) == 0 {
+		return nil
+	}
+	return resolveWhisperRecipients("", targetIDs, senderID)
+}
+
+func resolveWhisperRecipientsFromQuote(channelID, quoteID, senderID string) []string {
+	channelID = strings.TrimSpace(channelID)
+	quoteID = strings.TrimSpace(quoteID)
+	if channelID == "" || quoteID == "" {
+		return nil
+	}
+	var quote model.MessageModel
+	model.GetDB().
+		Select("id, channel_id, user_id, is_whisper, whisper_to, is_deleted").
+		Where("id = ? AND channel_id = ? AND is_deleted = ?", quoteID, channelID, false).
+		Limit(1).
+		Find(&quote)
+	if quote.ID == "" || !quote.IsWhisper {
+		return nil
+	}
+	recipientIDs := model.GetWhisperRecipientIDs(quote.ID)
+	if strings.TrimSpace(quote.UserID) != "" {
+		recipientIDs = append(recipientIDs, quote.UserID)
+	}
+	return resolveWhisperRecipients(quote.WhisperTo, recipientIDs, senderID)
+}
+
+func hasBotHiddenDicePendingTargets(pending *BotHiddenDicePending) bool {
+	if pending == nil {
+		return false
+	}
+	if strings.TrimSpace(pending.TargetUserID) != "" {
+		return true
+	}
+	for _, id := range pending.TargetUserIDs {
+		if strings.TrimSpace(id) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func botHiddenDicePendingContainsRecipient(pending *BotHiddenDicePending, userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if pending == nil || userID == "" {
+		return false
+	}
+	if strings.TrimSpace(pending.TargetUserID) == userID {
+		return true
+	}
+	for _, id := range pending.TargetUserIDs {
+		if strings.TrimSpace(id) == userID {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenDicePending {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
 		return nil
@@ -3326,7 +3435,7 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 	if targetChannelID == "" {
 		return
 	}
-	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); pending != nil && pending.TargetUserID == privateOtherUser {
+	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); botHiddenDicePendingContainsRecipient(pending, privateOtherUser) {
 		if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 			ctx.ConnInfo.BotHiddenDicePending.Delete(targetChannelID)
 		}
