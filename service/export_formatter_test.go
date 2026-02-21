@@ -1,9 +1,12 @@
 package service
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"sealchat/model"
 )
 
 func TestNormalizeDomainToURLIPv6(t *testing.T) {
@@ -112,5 +115,65 @@ func TestBuildBBCodeTextLineDoesNotRenderCodeFence(t *testing.T) {
 	}
 	if !strings.Contains(line, "```hello```") {
 		t.Fatalf("code fence should remain literal text, got %q", line)
+	}
+}
+
+func TestExtractWhisperTargetsPreferRoleNameOverUserName(t *testing.T) {
+	initTestDB(t)
+	db := model.GetDB()
+	if err := db.Create(&model.UserModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "u1"},
+		Username:          "target_user_name",
+		Password:          "test-password",
+		Salt:              "test-salt",
+		Nickname:          "目标用户昵称",
+	}).Error; err != nil {
+		t.Fatalf("create user u1 failed: %v", err)
+	}
+	if err := db.Create(&model.UserModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "u2"},
+		Username:          "target_user_name_2",
+		Password:          "test-password",
+		Salt:              "test-salt",
+		Nickname:          "目标乙昵称",
+	}).Error; err != nil {
+		t.Fatalf("create user u2 failed: %v", err)
+	}
+
+	msg := &model.MessageModel{
+		IsWhisper:               true,
+		WhisperTo:               "u1",
+		WhisperTargetMemberName: "角色甲",
+		WhisperTarget: &model.UserModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "u1"},
+			Username:          "target_user_name",
+			Nickname:          "目标用户昵称",
+		},
+		WhisperTargets: []*model.UserModel{
+			{
+				StringPKBaseModel: model.StringPKBaseModel{ID: "u1"},
+				Username:          "target_user_name",
+				Nickname:          "目标用户昵称",
+			},
+			{
+				StringPKBaseModel: model.StringPKBaseModel{ID: "u2"},
+				Username:          "target_user_name_2",
+				Nickname:          "目标乙昵称",
+			},
+		},
+	}
+
+	targets := extractWhisperTargets(msg, "", nil)
+	if len(targets) == 0 {
+		t.Fatalf("extractWhisperTargets returned empty")
+	}
+	if targets[0] != "角色甲" {
+		t.Fatalf("expected first target to be role name, got %v", targets)
+	}
+	if slices.Contains(targets, "目标用户昵称") {
+		t.Fatalf("primary target should prefer role name instead of user nickname, got %v", targets)
+	}
+	if !slices.Contains(targets, "目标乙昵称") {
+		t.Fatalf("secondary targets should still be present, got %v", targets)
 	}
 }
