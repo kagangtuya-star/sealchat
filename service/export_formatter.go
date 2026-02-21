@@ -397,6 +397,12 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 	if msg == nil || !msg.IsWhisper {
 		return nil
 	}
+	primaryTargetID := strings.TrimSpace(msg.WhisperTo)
+	if primaryTargetID == "" && msg.WhisperTarget != nil {
+		primaryTargetID = strings.TrimSpace(msg.WhisperTarget.ID)
+	}
+	hasPrimaryRoleName := strings.TrimSpace(msg.WhisperTargetMemberName) != ""
+
 	var targets []string
 	seen := map[string]struct{}{}
 	addName := func(name string) {
@@ -410,16 +416,47 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 		seen[name] = struct{}{}
 		targets = append(targets, name)
 	}
-	if msg.WhisperTarget != nil {
-		addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
+	skipPrimaryFallback := func(id string) bool {
+		if !hasPrimaryRoleName {
+			return false
+		}
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return primaryTargetID == ""
+		}
+		return id == primaryTargetID
 	}
-	if strings.TrimSpace(msg.WhisperTargetMemberName) != "" {
+	if hasPrimaryRoleName {
 		addName(msg.WhisperTargetMemberName)
+	}
+	if msg.WhisperTarget != nil {
+		if !skipPrimaryFallback(msg.WhisperTarget.ID) {
+			addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
+		}
+	}
+	for _, target := range msg.WhisperTargets {
+		if target == nil {
+			continue
+		}
+		if id := strings.TrimSpace(target.ID); id != "" {
+			if skipPrimaryFallback(id) {
+				continue
+			}
+			addName(resolveMemberDisplayName(channelID, id, resolver))
+			continue
+		}
+		if skipPrimaryFallback("") {
+			continue
+		}
+		addName(resolveUserDisplayName(target))
 	}
 	if strings.TrimSpace(msg.WhisperTargetUserNick) != "" && len(targets) == 0 {
 		addName(msg.WhisperTargetUserNick)
 	}
 	for _, id := range parseWhisperIDs(msg.WhisperTo) {
+		if skipPrimaryFallback(id) {
+			continue
+		}
 		if resolver != nil {
 			if name := resolver.resolveIdentityName(id); name != "" {
 				addName(name)
@@ -1056,21 +1093,21 @@ type quickToken struct {
 
 var (
 	quickCodeFenceLiteralPattern = regexp.MustCompile("```([\\s\\S]*?)```")
-	quickInlineCodePattern  = regexp.MustCompile("`([^`\\n]+)`")
-	quickLinkPattern        = regexp.MustCompile(`\[([^\]\\n]+)\]\((https?://[^\s)]+)\)`)
-	quickBoldPattern        = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
-	quickItalicPattern      = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
-	htmlTagPattern          = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
-	bbcodePrePattern        = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
-	bbcodeInlineCodePattern = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
-	bbcodeLinkPattern       = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
-	bbcodeStrongPattern     = regexp.MustCompile(`(?is)<\/?strong\b[^>]*>`)
-	bbcodeBoldPattern       = regexp.MustCompile(`(?is)<\/?b\b[^>]*>`)
-	bbcodeEmPattern         = regexp.MustCompile(`(?is)<\/?em\b[^>]*>`)
-	bbcodeItalicPattern     = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
-	bbcodeBrPattern         = regexp.MustCompile(`(?is)<br\s*/?>`)
-	bbcodePBoundaryPattern  = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
-	bbcodeAnyTagPattern     = regexp.MustCompile(`(?is)</?[^>]+>`)
+	quickInlineCodePattern       = regexp.MustCompile("`([^`\\n]+)`")
+	quickLinkPattern             = regexp.MustCompile(`\[([^\]\\n]+)\]\((https?://[^\s)]+)\)`)
+	quickBoldPattern             = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
+	quickItalicPattern           = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
+	htmlTagPattern               = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
+	bbcodePrePattern             = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
+	bbcodeInlineCodePattern      = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
+	bbcodeLinkPattern            = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	bbcodeStrongPattern          = regexp.MustCompile(`(?is)<\/?strong\b[^>]*>`)
+	bbcodeBoldPattern            = regexp.MustCompile(`(?is)<\/?b\b[^>]*>`)
+	bbcodeEmPattern              = regexp.MustCompile(`(?is)<\/?em\b[^>]*>`)
+	bbcodeItalicPattern          = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
+	bbcodeBrPattern              = regexp.MustCompile(`(?is)<br\s*/?>`)
+	bbcodePBoundaryPattern       = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
+	bbcodeAnyTagPattern          = regexp.MustCompile(`(?is)</?[^>]+>`)
 )
 
 func enhancePlainContentForHTMLExport(content string) string {
