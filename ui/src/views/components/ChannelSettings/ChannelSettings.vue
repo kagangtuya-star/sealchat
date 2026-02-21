@@ -62,6 +62,15 @@ watch(() => props.channel, () => {
   }
 }, { immediate: true });
 
+watch(
+  () => modelShow.value,
+  (show) => {
+    if (show && props.channel?.id) {
+      void doReload();
+    }
+  },
+);
+
 const channelEdit = async (): Promise<void> => {
   if (!model.value.name?.trim()) {
     message.error('频道名称不能为空');

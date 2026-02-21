@@ -196,6 +196,12 @@ const canEdit = computed(() => {
 const readOnly = computed(() => !canEdit.value);
 const isDirty = computed(() => JSON.stringify(normalizeConfig(configModel.value)) !== initialSnapshot.value);
 
+const patchCurrentChannelConfig = (configJson: string) => {
+  if (!props.channel) return;
+  (props.channel as any).botWhisperForwardConfig = configJson;
+  (props.channel as any).bot_whisper_forward_config = configJson;
+};
+
 const addRule = (type: BotWhisperForwardRuleType = 'keyword') => {
   configModel.value.rules.push(createRule(type));
 };
@@ -240,6 +246,10 @@ const saveConfig = async (applyToWorld = false) => {
       payload,
       { applyToWorld },
     );
+    const savedConfigJson = typeof result?.config_json === 'string' && result.config_json.trim()
+      ? result.config_json
+      : JSON.stringify(payload);
+    patchCurrentChannelConfig(savedConfigJson);
     configModel.value = cloneDeep(payload);
     initialSnapshot.value = JSON.stringify(payload);
     if (applyToWorld) {

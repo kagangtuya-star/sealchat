@@ -2553,10 +2553,7 @@ export const useChatStore = defineStore({
       });
       apply(this.channelTreePrivate as any);
       if (this.curChannel?.id === channelId) {
-        this.curChannel = {
-          ...this.curChannel,
-          ...normalizedPatch,
-        } as Channel;
+        Object.assign(this.curChannel as Record<string, any>, normalizedPatch);
       }
     },
 
