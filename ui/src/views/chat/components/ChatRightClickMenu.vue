@@ -452,6 +452,28 @@ const clickDelete = async () => {
   if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
     return;
   }
+  const target = menuMessage.value.raw as any;
+  if (isSelfMessage.value) {
+    const sourceContent = typeof target?.content === 'string'
+      ? target.content
+      : (typeof target?.originalContent === 'string' ? target.originalContent : '');
+    if (sourceContent) {
+      const mode = detectContentMode(sourceContent);
+      const whisperTargetId = resolveWhisperTargetId(target);
+      const identityId = resolveIdentityId(target);
+      const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
+      chat.cacheRevokedDraft({
+        messageId: String(target.id),
+        channelId: chat.curChannel.id,
+        content: sourceContent,
+        mode,
+        isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
+        whisperTargetId,
+        icMode,
+        identityId: identityId || null,
+      });
+    }
+  }
   await chat.messageDelete(chat.curChannel.id, menuMessage.value.raw.id)
   message.success('撤回成功')
   chat.messageMenu.show = false;

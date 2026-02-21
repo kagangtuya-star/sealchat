@@ -4150,6 +4150,14 @@ const removePinnedMessage = (messageId?: string) => {
   pinnedRows.value = pinnedRows.value.filter((msg) => msg.id !== messageId);
 };
 
+const removeRevokedPlaceholderMessage = (messageId?: string) => {
+  if (!messageId) {
+    return;
+  }
+  rows.value = rows.value.filter((msg) => msg.id !== messageId);
+  removePinnedMessage(messageId);
+};
+
 const upsertPinnedMessage = (incoming?: Message) => {
   if (!incoming || !incoming.id) {
     return;
@@ -6849,6 +6857,7 @@ const typingToggleClass = computed(() => ({
 }));
 
 const textToSend = ref('');
+const reeditRevokedSource = ref<{ channelId: string; messageId: string } | null>(null);
 
 // 术语快捷输入状态
 const keywordSuggestVisible = ref(false);
@@ -8005,10 +8014,51 @@ const canEditMessage = (target?: Message) => {
   return true;
 };
 
+const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId?: string) => {
+  if (!target?.id) {
+    return;
+  }
+  const ownerId = resolveMessageUserId(target);
+  if (!ownerId || ownerId !== user.info.id) {
+    return;
+  }
+  const channelId = String(
+    overrideChannelId
+    || (target as any)?.channel?.id
+    || (target as any)?.channel_id
+    || chat.curChannel?.id
+    || '',
+  ).trim();
+  if (!channelId) {
+    return;
+  }
+  const rawContent = typeof target.content === 'string'
+    ? target.content
+    : (typeof (target as any)?.originalContent === 'string' ? (target as any).originalContent : '');
+  if (!rawContent) {
+    return;
+  }
+  const mode = detectMessageContentMode(rawContent);
+  const whisperTargetId = resolveMessageWhisperTargetId(target);
+  const identityId = resolveMessageIdentityId(target);
+  const icMode = String(target.icMode ?? (target as any)?.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
+  chat.cacheRevokedDraft({
+    messageId: target.id,
+    channelId,
+    content: rawContent,
+    mode,
+    isWhisper: Boolean(target.isWhisper ?? (target as any)?.is_whisper),
+    whisperTargetId,
+    icMode,
+    identityId: identityId || null,
+  });
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
   }
+  reeditRevokedSource.value = null;
   if (!canEditMessage(target)) {
     message.error('无权编辑该消息');
     return;
@@ -8033,6 +8083,56 @@ const beginEdit = (target?: Message) => {
     identityId: identityId || null,
   });
   inputMode.value = detectedMode;
+};
+
+const handleReeditRevokedMessage = async (target?: Message) => {
+  const messageId = String(target?.id || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!messageId || !channelId) {
+    return;
+  }
+  let cachedDraft = chat.getRevokedDraft(channelId, messageId);
+  if (!cachedDraft) {
+    try {
+      cachedDraft = await chat.fetchRevokedDraft(channelId, messageId);
+    } catch (error) {
+      console.warn('拉取撤回草稿失败', error);
+    }
+  }
+  if (!cachedDraft) {
+    message.warning('撤回内容不可恢复');
+    return;
+  }
+  if (chat.editing) {
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+  }
+  stopTypingPreviewNow();
+  clearInputModeCache();
+  chat.curReplyTo = null;
+  chat.clearWhisperTargets();
+
+  inputMode.value = detectMessageContentMode(cachedDraft.content);
+  let draft = '';
+  if (inputMode.value === 'rich') {
+    resetInlineImages();
+    draft = cachedDraft.content;
+  } else {
+    draft = convertMessageContentToDraft(cachedDraft.content);
+  }
+  textToSend.value = draft;
+  chat.messageMenu.show = false;
+  reeditRevokedSource.value = { channelId, messageId };
+  syncSessionDraftSnapshot();
+  ensureInputFocus();
+  nextTick(() => {
+    if (inputMode.value === 'plain') {
+      moveInputCursorToEnd();
+      return;
+    }
+    const editor = textInputRef.value?.getEditor?.();
+    editor?.chain().focus('end').run();
+  });
 };
 
 const cancelEditing = () => {
@@ -8925,6 +9025,16 @@ const send = throttle(async () => {
   const channelKey = currentChannelKey.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
+  const activeReeditSource = (() => {
+    const source = reeditRevokedSource.value;
+    if (!source) {
+      return null;
+    }
+    if (source.channelId !== String(chat.curChannel?.id || '').trim()) {
+      return null;
+    }
+    return { ...source };
+  })();
 
   // 仅纯文本模式支持 `/角色名` 或 `/角色名 内容` 快捷切换
   if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
@@ -9076,6 +9186,24 @@ const send = throttle(async () => {
     setMessageSendStatus(tmpMsg as any, 'sent');
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
+    if (activeReeditSource) {
+      try {
+        await chat.messageRemove(activeReeditSource.channelId, activeReeditSource.messageId);
+        removeRevokedPlaceholderMessage(activeReeditSource.messageId);
+        chat.clearRevokedDraft(activeReeditSource.channelId, activeReeditSource.messageId);
+      } catch (removeError) {
+        console.warn('撤回占位持久化隐藏失败', removeError);
+        message.warning('消息已发送，但撤回提示未持久化隐藏，请重试');
+      } finally {
+        if (
+          reeditRevokedSource.value
+          && reeditRevokedSource.value.channelId === activeReeditSource.channelId
+          && reeditRevokedSource.value.messageId === activeReeditSource.messageId
+        ) {
+          reeditRevokedSource.value = null;
+        }
+      }
+    }
     resetInlineImages();
     pendingInlineSelection = null;
 
@@ -9407,8 +9535,10 @@ onMounted(async () => {
       return;
     }
     console.log('delete', targetId)
+    const currentChannelId = String(chat.curChannel?.id || '').trim();
     for (let i of rows.value) {
       if (i.id === targetId) {
+        cacheRevokedDraftFromMessage(i, currentChannelId);
         i.content = '';
         (i as any).is_revoked = true;
       }
@@ -9421,6 +9551,7 @@ onMounted(async () => {
     }
     for (let i of pinnedRows.value) {
       if (i.id === targetId) {
+        cacheRevokedDraftFromMessage(i, currentChannelId);
         i.content = '';
         (i as any).is_revoked = true;
       }
@@ -9436,6 +9567,10 @@ chatEvent.on('message-removed', (e?: Event) => {
   const targetId = e?.message?.id;
     if (!targetId) {
       return;
+    }
+    const removedChannelId = String(e?.channel?.id || chat.curChannel?.id || '').trim();
+    if (removedChannelId) {
+      chat.clearRevokedDraft(removedChannelId, targetId);
     }
     for (let i of rows.value) {
       if (i.id === targetId) {
@@ -11408,6 +11543,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(pinItem)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @reedit-revoked="handleReeditRevokedMessage"
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
@@ -11502,6 +11638,7 @@ onBeforeUnmount(() => {
                     @edit="beginEdit(entry.message)"
                     @edit-save="saveEdit"
                     @edit-cancel="cancelEditing"
+                    @reedit-revoked="handleReeditRevokedMessage"
                     @retry-send="retrySendMessage"
                     @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                   />
@@ -11537,6 +11674,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @reedit-revoked="handleReeditRevokedMessage"
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
@@ -11570,6 +11708,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @reedit-revoked="handleReeditRevokedMessage"
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />

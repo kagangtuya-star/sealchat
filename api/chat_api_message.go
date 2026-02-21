@@ -210,6 +210,74 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}) (any, error) {
+	db := model.GetDB()
+	channelID := strings.TrimSpace(data.ChannelID)
+	messageID := strings.TrimSpace(data.MessageID)
+	if channelID == "" || messageID == "" {
+		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	}
+
+	// 权限检查（与 message.get 一致）
+	if ctx.IsReadOnly() {
+		if len(channelID) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelID); err != nil {
+			return nil, err
+		}
+	} else if len(channelID) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	var item model.MessageModel
+	q := db.Where("channel_id = ? AND id = ?", channelID, messageID)
+	q = q.Where("is_deleted = ?", false)
+	q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+		SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+	))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+	q.Limit(1).Find(&item)
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	// 仅消息作者可恢复撤回文案
+	if item.UserID != ctx.User.ID {
+		return nil, nil
+	}
+	if !item.IsRevoked {
+		return nil, nil
+	}
+	if strings.TrimSpace(item.Content) == "" {
+		return nil, nil
+	}
+
+	icMode := strings.ToLower(strings.TrimSpace(item.ICMode))
+	if icMode != "ooc" {
+		icMode = "ic"
+	}
+
+	return map[string]any{
+		"message_id":  item.ID,
+		"channel_id":  item.ChannelID,
+		"content":     item.Content,
+		"is_whisper":  item.IsWhisper,
+		"whisper_to":  item.WhisperTo,
+		"ic_mode":     icMode,
+		"identity_id": item.SenderIdentityID,
+	}, nil
+}
+
 func clampMessageContextWindow(value int, defaultValue int) int {
 	if value <= 0 {
 		return defaultValue

@@ -147,6 +147,7 @@ interface ChatState {
     initialIdentityId?: string | null;
     activeIdentityBackup?: string | null;
   } | null
+  revokedDrafts: Record<string, RevokedDraftEntry>
 
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
@@ -197,6 +198,18 @@ interface ChatState {
   messageReactionLoading: Record<string, boolean>;
 }
 
+interface RevokedDraftEntry {
+  messageId: string;
+  channelId: string;
+  content: string;
+  mode: 'plain' | 'rich';
+  isWhisper: boolean;
+  whisperTargetId: string | null;
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  cachedAt: number;
+}
+
 interface ChannelCopyOptions {
   copyRoles: boolean;
   copyMembers: boolean;
@@ -230,6 +243,99 @@ interface PendingApiRequest {
   resolve: (value: any) => void;
   reject: (reason?: any) => void;
 }
+
+const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+const REVOKED_DRAFT_CACHE_MAX = 240;
+const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
+const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
+const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
+  const trimmed = String(content || '').trim();
+  if (!trimmed) {
+    return 'plain';
+  }
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && (
+        (parsed as any).type === 'doc'
+        || Array.isArray((parsed as any).content)
+      )) {
+        return 'rich';
+      }
+    } catch {
+      // ignore invalid json content
+    }
+  }
+  return 'plain';
+};
+const normalizeRevokedDraftEntry = (raw: any): RevokedDraftEntry | null => {
+  const messageId = String(raw?.messageId || '').trim();
+  const channelId = String(raw?.channelId || '').trim();
+  const content = typeof raw?.content === 'string' ? raw.content : '';
+  const cachedAt = Number(raw?.cachedAt || 0);
+  if (!messageId || !channelId || !content || !Number.isFinite(cachedAt) || cachedAt <= 0) {
+    return null;
+  }
+  return {
+    messageId,
+    channelId,
+    content,
+    mode: raw?.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+    isWhisper: raw?.isWhisper === true,
+    whisperTargetId: String(raw?.whisperTargetId || '').trim() || null,
+    icMode: raw?.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId: String(raw?.identityId || '').trim() || null,
+    cachedAt,
+  };
+};
+const loadRevokedDraftsFromSessionStorage = (): Record<string, RevokedDraftEntry> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = sessionStorage.getItem(REVOKED_DRAFT_SESSION_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    const now = Date.now();
+    const normalized = Object.entries(parsed as Record<string, any>)
+      .map(([key, value]) => {
+        const entry = normalizeRevokedDraftEntry(value);
+        if (!entry) {
+          return null;
+        }
+        if (now - entry.cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+          return null;
+        }
+        return [key, entry] as const;
+      })
+      .filter((item): item is readonly [string, RevokedDraftEntry] => !!item)
+      .sort((a, b) => a[1].cachedAt - b[1].cachedAt)
+      .slice(-REVOKED_DRAFT_CACHE_MAX);
+    return Object.fromEntries(normalized);
+  } catch {
+    return {};
+  }
+};
+const persistRevokedDraftsToSessionStorage = (drafts: Record<string, RevokedDraftEntry>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const entries = Object.entries(drafts);
+    if (!entries.length) {
+      sessionStorage.removeItem(REVOKED_DRAFT_SESSION_KEY);
+      return;
+    }
+    sessionStorage.setItem(REVOKED_DRAFT_SESSION_KEY, JSON.stringify(drafts));
+  } catch {
+    // ignore storage quota / privacy mode errors
+  }
+};
 
 const apiMap = new Map<string, PendingApiRequest>();
 let _connectResolve: any = null;
@@ -522,6 +628,7 @@ export const useChatStore = defineStore({
     },
 
     editing: null,
+    revokedDrafts: loadRevokedDraftsFromSessionStorage(),
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
@@ -2655,6 +2762,146 @@ export const useChatStore = defineStore({
     async messageRemove(channel_id: string, message_id: string) {
       const resp = await this.sendAPI('message.remove', { channel_id, message_id });
       return resp.data;
+    },
+
+    pruneRevokedDrafts(now = Date.now()) {
+      const entries = Object.entries(this.revokedDrafts);
+      if (!entries.length) {
+        return;
+      }
+      let changed = false;
+      for (const [key, draft] of entries) {
+        const cachedAt = typeof draft?.cachedAt === 'number' ? draft.cachedAt : 0;
+        if (!cachedAt || now - cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+          delete this.revokedDrafts[key];
+          changed = true;
+        }
+      }
+      if (changed) {
+        persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+        return;
+      }
+      const currentEntries = Object.entries(this.revokedDrafts);
+      if (currentEntries.length <= REVOKED_DRAFT_CACHE_MAX) {
+        return;
+      }
+      currentEntries
+        .sort((a, b) => (a[1].cachedAt || 0) - (b[1].cachedAt || 0))
+        .slice(0, currentEntries.length - REVOKED_DRAFT_CACHE_MAX)
+        .forEach(([key]) => {
+          delete this.revokedDrafts[key];
+        });
+      persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+    },
+
+    cacheRevokedDraft(payload: {
+      messageId: string;
+      channelId: string;
+      content: string;
+      mode?: 'plain' | 'rich';
+      isWhisper?: boolean;
+      whisperTargetId?: string | null;
+      icMode?: 'ic' | 'ooc';
+      identityId?: string | null;
+    }) {
+      const messageId = String(payload?.messageId || '').trim();
+      const channelId = String(payload?.channelId || '').trim();
+      const content = typeof payload?.content === 'string' ? payload.content : '';
+      if (!messageId || !channelId || !content) {
+        return;
+      }
+      const key = buildRevokedDraftKey(channelId, messageId);
+      const next: RevokedDraftEntry = {
+        messageId,
+        channelId,
+        content,
+        mode: payload.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+        isWhisper: payload.isWhisper === true,
+        whisperTargetId: payload.whisperTargetId || null,
+        icMode: payload.icMode === 'ooc' ? 'ooc' : 'ic',
+        identityId: payload.identityId || null,
+        cachedAt: Date.now(),
+      };
+      this.revokedDrafts[key] = next;
+      this.pruneRevokedDrafts(next.cachedAt);
+      persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+    },
+
+    getRevokedDraft(channelId: string, messageId: string): RevokedDraftEntry | null {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return null;
+      }
+      const key = buildRevokedDraftKey(normalizedChannelId, normalizedMessageId);
+      const draft = this.revokedDrafts[key];
+      if (!draft) {
+        return null;
+      }
+      const cachedAt = typeof draft.cachedAt === 'number' ? draft.cachedAt : 0;
+      if (!cachedAt || Date.now() - cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+        return null;
+      }
+      return draft;
+    },
+
+    hasRevokedDraft(channelId: string, messageId: string) {
+      return !!this.getRevokedDraft(channelId, messageId);
+    },
+
+    clearRevokedDraft(channelId: string, messageId: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return;
+      }
+      const key = buildRevokedDraftKey(normalizedChannelId, normalizedMessageId);
+      if (this.revokedDrafts[key]) {
+        delete this.revokedDrafts[key];
+        persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+      }
+    },
+
+    async fetchRevokedDraft(channelId: string, messageId: string): Promise<RevokedDraftEntry | null> {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return null;
+      }
+      const cached = this.getRevokedDraft(normalizedChannelId, normalizedMessageId);
+      if (cached) {
+        return cached;
+      }
+      const resp = await this.sendAPI<{ data?: any }>('message.revoked.draft', {
+        channel_id: normalizedChannelId,
+        message_id: normalizedMessageId,
+      });
+      const data = (resp as any)?.data;
+      const content = typeof data?.content === 'string' ? data.content : '';
+      if (!content) {
+        return null;
+      }
+      const resultChannelId = String(data?.channel_id || normalizedChannelId).trim();
+      const resultMessageId = String(data?.message_id || normalizedMessageId).trim();
+      if (!resultChannelId || !resultMessageId) {
+        return null;
+      }
+      const rawWhisperTargetId = data?.whisper_to ?? data?.whisperTargetId;
+      const whisperTargetId = String(rawWhisperTargetId || '').trim() || null;
+      const rawIdentityId = data?.identity_id ?? data?.identityId ?? data?.sender_identity_id;
+      const identityId = String(rawIdentityId || '').trim() || null;
+      const rawIcMode = String(data?.ic_mode ?? data?.icMode ?? 'ic').toLowerCase();
+      this.cacheRevokedDraft({
+        messageId: resultMessageId,
+        channelId: resultChannelId,
+        content,
+        mode: data?.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+        isWhisper: Boolean(data?.is_whisper ?? data?.isWhisper),
+        whisperTargetId,
+        icMode: rawIcMode === 'ooc' ? 'ooc' : 'ic',
+        identityId,
+      });
+      return this.getRevokedDraft(resultChannelId, resultMessageId);
     },
 
     async interactWithWidget(messageId: string, widgetIndex: number, operation: 'rotate' | 'reveal' = 'rotate') {

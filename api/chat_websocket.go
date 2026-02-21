@@ -632,6 +632,9 @@ func websocketWorks(app *fiber.App) {
 					case "message.get":
 						apiWrap(ctx, msg, apiMessageGet)
 						solved = true
+					case "message.revoked.draft":
+						apiWrap(ctx, msg, apiMessageRevokedDraft)
+						solved = true
 					case "message.context":
 						apiWrap(ctx, msg, apiMessageContext)
 						solved = true

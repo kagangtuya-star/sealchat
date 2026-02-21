@@ -888,7 +888,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change', 'retry-send']);
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change', 'retry-send', 'reedit-revoked']);
 
 const timestampTicker = ref(Date.now());
 const inlineTimestampText = computed(() => {
@@ -1136,6 +1136,13 @@ const canEdit = computed(() => {
   return false;
 });
 
+const canReeditRevoked = computed(() => {
+  return Boolean(props.item?.is_revoked && props.isSelf);
+});
+
+const revokedReeditLabel = computed(() => '重新编辑');
+const revokedReeditExpanded = ref(false);
+
 // Multi-select computed properties (merged from props and store)
 const effectiveMultiSelectMode = computed(() => props.isMultiSelectMode || chat.multiSelect?.active || false);
 const effectiveIsSelected = computed(() => {
@@ -1206,15 +1213,23 @@ const handleMobileTimestampTap = (e: MouseEvent) => {
 };
 
 const chatItemRef = ref<HTMLElement | null>(null);
+const revokedTriggerRef = ref<HTMLElement | null>(null);
 
 const handleGlobalClickForTimestamp = (e: MouseEvent) => {
-  if (!isMobileUa || shouldForceTimestampVisible.value || !hoverTimestampVisible.value) {
+  if (!isMobileUa) {
     return;
   }
   const target = e.target as HTMLElement;
-  // If click is outside this chat item, hide timestamp
-  if (chatItemRef.value && !chatItemRef.value.contains(target)) {
-    hoverTimestampVisible.value = false;
+  if (!shouldForceTimestampVisible.value && hoverTimestampVisible.value) {
+    // If click is outside this chat item, hide timestamp
+    if (chatItemRef.value && !chatItemRef.value.contains(target)) {
+      hoverTimestampVisible.value = false;
+    }
+  }
+  if (revokedReeditExpanded.value) {
+    if (revokedTriggerRef.value && !revokedTriggerRef.value.contains(target)) {
+      revokedReeditExpanded.value = false;
+    }
   }
 };
 
@@ -1223,6 +1238,14 @@ watch(shouldForceTimestampVisible, (value) => {
     clearHoverTimer();
   }
   hoverTimestampVisible.value = false;
+});
+watch(() => props.item?.id, () => {
+  revokedReeditExpanded.value = false;
+});
+watch(() => props.item?.is_revoked, (value) => {
+  if (!value) {
+    revokedReeditExpanded.value = false;
+  }
 });
 
 const inlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
@@ -2429,6 +2452,18 @@ const handleEditClick = (e: MouseEvent) => {
   emit('edit', props.item);
 }
 
+const handleRevokedReedit = (e: MouseEvent | KeyboardEvent) => {
+  e.stopPropagation();
+  if (!canReeditRevoked.value || !props.item) {
+    return;
+  }
+  if (isMobileUa && !revokedReeditExpanded.value) {
+    revokedReeditExpanded.value = true;
+    return;
+  }
+  emit('reedit-revoked', props.item);
+}
+
 const handleEditSave = (e: MouseEvent) => {
   e.stopPropagation();
   emit('edit-save', props.item);
@@ -2801,7 +2836,33 @@ const handleRetrySend = () => {
 
 <template>
   <div v-if="item?.is_deleted" class="py-4 text-center text-gray-400">一条消息已被删除</div>
-  <div v-else-if="item?.is_revoked" class="py-4 text-center">一条消息已被撤回</div>
+  <div
+    v-else-if="item?.is_revoked"
+    class="chat-item-revoked"
+    :class="[
+      `chat-item-revoked--${props.layout}`,
+      { 'chat-item-revoked--body-only': props.bodyOnly },
+    ]"
+  >
+    <div class="chat-item-revoked__line-wrap">
+      <button
+        ref="revokedTriggerRef"
+        type="button"
+        class="chat-item-revoked__trigger"
+        :class="{
+          'chat-item-revoked__trigger--disabled': !canReeditRevoked,
+          'chat-item-revoked__trigger--expanded': revokedReeditExpanded,
+        }"
+        :aria-label="revokedReeditLabel"
+        :aria-disabled="!canReeditRevoked"
+        :title="revokedReeditLabel"
+        @click="handleRevokedReedit"
+      >
+        <span class="chat-item-revoked__line" aria-hidden="true"></span>
+        <span class="chat-item-revoked__label">{{ revokedReeditLabel }}</span>
+      </button>
+    </div>
+  </div>
   <div
     v-else
     ref="chatItemRef"
@@ -3033,6 +3094,200 @@ const handleRetrySend = () => {
   width: 100%;
   align-items: flex-start;
   gap: 0.4rem;
+}
+
+.chat-item-revoked {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+
+.chat-item-revoked--compact {
+  padding: 0.28rem 0;
+}
+
+.chat-item-revoked__line-wrap {
+  width: min(18rem, 72%);
+  min-width: 7.5rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-item-revoked--compact .chat-item-revoked__line-wrap {
+  width: min(15rem, 100%);
+  min-width: 6.5rem;
+  height: 1.25rem;
+}
+
+.chat-item-revoked__trigger {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--chat-text-secondary, #94a3b8);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chat-item-revoked__line {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 62%, transparent);
+  opacity: 0.86;
+  transition: width 0.2s ease, opacity 0.2s ease;
+}
+
+.chat-item-revoked__label {
+  position: relative;
+  z-index: 1;
+  font-size: 0.74rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.chat-item-revoked__trigger:focus-visible {
+  color: var(--chat-text-primary, #111827);
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 52%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 35%, transparent);
+}
+
+.chat-item-revoked__trigger:focus-visible .chat-item-revoked__line {
+  width: 0;
+  opacity: 0;
+}
+
+.chat-item-revoked__trigger:focus-visible .chat-item-revoked__label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chat-item-revoked__trigger--expanded {
+  color: var(--chat-text-primary, #111827);
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 52%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 35%, transparent);
+}
+
+.chat-item-revoked__trigger--expanded .chat-item-revoked__line {
+  width: 0;
+  opacity: 0;
+}
+
+.chat-item-revoked__trigger--expanded .chat-item-revoked__label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-item-revoked__trigger:hover {
+    color: var(--chat-text-primary, #111827);
+    background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 52%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 35%, transparent);
+  }
+
+  .chat-item-revoked__trigger:hover .chat-item-revoked__line {
+    width: 0;
+    opacity: 0;
+  }
+
+  .chat-item-revoked__trigger:hover .chat-item-revoked__label {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-item-revoked__trigger {
+    color: var(--chat-text-secondary, #94a3b8);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .chat-item-revoked__line {
+    width: 100%;
+    opacity: 0.86;
+  }
+
+  .chat-item-revoked__label {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  .chat-item-revoked__trigger:active {
+    color: var(--chat-text-primary, #111827);
+    background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 52%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 35%, transparent);
+  }
+
+  .chat-item-revoked__trigger:active .chat-item-revoked__line {
+    width: 0;
+    opacity: 0;
+  }
+
+  .chat-item-revoked__trigger:active .chat-item-revoked__label {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-item-revoked__trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary-color, #3b82f6) 68%, transparent);
+  outline-offset: 1px;
+}
+
+.chat-item-revoked__trigger--disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.chat-item-revoked__trigger--disabled:hover {
+  color: var(--chat-text-secondary, #94a3b8);
+}
+
+:root[data-display-palette='night'] .chat-item-revoked__trigger {
+  color: #9aa7b8;
+}
+
+:root[data-display-palette='night'] .chat-item-revoked__trigger:focus-visible {
+  color: #d3dce5;
+  background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.35)) 58%, transparent);
+}
+
+:root[data-display-palette='night'] .chat-item-revoked__trigger--expanded {
+  color: #d3dce5;
+  background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.35)) 58%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :root[data-display-palette='night'] .chat-item-revoked__trigger:hover {
+    color: #d3dce5;
+    background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.35)) 58%, transparent);
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root[data-display-palette='night'] .chat-item-revoked__trigger:active {
+    color: #d3dce5;
+    background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.35)) 58%, transparent);
+  }
 }
 
 .chat-item__avatar {
