@@ -784,7 +784,23 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   <div class="world-lobby-root p-4">
     <div class="world-lobby-header">
       <h2 class="text-lg font-bold">世界大厅</h2>
-      <n-space size="small">
+      <div class="world-lobby-header-avatar">
+        <n-dropdown placement="bottom-end" trigger="click" :options="headerMenuOptions" @select="handleHeaderMenuSelect">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="sc-icon-button sc-user-button"
+                :aria-label="`打开 ${userDisplayName} 的菜单`"
+              >
+                <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
+              </button>
+            </template>
+            <span>{{ userDisplayName }}</span>
+          </n-tooltip>
+        </n-dropdown>
+      </div>
+      <div class="world-lobby-header-buttons">
         <n-button size="small" quaternary @click="toggleViewMode">
           <template #icon>
             <n-icon>
@@ -802,21 +818,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         <n-button size="small" :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'" @click="switchLobbyMode">
           {{ lobbyMode === 'mine' ? '探索世界' : '我的世界' }}
         </n-button>
-        <n-dropdown placement="bottom-end" trigger="click" :options="headerMenuOptions" @select="handleHeaderMenuSelect">
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <button
-                type="button"
-                class="sc-icon-button sc-user-button"
-                :aria-label="`打开 ${userDisplayName} 的菜单`"
-              >
-                <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
-              </button>
-            </template>
-            <span>{{ userDisplayName }}</span>
-          </n-tooltip>
-        </n-dropdown>
-      </n-space>
+      </div>
     </div>
 
     <div class="world-toolbar-row">
@@ -1184,10 +1186,24 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 .world-lobby-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
+}
+
+.world-lobby-header-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.world-lobby-header-buttons {
+  justify-self: end;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -1474,17 +1490,26 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 @media (max-width: 640px) {
   .world-lobby-header {
-    align-items: stretch;
+    grid-template-columns: 1fr auto;
+    row-gap: 8px;
   }
 
-  .world-lobby-header :deep(.n-space) {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+  .world-lobby-header-buttons {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .world-lobby-header :deep(.n-space .n-button) {
-    flex: 1 1 calc(50% - 8px);
+  .world-lobby-header-buttons::-webkit-scrollbar {
+    display: none;
+  }
+
+  .world-lobby-header-buttons :deep(.n-button) {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .world-toolbar-row {
