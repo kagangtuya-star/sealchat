@@ -5942,6 +5942,12 @@ const upsertMessage = (incoming?: Message) => {
 };
 
 async function replaceUsernames(text: string) {
+  const escapeAtAttrValue = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
   const resp = await chat.guildMemberList('');
   const infoMap = (resp.data as any[]).reduce((obj, item) => {
     obj[item.nick] = item;
@@ -5955,7 +5961,9 @@ async function replaceUsernames(text: string) {
   const replacedText = text.replace(regex, (match, username) => {
     if (username in infoMap) {
       const info = infoMap[username];
-      return `<at id="${info.id}" name="${info.nick}" />`
+      const safeId = escapeAtAttrValue(info.id);
+      const safeNick = escapeAtAttrValue(info.nick);
+      return `<at id="${safeId}" name="${safeNick}" />`
     }
     return match;
   });
@@ -8431,12 +8439,7 @@ const containsInlineImageMarker = (text: string) => /\[\[图片:[^\]]+\]\]/.test
 const AT_TOKEN_FLEX_REGEX = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
 
 const decodeAtTokenText = (value: string) => {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+  return contentUnescape(value);
 };
 
 const replaceAtTokensWithDisplayText = (value: string) => {

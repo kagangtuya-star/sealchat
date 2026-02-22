@@ -18,3 +18,11 @@ func TestElementToStringSelfClosingTags(t *testing.T) {
 		t.Fatalf("expected self-closing br tag, got: %q", got)
 	}
 }
+
+func TestNormalizeNestedEntitiesMultiRound(t *testing.T) {
+	input := "&amp;amp;quot; 和 &amp;amp;"
+	got := normalizeNestedEntities(input)
+	if got != "&quot; 和 &amp;" {
+		t.Fatalf("normalizeNestedEntities(%q) = %q", input, got)
+	}
+}

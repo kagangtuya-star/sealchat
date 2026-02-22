@@ -157,6 +157,8 @@ var satoriTagSet = func() map[string]struct{} {
 var satoriTagRegexp = regexp.MustCompile(`</?([a-zA-Z][a-zA-Z0-9_-]*)(\s[^<>]*?)?/?>`)
 var nestedEntityRegexp = regexp.MustCompile(`(?i)&amp;((?:amp|lt|gt|quot|apos)|#\d+|#x[0-9a-fA-F]+);`)
 
+const maxNestedEntityNormalizeRounds = 4
+
 // ContainsSatoriTags 检查内容是否包含 Satori 协议标签
 func ContainsSatoriTags(content string) bool {
 	for _, tag := range satoriTags {
@@ -300,5 +302,13 @@ func normalizeNestedEntities(content string) string {
 	if !strings.Contains(content, "&amp;") {
 		return content
 	}
-	return nestedEntityRegexp.ReplaceAllString(content, "&$1;")
+	current := content
+	for i := 0; i < maxNestedEntityNormalizeRounds; i++ {
+		next := nestedEntityRegexp.ReplaceAllString(current, "&$1;")
+		if next == current {
+			return next
+		}
+		current = next
+	}
+	return current
 }

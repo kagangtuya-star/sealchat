@@ -71,6 +71,27 @@ func TestEnhancePlainContentForHTMLExportInvalidLink(t *testing.T) {
 	}
 }
 
+func TestEnhancePlainContentForHTMLExportNormalizesNestedEntities(t *testing.T) {
+	input := "他说 &amp;quot;你好&amp;quot; 和 &amp;amp;"
+	result := enhancePlainContentForHTMLExport(input)
+	if strings.Contains(result, "&amp;quot;") {
+		t.Fatalf("nested quote entity should be normalized, got %q", result)
+	}
+	if strings.Contains(result, "&amp;amp;") {
+		t.Fatalf("nested amp entity should be normalized, got %q", result)
+	}
+	if !strings.Contains(result, "&#34;你好&#34;") && !strings.Contains(result, "&quot;你好&quot;") {
+		t.Fatalf("expected canonical quote entities, got %q", result)
+	}
+}
+
+func TestStripRichTextDecodesNestedEntities(t *testing.T) {
+	got := stripRichText("<p>&amp;quot;你好&amp;quot; &amp;amp;</p>")
+	if got != "\"你好\" &" {
+		t.Fatalf("stripRichText nested entity decode failed, got %q", got)
+	}
+}
+
 func TestBuildBBCodeTextLineFromQuickFormat(t *testing.T) {
 	payload := &ExportPayload{WithoutTimestamp: true}
 	msg := &ExportMessage{

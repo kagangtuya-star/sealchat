@@ -239,11 +239,18 @@ const resolveEmptyLinePlaceholderPosition = (node: Node | null): { node: Node; o
 
 // 从 mention 元素构建原始 Satori 标签
 const buildMentionToken = (element: HTMLElement): string => {
+  const escapeAttr = (value: string) => value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
   const atId = element.dataset.atId || '';
   const atName = element.dataset.atName || '';
   if (!atId) return '';
-  const nameAttr = atName ? ` name="${atName.replace(/"/g, '&quot;')}"` : '';
-  return `<at id="${atId}"${nameAttr}/>`;
+  const safeId = escapeAttr(atId);
+  const nameAttr = atName ? ` name="${escapeAttr(atName)}"` : '';
+  return `<at id="${safeId}"${nameAttr}/>`;
 };
 
 const getMentionTokenLength = (element: HTMLElement): number => {
