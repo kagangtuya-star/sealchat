@@ -39,6 +39,7 @@ const searchKeyword = ref('');
 const displayLimit = ref(120);
 const customGridRef = ref<HTMLElement | null>(null);
 const PAGE_SIZE = 120;
+const EMOJI_LOAD_TIMEOUT_MS = 5000;
 const activeTab = ref<'emoji' | 'reaction'>(props.mode === 'emoji-only' ? 'emoji' : props.initialTab);
 const customEmojiMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
 const pendingCustomEmojiMeta = new Set<string>();
@@ -232,12 +233,24 @@ const bindPickerEmojiFallback = () => {
   const root = picker?.shadowRoot;
   if (!root) return;
 
-  const handleImgError = (event: Event) => {
-    const target = event.target as HTMLElement | null;
-    if (!target || target.tagName !== 'IMG') return;
-    const img = target as HTMLImageElement;
-    const emoji = img.dataset.emoji || img.alt || img.getAttribute('aria-label') || '';
-    if (!emoji) return;
+  const imgTimers = new Map<HTMLImageElement, number>();
+
+  const clearImgTimeout = (img: HTMLImageElement) => {
+    const timer = imgTimers.get(img);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      imgTimers.delete(img);
+    }
+  };
+
+  const getEmojiToken = (img: HTMLImageElement) => (
+    img.dataset.emoji || img.alt || img.getAttribute('aria-label') || ''
+  );
+
+  const replaceWithFallback = (img: HTMLImageElement) => {
+    clearImgTimeout(img);
+    const emoji = getEmojiToken(img);
+    if (!emoji || emoji.startsWith('id:') || !img.isConnected) return;
     const fallback = document.createElement('span');
     fallback.textContent = emoji;
     fallback.style.display = 'inline-flex';
@@ -252,9 +265,63 @@ const bindPickerEmojiFallback = () => {
     img.replaceWith(fallback);
   };
 
+  const scheduleImgTimeout = (img: HTMLImageElement) => {
+    const emoji = getEmojiToken(img);
+    if (!emoji || emoji.startsWith('id:')) return;
+    clearImgTimeout(img);
+    if (img.complete && img.naturalWidth > 0) return;
+    const timer = window.setTimeout(() => {
+      if (!img.isConnected) {
+        clearImgTimeout(img);
+        return;
+      }
+      if (img.complete && img.naturalWidth > 0) {
+        clearImgTimeout(img);
+        return;
+      }
+      replaceWithFallback(img);
+    }, EMOJI_LOAD_TIMEOUT_MS);
+    imgTimers.set(img, timer);
+  };
+
+  const trackNode = (node: Node) => {
+    if (node instanceof HTMLImageElement) {
+      scheduleImgTimeout(node);
+      return;
+    }
+    if (node instanceof Element) {
+      node.querySelectorAll('img').forEach((img) => scheduleImgTimeout(img as HTMLImageElement));
+    }
+  };
+
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => trackNode(node));
+    });
+  });
+
+  const handleImgLoad = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.tagName !== 'IMG') return;
+    clearImgTimeout(target as HTMLImageElement);
+  };
+
+  const handleImgError = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.tagName !== 'IMG') return;
+    replaceWithFallback(target as HTMLImageElement);
+  };
+
+  root.querySelectorAll('img').forEach((img) => scheduleImgTimeout(img as HTMLImageElement));
+  observer.observe(root, { childList: true, subtree: true });
+  root.addEventListener('load', handleImgLoad, true);
   root.addEventListener('error', handleImgError, true);
 
   return () => {
+    observer.disconnect();
+    imgTimers.forEach((timer) => window.clearTimeout(timer));
+    imgTimers.clear();
+    root.removeEventListener('load', handleImgLoad, true);
     root.removeEventListener('error', handleImgError, true);
   };
 };

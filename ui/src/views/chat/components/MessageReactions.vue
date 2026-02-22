@@ -27,6 +27,8 @@ const chat = useChatStore();
 const user = useUserStore();
 
 const textFallback = reactive<Record<string, boolean>>({});
+const EMOJI_LOAD_TIMEOUT_MS = 5000;
+const emojiLoadTimers = new Map<string, number>();
 
 const reactionItems = computed(() =>
   props.reactions.map((item) => {
@@ -89,10 +91,58 @@ const markReactionFollower = (enabled: boolean) => {
 const handleImgError = (event: Event) => {
   const img = event.target as HTMLImageElement;
   const emoji = img.dataset.emoji || img.alt || '';
+  clearEmojiLoadTimeout(emoji);
   noteEmojiLoadFailure(img.src, emoji);
-  if (emoji) {
+  if (emoji && !emoji.startsWith('id:')) {
     textFallback[emoji] = true;
   }
+};
+
+const handleImgLoad = (event: Event) => {
+  const img = event.target as HTMLImageElement;
+  const emoji = img.dataset.emoji || img.alt || '';
+  clearEmojiLoadTimeout(emoji);
+};
+
+const clearEmojiLoadTimeout = (emoji: string) => {
+  const timer = emojiLoadTimers.get(emoji);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    emojiLoadTimers.delete(emoji);
+  }
+};
+
+const scheduleEmojiLoadTimeout = (emoji: string) => {
+  if (!emoji || emoji.startsWith('id:') || textFallback[emoji] || emojiLoadTimers.has(emoji)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    emojiLoadTimers.delete(emoji);
+    textFallback[emoji] = true;
+  }, EMOJI_LOAD_TIMEOUT_MS);
+  emojiLoadTimers.set(emoji, timer);
+};
+
+const syncEmojiLoadTimeouts = (items: Array<{ emoji: string; useText: boolean; isCustom?: boolean }>) => {
+  const activeEmojis = new Set<string>();
+  items.forEach((item) => {
+    activeEmojis.add(item.emoji);
+    if (item.useText || item.isCustom) {
+      clearEmojiLoadTimeout(item.emoji);
+    } else {
+      scheduleEmojiLoadTimeout(item.emoji);
+    }
+  });
+  Array.from(emojiLoadTimers.keys()).forEach((emoji) => {
+    if (!activeEmojis.has(emoji)) {
+      clearEmojiLoadTimeout(emoji);
+    }
+  });
+};
+
+const clearAllEmojiLoadTimeouts = () => {
+  emojiLoadTimers.forEach((timer) => window.clearTimeout(timer));
+  emojiLoadTimers.clear();
 };
 
 const fetchReactionUsersPage = async (emoji: string, limit: number, offset = 0) => {
@@ -413,6 +463,7 @@ const loadAllUsers = async () => {
 };
 
 onBeforeUnmount(() => {
+  clearAllEmojiLoadTimeouts();
   cancelLongPress();
   cancelHoverClose();
   if (suppressResetTimer.value !== null) {
@@ -424,6 +475,14 @@ onBeforeUnmount(() => {
     refreshTimer.value = null;
   }
 });
+
+watch(
+  reactionItems,
+  (items) => {
+    syncEmojiLoadTimeouts(items);
+  },
+  { immediate: true },
+);
 
 watch(reactionItems, (items) => {
   if (!popoverState.show || !popoverState.emoji) return;
@@ -493,6 +552,7 @@ onBeforeUnmount(() => {
             :data-fallback="reaction.fallbackUrl"
             class="message-reactions__emoji"
             loading="lazy"
+            @load="handleImgLoad"
             @error="handleImgError"
           />
           <span class="message-reactions__count">{{ reaction.count }}</span>
@@ -514,6 +574,7 @@ onBeforeUnmount(() => {
               :data-fallback="reaction.fallbackUrl"
               class="reaction-users-popover__emoji-img"
               loading="lazy"
+              @load="handleImgLoad"
               @error="handleImgError"
             />
           </span>
