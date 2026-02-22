@@ -3658,7 +3658,7 @@ func shouldForwardBotWhisperMessage(cfg BotWhisperForwardConfig, content string)
 func matchBotWhisperForwardRule(rule BotWhisperForwardRule, content string) bool {
 	switch rule.Type {
 	case botWhisperForwardRuleTypeLegacyHiddenDice:
-		return strings.Contains(content, "暗骰")
+		return strings.Contains(content, "暗骰") || strings.Contains(content, "暗中检定")
 	case botWhisperForwardRuleTypeKeyword:
 		keyword := strings.TrimSpace(rule.Keyword)
 		return keyword != "" && strings.Contains(content, keyword)
