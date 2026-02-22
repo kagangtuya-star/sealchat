@@ -772,7 +772,7 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
       var avatarUrl = data.avatarUrl || '';
       var avatarHtml = avatarUrl 
         ? '<img src="' + escapeHtml(avatarUrl) + '">' 
-        : (data.name || '?').charAt(0);
+        : escapeHtml((data.name || '?').charAt(0));
       
       html += '<div class="header">';
       html +=   '<div class="avatar">' + avatarHtml + '</div>';
@@ -787,10 +787,12 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
       html += '<div class="status-bar">';
       STATUS_KEYS.forEach(function(k) {
         var conf = STATUS_MAP[k];
-        var val = foundStatus[k] !== undefined ? foundStatus[k] : '--';
+        var rawVal = foundStatus[k] !== undefined ? foundStatus[k] : '--';
+        var escapedKey = escapeHtml(k);
+        var escapedVal = escapeHtml(String(rawVal));
         html += '<div class="status-item ' + conf.cls + '">';
         html +=   '<span class="status-label">' + conf.label + '</span>';
-        html +=   '<div class="status-val" data-attr="' + k + '" data-value="' + val + '">' + val + '</div>';
+        html +=   '<div class="status-val" data-attr="' + escapedKey + '" data-value="' + escapedVal + '">' + escapedVal + '</div>';
         html += '</div>';
       });
       html += '</div>';
@@ -799,11 +801,13 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
       html += '<div class="section-title">Characteristics</div>';
       html += '<div class="stats-grid">';
       STAT_KEYS.forEach(function(k) {
-        var val = foundStats[k] !== undefined ? foundStats[k] : '';
-        if (val === '') return; // 如果完全没这个属性，就不显示格子，或者也可以显示空白
+        var rawVal = foundStats[k] !== undefined ? foundStats[k] : '';
+        if (rawVal === '') return; // 如果完全没这个属性，就不显示格子，或者也可以显示空白
+        var escapedKey = escapeHtml(k);
+        var escapedVal = escapeHtml(String(rawVal));
         html += '<div class="stat-box">';
-        html +=   '<span class="stat-name" data-roll=".ra ' + k + '" data-skill="' + k + '">' + k + '</span>';
-        html +=   '<span class="stat-val" data-attr="' + k + '" data-value="' + val + '">' + val + '</span>';
+        html +=   '<span class="stat-name" data-roll=".ra ' + escapedKey + '" data-skill="' + escapedKey + '">' + escapedKey + '</span>';
+        html +=   '<span class="stat-val" data-attr="' + escapedKey + '" data-value="' + escapedVal + '">' + escapedVal + '</span>';
         html += '</div>';
       });
       html += '</div>';
@@ -813,9 +817,11 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
         html += '<div class="section-title">Skills</div>';
         html += '<div class="skills-container">';
         otherSkills.forEach(function(item) {
+          var escapedSkillKey = escapeHtml(String(item.key));
+          var escapedSkillVal = escapeHtml(String(item.val));
           html += '<div class="skill-item">';
-          html +=   '<span class="skill-name" data-roll=".ra ' + item.key + '" data-skill="' + item.key + '">' + escapeHtml(item.key) + '</span>';
-          html +=   '<span class="skill-val" data-attr="' + item.key + '" data-value="' + item.val + '">' + item.val + '</span>';
+          html +=   '<span class="skill-name" data-roll=".ra ' + escapedSkillKey + '" data-skill="' + escapedSkillKey + '">' + escapedSkillKey + '</span>';
+          html +=   '<span class="skill-val" data-attr="' + escapedSkillKey + '" data-value="' + escapedSkillVal + '">' + escapedSkillVal + '</span>';
           html += '</div>';
         });
         html += '</div>';
