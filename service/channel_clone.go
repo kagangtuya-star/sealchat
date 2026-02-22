@@ -133,13 +133,14 @@ func ChannelClone(sourceChannelID string, actor *model.UserModel, params Channel
 	if err := model.GetDB().Model(&model.ChannelModel{}).
 		Where("id = ?", newChannel.ID).
 		Updates(map[string]any{
-			"note":                     source.Note,
-			"sort_order":               source.SortOrder,
-			"default_dice_expr":        source.DefaultDiceExpr,
-			"built_in_dice_enabled":    source.BuiltInDiceEnabled,
-			"bot_feature_enabled":      source.BotFeatureEnabled,
-			"background_attachment_id": source.BackgroundAttachmentId,
-			"background_settings":      source.BackgroundSettings,
+			"note":                       source.Note,
+			"sort_order":                 source.SortOrder,
+			"default_dice_expr":          source.DefaultDiceExpr,
+			"built_in_dice_enabled":      source.BuiltInDiceEnabled,
+			"bot_feature_enabled":        source.BotFeatureEnabled,
+			"bot_whisper_forward_config": source.BotWhisperForwardConfig,
+			"background_attachment_id":   source.BackgroundAttachmentId,
+			"background_settings":        source.BackgroundSettings,
 		}).Error; err != nil {
 		cleanupClonedChannel(newChannel.ID)
 		return nil, err

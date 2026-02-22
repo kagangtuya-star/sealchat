@@ -48,17 +48,32 @@ func (el *Element) ToString() string {
 			for k, v := range el.Attrs {
 				sb.WriteString(fmt.Sprintf(" %s=\"%s\"", k, html.EscapeString(fmt.Sprint(v))))
 			}
-			sb.WriteString(">")
+			if isSelfClosingSatoriTag(el.Type) {
+				sb.WriteString(" />")
+			} else {
+				sb.WriteString(">")
+			}
 		}
 	}, func(el *Element) {
 		switch el.Type {
 		case "root", "text":
 			break
 		default:
-			sb.WriteString(fmt.Sprintf("</%s>", el.Type))
+			if !isSelfClosingSatoriTag(el.Type) {
+				sb.WriteString(fmt.Sprintf("</%s>", el.Type))
+			}
 		}
 	})
 	return sb.String()
+}
+
+func isSelfClosingSatoriTag(tag string) bool {
+	switch strings.ToLower(strings.TrimSpace(tag)) {
+	case "at", "br", "img", "audio", "video", "file":
+		return true
+	default:
+		return false
+	}
 }
 
 type Dict map[string]interface{}
@@ -141,6 +156,8 @@ var satoriTagSet = func() map[string]struct{} {
 
 var satoriTagRegexp = regexp.MustCompile(`</?([a-zA-Z][a-zA-Z0-9_-]*)(\s[^<>]*?)?/?>`)
 var nestedEntityRegexp = regexp.MustCompile(`(?i)&amp;((?:amp|lt|gt|quot|apos)|#\d+|#x[0-9a-fA-F]+);`)
+
+const maxNestedEntityNormalizeRounds = 4
 
 // ContainsSatoriTags 检查内容是否包含 Satori 协议标签
 func ContainsSatoriTags(content string) bool {
@@ -285,5 +302,13 @@ func normalizeNestedEntities(content string) string {
 	if !strings.Contains(content, "&amp;") {
 		return content
 	}
-	return nestedEntityRegexp.ReplaceAllString(content, "&$1;")
+	current := content
+	for i := 0; i < maxNestedEntityNormalizeRounds; i++ {
+		next := nestedEntityRegexp.ReplaceAllString(current, "&$1;")
+		if next == current {
+			return next
+		}
+		current = next
+	}
+	return current
 }

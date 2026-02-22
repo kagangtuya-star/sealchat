@@ -222,7 +222,7 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 		})
 	}
 	if channel, err := model.ChannelGet(channelId); err == nil {
-		broadcastChannelUpdated(user, channel)
+		broadcastChannelUpdated(user, channel, true)
 	}
 
 	return c.JSON(fiber.Map{
@@ -259,7 +259,7 @@ func ChannelBackgroundEdit(c *fiber.Ctx) error {
 		})
 	}
 	if channel, err := model.ChannelGet(channelId); err == nil {
-		broadcastChannelUpdated(user, channel)
+		broadcastChannelUpdated(user, channel, false)
 	}
 
 	return c.JSON(fiber.Map{
@@ -267,7 +267,7 @@ func ChannelBackgroundEdit(c *fiber.Ctx) error {
 	})
 }
 
-func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelModel) {
+func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelModel, treeChanged bool) {
 	if channel == nil || channel.ID == "" {
 		return
 	}
@@ -278,8 +278,20 @@ func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelMo
 		Type:    protocol.EventChannelUpdated,
 		Channel: channel.ToProtocolType(),
 	}
+	if treeChanged {
+		event.Argv = &protocol.Argv{
+			Options: map[string]interface{}{
+				"treeChanged": true,
+				"worldId":     channel.WorldID,
+			},
+		}
+	}
 	if operator != nil {
 		event.User = operator.ToProtocolType()
+	}
+	if treeChanged && strings.TrimSpace(channel.WorldID) != "" {
+		broadcastEventToWorld(channel.WorldID, event)
+		return
 	}
 	ctx := &ChatContext{
 		User:            operator,
@@ -407,10 +419,14 @@ func ChannelDissolve(c *fiber.Ctx) error {
 		})
 	}
 
+	channelRef, _ := model.ChannelGet(channelID)
 	if err := service.ChannelDissolve(channelID, user.ID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
+	}
+	if channelRef != nil && channelRef.ID != "" {
+		broadcastChannelUpdated(user, channelRef, true)
 	}
 
 	return c.JSON(fiber.Map{

@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
-	"sealchat/pm"
 	"sealchat/service"
 )
 
@@ -101,7 +100,25 @@ func validateExportChannel(userID, channelID string) error {
 		return fmt.Errorf("channel_id 不能为空")
 	}
 	if len(channelID) < 30 {
-		if !pm.CanWithChannelRole(userID, channelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelReadAll) {
+		channel, err := model.ChannelGet(channelID)
+		if err != nil {
+			return err
+		}
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			return fmt.Errorf("频道不存在")
+		}
+		worldID := strings.TrimSpace(channel.WorldID)
+		if worldID == "" {
+			return fmt.Errorf("无权限导出该频道")
+		}
+		var worldMember model.WorldMemberModel
+		if err := model.GetDB().
+			Where("world_id = ? AND user_id = ?", worldID, userID).
+			Limit(1).
+			Find(&worldMember).Error; err != nil {
+			return err
+		}
+		if worldMember.ID == "" || !canExportByWorldRole(worldMember.Role) {
 			return fmt.Errorf("无权限导出该频道")
 		}
 		return nil
@@ -115,6 +132,15 @@ func validateExportChannel(userID, channelID string) error {
 		return fmt.Errorf("无权限导出该频道")
 	}
 	return nil
+}
+
+func canExportByWorldRole(role string) bool {
+	switch strings.TrimSpace(role) {
+	case model.WorldRoleOwner, model.WorldRoleAdmin, model.WorldRoleMember:
+		return true
+	default:
+		return false
+	}
 }
 
 func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportResponse, error) {

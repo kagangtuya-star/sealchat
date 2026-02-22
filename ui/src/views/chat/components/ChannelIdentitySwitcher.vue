@@ -234,13 +234,9 @@ const handleSelect = async (key: string | number) => {
     return;
   }
   try {
-    const boundCardId = cardStore.getBoundCardId(String(key));
-    if (boundCardId) {
-      await cardStore.tagCard(channelId, undefined, boundCardId);
-    } else {
-      await cardStore.tagCard(channelId);
-    }
-    await cardStore.loadCards(channelId);
+    await cardStore.syncCardForIdentity(channelId, String(key), {
+      preserveWhenUnbound: true,
+    });
   } catch (e) {
     console.warn('Failed to sync character card for identity', e);
   }

@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -147,6 +147,7 @@ interface ChatState {
     initialIdentityId?: string | null;
     activeIdentityBackup?: string | null;
   } | null
+  revokedDrafts: Record<string, RevokedDraftEntry>
 
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
@@ -160,6 +161,7 @@ interface ChatState {
   icMode: 'ic' | 'ooc';
   presenceMap: Record<string, { lastPing: number; latencyMs: number; isFocused: boolean }>;
   isAppFocused: boolean;
+  lastGatewayAckAt: number;
   lastPingSentAt: number | null;
   lastLatencyMs: number;
   serverTimeOffsetMs: number;
@@ -196,6 +198,18 @@ interface ChatState {
   messageReactionLoading: Record<string, boolean>;
 }
 
+interface RevokedDraftEntry {
+  messageId: string;
+  channelId: string;
+  content: string;
+  mode: 'plain' | 'rich';
+  isWhisper: boolean;
+  whisperTargetId: string | null;
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  cachedAt: number;
+}
+
 interface ChannelCopyOptions {
   copyRoles: boolean;
   copyMembers: boolean;
@@ -225,8 +239,122 @@ interface ChannelCopyResponse {
   };
 }
 
-const apiMap = new Map<string, any>();
+interface PendingApiRequest {
+  resolve: (value: any) => void;
+  reject: (reason?: any) => void;
+}
+
+const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+const REVOKED_DRAFT_CACHE_MAX = 240;
+const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
+const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
+const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
+  const trimmed = String(content || '').trim();
+  if (!trimmed) {
+    return 'plain';
+  }
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && (
+        (parsed as any).type === 'doc'
+        || Array.isArray((parsed as any).content)
+      )) {
+        return 'rich';
+      }
+    } catch {
+      // ignore invalid json content
+    }
+  }
+  return 'plain';
+};
+const normalizeRevokedDraftEntry = (raw: any): RevokedDraftEntry | null => {
+  const messageId = String(raw?.messageId || '').trim();
+  const channelId = String(raw?.channelId || '').trim();
+  const content = typeof raw?.content === 'string' ? raw.content : '';
+  const cachedAt = Number(raw?.cachedAt || 0);
+  if (!messageId || !channelId || !content || !Number.isFinite(cachedAt) || cachedAt <= 0) {
+    return null;
+  }
+  return {
+    messageId,
+    channelId,
+    content,
+    mode: raw?.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+    isWhisper: raw?.isWhisper === true,
+    whisperTargetId: String(raw?.whisperTargetId || '').trim() || null,
+    icMode: raw?.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId: String(raw?.identityId || '').trim() || null,
+    cachedAt,
+  };
+};
+const loadRevokedDraftsFromSessionStorage = (): Record<string, RevokedDraftEntry> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = sessionStorage.getItem(REVOKED_DRAFT_SESSION_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    const now = Date.now();
+    const normalized = Object.entries(parsed as Record<string, any>)
+      .map(([key, value]) => {
+        const entry = normalizeRevokedDraftEntry(value);
+        if (!entry) {
+          return null;
+        }
+        if (now - entry.cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+          return null;
+        }
+        return [key, entry] as const;
+      })
+      .filter((item): item is readonly [string, RevokedDraftEntry] => !!item)
+      .sort((a, b) => a[1].cachedAt - b[1].cachedAt)
+      .slice(-REVOKED_DRAFT_CACHE_MAX);
+    return Object.fromEntries(normalized);
+  } catch {
+    return {};
+  }
+};
+const persistRevokedDraftsToSessionStorage = (drafts: Record<string, RevokedDraftEntry>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const entries = Object.entries(drafts);
+    if (!entries.length) {
+      sessionStorage.removeItem(REVOKED_DRAFT_SESSION_KEY);
+      return;
+    }
+    sessionStorage.setItem(REVOKED_DRAFT_SESSION_KEY, JSON.stringify(drafts));
+  } catch {
+    // ignore storage quota / privacy mode errors
+  }
+};
+
+const apiMap = new Map<string, PendingApiRequest>();
 let _connectResolve: any = null;
+
+const rejectPendingApiRequests = (reason: string) => {
+  if (!apiMap.size) {
+    return;
+  }
+  const error = new Error(reason);
+  const pendingRequests = Array.from(apiMap.values());
+  apiMap.clear();
+  pendingRequests.forEach((pending) => {
+    try {
+      pending.reject(error);
+    } catch {
+      // ignore
+    }
+  });
+};
 
 const ROLELESS_FILTER_ID = '__roleless__';
 const defaultOocRoleCreateTasks = new Map<string, Promise<string | null>>();
@@ -327,8 +455,24 @@ const ensureWorldGateway = () => {
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
+let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const scheduleChannelTreeRefresh = (chat: any) => {
+  if (!chat?.currentWorldId) return;
+  if (channelTreeRefreshTimer) return;
+  channelTreeRefreshTimer = setTimeout(() => {
+    channelTreeRefreshTimer = null;
+    if (chat.currentWorldId) {
+      void chat.channelList(chat.currentWorldId, true);
+    }
+  }, 150);
+};
 const pendingLatencyProbes: Record<string, number> = {};
 const LATENCY_PROBE_TIMEOUT = 8000;
+const WS_FOREGROUND_PROBE_TIMEOUT_MS = 7000;
+const WS_FOREGROUND_RECOVERY_DEBOUNCE_MS = 1500;
+const WS_DEFAULT_API_TIMEOUT_MS = 15_000;
+let wsForegroundProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let wsLastForegroundRecoverAt = 0;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
@@ -370,6 +514,13 @@ const cleanupPendingLatencyProbes = () => {
       delete pendingLatencyProbes[key];
     }
   });
+};
+
+const clearForegroundProbeTimer = () => {
+  if (wsForegroundProbeTimer) {
+    clearTimeout(wsForegroundProbeTimer);
+    wsForegroundProbeTimer = null;
+  }
 };
 
 const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) => {
@@ -477,6 +628,7 @@ export const useChatStore = defineStore({
     },
 
     editing: null,
+    revokedDrafts: loadRevokedDraftsFromSessionStorage(),
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
@@ -489,6 +641,7 @@ export const useChatStore = defineStore({
     icMode: 'ic',
     presenceMap: {},
     isAppFocused: true,
+    lastGatewayAckAt: 0,
     lastPingSentAt: null,
     lastLatencyMs: 0,
     serverTimeOffsetMs: 0,
@@ -660,8 +813,10 @@ export const useChatStore = defineStore({
     disconnect(reason?: string) {
       // 用于分屏壳页面等场景：明确关闭当前 WS，避免占用连接数
       clearWsReconnectTimer(this);
+      clearForegroundProbeTimer();
       this.stopPingLoop();
       clearPendingLatencyProbes();
+      rejectPendingApiRequests(reason || 'ws disconnected');
       try {
         this.subject?.complete();
         this.subject?.unsubscribe();
@@ -670,6 +825,7 @@ export const useChatStore = defineStore({
       }
       this.subject = null;
       this.connectState = 'disconnected';
+      this.lastGatewayAckAt = 0;
     },
 
     async connect() {
@@ -686,6 +842,7 @@ export const useChatStore = defineStore({
       // 先清理现有连接，防止连接泄漏
       const oldSubject = this.subject;
       if (oldSubject) {
+        rejectPendingApiRequests('ws connection replaced');
         try {
           oldSubject.complete();
           oldSubject.unsubscribe();
@@ -699,14 +856,36 @@ export const useChatStore = defineStore({
       this.stopPingLoop();
       if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
         focusListenersBound = true;
+        const store = this;
         const updateFocusState = () => {
           const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
           const isVisible = document.visibilityState !== 'hidden';
-          this.setFocusState(hasFocus && isVisible);
+          store.setFocusState(hasFocus && isVisible);
         };
-        window.addEventListener('focus', updateFocusState);
+        const triggerForegroundRecover = (reason: string) => {
+          if (document.visibilityState !== 'visible') {
+            return;
+          }
+          store.recoverConnectionOnForeground(reason);
+        };
+        window.addEventListener('focus', () => {
+          updateFocusState();
+          triggerForegroundRecover('window-focus');
+        });
         window.addEventListener('blur', updateFocusState);
-        document.addEventListener('visibilitychange', updateFocusState);
+        window.addEventListener('online', () => {
+          triggerForegroundRecover('network-online');
+        });
+        window.addEventListener('pageshow', () => {
+          updateFocusState();
+          triggerForegroundRecover('window-pageshow');
+        });
+        document.addEventListener('visibilitychange', () => {
+          updateFocusState();
+          if (document.visibilityState === 'visible') {
+            triggerForegroundRecover('visibility-visible');
+          }
+        });
         updateFocusState();
       }
       const u: User = {
@@ -740,6 +919,7 @@ export const useChatStore = defineStore({
           if (epoch !== wsConnectionEpoch) {
             return;
           }
+          this.markGatewayActivity();
           // Opcode.READY
           if (msg.op === 4) {
             console.log('svr ready', msg);
@@ -754,8 +934,9 @@ export const useChatStore = defineStore({
           } else if (msg.op === 6) {
             this.handleLatencyResult(msg?.body);
           } else if (apiMap.get(msg.echo)) {
-            apiMap.get(msg.echo).resolve(msg);
+            const pending = apiMap.get(msg.echo);
             apiMap.delete(msg.echo);
+            pending?.resolve(msg);
           }
         },
         error: err => {
@@ -763,9 +944,12 @@ export const useChatStore = defineStore({
             return;
           }
           console.log('[WS] 连接错误', err);
+          rejectPendingApiRequests('ws connection error');
           this.subject = null;
           this.connectState = 'reconnecting';
+          clearForegroundProbeTimer();
           this.stopPingLoop();
+          this.lastGatewayAckAt = 0;
           this.reconnectAfter(5, () => {
             try {
               if (epoch !== wsConnectionEpoch) {
@@ -785,9 +969,12 @@ export const useChatStore = defineStore({
             return;
           }
           console.log('[WS] 连接关闭');
+          rejectPendingApiRequests('ws connection closed');
           this.subject = null;
           this.connectState = 'reconnecting';
+          clearForegroundProbeTimer();
           this.stopPingLoop();
+          this.lastGatewayAckAt = 0;
           this.reconnectAfter(5, () => {
             try {
               if (epoch !== wsConnectionEpoch) {
@@ -846,6 +1033,7 @@ export const useChatStore = defineStore({
         return;
       }
       this.connectState = 'connected';
+      this.markGatewayActivity();
       clearWsReconnectTimer(this);
 
       chatEvent.emit('connected', undefined);
@@ -908,12 +1096,46 @@ export const useChatStore = defineStore({
       this.curReplyTo = item;
     },
 
-    async sendAPI<T = any>(api: string, data: APIMessage): Promise<T> {
+    async sendAPI<T = any>(api: string, data: APIMessage, options?: { timeoutMs?: number }): Promise<T> {
       const doSend = () => {
         const echo = nanoid();
         return new Promise((resolve, reject) => {
-          apiMap.set(echo, { resolve, reject });
-          this.subject?.next({ api, data, echo });
+          if (!this.subject) {
+            reject(new Error('ws not connected'));
+            return;
+          }
+          const rawTimeout = options?.timeoutMs;
+          const timeoutMs = rawTimeout === undefined
+            ? WS_DEFAULT_API_TIMEOUT_MS
+            : (Number.isFinite(rawTimeout) ? Math.max(0, Number(rawTimeout)) : WS_DEFAULT_API_TIMEOUT_MS);
+          let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+          const cleanupTimeout = () => {
+            if (timeoutTimer) {
+              clearTimeout(timeoutTimer);
+              timeoutTimer = null;
+            }
+          };
+          apiMap.set(echo, {
+            resolve: (resp: any) => {
+              cleanupTimeout();
+              resolve(resp);
+            },
+            reject: (reason?: any) => {
+              cleanupTimeout();
+              reject(reason);
+            },
+          });
+          if (timeoutMs > 0) {
+            timeoutTimer = setTimeout(() => {
+              const pending = apiMap.get(echo);
+              if (!pending) {
+                return;
+              }
+              apiMap.delete(echo);
+              pending.reject(new Error(`${api} timeout`));
+            }, timeoutMs);
+          }
+          this.subject.next({ api, data, echo });
         });
       };
       const run = isBotRelatedApi(api)
@@ -1651,14 +1873,17 @@ export const useChatStore = defineStore({
         return [];
       }
       if (!force && this.channelIdentities[channelId]) {
+        const items = this.channelIdentities[channelId];
         const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
-        if (cached) {
+        const defaultItem = items.find(item => item.isDefault) || items[0];
+        const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
+        if (activeId) {
           this.activeChannelIdentity = {
             ...this.activeChannelIdentity,
-            [channelId]: cached,
+            [channelId]: activeId,
           };
         }
-        return this.channelIdentities[channelId];
+        return items;
       }
       const existing = inFlightChannelIdentityLoads.get(channelId);
       if (existing) {
@@ -1683,9 +1908,20 @@ export const useChatStore = defineStore({
           ...this.channelIdentityFavorites,
           [channelId]: resp.data.favorites || [],
         };
+        this.channelIdentityMembership = {
+          ...this.channelIdentityMembership,
+          [channelId]: membership,
+        };
         this.channelIdentityLoadedAt = {
           ...this.channelIdentityLoadedAt,
           [channelId]: Date.now(),
+        };
+        const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
+        const defaultItem = items.find(item => item.isDefault) || items[0];
+        const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
+        this.activeChannelIdentity = {
+          ...this.activeChannelIdentity,
+          [channelId]: activeId,
         };
         return items;
       })();
@@ -1698,18 +1934,6 @@ export const useChatStore = defineStore({
           inFlightChannelIdentityLoads.delete(channelId);
         }
       }
-      this.channelIdentityMembership = {
-        ...this.channelIdentityMembership,
-        [channelId]: membership,
-      };
-      const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
-      const defaultItem = items.find(item => item.isDefault) || items[0];
-      const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
-      this.activeChannelIdentity = {
-        ...this.activeChannelIdentity,
-        [channelId]: activeId,
-      };
-      return items;
     },
 
     async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
@@ -1891,6 +2115,61 @@ export const useChatStore = defineStore({
         return false;
       }
       return this.getChannelOwnerId(channelId) === userId;
+    },
+
+    getChannelRoleRank(channelId?: string, userId?: string) {
+      if (!channelId || !userId) {
+        return 0;
+      }
+
+      let rank = 0;
+      if (this.isChannelOwner(channelId, userId)) {
+        rank = Math.max(rank, 4);
+      }
+
+      const roleIds = this.channelMemberRoleMap[channelId]?.[userId] || [];
+      if (Array.isArray(roleIds)) {
+        roleIds.forEach((roleId) => {
+          if (typeof roleId !== 'string') {
+            return;
+          }
+          if (roleId.endsWith('-owner')) {
+            rank = Math.max(rank, 4);
+          } else if (roleId.endsWith('-admin')) {
+            rank = Math.max(rank, 3);
+          } else if (roleId.endsWith('-member')) {
+            rank = Math.max(rank, 2);
+          } else if (roleId.endsWith('-spectator')) {
+            rank = Math.max(rank, 1);
+          }
+        });
+      }
+
+      const channelWorldId = (() => {
+        if (this.curChannel?.id === channelId) {
+          return (this.curChannel as any)?.worldId || this.currentWorldId;
+        }
+        const target = this.findChannelById(channelId) as any;
+        return target?.worldId || '';
+      })();
+      if (channelWorldId) {
+        const worldOwnerId = this.worldDetailMap[channelWorldId]?.world?.ownerId || this.worldMap[channelWorldId]?.ownerId;
+        if (worldOwnerId && worldOwnerId === userId) {
+          rank = Math.max(rank, 4);
+        }
+      }
+
+      return rank;
+    },
+
+    canModerateTargetByRole(channelId?: string, operatorUserId?: string, targetUserId?: string) {
+      if (!channelId || !operatorUserId || !targetUserId) {
+        return false;
+      }
+      if (operatorUserId === targetUserId) {
+        return true;
+      }
+      return this.getChannelRoleRank(channelId, operatorUserId) > this.getChannelRoleRank(channelId, targetUserId);
     },
 
     async ensureRolePermissions(roleId: string): Promise<string[]> {
@@ -2274,10 +2553,7 @@ export const useChatStore = defineStore({
       });
       apply(this.channelTreePrivate as any);
       if (this.curChannel?.id === channelId) {
-        this.curChannel = {
-          ...this.curChannel,
-          ...normalizedPatch,
-        } as Channel;
+        Object.assign(this.curChannel as Record<string, any>, normalizedPatch);
       }
     },
 
@@ -2330,6 +2606,44 @@ export const useChatStore = defineStore({
         patch.botFeatureEnabled = updates.botFeatureEnabled;
       }
       this.patchChannelAttributes(targetId, patch);
+      return payload;
+    },
+
+    async updateChannelBotWhisperForwardConfig(
+      channelId: string,
+      config: BotWhisperForwardConfig,
+      options?: { applyToWorld?: boolean },
+    ) {
+      if (!channelId) {
+        return null;
+      }
+      const applyToWorld = options?.applyToWorld === true;
+      const configJson = JSON.stringify(config ?? {});
+      const resp = await this.sendAPI('channel.bot_whisper.forward.update', {
+        channel_id: channelId,
+        config_json: configJson,
+        apply_to_world: applyToWorld,
+      }) as {
+        data?: {
+          channel_id?: string;
+          channel_ids?: string[];
+          updated_count?: number;
+          config_json?: string;
+          apply_to_world?: boolean;
+          world_id?: string;
+        };
+      };
+      const payload = resp?.data || {};
+      const patchJson = payload.config_json || configJson;
+      const targetIdsRaw = Array.isArray(payload.channel_ids) && payload.channel_ids.length > 0
+        ? payload.channel_ids
+        : [payload.channel_id || channelId];
+      const targetIds = Array.from(new Set(targetIdsRaw.map((id) => String(id || '').trim()).filter(Boolean)));
+      targetIds.forEach((id) => {
+        this.patchChannelAttributes(id, {
+          botWhisperForwardConfig: patchJson,
+        });
+      });
       return payload;
     },
 
@@ -2485,12 +2799,152 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async interactWithWidget(messageId: string, widgetIndex: number) {
+    pruneRevokedDrafts(now = Date.now()) {
+      const entries = Object.entries(this.revokedDrafts);
+      if (!entries.length) {
+        return;
+      }
+      let changed = false;
+      for (const [key, draft] of entries) {
+        const cachedAt = typeof draft?.cachedAt === 'number' ? draft.cachedAt : 0;
+        if (!cachedAt || now - cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+          delete this.revokedDrafts[key];
+          changed = true;
+        }
+      }
+      if (changed) {
+        persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+        return;
+      }
+      const currentEntries = Object.entries(this.revokedDrafts);
+      if (currentEntries.length <= REVOKED_DRAFT_CACHE_MAX) {
+        return;
+      }
+      currentEntries
+        .sort((a, b) => (a[1].cachedAt || 0) - (b[1].cachedAt || 0))
+        .slice(0, currentEntries.length - REVOKED_DRAFT_CACHE_MAX)
+        .forEach(([key]) => {
+          delete this.revokedDrafts[key];
+        });
+      persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+    },
+
+    cacheRevokedDraft(payload: {
+      messageId: string;
+      channelId: string;
+      content: string;
+      mode?: 'plain' | 'rich';
+      isWhisper?: boolean;
+      whisperTargetId?: string | null;
+      icMode?: 'ic' | 'ooc';
+      identityId?: string | null;
+    }) {
+      const messageId = String(payload?.messageId || '').trim();
+      const channelId = String(payload?.channelId || '').trim();
+      const content = typeof payload?.content === 'string' ? payload.content : '';
+      if (!messageId || !channelId || !content) {
+        return;
+      }
+      const key = buildRevokedDraftKey(channelId, messageId);
+      const next: RevokedDraftEntry = {
+        messageId,
+        channelId,
+        content,
+        mode: payload.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+        isWhisper: payload.isWhisper === true,
+        whisperTargetId: payload.whisperTargetId || null,
+        icMode: payload.icMode === 'ooc' ? 'ooc' : 'ic',
+        identityId: payload.identityId || null,
+        cachedAt: Date.now(),
+      };
+      this.revokedDrafts[key] = next;
+      this.pruneRevokedDrafts(next.cachedAt);
+      persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+    },
+
+    getRevokedDraft(channelId: string, messageId: string): RevokedDraftEntry | null {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return null;
+      }
+      const key = buildRevokedDraftKey(normalizedChannelId, normalizedMessageId);
+      const draft = this.revokedDrafts[key];
+      if (!draft) {
+        return null;
+      }
+      const cachedAt = typeof draft.cachedAt === 'number' ? draft.cachedAt : 0;
+      if (!cachedAt || Date.now() - cachedAt > REVOKED_DRAFT_CACHE_TTL_MS) {
+        return null;
+      }
+      return draft;
+    },
+
+    hasRevokedDraft(channelId: string, messageId: string) {
+      return !!this.getRevokedDraft(channelId, messageId);
+    },
+
+    clearRevokedDraft(channelId: string, messageId: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return;
+      }
+      const key = buildRevokedDraftKey(normalizedChannelId, normalizedMessageId);
+      if (this.revokedDrafts[key]) {
+        delete this.revokedDrafts[key];
+        persistRevokedDraftsToSessionStorage(this.revokedDrafts);
+      }
+    },
+
+    async fetchRevokedDraft(channelId: string, messageId: string): Promise<RevokedDraftEntry | null> {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!normalizedChannelId || !normalizedMessageId) {
+        return null;
+      }
+      const cached = this.getRevokedDraft(normalizedChannelId, normalizedMessageId);
+      if (cached) {
+        return cached;
+      }
+      const resp = await this.sendAPI<{ data?: any }>('message.revoked.draft', {
+        channel_id: normalizedChannelId,
+        message_id: normalizedMessageId,
+      });
+      const data = (resp as any)?.data;
+      const content = typeof data?.content === 'string' ? data.content : '';
+      if (!content) {
+        return null;
+      }
+      const resultChannelId = String(data?.channel_id || normalizedChannelId).trim();
+      const resultMessageId = String(data?.message_id || normalizedMessageId).trim();
+      if (!resultChannelId || !resultMessageId) {
+        return null;
+      }
+      const rawWhisperTargetId = data?.whisper_to ?? data?.whisperTargetId;
+      const whisperTargetId = String(rawWhisperTargetId || '').trim() || null;
+      const rawIdentityId = data?.identity_id ?? data?.identityId ?? data?.sender_identity_id;
+      const identityId = String(rawIdentityId || '').trim() || null;
+      const rawIcMode = String(data?.ic_mode ?? data?.icMode ?? 'ic').toLowerCase();
+      this.cacheRevokedDraft({
+        messageId: resultMessageId,
+        channelId: resultChannelId,
+        content,
+        mode: data?.mode === 'rich' ? 'rich' : detectRevokedDraftMode(content),
+        isWhisper: Boolean(data?.is_whisper ?? data?.isWhisper),
+        whisperTargetId,
+        icMode: rawIcMode === 'ooc' ? 'ooc' : 'ic',
+        identityId,
+      });
+      return this.getRevokedDraft(resultChannelId, resultMessageId);
+    },
+
+    async interactWithWidget(messageId: string, widgetIndex: number, operation: 'rotate' | 'reveal' = 'rotate') {
       if (this.connectState !== 'connected') return
       await this.sendAPI('widget.interact', {
         message_id: messageId,
         widget_index: widgetIndex,
-        operation: 'rotate',
+        operation,
       })
     },
 
@@ -2720,6 +3174,7 @@ export const useChatStore = defineStore({
       clientId?: string,
       identityId?: string,
       displayOrder?: number,
+      whisperTargetIds?: string[],
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -2729,10 +3184,13 @@ export const useChatStore = defineStore({
       if (quote_id) {
         payload.quote_id = quote_id;
       }
+      const explicitWhisperIds = Array.isArray(whisperTargetIds)
+        ? whisperTargetIds
+        : this.whisperTargets.map((target) => target?.id);
       const whisperIds = [
         whisper_to,
-        ...this.whisperTargets.map((target) => target?.id),
-      ].filter(Boolean) as string[];
+        ...explicitWhisperIds,
+      ].map((id) => String(id || '').trim()).filter(Boolean) as string[];
       const uniqueWhisperIds = Array.from(new Set(whisperIds));
       if (uniqueWhisperIds.length > 0) {
         payload.whisper_to_ids = uniqueWhisperIds;
@@ -2748,7 +3206,7 @@ export const useChatStore = defineStore({
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
       }
-      const resp = await this.sendAPI('message.create', payload);
+      const resp = await this.sendAPI('message.create', payload, { timeoutMs: 5_000 });
       const message = resp?.data;
       if (!message || typeof message !== 'object') {
         return null;
@@ -3257,6 +3715,65 @@ export const useChatStore = defineStore({
     // 新增方法
     setIcMode(mode: 'ic' | 'ooc') {
       this.icMode = mode;
+    },
+
+    markGatewayActivity() {
+      this.lastGatewayAckAt = Date.now();
+      clearForegroundProbeTimer();
+    },
+
+    recoverConnectionOnForeground(reason = 'foreground-resume') {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      const now = Date.now();
+      if (now - wsLastForegroundRecoverAt < WS_FOREGROUND_RECOVERY_DEBOUNCE_MS) {
+        return;
+      }
+      wsLastForegroundRecoverAt = now;
+
+      if (this.connectState === 'connecting') {
+        return;
+      }
+
+      if (!this.subject || this.connectState !== 'connected') {
+        if (this.subject) {
+          this.disconnect(`foreground force reconnect:${reason}`);
+        }
+        clearWsReconnectTimer(this);
+        this.connect();
+        return;
+      }
+
+      const probeStartAt = Date.now();
+      try {
+        this.sendPresencePing(true);
+        this.measureLatency();
+      } catch (error) {
+        console.warn('[WS] foreground probe send failed, reconnecting', { reason, error });
+        this.disconnect(`foreground probe send failed:${reason}`);
+        this.connect();
+        return;
+      }
+      clearForegroundProbeTimer();
+      wsForegroundProbeTimer = window.setTimeout(() => {
+        if (this.connectState !== 'connected') {
+          return;
+        }
+        if (this.lastGatewayAckAt >= probeStartAt) {
+          return;
+        }
+        console.warn('[WS] foreground probe timeout, reconnecting', {
+          reason,
+          probeStartAt,
+          lastGatewayAckAt: this.lastGatewayAckAt,
+        });
+        this.disconnect(`foreground probe timeout:${reason}`);
+        this.connect();
+      }, WS_FOREGROUND_PROBE_TIMEOUT_MS);
     },
 
     startPingLoop() {
@@ -4002,11 +4519,31 @@ chatEvent.on('message.reaction', (event: any) => {
 });
 
 chatEvent.on('channel-updated', (event) => {
+  const rawArgv = event?.argv || {};
+  const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, any>;
+  const treeChanged = options.treeChanged === true || options.tree_changed === true;
+  const chat = useChatStore();
+  if (treeChanged) {
+    scheduleChannelTreeRefresh(chat);
+    return;
+  }
   const channelId = event?.channel?.id;
   if (!channelId) {
     return;
   }
-  const chat = useChatStore();
+  const existsInTree = (items: SChannel[] | undefined): boolean => {
+    if (!Array.isArray(items)) return false;
+    for (const item of items) {
+      if (!item) continue;
+      if (item.id === channelId) return true;
+      if (existsInTree(item.children as SChannel[] | undefined)) return true;
+    }
+    return false;
+  };
+  if (!existsInTree(chat.channelTree as SChannel[]) && !existsInTree(chat.channelTreePrivate as SChannel[])) {
+    scheduleChannelTreeRefresh(chat);
+    return;
+  }
   const patch: Partial<SChannel> = {};
   if (typeof event.channel?.name === 'string') {
     patch.name = event.channel.name;
@@ -4022,6 +4559,9 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (event.channel?.defaultDiceExpr) {
     patch.defaultDiceExpr = event.channel.defaultDiceExpr;
+  }
+  if (typeof (event.channel as any)?.botWhisperForwardConfig === 'string') {
+    patch.botWhisperForwardConfig = (event.channel as any).botWhisperForwardConfig;
   }
   if (typeof event.channel?.builtInDiceEnabled === 'boolean') {
     patch.builtInDiceEnabled = event.channel.builtInDiceEnabled;

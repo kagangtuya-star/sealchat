@@ -55,6 +55,7 @@ type ConnInfo struct {
 	TypingOrderKey        float64
 	Focused               bool
 	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastWhisperTargets *utils.SyncMap[string, []string]
 	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
 	BotCharacterSupport   BotCharacterSupportState
 	BotCharacterProbeOn   bool
@@ -62,8 +63,10 @@ type ConnInfo struct {
 }
 
 type BotHiddenDicePending struct {
-	TargetUserID string
-	Count        int
+	TargetUserID  string
+	TargetUserIDs []string
+	Count         int
+	CreatedAt     int64
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -588,6 +591,9 @@ func websocketWorks(app *fiber.App) {
 					case "channel.feature.update":
 						apiWrap(ctx, msg, apiChannelFeatureUpdate)
 						solved = true
+					case "channel.bot_whisper.forward.update":
+						apiWrap(ctx, msg, apiChannelBotWhisperForwardUpdate)
+						solved = true
 						// case "guild.list":
 					//	 apiChannelList(c, msg, apiMsg.Echo)
 					//	 solved = true
@@ -631,6 +637,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "message.get":
 						apiWrap(ctx, msg, apiMessageGet)
+						solved = true
+					case "message.revoked.draft":
+						apiWrap(ctx, msg, apiMessageRevokedDraft)
 						solved = true
 					case "message.context":
 						apiWrap(ctx, msg, apiMessageContext)

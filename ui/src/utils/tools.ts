@@ -89,11 +89,24 @@ export function contentEscape(text: string) {
     .replace(/"/g, '&quot;');
 }
 
+const CONTENT_UNESCAPE_ROUNDS = 4;
+
 export function contentUnescape(str: string): string {
-  return str.replace(/&quot;/g, '"')
-    .replace(/&gt;/g, '>')
-    .replace(/&lt;/g, '<')
-    .replace(/&amp;/g, '&');
+  let current = str;
+  for (let i = 0; i < CONTENT_UNESCAPE_ROUNDS; i += 1) {
+    const next = current
+      .replace(/&quot;/g, '"')
+      .replace(/&#039;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&gt;/g, '>')
+      .replace(/&lt;/g, '<')
+      .replace(/&amp;/g, '&');
+    if (next === current) {
+      return next;
+    }
+    current = next;
+  }
+  return current;
 }
 
 export function escapeRegExp(value: string): string {

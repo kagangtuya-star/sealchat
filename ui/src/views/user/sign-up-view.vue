@@ -480,7 +480,7 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card sc-form-scroll"
-      :class="{ 'sc-glass-panel': hasLoginBg }"
+      :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
       :style="hasLoginBg ? loginGlassStyle : undefined"
       v-if="config?.registerOpen">
       <div class="px-6 py-4">
@@ -640,14 +640,14 @@ onBeforeUnmount(() => {
         </form>
       </div>
 
-      <div class="flex items-center justify-center py-4 text-center bg-gray-50 dark:bg-gray-700">
+      <div class="flex items-center justify-center py-4 text-center sign-up-footer">
         <span class="text-sm text-gray-600 dark:text-gray-200">已有账号 ？</span>
         <router-link :to="{ name: 'user-signin' }"
           class="mx-2 text-sm font-bold text-blue-500 dark:text-blue-400 hover:underline">登录</router-link>
       </div>
     </div>
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
-      :class="{ 'sc-glass-panel': hasLoginBg }"
+      :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
       :style="hasLoginBg ? loginGlassStyle : undefined" v-else>
       <div class="p-6">你来晚了，门已经悄然关闭。</div>
     </div>
@@ -695,5 +695,52 @@ onBeforeUnmount(() => {
 .sign-up-card.sc-glass-panel {
   background: var(--sc-glass-bg);
   box-shadow: var(--sc-glass-shadow);
+}
+
+.sign-up-footer {
+  background: rgb(249 250 251);
+}
+
+:global(.dark) .sign-up-footer {
+  background: #374151;
+}
+
+.sign-up-card--glass .sign-up-footer {
+  background: transparent;
+  border-top: 1px solid var(--sc-glass-border);
+}
+
+.sign-up-card--glass :deep(input) {
+  color: rgba(17, 24, 39, 0.96) !important;
+}
+
+.sign-up-card--glass :deep(input::placeholder) {
+  color: rgba(55, 65, 81, 0.78) !important;
+}
+
+.sign-up-card--glass :deep(.text-gray-500),
+.sign-up-card--glass :deep(.text-gray-600),
+.sign-up-card--glass :deep(.text-gray-700),
+.sign-up-card--glass :deep(.dark\:text-gray-200),
+.sign-up-card--glass :deep(.dark\:text-gray-300),
+.sign-up-card--glass :deep(.dark\:text-gray-400) {
+  color: rgba(17, 24, 39, 0.92) !important;
+}
+
+:global(.dark) .sign-up-card--glass :deep(input) {
+  color: rgba(243, 244, 246, 0.96) !important;
+}
+
+:global(.dark) .sign-up-card--glass :deep(input::placeholder) {
+  color: rgba(229, 231, 235, 0.8) !important;
+}
+
+:global(.dark) .sign-up-card--glass :deep(.text-gray-500),
+:global(.dark) .sign-up-card--glass :deep(.text-gray-600),
+:global(.dark) .sign-up-card--glass :deep(.text-gray-700),
+:global(.dark) .sign-up-card--glass :deep(.dark\:text-gray-200),
+:global(.dark) .sign-up-card--glass :deep(.dark\:text-gray-300),
+:global(.dark) .sign-up-card--glass :deep(.dark\:text-gray-400) {
+  color: rgba(243, 244, 246, 0.93) !important;
 }
 </style>

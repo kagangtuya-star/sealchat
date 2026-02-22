@@ -43,6 +43,18 @@ export interface CharacterCardBadgeEntry {
   updatedAt: number;
 }
 
+interface SyncCardForIdentityOptions {
+  preserveWhenUnbound?: boolean;
+  reloadAfterSwitch?: boolean;
+}
+
+interface SyncCardForIdentityResult {
+  ok: boolean;
+  switched: boolean;
+  preserved: boolean;
+  boundCardId?: string;
+}
+
 // Convert API response to UI format
 const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
   id: card.id,
@@ -842,6 +854,68 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Backwards compatibility: getBoundCardId
   const getBoundCardId = (identityId: string) => identityBindings.value[identityId];
 
+  const syncCardForIdentity = async (
+    channelId: string,
+    identityId: string,
+    options: SyncCardForIdentityOptions = {},
+  ): Promise<SyncCardForIdentityResult> => {
+    if (!channelId || !identityId) {
+      return {
+        ok: false,
+        switched: false,
+        preserved: false,
+      };
+    }
+    loadIdentityBindings();
+    const boundCardId = identityBindings.value[identityId];
+    const preserveWhenUnbound = options.preserveWhenUnbound !== false;
+    const reloadAfterSwitch = options.reloadAfterSwitch !== false;
+
+    if (!boundCardId) {
+      if (preserveWhenUnbound) {
+        return {
+          ok: true,
+          switched: false,
+          preserved: true,
+        };
+      }
+      const cleared = await tagCard(channelId);
+      if (!cleared) {
+        return {
+          ok: false,
+          switched: false,
+          preserved: false,
+        };
+      }
+      if (reloadAfterSwitch) {
+        await loadCards(channelId);
+      }
+      return {
+        ok: true,
+        switched: true,
+        preserved: false,
+      };
+    }
+
+    const tagged = await tagCard(channelId, undefined, boundCardId);
+    if (!tagged) {
+      return {
+        ok: false,
+        switched: false,
+        preserved: false,
+      };
+    }
+    if (reloadAfterSwitch) {
+      await loadCards(channelId);
+    }
+    return {
+      ok: true,
+      switched: true,
+      preserved: false,
+      boundCardId,
+    };
+  };
+
   // Backwards compatibility: bindIdentity persists mapping locally then syncs SealDice
   const bindIdentity = async (channelId: string, identityId: string, cardId: string) => {
     if (!channelId || !identityId || !cardId) return null;
@@ -849,8 +923,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     identityBindings.value[identityId] = cardId;
     persistIdentityBindings();
     if (chatStore.getActiveIdentityId(channelId) === identityId) {
-      await tagCard(channelId, undefined, cardId);
-      await loadCards(channelId);
+      await syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: false });
     }
     return { ok: true };
   };
@@ -862,8 +935,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     delete identityBindings.value[identityId];
     persistIdentityBindings();
     if (chatStore.getActiveIdentityId(channelId) === identityId) {
-      await tagCard(channelId);
-      await loadCards(channelId);
+      await syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: false });
     }
     return { ok: true };
   };
@@ -980,6 +1052,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getCardsByChannel,
     getBadgeByIdentity,
     getBoundCardId,
+    syncCardForIdentity,
     bindIdentity,
     unbindIdentity,
     requestBadgeSnapshot,

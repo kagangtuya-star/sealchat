@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
+import { setLocale, setLocaleByNavigator } from '@/lang';
+import { useI18n } from 'vue-i18n';
+import { useUserStore } from '@/stores/user';
+import UserProfile from '@/views/components/user-profile.vue';
+import Avatar from '@/components/avatar.vue';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -54,9 +59,12 @@ const readStoredViewMode = (): WorldLobbyViewMode => {
 };
 
 const chat = useChatStore();
+const user = useUserStore();
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
+const { t } = useI18n();
+const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -64,6 +72,8 @@ const joining = ref(false);
 const searchKeyword = ref('');
 const createVisible = ref(false);
 const creating = ref(false);
+const userProfileShow = ref(false);
+const adminShow = ref(false);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -673,6 +683,80 @@ const toggleViewMode = () => {
   viewMode.value = viewMode.value === 'list' ? 'grid' : 'list';
 };
 
+const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
+
+const headerMenuOptions = computed(() => [
+  {
+    label: t('headerMenu.profile'),
+    key: 'profile',
+  },
+  user.checkPerm('mod_admin') ? {
+    label: t('headerMenu.admin'),
+    key: 'admin',
+  } : null,
+  {
+    label: t('headerMenu.lang'),
+    key: 'lang',
+    children: [
+      {
+        label: t('headerMenu.langAuto'),
+        key: 'lang:auto',
+      },
+      {
+        label: '简体中文',
+        key: 'lang:zh-cn',
+      },
+      {
+        label: 'English',
+        key: 'lang:en',
+      },
+      {
+        label: '日本語',
+        key: 'lang:ja',
+      },
+    ],
+  },
+  {
+    label: t('headerMenu.logout'),
+    key: 'logout',
+  },
+].filter(Boolean));
+
+const handleHeaderMenuSelect = (key: string | number) => {
+  switch (key) {
+    case 'profile':
+      adminShow.value = false;
+      userProfileShow.value = !userProfileShow.value;
+      break;
+    case 'admin':
+      userProfileShow.value = false;
+      adminShow.value = !adminShow.value;
+      break;
+    case 'logout':
+      dialog.warning({
+        title: t('dialogLogOut.title'),
+        content: t('dialogLogOut.content'),
+        positiveText: t('dialogLogOut.positiveText'),
+        negativeText: t('dialogLogOut.negativeText'),
+        onPositiveClick: () => {
+          user.logout();
+          chat.subject?.unsubscribe();
+          router.replace({ name: 'user-signin' });
+        },
+      });
+      break;
+    default:
+      if (typeof key === 'string' && key.startsWith('lang:')) {
+        if (key === 'lang:auto') {
+          setLocaleByNavigator();
+        } else {
+          setLocale(key.replace('lang:', ''));
+        }
+      }
+      break;
+  }
+};
+
 const handleMinePageChange = (page: number) => {
   minePagination.value.page = page;
   void fetchList({ page });
@@ -700,7 +784,23 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   <div class="world-lobby-root p-4">
     <div class="world-lobby-header">
       <h2 class="text-lg font-bold">世界大厅</h2>
-      <n-space size="small">
+      <div class="world-lobby-header-avatar">
+        <n-dropdown placement="bottom-end" trigger="click" :options="headerMenuOptions" @select="handleHeaderMenuSelect">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="sc-icon-button sc-user-button"
+                :aria-label="`打开 ${userDisplayName} 的菜单`"
+              >
+                <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
+              </button>
+            </template>
+            <span>{{ userDisplayName }}</span>
+          </n-tooltip>
+        </n-dropdown>
+      </div>
+      <div class="world-lobby-header-buttons">
         <n-button size="small" quaternary @click="toggleViewMode">
           <template #icon>
             <n-icon>
@@ -718,7 +818,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         <n-button size="small" :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'" @click="switchLobbyMode">
           {{ lobbyMode === 'mine' ? '探索世界' : '我的世界' }}
         </n-button>
-      </n-space>
+      </div>
     </div>
 
     <div class="world-toolbar-row">
@@ -935,11 +1035,26 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         </n-space>
       </template>
     </n-modal>
+
+    <div
+      v-if="userProfileShow"
+      class="world-lobby-overlay world-lobby-overlay--profile sc-overlay-layer"
+    >
+      <UserProfile @close="userProfileShow = false" />
+    </div>
+    <div
+      v-if="adminShow"
+      class="world-lobby-overlay world-lobby-overlay--admin sc-overlay-layer"
+    >
+      <AdminSettings @close="adminShow = false" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .world-lobby-root {
+  position: relative;
+  width: 100%;
   min-height: 100vh;
   min-height: 100dvh;
   height: 100vh;
@@ -948,14 +1063,147 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   flex-direction: column;
   gap: 12px;
   overflow: hidden;
+  overflow-x: clip;
   box-sizing: border-box;
+  background-color: var(--sc-bg-page);
+}
+
+/* Fix subtle left-edge seam in dark palettes on some mobile browsers */
+.world-lobby-root::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background-color: var(--sc-bg-page);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.sc-icon-button {
+  width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background-color: transparent;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  color: var(--sc-text-secondary);
+  transition: color 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+
+.sc-icon-button:hover,
+.sc-icon-button:focus-visible {
+  color: #0ea5e9;
+  transform: translateY(-0.5px);
+}
+
+.sc-user-button {
+  overflow: hidden;
+}
+
+.sc-user-button :deep(.avatar-shell) {
+  border-radius: 9999px;
+}
+
+.sc-overlay-layer {
+  pointer-events: auto;
+  z-index: 2600;
+}
+
+.world-lobby-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 18px;
+  background-color: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(2px) saturate(108%);
+}
+
+.world-lobby-overlay--profile :deep(.sc-form-scroll) {
+  width: min(680px, calc(100vw - 36px));
+  max-width: 680px;
+  max-height: min(88vh, calc(100vh - 36px));
+  overflow: auto;
+  background-color: var(--sc-bg-surface);
+  border: 1px solid var(--sc-border-mute);
+  box-shadow:
+    0 20px 46px rgba(15, 23, 42, 0.2),
+    0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+.world-lobby-overlay--admin :deep(.sc-admin-settings-shell) {
+  width: min(1120px, calc(100vw - 36px));
+  max-height: min(88vh, calc(100vh - 36px));
+  margin-top: 0 !important;
+  overflow: auto;
+  background-color: var(--sc-bg-surface);
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 12px;
+  box-shadow:
+    0 20px 46px rgba(15, 23, 42, 0.2),
+    0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+:global(:root[data-display-palette='day']) .world-lobby-overlay {
+  background-color: rgba(148, 163, 184, 0.28);
+}
+
+:global(:root[data-display-palette='night']) .world-lobby-overlay {
+  background-color: rgba(2, 6, 23, 0.62);
+}
+
+@media (max-width: 640px) {
+  .world-lobby-root::before {
+    width: 2px;
+  }
+
+  .world-lobby-overlay {
+    padding: 10px;
+  }
+
+  .world-lobby-overlay--profile :deep(.sc-form-scroll) {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  .world-lobby-overlay--admin :deep(.sc-admin-settings-shell) {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    min-height: 0 !important;
+    border-radius: 12px;
+    padding: 12px;
+  }
 }
 
 .world-lobby-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
+}
+
+.world-lobby-header-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.world-lobby-header-buttons {
+  justify-self: end;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -1242,17 +1490,26 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 @media (max-width: 640px) {
   .world-lobby-header {
-    align-items: stretch;
+    grid-template-columns: 1fr auto;
+    row-gap: 8px;
   }
 
-  .world-lobby-header :deep(.n-space) {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+  .world-lobby-header-buttons {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .world-lobby-header :deep(.n-space .n-button) {
-    flex: 1 1 calc(50% - 8px);
+  .world-lobby-header-buttons::-webkit-scrollbar {
+    display: none;
+  }
+
+  .world-lobby-header-buttons :deep(.n-button) {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .world-toolbar-row {

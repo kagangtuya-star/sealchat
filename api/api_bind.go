@@ -525,8 +525,20 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 			return err
 		}
 
+		var rawPayload struct {
+			Audio *struct {
+				AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
+			} `json:"audio"`
+			AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
+		}
+		if unmarshalErr := json.Unmarshal(ctx.Body(), &rawPayload); unmarshalErr != nil {
+			return unmarshalErr
+		}
+
 		newConfig := payload.AppConfig
-		if payload.AllowWorldAudioWorkbench != nil {
+		if rawPayload.Audio != nil && rawPayload.Audio.AllowWorldAudioWorkbench != nil {
+			newConfig.Audio.AllowWorldAudioWorkbench = *rawPayload.Audio.AllowWorldAudioWorkbench
+		} else if payload.AllowWorldAudioWorkbench != nil {
 			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
 		}
 

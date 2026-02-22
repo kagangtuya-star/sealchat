@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -129,6 +130,17 @@ func TestConvertSatoriToCQ(t *testing.T) {
 	// 结果应包含 [CQ:at] 格式
 	if result == input {
 		t.Log("ConvertSatoriToCQ result:", result)
+	}
+}
+
+func TestConvertSatoriToCQWithBr(t *testing.T) {
+	input := "前文<br />后文"
+	result := ConvertSatoriToCQ(input)
+	if strings.Contains(result, "</br>") {
+		t.Fatalf("unexpected closing br tag in result: %q", result)
+	}
+	if !strings.Contains(result, "前文\n后文") {
+		t.Fatalf("expected newline converted content, got: %q", result)
 	}
 }
 

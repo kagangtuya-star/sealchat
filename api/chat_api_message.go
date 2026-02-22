@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -31,6 +32,27 @@ const (
 )
 
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
+var atTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "UNIQUE constraint failed") {
+		return true
+	}
+	if strings.Contains(msg, "Error 1062") || strings.Contains(msg, "Duplicate entry") {
+		return true
+	}
+	if strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "duplicate key value") {
+		return true
+	}
+	return false
+}
 
 type typingOrderCandidate struct {
 	userId    string
@@ -186,6 +208,74 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 		"channel_id":    item.ChannelID,
 		"created_at":    item.CreatedAt.UnixMilli(),
 		"display_order": item.DisplayOrder,
+	}, nil
+}
+
+func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}) (any, error) {
+	db := model.GetDB()
+	channelID := strings.TrimSpace(data.ChannelID)
+	messageID := strings.TrimSpace(data.MessageID)
+	if channelID == "" || messageID == "" {
+		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	}
+
+	// 权限检查（与 message.get 一致）
+	if ctx.IsReadOnly() {
+		if len(channelID) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelID); err != nil {
+			return nil, err
+		}
+	} else if len(channelID) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	var item model.MessageModel
+	q := db.Where("channel_id = ? AND id = ?", channelID, messageID)
+	q = q.Where("is_deleted = ?", false)
+	q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+		SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+	))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+	q.Limit(1).Find(&item)
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	// 仅消息作者可恢复撤回文案
+	if item.UserID != ctx.User.ID {
+		return nil, nil
+	}
+	if !item.IsRevoked {
+		return nil, nil
+	}
+	if strings.TrimSpace(item.Content) == "" {
+		return nil, nil
+	}
+
+	icMode := strings.ToLower(strings.TrimSpace(item.ICMode))
+	if icMode != "ooc" {
+		icMode = "ic"
+	}
+
+	return map[string]any{
+		"message_id":  item.ID,
+		"channel_id":  item.ChannelID,
+		"content":     item.Content,
+		"is_whisper":  item.IsWhisper,
+		"whisper_to":  item.WhisperTo,
+		"ic_mode":     icMode,
+		"identity_id": item.SenderIdentityID,
 	}, nil
 }
 
@@ -484,13 +574,12 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 	operatorID := ctx.User.ID
 	targetUserID := msg.UserID
 	if targetUserID != operatorID {
-		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID) ||
-			service.IsWorldAdmin(channel.WorldID, operatorID)
-		if !operatorIsAdmin && !pm.CanWithSystemRole(operatorID, pm.PermModAdmin) {
+		operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+		operatorIsSystemAdmin := pm.CanWithSystemRole(operatorID, pm.PermModAdmin)
+		if operatorRank < channelMemberRoleRankAdmin && !operatorIsSystemAdmin {
 			return nil, fmt.Errorf("无权限删除该消息")
 		}
-		if isChannelAdminUser(channel, channelID, targetUserID) ||
-			service.IsWorldAdmin(channel.WorldID, targetUserID) {
+		if !operatorIsSystemAdmin && !canModerateTargetByRank(channel, channelID, operatorID, targetUserID) {
 			return nil, fmt.Errorf("无法删除拥有管理员权限的成员消息")
 		}
 	}
@@ -982,26 +1071,33 @@ func getChannelMemberRoleRank(channel *model.ChannelModel, channelID, userID str
 		return channelMemberRoleRankOwner
 	}
 	roleIDs, err := model.UserRoleMappingListByUserID(userID, channelID, "channel")
-	if err != nil || len(roleIDs) == 0 {
-		return channelMemberRoleRankNone
-	}
 	rank := channelMemberRoleRankNone
-	for _, roleID := range roleIDs {
-		switch {
-		case strings.HasSuffix(roleID, "-owner"):
+	if err == nil {
+		for _, roleID := range roleIDs {
+			switch {
+			case strings.HasSuffix(roleID, "-owner"):
+				return channelMemberRoleRankOwner
+			case strings.HasSuffix(roleID, "-admin"):
+				if rank < channelMemberRoleRankAdmin {
+					rank = channelMemberRoleRankAdmin
+				}
+			case strings.HasSuffix(roleID, "-member"):
+				if rank < channelMemberRoleRankMember {
+					rank = channelMemberRoleRankMember
+				}
+			case strings.HasSuffix(roleID, "-spectator"):
+				if rank < channelMemberRoleRankSpectator {
+					rank = channelMemberRoleRankSpectator
+				}
+			}
+		}
+	}
+	if channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+		if service.IsWorldOwner(channel.WorldID, userID) {
 			return channelMemberRoleRankOwner
-		case strings.HasSuffix(roleID, "-admin"):
-			if rank < channelMemberRoleRankAdmin {
-				rank = channelMemberRoleRankAdmin
-			}
-		case strings.HasSuffix(roleID, "-member"):
-			if rank < channelMemberRoleRankMember {
-				rank = channelMemberRoleRankMember
-			}
-		case strings.HasSuffix(roleID, "-spectator"):
-			if rank < channelMemberRoleRankSpectator {
-				rank = channelMemberRoleRankSpectator
-			}
+		}
+		if service.IsWorldAdmin(channel.WorldID, userID) && rank < channelMemberRoleRankAdmin {
+			rank = channelMemberRoleRankAdmin
 		}
 	}
 	return rank
@@ -1009,6 +1105,18 @@ func getChannelMemberRoleRank(channel *model.ChannelModel, channelID, userID str
 
 func isChannelMemberOrAbove(channel *model.ChannelModel, channelID, userID string) bool {
 	return getChannelMemberRoleRank(channel, channelID, userID) >= channelMemberRoleRankMember
+}
+
+func canModerateTargetByRank(channel *model.ChannelModel, channelID, operatorID, targetUserID string) bool {
+	if strings.TrimSpace(operatorID) == "" || strings.TrimSpace(targetUserID) == "" {
+		return false
+	}
+	if operatorID == targetUserID {
+		return true
+	}
+	operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+	targetRank := getChannelMemberRoleRank(channel, channelID, targetUserID)
+	return operatorRank > targetRank
 }
 
 func canCancelPinnedMessage(channel *model.ChannelModel, channelID, operatorID, pinnedBy string) bool {
@@ -1298,15 +1406,15 @@ func apiMessageArchive(ctx *ChatContext, data *struct {
 			}
 		}
 	} else {
-		operatorIsAdmin := isChannelAdminUser(channel, data.ChannelID, operatorID)
+		operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, operatorID)
 		for _, msg := range messages {
 			if msg.UserID == operatorID {
 				continue
 			}
-			if !operatorIsAdmin {
+			if operatorRank < channelMemberRoleRankAdmin {
 				return nil, fmt.Errorf("无权限归档目标消息")
 			}
-			if isChannelAdminUser(channel, data.ChannelID, msg.UserID) {
+			if !canModerateTargetByRank(channel, data.ChannelID, operatorID, msg.UserID) {
 				return nil, fmt.Errorf("无法归档同样具有管理员权限的成员消息")
 			}
 		}
@@ -1379,15 +1487,15 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 			}
 		}
 	} else {
-		operatorIsAdmin := isChannelAdminUser(channel, data.ChannelID, operatorID)
+		operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, operatorID)
 		for _, msg := range messages {
 			if msg.UserID == operatorID {
 				continue
 			}
-			if !operatorIsAdmin {
+			if operatorRank < channelMemberRoleRankAdmin {
 				return nil, fmt.Errorf("无权限取消归档目标消息")
 			}
-			if isChannelAdminUser(channel, data.ChannelID, msg.UserID) {
+			if !canModerateTargetByRank(channel, data.ChannelID, operatorID, msg.UserID) {
 				return nil, fmt.Errorf("无法操作同样具有管理员权限的成员消息")
 			}
 		}
@@ -1446,6 +1554,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	echo := ctx.Echo
 	db := model.GetDB()
 	channelId := data.ChannelID
+	trimmedClientID := strings.TrimSpace(data.ClientID)
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)
@@ -1536,6 +1645,68 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+
+	findExistingByClientID := func(clientID string) (*protocol.Message, error) {
+		var existing model.MessageModel
+		if err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, username, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("channel_id = ? AND user_id = ? AND client_id = ?", channelId, ctx.User.ID, clientID).
+			Order("created_at desc").Limit(1).Find(&existing).Error; err != nil {
+			return nil, err
+		}
+		if existing.ID == "" {
+			return nil, nil
+		}
+		if existing.WhisperTo != "" {
+			existing.WhisperTarget = loadWhisperTargetForChannel(channelId, existing.WhisperTo)
+		}
+		if existing.IsWhisper {
+			existing.WhisperTargets = loadWhisperTargetsForMessage(channelId, existing.ID, existing.WhisperTarget)
+		}
+		if existing.QuoteID != "" {
+			var quote model.MessageModel
+			if err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, username, avatar, is_bot")
+			}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+				return db.Select("id, nickname, channel_id, user_id")
+			}).Where("id = ? AND is_deleted = ?", existing.QuoteID, false).Limit(1).Find(&quote).Error; err == nil && quote.ID != "" {
+				if quote.WhisperTo != "" {
+					quote.WhisperTarget = loadWhisperTargetForChannel(channelId, quote.WhisperTo)
+				}
+				if quote.IsWhisper {
+					quote.WhisperTargets = loadWhisperTargetsForMessage(channelId, quote.ID, quote.WhisperTarget)
+				}
+				existing.Quote = &quote
+			}
+		}
+
+		messageData := buildProtocolMessage(&existing, channelData)
+		if messageData.User == nil {
+			messageData.User = ctx.User.ToProtocolType()
+		}
+		if messageData.Member == nil && member != nil {
+			messageData.Member = member.ToProtocolType()
+		}
+		if messageData.Member != nil {
+			messageData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(ctx.User.ID, channelId, channel.WorldID)}
+		}
+		messageData.ClientID = clientID
+		return messageData, nil
+	}
+
+	// 幂等重试：同一用户在同一频道重复提交相同 client_id 时直接返回既有消息。
+	if trimmedClientID != "" {
+		existingMessageData, err := findExistingByClientID(trimmedClientID)
+		if err != nil {
+			return nil, err
+		}
+		if existingMessageData != nil {
+			log.Printf("[message.create] 幂等命中 channel=%s user=%s client_id=%s message=%s", channelId, ctx.User.ID, trimmedClientID, existingMessageData.ID)
+			return existingMessageData, nil
+		}
+	}
 	var renderResult *service.DiceRenderResult
 	var isHiddenDice bool
 	if channel.BuiltInDiceEnabled {
@@ -1554,21 +1725,50 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	hiddenWhisperToSelf := false
 	whisperTo := strings.TrimSpace(data.WhisperTo)
-	if whisperTo == "" && botMsgContext != nil && botMsgContext.IsWhisper && !botMsgContext.IsHiddenDice {
-		if botMsgContext.WhisperToUserID != "" {
-			whisperTo = botMsgContext.WhisperToUserID
+	whisperRecipientIDs := resolveWhisperRecipients(whisperTo, data.WhisperToIds, ctx.User.ID)
+	if whisperTo == "" && len(whisperRecipientIDs) > 0 {
+		whisperTo = whisperRecipientIDs[0]
+	}
+	if len(whisperRecipientIDs) == 0 && ctx.User.IsBot && data.QuoteID != "" {
+		if quoteRecipients := resolveWhisperRecipientsFromQuote(channelId, data.QuoteID, ctx.User.ID); len(quoteRecipients) > 0 {
+			whisperRecipientIDs = quoteRecipients
+			whisperTo = quoteRecipients[0]
+		}
+	}
+	if len(whisperRecipientIDs) == 0 && botMsgContext != nil && botMsgContext.IsWhisper && !botMsgContext.IsHiddenDice {
+		if cachedRecipients := resolveBotWhisperRecipients(ctx, channelId, ctx.User.ID); len(cachedRecipients) > 0 {
+			whisperRecipientIDs = cachedRecipients
+			whisperTo = cachedRecipients[0]
+		} else if botMsgContext.WhisperToUserID != "" {
+			whisperRecipientIDs = resolveWhisperRecipients(botMsgContext.WhisperToUserID, nil, ctx.User.ID)
+			if len(whisperRecipientIDs) > 0 {
+				whisperTo = whisperRecipientIDs[0]
+			} else {
+				whisperTo = botMsgContext.WhisperToUserID
+			}
 		}
 	}
 	if ctx.User.IsBot && channel.BotFeatureEnabled {
-		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && pending.TargetUserID != "" {
-			if whisperTo != "" {
+		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && hasBotHiddenDicePendingTargets(pending) {
+			if len(whisperRecipientIDs) > 0 || whisperTo != "" {
 				if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 					ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
 				}
 			} else {
 				pending.Count++
 				if pending.Count >= 2 {
-					whisperTo = pending.TargetUserID
+					resolvedPending := resolveWhisperRecipients(pending.TargetUserID, pending.TargetUserIDs, ctx.User.ID)
+					if len(resolvedPending) > 0 {
+						whisperRecipientIDs = resolvedPending
+						preferredTarget := strings.TrimSpace(pending.TargetUserID)
+						if preferredTarget != "" {
+							whisperTo = preferredTarget
+						} else {
+							whisperTo = resolvedPending[0]
+						}
+					} else if pending.TargetUserID != "" {
+						whisperTo = pending.TargetUserID
+					}
 					if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 						ctx.ConnInfo.BotHiddenDicePending.Delete(channelId)
 					}
@@ -1578,12 +1778,20 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && !channel.BotFeatureEnabled {
+	if ctx.User.IsBot && botMsgContext != nil && botMsgContext.IsWhisper {
+		senderID := strings.TrimSpace(botMsgContext.SenderUserID)
+		if senderID != "" {
+			whisperRecipientIDs = resolveWhisperRecipients(whisperTo, append(whisperRecipientIDs, senderID), ctx.User.ID)
+			if whisperTo == "" && len(whisperRecipientIDs) > 0 {
+				whisperTo = whisperRecipientIDs[0]
+			}
+		}
+	}
+	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !channel.BotFeatureEnabled {
 		hiddenWhisperToSelf = true
 		whisperTo = ctx.User.ID
 	}
 
-	whisperRecipientIDs := resolveWhisperRecipients(whisperTo, data.WhisperToIds, ctx.User.ID)
 	if len(whisperRecipientIDs) > 10 {
 		return nil, fmt.Errorf("悄悄话收件人数量不能超过10人")
 	}
@@ -1694,6 +1902,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		WhisperTo:        whisperTo,
 		WhisperTargets:   whisperTargets,
 	}
+	if trimmedClientID != "" {
+		m.ClientID = &trimmedClientID
+	}
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
@@ -1724,6 +1935,16 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	createResult := db.Create(&m)
 	if createResult.Error != nil {
+		if trimmedClientID != "" && isUniqueConstraintError(createResult.Error) {
+			existingMessageData, err := findExistingByClientID(trimmedClientID)
+			if err != nil {
+				return nil, err
+			}
+			if existingMessageData != nil {
+				log.Printf("[message.create] 唯一键冲突兜底 channel=%s user=%s client_id=%s message=%s", channelId, ctx.User.ID, trimmedClientID, existingMessageData.ID)
+				return existingMessageData, nil
+			}
+		}
 		return nil, createResult.Error
 	}
 	if len(whisperRecipientIDs) > 0 {
@@ -1753,7 +1974,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		messageData.User = userData
 		messageData.Member = member.ToProtocolType()
 		messageData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(ctx.User.ID, data.ChannelID, channel.WorldID)}
-		messageData.ClientID = data.ClientID
+		messageData.ClientID = trimmedClientID
 		if quote.ID != "" {
 			qData := quote.ToProtocolType2(channelData)
 			qData.Content = quote.Content
@@ -1821,7 +2042,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			go sendHiddenDicePrivateCopy(ctx, channelData, messageData)
 		}
 		if channel.PermType == "private" && ctx.User != nil && ctx.User.IsBot {
-			go forwardHiddenDiceWhisperCopy(ctx, channel, &m, privateOtherUser)
+			go forwardBotWhisperCopy(ctx, channel, &m, privateOtherUser)
 		}
 
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
@@ -1838,7 +2059,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 				QuoteID:   data.QuoteID,
 				Content:   data.Content,
 				WhisperTo: whisperTo,
-				ClientID:  data.ClientID,
+				ClientID:  trimmedClientID,
 				ICMode:    icMode,
 			}
 			builtinSealBotSolve(ctx, botReq, channelData, isHiddenDice)
@@ -1855,7 +2076,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		if whisperUser != nil {
-			targets := lo.Uniq([]string{whisperTo})
+			targets := make([]string, 0, len(whisperRecipientIDs)+1)
+			if whisperTo != "" {
+				targets = append(targets, whisperTo)
+			}
+			targets = append(targets, whisperRecipientIDs...)
+			targets = lo.Uniq(targets)
 			for _, uid := range targets {
 				if uid == "" || uid == ctx.User.ID {
 					continue
@@ -2278,11 +2504,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if !isAuthor && channel.WorldID != "" {
 		world, err := service.GetWorldByID(channel.WorldID)
 		if err == nil && world != nil && world.AllowAdminEditMessages {
-			if service.IsWorldAdmin(channel.WorldID, ctx.User.ID) {
-				// 检查目标消息作者是否为非管理员
-				if !service.IsWorldAdmin(channel.WorldID, msg.UserID) {
-					isAdminEdit = true
-				}
+			operatorRank := getChannelMemberRoleRank(channel, data.ChannelID, ctx.User.ID)
+			if operatorRank >= channelMemberRoleRankAdmin &&
+				canModerateTargetByRank(channel, data.ChannelID, ctx.User.ID, msg.UserID) {
+				isAdminEdit = true
 			}
 		}
 	}
@@ -2948,6 +3173,73 @@ func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.Mess
 	return msgContext
 }
 
+func resolveBotWhisperRecipients(ctx *ChatContext, channelId, senderID string) []string {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
+		return nil
+	}
+	if ctx.ConnInfo.BotLastWhisperTargets == nil {
+		return nil
+	}
+	targetIDs, ok := ctx.ConnInfo.BotLastWhisperTargets.Load(channelId)
+	if !ok || len(targetIDs) == 0 {
+		return nil
+	}
+	return resolveWhisperRecipients("", targetIDs, senderID)
+}
+
+func resolveWhisperRecipientsFromQuote(channelID, quoteID, senderID string) []string {
+	channelID = strings.TrimSpace(channelID)
+	quoteID = strings.TrimSpace(quoteID)
+	if channelID == "" || quoteID == "" {
+		return nil
+	}
+	var quote model.MessageModel
+	model.GetDB().
+		Select("id, channel_id, user_id, is_whisper, whisper_to, is_deleted").
+		Where("id = ? AND channel_id = ? AND is_deleted = ?", quoteID, channelID, false).
+		Limit(1).
+		Find(&quote)
+	if quote.ID == "" || !quote.IsWhisper {
+		return nil
+	}
+	recipientIDs := model.GetWhisperRecipientIDs(quote.ID)
+	if strings.TrimSpace(quote.UserID) != "" {
+		recipientIDs = append(recipientIDs, quote.UserID)
+	}
+	return resolveWhisperRecipients(quote.WhisperTo, recipientIDs, senderID)
+}
+
+func hasBotHiddenDicePendingTargets(pending *BotHiddenDicePending) bool {
+	if pending == nil {
+		return false
+	}
+	if strings.TrimSpace(pending.TargetUserID) != "" {
+		return true
+	}
+	for _, id := range pending.TargetUserIDs {
+		if strings.TrimSpace(id) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func botHiddenDicePendingContainsRecipient(pending *BotHiddenDicePending, userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if pending == nil || userID == "" {
+		return false
+	}
+	if strings.TrimSpace(pending.TargetUserID) == userID {
+		return true
+	}
+	for _, id := range pending.TargetUserIDs {
+		if strings.TrimSpace(id) == userID {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenDicePending {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || ctx.ConnInfo == nil {
 		return nil
@@ -3123,49 +3415,34 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
 }
 
-func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
+func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
 	if ctx == nil || ctx.User == nil || !ctx.User.IsBot || sourceChannel == nil || msg == nil {
 		return
 	}
 	if sourceChannel.PermType != "private" {
 		return
 	}
+	privateOtherUser = strings.TrimSpace(privateOtherUser)
 	if privateOtherUser == "" {
 		return
 	}
-	if !strings.Contains(msg.Content, "暗骰") {
+	targetChannel, targetChannelID := resolveBotWhisperForwardTargetChannel(ctx, msg.Content, privateOtherUser)
+	if targetChannel == nil || targetChannelID == "" {
 		return
 	}
-	match := hiddenDiceForwardPattern.FindStringSubmatch(msg.Content)
-	if len(match) < 2 {
+	cfg := parseBotWhisperForwardConfig(targetChannel.BotWhisperForwardConfig)
+	if !shouldForwardBotWhisperMessage(cfg, msg.Content) {
 		return
 	}
-	targetChannelID := strings.TrimSpace(match[1])
-	if targetChannelID == "" {
-		return
-	}
-	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); pending != nil && pending.TargetUserID == privateOtherUser {
+	if pending := resolveBotHiddenDicePending(ctx, targetChannelID); botHiddenDicePendingContainsRecipient(pending, privateOtherUser) {
 		if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
 			ctx.ConnInfo.BotHiddenDicePending.Delete(targetChannelID)
 		}
-	}
-	targetChannel, _ := model.ChannelGet(targetChannelID)
-	if targetChannel == nil || targetChannel.ID == "" {
-		return
 	}
 	member, err := model.MemberGetByUserIDAndChannelIDBase(ctx.User.ID, targetChannelID, ctx.User.Nickname, true)
 	if err != nil || member == nil {
 		return
 	}
-	whisperUser := model.UserGet(privateOtherUser)
-	if whisperUser == nil {
-		return
-	}
-	var whisperMember *model.MemberModel
-	if len(targetChannelID) < 30 {
-		whisperMember, _ = model.MemberGetByUserIDAndChannelIDBase(privateOtherUser, targetChannelID, "", false)
-	}
-	setUserNickFromMember(whisperUser, whisperMember)
 
 	msgICMode := strings.TrimSpace(strings.ToLower(msg.ICMode))
 	if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
@@ -3176,15 +3453,20 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 	}
 
 	now := time.Now()
+	dbQuery := model.GetDB().Model(&model.MessageModel{}).
+		Where("channel_id = ? AND user_id = ? AND is_whisper = ? AND content = ? AND created_at >= ?",
+			targetChannelID, ctx.User.ID, cfg.AsWhisper, msg.Content, now.Add(-5*time.Second))
+	if cfg.AsWhisper {
+		dbQuery = dbQuery.Where("whisper_to = ?", privateOtherUser)
+	} else {
+		dbQuery = dbQuery.Where("COALESCE(whisper_to, '') = ''")
+	}
 	var existingCount int64
-	model.GetDB().Model(&model.MessageModel{}).
-		Where("channel_id = ? AND user_id = ? AND is_whisper = ? AND whisper_to = ? AND content = ? AND created_at >= ?",
-			targetChannelID, ctx.User.ID, true, privateOtherUser, msg.Content, now.Add(-5*time.Second)).
-		Count(&existingCount)
+	dbQuery.Count(&existingCount)
 	if existingCount > 0 {
 		return
 	}
-	nowMs := now.UnixMilli()
+
 	m := model.MessageModel{
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
@@ -3193,43 +3475,234 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 		ChannelID:        targetChannelID,
 		MemberID:         member.ID,
 		Content:          msg.Content,
-		DisplayOrder:     float64(nowMs),
+		DisplayOrder:     float64(now.UnixMilli()),
 		ICMode:           msgICMode,
 		SenderMemberName: member.Nickname,
-		IsWhisper:        true,
-		WhisperTo:        privateOtherUser,
+		IsWhisper:        cfg.AsWhisper,
 	}
-	m.WhisperTarget = whisperUser
-	m.WhisperSenderUserNick = ctx.User.Nickname
-	m.WhisperSenderUserName = ctx.User.Username
-	m.WhisperSenderMemberID = member.ID
-	m.WhisperSenderMemberName = m.SenderMemberName
-	m.WhisperTargetUserNick = whisperUser.Nickname
-	m.WhisperTargetUserName = whisperUser.Username
-	if whisperMember != nil {
-		m.WhisperTargetMemberID = whisperMember.ID
-		m.WhisperTargetMemberName = whisperMember.Nickname
+
+	whisperRecipientIDs := make([]string, 0, 4)
+	if cfg.AsWhisper {
+		whisperUser := model.UserGet(privateOtherUser)
+		if whisperUser == nil {
+			return
+		}
+		var whisperMember *model.MemberModel
+		if len(targetChannelID) < 30 {
+			whisperMember, _ = model.MemberGetByUserIDAndChannelIDBase(privateOtherUser, targetChannelID, "", false)
+		}
+		setUserNickFromMember(whisperUser, whisperMember)
+
+		recipientUsers := []*model.UserModel{whisperUser}
+		recipientSeen := map[string]struct{}{whisperUser.ID: {}}
+		if cfg.AppendAtTargetsWhenWhisper {
+			atIDs := extractBotWhisperForwardAtTargetIDs(msg.Content)
+			for _, atID := range atIDs {
+				atID = strings.TrimSpace(atID)
+				if atID == "" || atID == "all" || atID == ctx.User.ID || atID == whisperUser.ID {
+					continue
+				}
+				if _, exists := recipientSeen[atID]; exists {
+					continue
+				}
+				target := loadWhisperTargetForChannel(targetChannelID, atID)
+				if target == nil {
+					continue
+				}
+				recipientSeen[atID] = struct{}{}
+				recipientUsers = append(recipientUsers, target)
+			}
+		}
+		for _, target := range recipientUsers {
+			if target == nil || target.ID == "" || target.ID == ctx.User.ID {
+				continue
+			}
+			whisperRecipientIDs = append(whisperRecipientIDs, target.ID)
+		}
+
+		m.WhisperTo = privateOtherUser
+		m.WhisperTarget = whisperUser
+		m.WhisperTargets = recipientUsers
+		m.WhisperSenderUserNick = ctx.User.Nickname
+		m.WhisperSenderUserName = ctx.User.Username
+		m.WhisperSenderMemberID = member.ID
+		m.WhisperSenderMemberName = m.SenderMemberName
+		m.WhisperTargetUserNick = whisperUser.Nickname
+		m.WhisperTargetUserName = whisperUser.Username
+		if whisperMember != nil {
+			m.WhisperTargetMemberID = whisperMember.ID
+			m.WhisperTargetMemberName = whisperMember.Nickname
+		}
 	}
 
 	if err := model.GetDB().Create(&m).Error; err != nil {
 		return
 	}
+	if cfg.AsWhisper && len(whisperRecipientIDs) > 0 {
+		if err := model.CreateWhisperRecipients(m.ID, whisperRecipientIDs); err != nil {
+			log.Printf("创建 BOT 私聊转发收件人失败: %v", err)
+		}
+	}
+
 	channelData := targetChannel.ToProtocolType()
 	userData := ctx.User.ToProtocolType()
 	messageData := m.ToProtocolType2(channelData)
 	messageData.Content = msg.Content
 	messageData.User = userData
 	messageData.Member = member.ToProtocolType()
-	messageData.WhisperTo = whisperUser.ToProtocolType()
 
-	recipients := lo.Uniq([]string{ctx.User.ID, whisperUser.ID})
-	ctx.BroadcastEventInChannelToUsers(targetChannelID, recipients, &protocol.Event{
-		Type:    protocol.EventMessageCreated,
-		Message: messageData,
-		Channel: channelData,
-		User:    userData,
-	})
+	if cfg.AsWhisper {
+		recipients := lo.Uniq(append([]string{ctx.User.ID}, whisperRecipientIDs...))
+		ctx.BroadcastEventInChannelToUsers(targetChannelID, recipients, &protocol.Event{
+			Type:    protocol.EventMessageCreated,
+			Message: messageData,
+			Channel: channelData,
+			User:    userData,
+		})
+	} else {
+		ctx.BroadcastEventInChannel(targetChannelID, &protocol.Event{
+			Type:    protocol.EventMessageCreated,
+			Message: messageData,
+			Channel: channelData,
+			User:    userData,
+		})
+	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
+}
+
+func resolveBotWhisperForwardTargetChannel(ctx *ChatContext, content, privateOtherUser string) (*model.ChannelModel, string) {
+	match := hiddenDiceForwardPattern.FindStringSubmatch(content)
+	if len(match) >= 2 {
+		if channel := loadBotWhisperForwardTargetChannel(strings.TrimSpace(match[1])); channel != nil {
+			return channel, channel.ID
+		}
+	}
+	fallbackChannelID := resolveActiveChannelIDForUser(ctx, privateOtherUser)
+	if channel := loadBotWhisperForwardTargetChannel(fallbackChannelID); channel != nil {
+		return channel, channel.ID
+	}
+	return nil, ""
+}
+
+func loadBotWhisperForwardTargetChannel(channelID string) *model.ChannelModel {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil || channel == nil || channel.ID == "" {
+		return nil
+	}
+	if channel.IsPrivate || strings.EqualFold(strings.TrimSpace(channel.PermType), "private") {
+		return nil
+	}
+	return channel
+}
+
+func resolveActiveChannelIDForUser(ctx *ChatContext, userID string) string {
+	userID = strings.TrimSpace(userID)
+	if ctx == nil || userID == "" || ctx.UserId2ConnInfo == nil {
+		return ""
+	}
+	connMap, ok := ctx.UserId2ConnInfo.Load(userID)
+	if !ok || connMap == nil {
+		return ""
+	}
+	bestChannelID := ""
+	bestAliveAt := int64(-1)
+	connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+		if info == nil {
+			return true
+		}
+		channelID := strings.TrimSpace(info.ChannelId)
+		if channelID == "" {
+			return true
+		}
+		lastAlive := info.LastAliveTime
+		if lastAlive == 0 {
+			lastAlive = info.LastPingTime
+		}
+		if lastAlive > bestAliveAt {
+			bestAliveAt = lastAlive
+			bestChannelID = channelID
+		}
+		return true
+	})
+	return bestChannelID
+}
+
+func shouldForwardBotWhisperMessage(cfg BotWhisperForwardConfig, content string) bool {
+	if !cfg.Enabled {
+		return false
+	}
+	matchedCount := 0
+	enabledCount := 0
+	for _, rule := range cfg.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		enabledCount++
+		if matchBotWhisperForwardRule(rule, content) {
+			matchedCount++
+		}
+	}
+	if enabledCount == 0 {
+		return false
+	}
+	if cfg.RuleLogic == botWhisperForwardRuleLogicAll {
+		return matchedCount == enabledCount
+	}
+	return matchedCount > 0
+}
+
+func matchBotWhisperForwardRule(rule BotWhisperForwardRule, content string) bool {
+	switch rule.Type {
+	case botWhisperForwardRuleTypeLegacyHiddenDice:
+		return strings.Contains(content, "暗骰") || strings.Contains(content, "暗中检定")
+	case botWhisperForwardRuleTypeKeyword:
+		keyword := strings.TrimSpace(rule.Keyword)
+		return keyword != "" && strings.Contains(content, keyword)
+	case botWhisperForwardRuleTypeRegex:
+		re, err := compileBotWhisperForwardRegex(rule.Pattern, rule.Flags)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(content)
+	case botWhisperForwardRuleTypeAll:
+		return true
+	default:
+		return false
+	}
+}
+
+func extractBotWhisperForwardAtTargetIDs(content string) []string {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	matches := atTagIDPattern.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(matches))
+	seen := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		id := strings.TrimSpace(match[1])
+		if id == "" {
+			id = strings.TrimSpace(match[2])
+		}
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func resolveWhisperRecipients(whisperTo string, whisperToIds []string, senderID string) []string {
@@ -3281,7 +3754,7 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 	WidgetIndex int    `json:"widget_index"`
 	Operation   string `json:"operation"`
 }) (any, error) {
-	if data.Operation != "rotate" {
+	if data.Operation != service.WidgetOperationRotate && data.Operation != service.WidgetOperationReveal {
 		return nil, fmt.Errorf("unsupported operation: %s", data.Operation)
 	}
 
@@ -3321,46 +3794,54 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		}
 	}
 
-	// Permission check:
-	// - no @ mention: allow channel/world member with read access (already verified above)
-	// - has @ mention: only sender, mentioned user, or world admin/owner
-	hasMention := false
-	isMentioned := false
-	root := protocol.ElementParse(msg.Content)
-	if root != nil {
-		root.Traverse(func(el *protocol.Element) {
-			if el.Type != "at" {
-				return
+	if data.Operation == service.WidgetOperationReveal {
+		// Reveal is one-way transition for spoiler visibility and only sender can trigger.
+		if msg.UserID != ctx.User.ID {
+			return nil, fmt.Errorf("forbidden")
+		}
+	} else {
+		// Permission check:
+		// - no @ mention: allow channel/world member with read access (already verified above)
+		// - has @ mention: only sender, mentioned user, or world admin/owner
+		hasMention := false
+		isMentioned := false
+		root := protocol.ElementParse(msg.Content)
+		if root != nil {
+			root.Traverse(func(el *protocol.Element) {
+				if el.Type != "at" {
+					return
+				}
+				id, ok := el.Attrs["id"].(string)
+				if !ok || strings.TrimSpace(id) == "" {
+					return
+				}
+				hasMention = true
+				if id == ctx.User.ID {
+					isMentioned = true
+				}
+			})
+		}
+
+		allowed := !hasMention || msg.UserID == ctx.User.ID || isMentioned
+		if !allowed {
+			channel, _ := model.ChannelGet(msg.ChannelID)
+			worldID := ""
+			if channel != nil {
+				worldID = channel.WorldID
 			}
-			id, ok := el.Attrs["id"].(string)
-			if !ok || strings.TrimSpace(id) == "" {
-				return
+			role := service.ResolveMemberRoleForProtocol(ctx.User.ID, msg.ChannelID, worldID)
+			if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
+				allowed = true
 			}
-			hasMention = true
-			if id == ctx.User.ID {
-				isMentioned = true
-			}
-		})
+		}
+		if !allowed {
+			return nil, fmt.Errorf("forbidden")
+		}
 	}
 
-	allowed := !hasMention || msg.UserID == ctx.User.ID || isMentioned
-	if !allowed {
-		channel, _ := model.ChannelGet(msg.ChannelID)
-		worldID := ""
-		if channel != nil {
-			worldID = channel.WorldID
-		}
-		role := service.ResolveMemberRoleForProtocol(ctx.User.ID, msg.ChannelID, worldID)
-		if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return nil, fmt.Errorf("forbidden")
-	}
-
-	// Rotate widget in transaction
+	// Apply widget operation in transaction
 	var newJSON string
+	var changed bool
 	var txErr error
 	if model.IsSQLite() {
 		txErr = db.Transaction(func(tx *gorm.DB) error {
@@ -3369,9 +3850,13 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 				return err
 			}
 			var err error
-			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			newJSON, changed, err = service.ApplyWidgetOperation(fresh.WidgetData, data.WidgetIndex, data.Operation)
 			if err != nil {
 				return err
+			}
+			if !changed {
+				newJSON = fresh.WidgetData
+				return nil
 			}
 			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
 		})
@@ -3383,9 +3868,13 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 				return err
 			}
 			var err error
-			newJSON, err = service.RotateWidgetIndex(fresh.WidgetData, data.WidgetIndex)
+			newJSON, changed, err = service.ApplyWidgetOperation(fresh.WidgetData, data.WidgetIndex, data.Operation)
 			if err != nil {
 				return err
+			}
+			if !changed {
+				newJSON = fresh.WidgetData
+				return nil
 			}
 			return tx.Model(&model.MessageModel{}).Where("id = ?", msg.ID).UpdateColumn("widget_data", newJSON).Error
 		})
@@ -3424,20 +3913,22 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		IsInteractiveUpdate: true,
 	}
 
-	if fullMsg.IsWhisper {
-		recipients := []string{fullMsg.UserID}
-		if fullMsg.WhisperTo != "" {
-			recipients = append(recipients, fullMsg.WhisperTo)
+	if changed {
+		if fullMsg.IsWhisper {
+			recipients := []string{fullMsg.UserID}
+			if fullMsg.WhisperTo != "" {
+				recipients = append(recipients, fullMsg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(fullMsg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(fullMsg.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(fullMsg.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(fullMsg.ChannelID, ev)
 		}
-		recipientIDs := model.GetWhisperRecipientIDs(fullMsg.ID)
-		if len(recipientIDs) > 0 {
-			recipients = append(recipients, recipientIDs...)
-		}
-		recipients = lo.Uniq(recipients)
-		ctx.BroadcastEventInChannelToUsers(fullMsg.ChannelID, recipients, ev)
-	} else {
-		ctx.BroadcastEventInChannel(fullMsg.ChannelID, ev)
-		ctx.BroadcastEventInChannelForBot(fullMsg.ChannelID, ev)
 	}
 
 	return &struct {

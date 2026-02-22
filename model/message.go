@@ -11,21 +11,22 @@ const displayOrderBaseGap = 1024.0
 
 type MessageModel struct {
 	StringPKBaseModel
-	Content    string `json:"content"`
-	WidgetData string `json:"widget_data" gorm:"type:text;not null;default:''"`
-	ChannelID    string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1"`
-	GuildID      string  `json:"guild_id" gorm:"null;size:100"`
-	MemberID     string  `json:"member_id" gorm:"null;size:100"`
-	UserID       string  `json:"user_id" gorm:"null;size:100"`
-	QuoteID      string  `json:"quote_id" gorm:"null;size:100"`
-	DisplayOrder float64 `json:"display_order" gorm:"type:decimal(24,8);index:idx_msg_channel_order,priority:2"`
-	IsRevoked    bool    `json:"is_revoked" gorm:"null"` // 被撤回。这样实现可能不很严肃，但是能填补窗口中空白
-	IsWhisper    bool    `json:"is_whisper" gorm:"default:false"`
-	WhisperTo    string  `json:"whisper_to" gorm:"size:100"`
-	IsEdited         bool   `json:"is_edited" gorm:"default:false"`
-	EditCount        int    `json:"edit_count" gorm:"default:0"`
-	EditedByUserID   string `json:"edited_by_user_id" gorm:"size:100"`   // 编辑者用户ID（管理员编辑时记录）
-	EditedByUserName string `json:"edited_by_user_name" gorm:"size:100"` // 编辑者用户名
+	Content          string  `json:"content"`
+	WidgetData       string  `json:"widget_data" gorm:"type:text;not null;default:''"`
+	ChannelID        string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1;uniqueIndex:idx_msg_client_dedupe,priority:1"`
+	GuildID          string  `json:"guild_id" gorm:"null;size:100"`
+	MemberID         string  `json:"member_id" gorm:"null;size:100"`
+	UserID           string  `json:"user_id" gorm:"null;size:100;uniqueIndex:idx_msg_client_dedupe,priority:2"`
+	QuoteID          string  `json:"quote_id" gorm:"null;size:100"`
+	DisplayOrder     float64 `json:"display_order" gorm:"type:decimal(24,8);index:idx_msg_channel_order,priority:2"`
+	ClientID         *string `json:"client_id,omitempty" gorm:"size:100;uniqueIndex:idx_msg_client_dedupe,priority:3"`
+	IsRevoked        bool    `json:"is_revoked" gorm:"null"` // 被撤回。这样实现可能不很严肃，但是能填补窗口中空白
+	IsWhisper        bool    `json:"is_whisper" gorm:"default:false"`
+	WhisperTo        string  `json:"whisper_to" gorm:"size:100"`
+	IsEdited         bool    `json:"is_edited" gorm:"default:false"`
+	EditCount        int     `json:"edit_count" gorm:"default:0"`
+	EditedByUserID   string  `json:"edited_by_user_id" gorm:"size:100"`   // 编辑者用户ID（管理员编辑时记录）
+	EditedByUserName string  `json:"edited_by_user_name" gorm:"size:100"` // 编辑者用户名
 	// Whisper 元数据持久化
 	WhisperSenderMemberID   string `json:"whisper_sender_member_id" gorm:"size:100"`
 	WhisperSenderMemberName string `json:"whisper_sender_member_name"`
@@ -59,9 +60,9 @@ type MessageModel struct {
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
 	Quote  *MessageModel `json:"quote" gorm:"-"` // 嵌套 Message 结构体
 	// WhisperTarget 为前端展示提供冗余
-	WhisperTarget  *UserModel              `json:"whisper_target" gorm:"-"`
-	WhisperTargets []*UserModel            `json:"whisper_targets" gorm:"-"`
-	WhisperMeta    *protocol.WhisperMeta   `json:"whisper_meta,omitempty" gorm:"-"`
+	WhisperTarget  *UserModel                `json:"whisper_target" gorm:"-"`
+	WhisperTargets []*UserModel              `json:"whisper_targets" gorm:"-"`
+	WhisperMeta    *protocol.WhisperMeta     `json:"whisper_meta,omitempty" gorm:"-"`
 	Reactions      []MessageReactionListItem `json:"reactions" gorm:"-"`
 }
 
@@ -120,6 +121,9 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			}
 			return nil
 		}(),
+	}
+	if m.ClientID != nil {
+		msg.ClientID = *m.ClientID
 	}
 	if len(m.WhisperTargets) > 0 {
 		msg.WhisperToIds = make([]*protocol.User, 0, len(m.WhisperTargets))

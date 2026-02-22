@@ -1,13 +1,14 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle, Palette } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
+import Avatar from '@/components/avatar.vue';
 // import AdminSettings from './admin-settings.vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
@@ -596,7 +597,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
               class="sc-icon-button sc-user-button"
               :aria-label="`打开 ${userDisplayName} 的菜单`"
             >
-              <n-icon :component="UserCircle" size="18" />
+              <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
             </button>
           </template>
           <span>{{ userDisplayName }}</span>
@@ -645,6 +646,14 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 
 .sc-actions {
   gap: 0.45rem;
+}
+
+.sc-user-button {
+  overflow: hidden;
+}
+
+.sc-user-button :deep(.avatar-shell) {
+  border-radius: 9999px;
 }
 
 .sc-icon-button {
@@ -740,5 +749,23 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   justify-content: center;
   border: 1px solid var(--sc-border-strong);
   line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .sc-actions {
+    gap: 0.32rem;
+  }
+
+  .sc-user-button {
+    width: 1.58rem;
+    height: 1.58rem;
+  }
+
+  .sc-user-button :deep(.avatar-shell) {
+    width: 16px !important;
+    height: 16px !important;
+    min-width: 16px !important;
+    min-height: 16px !important;
+  }
 }
 </style>

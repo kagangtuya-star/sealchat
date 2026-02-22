@@ -1,12 +1,20 @@
 package api
 
 import (
+	"regexp"
+	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
+)
+
+var (
+	botCommandTailCleanupPattern = regexp.MustCompile(`(?i)(?:\s|&nbsp;|<br\s*/?>)+$`)
 )
 
 type ChatContext struct {
@@ -127,6 +135,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 	if ctx == nil || ctx.UserId2ConnInfo == nil || channelId == "" || data == nil {
 		return
 	}
+	data = normalizeEventForBot(data)
 	// 只向频道选中的 BOT 推送事件，避免多 BOT 实例导致数据不同步
 	data.Timestamp = time.Now().Unix()
 	botID, err := service.SelectedBotIdByChannelId(channelId)
@@ -151,6 +160,13 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			return true
 		})
 		if active != nil {
+			whisperTargetIDs := extractBotWhisperTargetIDs(data)
+			if len(whisperTargetIDs) > 0 {
+				if active.BotLastWhisperTargets == nil {
+					active.BotLastWhisperTargets = &utils.SyncMap[string, []string]{}
+				}
+				active.BotLastWhisperTargets.Store(channelId, whisperTargetIDs)
+			}
 			if data.MessageContext != nil {
 				if active.BotLastMessageContext == nil {
 					active.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
@@ -160,9 +176,24 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 					if active.BotHiddenDicePending == nil {
 						active.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
 					}
+					senderUserID := strings.TrimSpace(data.MessageContext.SenderUserID)
+					pendingTargets := whisperTargetIDs
+					if senderUserID != "" {
+						pendingTargets = normalizeWhisperTargetIDs(append(pendingTargets, senderUserID))
+					}
+					primaryTargetID := senderUserID
+					for _, id := range whisperTargetIDs {
+						id = strings.TrimSpace(id)
+						if id != "" && id != senderUserID {
+							primaryTargetID = id
+							break
+						}
+					}
 					active.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
-						TargetUserID: data.MessageContext.SenderUserID,
-						Count:        0,
+						TargetUserID:  primaryTargetID,
+						TargetUserIDs: pendingTargets,
+						Count:         0,
+						CreatedAt:     time.Now().UnixMilli(),
 					})
 				}
 			}
@@ -176,6 +207,89 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 		}
 	}
+}
+
+func normalizeEventForBot(event *protocol.Event) *protocol.Event {
+	if event == nil || event.Message == nil {
+		return event
+	}
+	if event.Type != protocol.EventMessageCreated && event.Type != protocol.EventMessageUpdated {
+		return event
+	}
+	content := normalizeBotCommandContent(event.Message.Content)
+	if content == event.Message.Content {
+		return event
+	}
+	cloned := *event
+	if event.Message != nil {
+		msgCopy := *event.Message
+		msgCopy.Content = content
+		cloned.Message = &msgCopy
+	}
+	return &cloned
+}
+
+func normalizeBotCommandContent(content string) string {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" || service.LooksLikeTipTapJSON(leading) {
+		return content
+	}
+	firstRune, _ := utf8.DecodeRuneInString(leading)
+	switch firstRune {
+	case '.', '/', '。', '．', '｡':
+	default:
+		return content
+	}
+	normalized := botCommandTailCleanupPattern.ReplaceAllString(content, "")
+	normalized = strings.TrimRight(normalized, " \t\r\n")
+	if normalized == "" {
+		return content
+	}
+	return normalized
+}
+
+func extractBotWhisperTargetIDs(event *protocol.Event) []string {
+	if event == nil {
+		return nil
+	}
+	collected := make([]string, 0, 4)
+	if event.Message != nil {
+		if event.Message.WhisperTo != nil {
+			collected = append(collected, event.Message.WhisperTo.ID)
+		}
+		for _, target := range event.Message.WhisperToIds {
+			if target != nil {
+				collected = append(collected, target.ID)
+			}
+		}
+	}
+	if len(collected) == 0 && event.MessageContext != nil {
+		collected = append(collected, event.MessageContext.WhisperToUserID)
+	}
+	return normalizeWhisperTargetIDs(collected)
+}
+
+func normalizeWhisperTargetIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	set := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		set[id] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(set))
+	for id := range set {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (ctx *ChatContext) BroadcastEventInChannelExcept(channelId string, ignoredUserIds []string, data *protocol.Event) {

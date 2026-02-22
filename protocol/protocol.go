@@ -1,17 +1,18 @@
 package protocol
 
 type Channel struct {
-	ID                     string      `json:"id"`
-	WorldID                string      `json:"worldId,omitempty"`
-	Type                   ChannelType `json:"type"`
-	Name                   string      `json:"name"`
-	ParentID               string      `json:"parent_id" gorm:"null"`
-	PermType               string      `json:"permType"`
-	DefaultDiceExpr        string      `json:"defaultDiceExpr,omitempty"`
-	BuiltInDiceEnabled     bool        `json:"builtInDiceEnabled"`
-	BotFeatureEnabled      bool        `json:"botFeatureEnabled"`
-	BackgroundAttachmentId string      `json:"backgroundAttachmentId"`
-	BackgroundSettings     string      `json:"backgroundSettings"`
+	ID                      string      `json:"id"`
+	WorldID                 string      `json:"worldId,omitempty"`
+	Type                    ChannelType `json:"type"`
+	Name                    string      `json:"name"`
+	ParentID                string      `json:"parent_id" gorm:"null"`
+	PermType                string      `json:"permType"`
+	DefaultDiceExpr         string      `json:"defaultDiceExpr,omitempty"`
+	BuiltInDiceEnabled      bool        `json:"builtInDiceEnabled"`
+	BotFeatureEnabled       bool        `json:"botFeatureEnabled"`
+	BotWhisperForwardConfig string      `json:"botWhisperForwardConfig"`
+	BackgroundAttachmentId  string      `json:"backgroundAttachmentId"`
+	BackgroundSettings      string      `json:"backgroundSettings"`
 }
 
 type ChannelType int
@@ -176,12 +177,16 @@ type AudioPlaybackStatePayload struct {
 	Tracks               []AudioTrackState `json:"tracks"`
 	IsPlaying            bool              `json:"isPlaying"`
 	Position             float64           `json:"position"`
+	BasePositionSec      float64           `json:"basePositionSec"`
+	CapturedAtMs         int64             `json:"capturedAtMs"`
 	LoopEnabled          bool              `json:"loopEnabled"`
 	PlaybackRate         float64           `json:"playbackRate"`
 	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
 	Revision             int64             `json:"revision"`
 	UpdatedBy            string            `json:"updatedBy"`
 	UpdatedAt            int64             `json:"updatedAt"`
+	ScopeType            string            `json:"scopeType"`
+	ScopeID              string            `json:"scopeId"`
 }
 
 type ChannelIForm struct {

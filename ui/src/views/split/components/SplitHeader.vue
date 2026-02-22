@@ -3,12 +3,13 @@ import { computed, defineAsyncComponent, h, ref, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { NDropdown, NIcon, NTooltip, useDialog } from 'naive-ui';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Link, Refresh, UserCircle, Users } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Link, Refresh, Users } from '@vicons/tabler';
 import { SearchOutline, UnlinkOutline, AppsOutline, MusicalNotesOutline, BrowsersOutline } from '@vicons/ionicons5';
 import Notif from '@/views/notif.vue';
 import UserProfile from '@/views/components/user-profile.vue';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useUserStore } from '@/stores/user';
+import Avatar from '@/components/avatar.vue';
 
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
 
@@ -235,7 +236,7 @@ const handleSelect = async (key: string | number) => {
         <n-tooltip trigger="hover">
           <template #trigger>
             <button type="button" class="sc-icon-button sc-user-button" :aria-label="`打开 ${userDisplayName} 的菜单`">
-              <n-icon :component="UserCircle" size="18" />
+              <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
             </button>
           </template>
           <span>{{ userDisplayName }}</span>
@@ -270,6 +271,14 @@ const handleSelect = async (key: string | number) => {
 
 .sc-actions {
   gap: 0.45rem;
+}
+
+.sc-user-button {
+  overflow: hidden;
+}
+
+.sc-user-button :deep(.avatar-shell) {
+  border-radius: 9999px;
 }
 
 .sc-icon-button {
@@ -331,6 +340,24 @@ const handleSelect = async (key: string | number) => {
   font-size: 11px;
   line-height: 1;
   border: 1px solid rgba(14, 165, 233, 0.35);
+}
+
+@media (max-width: 640px) {
+  .sc-actions {
+    gap: 0.32rem;
+  }
+
+  .sc-user-button {
+    width: 1.58rem;
+    height: 1.58rem;
+  }
+
+  .sc-user-button :deep(.avatar-shell) {
+    width: 16px !important;
+    height: 16px !important;
+    min-width: 16px !important;
+    min-height: 16px !important;
+  }
 }
 
 .sc-connection-icon--spin {

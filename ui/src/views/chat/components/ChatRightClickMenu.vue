@@ -159,7 +159,7 @@ const canEdit = computed(() => {
     const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
     const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
     if (isWorldAdmin) {
-      if (targetIsAdmin.value) {
+      if (!canModerateTarget.value) {
         return false;
       }
       return true;
@@ -209,15 +209,15 @@ const viewerIsAdmin = computed(() => {
   if (!channelId.value) {
     return false;
   }
-  return chat.isChannelAdmin(channelId.value, currentUserId.value);
+  return chat.getChannelRoleRank(channelId.value, currentUserId.value) >= 3;
 });
 
-const targetIsAdmin = computed(() => {
-  if (!channelId.value || !targetUserId.value) {
-    return false;
-  }
-  return chat.isChannelAdmin(channelId.value, targetUserId.value);
-});
+const canModerateTarget = computed(() => (
+  !!channelId.value
+  && !!currentUserId.value
+  && !!targetUserId.value
+  && chat.canModerateTargetByRole(channelId.value, currentUserId.value, targetUserId.value)
+));
 
 const canArchiveByRule = computed(() => {
   if (!menuMessage.value.raw || !channelId.value || !targetUserId.value) {
@@ -229,7 +229,7 @@ const canArchiveByRule = computed(() => {
   if (!viewerIsAdmin.value) {
     return false;
   }
-  if (targetIsAdmin.value) {
+  if (!canModerateTarget.value) {
     return false;
   }
   return true;
@@ -244,40 +244,22 @@ const isPinnedMessage = computed(() => {
   }
   return Boolean(raw.isPinned ?? raw.is_pinned ?? false);
 });
-const resolveRoleRank = (uid: string): number => {
-  if (!uid || !channelId.value) {
+const viewerRoleRank = computed(() => {
+  if (!channelId.value || !currentUserId.value) {
     return 0;
   }
-  if (chat.isChannelOwner(channelId.value, uid)) {
-    return 4;
-  }
-  const roleIds = chat.channelMemberRoleMap[channelId.value]?.[uid] || [];
-  if (!Array.isArray(roleIds) || roleIds.length === 0) {
-    return 0;
-  }
-  let rank = 0;
-  roleIds.forEach((roleId) => {
-    if (typeof roleId !== 'string') {
-      return;
-    }
-    if (roleId.endsWith('-owner')) {
-      rank = Math.max(rank, 4);
-    } else if (roleId.endsWith('-admin')) {
-      rank = Math.max(rank, 3);
-    } else if (roleId.endsWith('-member')) {
-      rank = Math.max(rank, 2);
-    } else if (roleId.endsWith('-spectator')) {
-      rank = Math.max(rank, 1);
-    }
-  });
-  return rank;
-};
-const viewerRoleRank = computed(() => resolveRoleRank(currentUserId.value));
+  return chat.getChannelRoleRank(channelId.value, currentUserId.value);
+});
 const pinnerUserId = computed(() => {
   const raw: any = menuMessage.value.raw;
   return String(raw?.pinnedBy ?? raw?.pinned_by ?? '').trim();
 });
-const pinnerRoleRank = computed(() => resolveRoleRank(pinnerUserId.value));
+const pinnerRoleRank = computed(() => {
+  if (!channelId.value || !pinnerUserId.value) {
+    return 0;
+  }
+  return chat.getChannelRoleRank(channelId.value, pinnerUserId.value);
+});
 const canPinByRule = computed(() => {
   if (!menuMessage.value.raw || !channelId.value) {
     return false;
@@ -316,10 +298,7 @@ const canRemoveMessage = computed(() => {
   if (!viewerIsAdmin.value && !isWorldAdmin) {
     return false;
   }
-  if (ownerId && targetUserId.value === ownerId) {
-    return false;
-  }
-  if (targetIsAdmin.value) {
+  if (!canModerateTarget.value) {
     return false;
   }
   return true;
@@ -472,6 +451,28 @@ const handleFullEmojiSelect = async (emoji: string) => {
 const clickDelete = async () => {
   if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
     return;
+  }
+  const target = menuMessage.value.raw as any;
+  if (isSelfMessage.value) {
+    const sourceContent = typeof target?.content === 'string'
+      ? target.content
+      : (typeof target?.originalContent === 'string' ? target.originalContent : '');
+    if (sourceContent) {
+      const mode = detectContentMode(sourceContent);
+      const whisperTargetId = resolveWhisperTargetId(target);
+      const identityId = resolveIdentityId(target);
+      const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
+      chat.cacheRevokedDraft({
+        messageId: String(target.id),
+        channelId: chat.curChannel.id,
+        content: sourceContent,
+        mode,
+        isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
+        whisperTargetId,
+        icMode,
+        identityId: identityId || null,
+      });
+    }
   }
   await chat.messageDelete(chat.curChannel.id, menuMessage.value.raw.id)
   message.success('撤回成功')

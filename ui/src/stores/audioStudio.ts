@@ -98,6 +98,7 @@ interface AudioStudioState {
   syncRetryAttempt: number;
   pendingCommitPayload: PlaybackSyncPayload | null;
   lastAppliedRevisionByScope: Record<string, number>;
+  lastAppliedCapturedAtByScope: Record<string, number>;
   lastSnapshotFetchedAtByScope: Record<string, number>;
   channelSwitchSeq: number;
 }
@@ -108,10 +109,16 @@ interface PlaybackSyncPayload {
   tracks: AudioTrackStatePayload[];
   isPlaying: boolean;
   position: number;
+  basePositionSec: number;
+  capturedAtMs: number;
   loopEnabled: boolean;
   playbackRate: number;
   worldPlaybackEnabled: boolean;
   baseRevision: number;
+  scopeType?: 'channel' | 'world';
+  scopeId?: string;
+  persist?: boolean;
+  syncReason?: string;
 }
 
 interface PlaybackFetchOptions {
@@ -150,6 +157,7 @@ const SYNC_DEBOUNCE_MS = 300;
 const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
 const SYNC_RETRY_MAX_MS = 10_000;
+const DEFAULT_WORLD_PLAYBACK_ENABLED = true;
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
 const logAudioSync = (...args: unknown[]) => {
   if (isDebugEnabled()) {
@@ -368,7 +376,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     loopEnabled: false,
     playbackRate: 1,
     masterVolume: 1,
-    worldPlaybackEnabled: false,
+    worldPlaybackEnabled: DEFAULT_WORLD_PLAYBACK_ENABLED,
     error: null,
     currentChannelId: null,
     currentWorldId: null,
@@ -382,6 +390,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     syncRetryAttempt: 0,
     pendingCommitPayload: null,
     lastAppliedRevisionByScope: {},
+    lastAppliedCapturedAtByScope: {},
     lastSnapshotFetchedAtByScope: {},
     channelSwitchSeq: 0,
   }),
@@ -464,18 +473,45 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return 0;
     },
 
-    markAppliedRevision(scopeKey: string, revision: number) {
-      if (!scopeKey || !Number.isFinite(revision) || revision <= 0) {
+    getCapturedAtFromPayload(payload: AudioPlaybackStatePayload | null | undefined) {
+      const raw = (payload as any)?.capturedAtMs;
+      if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+        return Math.floor(raw);
+      }
+      if (typeof raw === 'string') {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          return Math.floor(parsed);
+        }
+      }
+      return 0;
+    },
+
+    getScopeKeyFromPayload(payload: AudioPlaybackStatePayload | null | undefined) {
+      const scopeType = String((payload as any)?.scopeType || '').trim();
+      const scopeId = String((payload as any)?.scopeId || '').trim();
+      if (scopeType && scopeId) {
+        return `${scopeType}:${scopeId}`;
+      }
+      return this.getScopeKey(payload?.channelId || this.currentChannelId, !!payload?.worldPlaybackEnabled);
+    },
+
+    markAppliedState(scopeKey: string, revision: number, capturedAtMs?: number) {
+      if (!scopeKey) {
         return;
       }
-      const current = this.lastAppliedRevisionByScope[scopeKey] || 0;
-      if (revision <= current) {
-        return;
+      const nextRevisionMap = { ...this.lastAppliedRevisionByScope };
+      const currentRevision = nextRevisionMap[scopeKey] || 0;
+      if (Number.isFinite(revision) && revision > currentRevision) {
+        nextRevisionMap[scopeKey] = Math.floor(revision);
       }
-      this.lastAppliedRevisionByScope = {
-        ...this.lastAppliedRevisionByScope,
-        [scopeKey]: revision,
-      };
+      this.lastAppliedRevisionByScope = nextRevisionMap;
+      const nextCapturedMap = { ...this.lastAppliedCapturedAtByScope };
+      const currentCapturedAt = nextCapturedMap[scopeKey] || 0;
+      if (Number.isFinite(capturedAtMs) && (capturedAtMs as number) > currentCapturedAt) {
+        nextCapturedMap[scopeKey] = Math.floor(capturedAtMs as number);
+      }
+      this.lastAppliedCapturedAtByScope = nextCapturedMap;
     },
 
     clearRetrySyncTimer() {
@@ -486,6 +522,33 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         window.clearTimeout(this.retrySyncHandle);
         this.retrySyncHandle = null;
       }
+    },
+
+    flushPlaybackStateOnExit(reason: string) {
+      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+        return;
+      }
+      if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+        window.clearTimeout(this.pendingSyncHandle);
+        this.pendingSyncHandle = null;
+      }
+      const payload = this.serializePlaybackState({ persist: true, syncReason: reason });
+      if (!payload) {
+        return;
+      }
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        try {
+          const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+          const endpoint = `${urlBase}/api/v1/audio/state`;
+          if (navigator.sendBeacon(endpoint, blob)) {
+            return;
+          }
+        } catch {
+          // ignore and fallback to async request
+        }
+      }
+      this.pendingCommitPayload = payload;
+      void this.flushPendingPlaybackSync('commit');
     },
 
     ensureSyncLifecycleBindings() {
@@ -511,6 +574,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         document.addEventListener(
           'visibilitychange',
           () => {
+            if (document.visibilityState === 'hidden') {
+              this.flushPlaybackStateOnExit('visibility-hidden');
+              return;
+            }
             if (document.visibilityState !== 'visible' || !this.currentChannelId) {
               return;
             }
@@ -518,6 +585,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           },
           { capture: true },
         );
+      }
+      if (typeof window !== 'undefined') {
+        const flushHandler = () => {
+          this.flushPlaybackStateOnExit('pagehide');
+        };
+        window.addEventListener('pagehide', flushHandler, { capture: true });
+        window.addEventListener('beforeunload', flushHandler, { capture: true });
       }
     },
 
@@ -546,7 +620,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
-      if (payload.channelId !== this.currentChannelId) {
+      if (payload.channelId !== this.currentChannelId && !payload.worldPlaybackEnabled) {
         this.pendingCommitPayload = null;
         this.clearRetrySyncTimer();
         this.syncRetryAttempt = 0;
@@ -559,8 +633,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.syncRetryAttempt = 0;
         const state = resp?.data?.state as AudioPlaybackStatePayload | undefined;
         if (state) {
-          const scopeKey = this.getScopeKey(state.channelId, !!state.worldPlaybackEnabled);
-          this.markAppliedRevision(scopeKey, this.getRevisionFromPayload(state));
+          const scopeKey = this.getScopeKeyFromPayload(state);
+          this.markAppliedState(scopeKey, this.getRevisionFromPayload(state), this.getCapturedAtFromPayload(state));
         }
         logAudioSync('[AudioSync] sync committed', { source });
       } catch (err: any) {
@@ -584,7 +658,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     setCurrentWorld(worldId: string | null) {
+      const changed = this.currentWorldId !== worldId;
       this.currentWorldId = worldId;
+      if (changed) {
+        // 世界切换时先回到默认值；若服务端有显式配置，后续快照会覆盖。
+        this.worldPlaybackEnabled = DEFAULT_WORLD_PLAYBACK_ENABLED;
+        this.currentSceneId = null;
+        this.selectedSceneId = null;
+        this.scenes = [];
+        this.scenePagination = {
+          ...this.scenePagination,
+          page: 1,
+          total: 0,
+        };
+      }
       if (worldId) {
         this.filters.worldId = worldId;
         this.filters.includeCommon = true;
@@ -597,6 +684,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (!this.isSystemAdmin) {
           this.filters.scope = undefined;
         }
+      }
+      if (changed && this.initialized) {
+        void this.fetchScenes();
+        void this.fetchFolders();
+        void this.fetchAssets({ pagination: { page: 1 } });
       }
       if (this.worldPlaybackEnabled && this.currentChannelId) {
         void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
@@ -650,7 +742,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const previousChannelId = this.currentChannelId;
       const shouldFlushBeforeSwitch =
         !!previousChannelId &&
-        !this.worldPlaybackEnabled &&
         !this.isApplyingRemoteState &&
         this.canManage &&
         (!!this.pendingSyncHandle || this.pendingCommitPayload?.channelId === previousChannelId);
@@ -659,19 +750,23 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.pendingSyncHandle = null;
       }
       if (shouldFlushBeforeSwitch) {
-        await this.commitPlaybackSync();
+        await this.commitPlaybackSync({ persist: true, syncReason: 'channel-switch' });
         if (switchSeq !== this.channelSwitchSeq) {
           return;
         }
       }
-      if (!this.worldPlaybackEnabled || !normalizedChannelId) {
+      if (!this.worldPlaybackEnabled) {
         this.resetLocalPlaybackRuntime();
       }
       if (switchSeq !== this.channelSwitchSeq) {
         return;
       }
       this.currentChannelId = normalizedChannelId;
-      if (this.pendingCommitPayload && this.pendingCommitPayload.channelId !== (normalizedChannelId || '')) {
+      if (
+        this.pendingCommitPayload &&
+        !this.pendingCommitPayload.worldPlaybackEnabled &&
+        this.pendingCommitPayload.channelId !== (normalizedChannelId || '')
+      ) {
         this.pendingCommitPayload = null;
         this.clearRetrySyncTimer();
         this.syncRetryAttempt = 0;
@@ -688,7 +783,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       this.worldPlaybackEnabled = enabled;
       if (this.canManage) {
-        this.queuePlaybackSync();
+        void this.commitPlaybackSync({ persist: true, syncReason: 'world-mode-toggle' });
       }
     },
 
@@ -740,9 +835,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (payload && !allowWorld && payload.channelId !== this.currentChannelId) {
         return;
       }
-      const scopeKey = this.getScopeKey(payload?.channelId || this.currentChannelId, allowWorld);
+      const scopeKey = this.getScopeKeyFromPayload(payload);
       const incomingRevision = this.getRevisionFromPayload(payload);
+      const incomingCapturedAt = this.getCapturedAtFromPayload(payload);
       const lastAppliedRevision = this.lastAppliedRevisionByScope[scopeKey] || 0;
+      const lastCapturedAt = this.lastAppliedCapturedAtByScope[scopeKey] || 0;
       const reason = options?.reason || '';
       const allowReplayOnSnapshotPull =
         source === 'pull' &&
@@ -750,15 +847,35 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           reason === 'channel-reenter' ||
           reason === 'channel-switch' ||
           reason === 'connected' ||
-          reason === 'visible');
-      if (incomingRevision > 0 && incomingRevision <= lastAppliedRevision && !allowReplayOnSnapshotPull) {
-        logAudioSync('[AudioSync] Skip stale remote state', { scopeKey, incomingRevision, lastAppliedRevision });
+          reason === 'visible') &&
+        this.allTracksIdle();
+      if (!allowReplayOnSnapshotPull && incomingRevision > 0 && incomingRevision < lastAppliedRevision) {
+        logAudioSync('[AudioSync] Skip stale remote state by revision', {
+          scopeKey,
+          incomingRevision,
+          lastAppliedRevision,
+        });
+        return;
+      }
+      if (
+        !allowReplayOnSnapshotPull &&
+        incomingRevision > 0 &&
+        incomingRevision === lastAppliedRevision &&
+        incomingCapturedAt > 0 &&
+        incomingCapturedAt <= lastCapturedAt
+      ) {
+        logAudioSync('[AudioSync] Skip stale remote state by capturedAt', {
+          scopeKey,
+          incomingRevision,
+          incomingCapturedAt,
+          lastCapturedAt,
+        });
         return;
       }
       const hasRevisionGap = incomingRevision > 0 && lastAppliedRevision > 0 && incomingRevision > lastAppliedRevision + 1;
       const user = useUserStore();
       if (payload && payload.updatedBy && payload.updatedBy === user.info.id && source === 'push') {
-        this.markAppliedRevision(scopeKey, incomingRevision);
+        this.markAppliedState(scopeKey, incomingRevision, incomingCapturedAt);
         return;
       }
 
@@ -781,6 +898,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.isApplyingRemoteState = true;
 
       if (!payload) {
+        if (source === 'pull') {
+          // 对于无历史状态的新频道/新世界，使用默认世界模式。
+          this.worldPlaybackEnabled = DEFAULT_WORLD_PLAYBACK_ENABLED;
+        }
         // 清空所有轨道
         stopProgressWatcher();
         DEFAULT_TRACK_TYPES.forEach((type) => {
@@ -949,7 +1070,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       } finally {
         this.isApplyingRemoteState = false;
-        this.markAppliedRevision(scopeKey, incomingRevision);
+        this.markAppliedState(scopeKey, incomingRevision, incomingCapturedAt);
       }
 
       if (hasRevisionGap && payload?.channelId) {
@@ -996,12 +1117,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       });
     },
 
-    queuePlaybackSync() {
+    queuePlaybackSync(options?: { persist?: boolean; syncReason?: string }) {
       if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
       if (typeof window === 'undefined') {
-        void this.commitPlaybackSync();
+        void this.commitPlaybackSync(options);
         return;
       }
       if (this.pendingSyncHandle) {
@@ -1009,15 +1130,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       this.pendingSyncHandle = window.setTimeout(() => {
         this.pendingSyncHandle = null;
-        void this.commitPlaybackSync();
+        void this.commitPlaybackSync(options);
       }, SYNC_DEBOUNCE_MS);
     },
 
-    async commitPlaybackSync() {
+    async commitPlaybackSync(options?: { persist?: boolean; syncReason?: string }) {
       if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
-      const payload = this.serializePlaybackState();
+      const payload = this.serializePlaybackState(options);
       if (!payload) return;
 
       this.pendingCommitPayload = payload;
@@ -1035,22 +1156,34 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.flushPendingPlaybackSync('commit');
     },
 
-    serializePlaybackState(): PlaybackSyncPayload | null {
+    serializePlaybackState(options?: { persist?: boolean; syncReason?: string }): PlaybackSyncPayload | null {
       if (!this.currentChannelId) return null;
       // 使用实际播放状态而不是 this.isPlaying，避免状态不同步
       const actuallyPlaying = this.anyTrackPlaying();
       const scopeKey = this.getScopeKey(this.currentChannelId, this.worldPlaybackEnabled);
       const baseRevision = this.lastAppliedRevisionByScope[scopeKey] || 0;
+      const capturedAtMs = Date.now();
+      const basePositionSec = this.estimatePlaybackPosition();
+      const scopeType = this.worldPlaybackEnabled ? 'world' : 'channel';
+      const scopeId = this.worldPlaybackEnabled
+        ? String(this.currentWorldId || '').trim()
+        : String(this.currentChannelId || '').trim();
       return {
         channelId: this.currentChannelId,
         sceneId: this.currentSceneId,
         tracks: this.buildTrackStatePayload(),
         isPlaying: actuallyPlaying,
-        position: this.estimatePlaybackPosition(),
+        position: basePositionSec,
+        basePositionSec,
+        capturedAtMs,
         loopEnabled: this.loopEnabled,
         playbackRate: this.playbackRate,
         worldPlaybackEnabled: this.worldPlaybackEnabled,
         baseRevision,
+        scopeType,
+        scopeId,
+        persist: !!options?.persist,
+        syncReason: options?.syncReason || 'runtime-sync',
       };
     },
 
@@ -1109,7 +1242,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await Promise.all([this.fetchScenes(), this.fetchFolders()]);
       await this.fetchAssets();
       this.initialized = true;
-      if (!this.currentSceneId && this.scenes.length) {
+      if (this.canManage && !this.currentSceneId && this.scenes.length) {
         this.applyScene(this.scenes[0].id);
       }
     },
@@ -1117,6 +1250,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async fetchScenes(filters?: Partial<AudioStudioState['sceneFilters']>) {
       try {
         this.scenesLoading = true;
+        if (!this.canManage) {
+          this.scenes = [];
+          this.selectedSceneId = null;
+          this.currentSceneId = null;
+          this.scenePagination = {
+            ...this.scenePagination,
+            page: 1,
+            total: 0,
+          };
+          return;
+        }
         if (filters) {
           this.sceneFilters = {
             ...this.sceneFilters,
@@ -1138,8 +1282,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (!params.query) {
           delete params.query;
         }
-        if (!this.canManage) {
-          params.channelScope = this.currentChannelId || undefined;
+        if (!this.isSystemAdmin) {
+          if (!this.currentWorldId) {
+            throw new Error('当前世界上下文缺失，无法加载播放列表');
+          }
+          params.scope = 'world';
+          params.worldId = this.currentWorldId;
+          params.includeCommon = false;
         }
         const resp = await api.get('/api/v1/audio/scenes', { params });
         const raw = resp.data as PaginatedResult<AudioScene> | AudioScene[] | undefined;
@@ -1201,6 +1350,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         channelScope: payload.channelScope ?? this.currentChannelId ?? null,
         order: payload.order,
       };
+      if (this.isSystemAdmin) {
+        if (payload.scope) {
+          scenePayload.scope = payload.scope;
+        }
+        if (payload.worldId !== undefined) {
+          scenePayload.worldId = payload.worldId;
+        }
+      } else {
+        if (!this.currentWorldId) {
+          throw new Error('当前世界上下文缺失，无法创建播放列表');
+        }
+        scenePayload.scope = 'world';
+        scenePayload.worldId = this.currentWorldId;
+      }
       const resp = await api.post('/api/v1/audio/scenes', scenePayload);
       const created = resp.data?.item as AudioScene | undefined;
       if (created) {
@@ -1227,6 +1390,21 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         channelScope: payload.channelScope ?? existing?.channelScope ?? null,
         order: payload.order ?? existing?.order,
       };
+      if (this.isSystemAdmin) {
+        if (payload.scope) {
+          normalized.scope = payload.scope;
+        }
+        if (payload.worldId !== undefined) {
+          normalized.worldId = payload.worldId;
+        }
+      } else {
+        const effectiveWorldId = this.currentWorldId || existing?.worldId || null;
+        if (!effectiveWorldId) {
+          throw new Error('当前世界上下文缺失，无法更新播放列表');
+        }
+        normalized.scope = 'world';
+        normalized.worldId = effectiveWorldId;
+      }
       if (!normalized.tracks.length) {
         normalized.tracks = existing ? existing.tracks : serializeRuntimeTracks(this.tracks);
       }
@@ -1624,7 +1802,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       });
       startProgressWatcher(this);
       if (!options?.force) {
-        this.queuePlaybackSync();
+        this.queuePlaybackSync({ syncReason: 'play-all' });
       }
     },
 
@@ -1641,7 +1819,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       this.isPlaying = false;
       stopProgressWatcher();
       if (!options?.force) {
-        this.queuePlaybackSync();
+        void this.commitPlaybackSync({ persist: true, syncReason: 'pause-all' });
       }
     },
 
@@ -1666,7 +1844,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       });
       this.updateProgressFromPlayers();
       if (!options?.force) {
-        this.queuePlaybackSync();
+        void this.commitPlaybackSync({ persist: true, syncReason: 'seek-all' });
       }
     },
 
@@ -1683,7 +1861,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       });
       this.updateProgressFromPlayers();
       if (!options?.force && this.canManage) {
-        this.queuePlaybackSync();
+        void this.commitPlaybackSync({ persist: true, syncReason: 'seek-to-seconds' });
       }
     },
 
@@ -1698,7 +1876,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       this.updateProgressFromPlayers();
       if (this.canManage) {
-        this.queuePlaybackSync();
+        void this.commitPlaybackSync({ persist: true, syncReason: 'seek-track' });
       }
     },
 

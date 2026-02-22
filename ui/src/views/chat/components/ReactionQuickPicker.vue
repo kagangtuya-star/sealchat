@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Plus } from '@vicons/tabler';
 import { buildEmojiRenderInfo } from '@/utils/emojiRender';
 import { noteEmojiLoadFailure } from '@/utils/twemoji';
@@ -12,6 +12,8 @@ const emit = defineEmits<{
 
 const refreshTick = ref(0);
 const textFallback = reactive<Record<string, boolean>>({});
+const EMOJI_LOAD_TIMEOUT_MS = 5000;
+const emojiLoadTimers = new Map<string, number>();
 
 const emojiItems = computed(() => {
   refreshTick.value;
@@ -36,11 +38,63 @@ const handleSelect = (emoji: string) => {
 const handleImgError = (event: Event) => {
   const img = event.target as HTMLImageElement;
   const emoji = img.dataset.emoji || img.alt || '';
+  clearEmojiLoadTimeout(emoji);
   noteEmojiLoadFailure(img.src, emoji);
-  if (emoji) {
+  if (emoji && !emoji.startsWith('id:')) {
     textFallback[emoji] = true;
   }
 };
+
+const handleImgLoad = (event: Event) => {
+  const img = event.target as HTMLImageElement;
+  const emoji = img.dataset.emoji || img.alt || '';
+  clearEmojiLoadTimeout(emoji);
+};
+
+const clearEmojiLoadTimeout = (emoji: string) => {
+  const timer = emojiLoadTimers.get(emoji);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    emojiLoadTimers.delete(emoji);
+  }
+};
+
+const scheduleEmojiLoadTimeout = (emoji: string) => {
+  if (!emoji || emoji.startsWith('id:') || textFallback[emoji] || emojiLoadTimers.has(emoji)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    emojiLoadTimers.delete(emoji);
+    textFallback[emoji] = true;
+  }, EMOJI_LOAD_TIMEOUT_MS);
+  emojiLoadTimers.set(emoji, timer);
+};
+
+const clearAllEmojiLoadTimeouts = () => {
+  emojiLoadTimers.forEach((timer) => window.clearTimeout(timer));
+  emojiLoadTimers.clear();
+};
+
+watch(
+  emojiItems,
+  (items) => {
+    const activeEmojis = new Set<string>();
+    items.forEach((item) => {
+      activeEmojis.add(item.emoji);
+      if (item.useText || item.isCustom) {
+        clearEmojiLoadTimeout(item.emoji);
+      } else {
+        scheduleEmojiLoadTimeout(item.emoji);
+      }
+    });
+    Array.from(emojiLoadTimers.keys()).forEach((emoji) => {
+      if (!activeEmojis.has(emoji)) {
+        clearEmojiLoadTimeout(emoji);
+      }
+    });
+  },
+  { immediate: true },
+);
 
 let unsubscribe: (() => void) | null = null;
 
@@ -52,6 +106,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearAllEmojiLoadTimeouts();
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
@@ -76,6 +131,7 @@ onBeforeUnmount(() => {
         :data-emoji="item.emoji"
         :data-fallback="item.fallbackUrl"
         class="twemoji-img"
+        @load="handleImgLoad"
         @error="handleImgError"
       />
     </button>

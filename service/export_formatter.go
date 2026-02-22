@@ -383,6 +383,23 @@ func htmlEscape(input string) string {
 	return html.EscapeString(input)
 }
 
+const maxHTMLEntityDecodeDepth = 4
+
+func htmlUnescapeDeep(input string) string {
+	if input == "" {
+		return ""
+	}
+	current := input
+	for i := 0; i < maxHTMLEntityDecodeDepth; i++ {
+		next := html.UnescapeString(current)
+		if next == current {
+			return next
+		}
+		current = next
+	}
+	return current
+}
+
 func clampInt(value, min, max int) int {
 	if value < min {
 		return min
@@ -397,6 +414,12 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 	if msg == nil || !msg.IsWhisper {
 		return nil
 	}
+	primaryTargetID := strings.TrimSpace(msg.WhisperTo)
+	if primaryTargetID == "" && msg.WhisperTarget != nil {
+		primaryTargetID = strings.TrimSpace(msg.WhisperTarget.ID)
+	}
+	hasPrimaryRoleName := strings.TrimSpace(msg.WhisperTargetMemberName) != ""
+
 	var targets []string
 	seen := map[string]struct{}{}
 	addName := func(name string) {
@@ -410,16 +433,47 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 		seen[name] = struct{}{}
 		targets = append(targets, name)
 	}
-	if msg.WhisperTarget != nil {
-		addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
+	skipPrimaryFallback := func(id string) bool {
+		if !hasPrimaryRoleName {
+			return false
+		}
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return primaryTargetID == ""
+		}
+		return id == primaryTargetID
 	}
-	if strings.TrimSpace(msg.WhisperTargetMemberName) != "" {
+	if hasPrimaryRoleName {
 		addName(msg.WhisperTargetMemberName)
+	}
+	if msg.WhisperTarget != nil {
+		if !skipPrimaryFallback(msg.WhisperTarget.ID) {
+			addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
+		}
+	}
+	for _, target := range msg.WhisperTargets {
+		if target == nil {
+			continue
+		}
+		if id := strings.TrimSpace(target.ID); id != "" {
+			if skipPrimaryFallback(id) {
+				continue
+			}
+			addName(resolveMemberDisplayName(channelID, id, resolver))
+			continue
+		}
+		if skipPrimaryFallback("") {
+			continue
+		}
+		addName(resolveUserDisplayName(target))
 	}
 	if strings.TrimSpace(msg.WhisperTargetUserNick) != "" && len(targets) == 0 {
 		addName(msg.WhisperTargetUserNick)
 	}
 	for _, id := range parseWhisperIDs(msg.WhisperTo) {
+		if skipPrimaryFallback(id) {
+			continue
+		}
 		if resolver != nil {
 			if name := resolver.resolveIdentityName(id); name != "" {
 				addName(name)
@@ -578,7 +632,7 @@ func stripRichText(input string) string {
 		if text == "" {
 			return
 		}
-		text = html.UnescapeString(text)
+		text = htmlUnescapeDeep(text)
 		text = strings.ReplaceAll(text, "\u00a0", " ")
 		sb.WriteString(text)
 		lastWasNewline = strings.HasSuffix(text, "\n")
@@ -1056,21 +1110,21 @@ type quickToken struct {
 
 var (
 	quickCodeFenceLiteralPattern = regexp.MustCompile("```([\\s\\S]*?)```")
-	quickInlineCodePattern  = regexp.MustCompile("`([^`\\n]+)`")
-	quickLinkPattern        = regexp.MustCompile(`\[([^\]\\n]+)\]\((https?://[^\s)]+)\)`)
-	quickBoldPattern        = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
-	quickItalicPattern      = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
-	htmlTagPattern          = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
-	bbcodePrePattern        = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
-	bbcodeInlineCodePattern = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
-	bbcodeLinkPattern       = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
-	bbcodeStrongPattern     = regexp.MustCompile(`(?is)<\/?strong\b[^>]*>`)
-	bbcodeBoldPattern       = regexp.MustCompile(`(?is)<\/?b\b[^>]*>`)
-	bbcodeEmPattern         = regexp.MustCompile(`(?is)<\/?em\b[^>]*>`)
-	bbcodeItalicPattern     = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
-	bbcodeBrPattern         = regexp.MustCompile(`(?is)<br\s*/?>`)
-	bbcodePBoundaryPattern  = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
-	bbcodeAnyTagPattern     = regexp.MustCompile(`(?is)</?[^>]+>`)
+	quickInlineCodePattern       = regexp.MustCompile("`([^`\\n]+)`")
+	quickLinkPattern             = regexp.MustCompile(`\[([^\]\\n]+)\]\((https?://[^\s)]+)\)`)
+	quickBoldPattern             = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
+	quickItalicPattern           = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
+	htmlTagPattern               = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
+	bbcodePrePattern             = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
+	bbcodeInlineCodePattern      = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
+	bbcodeLinkPattern            = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	bbcodeStrongPattern          = regexp.MustCompile(`(?is)<\/?strong\b[^>]*>`)
+	bbcodeBoldPattern            = regexp.MustCompile(`(?is)<\/?b\b[^>]*>`)
+	bbcodeEmPattern              = regexp.MustCompile(`(?is)<\/?em\b[^>]*>`)
+	bbcodeItalicPattern          = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
+	bbcodeBrPattern              = regexp.MustCompile(`(?is)<br\s*/?>`)
+	bbcodePBoundaryPattern       = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
+	bbcodeAnyTagPattern          = regexp.MustCompile(`(?is)</?[^>]+>`)
 )
 
 func enhancePlainContentForHTMLExport(content string) string {
@@ -1085,6 +1139,7 @@ func enhancePlainContentForHTMLExport(content string) string {
 	if isLikelyHTMLContent(normalized) {
 		return normalized
 	}
+	normalized = htmlUnescapeDeep(normalized)
 
 	protected, tokens := protectAtTagsForQuickFormat(normalized)
 	converted := convertQuickFormatForFlavor(protected, quickFormatFlavorHTML)
@@ -1188,7 +1243,7 @@ func convertQuickInline(input string, flavor quickFormatFlavor) string {
 			return segment
 		}
 		label := match[1]
-		url := html.UnescapeString(strings.TrimSpace(match[2]))
+		url := htmlUnescapeDeep(strings.TrimSpace(match[2]))
 		if !isSafeQuickLink(url) {
 			return segment
 		}
@@ -1261,7 +1316,7 @@ func convertRenderedHTMLToBBCode(input string) string {
 		if len(match) < 2 {
 			return segment
 		}
-		body := html.UnescapeString(stripRichText(match[1]))
+		body := htmlUnescapeDeep(stripRichText(match[1]))
 		token := fmt.Sprintf("__QF_BB_BLOCK_%d__", codeIndex)
 		codeIndex++
 		codeBlocks = append(codeBlocks, quickToken{token: token, bb: "[code]" + body + "[/code]"})
@@ -1273,7 +1328,7 @@ func convertRenderedHTMLToBBCode(input string) string {
 		if len(match) < 2 {
 			return segment
 		}
-		body := html.UnescapeString(stripRichText(match[1]))
+		body := htmlUnescapeDeep(stripRichText(match[1]))
 		return "[code]" + body + "[/code]"
 	})
 
@@ -1282,8 +1337,8 @@ func convertRenderedHTMLToBBCode(input string) string {
 		if len(match) < 3 {
 			return segment
 		}
-		href := html.UnescapeString(strings.TrimSpace(match[1]))
-		label := html.UnescapeString(stripRichText(match[2]))
+		href := htmlUnescapeDeep(strings.TrimSpace(match[1]))
+		label := htmlUnescapeDeep(stripRichText(match[2]))
 		if !isSafeQuickLink(href) {
 			return label
 		}
@@ -1318,7 +1373,7 @@ func convertRenderedHTMLToBBCode(input string) string {
 	text = bbcodePBoundaryPattern.ReplaceAllString(text, "\n")
 	text = bbcodeBrPattern.ReplaceAllString(text, "\n")
 	text = bbcodeAnyTagPattern.ReplaceAllString(text, "")
-	text = html.UnescapeString(text)
+	text = htmlUnescapeDeep(text)
 
 	for _, token := range codeBlocks {
 		text = strings.ReplaceAll(text, token.token, token.bb)

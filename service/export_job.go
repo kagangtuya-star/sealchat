@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -150,10 +151,138 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 	if err := query.Find(&messages).Error; err != nil {
 		return nil, err
 	}
+	if err := hydrateWhisperTargetsForExport(messages); err != nil {
+		return nil, err
+	}
 	if job.MergeMessages {
 		return mergeSequentialMessages(messages), nil
 	}
 	return messages, nil
+}
+
+func hydrateWhisperTargetsForExport(messages []*model.MessageModel) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	whisperMsgIDs := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil || !msg.IsWhisper {
+			continue
+		}
+		if id := strings.TrimSpace(msg.ID); id != "" {
+			whisperMsgIDs = append(whisperMsgIDs, id)
+		}
+	}
+	if len(whisperMsgIDs) == 0 {
+		return nil
+	}
+
+	recipientMap := model.GetWhisperRecipientIDsBatch(whisperMsgIDs)
+	userIDSet := make(map[string]struct{})
+	addUserID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		userIDSet[id] = struct{}{}
+	}
+	for _, msg := range messages {
+		if msg == nil || !msg.IsWhisper {
+			continue
+		}
+		for _, id := range splitWhisperIDs(msg.WhisperTo) {
+			addUserID(id)
+		}
+		for _, id := range recipientMap[msg.ID] {
+			addUserID(id)
+		}
+	}
+
+	userIDs := make([]string, 0, len(userIDSet))
+	for id := range userIDSet {
+		userIDs = append(userIDs, id)
+	}
+
+	userMap := map[string]*model.UserModel{}
+	if len(userIDs) > 0 {
+		var users []*model.UserModel
+		if err := model.GetDB().Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+			return err
+		}
+		for _, user := range users {
+			if user == nil || strings.TrimSpace(user.ID) == "" {
+				continue
+			}
+			userMap[user.ID] = user
+		}
+	}
+
+	for _, msg := range messages {
+		if msg == nil || !msg.IsWhisper {
+			continue
+		}
+		recipientIDs := normalizeWhisperRecipientIDs(recipientMap[msg.ID])
+		if len(recipientIDs) == 0 {
+			recipientIDs = splitWhisperIDs(msg.WhisperTo)
+		}
+		if len(recipientIDs) > 0 {
+			targets := make([]*model.UserModel, 0, len(recipientIDs))
+			for _, id := range recipientIDs {
+				if user, ok := userMap[id]; ok && user != nil {
+					targets = append(targets, user)
+					continue
+				}
+				targets = append(targets, &model.UserModel{
+					StringPKBaseModel: model.StringPKBaseModel{ID: id},
+				})
+			}
+			msg.WhisperTargets = targets
+			if msg.WhisperTarget == nil && len(targets) > 0 {
+				msg.WhisperTarget = targets[0]
+			}
+		}
+		if msg.WhisperTarget == nil {
+			ids := splitWhisperIDs(msg.WhisperTo)
+			if len(ids) > 0 {
+				if user, ok := userMap[ids[0]]; ok && user != nil {
+					msg.WhisperTarget = user
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func normalizeWhisperRecipientIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func splitWhisperIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	return normalizeWhisperRecipientIDs(parts)
 }
 
 func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageModel {

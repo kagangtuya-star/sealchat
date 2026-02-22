@@ -53,6 +53,7 @@ const isFocused = ref(false);
 const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更新
 const isComposing = ref(false);
 let latestInputRenderTaskId = 0;
+let latestCursorRestoreTaskId = 0;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -97,11 +98,111 @@ const QUICK_INLINE_CODE_PATTERN = /`([^`\n]+)`/g;
 const QUICK_LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
 const QUICK_ITALIC_PATTERN = /(^|[^*])\*([^*\n]+)\*/g;
+const ZERO_WIDTH_SPACE = '\u200B';
+const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;
 
 const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const isHighSurrogate = (code: number) => code >= 0xD800 && code <= 0xDBFF;
+const isLowSurrogate = (code: number) => code >= 0xDC00 && code <= 0xDFFF;
+const graphemeSegmenter = typeof Intl !== 'undefined' && typeof (Intl as any).Segmenter === 'function'
+  ? new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
+  : null;
+
+const getGraphemeRangeAt = (text: string, index: number): { start: number; end: number } | null => {
+  if (!graphemeSegmenter || !text || index < 0 || index >= text.length) {
+    return null;
+  }
+  const segments = graphemeSegmenter.segment(text) as Iterable<{ index: number; segment: string }>;
+  for (const part of segments) {
+    const start = part.index;
+    const end = start + String(part.segment).length;
+    if (index >= start && index < end) {
+      return { start, end };
+    }
+  }
+  return null;
+};
+
+const getBackwardDeleteStart = (text: string, cursor: number): number => {
+  const safeCursor = clamp(cursor, 0, text.length);
+  const previousIndex = safeCursor - 1;
+  if (previousIndex < 0) {
+    return safeCursor;
+  }
+  const graphemeRange = getGraphemeRangeAt(text, previousIndex);
+  if (graphemeRange) {
+    return graphemeRange.start;
+  }
+  const previousCode = text.charCodeAt(previousIndex);
+  if (isLowSurrogate(previousCode) && previousIndex - 1 >= 0) {
+    const leadCode = text.charCodeAt(previousIndex - 1);
+    if (isHighSurrogate(leadCode)) {
+      return previousIndex - 1;
+    }
+  }
+  return previousIndex;
+};
+
+const getForwardDeleteEnd = (text: string, cursor: number): number => {
+  const safeCursor = clamp(cursor, 0, text.length);
+  if (safeCursor >= text.length) {
+    return safeCursor;
+  }
+  const graphemeRange = getGraphemeRangeAt(text, safeCursor);
+  if (graphemeRange) {
+    return graphemeRange.end;
+  }
+  const currentCode = text.charCodeAt(safeCursor);
+  if (isHighSurrogate(currentCode) && safeCursor + 1 < text.length) {
+    const tailCode = text.charCodeAt(safeCursor + 1);
+    if (isLowSurrogate(tailCode)) {
+      return safeCursor + 2;
+    }
+  }
+  return safeCursor + 1;
+};
+
+const getTextModelLength = (text: string): number => {
+  let total = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== ZERO_WIDTH_SPACE) {
+      total += 1;
+    }
+  }
+  return total;
+};
+
+const getModelOffsetWithinText = (text: string, domOffset: number): number => {
+  const safeOffset = clamp(domOffset, 0, text.length);
+  let modelOffset = 0;
+  for (let i = 0; i < safeOffset; i++) {
+    if (text[i] !== ZERO_WIDTH_SPACE) {
+      modelOffset += 1;
+    }
+  }
+  return modelOffset;
+};
+
+const resolveTextOffsetByModelPosition = (text: string, modelPosition: number): number => {
+  const safeModelPosition = clamp(modelPosition, 0, getTextModelLength(text));
+  if (safeModelPosition <= 0) {
+    return 0;
+  }
+  let modelCount = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === ZERO_WIDTH_SPACE) {
+      continue;
+    }
+    modelCount += 1;
+    if (modelCount >= safeModelPosition) {
+      return i + 1;
+    }
+  }
+  return text.length;
+};
 
 const renderQuickFormatLine = (line: string): string => {
   if (!line) {
@@ -173,17 +274,42 @@ const isMentionElement = (node: Node): node is HTMLElement =>
 
 const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
   node.nodeType === Node.TEXT_NODE
-  && node.textContent === '\u200B'
+  && node.textContent === ZERO_WIDTH_SPACE
   && (node.parentElement?.classList.contains('empty-line') ?? false)
 );
 
+const resolveEmptyLinePlaceholderPosition = (node: Node | null): { node: Node; offset: number } | null => {
+  if (!node) {
+    return null;
+  }
+  if (isEmptyLinePlaceholderTextNode(node)) {
+    const length = node.textContent?.length ?? 1;
+    return { node, offset: Math.max(1, length) };
+  }
+  if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('empty-line')) {
+    const textNode = node.firstChild;
+    if (textNode && isEmptyLinePlaceholderTextNode(textNode)) {
+      const length = textNode.textContent?.length ?? 1;
+      return { node: textNode, offset: Math.max(1, length) };
+    }
+  }
+  return null;
+};
+
 // 从 mention 元素构建原始 Satori 标签
 const buildMentionToken = (element: HTMLElement): string => {
+  const escapeAttr = (value: string) => value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
   const atId = element.dataset.atId || '';
   const atName = element.dataset.atName || '';
   if (!atId) return '';
-  const nameAttr = atName ? ` name="${atName.replace(/"/g, '&quot;')}"` : '';
-  return `<at id="${atId}"${nameAttr}/>`;
+  const safeId = escapeAttr(atId);
+  const nameAttr = atName ? ` name="${escapeAttr(atName)}"` : '';
+  return `<at id="${safeId}"${nameAttr}/>`;
 };
 
 const getMentionTokenLength = (element: HTMLElement): number => {
@@ -195,7 +321,7 @@ const getNodeModelLength = (node: Node): number => {
     if (isEmptyLinePlaceholderTextNode(node)) {
       return 0;
     }
-    return node.textContent?.length ?? 0;
+    return getTextModelLength(node.textContent ?? '');
   }
   if (node.nodeName === 'BR') {
     return 1;
@@ -219,8 +345,7 @@ const getOffsetWithinNode = (node: Node, offset: number): number => {
     if (isEmptyLinePlaceholderTextNode(node)) {
       return 0;
     }
-    const length = node.textContent?.length ?? 0;
-    return clamp(offset, 0, length);
+    return getModelOffsetWithinText(node.textContent ?? '', offset);
   }
   if (node.nodeName === 'BR') {
     return offset > 0 ? 1 : 0;
@@ -281,17 +406,25 @@ const reduceNode = (node: Node, target: Node, offset: number): { found: boolean;
 
 const calculateModelIndexForPosition = (container: Node, offset: number): number => {
   if (!editorRef.value) return 0;
-  const { length } = reduceNode(editorRef.value, container, offset);
+  if (container !== editorRef.value && !editorRef.value.contains(container)) {
+    return getNodeModelLength(editorRef.value);
+  }
+  const { found, length } = reduceNode(editorRef.value, container, offset);
+  if (!found) {
+    return getNodeModelLength(editorRef.value);
+  }
   return length;
 };
 
 const resolvePositionByIndex = (node: Node, position: number): { node: Node; offset: number } => {
   if (node.nodeType === Node.TEXT_NODE) {
     if (isEmptyLinePlaceholderTextNode(node)) {
-      return { node, offset: 0 };
+      const length = node.textContent?.length ?? 1;
+      return { node, offset: Math.max(1, length) };
     }
-    const length = node.textContent?.length ?? 0;
-    return { node, offset: clamp(position, 0, length) };
+    const text = node.textContent ?? '';
+    const offset = resolveTextOffsetByModelPosition(text, position);
+    return { node, offset };
   }
 
   if (node.nodeName === 'BR') {
@@ -299,6 +432,10 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
     const index = Array.prototype.indexOf.call(parent.childNodes, node);
     if (position <= 0) {
       return { node: parent, offset: index };
+    }
+    const placeholderPosition = resolveEmptyLinePlaceholderPosition(parent.childNodes[index + 1] ?? null);
+    if (placeholderPosition) {
+      return placeholderPosition;
     }
     return { node: parent, offset: index + 1 };
   }
@@ -346,9 +483,40 @@ const getSelectionRange = () => {
     return { start: length, end: length };
   }
   const range = selection.getRangeAt(0);
+  if (!editorRef.value.contains(range.startContainer) || !editorRef.value.contains(range.endContainer)) {
+    const length = props.modelValue.length;
+    return { start: length, end: length };
+  }
   const start = calculateModelIndexForPosition(range.startContainer, range.startOffset);
   const end = calculateModelIndexForPosition(range.endContainer, range.endOffset);
   return { start, end };
+};
+
+const ensureCaretVisible = () => {
+  if (!editorRef.value) return;
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0).cloneRange();
+  range.collapse(false);
+  const editorRect = editorRef.value.getBoundingClientRect();
+  let caretRect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  if (!caretRect || (!caretRect.width && !caretRect.height)) {
+    const focusNode = selection.focusNode;
+    if (focusNode && focusNode.nodeType === Node.TEXT_NODE) {
+      caretRect = (focusNode.parentElement?.getBoundingClientRect() as DOMRect) ?? caretRect;
+    } else if (focusNode && focusNode.nodeType === Node.ELEMENT_NODE) {
+      caretRect = (focusNode as Element).getBoundingClientRect();
+    }
+  }
+  if (!caretRect) return;
+  const padding = 8;
+  const lower = editorRect.bottom - padding;
+  const upper = editorRect.top + padding;
+  if (caretRect.bottom > lower) {
+    editorRef.value.scrollTop += caretRect.bottom - lower;
+  } else if (caretRect.top < upper) {
+    editorRef.value.scrollTop -= upper - caretRect.top;
+  }
 };
 
 const setSelectionRange = (start: number, end: number) => {
@@ -367,6 +535,7 @@ const setSelectionRange = (start: number, end: number) => {
   range.setEnd(endPosition.node, endPosition.offset);
   selection.removeAllRanges();
   selection.addRange(range);
+  ensureCaretVisible();
 };
 
 const moveCursorToEnd = () => {
@@ -511,7 +680,11 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
   // 恢复光标位置
   if (preserveCursor && isFocused.value) {
+    const cursorRestoreTaskId = ++latestCursorRestoreTaskId;
     nextTick(() => {
+      if (cursorRestoreTaskId !== latestCursorRestoreTaskId) {
+        return;
+      }
       setCursorPosition(savedPosition);
     });
   }
@@ -664,6 +837,57 @@ const insertLineBreak = () => {
   insertLineBreakAtSelection();
 };
 
+const deleteBackwardAtSelection = (): boolean => {
+  const selection = getSelectionRange();
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  if (start !== end) {
+    const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
+    commitInputMutation(nextValue, start);
+    return true;
+  }
+  const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, start);
+  if (boundaryDelete) {
+    applyQuickFormatBoundaryDelete(boundaryDelete);
+    return true;
+  }
+  const marker = findMarkerInfoAt(start - 1);
+  if (marker) {
+    removeImageMarker(marker);
+    return true;
+  }
+  if (start <= 0) {
+    return false;
+  }
+  const deleteStart = getBackwardDeleteStart(props.modelValue, start);
+  const nextValue = `${props.modelValue.slice(0, deleteStart)}${props.modelValue.slice(start)}`;
+  commitInputMutation(nextValue, deleteStart);
+  return true;
+};
+
+const deleteForwardAtSelection = (): boolean => {
+  const selection = getSelectionRange();
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  if (start !== end) {
+    const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
+    commitInputMutation(nextValue, start);
+    return true;
+  }
+  const marker = findMarkerInfoAt(start);
+  if (marker) {
+    removeImageMarker(marker);
+    return true;
+  }
+  if (start >= props.modelValue.length) {
+    return false;
+  }
+  const deleteEnd = getForwardDeleteEnd(props.modelValue, start);
+  const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(deleteEnd)}`;
+  commitInputMutation(nextValue, start);
+  return true;
+};
+
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -787,6 +1011,8 @@ const insertPlainTextAtCursor = (text: string) => {
 // 处理输入事件
 const handleInput = (event?: InputEvent) => {
   if (!editorRef.value) return;
+  // 进入新的输入周期，取消所有已排队的旧光标恢复任务。
+  latestCursorRestoreTaskId++;
 
   let text = extractContentWithLineBreaks();
   // 删除到空时，浏览器经常遗留一个占位换行；仅在非“主动插入换行”场景下归零。
@@ -983,7 +1209,7 @@ const extractContentWithLineBreaks = () => {
   });
 
   let result = pieces.join('');
-  result = result.replace(/\u200B/g, '');
+  result = result.replace(ZERO_WIDTH_SPACE_REGEX, '');
   return result;
 };
 
@@ -1106,6 +1332,32 @@ const handleDragOver = (event: DragEvent) => {
   event.stopPropagation();
 };
 
+const handleBeforeInput = (event: InputEvent) => {
+  if (props.disabled) {
+    return;
+  }
+  const composing = event.isComposing || isComposing.value;
+  if (composing) {
+    return;
+  }
+  if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+    event.preventDefault();
+    insertLineBreak();
+    return;
+  }
+  if (event.inputType === 'deleteContentBackward') {
+    if (deleteBackwardAtSelection()) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (event.inputType === 'deleteContentForward') {
+    if (deleteForwardAtSelection()) {
+      event.preventDefault();
+    }
+  }
+};
+
 // 处理按键事件
 const handleKeydown = (event: KeyboardEvent) => {
   // 优先处理 mention 面板键盘导航
@@ -1144,35 +1396,10 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   if (!composing && event.key === 'Backspace') {
-    const selection = getSelectionRange();
-    const start = Math.min(selection.start, selection.end);
-    const end = Math.max(selection.start, selection.end);
-    if (start !== end) {
+    if (deleteBackwardAtSelection()) {
       event.preventDefault();
-      const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(end)}`;
-      commitInputMutation(nextValue, start);
       return;
     }
-    const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, start);
-    if (boundaryDelete) {
-      event.preventDefault();
-      applyQuickFormatBoundaryDelete(boundaryDelete);
-      return;
-    }
-    const marker = findMarkerInfoAt(start - 1);
-    if (marker) {
-      event.preventDefault();
-      removeImageMarker(marker);
-      return;
-    }
-    if (start <= 0) {
-      return;
-    }
-    event.preventDefault();
-    const cursor = start - 1;
-    const nextValue = `${props.modelValue.slice(0, cursor)}${props.modelValue.slice(start)}`;
-    commitInputMutation(nextValue, cursor);
-    return;
   }
 
   if (!composing && event.key === 'Delete') {
@@ -1284,6 +1511,7 @@ defineExpose({
       :data-placeholder="placeholder"
       contenteditable
       :disabled="disabled"
+      @beforeinput="handleBeforeInput"
       @input="handleInput"
       @paste="handlePaste"
       @drop="handleDrop"

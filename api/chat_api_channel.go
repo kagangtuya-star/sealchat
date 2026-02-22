@@ -38,6 +38,23 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 	}
 
 	m := service.ChannelNew(utils.NewID(), permType, data.Name, worldID, ctx.User.ID, data.ParentID)
+	if m != nil {
+		ev := &protocol.Event{
+			Type:    protocol.EventChannelUpdated,
+			Channel: m.ToProtocolType(),
+			Argv: &protocol.Argv{
+				Options: map[string]interface{}{
+					"treeChanged": true,
+					"worldId":     worldID,
+					"action":      "create",
+				},
+			},
+		}
+		if ctx.User != nil {
+			ev.User = ctx.User.ToProtocolType()
+		}
+		broadcastEventToWorld(worldID, ev)
+	}
 
 	return &struct {
 		Channel *protocol.Channel `json:"channel"`
@@ -342,15 +359,15 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	})
 
 	rData := &struct {
-		Member                *protocol.GuildMember `json:"member"`
-		FirstUnreadMessageId  string                `json:"first_unread_message_id,omitempty"`
-		FirstUnreadMsgTime    int64                 `json:"first_unread_msg_time,omitempty"`
-		CharacterAPIEnabled   bool                  `json:"character_api_enabled"`
-		CharacterAPIReason    string                `json:"character_api_reason,omitempty"`
+		Member               *protocol.GuildMember `json:"member"`
+		FirstUnreadMessageId string                `json:"first_unread_message_id,omitempty"`
+		FirstUnreadMsgTime   int64                 `json:"first_unread_msg_time,omitempty"`
+		CharacterAPIEnabled  bool                  `json:"character_api_enabled"`
+		CharacterAPIReason   string                `json:"character_api_reason,omitempty"`
 	}{
-		Member:                memberPT,
-		FirstUnreadMessageId:  firstUnreadMsgId,
-		FirstUnreadMsgTime:    firstUnreadMsgTime,
+		Member:               memberPT,
+		FirstUnreadMessageId: firstUnreadMsgId,
+		FirstUnreadMsgTime:   firstUnreadMsgTime,
 	}
 	characterEnabled, characterReason := GetChannelCharacterAPICapability(channelId, nil)
 	rData.CharacterAPIEnabled = characterEnabled
@@ -509,5 +526,101 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 		ChannelID:          channel.ID,
 		BuiltInDiceEnabled: channel.BuiltInDiceEnabled,
 		BotFeatureEnabled:  channel.BotFeatureEnabled,
+	}, nil
+}
+
+func apiChannelBotWhisperForwardUpdate(ctx *ChatContext, data *struct {
+	ChannelID    string `json:"channel_id"`
+	ConfigJSON   string `json:"config_json"`
+	ApplyToWorld bool   `json:"apply_to_world"`
+}) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("频道ID不能为空")
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel == nil || channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	if strings.TrimSpace(channel.WorldID) == "" {
+		return nil, fmt.Errorf("该频道不支持 BOT 私聊转发配置")
+	}
+	if !service.IsWorldAdmin(channel.WorldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+		return nil, fmt.Errorf("您没有权限修改 BOT 私聊转发配置")
+	}
+	_, normalizedJSON, err := validateAndNormalizeBotWhisperForwardConfig(data.ConfigJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	targetChannels := make([]*model.ChannelModel, 0, 8)
+	if data.ApplyToWorld {
+		var channels []*model.ChannelModel
+		if err := model.GetDB().
+			Where("world_id = ? AND (is_private = ? OR is_private IS NULL)", channel.WorldID, false).
+			Find(&channels).Error; err != nil {
+			return nil, err
+		}
+		if len(channels) == 0 {
+			return nil, fmt.Errorf("当前世界没有可更新的频道")
+		}
+		channelIDs := make([]string, 0, len(channels))
+		for _, ch := range channels {
+			if ch == nil || ch.ID == "" {
+				continue
+			}
+			channelIDs = append(channelIDs, ch.ID)
+		}
+		if len(channelIDs) == 0 {
+			return nil, fmt.Errorf("当前世界没有可更新的频道")
+		}
+		if err := model.GetDB().Model(&model.ChannelModel{}).
+			Where("id IN ?", channelIDs).
+			Update("bot_whisper_forward_config", normalizedJSON).Error; err != nil {
+			return nil, err
+		}
+		targetChannels = channels
+	} else {
+		if err := model.GetDB().Model(&model.ChannelModel{}).
+			Where("id = ?", channel.ID).
+			Update("bot_whisper_forward_config", normalizedJSON).Error; err != nil {
+			return nil, err
+		}
+		targetChannels = append(targetChannels, channel)
+	}
+
+	updatedChannelIDs := make([]string, 0, len(targetChannels))
+	for _, target := range targetChannels {
+		if target == nil || target.ID == "" {
+			continue
+		}
+		target.BotWhisperForwardConfig = normalizedJSON
+		updatedChannelIDs = append(updatedChannelIDs, target.ID)
+		ev := &protocol.Event{
+			Type:    protocol.EventChannelUpdated,
+			Channel: target.ToProtocolType(),
+			User:    ctx.User.ToProtocolType(),
+		}
+		ctx.BroadcastEventInChannel(target.ID, ev)
+		ctx.BroadcastEventInChannelForBot(target.ID, ev)
+	}
+
+	return &struct {
+		ChannelID    string   `json:"channel_id"`
+		ChannelIDs   []string `json:"channel_ids"`
+		WorldID      string   `json:"world_id"`
+		ApplyToWorld bool     `json:"apply_to_world"`
+		UpdatedCount int      `json:"updated_count"`
+		ConfigJSON   string   `json:"config_json"`
+	}{
+		ChannelID:    channel.ID,
+		ChannelIDs:   updatedChannelIDs,
+		WorldID:      channel.WorldID,
+		ApplyToWorld: data.ApplyToWorld,
+		UpdatedCount: len(updatedChannelIDs),
+		ConfigJSON:   normalizedJSON,
 	}, nil
 }

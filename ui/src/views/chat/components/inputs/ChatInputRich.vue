@@ -9,6 +9,7 @@ import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { matchText } from '@/utils/pinyinMatch';
+import { contentUnescape } from '@/utils/tools';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -79,12 +80,7 @@ let mentionPositionRaf: number | null = null;
 const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
 
 const decodeMentionText = (value: string) => {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+  return contentUnescape(value);
 };
 
 const encodeMentionAttr = (value: string) => {

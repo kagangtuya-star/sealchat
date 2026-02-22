@@ -30,7 +30,7 @@ export interface SealChatEvent {
   type: 'SEALCHAT_EVENT';
   version: number;
   windowId: string;
-  action: 'ROLL_DICE' | 'UPDATE_ATTRS';
+  action: 'ROLL_DICE' | 'UPDATE_ATTRS' | 'EDIT_START' | 'EDIT_END';
   payload: SealChatEventPayload;
 }
 
@@ -46,8 +46,79 @@ const emit = defineEmits<{
 
 const iframeRef = ref<HTMLIFrameElement | null>(null);
 
+const EDIT_HOOK_MARKER = 'data-sealchat-edit-hook="1"';
+const EDIT_HOOK_SCRIPT = `<script ${EDIT_HOOK_MARKER}>
+(function () {
+  var _windowId = '';
+  var editing = false;
+  var endTimer = null;
+  function isEditable(el) {
+    if (!el || !(el instanceof Element)) return false;
+    if (el instanceof HTMLInputElement) {
+      return !el.disabled && !el.readOnly && el.type !== 'hidden';
+    }
+    if (el instanceof HTMLTextAreaElement) return !el.disabled && !el.readOnly;
+    if (el instanceof HTMLSelectElement) return !el.disabled;
+    return !!el.isContentEditable;
+  }
+  function post(action) {
+    if (!_windowId) return;
+    try {
+      window.parent.postMessage({
+        type: 'SEALCHAT_EVENT',
+        version: 1,
+        windowId: _windowId,
+        action: action,
+        payload: {}
+      }, '*');
+    } catch (e) {}
+  }
+  function markEditStart() {
+    if (endTimer) {
+      clearTimeout(endTimer);
+      endTimer = null;
+    }
+    if (editing) return;
+    editing = true;
+    post('EDIT_START');
+  }
+  function checkEditEnd() {
+    var active = document.activeElement;
+    if (!isEditable(active) && editing) {
+      editing = false;
+      post('EDIT_END');
+    }
+  }
+  document.addEventListener('focusin', function (ev) {
+    if (isEditable(ev.target)) {
+      markEditStart();
+    }
+  }, true);
+  document.addEventListener('focusout', function () {
+    if (endTimer) clearTimeout(endTimer);
+    endTimer = setTimeout(checkEditEnd, 0);
+  }, true);
+  window.addEventListener('blur', function () {
+    if (endTimer) clearTimeout(endTimer);
+    endTimer = setTimeout(checkEditEnd, 0);
+  });
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    var data = e.data;
+    if (data && data.type === 'SEALCHAT_UPDATE' && data.payload && typeof data.payload.windowId === 'string') {
+      _windowId = data.payload.windowId;
+    }
+  });
+})();
+<\/script>`;
+
 const finalSrcDoc = computed(() => {
-  return props.html;
+  const html = props.html || '';
+  if (html.includes(EDIT_HOOK_MARKER)) return html;
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${EDIT_HOOK_SCRIPT}</body>`);
+  }
+  return `${html}\n${EDIT_HOOK_SCRIPT}`;
 });
 
 const postData = () => {

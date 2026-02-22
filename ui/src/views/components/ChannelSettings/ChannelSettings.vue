@@ -9,6 +9,7 @@ import { useChatStore } from '@/stores/chat';
 import { useI18n } from 'vue-i18n';
 import TabRoles from './TabRoles.vue'
 import TabAppearance from './TabAppearance.vue'
+import TabBotWhisperForward from './TabBotWhisperForward.vue'
 
 const message = useMessage();
 const dialog = useDialog();
@@ -60,6 +61,15 @@ watch(() => props.channel, () => {
     doReload();
   }
 }, { immediate: true });
+
+watch(
+  () => modelShow.value,
+  (show) => {
+    if (show && props.channel?.id) {
+      void doReload();
+    }
+  },
+);
 
 const channelEdit = async (): Promise<void> => {
   if (!model.value.name?.trim()) {
@@ -133,6 +143,10 @@ const tabRef = ref('members');
 
       <n-tab-pane name="appearance" tab="外观设置">
         <TabAppearance :channel="model" @update="doReload" />
+      </n-tab-pane>
+
+      <n-tab-pane name="bot-whisper-forward" tab="BOT私聊转发配置">
+        <TabBotWhisperForward :channel="model" />
       </n-tab-pane>
     </n-tabs>
 

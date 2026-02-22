@@ -18,7 +18,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="pointer-events-auto md:w-2/3 w-5/6 border p-4 py-4" style="margin-top: -5rem; min-height: 70vh;">
+  <div class="sc-admin-settings-shell pointer-events-auto md:w-2/3 w-5/6 border p-4 py-4" style="margin-top: -5rem; min-height: 70vh;">
     <h2 class="text-lg mb-2">平台管理</h2>
     <n-tabs type="line" animated>
       <n-tab-pane name="basic" tab="基本设置">

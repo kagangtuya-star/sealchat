@@ -4,6 +4,13 @@ export const DEFAULT_CARD_TEMPLATE = 'HP{生命值} SAN{理智} 闪避{闪避}';
 
 const TEMPLATE_STORAGE_KEY_PREFIX = 'sealchat_card_template_';
 
+const escapeHtmlText = (input: unknown): string => String(input)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 /**
  * Get the character card template for a specific world.
  */
@@ -40,7 +47,7 @@ export function renderCardTemplate(template: string, data: Record<string, any>):
     const key = String(rawKey).trim();
     if (!key) return '';
     const val = data[key];
-    return val !== undefined && val !== null ? String(val) : '';
+    return val !== undefined && val !== null ? escapeHtmlText(val) : '';
   });
 
   // Remove any remaining unmatched placeholders

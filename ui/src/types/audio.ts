@@ -191,10 +191,14 @@ export interface AudioPlaybackStatePayload {
   tracks: AudioTrackStatePayload[];
   isPlaying: boolean;
   position: number;
+  basePositionSec?: number;
+  capturedAtMs?: number;
   loopEnabled: boolean;
   playbackRate: number;
   worldPlaybackEnabled?: boolean;
   revision?: number;
   updatedBy?: string;
   updatedAt?: number | string;
+  scopeType?: 'channel' | 'world' | string;
+  scopeId?: string;
 }
