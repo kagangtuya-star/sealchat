@@ -105,6 +105,65 @@ const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const isHighSurrogate = (code: number) => code >= 0xD800 && code <= 0xDBFF;
+const isLowSurrogate = (code: number) => code >= 0xDC00 && code <= 0xDFFF;
+const graphemeSegmenter = typeof Intl !== 'undefined' && typeof (Intl as any).Segmenter === 'function'
+  ? new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
+  : null;
+
+const getGraphemeRangeAt = (text: string, index: number): { start: number; end: number } | null => {
+  if (!graphemeSegmenter || !text || index < 0 || index >= text.length) {
+    return null;
+  }
+  const segments = graphemeSegmenter.segment(text) as Iterable<{ index: number; segment: string }>;
+  for (const part of segments) {
+    const start = part.index;
+    const end = start + String(part.segment).length;
+    if (index >= start && index < end) {
+      return { start, end };
+    }
+  }
+  return null;
+};
+
+const getBackwardDeleteStart = (text: string, cursor: number): number => {
+  const safeCursor = clamp(cursor, 0, text.length);
+  const previousIndex = safeCursor - 1;
+  if (previousIndex < 0) {
+    return safeCursor;
+  }
+  const graphemeRange = getGraphemeRangeAt(text, previousIndex);
+  if (graphemeRange) {
+    return graphemeRange.start;
+  }
+  const previousCode = text.charCodeAt(previousIndex);
+  if (isLowSurrogate(previousCode) && previousIndex - 1 >= 0) {
+    const leadCode = text.charCodeAt(previousIndex - 1);
+    if (isHighSurrogate(leadCode)) {
+      return previousIndex - 1;
+    }
+  }
+  return previousIndex;
+};
+
+const getForwardDeleteEnd = (text: string, cursor: number): number => {
+  const safeCursor = clamp(cursor, 0, text.length);
+  if (safeCursor >= text.length) {
+    return safeCursor;
+  }
+  const graphemeRange = getGraphemeRangeAt(text, safeCursor);
+  if (graphemeRange) {
+    return graphemeRange.end;
+  }
+  const currentCode = text.charCodeAt(safeCursor);
+  if (isHighSurrogate(currentCode) && safeCursor + 1 < text.length) {
+    const tailCode = text.charCodeAt(safeCursor + 1);
+    if (isLowSurrogate(tailCode)) {
+      return safeCursor + 2;
+    }
+  }
+  return safeCursor + 1;
+};
 
 const getTextModelLength = (text: string): number => {
   let total = 0;
@@ -800,9 +859,9 @@ const deleteBackwardAtSelection = (): boolean => {
   if (start <= 0) {
     return false;
   }
-  const cursor = start - 1;
-  const nextValue = `${props.modelValue.slice(0, cursor)}${props.modelValue.slice(start)}`;
-  commitInputMutation(nextValue, cursor);
+  const deleteStart = getBackwardDeleteStart(props.modelValue, start);
+  const nextValue = `${props.modelValue.slice(0, deleteStart)}${props.modelValue.slice(start)}`;
+  commitInputMutation(nextValue, deleteStart);
   return true;
 };
 
@@ -823,7 +882,8 @@ const deleteForwardAtSelection = (): boolean => {
   if (start >= props.modelValue.length) {
     return false;
   }
-  const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(start + 1)}`;
+  const deleteEnd = getForwardDeleteEnd(props.modelValue, start);
+  const nextValue = `${props.modelValue.slice(0, start)}${props.modelValue.slice(deleteEnd)}`;
   commitInputMutation(nextValue, start);
   return true;
 };
