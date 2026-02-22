@@ -2,12 +2,13 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
-import { LayoutGrid, LayoutList, Search, Star, StarOff, UserCircle } from '@vicons/tabler';
+import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
+import Avatar from '@/components/avatar.vue';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -809,7 +810,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                 class="sc-icon-button sc-user-button"
                 :aria-label="`打开 ${userDisplayName} 的菜单`"
               >
-                <n-icon :component="UserCircle" size="18" />
+                <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
               </button>
             </template>
             <span>{{ userDisplayName }}</span>
@@ -1098,6 +1099,14 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 .sc-icon-button:focus-visible {
   color: #0ea5e9;
   transform: translateY(-0.5px);
+}
+
+.sc-user-button {
+  overflow: hidden;
+}
+
+.sc-user-button :deep(.avatar-shell) {
+  border-radius: 9999px;
 }
 
 .sc-overlay-layer {
