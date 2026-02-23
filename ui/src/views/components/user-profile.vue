@@ -1,7 +1,7 @@
 <script lang="tsx" setup>
 import { useUserStore } from '@/stores/user';
 import { useUtilsStore } from '@/stores/utils';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import { api, urlBase } from '@/stores/_config';
@@ -9,6 +9,18 @@ import { useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
 import router from '@/router';
 import type { ServerConfig } from '@/types';
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (container: HTMLElement | string, options: Record<string, any>) => string;
+      reset: (widgetId?: string) => void;
+      remove: (widgetId?: string) => void;
+    };
+  }
+}
+
+let turnstileScriptPromise: Promise<void> | null = null;
 
 const { t } = useI18n()
 
@@ -46,6 +58,11 @@ const captchaImageSeed = ref(0);
 const captchaLoading = ref(false);
 const captchaError = ref('');
 const captchaVerified = ref(false);
+const turnstileToken = ref('');
+const turnstileContainer = ref<HTMLDivElement | null>(null);
+const turnstileWidgetId = ref<string | null>(null);
+const turnstileError = ref('');
+const turnstileLoading = ref(false);
 
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) return '';
@@ -53,6 +70,12 @@ const captchaImageUrl = computed(() => {
 });
 
 const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const shouldForceCaptchaRetry = (errMsg: string) => {
+  if (!errMsg) {
+    return false;
+  }
+  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误'].some((keyword) => errMsg.includes(keyword));
+};
 
 onMounted(async () => {
   await user.infoUpdate();
@@ -200,6 +223,95 @@ const reloadCaptchaImage = async () => {
   }
 };
 
+const ensureTurnstileScript = async () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return;
+  }
+  if (window.turnstile) {
+    return;
+  }
+  if (!turnstileScriptPromise) {
+    turnstileScriptPromise = new Promise<void>((resolve, reject) => {
+      const existing = document.getElementById('cf-turnstile-script') as HTMLScriptElement | null;
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Turnstile script load failed')), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.id = 'cf-turnstile-script';
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Turnstile script load failed'));
+      document.head.appendChild(script);
+    }).catch((err) => {
+      turnstileScriptPromise = null;
+      throw err;
+    });
+  }
+  await turnstileScriptPromise;
+};
+
+const destroyTurnstile = () => {
+  if (typeof window !== 'undefined' && turnstileWidgetId.value && window.turnstile?.remove) {
+    window.turnstile.remove(turnstileWidgetId.value);
+  }
+  turnstileWidgetId.value = null;
+  turnstileToken.value = '';
+  turnstileError.value = '';
+  turnstileLoading.value = false;
+  if (turnstileContainer.value) {
+    turnstileContainer.value.innerHTML = '';
+  }
+};
+
+const renderTurnstileWidget = async () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  turnstileError.value = '';
+  turnstileLoading.value = true;
+  try {
+    await ensureTurnstileScript();
+    await nextTick();
+    const siteKey = config.value?.captcha?.signup?.turnstile?.siteKey?.trim()
+      || config.value?.captcha?.turnstile?.siteKey?.trim();
+    if (!siteKey) {
+      turnstileError.value = '未配置 Turnstile siteKey';
+      return;
+    }
+    if (!turnstileContainer.value || !window.turnstile) {
+      turnstileError.value = 'Turnstile 初始化失败';
+      return;
+    }
+    if (turnstileWidgetId.value && window.turnstile.remove) {
+      window.turnstile.remove(turnstileWidgetId.value);
+    }
+    turnstileToken.value = '';
+    turnstileWidgetId.value = window.turnstile.render(turnstileContainer.value, {
+      sitekey: siteKey,
+      callback: (token: string) => {
+        turnstileToken.value = token;
+        turnstileError.value = '';
+      },
+      'error-callback': () => {
+        turnstileToken.value = '';
+        turnstileError.value = '人机验证加载失败，请重试';
+      },
+      'expired-callback': () => {
+        turnstileToken.value = '';
+      },
+    });
+  } catch (err) {
+    console.error('Failed to load turnstile:', err);
+    turnstileError.value = '无法加载 Turnstile，请稍后重试';
+  } finally {
+    turnstileLoading.value = false;
+  }
+};
+
 const resetCaptchaState = () => {
   captchaId.value = '';
   captchaInput.value = '';
@@ -207,6 +319,7 @@ const resetCaptchaState = () => {
   captchaError.value = '';
   captchaLoading.value = false;
   captchaVerified.value = false;
+  destroyTurnstile();
 };
 
 const resetEmailBindState = () => {
@@ -227,6 +340,8 @@ const openEmailBind = () => {
   showEmailBind.value = true;
   if (captchaMode.value === 'local') {
     fetchCaptcha();
+  } else if (captchaMode.value === 'turnstile') {
+    nextTick().then(() => renderTurnstileWidget());
   }
 };
 
@@ -253,6 +368,9 @@ const sendBindEmailCode = async () => {
       message.error('请输入验证码');
       return;
     }
+  } else if (!captchaVerified.value && captchaMode.value === 'turnstile' && !turnstileToken.value) {
+    message.error('请先完成人机验证');
+    return;
   }
 
   emailCodeSending.value = true;
@@ -261,6 +379,7 @@ const sendBindEmailCode = async () => {
       email,
       captchaId: captchaVerified.value ? '' : captchaId.value,
       captchaValue: captchaVerified.value ? '' : captchaInput.value.trim(),
+      turnstileToken: captchaVerified.value ? '' : turnstileToken.value,
     });
     message.success('验证码已发送到您的邮箱');
     captchaVerified.value = true;
@@ -274,9 +393,29 @@ const sendBindEmailCode = async () => {
       }
     }, 1000);
   } catch (e: any) {
-    message.error(e?.response?.data?.error || '发送失败');
-    if (!captchaVerified.value && captchaMode.value === 'local') {
-      await fetchCaptcha();
+    const errMsg = e?.response?.data?.error || '发送失败';
+    message.error(errMsg);
+
+    if (shouldForceCaptchaRetry(errMsg)) {
+      captchaVerified.value = false;
+      if (captchaMode.value === 'local') {
+        captchaInput.value = '';
+        await fetchCaptcha();
+      } else if (captchaMode.value === 'turnstile') {
+        turnstileToken.value = '';
+        await nextTick();
+        await renderTurnstileWidget();
+      }
+      return;
+    }
+
+    if (!captchaVerified.value) {
+      if (captchaMode.value === 'local') {
+        await fetchCaptcha();
+      } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
+        window.turnstile.reset(turnstileWidgetId.value);
+        turnstileToken.value = '';
+      }
     }
   } finally {
     emailCodeSending.value = false;
@@ -324,6 +463,7 @@ onBeforeUnmount(() => {
     clearInterval(emailCodeTimer);
     emailCodeTimer = null;
   }
+  destroyTurnstile();
 });
 </script>
 
@@ -388,6 +528,15 @@ onBeforeUnmount(() => {
             <n-button text size="tiny" :loading="captchaLoading" @click.prevent="reloadCaptchaImage">刷新</n-button>
           </div>
           <div v-if="captchaError" class="text-xs text-red-500 dark:text-red-400 mt-1">{{ captchaError }}</div>
+        </n-form-item>
+        <n-form-item v-else-if="captchaMode === 'turnstile' && !captchaVerified" label="人机验证">
+          <div class="w-full rounded border border-gray-200 dark:border-gray-600 py-2 flex items-center justify-center min-h-[90px]">
+            <div ref="turnstileContainer" class="w-full flex items-center justify-center"></div>
+          </div>
+          <div class="flex justify-end mt-1">
+            <n-button text size="tiny" :loading="turnstileLoading" @click.prevent="renderTurnstileWidget">刷新</n-button>
+          </div>
+          <div v-if="turnstileError" class="text-xs text-red-500 dark:text-red-400 mt-1">{{ turnstileError }}</div>
         </n-form-item>
         <n-form-item label="邮箱验证码">
           <div class="flex w-full items-center gap-2">
