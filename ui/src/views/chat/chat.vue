@@ -425,13 +425,8 @@ const botRoleId = computed(() => {
   }
   return `ch-${channelId}-bot`;
 });
-const canEditDefaultDice = computed(() => {
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    return false;
-  }
-  return chat.isChannelAdmin(channelId, user.info.id);
-});
+const channelFeatureManageAllowed = ref(false);
+const canEditDefaultDice = computed(() => channelFeatureManageAllowed.value);
 const canManageChannelFeatures = computed(() => canEditDefaultDice.value);
 const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   label: bot.nick || bot.username || 'Bot',
@@ -517,7 +512,37 @@ const openCharacterCardPanel = () => {
   }
 };
 let webhookPermissionSeq = 0;
+let channelFeaturePermissionSeq = 0;
 
+watch(
+  () => chat.curChannel?.id,
+  async (channelId) => {
+    const seq = ++channelFeaturePermissionSeq;
+    const currentChannel = chat.curChannel as SChannel | undefined;
+    if (!channelId || !currentChannel) {
+      channelFeatureManageAllowed.value = false;
+      return;
+    }
+    if (isPrivateChatChannel(currentChannel)) {
+      channelFeatureManageAllowed.value = false;
+      return;
+    }
+    try {
+      const [canManageInfo, canRoleLink] = await Promise.all([
+        chat.hasChannelPermission(channelId, 'func_channel_manage_info', user.info.id),
+        chat.hasChannelPermission(channelId, 'func_channel_role_link', user.info.id),
+      ]);
+      if (seq === channelFeaturePermissionSeq) {
+        channelFeatureManageAllowed.value = !!(canManageInfo || canRoleLink);
+      }
+    } catch {
+      if (seq === channelFeaturePermissionSeq) {
+        channelFeatureManageAllowed.value = false;
+      }
+    }
+  },
+  { immediate: true },
+);
 watch(
   () => chat.curChannel?.id,
   async (channelId) => {
@@ -556,13 +581,17 @@ const toggleDiceTray = () => {
     setCurrentDiceTrayVisible(!diceTrayDesktopVisible.value);
   }
 };
-watch(() => chat.curChannel, (channel) => {
-  channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
-  channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
-  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    closeAllDiceTrays();
-  }
-}, { immediate: true });
+watch(
+  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled] as const,
+  ([, builtInDiceEnabled, botFeatureEnabled]) => {
+    channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
+    channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
+    if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+      closeAllDiceTrays();
+    }
+  },
+  { immediate: true },
+);
 watch(() => chat.curChannel?.id, () => {
 	diceSettingsVisible.value = false;
 	channelBotSelection.value = '';
@@ -863,7 +892,17 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
   }
   diceFeatureUpdating.value = true;
   try {
-    await chat.updateChannelFeatures(chat.curChannel.id, updates);
+    const payload = await chat.updateChannelFeatures(chat.curChannel.id, updates);
+    if (typeof payload?.built_in_dice_enabled === 'boolean') {
+      channelFeatures.builtInDiceEnabled = payload.built_in_dice_enabled;
+    } else if (typeof updates.builtInDiceEnabled === 'boolean') {
+      channelFeatures.builtInDiceEnabled = updates.builtInDiceEnabled;
+    }
+    if (typeof payload?.bot_feature_enabled === 'boolean') {
+      channelFeatures.botFeatureEnabled = payload.bot_feature_enabled;
+    } else if (typeof updates.botFeatureEnabled === 'boolean') {
+      channelFeatures.botFeatureEnabled = updates.botFeatureEnabled;
+    }
   } catch (error: any) {
     message.error(error?.response?.data?.error || '更新频道特性失败');
     throw error;
