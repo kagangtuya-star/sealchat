@@ -364,6 +364,10 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo *ConnInfo
 		)
 		c := &WsSyncConn{rawConn, sync.RWMutex{}}
+		// 统一在 handler 退出时关闭底层连接，避免 read loop 退出后遗留 CLOSE_WAIT。
+		defer func() {
+			_ = rawConn.Close()
+		}()
 
 		// 设置pong处理器，收到pong时更新连接活跃状态
 		rawConn.SetPongHandler(func(appData string) error {
@@ -375,6 +379,7 @@ func websocketWorks(app *fiber.App) {
 
 		// 启动ping goroutine，定期发送WebSocket ping帧检测连接是否存活
 		pingDone := make(chan struct{})
+		defer close(pingDone)
 		go func() {
 			for {
 				// BOT 使用 15s ping 间隔，普通用户使用 30s
@@ -737,9 +742,6 @@ func websocketWorks(app *fiber.App) {
 			//	break
 			// }
 		}
-
-		// 清理ping goroutine
-		close(pingDone)
 
 		// 连接断开，补发停止输入信令
 		if curConnInfo != nil && curConnInfo.TypingEnabled && curConnInfo.ChannelId != "" && curUser != nil {
