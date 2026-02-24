@@ -4118,6 +4118,8 @@ export const useChatStore = defineStore({
       timeRange?: [number, number];
       includeOoc?: boolean;
       includeArchived?: boolean;
+      includeImages?: boolean;
+      includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
       textColorizeBBCode?: boolean;
@@ -4131,6 +4133,8 @@ export const useChatStore = defineStore({
         format: params.format,
         include_ooc: params.includeOoc ?? true,
         include_archived: params.includeArchived ?? false,
+        include_images: params.includeImages ?? true,
+        include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
       };

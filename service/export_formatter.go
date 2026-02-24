@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"sealchat/model"
 	"sealchat/utils"
@@ -65,6 +67,8 @@ type ExportPayload struct {
 	Meta             map[string]bool        `json:"meta"`
 	Count            int                    `json:"count"`
 	WithoutTimestamp bool                   `json:"without_timestamp"`
+	IncludeImages    bool                   `json:"include_images"`
+	IncludeDiceCmds  bool                   `json:"include_dice_commands"`
 	ExtraMeta        map[string]interface{} `json:"extra_meta,omitempty"`
 }
 
@@ -103,11 +107,25 @@ func getFormatter(name string) (exportFormatter, bool) {
 	return f, ok
 }
 
-func buildExportPayload(job *model.MessageExportJobModel, channelName string, messages []*model.MessageModel, ctx *payloadContext) *ExportPayload {
+func buildExportPayload(job *model.MessageExportJobModel, channelName string, messages []*model.MessageModel, ctx *payloadContext, extra *exportExtraOptions) *ExportPayload {
+	includeImages := true
+	includeDiceCommand := true
+	if extra != nil {
+		includeImages = extra.IncludeImages
+		includeDiceCommand = extra.IncludeDiceCommand
+	}
 	identityResolver := newIdentityResolver(job.ChannelID)
 	exportMessages := make([]ExportMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
+			continue
+		}
+		plainContent := buildFilteredPlainContent(msg.Content, includeImages)
+		if plainContent == "" {
+			continue
+		}
+		isBotMessage := msg.User != nil && msg.User.IsBot
+		if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
 			continue
 		}
 		originalContent := msg.Content
@@ -119,6 +137,9 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		}
 		// 将 <at> 标签转换为带样式的 HTML
 		htmlContent = convertAtTagsToHTML(htmlContent)
+		if !includeImages {
+			htmlContent = stripImageTagsFromHTML(htmlContent)
+		}
 		exportMessages = append(exportMessages, ExportMessage{
 			ID:             msg.ID,
 			SenderID:       msg.UserID,
@@ -150,11 +171,15 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		Messages:         exportMessages,
 		Count:            len(exportMessages),
 		WithoutTimestamp: job.WithoutTimestamp,
+		IncludeImages:    includeImages,
+		IncludeDiceCmds:  includeDiceCommand,
 		Meta: map[string]bool{
-			"include_ooc":       job.IncludeOOC,
-			"include_archived":  job.IncludeArchived,
-			"merge_messages":    job.MergeMessages,
-			"without_timestamp": job.WithoutTimestamp,
+			"include_ooc":           job.IncludeOOC,
+			"include_archived":      job.IncludeArchived,
+			"include_images":        includeImages,
+			"include_dice_commands": includeDiceCommand,
+			"merge_messages":        job.MergeMessages,
+			"without_timestamp":     job.WithoutTimestamp,
 		},
 	}
 }
@@ -1382,7 +1407,7 @@ func convertRenderedHTMLToBBCode(input string) string {
 	return normalizePlainText(text)
 }
 
-func buildBBCodeBody(msg *ExportMessage) string {
+func buildBBCodeBody(msg *ExportMessage, includeImages bool) string {
 	if msg == nil {
 		return ""
 	}
@@ -1407,6 +1432,7 @@ func buildBBCodeBody(msg *ExportMessage) string {
 		body = normalizePlainText(body)
 	}
 
+	body = applyImageVisibilityToPlain(body, includeImages)
 	body = wrapOOCContent(msg.IcMode, body)
 	parts := make([]string, 0, 3)
 	if msg.IsArchived {
@@ -1417,12 +1443,16 @@ func buildBBCodeBody(msg *ExportMessage) string {
 			parts = append(parts, label)
 		}
 	}
-	parts = append(parts, body)
+	if body != "" {
+		parts = append(parts, body)
+	}
 	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 var (
 	attachmentTokenPattern    = regexp.MustCompile(`^[0-9A-Za-z_-]+$`)
+	cqImageTokenPattern       = regexp.MustCompile(`(?i)\[CQ:image,[^\]]*]`)
+	htmlImageTagPattern       = regexp.MustCompile(`(?is)<img\b[^>]*>`)
 	attachmentBaseURLOverride string
 )
 
@@ -1702,7 +1732,7 @@ func buildDiceLogPayload(payload *ExportPayload) *diceLogPayload {
 	items := make([]diceLogItem, 0, len(payload.Messages))
 	for i := range payload.Messages {
 		msg := &payload.Messages[i]
-		body := buildContentBody(msg)
+		body := buildContentBody(msg, payload.IncludeImages)
 		isDice, info := detectDiceCommand(msg)
 		items = append(items, diceLogItem{
 			Nickname:    msg.SenderName,
@@ -1764,7 +1794,7 @@ func buildPlainTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	}
 	header := strings.Join(prefixParts, " ")
 	namePart := fmt.Sprintf("<%s>", msg.SenderName)
-	content := buildContentBody(msg)
+	content := buildContentBody(msg, payload.IncludeImages)
 	var parts []string
 	if header != "" {
 		parts = append(parts, header)
@@ -1783,7 +1813,7 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	}
 	headerParts = append(headerParts, fmt.Sprintf("<%s>", msg.SenderName))
 	header := strings.Join(headerParts, " ")
-	content := buildBBCodeBody(msg)
+	content := buildBBCodeBody(msg, payload.IncludeImages)
 	color := sanitizeBBCodeColor(msg.SenderColor, "#111111")
 	return fmt.Sprintf("[color=silver]%s[/color][color=%s] %s [/color]", header, color, content)
 }
@@ -1900,11 +1930,11 @@ func detectDiceCommand(msg *ExportMessage) (bool, *diceCommandInfo) {
 	return false, nil
 }
 
-func buildContentBody(msg *ExportMessage) string {
+func buildContentBody(msg *ExportMessage, includeImages bool) string {
 	if msg == nil {
 		return ""
 	}
-	clean := stripRichText(msg.Content)
+	clean := buildFilteredPlainContent(msg.Content, includeImages)
 	clean = wrapOOCContent(msg.IcMode, clean)
 	var parts []string
 	if msg.IsArchived {
@@ -1915,8 +1945,80 @@ func buildContentBody(msg *ExportMessage) string {
 			parts = append(parts, label)
 		}
 	}
-	parts = append(parts, clean)
+	if clean != "" {
+		parts = append(parts, clean)
+	}
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func buildFilteredPlainContent(raw string, includeImages bool) string {
+	clean := stripRichText(raw)
+	return applyImageVisibilityToPlain(clean, includeImages)
+}
+
+func applyImageVisibilityToPlain(plain string, includeImages bool) string {
+	if includeImages {
+		return normalizePlainText(plain)
+	}
+	withoutImages := cqImageTokenPattern.ReplaceAllString(plain, "")
+	return normalizePlainText(withoutImages)
+}
+
+func stripImageTagsFromHTML(input string) string {
+	if strings.TrimSpace(input) == "" {
+		return ""
+	}
+	return strings.TrimSpace(htmlImageTagPattern.ReplaceAllString(input, ""))
+}
+
+func isSingleLineDiceCommand(raw string) bool {
+	line := normalizePlainText(raw)
+	if line == "" || strings.Contains(line, "\n") {
+		return false
+	}
+	line = strings.TrimSpace(trimOOCParentheses(line))
+	if line == "" || strings.Contains(line, "\n") {
+		return false
+	}
+	return isSingleLineDiceCommandWithPrefixes(line, resolveDiceCommandPrefixes())
+}
+
+func isSingleLineDiceCommandWithPrefixes(line string, prefixes []string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.Contains(line, "\n") {
+		return false
+	}
+	for _, prefix := range prefixes {
+		if prefix == "" || !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if rest == "" {
+			return false
+		}
+		first, _ := utf8.DecodeRuneInString(rest)
+		if first == utf8.RuneError {
+			return false
+		}
+		return unicode.IsLetter(first)
+	}
+	return false
+}
+
+func resolveDiceCommandPrefixes() []string {
+	if cfg := utils.GetConfig(); cfg != nil && len(cfg.Export.DiceCommandPrefixes) > 0 {
+		prefixes := make([]string, 0, len(cfg.Export.DiceCommandPrefixes))
+		for _, item := range cfg.Export.DiceCommandPrefixes {
+			trimmed := strings.TrimSpace(item)
+			if trimmed != "" {
+				prefixes = append(prefixes, trimmed)
+			}
+		}
+		if len(prefixes) > 0 {
+			return prefixes
+		}
+	}
+	return []string{".", "。"}
 }
 
 func safeUnix(t time.Time) int64 {

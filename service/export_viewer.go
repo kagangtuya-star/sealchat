@@ -139,7 +139,7 @@ func renderViewerParts(
 				SliceEnd:       end,
 				GeneratedAt:    &generatedAt,
 			}
-			payload := buildExportPayload(job, channelName, messages, ctx)
+			payload := buildExportPayload(job, channelName, messages, ctx, extra)
 			if embedder != nil {
 				embedder.inlinePayload(payload)
 			}
@@ -159,7 +159,7 @@ func renderViewerParts(
 					File:       partFile,
 					PartIndex:  index + 1,
 					PartTotal:  len(chunks),
-					Messages:   len(messages),
+					Messages:   len(payload.Messages),
 					SliceStart: start,
 					SliceEnd:   end,
 					SHA256:     hex.EncodeToString(hash[:]),

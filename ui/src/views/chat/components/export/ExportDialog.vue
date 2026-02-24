@@ -10,6 +10,8 @@ interface ExportParams {
   timeRange: [number, number] | null
   includeOoc: boolean
   includeArchived: boolean
+  includeImages: boolean
+  removeDiceCommands: boolean
   withoutTimestamp: boolean
   mergeMessages: boolean
   textColorizeBBCode: boolean
@@ -108,6 +110,8 @@ const form = reactive<ExportParams>({
   timeRange: null,
   includeOoc: true,
   includeArchived: false,
+  includeImages: false,
+  removeDiceCommands: true,
   withoutTimestamp: false,
   mergeMessages: true,
   textColorizeBBCode: false,
@@ -272,6 +276,8 @@ const handleClose = () => {
   form.timeRange = null
   form.includeOoc = true
   form.includeArchived = false
+  form.includeImages = false
+  form.removeDiceCommands = true
   form.withoutTimestamp = false
   form.mergeMessages = true
   form.textColorizeBBCode = false
@@ -422,6 +428,27 @@ const shortcuts = {
           <n-checkbox v-model:checked="form.includeArchived">
             包含已归档消息
           </n-checkbox>
+        </n-space>
+      </n-form-item>
+
+      <n-form-item label="导出过滤">
+        <n-space vertical>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.includeImages">
+                包含图片
+              </n-checkbox>
+            </template>
+            开启后，图片与表情内容会被导出；关闭后将过滤图片内容。
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.removeDiceCommands">
+                移除掷骰指令
+              </n-checkbox>
+            </template>
+            开启后会移除单行命令（如 .ra /ra !ra），但保留指令结果消息。
+          </n-tooltip>
         </n-space>
       </n-form-item>
 

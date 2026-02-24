@@ -219,3 +219,121 @@ func TestExtractWhisperTargetsPreferRoleNameOverUserName(t *testing.T) {
 		t.Fatalf("secondary targets should still be present, got %v", targets)
 	}
 }
+
+func TestBuildExportPayloadFiltersImagesWhenDisabled(t *testing.T) {
+	initTestDB(t)
+	now := time.Unix(1700001000, 0)
+	job := &model.MessageExportJobModel{
+		ChannelID:       "channel-filter-image",
+		IncludeOOC:      true,
+		IncludeArchived: true,
+		MergeMessages:   false,
+	}
+	messages := []*model.MessageModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "img-only", CreatedAt: now, UpdatedAt: now},
+			UserID:            "user-a",
+			Content:           `<img src="https://example.com/a.png" />`,
+			ICMode:            "ic",
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "img-mixed", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)},
+			UserID:            "user-a",
+			Content:           `带图文本 <img src="https://example.com/b.png" />`,
+			ICMode:            "ic",
+		},
+	}
+
+	payload := buildExportPayload(job, "图片过滤频道", messages, nil, &exportExtraOptions{
+		IncludeImages:      false,
+		IncludeDiceCommand: true,
+	})
+
+	if payload == nil {
+		t.Fatalf("payload should not be nil")
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("expected 1 message after image filtering, got %d", len(payload.Messages))
+	}
+	if payload.Messages[0].ID != "img-mixed" {
+		t.Fatalf("expected mixed message to remain, got %q", payload.Messages[0].ID)
+	}
+	if strings.Contains(payload.Messages[0].ContentHTML, "<img") {
+		t.Fatalf("html content should not contain img tag, got %q", payload.Messages[0].ContentHTML)
+	}
+	line := buildPlainTextLine(payload, &payload.Messages[0])
+	if strings.Contains(line, "[CQ:image") {
+		t.Fatalf("plain text line should not contain image CQ token, got %q", line)
+	}
+}
+
+func TestBuildExportPayloadFiltersSingleLineDiceCommandWhenDisabled(t *testing.T) {
+	initTestDB(t)
+	now := time.Unix(1700002000, 0)
+	job := &model.MessageExportJobModel{
+		ChannelID:       "channel-filter-dice-command",
+		IncludeOOC:      true,
+		IncludeArchived: true,
+		MergeMessages:   false,
+	}
+	messages := []*model.MessageModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "cmd", CreatedAt: now, UpdatedAt: now},
+			UserID:            "user-a",
+			Content:           ".ra 侦查",
+			ICMode:            "ic",
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "result", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)},
+			UserID:            "bot-a",
+			Content:           "检定结果 D100=42 困难成功",
+			ICMode:            "ic",
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "multi-line", CreatedAt: now.Add(2 * time.Second), UpdatedAt: now.Add(2 * time.Second)},
+			UserID:            "user-a",
+			Content:           ".ra\n继续说明",
+			ICMode:            "ic",
+		},
+	}
+
+	payload := buildExportPayload(job, "指令过滤频道", messages, nil, &exportExtraOptions{
+		IncludeImages:      true,
+		IncludeDiceCommand: false,
+	})
+
+	if payload == nil {
+		t.Fatalf("payload should not be nil")
+	}
+	if len(payload.Messages) != 2 {
+		t.Fatalf("expected 2 messages after dice command filtering, got %d", len(payload.Messages))
+	}
+	ids := []string{payload.Messages[0].ID, payload.Messages[1].ID}
+	if slices.Contains(ids, "cmd") {
+		t.Fatalf("single-line command should be filtered, got ids %v", ids)
+	}
+	if !slices.Contains(ids, "result") || !slices.Contains(ids, "multi-line") {
+		t.Fatalf("result and multiline message should remain, got ids %v", ids)
+	}
+}
+
+func TestIsSingleLineDiceCommandDefaultPrefixes(t *testing.T) {
+	if !isSingleLineDiceCommand(".ra 侦查") {
+		t.Fatalf("dot prefix should match by default")
+	}
+	if !isSingleLineDiceCommand("。掷骰 侦查") {
+		t.Fatalf("chinese dot prefix should match by default")
+	}
+	if isSingleLineDiceCommand("/ra 侦查") {
+		t.Fatalf("slash prefix should not match by default")
+	}
+}
+
+func TestIsSingleLineDiceCommandWithCustomPrefixes(t *testing.T) {
+	if !isSingleLineDiceCommandWithPrefixes("/ra 侦查", []string{"/"}) {
+		t.Fatalf("slash prefix should match when customized")
+	}
+	if isSingleLineDiceCommandWithPrefixes(".ra 侦查", []string{"/"}) {
+		t.Fatalf("dot prefix should not match when only slash is configured")
+	}
+}

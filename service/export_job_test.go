@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func TestLoadMessagesForExportHydratesMultiWhisperTargets(t *testing.T) {
 		t.Fatalf("whisper targets mismatch, got=%v want=%v", gotIDs, wantIDs)
 	}
 
-	payload := buildExportPayload(job, "Export Whisper Channel", messages, nil)
+	payload := buildExportPayload(job, "Export Whisper Channel", messages, nil, nil)
 	if payload == nil || len(payload.Messages) != 1 {
 		t.Fatalf("unexpected payload messages: %+v", payload)
 	}
@@ -92,6 +93,89 @@ func TestLoadMessagesForExportHydratesMultiWhisperTargets(t *testing.T) {
 	}
 	if !slices.Contains(targetNames, target2.Nickname) {
 		t.Fatalf("payload missing target2 nickname %q, got %v", target2.Nickname, targetNames)
+	}
+}
+
+func TestParseExportExtraOptionsDefaultsIncludeFlags(t *testing.T) {
+	extra := parseExportExtraOptions("")
+	if extra == nil {
+		t.Fatalf("extra options should not be nil")
+	}
+	if !extra.IncludeImages {
+		t.Fatalf("default include_images should be true")
+	}
+	if !extra.IncludeDiceCommand {
+		t.Fatalf("default include_dice_commands should be true")
+	}
+}
+
+func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
+	initTestDB(t)
+	db := model.GetDB()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	channelID := "ch-export-filter-before-merge-" + suffix
+	if err := db.Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID},
+		Name:              "Export Filter Before Merge",
+		PermType:          "public",
+		Status:            model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatalf("create channel failed: %v", err)
+	}
+
+	sender := createExportTestUser(t, "u-export-filter-sender-"+suffix, "export_filter_sender_"+suffix, "过滤发送者")
+	now := time.Now()
+	commandMsgID := "msg-export-filter-cmd-" + suffix
+	textMsgID := "msg-export-filter-text-" + suffix
+	if err := db.Create(&model.MessageModel{
+		StringPKBaseModel: model.StringPKBaseModel{
+			ID:        commandMsgID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		ChannelID:    channelID,
+		UserID:       sender.ID,
+		Content:      ".r1d5 掷骰异形表",
+		DisplayOrder: float64(now.UnixMilli()),
+		ICMode:       "ic",
+	}).Error; err != nil {
+		t.Fatalf("create command message failed: %v", err)
+	}
+	if err := db.Create(&model.MessageModel{
+		StringPKBaseModel: model.StringPKBaseModel{
+			ID:        textMsgID,
+			CreatedAt: now.Add(time.Second),
+			UpdatedAt: now.Add(time.Second),
+		},
+		ChannelID:    channelID,
+		UserID:       sender.ID,
+		Content:      "这是正常结果描述",
+		DisplayOrder: float64(now.Add(time.Second).UnixMilli()),
+		ICMode:       "ic",
+	}).Error; err != nil {
+		t.Fatalf("create text message failed: %v", err)
+	}
+
+	job := &model.MessageExportJobModel{
+		ChannelID:       channelID,
+		IncludeOOC:      true,
+		IncludeArchived: true,
+		MergeMessages:   true,
+		ExtraOptions:    `{"include_images":true,"include_dice_commands":false}`,
+	}
+	messages, err := loadMessagesForExport(job)
+	if err != nil {
+		t.Fatalf("loadMessagesForExport failed: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message after pre-merge filter, got %d", len(messages))
+	}
+	if messages[0].ID != textMsgID {
+		t.Fatalf("expected remaining message to be text message, got %q", messages[0].ID)
+	}
+	if strings.Contains(messages[0].Content, ".r1d5") {
+		t.Fatalf("dice command should be filtered before merge, got %q", messages[0].Content)
 	}
 }
 

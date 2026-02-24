@@ -26,6 +26,8 @@ type chatExportRequest struct {
 	TimeRange          []int64        `json:"time_range"`
 	IncludeOOC         *bool          `json:"include_ooc"`
 	IncludeArchived    *bool          `json:"include_archived"`
+	IncludeImages      *bool          `json:"include_images"`
+	IncludeDiceCommand *bool          `json:"include_dice_commands"`
 	WithoutTimestamp   *bool          `json:"without_timestamp"`
 	MergeMessages      *bool          `json:"merge_messages"`
 	Users              []string       `json:"users"`
@@ -170,6 +172,14 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 	if req.WithoutTimestamp != nil {
 		withoutTimestamp = *req.WithoutTimestamp
 	}
+	includeImages := true
+	if req.IncludeImages != nil {
+		includeImages = *req.IncludeImages
+	}
+	includeDiceCommand := true
+	if req.IncludeDiceCommand != nil {
+		includeDiceCommand = *req.IncludeDiceCommand
+	}
 	mergeMessages := true
 	if req.MergeMessages != nil {
 		mergeMessages = *req.MergeMessages
@@ -191,6 +201,8 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 		DisplayName:        req.DisplayName,
 		IncludeOOC:         includeOOC,
 		IncludeArchived:    includeArchived,
+		IncludeImages:      includeImages,
+		IncludeDiceCommand: includeDiceCommand,
 		WithoutTimestamp:   withoutTimestamp,
 		MergeMessages:      mergeMessages,
 		TextColorizeBBCode: textColorizeBBCode,

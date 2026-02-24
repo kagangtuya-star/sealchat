@@ -3922,6 +3922,8 @@ const handleExportMessages = async (params: {
   timeRange: [number, number] | null;
   includeOoc: boolean;
   includeArchived: boolean;
+  includeImages: boolean;
+  removeDiceCommands: boolean;
   withoutTimestamp: boolean;
   mergeMessages: boolean;
   textColorizeBBCode: boolean;
@@ -3955,6 +3957,8 @@ const handleExportMessages = async (params: {
       timeRange: params.timeRange ?? undefined,
       includeOoc: params.includeOoc,
       includeArchived: params.includeArchived,
+      includeImages: params.includeImages,
+      includeDiceCommands: !params.removeDiceCommands,
       withoutTimestamp: params.withoutTimestamp,
       mergeMessages: params.mergeMessages,
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
