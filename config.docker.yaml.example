@@ -83,6 +83,7 @@ export:
   htmlPageSizeDefault: 100
   htmlPageSizeMax: 500
   htmlMaxConcurrency: 2
+  diceCommandPrefixes: [".", "。"] # 导出“移除掷骰指令”时识别的命令前缀，可按需改为 ["/"] 等
 
 # 存储配置
 storage:
