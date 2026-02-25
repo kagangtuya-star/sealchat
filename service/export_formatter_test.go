@@ -110,6 +110,27 @@ func TestBuildBBCodeTextLineFromQuickFormat(t *testing.T) {
 	}
 }
 
+func TestBuildBBCodeTextLineNormalizesNestedEntitiesForPlainText(t *testing.T) {
+	payload := &ExportPayload{WithoutTimestamp: true}
+	msg := &ExportMessage{
+		SenderName:  "测试",
+		SenderColor: "#123abc",
+		CreatedAt:   time.Unix(1700000001, 0),
+		Content:     "他说 &amp;quot;你好&amp;quot; 和 &amp;amp;",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if strings.Contains(line, "&amp;quot;") || strings.Contains(line, "&quot;") {
+		t.Fatalf("nested quote entity should be normalized in bbcode line, got %q", line)
+	}
+	if !strings.Contains(line, "\"你好\"") {
+		t.Fatalf("expected decoded quote text in bbcode line, got %q", line)
+	}
+	if !strings.Contains(line, "和 &") {
+		t.Fatalf("expected decoded ampersand in bbcode line, got %q", line)
+	}
+}
+
 func TestEnhancePlainContentForHTMLExportDoesNotRenderCodeFence(t *testing.T) {
 	input := "```\nconst a = 1\n```"
 	result := enhancePlainContentForHTMLExport(input)

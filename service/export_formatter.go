@@ -1403,6 +1403,7 @@ func buildBBCodeBody(msg *ExportMessage) string {
 		for _, token := range tokens {
 			body = strings.ReplaceAll(body, token.token, token.bb)
 		}
+		body = htmlUnescapeDeep(body)
 		body = normalizePlainText(body)
 	}
 
