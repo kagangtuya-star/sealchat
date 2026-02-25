@@ -270,6 +270,25 @@ const newChannel = async () => {
 const presencePopoverVisible = ref(false);
 const actionRibbonActive = ref(false);
 const onlineMembersCount = computed(() => chat.curChannelUsers.length);
+const PRESENCE_POPOVER_REFRESH_INTERVAL_MS = 5000;
+let presencePopoverRefreshTimer: number | null = null;
+let presencePopoverRefreshInFlight: Promise<void> | null = null;
+
+const stopPresencePopoverRefreshLoop = () => {
+  if (presencePopoverRefreshTimer) {
+    window.clearInterval(presencePopoverRefreshTimer);
+    presencePopoverRefreshTimer = null;
+  }
+};
+
+const startPresencePopoverRefreshLoop = () => {
+  if (presencePopoverRefreshTimer) {
+    return;
+  }
+  presencePopoverRefreshTimer = window.setInterval(() => {
+    void handlePresenceRefresh({ silent: true });
+  }, PRESENCE_POPOVER_REFRESH_INTERVAL_MS);
+};
 
 const connectionStatus = computed(() => {
   switch (chat.connectState) {
@@ -312,43 +331,68 @@ const connectionStatus = computed(() => {
 });
 
 const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
-  const silent = !!options?.silent;
-  const selfId = user.info?.id || '';
-  try {
-    const data = await chat.getChannelPresence();
-    const updatedAt = typeof data?.updated_at === 'number' ? data.updated_at : undefined;
-    if (typeof updatedAt === 'number') {
-      chat.syncServerTime(updatedAt);
-    }
-    if (Array.isArray(data?.data)) {
-      data.data.forEach((item: any) => {
-        const userId = item?.user?.id || item?.user_id;
-        if (!userId) {
-          return;
-        }
-        const isSelf = selfId && userId === selfId;
-        const lastSeenServer = item?.lastSeen ?? item?.last_seen;
-        chat.updatePresence(userId, {
-          lastPing: isSelf
-            ? Date.now()
-            : (typeof lastSeenServer === 'number' ? chat.serverTsToLocal(lastSeenServer) : Date.now()),
-          latencyMs: isSelf ? chat.lastLatencyMs : (item?.latency ?? item?.latency_ms ?? 0),
-          isFocused: isSelf ? chat.isAppFocused : (item?.focused ?? item?.is_focused ?? false),
-        });
-      });
-    }
-    // 立即触发一次新的延迟探测以刷新本端值，避免旧值累加
-    chat.measureLatency();
-    if (!silent) {
-      message.success('状态已刷新');
-    }
-  } catch (error) {
-    if (!silent) {
-      message.error('刷新失败');
-    } else {
-      console.error('自动刷新在线状态失败', error);
-    }
+  if (presencePopoverRefreshInFlight) {
+    return presencePopoverRefreshInFlight;
   }
+
+  const task = (async () => {
+    const silent = !!options?.silent;
+    const selfId = user.info?.id || '';
+    try {
+      const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+      if (!channelId) {
+        chat.curChannelUsers = [];
+        chat.clearPresenceMap();
+        if (!silent) {
+          message.warning('当前无可用频道');
+        }
+        return;
+      }
+
+      const onlineResp = await chat.sendAPI<any>('channel.member.list.online', { channel_id: channelId } as any);
+      const onlineItems = Array.isArray(onlineResp?.data?.data) ? onlineResp.data.data : [];
+      chat.curChannelUsers = onlineItems;
+
+      const data = await chat.getChannelPresence();
+      const updatedAt = typeof data?.updated_at === 'number' ? data.updated_at : undefined;
+      if (typeof updatedAt === 'number') {
+        chat.syncServerTime(updatedAt);
+      }
+      if (Array.isArray(data?.data)) {
+        data.data.forEach((item: any) => {
+          const userId = item?.user?.id || item?.user_id;
+          if (!userId) {
+            return;
+          }
+          const isSelf = selfId && userId === selfId;
+          const lastSeenServer = item?.lastSeen ?? item?.last_seen;
+          chat.updatePresence(userId, {
+            lastPing: isSelf
+              ? Date.now()
+              : (typeof lastSeenServer === 'number' ? chat.serverTsToLocal(lastSeenServer) : Date.now()),
+            latencyMs: isSelf ? chat.lastLatencyMs : (item?.latency ?? item?.latency_ms ?? 0),
+            isFocused: isSelf ? chat.isAppFocused : (item?.focused ?? item?.is_focused ?? false),
+          });
+        });
+      }
+      // 立即触发一次新的延迟探测以刷新本端值，避免旧值累加
+      chat.measureLatency();
+      if (!silent) {
+        message.success('状态已刷新');
+      }
+    } catch (error) {
+      if (!silent) {
+        message.error('刷新失败');
+      } else {
+        console.error('自动刷新在线状态失败', error);
+      }
+    }
+  })();
+
+  presencePopoverRefreshInFlight = task.finally(() => {
+    presencePopoverRefreshInFlight = null;
+  });
+  return presencePopoverRefreshInFlight;
 };
 
 const searchPanelActive = computed(() => channelSearch.panelVisible);
@@ -386,7 +430,12 @@ watch(
 
 watch(presencePopoverVisible, (visible, oldVisible) => {
   if (visible && !oldVisible) {
-    handlePresenceRefresh({ silent: true });
+    void handlePresenceRefresh({ silent: true });
+    startPresencePopoverRefreshLoop();
+    return;
+  }
+  if (!visible && oldVisible) {
+    stopPresencePopoverRefreshLoop();
   }
 });
 
@@ -397,7 +446,9 @@ watch(
       return;
     }
     chat.clearPresenceMap();
-    handlePresenceRefresh({ silent: true });
+    if (presencePopoverVisible.value) {
+      void handlePresenceRefresh({ silent: true });
+    }
   }
 );
 
@@ -441,6 +492,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopPresencePopoverRefreshLoop();
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.off('open-user-profile', handleOpenUserProfile);
   if (notifTimer.value) {

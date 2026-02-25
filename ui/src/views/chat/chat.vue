@@ -10033,7 +10033,14 @@ chatEvent.on('typing-preview', (e?: Event) => {
 chatEvent.off('channel-presence-updated', '*');
 chatEvent.on('channel-presence-updated', (e?: Event) => {
   const channelId = e?.channel?.id || '';
-  if (!e?.presence || channelId !== chat.curChannel?.id) {
+  if (!channelId) {
+    return;
+  }
+  const presenceList = Array.isArray(e?.presence) ? e.presence : [];
+  chat.patchChannelAttributes(channelId, {
+    membersCount: presenceList.length,
+  } as any);
+  if (channelId !== chat.curChannel?.id) {
     return;
   }
   if (channelId !== presenceBadgeChannelId) {
@@ -10042,19 +10049,25 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     presenceBadgeUsers.clear();
   }
   let hasNewPresence = false;
+  const nextChannelUsers: User[] = [];
+  const seenUserIds = new Set<string>();
   if (typeof (e as any)?.timestamp === 'number') {
     chat.syncServerTime((e as any).timestamp);
   }
-  e.presence.forEach((item) => {
+  presenceList.forEach((item) => {
     const userId = item?.user?.id;
-    if (!userId) {
+    if (!userId || seenUserIds.has(userId)) {
       return;
     }
+    seenUserIds.add(userId);
     if (!presenceBadgeUsers.has(userId)) {
       presenceBadgeUsers.add(userId);
       if (presenceBadgeInitialized) {
         hasNewPresence = true;
       }
+    }
+    if (item?.user) {
+      nextChannelUsers.push(item.user as User);
     }
     chat.updatePresence(userId, {
       lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
@@ -10062,6 +10075,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       isFocused: !!item?.focused,
     });
   });
+  chat.curChannelUsers = nextChannelUsers;
   if (!presenceBadgeInitialized) {
     presenceBadgeInitialized = true;
     return;

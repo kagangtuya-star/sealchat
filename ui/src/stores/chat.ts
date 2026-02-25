@@ -454,6 +454,8 @@ const ensureWorldGateway = () => {
 
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
+let channelMembersCountRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let channelListRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
 let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleChannelTreeRefresh = (chat: any) => {
@@ -2670,17 +2672,17 @@ export const useChatStore = defineStore({
       if (this.observerMode) {
         return;
       }
-      setInterval(async () => {
-        await this.channelMembersCountRefresh();
-        if (this.curChannel?.id) {
-          const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': this.curChannel?.id });
-          this.curChannelUsers = resp2.data.data;
-        }
-      }, 10000);
+      if (!channelMembersCountRefreshTimer) {
+        channelMembersCountRefreshTimer = setInterval(() => {
+          void this.channelMembersCountRefresh();
+        }, 10000);
+      }
 
-      setInterval(async () => {
-        await this.channelList();
-      }, 20000);
+      if (!channelListRefreshTimer) {
+        channelListRefreshTimer = setInterval(() => {
+          void this.channelList();
+        }, 20000);
+      }
     },
 
     async messageList(channelId: string, next?: string, options?: {

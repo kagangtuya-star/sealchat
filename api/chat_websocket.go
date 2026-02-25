@@ -72,8 +72,14 @@ type BotHiddenDicePending struct {
 var commandTips utils.SyncMap[string, map[string]string]
 
 var (
-	channelUsersMapGlobal *utils.SyncMap[string, *utils.SyncSet[string]]
-	userId2ConnInfoGlobal *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
+	channelUsersMapGlobal  *utils.SyncMap[string, *utils.SyncSet[string]]
+	userId2ConnInfoGlobal  *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
+	presenceBroadcastState = struct {
+		sync.Mutex
+		lastByChannel map[string]int64
+	}{
+		lastByChannel: map[string]int64{},
+	}
 )
 
 // 连接管理配置常量
@@ -88,7 +94,52 @@ const (
 	botHealthCheckIntervalSeconds = 15
 	// BOT 连接无心跳最大存活时间（秒）
 	botConnectionMaxIdleSeconds = 45
+	// 同一频道在线态广播最小间隔（毫秒）
+	channelPresenceBroadcastMinIntervalMs = int64(2000)
+	// 在线态全量兜底广播间隔（秒）
+	channelPresenceFullBroadcastIntervalSeconds = 30
 )
+
+func shouldBroadcastChannelPresence(channelID string, nowMs int64) bool {
+	if channelID == "" {
+		return false
+	}
+	presenceBroadcastState.Lock()
+	defer presenceBroadcastState.Unlock()
+	last := presenceBroadcastState.lastByChannel[channelID]
+	if last > 0 && nowMs-last < channelPresenceBroadcastMinIntervalMs {
+		return false
+	}
+	presenceBroadcastState.lastByChannel[channelID] = nowMs
+	return true
+}
+
+func broadcastChannelPresenceForActiveChannels(
+	channelUsersMap *utils.SyncMap[string, *utils.SyncSet[string]],
+	userId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]],
+	nowMs int64,
+) int {
+	if channelUsersMap == nil || userId2ConnInfo == nil {
+		return 0
+	}
+	ctx := &ChatContext{
+		ChannelUsersMap: channelUsersMap,
+		UserId2ConnInfo: userId2ConnInfo,
+	}
+	broadcasted := 0
+	channelUsersMap.Range(func(channelID string, users *utils.SyncSet[string]) bool {
+		if channelID == "" || users == nil || users.Len() == 0 {
+			return true
+		}
+		if !shouldBroadcastChannelPresence(channelID, nowMs) {
+			return true
+		}
+		ctx.BroadcastChannelPresence(channelID)
+		broadcasted++
+		return true
+	})
+	return broadcasted
+}
 
 func getChannelUsersMap() *utils.SyncMap[string, *utils.SyncSet[string]] {
 	return channelUsersMapGlobal
@@ -103,6 +154,19 @@ func websocketWorks(app *fiber.App) {
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
 	userId2ConnInfoGlobal = userId2ConnInfo
+
+	// 在线态兜底广播：事件驱动为主，周期性全量广播用于状态收敛。
+	go func() {
+		ticker := time.NewTicker(channelPresenceFullBroadcastIntervalSeconds * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now().UnixMilli()
+			broadcasted := broadcastChannelPresenceForActiveChannels(channelUsersMap, userId2ConnInfo, now)
+			if broadcasted > 0 {
+				log.Printf("[WS] 在线态兜底广播完成，频道数: %d", broadcasted)
+			}
+		}
+	}()
 
 	guestAllowedAPIs := map[string]struct{}{
 		"channel.list":               {},
@@ -357,7 +421,6 @@ func websocketWorks(app *fiber.App) {
 	app.Get("/ws/seal", websocket.New(func(rawConn *websocket.Conn) {
 		// websocket.Conn bindings https://pkg.go.dev/github.com/fasthttp/websocket?tab=doc#pkg-index
 		var (
-			mt          int
 			msg         []byte
 			err         error
 			curUser     *model.UserModel
@@ -404,7 +467,7 @@ func websocketWorks(app *fiber.App) {
 		}()
 
 		for {
-			if mt, msg, err = c.ReadMessage(); err != nil {
+			if _, msg, err = c.ReadMessage(); err != nil {
 				log.Println("[WS] read:", err)
 				// 解析错误或超时
 				break
@@ -434,12 +497,16 @@ func websocketWorks(app *fiber.App) {
 					}
 					now := time.Now().UnixMilli()
 					var activeChannel string
+					focusChanged := false
 					if info, ok := userId2ConnInfo.Load(curUser.ID); ok {
 						if info2, ok := info.Load(c); ok {
 							if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
 								if focusedRaw, exists := bodyMap["focused"]; exists {
 									if focusedVal, ok := focusedRaw.(bool); ok {
-										info2.Focused = focusedVal
+										if info2.Focused != focusedVal {
+											info2.Focused = focusedVal
+											focusChanged = true
+										}
 									}
 								}
 								if latencyRaw, exists := bodyMap["latency"]; exists {
@@ -469,12 +536,15 @@ func websocketWorks(app *fiber.App) {
 					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
 						Op: protocol.OpPong,
 					})
-					if activeChannel != "" {
-						ctx := &ChatContext{
-							ChannelUsersMap: channelUsersMap,
-							UserId2ConnInfo: userId2ConnInfo,
+					// 仅在焦点状态变化时触发在线态广播，避免每次 ping 放大 CPU。
+					if activeChannel != "" && focusChanged {
+						if shouldBroadcastChannelPresence(activeChannel, now) {
+							ctx := &ChatContext{
+								ChannelUsersMap: channelUsersMap,
+								UserId2ConnInfo: userId2ConnInfo,
+							}
+							ctx.BroadcastChannelPresence(activeChannel)
 						}
-						ctx.BroadcastChannelPresence(activeChannel)
 					}
 					solved = true
 				case protocol.OpLatencyProbe:
@@ -736,7 +806,7 @@ func websocketWorks(app *fiber.App) {
 				}
 			}
 
-			log.Printf("recv: %s  %d", msg, mt)
+			// 避免逐消息日志在高并发场景放大 CPU 与 IO 压力。
 			// if err = c.WriteMessage(mt, msg); err != nil {
 			//	log.Println("write:", err)
 			//	break
