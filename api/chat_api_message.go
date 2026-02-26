@@ -1541,15 +1541,16 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
-	ChannelID    string   `json:"channel_id"`
-	QuoteID      string   `json:"quote_id"`
-	Content      string   `json:"content"`
-	WhisperTo    string   `json:"whisper_to"`
-	WhisperToIds []string `json:"whisper_to_ids"`
-	ClientID     string   `json:"client_id"`
-	IdentityID   string   `json:"identity_id"`
-	ICMode       string   `json:"ic_mode"`
-	DisplayOrder *float64 `json:"display_order"`
+	ChannelID        string   `json:"channel_id"`
+	QuoteID          string   `json:"quote_id"`
+	Content          string   `json:"content"`
+	WhisperTo        string   `json:"whisper_to"`
+	WhisperToIds     []string `json:"whisper_to_ids"`
+	ClientID         string   `json:"client_id"`
+	IdentityID       string   `json:"identity_id"`
+	ICMode           string   `json:"ic_mode"`
+	DisplayOrder     *float64 `json:"display_order"`
+	TypingDurationMs *int64   `json:"typing_duration_ms"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -1866,10 +1867,24 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	nowMs := time.Now().UnixMilli()
 	displayOrder := float64(nowMs)
-	if data.DisplayOrder != nil && *data.DisplayOrder > 0 {
+	hasExplicitDisplayOrder := data.DisplayOrder != nil && *data.DisplayOrder > 0
+	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
-	if whisperTo == "" {
+	hasTypingDuration := data.TypingDurationMs != nil && *data.TypingDurationMs > 0
+	if !hasExplicitDisplayOrder && hasTypingDuration {
+		durationMs := *data.TypingDurationMs
+		maxDurationMs := int64(24 * 60 * 60 * 1000)
+		if durationMs > maxDurationMs {
+			durationMs = maxDurationMs
+		}
+		estimatedStart := nowMs - durationMs
+		if estimatedStart <= 0 {
+			estimatedStart = 1
+		}
+		displayOrder = float64(estimatedStart)
+	}
+	if !hasExplicitDisplayOrder && !hasTypingDuration && whisperTo == "" {
 		windowMs := int64(0)
 		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
 			windowMs = cfg.TypingOrderWindowMs

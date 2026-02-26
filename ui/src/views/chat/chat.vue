@@ -6083,9 +6083,14 @@ let typingPreviewOrderSeq = Date.now();
 const previewOrderMin = 1e-6;
 const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
 const selfPreviewOrderModified = ref(false);
+const draftStartedAtMs = ref<number | null>(null);
 const resetSelfPreviewOrder = () => {
 	selfPreviewOrderKey.value = Number.MAX_SAFE_INTEGER;
 	selfPreviewOrderModified.value = false;
+};
+const resetDraftOrderContext = () => {
+  draftStartedAtMs.value = null;
+  resetSelfPreviewOrder();
 };
 const typingPreviewRowRefs = new Map<string, HTMLElement>();
 const typingPreviewItemKey = (preview: TypingPreviewItem | null | undefined) =>
@@ -7307,6 +7312,97 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
     return content.trim().length > 0 || containsInlineImageMarker(content);
   }
   return !isRichContentEmpty(content);
+};
+
+const getServerAlignedNowMs = () => {
+  const localNow = Date.now();
+  const offset = Number(chat.serverTimeOffsetMs);
+  if (!Number.isFinite(offset)) {
+    return localNow;
+  }
+  const alignedNow = Math.floor(localNow - offset);
+  return Number.isFinite(alignedNow) && alignedNow > 0 ? alignedNow : localNow;
+};
+
+const syncDraftStartedAt = (content: string) => {
+  if (isEditing.value) {
+    draftStartedAtMs.value = null;
+    return;
+  }
+  if (!isContentMeaningful(inputMode.value, content)) {
+    resetDraftOrderContext();
+    return;
+  }
+  if (
+    typeof draftStartedAtMs.value !== 'number'
+    || !Number.isFinite(draftStartedAtMs.value)
+    || draftStartedAtMs.value <= 0
+  ) {
+    draftStartedAtMs.value = Date.now();
+  }
+};
+
+interface SendDisplayOrderResolution {
+  localDisplayOrder: number;
+  explicitDisplayOrder?: number;
+  typingDurationMs?: number;
+}
+
+const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
+  if (!selfPreviewOrderModified.value) {
+    return null;
+  }
+  const typingItems = typingPreviewItems.value.slice().sort((a, b) => {
+    if (a.orderKey !== b.orderKey) {
+      return a.orderKey - b.orderKey;
+    }
+    return String(a.userId || '').localeCompare(String(b.userId || ''));
+  });
+  if (typingItems.length === 0) {
+    return null;
+  }
+  let rank = typingItems.findIndex((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing');
+  let count = typingItems.length;
+  if (rank < 0) {
+    rank = count;
+    count += 1;
+  }
+  const configuredWindowMs = Number((utils.config as any)?.typingOrderWindowMs);
+  const windowMs = Number.isFinite(configuredWindowMs) && configuredWindowMs > 0
+    ? Math.floor(configuredWindowMs)
+    : 1000;
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    return null;
+  }
+  const base = Math.floor(fallbackNowMs / windowMs) * windowMs;
+  const step = windowMs / (count + 1);
+  const resolved = base + step * (rank + 1);
+  return Number.isFinite(resolved) && resolved > 0 ? resolved : null;
+};
+
+const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): SendDisplayOrderResolution => {
+  const startedAt = Number(draftStartedAtMs.value);
+  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
+    ? startedAt
+    : localNowMs;
+  const manualOrder = resolveManualPreviewDisplayOrder(fallbackNowMs);
+  if (manualOrder !== null) {
+    return {
+      localDisplayOrder: manualOrder,
+      explicitDisplayOrder: manualOrder,
+    };
+  }
+  let typingDurationMs: number | undefined;
+  if (Number.isFinite(startedAt) && startedAt > 0) {
+    const duration = Math.floor(localNowMs - startedAt);
+    if (Number.isFinite(duration) && duration > 0) {
+      typingDurationMs = Math.min(duration, 24 * 60 * 60 * 1000);
+    }
+  }
+  return {
+    localDisplayOrder: timeBasedOrder,
+    typingDurationMs,
+  };
 };
 
 // 从当前 inlineImages Map 中提取图片信息用于历史保存
@@ -9198,6 +9294,14 @@ const send = throttle(async () => {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
+  const now = Date.now();
+  const orderNow = getServerAlignedNowMs();
+  const sendOrder = resolveSendDisplayOrder(now, orderNow);
+  const localDisplayOrder = sendOrder.localDisplayOrder;
+  const explicitDisplayOrder = sendOrder.explicitDisplayOrder;
+  const typingDurationMs = sendOrder.typingDurationMs;
+  resetDraftOrderContext();
+
 	const replyTo = chat.curReplyTo || undefined;
 	stopTypingPreviewNow();
   suspendInlineSync = true;
@@ -9207,7 +9311,6 @@ const send = throttle(async () => {
   suspendInlineSync = false;
   chat.curReplyTo = null;
 
-  const now = Date.now();
   const clientId = nanoid();
   const wasAtBottom = isNearBottom();
   const tmpMsg: Message = {
@@ -9240,6 +9343,8 @@ const send = throttle(async () => {
   if (chat.curChannel) {
     (tmpMsg as any).channel = chat.curChannel;
   }
+  (tmpMsg as any).displayOrder = localDisplayOrder;
+  (tmpMsg as any).display_order = localDisplayOrder;
 
   const whisperTargetsForSend = chat.whisperTargets.slice();
   if (whisperTargetsForSend.length > 0) {
@@ -9274,8 +9379,9 @@ const send = throttle(async () => {
       whisperTargetIds[0],
       clientId,
       identityIdOverride,
-      undefined,
+      explicitDisplayOrder,
       whisperTargetIds,
+      typingDurationMs,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9372,6 +9478,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 };
 
 watch(textToSend, (value) => {
+  syncDraftStartedAt(value);
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
   scheduleSessionDraftSnapshot();
@@ -9412,6 +9519,7 @@ watch(
     if (channelId === previous) {
       return;
     }
+    resetDraftOrderContext();
     whisperCandidateColorMap.value = new Map();
     whisperMentionableCandidates.value = [];
     if (whisperPanelVisible.value) {
@@ -9436,6 +9544,7 @@ watch([
 
 watch(isEditing, (editing) => {
   if (editing) {
+    resetDraftOrderContext();
     removeSelfTypingPreview();
     return;
   }

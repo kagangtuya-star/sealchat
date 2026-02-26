@@ -3177,6 +3177,7 @@ export const useChatStore = defineStore({
       identityId?: string,
       displayOrder?: number,
       whisperTargetIds?: string[],
+      typingDurationMs?: number,
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -3207,6 +3208,9 @@ export const useChatStore = defineStore({
       }
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
+      }
+      if (typeof typingDurationMs === 'number' && Number.isFinite(typingDurationMs) && typingDurationMs > 0) {
+        payload.typing_duration_ms = Math.floor(typingDurationMs);
       }
       const resp = await this.sendAPI('message.create', payload, { timeoutMs: 5_000 });
       const message = resp?.data;
@@ -3852,6 +3856,11 @@ export const useChatStore = defineStore({
         return;
       }
       this.lastLatencyMs = Math.round(rtt);
+      const serverSentAt = Number(payload?.serverSentAt);
+      if (Number.isFinite(serverSentAt) && serverSentAt > 0) {
+        const estimatedServerNow = serverSentAt + Math.floor(rtt / 2);
+        this.syncServerTime(estimatedServerNow);
+      }
       if (this.curChannel?.id) {
         this.updatePresence(useUserStore().info.id, {
           lastPing: Date.now(),
@@ -3888,8 +3897,20 @@ export const useChatStore = defineStore({
       if (typeof serverNowMs !== 'number' || !Number.isFinite(serverNowMs) || serverNowMs <= 0) {
         return;
       }
-      const measuredOffset = Date.now() - serverNowMs;
+      let normalizedServerNowMs = serverNowMs;
+      // 兼容秒/毫秒/微秒级时间戳，统一转换为毫秒。
+      if (normalizedServerNowMs < 1e11) {
+        normalizedServerNowMs *= 1000;
+      } else if (normalizedServerNowMs > 1e14) {
+        normalizedServerNowMs = Math.floor(normalizedServerNowMs / 1000);
+      }
+      const measuredOffset = Date.now() - normalizedServerNowMs;
       if (!Number.isFinite(this.serverTimeOffsetMs)) {
+        this.serverTimeOffsetMs = measuredOffset;
+        return;
+      }
+      // 偏移突变时直接收敛，避免单位异常导致排序时间漂移。
+      if (Math.abs(this.serverTimeOffsetMs - measuredOffset) > 5 * 60 * 1000) {
         this.serverTimeOffsetMs = measuredOffset;
         return;
       }
