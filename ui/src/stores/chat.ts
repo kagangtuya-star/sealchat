@@ -148,6 +148,7 @@ interface ChatState {
     activeIdentityBackup?: string | null;
   } | null
   revokedDrafts: Record<string, RevokedDraftEntry>
+  guildMemberListMemoized: ((guildId: string, next?: string) => Promise<any>) | null
 
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
@@ -631,6 +632,7 @@ export const useChatStore = defineStore({
 
     editing: null,
     revokedDrafts: loadRevokedDraftsFromSessionStorage(),
+    guildMemberListMemoized: null,
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
@@ -2788,7 +2790,13 @@ export const useChatStore = defineStore({
     },
 
     async guildMemberList(guildId: string, next?: string) {
-      return memoizeWithTimeout(this.guildMemberListRaw, 30000)(guildId, next)
+      if (!this.guildMemberListMemoized) {
+        this.guildMemberListMemoized = memoizeWithTimeout(
+          (targetGuildId: string, targetNext?: string) => this.guildMemberListRaw(targetGuildId, targetNext),
+          30000,
+        );
+      }
+      return this.guildMemberListMemoized(guildId, next);
     },
 
     async messageDelete(channel_id: string, message_id: string) {

@@ -5985,20 +5985,43 @@ const upsertMessage = (incoming?: Message) => {
 };
 
 async function replaceUsernames(text: string) {
+  if (!text || !text.includes('@')) {
+    return text;
+  }
   const escapeAtAttrValue = (value: unknown) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  const resp = await chat.guildMemberList('');
-  const infoMap = (resp.data as any[]).reduce((obj, item) => {
-    obj[item.nick] = item;
-    return obj;
-  }, {})
-
-  // 匹配 @ 后跟着字母数字下划线的用户名
   const regex = /@(\S+)/g;
+  if (!regex.test(text)) {
+    return text;
+  }
+  regex.lastIndex = 0;
+
+  let resp: any;
+  try {
+    resp = await chat.guildMemberList('');
+  } catch (error) {
+    console.warn('replaceUsernames 拉取成员列表失败，跳过替换', error);
+    return text;
+  }
+  const memberList = Array.isArray(resp?.data) ? resp.data : [];
+  if (!memberList.length) {
+    return text;
+  }
+  const infoMap = memberList.reduce<Record<string, any>>((obj, item) => {
+    const nick = String(item?.nick || '').trim();
+    if (nick) {
+      obj[nick] = item;
+    }
+    return obj;
+  }, {});
+
+  if (Object.keys(infoMap).length === 0) {
+    return text;
+  }
 
   // 使用 replace 方法来替换匹配到的用户名
   const replacedText = text.replace(regex, (match, username) => {
@@ -8258,6 +8281,51 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
   });
 };
 
+interface EditSaveSnapshot {
+  token: number;
+  channelId: string;
+  messageId: string;
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  initialIdentityId: string | null;
+}
+
+const isSavingEdit = ref(false);
+const editSessionToken = ref(0);
+const invalidateEditSession = () => {
+  editSessionToken.value += 1;
+  isSavingEdit.value = false;
+};
+const cancelEditingSession = () => {
+  if (chat.editing) {
+    chat.cancelEditing();
+  }
+  invalidateEditSession();
+};
+const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
+  const editing = chat.editing;
+  if (!editing) {
+    return null;
+  }
+  return {
+    token: editSessionToken.value,
+    channelId: editing.channelId,
+    messageId: editing.messageId,
+    icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId: editing.identityId ?? null,
+    initialIdentityId: editing.initialIdentityId ?? null,
+  };
+};
+const isEditSaveSnapshotAlive = (snapshot: EditSaveSnapshot) => {
+  const editing = chat.editing;
+  return Boolean(
+    editing
+    && editSessionToken.value === snapshot.token
+    && editing.channelId === snapshot.channelId
+    && editing.messageId === snapshot.messageId,
+  );
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
@@ -8271,6 +8339,7 @@ const beginEdit = (target?: Message) => {
   stopEditingPreviewNow();
   chat.curReplyTo = null;
   chat.clearWhisperTargets();
+  invalidateEditSession();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
@@ -8309,7 +8378,7 @@ const handleReeditRevokedMessage = async (target?: Message) => {
   }
   if (chat.editing) {
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
   }
   stopTypingPreviewNow();
   clearInputModeCache();
@@ -8340,11 +8409,11 @@ const handleReeditRevokedMessage = async (target?: Message) => {
 };
 
 const cancelEditing = () => {
-  if (!chat.editing) {
+  if (!chat.editing && !isSavingEdit.value) {
     return;
   }
   stopEditingPreviewNow();
-  chat.cancelEditing();
+  cancelEditingSession();
   textToSend.value = '';
   syncSessionDraftSnapshot();
   stopTypingPreviewNow();
@@ -8353,7 +8422,11 @@ const cancelEditing = () => {
 };
 
 const saveEdit = async () => {
-  if (!chat.editing) {
+  if (isSavingEdit.value) {
+    return;
+  }
+  const snapshot = createEditSaveSnapshot();
+  if (!snapshot) {
     return;
   }
   if (chat.connectState !== 'connected') {
@@ -8379,7 +8452,11 @@ const saveEdit = async () => {
     message.error('存在上传失败的图片，请删除后重试');
     return;
   }
+  isSavingEdit.value = true;
   try {
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     stopTypingPreviewNow();
     let finalContent: string;
     if (inputMode.value === 'rich') {
@@ -8392,38 +8469,48 @@ const saveEdit = async () => {
     } else {
       finalContent = await buildMessageHtml(processedDraft);
     }
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     if (finalContent.trim() === '') {
       message.error('消息内容不能为空');
       return;
     }
-    const updateIcMode = chat.editing.icMode;
     const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null } = {};
-    if (updateIcMode) {
-      updateOptions.icMode = updateIcMode;
-    }
-    if (chat.editing.identityId !== chat.editing.initialIdentityId) {
-      updateOptions.identityId = chat.editing.identityId ?? null;
+    updateOptions.icMode = snapshot.icMode;
+    if (snapshot.identityId !== snapshot.initialIdentityId) {
+      updateOptions.identityId = snapshot.identityId;
     }
     const hasOptions = Object.keys(updateOptions).length > 0;
     const updated = await chat.messageUpdate(
-      chat.editing.channelId,
-      chat.editing.messageId,
+      snapshot.channelId,
+      snapshot.messageId,
       finalContent,
       hasOptions ? updateOptions : undefined,
     );
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     if (updated) {
       upsertMessage(updated as unknown as Message);
     }
     message.success('消息已更新');
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     textToSend.value = '';
     syncSessionDraftSnapshot();
     resetInlineImages();
     ensureInputFocus();
   } catch (error: any) {
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     console.error('更新消息失败', error);
-    message.error((error?.message ?? '编辑失败，请稍后重试'));
+    const fallbackMessage = '编辑失败，请稍后重试';
+    const errorMessage = String(error?.message || '');
+    message.error(errorMessage.includes('Cannot read properties of null') ? fallbackMessage : (errorMessage || fallbackMessage));
+  } finally {
+    isSavingEdit.value = false;
   }
 };
 
@@ -8903,7 +8990,9 @@ const buildMessageHtml = async (draft: string) => {
   });
 
   let escaped = contentEscape(sanitizedDraft);
-  escaped = await replaceUsernames(escaped);
+  if (escaped.includes('@')) {
+    escaped = await replaceUsernames(escaped);
+  }
   let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
     html = html.split(key).join(value);
@@ -9095,6 +9184,9 @@ const handleInlineFileChange = (event: Event) => {
 };
 
 watch(() => chat.editing?.messageId, (messageId, previousId) => {
+  if (messageId !== previousId) {
+    invalidateEditSession();
+  }
   if (!messageId && previousId) {
     stopEditingPreviewNow();
     clearInputModeCache();
@@ -9970,7 +10062,7 @@ chatEvent.on('message-updated', (e?: Event) => {
   removeTypingPreview(e.user?.id, 'editing');
   if (chat.editing && chat.editing.messageId === e.message.id) {
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     clearInputModeCache();
     textToSend.value = '';
     syncSessionDraftSnapshot();
@@ -10277,7 +10369,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     if (!isReenter) {
       textToSend.value = '';
     }
@@ -11041,7 +11133,7 @@ const keyDown = function (e: KeyboardEvent) {
     }
     if (shouldSend) {
       if (isEditing.value) {
-        saveEdit();
+        void saveEdit();
       } else {
         send();
       }
@@ -11757,6 +11849,7 @@ onBeforeUnmount(() => {
                 :item="pinItem"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[pinItem.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(pinItem)"
                 :show-avatar="display.showAvatar"
                 :hide-avatar="false"
@@ -11851,6 +11944,7 @@ onBeforeUnmount(() => {
                     :item="entry.message"
                     :all-message-ids="allMessageIds"
                     :editing-preview="editingPreviewMap[entry.message.id]"
+                    :edit-saving="isSavingEdit"
                     :tone="getMessageTone(entry.message)"
                     :show-avatar="false"
                     :hide-avatar="false"
@@ -11888,6 +11982,7 @@ onBeforeUnmount(() => {
                 :item="entry.message"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="false"
                 :hide-avatar="false"
@@ -11922,6 +12017,7 @@ onBeforeUnmount(() => {
                 :item="entry.message"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="display.showAvatar"
                 :hide-avatar="display.showAvatar && entry.mergedWithPrev"
@@ -12933,7 +13029,7 @@ onBeforeUnmount(() => {
                 <template v-if="isEditing">
                   <div class="edit-actions-group">
                     <n-button size="medium" @click="saveEdit"
-                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      :disabled="isSavingEdit || spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="edit-action-btn edit-action-btn--save">
                       <template #icon>
                         <n-icon :component="Check" size="16" />

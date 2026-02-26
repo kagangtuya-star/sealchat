@@ -838,6 +838,10 @@ const props = defineProps({
   item: Object,
   identityColor: String,
   editingPreview: Object as PropType<EditingPreviewInfo | undefined>,
+  editSaving: {
+    type: Boolean,
+    default: false,
+  },
   tone: {
     type: String as PropType<'ic' | 'ooc' | 'archived'>,
     default: 'ic'
@@ -2466,6 +2470,9 @@ const handleRevokedReedit = (e: MouseEvent | KeyboardEvent) => {
 
 const handleEditSave = (e: MouseEvent) => {
   e.stopPropagation();
+  if (props.editSaving) {
+    return;
+  }
   emit('edit-save', props.item);
 }
 
@@ -3043,7 +3050,7 @@ const handleRetrySend = () => {
             </div>
           </div>
           <div v-if="selfEditingPreview" class="editing-self-actions">
-            <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" @click.stop="handleEditSave">
+            <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" :disabled="props.editSaving" @click.stop="handleEditSave">
               <n-icon :component="Check" size="14" class="editing-self-actions__btn-icon" />
               保存
             </n-button>
