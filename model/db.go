@@ -140,7 +140,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
-	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{})
+	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
 	db.AutoMigrate(&ServiceMetricSample{})
 	db.AutoMigrate(&ChatImportJobModel{})
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})

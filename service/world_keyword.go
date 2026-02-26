@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -129,7 +130,68 @@ func normalizeWorldKeywordInput(input *WorldKeywordInput) error {
 		input.DescriptionFormat = string(model.WorldKeywordDescPlain)
 	}
 	input.Category = strings.TrimSpace(input.Category)
+	if utf8.RuneCountInString(input.Category) > 100 {
+		input.Category = string([]rune(input.Category)[:100])
+	}
 	return nil
+}
+
+func normalizeWorldKeywordCategoryName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", errors.New("分类名称不能为空")
+	}
+	if utf8.RuneCountInString(trimmed) > 100 {
+		trimmed = string([]rune(trimmed)[:100])
+	}
+	return trimmed, nil
+}
+
+func upsertWorldKeywordCategory(tx *gorm.DB, worldID, categoryName, actorID string) error {
+	categoryName = strings.TrimSpace(categoryName)
+	if categoryName == "" {
+		return nil
+	}
+	name, err := normalizeWorldKeywordCategoryName(categoryName)
+	if err != nil {
+		return err
+	}
+	var existing model.WorldKeywordCategoryModel
+	if err := tx.Where("world_id = ? AND name = ?", worldID, name).Limit(1).First(&existing).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		record := &model.WorldKeywordCategoryModel{
+			WorldID:   worldID,
+			Name:      name,
+			CreatedBy: actorID,
+			UpdatedBy: actorID,
+		}
+		record.Normalize()
+		return tx.Create(record).Error
+	}
+	if existing.UpdatedBy == actorID {
+		return nil
+	}
+	return tx.Model(&existing).Update("updated_by", actorID).Error
+}
+
+func cleanupWorldKeywordCategoryIfUnused(tx *gorm.DB, worldID, categoryName string) error {
+	categoryName = strings.TrimSpace(categoryName)
+	if categoryName == "" {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&model.WorldKeywordModel{}).
+		Where("world_id = ? AND category = ?", worldID, categoryName).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return tx.Where("world_id = ? AND name = ?", worldID, categoryName).
+		Delete(&model.WorldKeywordCategoryModel{}).Error
 }
 
 // WorldKeywordList 查询世界词条。
@@ -255,7 +317,13 @@ func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*mode
 		UpdatedBy:         actorID,
 	}
 	item.Normalize()
-	if err := model.GetDB().Create(item).Error; err != nil {
+	db := model.GetDB()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := upsertWorldKeywordCategory(tx, worldID, input.Category, actorID); err != nil {
+			return err
+		}
+		return tx.Create(item).Error
+	}); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -277,6 +345,7 @@ func WorldKeywordUpdate(worldID, keywordID, actorID string, input WorldKeywordIn
 		}
 		return nil, err
 	}
+	previousCategory := strings.TrimSpace(record.Category)
 	updates := map[string]interface{}{
 		"keyword":            input.Keyword,
 		"category":           input.Category,
@@ -293,7 +362,20 @@ func WorldKeywordUpdate(worldID, keywordID, actorID string, input WorldKeywordIn
 	if input.SortOrder != nil {
 		updates["sort_order"] = *input.SortOrder
 	}
-	if err := db.Model(&record).Updates(updates).Error; err != nil {
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := upsertWorldKeywordCategory(tx, worldID, input.Category, actorID); err != nil {
+			return err
+		}
+		if err := tx.Model(&record).Updates(updates).Error; err != nil {
+			return err
+		}
+		if previousCategory != "" && previousCategory != strings.TrimSpace(input.Category) {
+			if err := cleanupWorldKeywordCategoryIfUnused(tx, worldID, previousCategory); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	if err := db.Where("id = ?", record.ID).First(&record).Error; err != nil {
@@ -308,14 +390,19 @@ func WorldKeywordDelete(worldID, keywordID, actorID string) error {
 		return err
 	}
 	db := model.GetDB()
-	res := db.Where("id = ? AND world_id = ?", keywordID, worldID).Delete(&model.WorldKeywordModel{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrWorldKeywordNotFound
-	}
-	return nil
+	return db.Transaction(func(tx *gorm.DB) error {
+		var record model.WorldKeywordModel
+		if err := tx.Where("id = ? AND world_id = ?", keywordID, worldID).First(&record).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrWorldKeywordNotFound
+			}
+			return err
+		}
+		if err := tx.Where("id = ? AND world_id = ?", keywordID, worldID).Delete(&model.WorldKeywordModel{}).Error; err != nil {
+			return err
+		}
+		return cleanupWorldKeywordCategoryIfUnused(tx, worldID, record.Category)
+	})
 }
 
 // WorldKeywordBulkDelete 批量删除。
@@ -332,8 +419,36 @@ func WorldKeywordBulkDelete(worldID string, ids []string, actorID string) (int64
 	if len(cleaned) == 0 {
 		return 0, nil
 	}
-	res := model.GetDB().Where("world_id = ? AND id IN ?", worldID, cleaned).Delete(&model.WorldKeywordModel{})
-	return res.RowsAffected, res.Error
+	db := model.GetDB()
+	var affected int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var records []model.WorldKeywordModel
+		if err := tx.Where("world_id = ? AND id IN ?", worldID, cleaned).Find(&records).Error; err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			affected = 0
+			return nil
+		}
+		categorySet := make(map[string]struct{})
+		for _, record := range records {
+			if cat := strings.TrimSpace(record.Category); cat != "" {
+				categorySet[cat] = struct{}{}
+			}
+		}
+		res := tx.Where("world_id = ? AND id IN ?", worldID, cleaned).Delete(&model.WorldKeywordModel{})
+		if res.Error != nil {
+			return res.Error
+		}
+		affected = res.RowsAffected
+		for categoryName := range categorySet {
+			if err := cleanupWorldKeywordCategoryIfUnused(tx, worldID, categoryName); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return affected, err
 }
 
 // WorldKeywordImport 批量导入词条。
@@ -398,16 +513,124 @@ func WorldKeywordListCategories(worldID, userID string) ([]string, error) {
 	if err := ensureWorldKeywordPermission(worldID, userID, false); err != nil {
 		return nil, err
 	}
-	var categories []string
-	err := model.GetDB().Model(&model.WorldKeywordModel{}).
+	db := model.GetDB()
+	var keywordCategories []string
+	if err := db.Model(&model.WorldKeywordModel{}).
 		Where("world_id = ? AND category != ''", worldID).
 		Distinct("category").
 		Order("category ASC").
-		Pluck("category", &categories).Error
-	if err != nil {
+		Pluck("category", &keywordCategories).Error; err != nil {
 		return nil, err
 	}
-	return categories, nil
+	var managedCategories []string
+	if err := db.Model(&model.WorldKeywordCategoryModel{}).
+		Where("world_id = ?", worldID).
+		Distinct("name").
+		Order("name ASC").
+		Pluck("name", &managedCategories).Error; err != nil {
+		return nil, err
+	}
+	mergedSet := make(map[string]struct{}, len(keywordCategories)+len(managedCategories))
+	for _, category := range keywordCategories {
+		if trimmed := strings.TrimSpace(category); trimmed != "" {
+			mergedSet[trimmed] = struct{}{}
+		}
+	}
+	for _, category := range managedCategories {
+		if trimmed := strings.TrimSpace(category); trimmed != "" {
+			mergedSet[trimmed] = struct{}{}
+		}
+	}
+	merged := make([]string, 0, len(mergedSet))
+	for category := range mergedSet {
+		merged = append(merged, category)
+	}
+	sort.Strings(merged)
+	return merged, nil
+}
+
+// WorldKeywordCategoryCreate 创建分类。
+func WorldKeywordCategoryCreate(worldID, actorID, categoryName string) (string, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return "", err
+	}
+	name, err := normalizeWorldKeywordCategoryName(categoryName)
+	if err != nil {
+		return "", err
+	}
+	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		return upsertWorldKeywordCategory(tx, worldID, name, actorID)
+	}); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// WorldKeywordCategoryRename 批量重命名分类。
+func WorldKeywordCategoryRename(worldID, actorID, oldName, newName string) (int64, string, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return 0, "", err
+	}
+	from, err := normalizeWorldKeywordCategoryName(oldName)
+	if err != nil {
+		return 0, "", err
+	}
+	to, err := normalizeWorldKeywordCategoryName(newName)
+	if err != nil {
+		return 0, "", err
+	}
+	if from == to {
+		return 0, to, nil
+	}
+	var updated int64
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := upsertWorldKeywordCategory(tx, worldID, to, actorID); err != nil {
+			return err
+		}
+		res := tx.Model(&model.WorldKeywordModel{}).
+			Where("world_id = ? AND category = ?", worldID, from).
+			Updates(map[string]interface{}{
+				"category":   to,
+				"updated_by": actorID,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		updated = res.RowsAffected
+		if err := tx.Where("world_id = ? AND name = ?", worldID, from).
+			Delete(&model.WorldKeywordCategoryModel{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	return updated, to, err
+}
+
+// WorldKeywordCategoryDelete 删除分类，并将分类下术语设为未分类。
+func WorldKeywordCategoryDelete(worldID, actorID, categoryName string) (int64, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return 0, err
+	}
+	name, err := normalizeWorldKeywordCategoryName(categoryName)
+	if err != nil {
+		return 0, err
+	}
+	var updated int64
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&model.WorldKeywordModel{}).
+			Where("world_id = ? AND category = ?", worldID, name).
+			Updates(map[string]interface{}{
+				"category":   "",
+				"updated_by": actorID,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		updated = res.RowsAffected
+		return tx.Where("world_id = ? AND name = ?", worldID, name).
+			Delete(&model.WorldKeywordCategoryModel{}).Error
+	})
+	return updated, err
 }
 
 // WorldKeywordListCategoriesPublic 获取公开世界启用词条的分类列表。
