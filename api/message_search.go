@@ -196,9 +196,14 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	var tokens []string
 	var usedFTS bool
 	var backendName string
-	preferLikeFallback := matchMode == "fuzzy" && containsCJK(keyword)
+	forceLikeFallback := shouldForceLikeFallback(keyword, matchMode)
 
-	query, tokens, usedFTS, backendName := buildKeywordQuery(buildBaseQuery, keyword, matchMode)
+	query, tokens, usedFTS, backendName := buildKeywordQuery(
+		buildBaseQuery,
+		keyword,
+		matchMode,
+		forceFallbackOption(forceLikeFallback),
+	)
 
 	countQuery := query.Session(&gorm.Session{})
 	var total int64
@@ -221,7 +226,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 			})
 		}
 	}
-	if total == 0 && usedFTS && preferLikeFallback {
+	if total == 0 && usedFTS && forceLikeFallback {
 		log.Printf("消息搜索(%s)命中 0 条且包含 CJK 关键字，回退 LIKE 模糊匹配", backendName)
 		query, tokens, usedFTS, backendName = buildKeywordQuery(buildBaseQuery, keyword, matchMode, forceFallbackOption(true))
 		countQuery = query.Session(&gorm.Session{})
@@ -385,6 +390,10 @@ func parseQueryStringSlice(c *fiber.Ctx, key string) []string {
 		}
 	})
 	return values
+}
+
+func shouldForceLikeFallback(keyword, mode string) bool {
+	return mode == "fuzzy" && containsCJK(keyword)
 }
 
 func applyDefaultKeywordFilter(q *gorm.DB, keyword, mode string) (*gorm.DB, []string) {
