@@ -3615,9 +3615,18 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
 };
 
 const getMessageDisplayName = (message: any) => {
-  // 编辑状态下优先使用编辑预览中的角色名称
+  // 仅在“编辑自己的消息”时使用本地编辑预览覆盖名称
   const editingPreview = editingPreviewMap.value[message?.id];
-  if (editingPreview?.isSelf && editingPreview.displayName) {
+  const messageUserId = (
+    message?.user?.id
+    || message?.member?.user?.id
+    || message?.member?.userId
+    || message?.member?.user_id
+    || message?.user_id
+    || ''
+  );
+  const canOverrideIdentity = editingPreview?.isSelf && !!messageUserId && messageUserId === user.info.id;
+  if (canOverrideIdentity && editingPreview.displayName) {
     return editingPreview.displayName;
   }
   return message?.identity?.displayName
@@ -3629,9 +3638,18 @@ const getMessageDisplayName = (message: any) => {
 };
 
 const getMessageAvatar = (message: any) => {
-  // 编辑状态下优先使用编辑预览中的角色头像
+  // 仅在“编辑自己的消息”时使用本地编辑预览覆盖头像
   const editingPreview = editingPreviewMap.value[message?.id];
-  if (editingPreview?.isSelf && editingPreview.avatar) {
+  const messageUserId = (
+    message?.user?.id
+    || message?.member?.user?.id
+    || message?.member?.userId
+    || message?.member?.user_id
+    || message?.user_id
+    || ''
+  );
+  const canOverrideIdentity = editingPreview?.isSelf && !!messageUserId && messageUserId === user.info.id;
+  if (canOverrideIdentity && editingPreview.avatar) {
     return editingPreview.avatar;
   }
   const candidates = [

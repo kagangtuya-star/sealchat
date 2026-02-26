@@ -1093,6 +1093,9 @@ const selfEditingPreview = computed(() => (
 const otherEditingPreview = computed(() => (
   props.editingPreview && !props.editingPreview.isSelf ? props.editingPreview : null
 ));
+const shouldUseSelfPreviewIdentity = computed(() => (
+  Boolean(selfEditingPreview.value && targetUserId.value && targetUserId.value === user.info.id)
+));
 
 const contentClassList = computed(() => {
   const classes: Record<string, boolean> = {
@@ -2753,8 +2756,8 @@ onBeforeUnmount(() => {
 });
 
 const nick = computed(() => {
-  // 编辑状态下优先使用编辑预览中的角色名称（自己或他人）
-  if (selfEditingPreview.value?.displayName) {
+  // 仅编辑自己的消息时，才使用本地编辑预览覆盖角色名称
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.displayName) {
     return selfEditingPreview.value.displayName;
   }
   if (otherEditingPreview.value?.displayName) {
@@ -2773,9 +2776,9 @@ const nick = computed(() => {
   return props.item?.member?.nick || props.item?.user?.name || '未知';
 });
 
-// 编辑状态下优先使用编辑预览中的头像（自己或他人）
+// 仅编辑自己的消息时，才使用本地编辑预览覆盖头像
 const displayAvatar = computed(() => {
-  if (selfEditingPreview.value?.avatar) {
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.avatar) {
     return selfEditingPreview.value.avatar;
   }
   if (otherEditingPreview.value?.avatar) {
