@@ -20,21 +20,22 @@ import (
 )
 
 type chatExportRequest struct {
-	ChannelID          string         `json:"channel_id"`
-	Format             string         `json:"format"`
-	DisplayName        string         `json:"display_name"`
-	TimeRange          []int64        `json:"time_range"`
-	IncludeOOC         *bool          `json:"include_ooc"`
-	IncludeArchived    *bool          `json:"include_archived"`
-	IncludeImages      *bool          `json:"include_images"`
-	IncludeDiceCommand *bool          `json:"include_dice_commands"`
-	WithoutTimestamp   *bool          `json:"without_timestamp"`
-	MergeMessages      *bool          `json:"merge_messages"`
-	Users              []string       `json:"users"`
-	DisplaySettings    map[string]any `json:"display_settings"`
-	SliceLimit         int            `json:"slice_limit"`
-	MaxConcurrency     int            `json:"max_concurrency"`
-	TextColorizeBBCode *bool          `json:"text_bbcode_colorize"`
+	ChannelID          string            `json:"channel_id"`
+	Format             string            `json:"format"`
+	DisplayName        string            `json:"display_name"`
+	TimeRange          []int64           `json:"time_range"`
+	IncludeOOC         *bool             `json:"include_ooc"`
+	IncludeArchived    *bool             `json:"include_archived"`
+	IncludeImages      *bool             `json:"include_images"`
+	IncludeDiceCommand *bool             `json:"include_dice_commands"`
+	WithoutTimestamp   *bool             `json:"without_timestamp"`
+	MergeMessages      *bool             `json:"merge_messages"`
+	Users              []string          `json:"users"`
+	DisplaySettings    map[string]any    `json:"display_settings"`
+	SliceLimit         int               `json:"slice_limit"`
+	MaxConcurrency     int               `json:"max_concurrency"`
+	TextColorizeBBCode *bool             `json:"text_bbcode_colorize"`
+	TextColorizeMap    map[string]string `json:"text_bbcode_color_map"`
 }
 
 type chatExportResponse struct {
@@ -189,28 +190,37 @@ func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportRes
 	if req.TextColorizeBBCode != nil && strings.EqualFold(format, "txt") {
 		textColorizeBBCode = *req.TextColorizeBBCode
 	}
+	textColorizeMap := map[string]string{}
+	if textColorizeBBCode {
+		normalizedMap, err := normalizeExportColorMap(req.TextColorizeMap)
+		if err != nil {
+			return nil, err
+		}
+		textColorizeMap = normalizedMap
+	}
 
 	displaySettings := normalizeDisplaySettings(req.DisplaySettings)
 	sliceLimit := service.NormalizeExportSliceLimit(req.SliceLimit)
 	maxConcurrency := service.NormalizeExportConcurrency(req.MaxConcurrency)
 
 	job, err := service.CreateMessageExportJob(&service.ExportJobOptions{
-		UserID:             userID,
-		ChannelID:          channelID,
-		Format:             format,
-		DisplayName:        req.DisplayName,
-		IncludeOOC:         includeOOC,
-		IncludeArchived:    includeArchived,
-		IncludeImages:      includeImages,
-		IncludeDiceCommand: includeDiceCommand,
-		WithoutTimestamp:   withoutTimestamp,
-		MergeMessages:      mergeMessages,
-		TextColorizeBBCode: textColorizeBBCode,
-		StartTime:          start,
-		EndTime:            end,
-		DisplaySettings:    displaySettings,
-		SliceLimit:         sliceLimit,
-		MaxConcurrency:     maxConcurrency,
+		UserID:                userID,
+		ChannelID:             channelID,
+		Format:                format,
+		DisplayName:           req.DisplayName,
+		IncludeOOC:            includeOOC,
+		IncludeArchived:       includeArchived,
+		IncludeImages:         includeImages,
+		IncludeDiceCommand:    includeDiceCommand,
+		WithoutTimestamp:      withoutTimestamp,
+		MergeMessages:         mergeMessages,
+		TextColorizeBBCode:    textColorizeBBCode,
+		TextColorizeBBCodeMap: textColorizeMap,
+		StartTime:             start,
+		EndTime:               end,
+		DisplaySettings:       displaySettings,
+		SliceLimit:            sliceLimit,
+		MaxConcurrency:        maxConcurrency,
 	})
 	if err != nil {
 		return nil, err

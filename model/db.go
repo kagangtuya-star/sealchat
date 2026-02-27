@@ -150,6 +150,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&UpdateCheckState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})
+	db.AutoMigrate(&ExportColorProfileModel{})
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").

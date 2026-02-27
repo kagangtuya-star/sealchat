@@ -126,6 +126,9 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 			payload.ExtraMeta = make(map[string]interface{})
 		}
 		payload.ExtraMeta["text_colorize_bbcode"] = true
+		if len(extraOptions.TextColorizeBBCodeMap) > 0 {
+			payload.ExtraMeta["text_colorize_bbcode_map"] = cloneStringMap(extraOptions.TextColorizeBBCodeMap)
+		}
 	}
 
 	formatter, ok := getFormatter(job.Format)

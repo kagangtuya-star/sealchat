@@ -3945,6 +3945,7 @@ const handleExportMessages = async (params: {
   withoutTimestamp: boolean;
   mergeMessages: boolean;
   textColorizeBBCode: boolean;
+  textColorizeBBCodeMap?: Record<string, string>;
   autoUpload: boolean;
   maxExportMessages: number;
   maxExportConcurrency: number;
@@ -3980,6 +3981,9 @@ const handleExportMessages = async (params: {
       withoutTimestamp: params.withoutTimestamp,
       mergeMessages: params.mergeMessages,
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
+      textColorizeBBCodeMap: params.textColorizeBBCode && params.format === 'txt'
+        ? (params.textColorizeBBCodeMap || {})
+        : undefined,
       sliceLimit,
       maxConcurrency,
       displaySettings: displayOptions,

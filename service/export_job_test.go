@@ -109,6 +109,30 @@ func TestParseExportExtraOptionsDefaultsIncludeFlags(t *testing.T) {
 	}
 }
 
+func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
+	raw, err := buildExportExtraOptions(&ExportJobOptions{
+		IncludeImages:         true,
+		IncludeDiceCommand:    true,
+		TextColorizeBBCode:    true,
+		TextColorizeBBCodeMap: map[string]string{"identity:role-a": "#123abc"},
+		SliceLimit:            5000,
+		MaxConcurrency:        2,
+	})
+	if err != nil {
+		t.Fatalf("buildExportExtraOptions failed: %v", err)
+	}
+	extra := parseExportExtraOptions(raw)
+	if extra == nil {
+		t.Fatalf("extra should not be nil")
+	}
+	if !extra.TextColorizeBBCode {
+		t.Fatalf("text colorize flag should be true")
+	}
+	if got := extra.TextColorizeBBCodeMap["identity:role-a"]; got != "#123abc" {
+		t.Fatalf("unexpected color map value: %q", got)
+	}
+}
+
 func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()

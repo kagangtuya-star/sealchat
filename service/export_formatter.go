@@ -37,19 +37,20 @@ type payloadContext struct {
 }
 
 type ExportMessage struct {
-	ID             string    `json:"id"`
-	SenderID       string    `json:"sender_id"`
-	SenderName     string    `json:"sender_name"`
-	SenderColor    string    `json:"sender_color"`
-	SenderAvatar   string    `json:"sender_avatar,omitempty"`
-	IcMode         string    `json:"ic_mode"`
-	IsWhisper      bool      `json:"is_whisper"`
-	IsArchived     bool      `json:"is_archived"`
-	IsBot          bool      `json:"is_bot"`
-	CreatedAt      time.Time `json:"created_at"`
-	Content        string    `json:"content"`
-	ContentHTML    string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
-	WhisperTargets []string  `json:"whisper_targets"`
+	ID               string    `json:"id"`
+	SenderID         string    `json:"sender_id"`
+	SenderIdentityID string    `json:"sender_identity_id,omitempty"`
+	SenderName       string    `json:"sender_name"`
+	SenderColor      string    `json:"sender_color"`
+	SenderAvatar     string    `json:"sender_avatar,omitempty"`
+	IcMode           string    `json:"ic_mode"`
+	IsWhisper        bool      `json:"is_whisper"`
+	IsArchived       bool      `json:"is_archived"`
+	IsBot            bool      `json:"is_bot"`
+	CreatedAt        time.Time `json:"created_at"`
+	Content          string    `json:"content"`
+	ContentHTML      string    `json:"content_html,omitempty"` // HTML 渲染结果，用于 HTML 导出
+	WhisperTargets   []string  `json:"whisper_targets"`
 }
 
 type ExportPayload struct {
@@ -141,19 +142,20 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			htmlContent = stripImageTagsFromHTML(htmlContent)
 		}
 		exportMessages = append(exportMessages, ExportMessage{
-			ID:             msg.ID,
-			SenderID:       msg.UserID,
-			SenderName:     resolveSenderName(msg),
-			SenderColor:    msg.SenderIdentityColor,
-			SenderAvatar:   resolveSenderAvatar(msg),
-			IcMode:         fallbackIcMode(msg.ICMode),
-			IsWhisper:      msg.IsWhisper,
-			IsArchived:     msg.IsArchived,
-			IsBot:          msg.User != nil && msg.User.IsBot,
-			CreatedAt:      msg.CreatedAt,
-			Content:        originalContent,
-			ContentHTML:    htmlContent,
-			WhisperTargets: extractWhisperTargets(msg, job.ChannelID, identityResolver),
+			ID:               msg.ID,
+			SenderID:         msg.UserID,
+			SenderIdentityID: strings.TrimSpace(msg.SenderIdentityID),
+			SenderName:       resolveSenderName(msg),
+			SenderColor:      msg.SenderIdentityColor,
+			SenderAvatar:     resolveSenderAvatar(msg),
+			IcMode:           fallbackIcMode(msg.ICMode),
+			IsWhisper:        msg.IsWhisper,
+			IsArchived:       msg.IsArchived,
+			IsBot:            msg.User != nil && msg.User.IsBot,
+			CreatedAt:        msg.CreatedAt,
+			Content:          originalContent,
+			ContentHTML:      htmlContent,
+			WhisperTargets:   extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
 
@@ -1814,8 +1816,43 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	headerParts = append(headerParts, fmt.Sprintf("<%s>", msg.SenderName))
 	header := strings.Join(headerParts, " ")
 	content := buildBBCodeBody(msg, payload.IncludeImages)
-	color := sanitizeBBCodeColor(msg.SenderColor, "#111111")
+	color := resolveBBCodeSenderColor(payload, msg)
 	return fmt.Sprintf("[color=silver]%s[/color][color=%s] %s [/color]", header, color, content)
+}
+
+func resolveBBCodeSenderColor(payload *ExportPayload, msg *ExportMessage) string {
+	if override := lookupBBCodeColorOverride(payload, msg); override != "" {
+		if normalized := sanitizeBBCodeColor(override, ""); normalized != "" {
+			return normalized
+		}
+	}
+	return sanitizeBBCodeColor(msg.SenderColor, "#111111")
+}
+
+func lookupBBCodeColorOverride(payload *ExportPayload, msg *ExportMessage) string {
+	if payload == nil || msg == nil || payload.ExtraMeta == nil {
+		return ""
+	}
+	identityID := strings.TrimSpace(msg.SenderIdentityID)
+	if identityID == "" {
+		return ""
+	}
+	rawMap, ok := payload.ExtraMeta["text_colorize_bbcode_map"]
+	if !ok {
+		return ""
+	}
+	key := "identity:" + identityID
+	switch m := rawMap.(type) {
+	case map[string]string:
+		return strings.TrimSpace(m[key])
+	case map[string]interface{}:
+		if raw, exists := m[key]; exists {
+			if value, ok := raw.(string); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
 }
 
 func shouldApplyBBCodeColor(payload *ExportPayload) bool {

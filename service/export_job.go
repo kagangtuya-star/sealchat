@@ -38,31 +38,33 @@ var supportedExportFormats = map[string]struct{}{
 
 // ExportJobOptions 聚合创建导出任务所需的信息。
 type ExportJobOptions struct {
-	UserID             string
-	ChannelID          string
-	Format             string
-	DisplayName        string
-	IncludeOOC         bool
-	IncludeArchived    bool
-	IncludeImages      bool
-	IncludeDiceCommand bool
-	WithoutTimestamp   bool
-	MergeMessages      bool
-	StartTime          *time.Time
-	EndTime            *time.Time
-	DisplaySettings    map[string]any
-	SliceLimit         int
-	MaxConcurrency     int
-	TextColorizeBBCode bool
+	UserID                string
+	ChannelID             string
+	Format                string
+	DisplayName           string
+	IncludeOOC            bool
+	IncludeArchived       bool
+	IncludeImages         bool
+	IncludeDiceCommand    bool
+	WithoutTimestamp      bool
+	MergeMessages         bool
+	StartTime             *time.Time
+	EndTime               *time.Time
+	DisplaySettings       map[string]any
+	SliceLimit            int
+	MaxConcurrency        int
+	TextColorizeBBCode    bool
+	TextColorizeBBCodeMap map[string]string
 }
 
 type exportExtraOptions struct {
-	DisplaySettings    map[string]any `json:"display,omitempty"`
-	SliceLimit         int            `json:"slice_limit,omitempty"`
-	MaxConcurrency     int            `json:"max_concurrency,omitempty"`
-	TextColorizeBBCode bool           `json:"text_colorize_bbcode,omitempty"`
-	IncludeImages      bool           `json:"include_images"`
-	IncludeDiceCommand bool           `json:"include_dice_commands"`
+	DisplaySettings       map[string]any    `json:"display,omitempty"`
+	SliceLimit            int               `json:"slice_limit,omitempty"`
+	MaxConcurrency        int               `json:"max_concurrency,omitempty"`
+	TextColorizeBBCode    bool              `json:"text_colorize_bbcode,omitempty"`
+	TextColorizeBBCodeMap map[string]string `json:"text_colorize_bbcode_map,omitempty"`
+	IncludeImages         bool              `json:"include_images"`
+	IncludeDiceCommand    bool              `json:"include_dice_commands"`
 }
 
 func normalizeExportFormat(format string) (string, bool) {
@@ -414,11 +416,12 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		return "", nil
 	}
 	extra := exportExtraOptions{
-		SliceLimit:         opts.SliceLimit,
-		MaxConcurrency:     opts.MaxConcurrency,
-		TextColorizeBBCode: opts.TextColorizeBBCode,
-		IncludeImages:      opts.IncludeImages,
-		IncludeDiceCommand: opts.IncludeDiceCommand,
+		SliceLimit:            opts.SliceLimit,
+		MaxConcurrency:        opts.MaxConcurrency,
+		TextColorizeBBCode:    opts.TextColorizeBBCode,
+		TextColorizeBBCodeMap: cloneStringMap(opts.TextColorizeBBCodeMap),
+		IncludeImages:         opts.IncludeImages,
+		IncludeDiceCommand:    opts.IncludeDiceCommand,
 	}
 	if len(opts.DisplaySettings) > 0 {
 		extra.DisplaySettings = opts.DisplaySettings
@@ -427,6 +430,7 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		extra.SliceLimit == 0 &&
 		extra.MaxConcurrency == 0 &&
 		!extra.TextColorizeBBCode &&
+		len(extra.TextColorizeBBCodeMap) == 0 &&
 		extra.IncludeImages &&
 		extra.IncludeDiceCommand {
 		return "", nil
@@ -459,7 +463,21 @@ func parseExportExtraOptions(raw string) *exportExtraOptions {
 	if extra.DisplaySettings != nil && len(extra.DisplaySettings) == 0 {
 		extra.DisplaySettings = nil
 	}
+	if len(extra.TextColorizeBBCodeMap) == 0 {
+		extra.TextColorizeBBCodeMap = nil
+	}
 	return extra
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func cloneMessage(msg *model.MessageModel) *model.MessageModel {

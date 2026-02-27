@@ -110,6 +110,50 @@ func TestBuildBBCodeTextLineFromQuickFormat(t *testing.T) {
 	}
 }
 
+func TestBuildBBCodeTextLineUsesOverrideColorMap(t *testing.T) {
+	payload := &ExportPayload{
+		WithoutTimestamp: true,
+		ExtraMeta: map[string]interface{}{
+			"text_colorize_bbcode":     true,
+			"text_colorize_bbcode_map": map[string]string{"identity:role-a": "#aabbcc"},
+		},
+	}
+	msg := &ExportMessage{
+		SenderIdentityID: "role-a",
+		SenderName:       "测试",
+		SenderColor:      "#123abc",
+		CreatedAt:        time.Unix(1700000000, 0),
+		Content:          "hello",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if !strings.Contains(line, "[color=#aabbcc]") {
+		t.Fatalf("expected override color in line, got %q", line)
+	}
+}
+
+func TestBuildBBCodeTextLineFallsBackWhenOverrideInvalid(t *testing.T) {
+	payload := &ExportPayload{
+		WithoutTimestamp: true,
+		ExtraMeta: map[string]interface{}{
+			"text_colorize_bbcode":     true,
+			"text_colorize_bbcode_map": map[string]string{"identity:role-a": "bad-color"},
+		},
+	}
+	msg := &ExportMessage{
+		SenderIdentityID: "role-a",
+		SenderName:       "测试",
+		SenderColor:      "#123abc",
+		CreatedAt:        time.Unix(1700000000, 0),
+		Content:          "hello",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if !strings.Contains(line, "[color=#123abc]") {
+		t.Fatalf("expected sender snapshot color fallback in line, got %q", line)
+	}
+}
+
 func TestBuildBBCodeTextLineNormalizesNestedEntitiesForPlainText(t *testing.T) {
 	payload := &ExportPayload{WithoutTimestamp: true}
 	msg := &ExportMessage{

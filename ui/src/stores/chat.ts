@@ -3485,9 +3485,48 @@ export const useChatStore = defineStore({
       if (!channelId) {
         return { items: [], total: 0 };
       }
-      const resp = await api.get<{ items: Array<{ id: string; label: string }>; total: number }>(
+      const resp = await api.get<{ items: Array<{ id: string; label: string; color?: string }>; total: number }>(
         `api/v1/channels/${channelId}/speaker-options`,
       );
+      return resp.data;
+    },
+
+    async channelExportColorProfileGet(channelId: string) {
+      if (!channelId) {
+        return { channelId: '', exists: false, colors: {} as Record<string, string> };
+      }
+      const resp = await api.get<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        updatedAt?: number;
+      }>(`api/v1/channels/${channelId}/export-color-profile`);
+      return resp.data;
+    },
+
+    async channelExportColorProfileUpsert(channelId: string, colors: Record<string, string>) {
+      if (!channelId) {
+        throw new Error('缺少频道 ID');
+      }
+      const resp = await api.post<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        updatedAt?: number;
+      }>(`api/v1/channels/${channelId}/export-color-profile`, { colors });
+      return resp.data;
+    },
+
+    async channelExportColorProfileDelete(channelId: string) {
+      if (!channelId) {
+        throw new Error('缺少频道 ID');
+      }
+      const resp = await api.delete<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        success: boolean;
+      }>(`api/v1/channels/${channelId}/export-color-profile`);
       return resp.data;
     },
 
@@ -4158,6 +4197,7 @@ export const useChatStore = defineStore({
       maxConcurrency?: number;
       displaySettings?: DisplaySettings;
       displayName?: string;
+      textColorizeBBCodeMap?: Record<string, string>;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
@@ -4186,6 +4226,9 @@ export const useChatStore = defineStore({
       }
       if (params.textColorizeBBCode) {
         payload.text_bbcode_colorize = true;
+        if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
+          payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
       }
       const resp = await api.post('api/v1/chat/export', payload);
       return resp.data as {
