@@ -1817,9 +1817,44 @@ const processMessageLinks = () => {
 // 支持两种格式:
 // 1. [自定义标题](http://.../#/worldId/channelId?msg=messageId)
 // 2. http://.../#/worldId/channelId?msg=messageId
+// 3. http(s)://example.com（普通网页链接，自动新标签页打开）
+const PLAIN_WEB_URL_REGEX = /https?:\/\/[^\s<>"'`]+/g;
+const PLAIN_WEB_URL_TRAILING_PUNCTUATION_REGEX = /[),.;!?，。；：！？、）】》」]+$/;
+
+type PlainTextLinkSegment = {
+  type: 'titled' | 'plain' | 'external';
+  content: string;
+  title?: string;
+  url?: string;
+  index: number;
+  length: number;
+};
+
+const createExternalLinkElement = (url: string): HTMLAnchorElement | null => {
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.className = 'message-external-link';
+  link.textContent = url;
+  link.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  return link;
+};
+
 const processPlainTextMessageLinks = (host: HTMLElement) => {
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
-  const nodesToProcess: { node: Text; segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> }[] = [];
+  const nodesToProcess: { node: Text; segments: PlainTextLinkSegment[] }[] = [];
 
   // 收集需要处理的文本节点
   let textNode: Text | null;
@@ -1829,7 +1864,6 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
     if (parent?.closest('.message-jump-link, a')) continue;
 
     const text = textNode.textContent || '';
-    const segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> = [];
 
     // 先匹配带标题的链接 [title](url)
     TITLED_MESSAGE_LINK_REGEX.lastIndex = 0;
@@ -1862,12 +1896,39 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
       }
     }
 
-    if (titledMatches.length === 0 && plainMatches.length === 0) continue;
+    // 继续匹配普通网页 URL，排除已经覆盖的消息链接区间
+    PLAIN_WEB_URL_REGEX.lastIndex = 0;
+    let externalMatch: RegExpExecArray | null;
+    const externalMatches: { index: number; length: number; url: string }[] = [];
+    while ((externalMatch = PLAIN_WEB_URL_REGEX.exec(text)) !== null) {
+      const rawUrl = externalMatch[0] || '';
+      const normalizedUrl = rawUrl.replace(PLAIN_WEB_URL_TRAILING_PUNCTUATION_REGEX, '');
+      if (!normalizedUrl) {
+        continue;
+      }
+
+      const matchStart = externalMatch.index;
+      const matchEnd = matchStart + normalizedUrl.length;
+      const isCoveredByMessageLink = titledMatches.some(t => matchStart >= t.index && matchEnd <= t.index + t.length)
+        || plainMatches.some(p => matchStart >= p.index && matchEnd <= p.index + p.length);
+      if (isCoveredByMessageLink) {
+        continue;
+      }
+
+      externalMatches.push({
+        index: matchStart,
+        length: normalizedUrl.length,
+        url: normalizedUrl,
+      });
+    }
+
+    if (titledMatches.length === 0 && plainMatches.length === 0 && externalMatches.length === 0) continue;
 
     // 合并并排序所有匹配
     const allMatches = [
       ...titledMatches.map(m => ({ ...m, type: 'titled' as const })),
       ...plainMatches.map(m => ({ ...m, type: 'plain' as const, title: undefined })),
+      ...externalMatches.map(m => ({ ...m, type: 'external' as const, title: undefined })),
     ].sort((a, b) => a.index - b.index);
 
     nodesToProcess.push({ node: textNode, segments: allMatches.map(m => ({
@@ -1916,6 +1977,13 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
           } else {
             fragment.appendChild(document.createTextNode(seg.content));
           }
+        } else {
+          fragment.appendChild(document.createTextNode(seg.content));
+        }
+      } else if (seg.type === 'external' && url) {
+        const externalLink = createExternalLinkElement(url);
+        if (externalLink) {
+          fragment.appendChild(externalLink);
         } else {
           fragment.appendChild(document.createTextNode(seg.content));
         }
@@ -3810,9 +3878,55 @@ const handleRetrySend = () => {
   border-radius: 0.125rem;
 }
 
+.chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #3b82f6) 52%, var(--chat-text-primary, #1f2937));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #3b82f6) 68%, var(--chat-text-primary, #1f2937));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 58%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 76%, var(--chat-text-secondary, #64748b));
+}
+
+:root[data-display-palette='night'] .chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #60a5fa) 42%, var(--chat-text-primary, #e2e8f0));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #60a5fa) 56%, var(--chat-text-primary, #f8fafc));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 70%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 78%, var(--chat-text-secondary, #94a3b8));
+}
+
+:root[data-custom-theme='true'] .chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #3b82f6) 50%, var(--chat-text-primary, #1f2937));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #3b82f6) 64%, var(--chat-text-primary, #1f2937));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 66%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 84%, var(--chat-text-secondary, #64748b));
+}
+
 .content a {
-  color: #3b82f6;
+  color: var(--message-link-color);
   text-decoration: underline;
+  text-decoration-color: var(--message-link-underline-color);
+  text-underline-offset: 2px;
+  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+}
+
+.content a:hover {
+  color: var(--message-link-hover-color);
+  text-decoration-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+}
+
+.content a.message-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.content a.message-external-link::after {
+  content: '↗';
+  font-size: 0.72em;
+  line-height: 1;
+  color: var(--message-link-indicator-color);
+  opacity: 0.92;
+  transform: translateY(-0.06em);
 }
 
 .content hr {
