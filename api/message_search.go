@@ -152,14 +152,12 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	}
 
 	db := model.GetDB()
-	buildBaseQuery := func() *gorm.DB {
-		q := db.Model(&model.MessageModel{}).
-			Where("channel_id = ?", channelID).
-			Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-				SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-			))`, false, user.ID, user.ID, user.ID).
-			Where("is_revoked = ?", false).
-			Where("is_deleted = ?", false)
+		buildBaseQuery := func() *gorm.DB {
+			q := db.Model(&model.MessageModel{}).
+				Where("channel_id = ?", channelID).
+				Where("is_revoked = ?", false).
+				Where("is_deleted = ?", false)
+			q = applyWhisperVisibilityFilter(q, user.ID, channelID)
 
 		switch archivedFilter {
 		case "only":

@@ -194,9 +194,7 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	var item model.MessageModel
 	q := db.Where("channel_id = ? AND id = ?", data.ChannelID, data.MessageID)
 	q = q.Where("is_deleted = ?", false)
-	q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-		SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-	))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+	q = applyWhisperVisibilityFilter(q, ctx.User.ID, data.ChannelID)
 	q.Limit(1).Find(&item)
 
 	if item.ID == "" {
@@ -244,9 +242,7 @@ func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 	var item model.MessageModel
 	q := db.Where("channel_id = ? AND id = ?", channelID, messageID)
 	q = q.Where("is_deleted = ?", false)
-	q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-		SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-	))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+	q = applyWhisperVisibilityFilter(q, ctx.User.ID, channelID)
 	q.Limit(1).Find(&item)
 	if item.ID == "" {
 		return nil, nil
@@ -338,10 +334,8 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
 			Where("channel_id = ?", channelID).
-			Where("is_deleted = ?", false).
-			Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-		))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+			Where("is_deleted = ?", false)
+		q = applyWhisperVisibilityFilter(q, ctx.User.ID, channelID)
 		if !includeArchived {
 			q = q.Where("is_archived = ?", false)
 		}
@@ -1349,11 +1343,9 @@ func apiMessagePinList(ctx *ChatContext, data *struct {
 
 	db := model.GetDB()
 	var items []*model.MessageModel
-	err := db.Where("channel_id = ? AND is_deleted = ? AND is_pinned = ?", channelID, false, true).
-		Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-		))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID).
-		Order("pinned_at desc").
+	q := db.Where("channel_id = ? AND is_deleted = ? AND is_pinned = ?", channelID, false, true)
+	q = applyWhisperVisibilityFilter(q, ctx.User.ID, channelID)
+	err := q.Order("pinned_at desc").
 		Order("display_order asc").
 		Order("created_at asc").
 		Preload("User", func(db *gorm.DB) *gorm.DB {
@@ -2187,11 +2179,10 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 
 	var items []*model.MessageModel
+	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, data.ChannelID)
 	q := db.Where("channel_id = ?", data.ChannelID)
 	q = q.Where("is_deleted = ?", false)
-	q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-		SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-	))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID)
+	q = applyWhisperVisibilityFilter(q, ctx.User.ID, data.ChannelID)
 
 	if data.ArchivedOnly {
 		q = q.Where("is_archived = ?", true)
@@ -2425,11 +2416,11 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 
 	for _, i := range items {
-		if i.IsWhisper && i.UserID != ctx.User.ID && i.WhisperTo != ctx.User.ID && !isRecipient(recipientMap[i.ID], ctx.User.ID) {
+		if !canReadAllWhispers && i.IsWhisper && i.UserID != ctx.User.ID && i.WhisperTo != ctx.User.ID && !isRecipient(recipientMap[i.ID], ctx.User.ID) {
 			// 理论上不会出现，因为已经过滤，但保险起见
 			i.Content = ""
 		}
-		if i.Quote != nil && i.Quote.IsWhisper &&
+		if !canReadAllWhispers && i.Quote != nil && i.Quote.IsWhisper &&
 			i.Quote.UserID != ctx.User.ID &&
 			i.Quote.WhisperTo != ctx.User.ID &&
 			!isRecipient(recipientMap[i.Quote.ID], ctx.User.ID) {

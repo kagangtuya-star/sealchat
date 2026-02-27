@@ -356,6 +356,7 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		ICFilter:        data.ICFilter,
 		RoleIDs:         data.RoleIDs,
 		IncludeRoleless: data.IncludeRoleless,
+		ReadAllWhispers: canUserReadAllWhispersInChannel(ctx.User.ID, channelId),
 	})
 
 	rData := &struct {

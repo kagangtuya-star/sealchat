@@ -23,6 +23,7 @@ export interface ChannelRolePermSheet {
   func_channel_message_pin: PermResult; // 频道 - 消息 - 置顶
   func_channel_message_archive: PermResult; // 频道 - 消息 - 归档
   func_channel_message_delete: PermResult; // 频道 - 消息 - 删除
+  func_channel_message_read_whisper_all: PermResult; // 频道 - 消息 - 查看所有悄悄话
   func_channel_iform_manage: PermResult; // 频道 - iForm - 配置管理
   func_channel_iform_broadcast: PermResult; // 频道 - iForm - 同步推送
   func_channel_read_all: PermResult; // 频道 - 特殊 - 查看所有子频道
