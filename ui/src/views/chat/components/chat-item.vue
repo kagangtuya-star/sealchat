@@ -3944,8 +3944,9 @@ const handleRetrySend = () => {
   margin-top: var(--chat-paragraph-spacing, 0.5rem);
 }
 .edited-label {
-  @apply text-xs text-blue-500 font-medium;
+  @apply text-xs font-medium;
   margin-left: 0.2rem;
+  color: color-mix(in srgb, var(--primary-color, #3b82f6) 26%, var(--chat-text-secondary, #64748b));
 }
 
 .message-action-bar {
