@@ -15,6 +15,12 @@ import (
 type statusSummary struct {
 	Timestamp             int64 `json:"timestamp"`
 	ConcurrentConnections int64 `json:"concurrentConnections"`
+	WsAuthedConnections   int64 `json:"wsAuthedConnections"`
+	WsPreAuthConnections  int64 `json:"wsPreAuthConnections"`
+	WsTotalConnections    int64 `json:"wsTotalConnections"`
+	WsGuestConnections    int64 `json:"wsGuestConnections"`
+	WsObserverConnections int64 `json:"wsObserverConnections"`
+	WsAuthenticatedUsers  int64 `json:"wsAuthenticatedUsers"`
 	OnlineUsers           int64 `json:"onlineUsers"`
 	MessagesPerMinute     int64 `json:"messagesPerMinute"`
 	RegisteredUsers       int64 `json:"registeredUsers"`
@@ -131,6 +137,7 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 	if sample == nil {
 		sample = &model.ServiceMetricSample{TimestampMs: time.Now().UnixMilli()}
 	}
+	wsSnapshot := getWsConnectionSnapshot()
 	intervalSeconds := 120
 	retentionDays := 7
 	if collector != nil {
@@ -144,6 +151,12 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 	return statusSummary{
 		Timestamp:             sample.TimestampMs,
 		ConcurrentConnections: sample.ConcurrentConnections,
+		WsAuthedConnections:   wsSnapshot.AuthedConnections,
+		WsPreAuthConnections:  wsSnapshot.PreAuthConnections,
+		WsTotalConnections:    wsSnapshot.TotalConnections,
+		WsGuestConnections:    wsSnapshot.GuestConnections,
+		WsObserverConnections: wsSnapshot.ObserverConnections,
+		WsAuthenticatedUsers:  wsSnapshot.AuthenticatedUsers,
 		OnlineUsers:           sample.OnlineUsers,
 		MessagesPerMinute:     sample.MessagesPerMinute,
 		RegisteredUsers:       sample.RegisteredUsers,

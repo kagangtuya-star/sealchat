@@ -339,7 +339,25 @@ const persistRevokedDraftsToSessionStorage = (drafts: Record<string, RevokedDraf
 };
 
 const apiMap = new Map<string, PendingApiRequest>();
-let _connectResolve: any = null;
+const pendingConnectResolvers: Array<() => void> = [];
+
+const enqueueConnectResolver = (resolve: () => void) => {
+  pendingConnectResolvers.push(resolve);
+};
+
+const resolvePendingConnectResolvers = () => {
+  if (!pendingConnectResolvers.length) {
+    return;
+  }
+  const resolvers = pendingConnectResolvers.splice(0);
+  resolvers.forEach((resolve) => {
+    try {
+      resolve();
+    } catch {
+      // ignore
+    }
+  });
+};
 
 const rejectPendingApiRequests = (reason: string) => {
   if (!apiMap.size) {
@@ -479,6 +497,8 @@ let wsLastForegroundRecoverAt = 0;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
+let wsConnectInFlight = false;
+let wsReconnectSuppressedEpoch = 0;
 let channelSwitchEpoch = 0;
 const channelSwitchGuard: {
   recent: Array<{ id: string; at: number }>;
@@ -821,6 +841,8 @@ export const useChatStore = defineStore({
       this.stopPingLoop();
       clearPendingLatencyProbes();
       rejectPendingApiRequests(reason || 'ws disconnected');
+      wsReconnectSuppressedEpoch = wsConnectionEpoch;
+      wsConnectInFlight = false;
       try {
         this.subject?.complete();
         this.subject?.unsubscribe();
@@ -837,162 +859,194 @@ export const useChatStore = defineStore({
       if (this.subject && (this.connectState === 'connected' || this.connectState === 'connecting' || this.connectState === 'reconnecting')) {
         return;
       }
-
-      // 若存在重连倒计时，直接取消，立即发起连接
-      clearWsReconnectTimer(this);
-
-      const epoch = ++wsConnectionEpoch;
-
-      // 先清理现有连接，防止连接泄漏
-      const oldSubject = this.subject;
-      if (oldSubject) {
-        rejectPendingApiRequests('ws connection replaced');
-        try {
-          oldSubject.complete();
-          oldSubject.unsubscribe();
-          console.log('[WS] 清理旧连接');
-        } catch (e) {
-          console.warn('[WS] 清理旧连接失败', e);
-        }
-        this.subject = null;
+      if (wsConnectInFlight) {
+        return;
       }
+      wsConnectInFlight = true;
+      try {
+        // 若存在重连倒计时，直接取消，立即发起连接
+        clearWsReconnectTimer(this);
 
-      this.stopPingLoop();
-      if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
-        focusListenersBound = true;
-        const store = this;
-        const updateFocusState = () => {
-          const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
-          const isVisible = document.visibilityState !== 'hidden';
-          store.setFocusState(hasFocus && isVisible);
-        };
-        const triggerForegroundRecover = (reason: string) => {
-          if (document.visibilityState !== 'visible') {
-            return;
+        const epoch = ++wsConnectionEpoch;
+
+        // 先清理现有连接，防止连接泄漏
+        const oldSubject = this.subject;
+        if (oldSubject) {
+          rejectPendingApiRequests('ws connection replaced');
+          try {
+            oldSubject.complete();
+            oldSubject.unsubscribe();
+            console.log('[WS] 清理旧连接');
+          } catch (e) {
+            console.warn('[WS] 清理旧连接失败', e);
           }
-          store.recoverConnectionOnForeground(reason);
-        };
-        window.addEventListener('focus', () => {
-          updateFocusState();
-          triggerForegroundRecover('window-focus');
-        });
-        window.addEventListener('blur', updateFocusState);
-        window.addEventListener('online', () => {
-          triggerForegroundRecover('network-online');
-        });
-        window.addEventListener('pageshow', () => {
-          updateFocusState();
-          triggerForegroundRecover('window-pageshow');
-        });
-        document.addEventListener('visibilitychange', () => {
-          updateFocusState();
-          if (document.visibilityState === 'visible') {
-            triggerForegroundRecover('visibility-visible');
-          }
-        });
-        updateFocusState();
-      }
-      const u: User = {
-        id: '',
-      }
-      // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
-      this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
-
-      // 'ws://localhost:3212/ws/seal'
-      // const subject = webSocket(`ws:${urlBase}/ws/seal`);
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const subject = webSocket(`${protocol}${urlBase}/ws/seal`);
-
-      let isReady = false;
-
-      // 发送协议握手
-      // Opcode.IDENTIFY: 3
-      const user = useUserStore();
-      subject.next({
-        op: 3, body: {
-          token: user.token,
-          observer: this.observerMode,
-        }
-      });
-
-      // 保存当前 subject 引用，供错误处理使用
-      const currentSubject = subject;
-
-      subject.subscribe({
-        next: (msg: any) => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          this.markGatewayActivity();
-          // Opcode.READY
-          if (msg.op === 4) {
-            console.log('svr ready', msg);
-            isReady = true
-            this.connectReady(epoch);
-          } else if (msg.op === 0) {
-            // Opcode.EVENT
-            const e = msg as Event;
-            this.eventDispatch(e);
-          } else if (msg.op === 2) {
-            this.handlePong();
-          } else if (msg.op === 6) {
-            this.handleLatencyResult(msg?.body);
-          } else if (apiMap.get(msg.echo)) {
-            const pending = apiMap.get(msg.echo);
-            apiMap.delete(msg.echo);
-            pending?.resolve(msg);
-          }
-        },
-        error: err => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          console.log('[WS] 连接错误', err);
-          rejectPendingApiRequests('ws connection error');
           this.subject = null;
-          this.connectState = 'reconnecting';
-          clearForegroundProbeTimer();
-          this.stopPingLoop();
-          this.lastGatewayAckAt = 0;
-          this.reconnectAfter(5, () => {
-            try {
-              if (epoch !== wsConnectionEpoch) {
-                return;
-              }
-              err.target?.close();
-              // 使用保存的引用而非 this.subject（此时已为 null）
-              currentSubject?.unsubscribe();
-              console.log('[WS] 错误后清理完成');
-            } catch (e) {
-              console.warn('[WS] 错误后清理失败', e)
-            }
-          })
-        }, // Called if at any point WebSocket API signals some kind of error.
-        complete: () => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          console.log('[WS] 连接关闭');
-          rejectPendingApiRequests('ws connection closed');
-          this.subject = null;
-          this.connectState = 'reconnecting';
-          clearForegroundProbeTimer();
-          this.stopPingLoop();
-          this.lastGatewayAckAt = 0;
-          this.reconnectAfter(5, () => {
-            try {
-              if (epoch !== wsConnectionEpoch) {
-                return;
-              }
-              currentSubject?.unsubscribe();
-            } catch {
-              // ignore
-            }
-          })
-        } // Called when connection is closed (for whatever reason).
-      });
+        }
 
-      this.subject = subject;
+        this.stopPingLoop();
+        if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
+          focusListenersBound = true;
+          const store = this;
+          const updateFocusState = () => {
+            const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+            const isVisible = document.visibilityState !== 'hidden';
+            store.setFocusState(hasFocus && isVisible);
+          };
+          const triggerForegroundRecover = (reason: string) => {
+            if (document.visibilityState !== 'visible') {
+              return;
+            }
+            store.recoverConnectionOnForeground(reason);
+          };
+          window.addEventListener('focus', () => {
+            updateFocusState();
+            triggerForegroundRecover('window-focus');
+          });
+          window.addEventListener('blur', updateFocusState);
+          window.addEventListener('online', () => {
+            triggerForegroundRecover('network-online');
+          });
+          window.addEventListener('pageshow', () => {
+            updateFocusState();
+            triggerForegroundRecover('window-pageshow');
+          });
+          document.addEventListener('visibilitychange', () => {
+            updateFocusState();
+            if (document.visibilityState === 'visible') {
+              triggerForegroundRecover('visibility-visible');
+            }
+          });
+          updateFocusState();
+        }
+        const u: User = {
+          id: '',
+        }
+        // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
+        this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
+
+        // 'ws://localhost:3212/ws/seal'
+        // const subject = webSocket(`ws:${urlBase}/ws/seal`);
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const subject = webSocket(`${protocol}${urlBase}/ws/seal`);
+
+        let isReady = false;
+
+        // 发送协议握手
+        // Opcode.IDENTIFY: 3
+        const user = useUserStore();
+        subject.next({
+          op: 3, body: {
+            token: user.token,
+            observer: this.observerMode,
+          }
+        });
+ 
+        // 保存当前 subject 引用，供错误处理使用
+        const currentSubject = subject;
+
+        subject.subscribe({
+          next: (msg: any) => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            this.markGatewayActivity();
+            // Opcode.READY
+            if (msg.op === 4) {
+              console.log('svr ready', msg);
+              isReady = true
+              this.connectReady(epoch);
+            } else if (msg.op === 0) {
+              // Opcode.EVENT
+              const e = msg as Event;
+              this.eventDispatch(e);
+            } else if (msg.op === 2) {
+              this.handlePong();
+            } else if (msg.op === 6) {
+              this.handleLatencyResult(msg?.body);
+            } else if (apiMap.get(msg.echo)) {
+              const pending = apiMap.get(msg.echo);
+              apiMap.delete(msg.echo);
+              pending?.resolve(msg);
+            }
+          },
+          error: err => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            const reconnectSuppressed = wsReconnectSuppressedEpoch === epoch;
+            if (reconnectSuppressed) {
+              wsReconnectSuppressedEpoch = 0;
+            }
+            console.log('[WS] 连接错误', err);
+            rejectPendingApiRequests('ws connection error');
+            this.subject = null;
+            this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            clearForegroundProbeTimer();
+            this.stopPingLoop();
+            this.lastGatewayAckAt = 0;
+            if (reconnectSuppressed) {
+              try {
+                err.target?.close();
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+              return;
+            }
+            this.reconnectAfter(5, () => {
+              try {
+                if (epoch !== wsConnectionEpoch) {
+                  return;
+                }
+                err.target?.close();
+                // 使用保存的引用而非 this.subject（此时已为 null）
+                currentSubject?.unsubscribe();
+                console.log('[WS] 错误后清理完成');
+              } catch (e) {
+                console.warn('[WS] 错误后清理失败', e)
+              }
+            })
+          }, // Called if at any point WebSocket API signals some kind of error.
+          complete: () => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            const reconnectSuppressed = wsReconnectSuppressedEpoch === epoch;
+            if (reconnectSuppressed) {
+              wsReconnectSuppressedEpoch = 0;
+            }
+            console.log('[WS] 连接关闭');
+            rejectPendingApiRequests('ws connection closed');
+            this.subject = null;
+            this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            clearForegroundProbeTimer();
+            this.stopPingLoop();
+            this.lastGatewayAckAt = 0;
+            if (reconnectSuppressed) {
+              try {
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+              return;
+            }
+            this.reconnectAfter(5, () => {
+              try {
+                if (epoch !== wsConnectionEpoch) {
+                  return;
+                }
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+            })
+          }
+        });
+
+        this.subject = subject;
+      } finally {
+        wsConnectInFlight = false;
+      }
     },
 
     async reconnectAfter(secs: number, beforeConnect?: Function) {
@@ -1046,10 +1100,7 @@ export const useChatStore = defineStore({
 
       if (this.observerMode) {
         await this.initObserverSession();
-        if (_connectResolve) {
-          _connectResolve();
-          _connectResolve = null;
-        }
+        resolvePendingConnectResolvers();
         return;
       }
 
@@ -1061,30 +1112,31 @@ export const useChatStore = defineStore({
       await this.ChannelPrivateList();
       await this.channelMembersCountRefresh();
 
-      if (_connectResolve) {
-        _connectResolve();
-        _connectResolve = null;
-      }
+      resolvePendingConnectResolvers();
     },
 
     /** try to initialize */
     async tryInit() {
-      if (!this.subject) {
-        return new Promise((resolve) => {
-          _connectResolve = resolve;
-          this.connect();
-        });
+      if (this.connectState === 'connected') {
+        return;
       }
+      return new Promise<void>((resolve) => {
+        enqueueConnectResolver(resolve);
+        if (!this.subject && !wsConnectInFlight) {
+          this.connect();
+        }
+      });
     },
 
     async ensureConnectionReady() {
-      if (this.connectState === 'connected') {
+      const isConnected = () => this.connectState === 'connected';
+      if (isConnected()) {
         return;
       }
       if (!this.subject) {
         await this.tryInit();
       }
-      if (this.connectState === 'connected') {
+      if (isConnected()) {
         return;
       }
       await new Promise<void>((resolve) => {

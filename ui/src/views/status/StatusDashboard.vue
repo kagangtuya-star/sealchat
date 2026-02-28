@@ -17,6 +17,12 @@ type ChartMetricKey =
 interface StatusSummary {
   timestamp: number;
   concurrentConnections: number;
+  wsAuthedConnections?: number;
+  wsPreAuthConnections?: number;
+  wsTotalConnections?: number;
+  wsGuestConnections?: number;
+  wsObserverConnections?: number;
+  wsAuthenticatedUsers?: number;
   onlineUsers: number;
   messagesPerMinute: number;
   registeredUsers: number;
@@ -99,7 +105,13 @@ const summaryCards = computed(() => {
   }
   const data = summary.value;
   return [
-    { label: '并发连接', value: formatNumber(data.concurrentConnections), hint: '当前活跃 WebSocket 数' },
+    { label: '并发连接', value: formatNumber(data.concurrentConnections), hint: '采样值：已鉴权 WebSocket 连接数' },
+    { label: 'WS 总连接', value: formatNumber(data.wsTotalConnections), hint: '实时值：已鉴权 + 鉴权前连接' },
+    { label: 'WS 已鉴权', value: formatNumber(data.wsAuthedConnections), hint: '实时值：已完成 IDENTIFY 的连接' },
+    { label: 'WS 鉴权前', value: formatNumber(data.wsPreAuthConnections), hint: '实时值：已升级但未 IDENTIFY 的连接' },
+    { label: 'Guest 连接', value: formatNumber(data.wsGuestConnections), hint: '实时值：空 token 访客连接数' },
+    { label: '观察者连接', value: formatNumber(data.wsObserverConnections), hint: '实时值：observer 模式连接数' },
+    { label: 'WS 鉴权用户', value: formatNumber(data.wsAuthenticatedUsers), hint: '实时值：存在鉴权连接的唯一用户数' },
     { label: '在线用户', value: formatNumber(data.onlineUsers), hint: '120 秒内仍活跃的用户' },
     { label: '消息 / 分钟', value: formatNumber(data.messagesPerMinute), hint: '最近一分钟的消息吞吐' },
     { label: '注册用户', value: formatNumber(data.registeredUsers), hint: '未被禁用的账户数量' },

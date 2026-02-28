@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/contrib/websocket"
@@ -38,6 +40,7 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 type ConnInfo struct {
 	User                  *model.UserModel
 	Conn                  *WsSyncConn
+	ClientAddr            string
 	LastPingTime          int64
 	LastAliveTime         int64
 	LatencyMs             int64
@@ -80,12 +83,24 @@ var (
 	}{
 		lastByChannel: map[string]int64{},
 	}
+	preAuthConnState = struct {
+		total  atomic.Int64
+		byAddr utils.SyncMap[string, *atomic.Int64]
+	}{}
 )
 
 // 连接管理配置常量
 const (
 	// 每用户最大连接数，超出时关闭最旧连接
 	maxConnectionsPerUser = 8
+	// 同来源地址 guest 最大连接数，防止匿名连接风暴
+	maxGuestConnectionsPerAddr = 16
+	// 鉴权前必须完成 identify 的超时（秒）
+	preAuthIdentifyTimeoutSeconds = 10
+	// 全局鉴权前连接上限
+	maxPreAuthConnectionsGlobal = 256
+	// 同来源地址鉴权前连接上限
+	maxPreAuthConnectionsPerAddr = 32
 	// 全局健康检查间隔（秒）
 	healthCheckIntervalSeconds = 60
 	// 连接无心跳最大存活时间（秒）
@@ -99,6 +114,73 @@ const (
 	// 在线态全量兜底广播间隔（秒）
 	channelPresenceFullBroadcastIntervalSeconds = 30
 )
+
+type wsConnectionSnapshot struct {
+	AuthedConnections   int64 `json:"wsAuthedConnections"`
+	PreAuthConnections  int64 `json:"wsPreAuthConnections"`
+	TotalConnections    int64 `json:"wsTotalConnections"`
+	GuestConnections    int64 `json:"wsGuestConnections"`
+	ObserverConnections int64 `json:"wsObserverConnections"`
+	AuthenticatedUsers  int64 `json:"wsAuthenticatedUsers"`
+}
+
+func addPreAuthConnection(addr string) (globalCount int64, addrCount int64) {
+	globalCount = preAuthConnState.total.Add(1)
+	if addr == "" {
+		return globalCount, 0
+	}
+	counter, _ := preAuthConnState.byAddr.LoadOrStore(addr, &atomic.Int64{})
+	addrCount = counter.Add(1)
+	return globalCount, addrCount
+}
+
+func releasePreAuthConnection(addr string) {
+	if next := preAuthConnState.total.Add(-1); next < 0 {
+		preAuthConnState.total.Store(0)
+	}
+	if addr == "" {
+		return
+	}
+	counter, ok := preAuthConnState.byAddr.Load(addr)
+	if !ok || counter == nil {
+		return
+	}
+	if counter.Add(-1) <= 0 {
+		preAuthConnState.byAddr.Delete(addr)
+	}
+}
+
+func getWsConnectionSnapshot() wsConnectionSnapshot {
+	snapshot := wsConnectionSnapshot{
+		PreAuthConnections: preAuthConnState.total.Load(),
+	}
+	connMap := getUserConnInfoMap()
+	if connMap != nil {
+		connMap.Range(func(_ string, userConnMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+			hasConnection := false
+			userConnMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+				if info == nil {
+					return true
+				}
+				snapshot.AuthedConnections++
+				hasConnection = true
+				if info.IsGuest {
+					snapshot.GuestConnections++
+				}
+				if info.IsObserver {
+					snapshot.ObserverConnections++
+				}
+				return true
+			})
+			if hasConnection {
+				snapshot.AuthenticatedUsers++
+			}
+			return true
+		})
+	}
+	snapshot.TotalConnections = snapshot.AuthedConnections + snapshot.PreAuthConnections
+	return snapshot
+}
 
 func shouldBroadcastChannelPresence(channelID string, nowMs int64) bool {
 	if channelID == "" {
@@ -179,7 +261,35 @@ func websocketWorks(app *fiber.App) {
 		"message.context":            {},
 	}
 
-	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
+	normalizeRemoteAddr := func(addr string) string {
+		if addr == "" {
+			return ""
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err == nil && host != "" {
+			return host
+		}
+		return addr
+	}
+
+	countGuestConnectionsByAddr := func(addr string) int {
+		if addr == "" {
+			return 0
+		}
+		count := 0
+		userId2ConnInfo.Range(func(_ string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+			connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+				if info != nil && info.IsGuest && info.ClientAddr == addr {
+					count++
+				}
+				return true
+			})
+			return true
+		})
+		return count
+	}
+
+	clientEnter := func(c *WsSyncConn, body any, clientAddr string) (curUser *model.UserModel, curConnInfo *ConnInfo) {
 		if body != nil {
 			// 有身份信息
 			m, ok := body.(map[string]any)
@@ -206,6 +316,17 @@ func websocketWorks(app *fiber.App) {
 			var err error
 
 			if token == "" {
+				guestConnCount := countGuestConnectionsByAddr(clientAddr)
+				if guestConnCount >= maxGuestConnectionsPerAddr {
+					log.Printf("[WS] guest 来源连接数超限，拒绝连接: addr=%s count=%d", clientAddr, guestConnCount)
+					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+						Op: protocol.OpReady,
+						Body: map[string]any{
+							"errorMsg": "guest connection limit reached",
+						},
+					})
+					return nil, nil
+				}
 				guestID := fmt.Sprintf("guest-%s", utils.NewIDWithLength(12))
 				user = &model.UserModel{
 					Username: "guest",
@@ -215,6 +336,7 @@ func websocketWorks(app *fiber.App) {
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
 				curConnInfo = &ConnInfo{
 					Conn:          c,
+					ClientAddr:    clientAddr,
 					LastPingTime:  time.Now().UnixMilli(),
 					LastAliveTime: time.Now().UnixMilli(),
 					User:          user,
@@ -294,6 +416,7 @@ func websocketWorks(app *fiber.App) {
 
 				curConnInfo = &ConnInfo{
 					Conn:          c,
+					ClientAddr:    clientAddr,
 					LastPingTime:  time.Now().UnixMilli(),
 					LastAliveTime: time.Now().UnixMilli(),
 					User:          user,
@@ -427,8 +550,34 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo *ConnInfo
 		)
 		c := &WsSyncConn{rawConn, sync.RWMutex{}}
+		clientAddr := normalizeRemoteAddr(rawConn.RemoteAddr().String())
+		preAuthReleased := false
+		preAuthGlobalCount, preAuthAddrCount := addPreAuthConnection(clientAddr)
+		setReadDeadline := func(authenticated bool) {
+			timeout := time.Duration(preAuthIdentifyTimeoutSeconds) * time.Second
+			if authenticated {
+				timeout = time.Duration(connectionMaxIdleSeconds) * time.Second
+			}
+			_ = rawConn.SetReadDeadline(time.Now().Add(timeout))
+		}
+		if preAuthGlobalCount > maxPreAuthConnectionsGlobal || preAuthAddrCount > maxPreAuthConnectionsPerAddr {
+			log.Printf("[WS] pre-auth 连接超限，拒绝连接: addr=%s global=%d addrCount=%d", clientAddr, preAuthGlobalCount, preAuthAddrCount)
+			_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+				Op: protocol.OpReady,
+				Body: map[string]any{
+					"errorMsg": "too many pending websocket connections",
+				},
+			})
+			_ = c.Close()
+			releasePreAuthConnection(clientAddr)
+			return
+		}
+		setReadDeadline(false)
 		// 统一在 handler 退出时关闭底层连接，避免 read loop 退出后遗留 CLOSE_WAIT。
 		defer func() {
+			if !preAuthReleased {
+				releasePreAuthConnection(clientAddr)
+			}
 			_ = rawConn.Close()
 		}()
 
@@ -436,6 +585,9 @@ func websocketWorks(app *fiber.App) {
 		rawConn.SetPongHandler(func(appData string) error {
 			if curConnInfo != nil {
 				curConnInfo.LastAliveTime = time.Now().UnixMilli()
+			}
+			if curUser != nil {
+				setReadDeadline(true)
 			}
 			return nil
 		})
@@ -472,6 +624,7 @@ func websocketWorks(app *fiber.App) {
 				// 解析错误或超时
 				break
 			}
+			setReadDeadline(curUser != nil)
 			if curConnInfo != nil {
 				curConnInfo.LastAliveTime = time.Now().UnixMilli()
 			}
@@ -483,17 +636,40 @@ func websocketWorks(app *fiber.App) {
 				// 信令
 				switch gatewayMsg.Op {
 				case protocol.OpIdentify:
+					if curUser != nil {
+						log.Printf("[WS] duplicate identify from %s user=%s, ignored", clientAddr, curUser.ID)
+						_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+							Op: protocol.OpReady,
+							Body: map[string]any{
+								"errorMsg": "already identified",
+							},
+						})
+						solved = true
+						break
+					}
 					fmt.Println("新客户端接入")
-					curUser, curConnInfo = clientEnter(c, gatewayMsg.Body)
+					curUser, curConnInfo = clientEnter(c, gatewayMsg.Body, clientAddr)
 					if curUser == nil {
 						_ = c.Close()
 						return
 					}
+					if !preAuthReleased {
+						releasePreAuthConnection(clientAddr)
+						preAuthReleased = true
+					}
+					setReadDeadline(true)
 					solved = true
 				case protocol.OpPing:
 					if curUser == nil {
-						solved = true
-						continue
+						log.Printf("[WS] op ping before identify from %s, closing", clientAddr)
+						_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+							Op: protocol.OpReady,
+							Body: map[string]any{
+								"errorMsg": "identify required",
+							},
+						})
+						_ = c.Close()
+						return
 					}
 					now := time.Now().UnixMilli()
 					var activeChannel string
@@ -549,8 +725,15 @@ func websocketWorks(app *fiber.App) {
 					solved = true
 				case protocol.OpLatencyProbe:
 					if curUser == nil {
-						solved = true
-						continue
+						log.Printf("[WS] op latency probe before identify from %s, closing", clientAddr)
+						_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+							Op: protocol.OpReady,
+							Body: map[string]any{
+								"errorMsg": "identify required",
+							},
+						})
+						_ = c.Close()
+						return
 					}
 					latencyBody := protocol.LatencyPayload{}
 					if bodyMap, ok := gatewayMsg.Body.(map[string]any); ok {
@@ -578,6 +761,17 @@ func websocketWorks(app *fiber.App) {
 			}
 
 			if !solved {
+				if curUser == nil {
+					log.Printf("[WS] api payload before identify from %s, closing", clientAddr)
+					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+						Op: protocol.OpReady,
+						Body: map[string]any{
+							"errorMsg": "identify required",
+						},
+					})
+					_ = c.Close()
+					return
+				}
 				apiMsg := ApiMsgPayload{}
 				err := json.Unmarshal(msg, &apiMsg)
 
@@ -860,26 +1054,39 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo.TypingOrderKey = 0
 		}
 
-		// 连接断开，后续封装成函数
-		if collector := metrics.Get(); collector != nil && curUser != nil {
-			collector.RecordConnectionClosed(curUser.ID)
-		}
+		// 连接断开时删除该 conn 在所有用户映射中的残留，避免历史脏数据泄漏。
+		affectedUserIDs := map[string]struct{}{}
 		userId2ConnInfo.Range(func(key string, value *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-			exists := value.Delete(c)
-			if exists {
-				return false
+			if value.Delete(c) {
+				affectedUserIDs[key] = struct{}{}
 			}
 			return true
 		})
+		if collector := metrics.Get(); collector != nil {
+			for userID := range affectedUserIDs {
+				collector.RecordConnectionClosed(userID)
+			}
+		}
+		presenceCleanupUsers := affectedUserIDs
+		if len(presenceCleanupUsers) == 0 && curUser != nil {
+			presenceCleanupUsers = map[string]struct{}{curUser.ID: {}}
+		}
 		ctx := &ChatContext{
 			ChannelUsersMap: channelUsersMap,
 			UserId2ConnInfo: userId2ConnInfo,
 		}
 		channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
-			if curUser != nil && value.Exists(curUser.ID) {
-				if !userHasChannelConnection(curUser.ID, chId, userId2ConnInfo, nil) {
-					value.Delete(curUser.ID)
+			changed := false
+			for userID := range presenceCleanupUsers {
+				if !value.Exists(userID) {
+					continue
 				}
+				if !userHasChannelConnection(userID, chId, userId2ConnInfo, nil) {
+					value.Delete(userID)
+					changed = true
+				}
+			}
+			if changed {
 				ctx.BroadcastChannelPresence(chId)
 			}
 			return true

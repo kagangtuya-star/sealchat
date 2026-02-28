@@ -4207,6 +4207,11 @@ const handleRetrySend = () => {
   color: var(--chat-text-secondary);
 }
 
+.chat--has-background .chat-item--ooc .right .content {
+  color: color-mix(in srgb, var(--chat-ooc-text, var(--chat-text-secondary, #6b7280)) 80%, transparent);
+  font-size: calc(var(--chat-font-size, 0.95rem) - 2.5px);
+}
+
 /* @ mention capsule styles */
 .mention-capsule {
   display: inline;
