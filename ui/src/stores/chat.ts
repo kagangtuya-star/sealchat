@@ -157,6 +157,7 @@ interface ChatState {
   channelIdentityFavorites: Record<string, string[]>;
   channelIdentityMembership: Record<string, Record<string, string[]>>;
   channelIdentityLoadedAt: Record<string, number>;
+  channelIdentityRecentSpokenAt: Record<string, Record<string, number>>;
 
   // 新增状态
   icMode: 'ic' | 'ooc';
@@ -248,6 +249,7 @@ interface PendingApiRequest {
 const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const REVOKED_DRAFT_CACHE_MAX = 240;
 const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
+const CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY = 'sealchat_identity_recent_spoken_v1';
 const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
 const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
   const trimmed = String(content || '').trim();
@@ -335,6 +337,59 @@ const persistRevokedDraftsToSessionStorage = (drafts: Record<string, RevokedDraf
     sessionStorage.setItem(REVOKED_DRAFT_SESSION_KEY, JSON.stringify(drafts));
   } catch {
     // ignore storage quota / privacy mode errors
+  }
+};
+const normalizeIdentityRecentSpokenMap = (raw: any): Record<string, Record<string, number>> => {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const normalized: Record<string, Record<string, number>> = {};
+  Object.entries(raw as Record<string, any>).forEach(([channelId, channelData]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId || !channelData || typeof channelData !== 'object') {
+      return;
+    }
+    const perChannel: Record<string, number> = {};
+    Object.entries(channelData as Record<string, any>).forEach(([identityId, value]) => {
+      const normalizedIdentityId = String(identityId || '').trim();
+      const timestamp = Number(value);
+      if (!normalizedIdentityId || !Number.isFinite(timestamp) || timestamp <= 0) {
+        return;
+      }
+      perChannel[normalizedIdentityId] = Math.floor(timestamp);
+    });
+    if (Object.keys(perChannel).length > 0) {
+      normalized[normalizedChannelId] = perChannel;
+    }
+  });
+  return normalized;
+};
+const loadIdentityRecentSpokenFromStorage = (): Record<string, Record<string, number>> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = localStorage.getItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    return normalizeIdentityRecentSpokenMap(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+};
+const persistIdentityRecentSpokenToStorage = (value: Record<string, Record<string, number>>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (!value || Object.keys(value).length === 0) {
+      localStorage.removeItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore storage failures
   }
 };
 
@@ -660,6 +715,7 @@ export const useChatStore = defineStore({
     channelIdentityFavorites: {},
     channelIdentityMembership: {},
     channelIdentityLoadedAt: {},
+    channelIdentityRecentSpokenAt: loadIdentityRecentSpokenFromStorage(),
 
     // 新增状态初始值
     icMode: 'ic',
@@ -1832,6 +1888,75 @@ export const useChatStore = defineStore({
       return this.getActiveIdentity(channelId)?.id || '';
     },
 
+    getIdentityLastSpokenAt(channelId?: string, identityId?: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedIdentityId = String(identityId || '').trim();
+      if (!normalizedChannelId || !normalizedIdentityId) {
+        return 0;
+      }
+      return this.channelIdentityRecentSpokenAt?.[normalizedChannelId]?.[normalizedIdentityId] || 0;
+    },
+
+    recordIdentitySpoken(channelId: string, identityId: string, spokenAt?: number) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedIdentityId = String(identityId || '').trim();
+      if (!normalizedChannelId || !normalizedIdentityId) {
+        return;
+      }
+      const resolvedAt = Number(spokenAt ?? Date.now());
+      if (!Number.isFinite(resolvedAt) || resolvedAt <= 0) {
+        return;
+      }
+      const perChannel = {
+        ...(this.channelIdentityRecentSpokenAt[normalizedChannelId] || {}),
+      };
+      const current = perChannel[normalizedIdentityId] || 0;
+      const next = Math.floor(resolvedAt);
+      if (current >= next) {
+        return;
+      }
+      perChannel[normalizedIdentityId] = next;
+      this.channelIdentityRecentSpokenAt = {
+        ...this.channelIdentityRecentSpokenAt,
+        [normalizedChannelId]: perChannel,
+      };
+      persistIdentityRecentSpokenToStorage(this.channelIdentityRecentSpokenAt);
+    },
+
+    pruneIdentityRecentSpoken(channelId: string, validIdentityIds?: string[]) {
+      const normalizedChannelId = String(channelId || '').trim();
+      if (!normalizedChannelId) {
+        return;
+      }
+      const current = this.channelIdentityRecentSpokenAt[normalizedChannelId];
+      if (!current) {
+        return;
+      }
+      const validSet = new Set(
+        (Array.isArray(validIdentityIds) ? validIdentityIds : [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => id.length > 0),
+      );
+      const nextEntries = Object.entries(current).filter(([identityId, spokenAt]) => {
+        if (!validSet.size) {
+          return false;
+        }
+        if (!validSet.has(identityId)) {
+          return false;
+        }
+        const ts = Number(spokenAt);
+        return Number.isFinite(ts) && ts > 0;
+      });
+      const nextMap = { ...this.channelIdentityRecentSpokenAt };
+      if (!nextEntries.length) {
+        delete nextMap[normalizedChannelId];
+      } else {
+        nextMap[normalizedChannelId] = Object.fromEntries(nextEntries);
+      }
+      this.channelIdentityRecentSpokenAt = nextMap;
+      persistIdentityRecentSpokenToStorage(this.channelIdentityRecentSpokenAt);
+    },
+
     setActiveIdentity(channelId: string, identityId: string) {
       this.activeChannelIdentity = {
         ...this.activeChannelIdentity,
@@ -1888,6 +2013,7 @@ export const useChatStore = defineStore({
         ...this.channelIdentities,
         [identity.channelId]: list,
       };
+      this.pruneIdentityRecentSpoken(identity.channelId, list.map(item => item.id));
       if (identity.isDefault || !this.activeChannelIdentity[identity.channelId]) {
         this.setActiveIdentity(identity.channelId, identity.id);
       }
@@ -1910,6 +2036,7 @@ export const useChatStore = defineStore({
         ...this.channelIdentities,
         [channelId]: list,
       };
+      this.pruneIdentityRecentSpoken(channelId, list.map(item => item.id));
       if (this.activeChannelIdentity[channelId] === identityId) {
         const fallback = list.find(item => item.isDefault) || list[0];
         this.setActiveIdentity(channelId, fallback?.id || '');
@@ -1930,6 +2057,7 @@ export const useChatStore = defineStore({
       }
       if (!force && this.channelIdentities[channelId]) {
         const items = this.channelIdentities[channelId];
+        this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
@@ -1979,6 +2107,7 @@ export const useChatStore = defineStore({
           ...this.activeChannelIdentity,
           [channelId]: activeId,
         };
+        this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         return items;
       })();
       inFlightChannelIdentityLoads.set(channelId, task);

@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount } from 'vue';
+import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useUserStore } from '@/stores/user';
@@ -77,6 +77,23 @@ const filteredIdentities = computed(() => {
     return folders.some(folderId => favoriteSet.has(folderId));
   });
 });
+const MAX_VISIBLE_ROLE_COUNT = 9;
+const sortedIdentities = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const list = filteredIdentities.value.slice();
+  if (!channelId || list.length <= 1) {
+    return list;
+  }
+  return list.sort((a, b) => {
+    const aLast = chat.getIdentityLastSpokenAt(channelId, a.id);
+    const bLast = chat.getIdentityLastSpokenAt(channelId, b.id);
+    if (aLast !== bLast) {
+      return aLast - bLast;
+    }
+    return (a.sortOrder || 0) - (b.sortOrder || 0);
+  });
+});
+const identityOptionCount = computed(() => Math.max(sortedIdentities.value.length, 1));
 
 const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.value));
 
@@ -121,7 +138,7 @@ const avatarSrc = computed(() => {
 });
 
 const options = computed<DropdownOption[]>(() => {
-  const list = filteredIdentities.value.map<DropdownOption>((item) => ({
+  const list = sortedIdentities.value.map<DropdownOption>((item) => ({
     key: item.id,
     label: item.displayName,
     icon: () => (
@@ -315,6 +332,20 @@ const handleOpenConfig = () => {
 };
 
 const isNightPalette = computed(() => display.palette === 'night');
+const dropdownVisible = ref(false);
+const dropdownOverlayClass = computed(() => (
+  isNightPalette.value
+    ? 'identity-dropdown-overlay identity-dropdown--night'
+    : 'identity-dropdown-overlay'
+));
+const dropdownMenuClass = computed(() => (
+  isNightPalette.value
+    ? 'identity-dropdown-menu identity-dropdown-menu--night'
+    : 'identity-dropdown-menu'
+));
+const dropdownMenuProps = () => ({
+  class: dropdownMenuClass.value,
+});
 
 // Avatar setup badge logic
 const showAvatarSetupBadge = computed(() => {
@@ -329,6 +360,80 @@ const showAvatarSetupBadge = computed(() => {
 const handleAvatarSetup = () => {
   emit('avatar-setup');
 };
+
+const getDropdownMenuElement = (): HTMLElement | null => {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const matches = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '.identity-dropdown-menu, .identity-dropdown-overlay .n-dropdown-menu, .identity-dropdown-overlay.n-dropdown-menu',
+    ),
+  ).filter(node => node.querySelector('.identity-option-node'));
+  return matches[matches.length - 1] ?? null;
+};
+
+const ensureDropdownMenuHooks = (menuEl: HTMLElement) => {
+  menuEl.classList.add('identity-dropdown-menu');
+  menuEl.classList.toggle('identity-dropdown-menu--night', isNightPalette.value);
+
+  const followerEl = menuEl.closest<HTMLElement>('.v-binder-follower-content');
+  if (!followerEl) {
+    return;
+  }
+  followerEl.classList.add('identity-dropdown-overlay');
+  followerEl.classList.toggle('identity-dropdown--night', isNightPalette.value);
+};
+
+const applyDropdownMenuLayout = (): boolean => {
+  const menuEl = getDropdownMenuElement();
+  if (!menuEl) {
+    return false;
+  }
+  ensureDropdownMenuHooks(menuEl);
+  const optionEls = Array.from(menuEl.querySelectorAll<HTMLElement>('.n-dropdown-option'));
+  const rowHeight = optionEls[0]?.offsetHeight || 36;
+  const dividerHeight = menuEl.querySelector<HTMLElement>('.n-dropdown-divider')?.offsetHeight || 8;
+  const visibleRoleCount = Math.min(identityOptionCount.value, MAX_VISIBLE_ROLE_COUNT);
+  const actionCount = 1 + (canManageIdentities.value ? 2 : 0); // toggle + optional create/manage
+  const menuPadding = 8;
+  const maxHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
+  menuEl.style.maxHeight = `${maxHeight}px`;
+  menuEl.style.overflowY = identityOptionCount.value > MAX_VISIBLE_ROLE_COUNT ? 'auto' : 'hidden';
+  menuEl.scrollTop = menuEl.scrollHeight;
+  return true;
+};
+
+const syncDropdownMenuLayout = (attempt = 0) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      const applied = applyDropdownMenuLayout();
+      if (!applied && attempt < 8) {
+        window.setTimeout(() => {
+          syncDropdownMenuLayout(attempt + 1);
+        }, 16 * (attempt + 1));
+      }
+    });
+  });
+};
+
+const handleDropdownShowUpdate = (show: boolean) => {
+  dropdownVisible.value = show;
+  if (show) {
+    syncDropdownMenuLayout();
+  }
+};
+
+const sortedIdentitySignature = computed(() => sortedIdentities.value.map(item => item.id).join('|'));
+watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value], ([visible]) => {
+  if (!visible) {
+    return;
+  }
+  syncDropdownMenuLayout();
+});
 </script>
 
 <template>
@@ -376,7 +481,9 @@ const handleAvatarSetup = () => {
       placement="top-start"
       :disabled="!resolvedChannelId || disabled"
       :render-option="renderOption"
-      :overlay-class="isNightPalette ? 'identity-dropdown--night' : undefined"
+      :menu-props="dropdownMenuProps"
+      :content-class="dropdownOverlayClass"
+      @update:show="handleDropdownShowUpdate"
       @select="handleSelect"
     >
       <n-button
@@ -493,7 +600,7 @@ const handleAvatarSetup = () => {
 
 .identity-option--action {
   font-weight: 500;
-  color: #1f2937;
+  color: var(--sc-text-primary, #1f2937);
 }
 
 .identity-option-node {
@@ -509,23 +616,49 @@ const handleAvatarSetup = () => {
   font-weight: 500;
 }
 
-:global(.identity-dropdown--night .n-dropdown-menu) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night) {
   background-color: #0f172a;
   color: rgba(248, 250, 252, 0.95);
 }
 
-:global(.identity-dropdown--night .n-dropdown-option) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option) {
   color: rgba(248, 250, 252, 0.95);
 }
 
-:global(.identity-dropdown--night .n-dropdown-option:hover),
-:global(.identity-dropdown--night .n-dropdown-option.n-dropdown-option--active) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option:hover),
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-option.n-dropdown-option--active) {
   background-color: rgba(59, 130, 246, 0.25);
   color: #fff;
 }
 
-:global(.identity-dropdown--night .n-dropdown-divider) {
+:global(.identity-dropdown-menu.identity-dropdown-menu--night .n-dropdown-divider) {
   background-color: rgba(148, 163, 184, 0.35);
+}
+
+:global(.identity-dropdown-menu) {
+  max-height: calc(36px * 11 + 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb, var(--sc-border-mute, rgba(148, 163, 184, 0.45))) transparent;
+}
+
+:global(.identity-dropdown-menu::-webkit-scrollbar) {
+  width: var(--sc-scrollbar-size, 4px);
+  height: var(--sc-scrollbar-size, 4px);
+}
+
+:global(.identity-dropdown-menu::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:global(.identity-dropdown-menu::-webkit-scrollbar-thumb) {
+  background-color: var(--sc-scrollbar-thumb, var(--sc-border-mute, rgba(148, 163, 184, 0.45)));
+  border-radius: 999px;
+}
+
+:global(.identity-dropdown-menu::-webkit-scrollbar-thumb:hover) {
+  background-color: var(--sc-scrollbar-thumb-hover, var(--sc-border-strong, rgba(148, 163, 184, 0.6)));
 }
 
 /* Wrapper for identity switcher and warning */

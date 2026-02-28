@@ -5978,9 +5978,29 @@ const applyReorderPayload = (payload: any) => {
   sortRowsByDisplayOrder();
 };
 
+const recordIdentitySpokenFromMessage = (message?: Message) => {
+  if (!message) {
+    return;
+  }
+  const identityId = resolveMessageIdentityId(message);
+  if (!identityId) {
+    return;
+  }
+  const channelId = String((message as any)?.channel?.id || chat.curChannel?.id || '').trim();
+  if (!channelId) {
+    return;
+  }
+  const spokenAt = normalizeTimestamp((message as any)?.createdAt) ?? Date.now();
+  chat.recordIdentitySpoken(channelId, identityId, spokenAt);
+};
+
 const normalizeMessageList = (items: any[] = []): Message[] =>
   items
-    .map((item) => normalizeMessageShape(item))
+    .map((item) => {
+      const normalized = normalizeMessageShape(item);
+      recordIdentitySpokenFromMessage(normalized);
+      return normalized;
+    })
     .filter((item) => !(item as any)?.is_deleted);
 
 const upsertMessage = (incoming?: Message) => {
@@ -9437,10 +9457,14 @@ const send = throttle(async () => {
     quote: replyTo,
   };
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
+  const activeChannelId = String(chat.curChannel?.id || '').trim();
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
     (tmpMsg as any).senderRoleId = activeIdentity.id;
     (tmpMsg as any).sender_role_id = activeIdentity.id;
+    if (activeChannelId) {
+      chat.recordIdentitySpoken(activeChannelId, activeIdentity.id, now);
+    }
     if (!tmpMsg.identity) {
       tmpMsg.identity = {
         id: activeIdentity.id,
@@ -9924,6 +9948,15 @@ chatEvent.on('message-created', (e?: Event) => {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  const incomingIdentityId = resolveMessageIdentityId(incoming);
+  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || '').trim();
+  if (incomingChannelId && incomingIdentityId) {
+    chat.recordIdentitySpoken(
+      incomingChannelId,
+      incomingIdentityId,
+      normalizeTimestamp(incoming.createdAt) ?? Date.now(),
+    );
+  }
   if (hasCardRefreshCommand(incoming.content || '')) {
     scheduleCharacterSheetRefresh();
   }
