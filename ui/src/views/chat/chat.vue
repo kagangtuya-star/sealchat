@@ -13707,6 +13707,10 @@ onBeforeUnmount(() => {
   background-color: var(--chat-stage-bg, var(--sc-bg-surface));
 }
 
+.chat--layout-bubble.chat--has-background .message-row {
+  background-color: transparent;
+}
+
 :root[data-custom-theme='true'] .chat--layout-bubble .message-row {
   background-color: transparent;
 }
@@ -13889,6 +13893,12 @@ onBeforeUnmount(() => {
   letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
+.chat.chat--has-background {
+  background-color: transparent;
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.28)) 70%, transparent);
+  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
+}
+
 .favorite-bar-wrapper {
   margin-top: 0.75rem;
   margin-bottom: 0.5rem;
@@ -13898,6 +13908,12 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 0;
   box-shadow: 0 22px 42px rgba(0, 0, 0, 0.6);
+}
+
+.chat.chat--palette-night.chat--has-background {
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.22)) 78%, transparent);
+  border-radius: 0;
+  box-shadow: 0 18px 34px color-mix(in srgb, #000 34%, transparent);
 }
 
 .chat::-webkit-scrollbar {
@@ -13965,11 +13981,13 @@ onBeforeUnmount(() => {
 
 .chat--has-background {
   /* 频道背景开启时，预览/编辑框体使用半透明 tone 混合色，确保能随背景调整可见变化 */
-  --chat-live-preview-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 38%, transparent);
-  --chat-live-preview-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 38%, transparent);
-  --chat-editing-preview-bg: color-mix(in srgb, var(--chat-preview-bg, var(--chat-ic-bg)) 38%, transparent);
-  --chat-editing-preview-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 42%, transparent);
-  --chat-editing-preview-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 42%, transparent);
+  --chat-bubble-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 34%, transparent);
+  --chat-bubble-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 34%, transparent);
+  --chat-live-preview-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-bubble-ooc-bg);
+  --chat-editing-preview-bg: color-mix(in srgb, var(--chat-preview-bg, var(--chat-ic-bg)) 34%, transparent);
+  --chat-editing-preview-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-bubble-ooc-bg);
   --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
   --chat-live-preview-ic-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 18%, transparent);
   --chat-live-preview-ooc-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 16%, transparent);

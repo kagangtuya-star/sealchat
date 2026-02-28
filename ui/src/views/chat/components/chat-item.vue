@@ -3504,7 +3504,7 @@ const handleRetrySend = () => {
   max-width: 100%;
   padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
   border-radius: var(--chat-message-radius, 0.85rem);
-  background: var(--chat-ic-bg, #f5f5f5);
+  background: var(--chat-message-ic-bg, var(--chat-ic-bg, #f5f5f5));
   color: var(--chat-text-primary, #111827);
   text-align: left;
   border: none;
@@ -3536,6 +3536,13 @@ const handleRetrySend = () => {
   border-radius: 0.85rem;
   padding: calc(var(--chat-message-padding-y, 0.85rem) * 0.8)
     calc(var(--chat-message-padding-x, 1.1rem) * 0.95);
+}
+
+.chat--has-background .chat-item--layout-bubble > .right > .content {
+  --chat-message-ic-bg: var(--chat-bubble-ic-bg, color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 34%, transparent));
+  background: var(--chat-message-ic-bg);
+  border: 1px solid color-mix(in srgb, var(--chat-bubble-border, rgba(15, 23, 42, 0.08)) 70%, transparent);
+  backdrop-filter: blur(4px);
 }
 
 .chat-item--layout-bubble.chat-item--self {
@@ -4147,10 +4154,16 @@ const handleRetrySend = () => {
 
 /* Tone 样式 */
 .chat-item--ooc .right .content {
-  background: var(--chat-ooc-bg, rgba(156, 163, 175, 0.1));
+  background: var(--chat-message-ooc-bg, var(--chat-ooc-bg, rgba(156, 163, 175, 0.1)));
   border: none;
   color: var(--chat-ooc-text, var(--chat-text-secondary, #6b7280));
   font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
+}
+
+.chat--has-background .chat-item--layout-bubble.chat-item--ooc .right .content {
+  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, color-mix(in srgb, var(--chat-ooc-bg, #ffffff) 34%, transparent));
+  background: var(--chat-message-ooc-bg);
+  border: 1px solid color-mix(in srgb, var(--chat-ooc-border, rgba(148, 163, 184, 0.35)) 72%, transparent);
 }
 
 .chat-item--archived {
