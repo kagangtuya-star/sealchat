@@ -6,9 +6,9 @@ import { useUserStore } from '@/stores/user';
 import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
+import type { DropdownOption, DropdownMixedOption, DropdownRenderOption } from 'naive-ui';
 import { NDropdown, NButton, NIcon, NTooltip, NPopover } from 'naive-ui';
-import { Plus, Star, AlertTriangle, Camera } from '@vicons/tabler';
+import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 import { useI18n } from 'vue-i18n';
 
@@ -109,9 +109,14 @@ const displayColor = computed(() => activeIdentity.value?.color || '');
 const isMobile = ref(false);
 const MOBILE_BREAKPOINT = 768;
 const MAX_NAME_LENGTH_MOBILE = 4;
+const MOBILE_DROPDOWN_VIEWPORT_RATIO = 0.62;
 
 const updateIsMobile = () => {
-  isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT;
+  const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
+  const isCoarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches ?? false;
+  const hasTouchPoints = (navigator?.maxTouchPoints || 0) > 0;
+  const isMobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator?.userAgent || '');
+  isMobile.value = isNarrowViewport || isCoarsePointer || (hasTouchPoints && isMobileUa);
 };
 
 // Displayed name: on mobile, if name exceeds 4 characters, show "切换" instead
@@ -123,21 +128,74 @@ const displayedButtonLabel = computed(() => {
   return name;
 });
 
-// Setup resize listener for mobile detection
-
-onMounted(() => {
-  updateIsMobile();
-  window.addEventListener('resize', updateIsMobile);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateIsMobile);
-});
 const avatarSrc = computed(() => {
   return buildAttachmentUrl(activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
 });
+const toggleActionLabel = computed(() => (
+  filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
+));
+const renderActionIconByKey = (key: string) => {
+  if (key === '__toggle') {
+    return (
+      <NIcon size={18}>
+        {filterMode.value === 'favorites' ? <LayoutList /> : <Star />}
+      </NIcon>
+    );
+  }
+  if (key === '__create') {
+    return (
+      <NIcon size={18}>
+        <Plus />
+      </NIcon>
+    );
+  }
+  return (
+    <NIcon size={18}>
+      <Settings />
+    </NIcon>
+  );
+};
 
-const options = computed<DropdownOption[]>(() => {
+const renderMobileActionRow = () => (
+  <div class="identity-action-bar-inline" onMousedown={consumeDropdownActionPointer} onClick={consumeDropdownActionPointer}>
+    <button
+      type="button"
+      class="identity-action-bar-inline__btn"
+      title={toggleActionLabel.value}
+      aria-label={toggleActionLabel.value}
+      onMousedown={consumeDropdownActionPointer}
+      onClick={handleMobileToggleAction}
+    >
+      {renderActionIconByKey('__toggle')}
+    </button>
+    {canManageIdentities.value ? (
+      <>
+        <button
+          type="button"
+          class="identity-action-bar-inline__btn"
+          title="创建新角色"
+          aria-label="创建新角色"
+          onMousedown={consumeDropdownActionPointer}
+          onClick={handleMobileCreateAction}
+        >
+          {renderActionIconByKey('__create')}
+        </button>
+        <button
+          type="button"
+          class="identity-action-bar-inline__btn"
+          title="管理角色"
+          aria-label="管理角色"
+          onMousedown={consumeDropdownActionPointer}
+          onClick={handleMobileManageAction}
+        >
+          {renderActionIconByKey('__manage')}
+        </button>
+      </>
+    ) : null}
+  </div>
+);
+
+const options = computed<DropdownMixedOption[]>(() => {
   const list = sortedIdentities.value.map<DropdownOption>((item) => ({
     key: item.id,
     label: item.displayName,
@@ -158,45 +216,108 @@ const options = computed<DropdownOption[]>(() => {
       disabled: true,
     });
   }
-  const actionLabel = filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色';
-  const result: DropdownOption[] = [
+  const result: DropdownMixedOption[] = [
     ...list,
     { type: 'divider', key: '__divider' },
-    {
-      key: '__toggle',
-      label: actionLabel,
-    },
   ];
+  if (isMobile.value) {
+    result.push({
+      type: 'render',
+      key: '__mobile_actions',
+      render: renderMobileActionRow,
+      props: {
+        class: 'identity-action-row-inline',
+      },
+    });
+    return result;
+  }
+  result.push({
+    key: '__toggle',
+    label: toggleActionLabel.value,
+    class: 'identity-option identity-option--action identity-action identity-action--toggle',
+    icon: () => renderActionIconByKey('__toggle'),
+  });
   if (canManageIdentities.value) {
     result.push(
       {
         key: '__create',
         label: '创建新角色',
-        icon: () => (
-          <NIcon size={18}>
-            <Plus />
-          </NIcon>
-        ),
+        class: 'identity-option identity-option--action identity-action identity-action--create',
+        icon: () => renderActionIconByKey('__create'),
       },
       {
         key: '__manage',
         label: '管理角色',
+        class: 'identity-option identity-option--action identity-action identity-action--manage',
+        icon: () => renderActionIconByKey('__manage'),
       },
     );
   }
   return result;
 });
 
+const keepDropdownOpenAfterToggle = ref(false);
+const consumeDropdownActionPointer = (event: MouseEvent) => {
+  event.preventDefault();
+  event.stopPropagation();
+};
+const applyToggleFilterMode = (keepOpenAfterSelect = false) => {
+  if (favoriteFolderIds.value.length) {
+    filterMode.value = filterMode.value === 'favorites' ? 'all' : 'favorites';
+  } else {
+    filterMode.value = 'all';
+  }
+  keepDropdownOpenAfterToggle.value = keepOpenAfterSelect;
+  if (dropdownVisible.value) {
+    syncDropdownMenuLayout();
+  }
+};
+const handleMobileToggleAction = (event: MouseEvent) => {
+  consumeDropdownActionPointer(event);
+  applyToggleFilterMode(false);
+};
+const handleMobileCreateAction = (event: MouseEvent) => {
+  consumeDropdownActionPointer(event);
+  dropdownVisible.value = false;
+  emit('create');
+};
+const handleMobileManageAction = (event: MouseEvent) => {
+  consumeDropdownActionPointer(event);
+  dropdownVisible.value = false;
+  emit('manage');
+};
+
 const renderOption: DropdownRenderOption = ({ node, option }) => {
   if (option.key === '__divider') {
     return node;
   }
-  if (option.key === '__divider') {
-    return node;
+  if (option.key === '__create' || option.key === '__manage' || option.key === '__toggle') {
+    const label = String(option.label || '');
+    const actionKey = String(option.key || '');
+    return cloneVNode(
+      node,
+      {
+        class: [node.props?.class, 'identity-option-node', 'identity-option-node--action'],
+      },
+      {
+        default: () => (
+          <div
+            class="identity-action-option"
+            title={label}
+            aria-label={label}
+          >
+            <span class="identity-action-option__icon">
+              {renderActionIconByKey(actionKey)}
+            </span>
+            <span class="identity-action-option__text">{label}</span>
+          </div>
+        ),
+      },
+    );
   }
-  if (option.key === '__create' || option.key === '__manage' || option.key === '__toggle' || option.key === '__placeholder') {
+  if (option.key === '__placeholder') {
     return cloneVNode(node, {
-      class: [node.props?.class, 'identity-option-node', 'identity-option-node--action'],
+      class: [node.props?.class, 'identity-option-node', 'identity-option-node--placeholder'],
     });
   }
   const color = (option as any).extra as string | undefined;
@@ -231,11 +352,10 @@ const handleSelect = async (key: string | number) => {
     return;
   }
   if (key === '__toggle') {
-    if (favoriteFolderIds.value.length) {
-      filterMode.value = filterMode.value === 'favorites' ? 'all' : 'favorites';
-    } else {
-      filterMode.value = 'all';
-    }
+    applyToggleFilterMode(true);
+    return;
+  }
+  if (key === '__mobile_actions') {
     return;
   }
   if (key === '__placeholder') {
@@ -395,12 +515,25 @@ const applyDropdownMenuLayout = (): boolean => {
   const rowHeight = optionEls[0]?.offsetHeight || 36;
   const dividerHeight = menuEl.querySelector<HTMLElement>('.n-dropdown-divider')?.offsetHeight || 8;
   const visibleRoleCount = Math.min(identityOptionCount.value, MAX_VISIBLE_ROLE_COUNT);
-  const actionCount = 1 + (canManageIdentities.value ? 2 : 0); // toggle + optional create/manage
+  const actionCount = isMobile.value ? 1 : (1 + (canManageIdentities.value ? 2 : 0)); // mobile action bar or desktop actions
   const menuPadding = 8;
-  const maxHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
+  const desiredHeight = Math.ceil(rowHeight * visibleRoleCount + rowHeight * actionCount + dividerHeight + menuPadding);
+  const viewportHeight = Math.max(
+    320,
+    Math.floor(window.visualViewport?.height || window.innerHeight || 0),
+  );
+  const mobileMaxHeight = Math.max(
+    rowHeight * 4,
+    Math.floor(viewportHeight * MOBILE_DROPDOWN_VIEWPORT_RATIO) - 12,
+  );
+  const maxHeight = isMobile.value ? Math.min(desiredHeight, mobileMaxHeight) : desiredHeight;
+  const shouldScroll = identityOptionCount.value > MAX_VISIBLE_ROLE_COUNT || maxHeight < desiredHeight;
+  menuEl.classList.toggle('identity-dropdown-menu--mobile', isMobile.value);
   menuEl.style.maxHeight = `${maxHeight}px`;
-  menuEl.style.overflowY = identityOptionCount.value > MAX_VISIBLE_ROLE_COUNT ? 'auto' : 'hidden';
-  menuEl.scrollTop = menuEl.scrollHeight;
+  menuEl.style.overflowY = shouldScroll ? 'auto' : 'hidden';
+  if (shouldScroll) {
+    menuEl.scrollTop = menuEl.scrollHeight;
+  }
   return true;
 };
 
@@ -421,14 +554,39 @@ const syncDropdownMenuLayout = (attempt = 0) => {
 };
 
 const handleDropdownShowUpdate = (show: boolean) => {
+  if (!show && keepDropdownOpenAfterToggle.value) {
+    keepDropdownOpenAfterToggle.value = false;
+    dropdownVisible.value = true;
+    syncDropdownMenuLayout();
+    return;
+  }
+  keepDropdownOpenAfterToggle.value = false;
   dropdownVisible.value = show;
   if (show) {
     syncDropdownMenuLayout();
   }
 };
 
+const handleViewportResize = () => {
+  updateIsMobile();
+  if (dropdownVisible.value) {
+    syncDropdownMenuLayout();
+  }
+};
+
+onMounted(() => {
+  updateIsMobile();
+  window.addEventListener('resize', handleViewportResize);
+  window.visualViewport?.addEventListener('resize', handleViewportResize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleViewportResize);
+  window.visualViewport?.removeEventListener('resize', handleViewportResize);
+});
+
 const sortedIdentitySignature = computed(() => sortedIdentities.value.map(item => item.id).join('|'));
-watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value], ([visible]) => {
+watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value, isMobile, isNightPalette], ([visible]) => {
   if (!visible) {
     return;
   }
@@ -477,6 +635,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
     <n-dropdown
       trigger="click"
       :options="options"
+      :show="dropdownVisible"
       :show-arrow="false"
       placement="top-start"
       :disabled="!resolvedChannelId || disabled"
@@ -616,6 +775,67 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   font-weight: 500;
 }
 
+:global(.identity-action-row-inline) {
+  padding: 0.24rem 0.35rem;
+}
+
+:global(.identity-action-bar-inline) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  min-width: 11rem;
+}
+
+:global(.identity-action-bar-inline__btn) {
+  appearance: none;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.35));
+  background: var(--sc-chip-bg, rgba(148, 163, 184, 0.12));
+  color: var(--sc-text-primary, #1f2937);
+  border-radius: 10px;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.15s ease;
+}
+
+:global(.identity-action-bar-inline__btn:hover) {
+  border-color: var(--sc-border-strong, rgba(148, 163, 184, 0.55));
+  background: var(--sc-bg-layer, rgba(148, 163, 184, 0.2));
+}
+
+:global(.identity-action-bar-inline__btn:active) {
+  transform: scale(0.96);
+}
+
+.identity-action-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 11rem;
+}
+
+.identity-action-option__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  color: inherit;
+  flex: 0 0 auto;
+}
+
+.identity-action-option__text {
+  display: inline-flex;
+  align-items: center;
+}
+
+.identity-option-node--placeholder {
+  opacity: 0.78;
+}
+
 :global(.identity-dropdown-menu.identity-dropdown-menu--night) {
   background-color: #0f172a;
   color: rgba(248, 250, 252, 0.95);
@@ -636,9 +856,11 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 }
 
 :global(.identity-dropdown-menu) {
-  max-height: calc(36px * 11 + 8px);
+  max-height: min(62vh, calc(36px * 11 + 8px));
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   scrollbar-width: thin;
   scrollbar-color: var(--sc-scrollbar-thumb, var(--sc-border-mute, rgba(148, 163, 184, 0.45))) transparent;
 }
@@ -704,8 +926,11 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 /* Mobile responsive adjustments */
 @media (max-width: 768px) {
   .identity-switcher {
-    gap: 0.3rem;
-    padding: 0.25rem 0.4rem;
+    gap: 0.25rem;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0.35rem;
+    justify-content: center;
   }
 
   .identity-switcher__label,
@@ -722,14 +947,39 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   .identity-switcher-wrapper {
     gap: 0.25rem;
   }
-  
+
+  .ic-ooc-warning-button,
+  .avatar-setup-badge {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
   .ic-ooc-warning-button {
     padding: 0.15rem;
   }
-  
+
   .warning-tooltip-content {
     font-size: 0.75rem;
     max-width: 160px;
+  }
+
+  :global(.identity-dropdown-menu.identity-dropdown-menu--mobile .identity-action-row-inline) {
+    padding: 0.22rem 0.25rem;
+  }
+
+  :global(.identity-dropdown-menu.identity-dropdown-menu--mobile .identity-action-bar-inline) {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 0.3rem;
+  }
+
+  :global(.identity-dropdown-menu.identity-dropdown-menu--mobile .identity-action-bar-inline__btn) {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    height: 2.1rem;
+    border-radius: 11px;
   }
 }
 
