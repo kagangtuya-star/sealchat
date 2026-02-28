@@ -13759,7 +13759,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: -0.15rem 0;
   border-radius: 1rem;
-  background-color: var(--chat-preview-bg);
+  background-color: var(--chat-editing-preview-bg, var(--chat-preview-bg));
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
   opacity: 0.9;
@@ -13767,12 +13767,12 @@ onBeforeUnmount(() => {
 }
 
 .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
 }
 
 .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
 }
 
@@ -13788,35 +13788,35 @@ onBeforeUnmount(() => {
 /* 气泡模式下移除编辑蒙版的网点纹理，仅保留纯色背景 */
 .chat--layout-bubble .message-row__surface--editing::before {
   background-image: none;
-  background-color: transparent;
+  background-color: var(--chat-preview-bg);
 }
 
 .chat--layout-bubble .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: transparent;
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: none;
 }
 
 .chat--layout-bubble .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: transparent;
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: none;
 }
 
 /* 紧凑模式下按 tone 细分颜色/网点，保持与本人编辑一致 */
 .chat--layout-compact .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
 .chat--layout-compact .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
 /* 夜间紧凑模式编辑场外消息需保持纯黑底，避免灰色噪点 */
 .chat--layout-compact.chat--palette-night .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: #2D2D31;
+  background-color: var(--chat-editing-preview-ooc-bg-night, var(--chat-editing-preview-ooc-bg, #2D2D31));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
   background-size: 10px 10px;
 }
@@ -13881,6 +13881,10 @@ onBeforeUnmount(() => {
 .chat--palette-day {
   --chat-ic-bg: #FBFDF7;
   --chat-ooc-bg: #FFFFFF;
+  --chat-live-preview-ic-bg: var(--chat-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ic-bg: var(--chat-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-ooc-bg);
   --chat-preview-dot-ic: rgba(120, 130, 120, 0.35);
   --chat-preview-dot-ooc: rgba(148, 163, 184, 0.35);
 }
@@ -13888,6 +13892,11 @@ onBeforeUnmount(() => {
 .chat--palette-night {
   --chat-ic-bg: #3F3F46;
   --chat-ooc-bg: #2D2D31;
+  --chat-live-preview-ic-bg: var(--chat-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ic-bg: var(--chat-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ooc-bg-night: var(--chat-ooc-bg);
   --chat-preview-dot-ic: rgba(255, 255, 255, 0.25);
   --chat-preview-dot-ooc: rgba(255, 255, 255, 0.35);
 }
@@ -13900,6 +13909,29 @@ onBeforeUnmount(() => {
   --chat-stage-bg: var(--custom-chat-stage-bg, var(--chat-stage-bg));
   --chat-preview-bg: var(--custom-chat-preview-bg, var(--chat-preview-bg));
   --chat-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot));
+  --chat-live-preview-ic-bg: var(--custom-chat-preview-bg, var(--custom-chat-ic-bg, var(--chat-ic-bg)));
+  --chat-live-preview-ooc-bg: var(--custom-chat-preview-bg, var(--custom-chat-ooc-bg, var(--chat-ooc-bg)));
+  --chat-editing-preview-ic-bg: var(--custom-chat-preview-bg, var(--custom-chat-ic-bg, var(--chat-ic-bg)));
+  --chat-editing-preview-ooc-bg: var(--custom-chat-preview-bg, var(--custom-chat-ooc-bg, var(--chat-ooc-bg)));
+  --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
+}
+
+.chat--has-background {
+  /* 频道背景开启时，预览/编辑框体使用半透明 tone 混合色，确保能随背景调整可见变化 */
+  --chat-live-preview-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 38%, transparent);
+  --chat-live-preview-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 38%, transparent);
+  --chat-editing-preview-bg: color-mix(in srgb, var(--chat-preview-bg, var(--chat-ic-bg)) 38%, transparent);
+  --chat-editing-preview-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 42%, transparent);
+  --chat-editing-preview-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 42%, transparent);
+  --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
+  --chat-live-preview-ic-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 18%, transparent);
+  --chat-live-preview-ooc-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 16%, transparent);
+  --chat-live-preview-ic-border-night: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 30%, transparent);
+  --chat-live-preview-ooc-border-night: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 34%, transparent);
+  --chat-editing-preview-ic-border: var(--chat-live-preview-ic-border);
+  --chat-editing-preview-ooc-border: var(--chat-live-preview-ooc-border);
+  --chat-editing-preview-ic-border-night: var(--chat-live-preview-ic-border-night);
+  --chat-editing-preview-ooc-border-night: var(--chat-live-preview-ooc-border-night);
 }
 
 .chat--layout-compact {
@@ -13996,12 +14028,12 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--chat-compact-ooc-bg);
+  --typing-preview-bg: var(--chat-live-preview-ooc-bg, var(--chat-compact-ooc-bg));
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ic'],
 .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--chat-compact-ic-bg);
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--chat-compact-ic-bg));
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface::before {
@@ -14010,7 +14042,7 @@ onBeforeUnmount(() => {
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
   background-color: var(--typing-preview-bg);
   background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
@@ -14019,13 +14051,13 @@ onBeforeUnmount(() => {
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff));
+  --typing-preview-bg: var(--chat-live-preview-ooc-bg, var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ooc));
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ic'],
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7));
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ic));
 }
 
@@ -14578,12 +14610,12 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ic']::before {
-  background-color: var(--chat-ic-bg, #fbfdf7);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #fbfdf7));
   --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ooc']::before {
-  background-color: var(--chat-ooc-bg, #ffffff);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
   --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
@@ -14597,32 +14629,32 @@ onBeforeUnmount(() => {
 .chat--layout-bubble .typing-preview-bubble {
   padding: 0.5rem 0.75rem;
   border-radius: var(--chat-message-radius, 0.85rem);
-  background-color: var(--chat-ic-bg, #f5f5f5);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #f5f5f5));
   border-color: transparent;
   background-image: none;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
-  background-color: var(--chat-ic-bg, #f5f5f5);
-  border-color: rgba(15, 23, 42, 0.14);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #f5f5f5));
+  border-color: var(--chat-live-preview-ic-border, rgba(15, 23, 42, 0.14));
   --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
-  background-color: var(--chat-ooc-bg, #ffffff);
-  border-color: rgba(15, 23, 42, 0.12);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
+  border-color: var(--chat-live-preview-ooc-border, rgba(15, 23, 42, 0.12));
   --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
-  background-color: var(--chat-ic-bg, #3f3f45);
-  border-color: rgba(255, 255, 255, 0.16);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #3f3f46));
+  border-color: var(--chat-live-preview-ic-border-night, rgba(255, 255, 255, 0.16));
   color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
-  background-color: var(--chat-ooc-bg, #2D2D31);
-  border-color: rgba(255, 255, 255, 0.24);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #2D2D31));
+  border-color: var(--chat-live-preview-ooc-border-night, rgba(255, 255, 255, 0.24));
   color: var(--chat-text-primary, #f5f3ff);
 }
 

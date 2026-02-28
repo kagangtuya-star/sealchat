@@ -1694,21 +1694,21 @@ defineExpose({
 <style lang="scss" scoped>
 .tiptap-editor {
   width: 100%;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
   border-radius: 0.85rem;
-  background-color: #f9fafb;
+  background-color: var(--sc-bg-input, #f9fafb);
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 
   &.is-focused {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+    border-color: var(--primary-color, #3b82f6);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #3b82f6) 32%, transparent);
   }
 
   &.whisper-mode {
-    border-color: #7c3aed;
-    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35);
-    background-color: rgba(250, 245, 255, 0.92);
+    border-color: var(--chat-whisper-border, rgba(124, 58, 237, 0.8));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--chat-whisper-border, rgba(124, 58, 237, 0.8)) 45%, transparent);
+    background-color: var(--chat-whisper-bg, rgba(250, 245, 255, 0.92));
   }
 }
 
@@ -1776,8 +1776,8 @@ defineExpose({
   align-items: center;
   gap: 0.25rem;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid #e5e7eb;
-  background-color: #ffffff;
+  border-bottom: 1px solid var(--sc-border-mute, #e5e7eb);
+  background-color: var(--sc-bg-elevated, #ffffff);
   flex-wrap: wrap;
 }
 
@@ -1790,7 +1790,7 @@ defineExpose({
 .tiptap-toolbar__divider {
   width: 1px;
   height: 1.25rem;
-  background-color: #e5e7eb;
+  background-color: var(--sc-border-mute, #e5e7eb);
   margin: 0 0.25rem;
 }
 
@@ -1899,17 +1899,18 @@ defineExpose({
   display: flex;
   gap: 0.25rem;
   padding: 0.375rem 0.5rem;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--sc-bg-elevated, #ffffff);
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
   border-radius: 0.5rem;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   align-items: center;
+  color: var(--sc-text-primary, #0f172a);
 }
 
 .tiptap-bubble-menu__divider {
   width: 1px;
   height: 1rem;
-  background-color: #e5e7eb;
+  background-color: var(--sc-border-mute, #e5e7eb);
   margin: 0 0.25rem;
 }
 
@@ -2248,40 +2249,40 @@ defineExpose({
 
 /* 编辑器容器夜间模式 */
 :root[data-display-palette='night'] .tiptap-editor {
-  background-color: #3f3f46;
-  border-color: #52525b;
+  background-color: var(--sc-bg-input, #3f3f46);
+  border-color: var(--sc-border-strong, #52525b);
 }
 
 :root[data-display-palette='night'] .tiptap-editor.is-focused {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+  border-color: var(--primary-color, #60a5fa);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #60a5fa) 35%, transparent);
 }
 
 :root[data-display-palette='night'] .tiptap-editor.whisper-mode {
-  background-color: rgba(76, 29, 149, 0.25);
-  border-color: rgba(167, 139, 250, 0.85);
+  background-color: var(--chat-whisper-bg, rgba(76, 29, 149, 0.25));
+  border-color: var(--chat-whisper-border, rgba(167, 139, 250, 0.85));
 }
 
 /* 工具栏夜间模式 */
 :root[data-display-palette='night'] .tiptap-toolbar {
-  background-color: #27272a;
-  border-bottom-color: #52525b;
+  background-color: var(--sc-bg-elevated, #27272a);
+  border-bottom-color: var(--sc-border-strong, #52525b);
 }
 
 :root[data-display-palette='night'] .tiptap-toolbar__divider {
-  background-color: #3f3f46;
+  background-color: var(--sc-border-strong, #3f3f46);
 }
 
 /* 浮动菜单夜间模式 */
 :root[data-display-palette='night'] .tiptap-bubble-menu {
-  background: #27272a;
-  border-color: #3f3f46;
-  color: #f4f4f5;
+  background: var(--sc-bg-elevated, #27272a);
+  border-color: var(--sc-border-strong, #3f3f46);
+  color: var(--sc-text-primary, #f4f4f5);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
 }
 
 :root[data-display-palette='night'] .tiptap-bubble-menu__divider {
-  background-color: #3f3f46;
+  background-color: var(--sc-border-strong, #3f3f46);
 }
 
 /* 编辑内容区夜间模式 */

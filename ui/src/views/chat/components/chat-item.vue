@@ -4016,29 +4016,29 @@ const handleRetrySend = () => {
 }
 
 .editing-preview__bubble[data-tone='ic'] {
-  --editing-preview-bg: #fbfdf7;
+  --editing-preview-bg: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg, #fbfdf7));
   --editing-preview-dot: var(--chat-preview-dot-ic, rgba(148, 163, 184, 0.35));
-  border-color: rgba(15, 23, 42, 0.14);
+  border-color: var(--chat-editing-preview-ic-border, rgba(15, 23, 42, 0.14));
 }
 
 .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: #ffffff;
+  --editing-preview-bg: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
   --editing-preview-dot: var(--chat-preview-dot-ooc, rgba(148, 163, 184, 0.25));
-  border-color: rgba(15, 23, 42, 0.12);
+  border-color: var(--chat-editing-preview-ooc-border, rgba(15, 23, 42, 0.12));
 }
 
 :root[data-display-palette='night'] .editing-preview__bubble[data-tone='ic'] {
-  --editing-preview-bg: #3f3f45;
-  --editing-preview-dot: var(--chat-preview-dot-ic-night, rgba(148, 163, 184, 0.2));
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #f4f4f5;
+  --editing-preview-bg: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg, #3f3f45));
+  --editing-preview-dot: var(--chat-preview-dot-ic, rgba(148, 163, 184, 0.2));
+  border-color: var(--chat-editing-preview-ic-border-night, rgba(255, 255, 255, 0.16));
+  color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: #2D2D31;
-  --editing-preview-dot: var(--chat-preview-dot-ooc-night, rgba(148, 163, 184, 0.2));
-  border-color: rgba(255, 255, 255, 0.24);
-  color: #f5f3ff;
+  --editing-preview-bg: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg, #2D2D31));
+  --editing-preview-dot: var(--chat-preview-dot-ooc, rgba(148, 163, 184, 0.2));
+  border-color: var(--chat-editing-preview-ooc-border-night, rgba(255, 255, 255, 0.24));
+  color: var(--chat-text-primary, #f5f3ff);
 }
 
 .chat-item--layout-compact .content--editing-preview .editing-preview__bubble,
