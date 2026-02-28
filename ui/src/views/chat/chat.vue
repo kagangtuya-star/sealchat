@@ -11884,7 +11884,7 @@ onBeforeUnmount(() => {
     <div
       v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
       class="chat-pinned-zone px-4"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle }]"
     >
       <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
         <span class="chat-pinned-zone__title">置顶消息</span>
@@ -13646,6 +13646,53 @@ onBeforeUnmount(() => {
 :root[data-custom-theme='true'] .chat-pinned-zone__list {
   border-color: var(--sc-border-default);
   background: color-mix(in srgb, var(--sc-bg-surface) 74%, transparent);
+}
+
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 72%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, var(--sc-bg-surface, #ffffff)) 22%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+/* 兜底：只要存在频道背景层，就让置顶区适配（避免类名状态不同步） */
+.channel-background-layer ~ .chat-pinned-zone .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 72%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, var(--sc-bg-surface, #ffffff)) 22%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+  color: color-mix(in srgb, var(--chat-text-secondary, #475569) 88%, var(--chat-text-primary, #0f172a) 12%);
+}
+
+.chat-pinned-zone.chat--has-background {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+}
+
+.channel-background-layer ~ .chat-pinned-zone {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+}
+
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 58%, transparent);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.18)) 78%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
+}
+
+:root[data-display-palette='night'] .channel-background-layer ~ .chat-pinned-zone .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.18)) 78%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+  color: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 90%, var(--chat-text-secondary, #b5b5c5) 10%);
 }
 
 .message-row {
