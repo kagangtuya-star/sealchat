@@ -7712,13 +7712,17 @@ const tryAutoRestoreHistory = () => {
   notifyAutoRestoreSuccess(channelKey);
 };
 
-const syncSessionDraftSnapshot = () => {
-  const channelKey = currentChannelKey.value;
+const persistSessionDraftForChannel = (
+  channelKey: string,
+  options: { clearWhenEmpty?: boolean } = {},
+) => {
   if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK || isEditing.value) {
     return;
   }
   if (!isContentMeaningful(inputMode.value, textToSend.value)) {
-    writeSessionDraftForChannel(channelKey, null);
+    if (options.clearWhenEmpty) {
+      writeSessionDraftForChannel(channelKey, null);
+    }
     return;
   }
   const images = inputMode.value === 'plain' ? collectCurrentImageInfo() : undefined;
@@ -7728,6 +7732,10 @@ const syncSessionDraftSnapshot = () => {
     updatedAt: Date.now(),
     images: images?.length ? images : undefined,
   });
+};
+
+const syncSessionDraftSnapshot = () => {
+  persistSessionDraftForChannel(currentChannelKey.value, { clearWhenEmpty: true });
 };
 
 const scheduleSessionDraftSnapshot = throttle(
@@ -10421,6 +10429,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (!firstLoad) return;
     const payload = (e as any)?.argv || {};
     const isReenter = !!payload?.reenter;
+    const previousChannelId = String(payload?.previousChannelId || '').trim();
+    persistSessionDraftForChannel(previousChannelId);
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
@@ -11039,6 +11049,11 @@ const handleKeywordSuggestHover = (index: number) => {
 
 const handleKeywordSuggestBlur = () => {
   keywordSuggestVisible.value = false;
+};
+
+const handleChatInputBlur = () => {
+  handleKeywordSuggestBlur();
+  syncSessionDraftSnapshot();
 };
 
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
@@ -13064,7 +13079,7 @@ onBeforeUnmount(() => {
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
-                  @blur="handleKeywordSuggestBlur"
+                  @blur="handleChatInputBlur"
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
