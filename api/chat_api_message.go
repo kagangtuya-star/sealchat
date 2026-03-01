@@ -34,6 +34,88 @@ const (
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
 var atTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
 
+func fillBotMentionNames(channelID, content string) string {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" || strings.TrimSpace(content) == "" {
+		return content
+	}
+	cache := make(map[string]string)
+	return service.FillSatoriAtName(content, func(id string) string {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return ""
+		}
+		if strings.EqualFold(id, "all") {
+			return "全体成员"
+		}
+		if name, ok := cache[id]; ok {
+			return name
+		}
+		name := resolveMentionDisplayNameForChannel(channelID, id)
+		cache[id] = name
+		return name
+	})
+}
+
+func resolveMentionDisplayNameForChannel(channelID, targetUserID string) string {
+	channelID = strings.TrimSpace(channelID)
+	targetUserID = strings.TrimSpace(targetUserID)
+	if channelID == "" || targetUserID == "" {
+		return ""
+	}
+
+	db := model.GetDB()
+	var snapshot struct {
+		SenderIdentityName string
+	}
+	if err := db.Model(&model.MessageModel{}).
+		Select("sender_identity_name").
+		Where("channel_id = ? AND user_id = ? AND sender_identity_name <> ''", channelID, targetUserID).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(&snapshot).Error; err == nil {
+		if name := strings.TrimSpace(snapshot.SenderIdentityName); name != "" {
+			return name
+		}
+	}
+
+	if identities, err := model.ChannelIdentityListVisible(channelID, targetUserID); err == nil && len(identities) > 0 {
+		for _, identity := range identities {
+			if identity == nil || !identity.IsDefault {
+				continue
+			}
+			if name := strings.TrimSpace(identity.DisplayName); name != "" {
+				return name
+			}
+		}
+		for _, identity := range identities {
+			if identity == nil {
+				continue
+			}
+			if name := strings.TrimSpace(identity.DisplayName); name != "" {
+				return name
+			}
+		}
+	}
+
+	if member, err := model.MemberGetByUserIDAndChannelIDBase(targetUserID, channelID, "", false); err == nil && member != nil {
+		if name := strings.TrimSpace(member.Nickname); name != "" {
+			return name
+		}
+	}
+
+	if user := model.UserGet(targetUserID); user != nil {
+		if name := strings.TrimSpace(user.Nickname); name != "" {
+			return name
+		}
+		if name := strings.TrimSpace(user.Username); name != "" {
+			return name
+		}
+	}
+
+	return ""
+}
+
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
@@ -1586,6 +1668,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	// BOT 消息的 Satori 内容规范化
 	if ctx.User.IsBot {
+		// 兼容机器人回包中的 CQ/海豹 At 码
+		content = service.ConvertCQToSatori(content)
+		content = fillBotMentionNames(channelId, content)
 		content = protocol.EscapeSatoriText(content)
 		if strings.Contains(content, "data:") || strings.Contains(content, "sealchat://asset/") {
 			// 将 Base64 图片/文件或 asset 引用转换为附件
@@ -2594,6 +2679,11 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 	newContent := data.Content
+	if ctx.User.IsBot {
+		newContent = service.ConvertCQToSatori(newContent)
+		newContent = fillBotMentionNames(data.ChannelID, newContent)
+		newContent = protocol.EscapeSatoriText(newContent)
+	}
 	var renderResult *service.DiceRenderResult
 	if channel.BuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)

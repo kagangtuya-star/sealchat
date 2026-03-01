@@ -8,7 +8,9 @@ import (
 
 var (
 	// CQ 码正则：匹配 [CQ:type,key=value,key=value...]
-	cqCodePattern = regexp.MustCompile(`\[CQ:([a-zA-Z]+)(?:,([^\]]*))?\]`)
+	cqCodePattern = regexp.MustCompile(`(?i)\[CQ:([a-zA-Z]+)(?:,([^\]]*))?\]`)
+	// 海豹兼容 @ 码：匹配 [At:SEALCHAT:userId] 或 [At:SEALCHAT:userId:displayName]
+	sealChatAtCodePattern = regexp.MustCompile(`(?i)\[At:SEALCHAT:([^\]]+)\]`)
 )
 
 // ParseCQCode 解析 CQ 码为 Element 数组
@@ -36,7 +38,7 @@ func ParseCQCode(content string) []*protocol.Element {
 
 		// 解析 CQ 码
 		fullMatch := content[match[0]:match[1]]
-		cqType := content[match[2]:match[3]]
+		cqType := strings.ToLower(content[match[2]:match[3]])
 		var params string
 		if match[4] != -1 && match[5] != -1 {
 			params = content[match[4]:match[5]]
@@ -49,14 +51,25 @@ func ParseCQCode(content string) []*protocol.Element {
 		switch cqType {
 		case "at":
 			attrs := protocol.Dict{}
-			qq := paramMap["qq"]
+			qq := strings.TrimSpace(paramMap["qq"])
+			if qq == "" {
+				qq = strings.TrimSpace(paramMap["id"])
+			}
 			name := paramMap["name"]
 
-			if qq == "all" {
+			if qq == "" {
+				elements = append(elements, &protocol.Element{
+					Type:  "text",
+					Attrs: protocol.Dict{"content": fullMatch},
+				})
+				break
+			}
+
+			if strings.EqualFold(qq, "all") {
 				attrs["id"] = "all"
 				attrs["name"] = "全体成员"
 			} else {
-				attrs["id"] = qq
+				attrs["id"] = unescapeCQ(qq)
 				if name != "" {
 					attrs["name"] = unescapeCQ(name)
 				}
@@ -144,7 +157,11 @@ func ElementsToSatoriXML(elements []*protocol.Element) string {
 
 // ConvertCQToSatori 将包含 CQ 码的消息转换为 Satori XML 格式
 func ConvertCQToSatori(content string) string {
-	if content == "" || !strings.Contains(content, "[CQ:") {
+	if content == "" {
+		return content
+	}
+	content = normalizeSealChatAtCode(content)
+	if !strings.Contains(strings.ToLower(content), "[cq:") {
 		return content
 	}
 	elements := ParseCQCode(content)
@@ -163,6 +180,43 @@ func ConvertSatoriToCQ(content string) string {
 	return EncodeCQCode(root.Children)
 }
 
+// FillSatoriAtName 为 Satori <at> 标签补全缺失的 name 属性
+func FillSatoriAtName(content string, resolve func(id string) string) string {
+	if content == "" || resolve == nil || !strings.Contains(content, "<at") {
+		return content
+	}
+	root := protocol.ElementParse(content)
+	if root == nil || len(root.Children) == 0 {
+		return content
+	}
+
+	changed := false
+	root.Traverse(func(el *protocol.Element) {
+		if el == nil || el.Type != "at" {
+			return
+		}
+		id := strings.TrimSpace(getStringAttr(el.Attrs, "id"))
+		if id == "" {
+			return
+		}
+		name := strings.TrimSpace(getStringAttr(el.Attrs, "name"))
+		if name != "" {
+			return
+		}
+		resolved := strings.TrimSpace(resolve(id))
+		if resolved == "" {
+			return
+		}
+		el.Attrs["name"] = resolved
+		changed = true
+	})
+
+	if !changed {
+		return content
+	}
+	return root.ToString()
+}
+
 // parseCQParams 解析 CQ 码参数
 func parseCQParams(params string) map[string]string {
 	result := make(map[string]string)
@@ -174,7 +228,7 @@ func parseCQParams(params string) map[string]string {
 	for _, pair := range pairs {
 		idx := strings.Index(pair, "=")
 		if idx > 0 {
-			key := strings.TrimSpace(pair[:idx])
+			key := strings.ToLower(strings.TrimSpace(pair[:idx]))
 			value := ""
 			if idx+1 < len(pair) {
 				value = strings.TrimSpace(pair[idx+1:])
@@ -211,4 +265,44 @@ func getStringAttr(attrs protocol.Dict, key string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeSealChatAtCode(content string) string {
+	if content == "" {
+		return content
+	}
+	return sealChatAtCodePattern.ReplaceAllStringFunc(content, func(token string) string {
+		matches := sealChatAtCodePattern.FindStringSubmatch(token)
+		if len(matches) < 2 {
+			return token
+		}
+		payload := strings.TrimSpace(matches[1])
+		if payload == "" {
+			return token
+		}
+
+		id := payload
+		name := ""
+		if idx := strings.Index(payload, ":"); idx >= 0 {
+			id = strings.TrimSpace(payload[:idx])
+			name = strings.TrimSpace(payload[idx+1:])
+		}
+		if id == "" {
+			return token
+		}
+
+		var sb strings.Builder
+		sb.WriteString("[CQ:at,qq=")
+		if strings.EqualFold(id, "all") {
+			sb.WriteString("all")
+		} else {
+			sb.WriteString(escapeCQ(id))
+		}
+		if name != "" && !strings.EqualFold(id, "all") {
+			sb.WriteString(",name=")
+			sb.WriteString(escapeCQ(name))
+		}
+		sb.WriteString("]")
+		return sb.String()
+	})
 }
