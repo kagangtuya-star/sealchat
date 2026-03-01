@@ -325,11 +325,11 @@ nav a:first-of-type {
    -------------------------------------------------------------------------- */
 
 :root[data-custom-theme='true'] .chat--layout-compact .message-row__surface--tone-ic {
-  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg)) !important;
+  background-color: var(--chat-compact-ic-bg, var(--custom-chat-ic-bg, var(--chat-ic-bg))) !important;
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .message-row__surface--tone-ooc {
-  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg)) !important;
+  background-color: var(--chat-compact-ooc-bg, var(--custom-chat-ooc-bg, var(--chat-ooc-bg))) !important;
 }
 
 :root[data-custom-theme='true'] .chat--layout-bubble .message-row__surface--tone-ic,
@@ -1385,16 +1385,16 @@ nav a:first-of-type {
    ========================================================================== */
 
 :root[data-custom-theme='true'] .editing-preview__bubble {
-  background-color: var(--sc-bg-elevated) !important;
+  background-color: var(--chat-editing-preview-bg, var(--sc-bg-elevated)) !important;
   color: var(--sc-text-primary) !important;
 }
 
 :root[data-custom-theme='true'] .editing-preview__bubble[data-tone='ic'] {
-  background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
+  background-color: var(--chat-editing-preview-ic-bg, var(--custom-chat-ic-bg, var(--sc-bg-elevated))) !important;
 }
 
 :root[data-custom-theme='true'] .editing-preview__bubble[data-tone='ooc'] {
-  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+  background-color: var(--chat-editing-preview-ooc-bg, var(--custom-chat-ooc-bg, var(--sc-bg-elevated))) !important;
 }
 
 /* ==========================================================================
@@ -1406,11 +1406,11 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .chat--layout-bubble .typing-preview-bubble[data-tone='ic'] {
-  background-color: var(--custom-chat-ic-bg, var(--sc-bg-elevated)) !important;
+  background-color: var(--chat-live-preview-ic-bg, var(--custom-chat-ic-bg, var(--sc-bg-elevated))) !important;
 }
 
 :root[data-custom-theme='true'] .chat--layout-bubble .typing-preview-bubble[data-tone='ooc'] {
-  background-color: var(--custom-chat-ooc-bg, var(--sc-bg-elevated)) !important;
+  background-color: var(--chat-live-preview-ooc-bg, var(--custom-chat-ooc-bg, var(--sc-bg-elevated))) !important;
 }
 
 /* ==========================================================================

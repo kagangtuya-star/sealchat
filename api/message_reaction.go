@@ -191,7 +191,7 @@ func resolveReactionMessage(user *model.UserModel, messageID string) (*model.Mes
 		return nil, nil, 0, "", err
 	}
 
-	if msg.IsWhisper && msg.UserID != user.ID && msg.WhisperTo != user.ID && !model.HasWhisperRecipient(msg.ID, user.ID) {
+	if msg.IsWhisper && !canUserAccessWhisperMessage(user.ID, msg.ChannelID, &msg) {
 		return nil, nil, http.StatusForbidden, "没有访问该悄悄话的权限", nil
 	}
 
@@ -250,6 +250,16 @@ func broadcastMessageReaction(channel *model.ChannelModel, msg *model.MessageMod
 		addRecipient(msg.WhisperTo)
 		for _, id := range model.GetWhisperRecipientIDs(msg.ID) {
 			addRecipient(id)
+		}
+		if broadcast.ChannelUsersMap != nil {
+			if userSet, ok := broadcast.ChannelUsersMap.Load(msg.ChannelID); ok && userSet != nil {
+				userSet.Range(func(id string) bool {
+					if canUserReadAllWhispersInChannel(id, msg.ChannelID) {
+						addRecipient(id)
+					}
+					return true
+				})
+			}
 		}
 		broadcast.BroadcastEventInChannelToUsers(msg.ChannelID, recipients, event)
 		broadcast.BroadcastEventInChannelForBot(msg.ChannelID, event)

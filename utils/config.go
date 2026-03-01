@@ -236,12 +236,13 @@ type AppConfig struct {
 }
 
 type ExportConfig struct {
-	StorageDir            string `json:"storageDir" yaml:"storageDir"`
-	DownloadBandwidthKBps int    `json:"downloadBandwidthKBps" yaml:"downloadBandwidthKBps"`
-	DownloadBurstKB       int    `json:"downloadBurstKB" yaml:"downloadBurstKB"`
-	HTMLPageSizeDefault   int    `json:"htmlPageSizeDefault" yaml:"htmlPageSizeDefault"`
-	HTMLPageSizeMax       int    `json:"htmlPageSizeMax" yaml:"htmlPageSizeMax"`
-	HTMLMaxConcurrency    int    `json:"htmlMaxConcurrency" yaml:"htmlMaxConcurrency"`
+	StorageDir            string   `json:"storageDir" yaml:"storageDir"`
+	DownloadBandwidthKBps int      `json:"downloadBandwidthKBps" yaml:"downloadBandwidthKBps"`
+	DownloadBurstKB       int      `json:"downloadBurstKB" yaml:"downloadBurstKB"`
+	HTMLPageSizeDefault   int      `json:"htmlPageSizeDefault" yaml:"htmlPageSizeDefault"`
+	HTMLPageSizeMax       int      `json:"htmlPageSizeMax" yaml:"htmlPageSizeMax"`
+	HTMLMaxConcurrency    int      `json:"htmlMaxConcurrency" yaml:"htmlMaxConcurrency"`
+	DiceCommandPrefixes   []string `json:"diceCommandPrefixes" yaml:"diceCommandPrefixes"`
 }
 
 // SQLiteConfig 用于细化 SQLite 数据库的运行参数
@@ -318,6 +319,7 @@ func ReadConfig() *AppConfig {
 			HTMLPageSizeDefault:   defaultExportHTMLPageSize,
 			HTMLPageSizeMax:       defaultExportHTMLPageSizeMax,
 			HTMLMaxConcurrency:    defaultExportHTMLMaxConcurrency,
+			DiceCommandPrefixes:   []string{".", "。"},
 		},
 		Storage: StorageConfig{
 			Mode:       StorageModeLocal,
@@ -518,6 +520,31 @@ func applyExportDefaults(cfg *ExportConfig) {
 	if cfg.DownloadBurstKB < 0 {
 		cfg.DownloadBurstKB = 0
 	}
+	cfg.DiceCommandPrefixes = normalizeExportDiceCommandPrefixes(cfg.DiceCommandPrefixes)
+}
+
+func normalizeExportDiceCommandPrefixes(prefixes []string) []string {
+	defaults := []string{".", "。"}
+	if len(prefixes) == 0 {
+		return defaults
+	}
+	normalized := make([]string, 0, len(prefixes))
+	seen := make(map[string]struct{}, len(prefixes))
+	for _, item := range prefixes {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	if len(normalized) == 0 {
+		return defaults
+	}
+	return normalized
 }
 
 func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {

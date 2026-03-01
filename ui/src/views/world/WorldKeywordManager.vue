@@ -10,6 +10,11 @@ import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
 import { matchText } from '@/utils/pinyinMatch'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
+import {
+  createWorldKeywordCategory,
+  renameWorldKeywordCategory,
+  deleteWorldKeywordCategory,
+} from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
@@ -203,6 +208,7 @@ const keywordMaxLength = computed(() => utils.config?.keywordMaxLength || DEFAUL
 
 const clampText = (value: string) => value.slice(0, keywordMaxLength.value)
 const clampDescription = (value: string) => clampTextWithImageTokens(value, keywordMaxLength.value)
+const resolveErrorMessage = (error: any, fallback: string) => error?.response?.data?.message || error?.message || fallback
 
 const splitAliases = (value?: string | string[] | null) => {
   if (!value) return []
@@ -458,33 +464,43 @@ async function submitEditor() {
       await glossary.createKeyword(worldId, payload)
       message.success('已创建术语')
     }
+    categoryOptions.value = await glossary.fetchCategories(worldId)
     glossary.closeEditor()
   } catch (error: any) {
-    message.error(error?.message || '保存失败')
+    message.error(resolveErrorMessage(error, '保存失败'))
   }
 }
 
 async function handleDelete(itemId: string) {
   const worldId = currentWorldId.value
   if (!worldId) return
-  await glossary.removeKeyword(worldId, itemId)
-  message.success('已删除')
-  selectedIds.value = selectedIds.value.filter((id) => id !== itemId)
+  try {
+    await glossary.removeKeyword(worldId, itemId)
+    categoryOptions.value = await glossary.fetchCategories(worldId)
+    message.success('已删除')
+    selectedIds.value = selectedIds.value.filter((id) => id !== itemId)
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '删除失败'))
+  }
 }
 
 async function handleToggle(item: WorldKeywordItem) {
   const worldId = currentWorldId.value
   if (!worldId) return
-  await glossary.editKeyword(worldId, item.id, {
-    keyword: item.keyword,
-    category: item.category,
-    aliases: item.aliases,
-    matchMode: item.matchMode,
-    description: item.description,
-    descriptionFormat: item.descriptionFormat || 'plain',
-    display: item.display,
-    isEnabled: !item.isEnabled,
-  })
+  try {
+    await glossary.editKeyword(worldId, item.id, {
+      keyword: item.keyword,
+      category: item.category,
+      aliases: item.aliases,
+      matchMode: item.matchMode,
+      description: item.description,
+      descriptionFormat: item.descriptionFormat || 'plain',
+      display: item.display,
+      isEnabled: !item.isEnabled,
+    })
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '更新状态失败'))
+  }
 }
 
 async function handleExport(categoryFilters?: string[]) {
@@ -526,12 +542,17 @@ function openExportModal() {
 async function openCategoryManager() {
   const worldId = currentWorldId.value
   if (!worldId) return
-  // Compute category stats from current keywords
+  // Compute category stats from current keywords + managed categories
   const items = keywordItems.value
   const statsMap = new Map<string, number>()
   items.forEach((item) => {
     const cat = item.category || '(未分类)'
     statsMap.set(cat, (statsMap.get(cat) || 0) + 1)
+  })
+  categoryOptions.value.forEach((name) => {
+    if (!statsMap.has(name)) {
+      statsMap.set(name, 0)
+    }
   })
   categoryStats.value = Array.from(statsMap.entries())
     .map(([name, count]) => ({ name, count }))
@@ -541,53 +562,48 @@ async function openCategoryManager() {
 
 async function handleBulkRenameCategory(oldName: string, newName: string) {
   const worldId = currentWorldId.value
-  if (!worldId || !newName.trim()) return
-  const items = keywordItems.value.filter((item) => 
-    (oldName === '(未分类)' ? !item.category : item.category === oldName)
-  )
-  for (const item of items) {
-    await glossary.editKeyword(worldId, item.id, {
-      keyword: item.keyword,
-      category: newName.trim(),
-      aliases: item.aliases,
-      matchMode: item.matchMode,
-      description: item.description,
-      descriptionFormat: item.descriptionFormat || 'plain',
-      display: item.display,
-      isEnabled: item.isEnabled,
-    })
+  const targetName = newName.trim()
+  if (!worldId || !targetName) return
+  try {
+    if (oldName === '(未分类)') {
+      const uncategorizedIds = keywordItems.value.filter((item) => !item.category).map((item) => item.id)
+      await handleBulkModifyCategoryToTarget(targetName, uncategorizedIds)
+    } else {
+      await renameWorldKeywordCategory(worldId, oldName, targetName)
+      await glossary.ensureKeywords(worldId, { force: true })
+    }
+    categoryOptions.value = await glossary.fetchCategories(worldId)
+    message.success(`已将分类 "${oldName}" 重命名为 "${targetName}"`)
+    await openCategoryManager()
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '分类重命名失败'))
   }
-  message.success(`已将 ${items.length} 个术语的分类更新为 "${newName}"`)
-  // Refresh categories
-  categoryOptions.value = await glossary.fetchCategories(worldId)
-  await openCategoryManager()
 }
 
 async function handleCreateCategory() {
   const worldId = currentWorldId.value
   if (!worldId || !newCategoryName.value.trim()) return
-  
-  // Simply add to categoryOptions if not exists
   const catName = newCategoryName.value.trim()
-  if (!categoryOptions.value.includes(catName)) {
-    categoryOptions.value.push(catName)
-    categoryOptions.value.sort()
+  try {
+    await createWorldKeywordCategory(worldId, catName)
+    categoryOptions.value = await glossary.fetchCategories(worldId)
+    message.success(`已创建分类 "${catName}"`)
+    newCategoryName.value = ''
+    await openCategoryManager()
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '创建分类失败'))
   }
-  message.success(`已创建分类 "${catName}"`)
-  newCategoryName.value = ''
-  // Refresh stats
-  await openCategoryManager()
 }
 
-async function handleBulkModifyCategory() {
+async function handleBulkModifyCategoryToTarget(targetCategory: string, targetIds?: string[]) {
   const worldId = currentWorldId.value
-  if (!worldId || !selectedIds.value.length || !bulkTargetCategory.value.trim()) return
-  
-  const items = keywordItems.value.filter((item) => selectedIds.value.includes(item.id))
+  if (!worldId || !targetCategory.trim()) return
+  const effectiveIds = targetIds && targetIds.length ? targetIds : selectedIds.value
+  const items = keywordItems.value.filter((item) => effectiveIds.includes(item.id))
   for (const item of items) {
     await glossary.editKeyword(worldId, item.id, {
       keyword: item.keyword,
-      category: bulkTargetCategory.value.trim(),
+      category: targetCategory.trim(),
       aliases: item.aliases,
       matchMode: item.matchMode,
       description: item.description,
@@ -596,12 +612,21 @@ async function handleBulkModifyCategory() {
       isEnabled: item.isEnabled,
     })
   }
-  message.success(`已将 ${items.length} 个术语的分类修改为 "${bulkTargetCategory.value}"`)
-  // Refresh categories
-  categoryOptions.value = await glossary.fetchCategories(worldId)
-  bulkCategoryModalVisible.value = false
-  bulkTargetCategory.value = ''
-  clearSelection()
+}
+
+async function handleBulkModifyCategory() {
+  const worldId = currentWorldId.value
+  if (!worldId || !selectedIds.value.length || !bulkTargetCategory.value.trim()) return
+  try {
+    await handleBulkModifyCategoryToTarget(bulkTargetCategory.value)
+    message.success(`已将 ${selectedIds.value.length} 个术语的分类修改为 "${bulkTargetCategory.value}"`)
+    categoryOptions.value = await glossary.fetchCategories(worldId)
+    bulkCategoryModalVisible.value = false
+    bulkTargetCategory.value = ''
+    clearSelection()
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '批量修改分类失败'))
+  }
 }
 
 const openBulkDisplayModal = () => {
@@ -621,7 +646,7 @@ async function handleBulkModifyDisplay() {
     bulkDisplayModalVisible.value = false
     clearSelection()
   } catch (error: any) {
-    message.error(error?.message || '批量更新失败')
+    message.error(resolveErrorMessage(error, '批量更新失败'))
   }
 }
 
@@ -629,20 +654,13 @@ async function handleBulkModifyDisplay() {
 async function handleDeleteCategory(categoryName: string) {
   const worldId = currentWorldId.value
   if (!worldId) return
-  
-  const items = keywordItems.value.filter((item) => 
+  const items = keywordItems.value.filter((item) =>
     (categoryName === '(未分类)' ? !item.category : item.category === categoryName)
   )
-  
-  if (items.length === 0) {
-    // No keywords using this category, just remove from options
-    categoryOptions.value = categoryOptions.value.filter(c => c !== categoryName)
-    message.success(`已删除分类 "${categoryName}"`)
-    await openCategoryManager()
+  if (categoryName === '(未分类)') {
+    message.warning('未分类不可删除')
     return
   }
-  
-  // Show dialog to handle keywords
   const d = dialog.warning({
     title: `删除分类 "${categoryName}"`,
     content: `该分类下有 ${items.length} 个术语。删除后这些术语将被设为"未分类"。`,
@@ -650,23 +668,15 @@ async function handleDeleteCategory(categoryName: string) {
     negativeText: '取消',
     onPositiveClick: async () => {
       d.loading = true
-      // Set all keywords to uncategorized
-      for (const item of items) {
-        await glossary.editKeyword(worldId, item.id, {
-          keyword: item.keyword,
-          category: '',
-          aliases: item.aliases,
-          matchMode: item.matchMode,
-          description: item.description,
-          descriptionFormat: item.descriptionFormat || 'plain',
-          display: item.display,
-          isEnabled: item.isEnabled,
-        })
+      try {
+        await deleteWorldKeywordCategory(worldId, categoryName)
+        await glossary.ensureKeywords(worldId, { force: true })
+        categoryOptions.value = await glossary.fetchCategories(worldId)
+        message.success(`已删除分类 "${categoryName}"，${items.length} 个术语已设为未分类`)
+        await openCategoryManager()
+      } catch (error: any) {
+        message.error(resolveErrorMessage(error, '删除分类失败'))
       }
-      // Remove from options
-      categoryOptions.value = categoryOptions.value.filter(c => c !== categoryName)
-      message.success(`已删除分类 "${categoryName}"，${items.length} 个术语已设为未分类`)
-      await openCategoryManager()
     }
   })
 }
@@ -692,7 +702,7 @@ async function handleImport(replace = false) {
     categoryOptions.value = await glossary.fetchCategories(worldId)
     importTargetCategory.value = ''
   } catch (error: any) {
-    message.error(error?.message || '导入失败')
+    message.error(resolveErrorMessage(error, '导入失败'))
   }
 }
 
@@ -760,7 +770,7 @@ const handleBulkDelete = async () => {
     message.success(`已删除 ${selectedIds.value.length} 个术语`)
     clearSelection()
   } catch (error: any) {
-    message.error(error?.message || '批量删除失败')
+    message.error(resolveErrorMessage(error, '批量删除失败'))
   } finally {
     bulkDeleting.value = false
   }
@@ -790,7 +800,7 @@ const handleBulkToggle = async (enabled: boolean) => {
     message.success(`${enabled ? '已启用' : '已停用'} ${selectedIds.value.length} 个术语`)
     clearSelection()
   } catch (error: any) {
-    message.error(error?.message || '批量更新失败')
+    message.error(resolveErrorMessage(error, '批量更新失败'))
   } finally {
     bulkToggleState.value = null
   }

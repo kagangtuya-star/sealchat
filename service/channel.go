@@ -342,6 +342,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelFileSend,
 			pm.PermFuncChannelAudioSend,
 			pm.PermFuncChannelReadAll,
+			pm.PermFuncChannelMessageReadWhisperAll,
 		}
 	})
 
@@ -394,6 +395,7 @@ func ensureChannelSpectatorRole(channelID string) {
 		return []gorbac.Permission{
 			pm.PermFuncChannelRead,
 			pm.PermFuncChannelReadAll,
+			pm.PermFuncChannelMessageReadWhisperAll,
 		}
 	})
 }

@@ -38,27 +38,33 @@ var supportedExportFormats = map[string]struct{}{
 
 // ExportJobOptions 聚合创建导出任务所需的信息。
 type ExportJobOptions struct {
-	UserID             string
-	ChannelID          string
-	Format             string
-	DisplayName        string
-	IncludeOOC         bool
-	IncludeArchived    bool
-	WithoutTimestamp   bool
-	MergeMessages      bool
-	StartTime          *time.Time
-	EndTime            *time.Time
-	DisplaySettings    map[string]any
-	SliceLimit         int
-	MaxConcurrency     int
-	TextColorizeBBCode bool
+	UserID                string
+	ChannelID             string
+	Format                string
+	DisplayName           string
+	IncludeOOC            bool
+	IncludeArchived       bool
+	IncludeImages         bool
+	IncludeDiceCommand    bool
+	WithoutTimestamp      bool
+	MergeMessages         bool
+	StartTime             *time.Time
+	EndTime               *time.Time
+	DisplaySettings       map[string]any
+	SliceLimit            int
+	MaxConcurrency        int
+	TextColorizeBBCode    bool
+	TextColorizeBBCodeMap map[string]string
 }
 
 type exportExtraOptions struct {
-	DisplaySettings    map[string]any `json:"display,omitempty"`
-	SliceLimit         int            `json:"slice_limit,omitempty"`
-	MaxConcurrency     int            `json:"max_concurrency,omitempty"`
-	TextColorizeBBCode bool           `json:"text_colorize_bbcode,omitempty"`
+	DisplaySettings       map[string]any    `json:"display,omitempty"`
+	SliceLimit            int               `json:"slice_limit,omitempty"`
+	MaxConcurrency        int               `json:"max_concurrency,omitempty"`
+	TextColorizeBBCode    bool              `json:"text_colorize_bbcode,omitempty"`
+	TextColorizeBBCodeMap map[string]string `json:"text_colorize_bbcode_map,omitempty"`
+	IncludeImages         bool              `json:"include_images"`
+	IncludeDiceCommand    bool              `json:"include_dice_commands"`
 }
 
 func normalizeExportFormat(format string) (string, bool) {
@@ -154,10 +160,40 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 	if err := hydrateWhisperTargetsForExport(messages); err != nil {
 		return nil, err
 	}
+	extra := parseExportExtraOptions(job.ExtraOptions)
+	messages = filterMessagesBeforeMerge(messages, extra)
 	if job.MergeMessages {
 		return mergeSequentialMessages(messages), nil
 	}
 	return messages, nil
+}
+
+func filterMessagesBeforeMerge(messages []*model.MessageModel, extra *exportExtraOptions) []*model.MessageModel {
+	if len(messages) == 0 {
+		return messages
+	}
+	includeImages := true
+	includeDiceCommand := true
+	if extra != nil {
+		includeImages = extra.IncludeImages
+		includeDiceCommand = extra.IncludeDiceCommand
+	}
+	filtered := make([]*model.MessageModel, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		plainContent := buildFilteredPlainContent(msg.Content, includeImages)
+		if plainContent == "" {
+			continue
+		}
+		isBotMessage := msg.User != nil && msg.User.IsBot
+		if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
 }
 
 func hydrateWhisperTargetsForExport(messages []*model.MessageModel) error {
@@ -380,14 +416,23 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 		return "", nil
 	}
 	extra := exportExtraOptions{
-		SliceLimit:         opts.SliceLimit,
-		MaxConcurrency:     opts.MaxConcurrency,
-		TextColorizeBBCode: opts.TextColorizeBBCode,
+		SliceLimit:            opts.SliceLimit,
+		MaxConcurrency:        opts.MaxConcurrency,
+		TextColorizeBBCode:    opts.TextColorizeBBCode,
+		TextColorizeBBCodeMap: cloneStringMap(opts.TextColorizeBBCodeMap),
+		IncludeImages:         opts.IncludeImages,
+		IncludeDiceCommand:    opts.IncludeDiceCommand,
 	}
 	if len(opts.DisplaySettings) > 0 {
 		extra.DisplaySettings = opts.DisplaySettings
 	}
-	if extra.DisplaySettings == nil && extra.SliceLimit == 0 && extra.MaxConcurrency == 0 {
+	if extra.DisplaySettings == nil &&
+		extra.SliceLimit == 0 &&
+		extra.MaxConcurrency == 0 &&
+		!extra.TextColorizeBBCode &&
+		len(extra.TextColorizeBBCodeMap) == 0 &&
+		extra.IncludeImages &&
+		extra.IncludeDiceCommand {
 		return "", nil
 	}
 	data, err := json.Marshal(extra)
@@ -399,8 +444,10 @@ func buildExportExtraOptions(opts *ExportJobOptions) (string, error) {
 
 func parseExportExtraOptions(raw string) *exportExtraOptions {
 	extra := &exportExtraOptions{
-		SliceLimit:     DefaultExportSliceLimit,
-		MaxConcurrency: DefaultExportConcurrency,
+		SliceLimit:         DefaultExportSliceLimit,
+		MaxConcurrency:     DefaultExportConcurrency,
+		IncludeImages:      true,
+		IncludeDiceCommand: true,
 	}
 	if strings.TrimSpace(raw) == "" {
 		return extra
@@ -416,7 +463,21 @@ func parseExportExtraOptions(raw string) *exportExtraOptions {
 	if extra.DisplaySettings != nil && len(extra.DisplaySettings) == 0 {
 		extra.DisplaySettings = nil
 	}
+	if len(extra.TextColorizeBBCodeMap) == 0 {
+		extra.TextColorizeBBCodeMap = nil
+	}
 	return extra
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func cloneMessage(msg *model.MessageModel) *model.MessageModel {
@@ -584,6 +645,8 @@ func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExpo
 	opts.DisplaySettings = extra.DisplaySettings
 	opts.SliceLimit = extra.SliceLimit
 	opts.MaxConcurrency = extra.MaxConcurrency
+	opts.IncludeImages = extra.IncludeImages
+	opts.IncludeDiceCommand = extra.IncludeDiceCommand
 	return CreateMessageExportJob(opts)
 }
 

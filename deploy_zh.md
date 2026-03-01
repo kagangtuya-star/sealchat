@@ -530,3 +530,28 @@ CLI 命令支持通过环境变量指定数据库连接（优先级高于配置�
 export SEALCHAT_DSN="postgresql://user:pass@localhost:5432/sealchat"
 ./sealchat-server --config-list
 ```
+
+### 5.6 用户密码重置命令
+
+除了配置版本管理，CLI 还支持按数据库中的账号数据进行用户密码重置。
+
+```bash
+# 列出平台管理员用户
+./sealchat-server --user-secret list
+
+# 按用户名重置密码为 123456（支持平台管理员和普通用户）
+./sealchat-server --user-secret reset --username alice --username bob
+
+# 仅允许重置平台管理员
+./sealchat-server --user-secret reset --admin-only --username alice
+
+# 跳过确认
+./sealchat-server --user-secret reset --username alice --yes
+```
+
+参数说明：
+
+- `--user-secret list|reset`：执行用户秘密命令
+- `--username`：目标用户名，可重复指定
+- `--admin-only`：限制只重置平台管理员
+- `--yes`：执行重置时跳过交互确认

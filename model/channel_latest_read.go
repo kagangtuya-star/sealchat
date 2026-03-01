@@ -120,6 +120,7 @@ type FirstUnreadFilterOptions struct {
 	ICFilter        string
 	RoleIDs         []string
 	IncludeRoleless bool
+	ReadAllWhispers bool
 }
 
 // ChannelGetFirstUnreadInfo 获取频道的第一条未读消息信息
@@ -140,25 +141,29 @@ func ChannelGetFirstUnreadInfo(channelId, userId string, options *FirstUnreadFil
 	lastReadTime := time.UnixMilli(record.MessageTime)
 	var firstUnread MessageModel
 	q := db.Where("channel_id = ? AND created_at > ? AND user_id <> ?", channelId, lastReadTime, userId).
-		Where("is_deleted = ?", false).
-		Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-		))`, false, userId, userId, userId)
+		Where("is_deleted = ?", false)
 
 	includeArchived := false
 	icFilter := ""
 	includeRoleless := false
+	readAllWhispers := false
 	var roleIDs []string
 	if options != nil {
 		includeArchived = options.IncludeArchived
 		icFilter = strings.ToLower(strings.TrimSpace(options.ICFilter))
 		includeRoleless = options.IncludeRoleless
+		readAllWhispers = options.ReadAllWhispers
 		for _, id := range options.RoleIDs {
 			trimmed := strings.TrimSpace(id)
 			if trimmed != "" {
 				roleIDs = append(roleIDs, trimmed)
 			}
 		}
+	}
+	if !readAllWhispers {
+		q = q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+		))`, false, userId, userId, userId)
 	}
 
 	if !includeArchived {

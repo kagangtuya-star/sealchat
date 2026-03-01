@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { Settings } from '@vicons/ionicons5'
 import { useUtilsStore } from '@/stores/utils'
 import { useDisplayStore } from '@/stores/display'
+import { useChatStore } from '@/stores/chat'
 
 interface ExportParams {
   format: string
@@ -10,9 +12,12 @@ interface ExportParams {
   timeRange: [number, number] | null
   includeOoc: boolean
   includeArchived: boolean
+  includeImages: boolean
+  removeDiceCommands: boolean
   withoutTimestamp: boolean
   mergeMessages: boolean
   textColorizeBBCode: boolean
+  textColorizeBBCodeMap?: Record<string, string>
   autoUpload: boolean
   maxExportMessages: number
   maxExportConcurrency: number
@@ -98,7 +103,30 @@ const applyFormatSpecificLimits = () => {
 const message = useMessage()
 const utils = useUtilsStore()
 const display = useDisplayStore()
+const chat = useChatStore()
 const loading = ref(false)
+const textColorizeBBCodeMap = ref<Record<string, string>>({})
+const colorProfileVisible = ref(false)
+const colorProfileLoading = ref(false)
+const colorProfileSaving = ref(false)
+const colorProfileKeyword = ref('')
+let colorProfileLoadSeq = 0
+
+interface ColorProfileRow {
+  identityId: string
+  mapKey: string
+  label: string
+  defaultColor: string
+  customColor: string
+}
+
+interface SpeakerOption {
+  id?: string
+  label?: string
+  color?: string
+}
+
+const colorProfileRows = ref<ColorProfileRow[]>([])
 
 const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
 const isApplyingPreset = ref(false)
@@ -108,6 +136,8 @@ const form = reactive<ExportParams>({
   timeRange: null,
   includeOoc: true,
   includeArchived: false,
+  includeImages: false,
+  removeDiceCommands: true,
   withoutTimestamp: false,
   mergeMessages: true,
   textColorizeBBCode: false,
@@ -123,6 +153,217 @@ const showCloudUploadOption = computed(() => cloudUploadEnabled.value && form.fo
 const cloudUploadDefaultName = '频道名_时间范围（例如：新的_20251107-20251108）'
 const isSealFormatter = computed(() => form.format === 'json')
 const showZipOptions = computed(() => form.format === 'html')
+const showColorProfileTrigger = computed(() => form.format === 'txt')
+const colorProfileCount = computed(() => Object.keys(textColorizeBBCodeMap.value).length)
+const filteredColorProfileRows = computed(() => {
+  const keyword = colorProfileKeyword.value.trim().toLowerCase()
+  if (!keyword) {
+    return colorProfileRows.value
+  }
+  return colorProfileRows.value.filter(item => item.label.toLowerCase().includes(keyword))
+})
+
+const normalizeHexColor = (value: string): string => {
+  let color = value.trim().toLowerCase()
+  if (!color) return ''
+  if (!color.startsWith('#')) {
+    color = `#${color}`
+  }
+  if (/^#[0-9a-f]{3}$/.test(color)) {
+    const [, r, g, b] = color.split('')
+    color = `#${r}${r}${g}${g}${b}${b}`
+  }
+  if (!/^#[0-9a-f]{6}$/.test(color)) {
+    return ''
+  }
+  return color
+}
+
+const normalizeColorMap = (input?: Record<string, string>) => {
+  const result: Record<string, string> = {}
+  if (!input) {
+    return result
+  }
+  Object.entries(input).forEach(([rawKey, rawColor]) => {
+    const key = String(rawKey || '').trim()
+    if (!key.startsWith('identity:')) {
+      return
+    }
+    const normalized = normalizeHexColor(String(rawColor || ''))
+    if (!normalized) {
+      return
+    }
+    result[key] = normalized
+  })
+  return result
+}
+
+const buildColorMapKey = (identityId: string) => {
+  const trimmed = String(identityId || '').trim()
+  return trimmed ? `identity:${trimmed}` : ''
+}
+
+const buildDefaultColorMapFromSpeakerOptions = (items?: SpeakerOption[]) => {
+  const defaults: Record<string, string> = {}
+  for (const item of items || []) {
+    const key = buildColorMapKey(String(item?.id || ''))
+    if (!key) {
+      continue
+    }
+    const color = normalizeHexColor(String(item?.color || ''))
+    if (!color) {
+      continue
+    }
+    defaults[key] = color
+  }
+  return defaults
+}
+
+const buildColorOverridesFromRows = () => {
+  const result: Record<string, string> = {}
+  colorProfileRows.value.forEach((item) => {
+    const key = item.mapKey
+    if (!key) {
+      return
+    }
+    const normalizedCustom = normalizeHexColor(item.customColor || '')
+    if (!normalizedCustom) {
+      return
+    }
+    if (item.defaultColor && normalizedCustom === item.defaultColor) {
+      return
+    }
+    result[key] = normalizedCustom
+  })
+  return result
+}
+
+const getRowPreviewColor = (item: ColorProfileRow) => {
+  return normalizeHexColor(item.customColor || '') || item.defaultColor || '#111111'
+}
+
+const loadSavedColorMap = async (channelId?: string) => {
+  if (!channelId) {
+    textColorizeBBCodeMap.value = {}
+    return
+  }
+  try {
+    const profile = await chat.channelExportColorProfileGet(channelId)
+    textColorizeBBCodeMap.value = normalizeColorMap(profile?.colors)
+  } catch (error) {
+    console.warn('加载导出颜色配置失败', error)
+    textColorizeBBCodeMap.value = {}
+  }
+}
+
+const openColorProfilePanel = async () => {
+  if (!props.channelId) {
+    message.error('未选择频道')
+    return
+  }
+  colorProfileVisible.value = true
+  colorProfileKeyword.value = ''
+  const seq = ++colorProfileLoadSeq
+  colorProfileLoading.value = true
+  try {
+    const [speakerResp, profileResp] = await Promise.all([
+      chat.channelSpeakerOptions(props.channelId),
+      chat.channelExportColorProfileGet(props.channelId),
+    ])
+    if (seq !== colorProfileLoadSeq) {
+      return
+    }
+    const savedMap = normalizeColorMap(profileResp?.colors)
+    textColorizeBBCodeMap.value = savedMap
+    const rows = (speakerResp?.items || [])
+      .map((item) => {
+        const identityId = String(item?.id || '').trim()
+        const mapKey = buildColorMapKey(identityId)
+        if (!identityId || !mapKey) {
+          return null
+        }
+        return {
+          identityId,
+          mapKey,
+          label: String(item?.label || '').trim() || '未命名角色',
+          defaultColor: normalizeHexColor(String(item?.color || '')),
+          customColor: savedMap[mapKey] || '',
+        } as ColorProfileRow
+      })
+      .filter((item): item is ColorProfileRow => !!item)
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'))
+    colorProfileRows.value = rows
+  } catch (error) {
+    if (seq !== colorProfileLoadSeq) {
+      return
+    }
+    message.error('加载角色颜色配置失败')
+    colorProfileRows.value = []
+  } finally {
+    if (seq === colorProfileLoadSeq) {
+      colorProfileLoading.value = false
+    }
+  }
+}
+
+const handleColorRowBlur = (item: ColorProfileRow) => {
+  if (!item.customColor) {
+    return
+  }
+  const normalized = normalizeHexColor(item.customColor)
+  if (!normalized) {
+    message.warning('颜色格式应为 #RGB 或 #RRGGBB')
+    item.customColor = ''
+    return
+  }
+  item.customColor = normalized
+}
+
+const handleColorPickerInput = (item: ColorProfileRow, event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  if (!target) {
+    return
+  }
+  const normalized = normalizeHexColor(target.value || '')
+  if (!normalized) {
+    return
+  }
+  item.customColor = normalized
+}
+
+const resetColorRow = (item: ColorProfileRow) => {
+  item.customColor = ''
+}
+
+const resetAllColorRows = () => {
+  colorProfileRows.value.forEach((item) => {
+    item.customColor = ''
+  })
+}
+
+const saveColorProfile = async () => {
+  if (!props.channelId) {
+    message.error('未选择频道')
+    return
+  }
+  const colorMap = buildColorOverridesFromRows()
+  colorProfileSaving.value = true
+  try {
+    if (Object.keys(colorMap).length === 0) {
+      await chat.channelExportColorProfileDelete(props.channelId)
+    } else {
+      await chat.channelExportColorProfileUpsert(props.channelId, colorMap)
+    }
+    textColorizeBBCodeMap.value = colorMap
+    message.success('导出颜色配置已保存')
+    colorProfileVisible.value = false
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.message || error?.response?.data?.error || (error as Error)?.message || '保存失败'
+    message.error(`保存失败：${errMsg}`)
+  } finally {
+    colorProfileSaving.value = false
+  }
+}
 
 watch(
   () => form.format,
@@ -160,6 +401,18 @@ watch(
   (visible) => {
     if (visible) {
       syncExportSettingsFromStore()
+      void loadSavedColorMap(props.channelId)
+    } else {
+      colorProfileVisible.value = false
+    }
+  },
+)
+
+watch(
+  () => props.channelId,
+  (channelId) => {
+    if (props.visible) {
+      void loadSavedColorMap(channelId)
     }
   },
 )
@@ -173,6 +426,12 @@ watch(
   },
   { deep: true }
 )
+
+watch(showColorProfileTrigger, (enabled) => {
+  if (!enabled) {
+    colorProfileVisible.value = false
+  }
+})
 
 const formatOptions = [
   { label: '纯文本 (.txt)', value: 'txt' },
@@ -257,7 +516,28 @@ const handleExport = async () => {
 
   loading.value = true
   try {
-    emit('export', { ...form, displayName: form.displayName?.trim() || undefined })
+    let colorMap: Record<string, string> | undefined
+    if (form.textColorizeBBCode && form.format === 'txt') {
+      try {
+        const [speakerResp, profileResp] = await Promise.all([
+          chat.channelSpeakerOptions(props.channelId),
+          chat.channelExportColorProfileGet(props.channelId),
+        ])
+        const defaultMap = buildDefaultColorMapFromSpeakerOptions(speakerResp?.items as SpeakerOption[] | undefined)
+        const savedMap = normalizeColorMap(profileResp?.colors)
+        textColorizeBBCodeMap.value = savedMap
+        colorMap = Object.keys(defaultMap).length > 0 || Object.keys(savedMap).length > 0
+          ? { ...defaultMap, ...savedMap }
+          : undefined
+      } catch (error) {
+        colorMap = normalizeColorMap(textColorizeBBCodeMap.value)
+      }
+    }
+    emit('export', {
+      ...form,
+      textColorizeBBCodeMap: colorMap,
+      displayName: form.displayName?.trim() || undefined,
+    })
   } catch (error) {
     message.error('导出失败')
   } finally {
@@ -272,11 +552,17 @@ const handleClose = () => {
   form.timeRange = null
   form.includeOoc = true
   form.includeArchived = false
+  form.includeImages = false
+  form.removeDiceCommands = true
   form.withoutTimestamp = false
   form.mergeMessages = true
   form.textColorizeBBCode = false
   form.autoUpload = false
   form.displayName = ''
+  textColorizeBBCodeMap.value = {}
+  colorProfileRows.value = []
+  colorProfileKeyword.value = ''
+  colorProfileVisible.value = false
   syncExportSettingsFromStore()
   timePreset.value = 'none'
 }
@@ -425,6 +711,27 @@ const shortcuts = {
         </n-space>
       </n-form-item>
 
+      <n-form-item label="导出过滤">
+        <n-space vertical>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.includeImages">
+                包含图片
+              </n-checkbox>
+            </template>
+            开启后，图片与表情内容会被导出；关闭后将过滤图片内容。
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-checkbox v-model:checked="form.removeDiceCommands">
+                移除掷骰指令
+              </n-checkbox>
+            </template>
+            开启后会移除单行命令（如 .ra /ra !ra），但保留指令结果消息。
+          </n-tooltip>
+        </n-space>
+      </n-form-item>
+
       <n-form-item label="格式选项">
         <n-space vertical>
           <n-tooltip trigger="hover">
@@ -445,12 +752,28 @@ const shortcuts = {
           </n-tooltip>
           <n-tooltip trigger="hover" v-if="form.format === 'txt'">
             <template #trigger>
-              <n-checkbox v-model:checked="form.textColorizeBBCode">
-                使用 BBCode 染色（昵称颜色）
-              </n-checkbox>
+              <n-space align="center" :wrap-item="false">
+                <n-checkbox v-model:checked="form.textColorizeBBCode">
+                  使用 BBCode 染色（昵称颜色）
+                </n-checkbox>
+                <n-button
+                  v-if="showColorProfileTrigger"
+                  tertiary
+                  circle
+                  size="tiny"
+                  :disabled="!props.channelId"
+                  title="配置角色颜色"
+                  @click.stop="openColorProfilePanel"
+                >
+                  <n-icon :component="Settings" />
+                </n-button>
+              </n-space>
             </template>
             仅对纯文本导出生效，会使用 [color] 标签包裹角色名与内容，并引用频道内的昵称颜色。
           </n-tooltip>
+          <n-text depth="3" v-if="showColorProfileTrigger">
+            已保存 {{ colorProfileCount }} 个角色颜色覆盖。
+          </n-text>
         </n-space>
       </n-form-item>
 
@@ -478,12 +801,79 @@ const shortcuts = {
       </n-space>
     </template>
   </n-modal>
+
+  <n-modal
+    :show="colorProfileVisible"
+    preset="card"
+    title="BBCode 染色配置"
+    class="export-color-profile-modal"
+    :auto-focus="false"
+    @update:show="colorProfileVisible = $event"
+  >
+    <n-spin :show="colorProfileLoading">
+      <div class="color-profile-toolbar">
+        <n-input
+          v-model:value="colorProfileKeyword"
+          clearable
+          size="small"
+          placeholder="搜索角色名称"
+        />
+        <n-button size="small" tertiary @click="resetAllColorRows" :disabled="!colorProfileRows.length">
+          恢复默认
+        </n-button>
+      </div>
+      <div class="color-profile-list" v-if="filteredColorProfileRows.length">
+        <div
+          v-for="item in filteredColorProfileRows"
+          :key="item.identityId"
+          class="color-profile-item"
+        >
+          <div class="color-profile-item__meta">
+            <p class="color-profile-item__name">{{ item.label }}</p>
+            <p class="color-profile-item__desc">
+              默认颜色：{{ item.defaultColor || '无（将使用系统回退色）' }}
+            </p>
+          </div>
+          <div class="color-profile-item__editor">
+            <label class="color-profile-item__picker" title="点击选择颜色">
+              <input
+                class="color-profile-item__picker-input"
+                type="color"
+                :value="getRowPreviewColor(item)"
+                @input="handleColorPickerInput(item, $event)"
+              />
+            </label>
+            <n-input
+              v-model:value="item.customColor"
+              size="small"
+              placeholder="留空使用默认色"
+              @blur="handleColorRowBlur(item)"
+            />
+            <n-button size="small" tertiary @click="resetColorRow(item)">重置</n-button>
+          </div>
+        </div>
+      </div>
+      <n-empty v-else description="当前频道暂无可配置角色" />
+    </n-spin>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="colorProfileVisible = false">取消</n-button>
+        <n-button type="primary" :loading="colorProfileSaving" @click="saveColorProfile">
+          保存到云端
+        </n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <style lang="scss" scoped>
 .export-dialog {
   width: 500px;
   max-width: 90vw;
+}
+
+.export-color-profile-modal {
+  width: min(760px, 92vw);
 }
 
 .export-dialog :deep(.n-input),
@@ -586,5 +976,82 @@ const shortcuts = {
   margin-top: 0.5rem;
   font-size: 12px;
   color: var(--primary-color);
+}
+
+.color-profile-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.color-profile-list {
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.color-profile-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.08));
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.color-profile-item__meta {
+  min-width: 0;
+}
+
+.color-profile-item__name {
+  font-weight: 600;
+  margin: 0;
+}
+
+.color-profile-item__desc {
+  margin: 0.2rem 0 0;
+  font-size: 12px;
+  color: var(--sc-text-tertiary, #6b7280);
+}
+
+.color-profile-item__editor {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  max-width: 360px;
+}
+
+.color-profile-item__picker {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.16));
+  overflow: hidden;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.color-profile-item__picker-input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.color-profile-item__picker-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-profile-item__picker-input::-webkit-color-swatch {
+  border: none;
 }
 </style>

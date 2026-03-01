@@ -425,13 +425,8 @@ const botRoleId = computed(() => {
   }
   return `ch-${channelId}-bot`;
 });
-const canEditDefaultDice = computed(() => {
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    return false;
-  }
-  return chat.isChannelAdmin(channelId, user.info.id);
-});
+const channelFeatureManageAllowed = ref(false);
+const canEditDefaultDice = computed(() => channelFeatureManageAllowed.value);
 const canManageChannelFeatures = computed(() => canEditDefaultDice.value);
 const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   label: bot.nick || bot.username || 'Bot',
@@ -517,7 +512,37 @@ const openCharacterCardPanel = () => {
   }
 };
 let webhookPermissionSeq = 0;
+let channelFeaturePermissionSeq = 0;
 
+watch(
+  () => chat.curChannel?.id,
+  async (channelId) => {
+    const seq = ++channelFeaturePermissionSeq;
+    const currentChannel = chat.curChannel as SChannel | undefined;
+    if (!channelId || !currentChannel) {
+      channelFeatureManageAllowed.value = false;
+      return;
+    }
+    if (isPrivateChatChannel(currentChannel)) {
+      channelFeatureManageAllowed.value = false;
+      return;
+    }
+    try {
+      const [canManageInfo, canRoleLink] = await Promise.all([
+        chat.hasChannelPermission(channelId, 'func_channel_manage_info', user.info.id),
+        chat.hasChannelPermission(channelId, 'func_channel_role_link', user.info.id),
+      ]);
+      if (seq === channelFeaturePermissionSeq) {
+        channelFeatureManageAllowed.value = !!(canManageInfo || canRoleLink);
+      }
+    } catch {
+      if (seq === channelFeaturePermissionSeq) {
+        channelFeatureManageAllowed.value = false;
+      }
+    }
+  },
+  { immediate: true },
+);
 watch(
   () => chat.curChannel?.id,
   async (channelId) => {
@@ -556,13 +581,17 @@ const toggleDiceTray = () => {
     setCurrentDiceTrayVisible(!diceTrayDesktopVisible.value);
   }
 };
-watch(() => chat.curChannel, (channel) => {
-  channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
-  channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
-  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    closeAllDiceTrays();
-  }
-}, { immediate: true });
+watch(
+  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled] as const,
+  ([, builtInDiceEnabled, botFeatureEnabled]) => {
+    channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
+    channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
+    if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+      closeAllDiceTrays();
+    }
+  },
+  { immediate: true },
+);
 watch(() => chat.curChannel?.id, () => {
 	diceSettingsVisible.value = false;
 	channelBotSelection.value = '';
@@ -863,7 +892,17 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
   }
   diceFeatureUpdating.value = true;
   try {
-    await chat.updateChannelFeatures(chat.curChannel.id, updates);
+    const payload = await chat.updateChannelFeatures(chat.curChannel.id, updates);
+    if (typeof payload?.built_in_dice_enabled === 'boolean') {
+      channelFeatures.builtInDiceEnabled = payload.built_in_dice_enabled;
+    } else if (typeof updates.builtInDiceEnabled === 'boolean') {
+      channelFeatures.builtInDiceEnabled = updates.builtInDiceEnabled;
+    }
+    if (typeof payload?.bot_feature_enabled === 'boolean') {
+      channelFeatures.botFeatureEnabled = payload.bot_feature_enabled;
+    } else if (typeof updates.botFeatureEnabled === 'boolean') {
+      channelFeatures.botFeatureEnabled = updates.botFeatureEnabled;
+    }
   } catch (error: any) {
     message.error(error?.response?.data?.error || '更新频道特性失败');
     throw error;
@@ -3576,9 +3615,18 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
 };
 
 const getMessageDisplayName = (message: any) => {
-  // 编辑状态下优先使用编辑预览中的角色名称
+  // 仅在“编辑自己的消息”时使用本地编辑预览覆盖名称
   const editingPreview = editingPreviewMap.value[message?.id];
-  if (editingPreview?.isSelf && editingPreview.displayName) {
+  const messageUserId = (
+    message?.user?.id
+    || message?.member?.user?.id
+    || message?.member?.userId
+    || message?.member?.user_id
+    || message?.user_id
+    || ''
+  );
+  const canOverrideIdentity = editingPreview?.isSelf && !!messageUserId && messageUserId === user.info.id;
+  if (canOverrideIdentity && editingPreview.displayName) {
     return editingPreview.displayName;
   }
   return message?.identity?.displayName
@@ -3590,9 +3638,18 @@ const getMessageDisplayName = (message: any) => {
 };
 
 const getMessageAvatar = (message: any) => {
-  // 编辑状态下优先使用编辑预览中的角色头像
+  // 仅在“编辑自己的消息”时使用本地编辑预览覆盖头像
   const editingPreview = editingPreviewMap.value[message?.id];
-  if (editingPreview?.isSelf && editingPreview.avatar) {
+  const messageUserId = (
+    message?.user?.id
+    || message?.member?.user?.id
+    || message?.member?.userId
+    || message?.member?.user_id
+    || message?.user_id
+    || ''
+  );
+  const canOverrideIdentity = editingPreview?.isSelf && !!messageUserId && messageUserId === user.info.id;
+  if (canOverrideIdentity && editingPreview.avatar) {
     return editingPreview.avatar;
   }
   const candidates = [
@@ -3883,9 +3940,12 @@ const handleExportMessages = async (params: {
   timeRange: [number, number] | null;
   includeOoc: boolean;
   includeArchived: boolean;
+  includeImages: boolean;
+  removeDiceCommands: boolean;
   withoutTimestamp: boolean;
   mergeMessages: boolean;
   textColorizeBBCode: boolean;
+  textColorizeBBCodeMap?: Record<string, string>;
   autoUpload: boolean;
   maxExportMessages: number;
   maxExportConcurrency: number;
@@ -3916,9 +3976,14 @@ const handleExportMessages = async (params: {
       timeRange: params.timeRange ?? undefined,
       includeOoc: params.includeOoc,
       includeArchived: params.includeArchived,
+      includeImages: params.includeImages,
+      includeDiceCommands: !params.removeDiceCommands,
       withoutTimestamp: params.withoutTimestamp,
       mergeMessages: params.mergeMessages,
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
+      textColorizeBBCodeMap: params.textColorizeBBCode && params.format === 'txt'
+        ? (params.textColorizeBBCodeMap || {})
+        : undefined,
       sliceLimit,
       maxConcurrency,
       displaySettings: displayOptions,
@@ -5913,9 +5978,29 @@ const applyReorderPayload = (payload: any) => {
   sortRowsByDisplayOrder();
 };
 
+const recordIdentitySpokenFromMessage = (message?: Message) => {
+  if (!message) {
+    return;
+  }
+  const identityId = resolveMessageIdentityId(message);
+  if (!identityId) {
+    return;
+  }
+  const channelId = String((message as any)?.channel?.id || chat.curChannel?.id || '').trim();
+  if (!channelId) {
+    return;
+  }
+  const spokenAt = normalizeTimestamp((message as any)?.createdAt) ?? Date.now();
+  chat.recordIdentitySpoken(channelId, identityId, spokenAt);
+};
+
 const normalizeMessageList = (items: any[] = []): Message[] =>
   items
-    .map((item) => normalizeMessageShape(item))
+    .map((item) => {
+      const normalized = normalizeMessageShape(item);
+      recordIdentitySpokenFromMessage(normalized);
+      return normalized;
+    })
     .filter((item) => !(item as any)?.is_deleted);
 
 const upsertMessage = (incoming?: Message) => {
@@ -5942,20 +6027,43 @@ const upsertMessage = (incoming?: Message) => {
 };
 
 async function replaceUsernames(text: string) {
+  if (!text || !text.includes('@')) {
+    return text;
+  }
   const escapeAtAttrValue = (value: unknown) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  const resp = await chat.guildMemberList('');
-  const infoMap = (resp.data as any[]).reduce((obj, item) => {
-    obj[item.nick] = item;
-    return obj;
-  }, {})
-
-  // 匹配 @ 后跟着字母数字下划线的用户名
   const regex = /@(\S+)/g;
+  if (!regex.test(text)) {
+    return text;
+  }
+  regex.lastIndex = 0;
+
+  let resp: any;
+  try {
+    resp = await chat.guildMemberList('');
+  } catch (error) {
+    console.warn('replaceUsernames 拉取成员列表失败，跳过替换', error);
+    return text;
+  }
+  const memberList = Array.isArray(resp?.data) ? resp.data : [];
+  if (!memberList.length) {
+    return text;
+  }
+  const infoMap = memberList.reduce<Record<string, any>>((obj, item) => {
+    const nick = String(item?.nick || '').trim();
+    if (nick) {
+      obj[nick] = item;
+    }
+    return obj;
+  }, {});
+
+  if (Object.keys(infoMap).length === 0) {
+    return text;
+  }
 
   // 使用 replace 方法来替换匹配到的用户名
   const replacedText = text.replace(regex, (match, username) => {
@@ -6040,9 +6148,14 @@ let typingPreviewOrderSeq = Date.now();
 const previewOrderMin = 1e-6;
 const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
 const selfPreviewOrderModified = ref(false);
+const draftStartedAtMs = ref<number | null>(null);
 const resetSelfPreviewOrder = () => {
 	selfPreviewOrderKey.value = Number.MAX_SAFE_INTEGER;
 	selfPreviewOrderModified.value = false;
+};
+const resetDraftOrderContext = () => {
+  draftStartedAtMs.value = null;
+  resetSelfPreviewOrder();
 };
 const typingPreviewRowRefs = new Map<string, HTMLElement>();
 const typingPreviewItemKey = (preview: TypingPreviewItem | null | undefined) =>
@@ -7266,6 +7379,97 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   return !isRichContentEmpty(content);
 };
 
+const getServerAlignedNowMs = () => {
+  const localNow = Date.now();
+  const offset = Number(chat.serverTimeOffsetMs);
+  if (!Number.isFinite(offset)) {
+    return localNow;
+  }
+  const alignedNow = Math.floor(localNow - offset);
+  return Number.isFinite(alignedNow) && alignedNow > 0 ? alignedNow : localNow;
+};
+
+const syncDraftStartedAt = (content: string) => {
+  if (isEditing.value) {
+    draftStartedAtMs.value = null;
+    return;
+  }
+  if (!isContentMeaningful(inputMode.value, content)) {
+    resetDraftOrderContext();
+    return;
+  }
+  if (
+    typeof draftStartedAtMs.value !== 'number'
+    || !Number.isFinite(draftStartedAtMs.value)
+    || draftStartedAtMs.value <= 0
+  ) {
+    draftStartedAtMs.value = Date.now();
+  }
+};
+
+interface SendDisplayOrderResolution {
+  localDisplayOrder: number;
+  explicitDisplayOrder?: number;
+  typingDurationMs?: number;
+}
+
+const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
+  if (!selfPreviewOrderModified.value) {
+    return null;
+  }
+  const typingItems = typingPreviewItems.value.slice().sort((a, b) => {
+    if (a.orderKey !== b.orderKey) {
+      return a.orderKey - b.orderKey;
+    }
+    return String(a.userId || '').localeCompare(String(b.userId || ''));
+  });
+  if (typingItems.length === 0) {
+    return null;
+  }
+  let rank = typingItems.findIndex((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing');
+  let count = typingItems.length;
+  if (rank < 0) {
+    rank = count;
+    count += 1;
+  }
+  const configuredWindowMs = Number((utils.config as any)?.typingOrderWindowMs);
+  const windowMs = Number.isFinite(configuredWindowMs) && configuredWindowMs > 0
+    ? Math.floor(configuredWindowMs)
+    : 1000;
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    return null;
+  }
+  const base = Math.floor(fallbackNowMs / windowMs) * windowMs;
+  const step = windowMs / (count + 1);
+  const resolved = base + step * (rank + 1);
+  return Number.isFinite(resolved) && resolved > 0 ? resolved : null;
+};
+
+const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): SendDisplayOrderResolution => {
+  const startedAt = Number(draftStartedAtMs.value);
+  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
+    ? startedAt
+    : localNowMs;
+  const manualOrder = resolveManualPreviewDisplayOrder(fallbackNowMs);
+  if (manualOrder !== null) {
+    return {
+      localDisplayOrder: manualOrder,
+      explicitDisplayOrder: manualOrder,
+    };
+  }
+  let typingDurationMs: number | undefined;
+  if (Number.isFinite(startedAt) && startedAt > 0) {
+    const duration = Math.floor(localNowMs - startedAt);
+    if (Number.isFinite(duration) && duration > 0) {
+      typingDurationMs = Math.min(duration, 24 * 60 * 60 * 1000);
+    }
+  }
+  return {
+    localDisplayOrder: timeBasedOrder,
+    typingDurationMs,
+  };
+};
+
 // 从当前 inlineImages Map 中提取图片信息用于历史保存
 const collectCurrentImageInfo = (): HistoryImageInfo[] => {
   const images: HistoryImageInfo[] = [];
@@ -8119,6 +8323,51 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
   });
 };
 
+interface EditSaveSnapshot {
+  token: number;
+  channelId: string;
+  messageId: string;
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  initialIdentityId: string | null;
+}
+
+const isSavingEdit = ref(false);
+const editSessionToken = ref(0);
+const invalidateEditSession = () => {
+  editSessionToken.value += 1;
+  isSavingEdit.value = false;
+};
+const cancelEditingSession = () => {
+  if (chat.editing) {
+    chat.cancelEditing();
+  }
+  invalidateEditSession();
+};
+const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
+  const editing = chat.editing;
+  if (!editing) {
+    return null;
+  }
+  return {
+    token: editSessionToken.value,
+    channelId: editing.channelId,
+    messageId: editing.messageId,
+    icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId: editing.identityId ?? null,
+    initialIdentityId: editing.initialIdentityId ?? null,
+  };
+};
+const isEditSaveSnapshotAlive = (snapshot: EditSaveSnapshot) => {
+  const editing = chat.editing;
+  return Boolean(
+    editing
+    && editSessionToken.value === snapshot.token
+    && editing.channelId === snapshot.channelId
+    && editing.messageId === snapshot.messageId,
+  );
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
@@ -8132,6 +8381,7 @@ const beginEdit = (target?: Message) => {
   stopEditingPreviewNow();
   chat.curReplyTo = null;
   chat.clearWhisperTargets();
+  invalidateEditSession();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
@@ -8170,7 +8420,7 @@ const handleReeditRevokedMessage = async (target?: Message) => {
   }
   if (chat.editing) {
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
   }
   stopTypingPreviewNow();
   clearInputModeCache();
@@ -8201,11 +8451,11 @@ const handleReeditRevokedMessage = async (target?: Message) => {
 };
 
 const cancelEditing = () => {
-  if (!chat.editing) {
+  if (!chat.editing && !isSavingEdit.value) {
     return;
   }
   stopEditingPreviewNow();
-  chat.cancelEditing();
+  cancelEditingSession();
   textToSend.value = '';
   syncSessionDraftSnapshot();
   stopTypingPreviewNow();
@@ -8214,7 +8464,11 @@ const cancelEditing = () => {
 };
 
 const saveEdit = async () => {
-  if (!chat.editing) {
+  if (isSavingEdit.value) {
+    return;
+  }
+  const snapshot = createEditSaveSnapshot();
+  if (!snapshot) {
     return;
   }
   if (chat.connectState !== 'connected') {
@@ -8240,7 +8494,11 @@ const saveEdit = async () => {
     message.error('存在上传失败的图片，请删除后重试');
     return;
   }
+  isSavingEdit.value = true;
   try {
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     stopTypingPreviewNow();
     let finalContent: string;
     if (inputMode.value === 'rich') {
@@ -8253,38 +8511,48 @@ const saveEdit = async () => {
     } else {
       finalContent = await buildMessageHtml(processedDraft);
     }
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     if (finalContent.trim() === '') {
       message.error('消息内容不能为空');
       return;
     }
-    const updateIcMode = chat.editing.icMode;
     const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null } = {};
-    if (updateIcMode) {
-      updateOptions.icMode = updateIcMode;
-    }
-    if (chat.editing.identityId !== chat.editing.initialIdentityId) {
-      updateOptions.identityId = chat.editing.identityId ?? null;
+    updateOptions.icMode = snapshot.icMode;
+    if (snapshot.identityId !== snapshot.initialIdentityId) {
+      updateOptions.identityId = snapshot.identityId;
     }
     const hasOptions = Object.keys(updateOptions).length > 0;
     const updated = await chat.messageUpdate(
-      chat.editing.channelId,
-      chat.editing.messageId,
+      snapshot.channelId,
+      snapshot.messageId,
       finalContent,
       hasOptions ? updateOptions : undefined,
     );
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     if (updated) {
       upsertMessage(updated as unknown as Message);
     }
     message.success('消息已更新');
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     textToSend.value = '';
     syncSessionDraftSnapshot();
     resetInlineImages();
     ensureInputFocus();
   } catch (error: any) {
+    if (!isEditSaveSnapshotAlive(snapshot)) {
+      return;
+    }
     console.error('更新消息失败', error);
-    message.error((error?.message ?? '编辑失败，请稍后重试'));
+    const fallbackMessage = '编辑失败，请稍后重试';
+    const errorMessage = String(error?.message || '');
+    message.error(errorMessage.includes('Cannot read properties of null') ? fallbackMessage : (errorMessage || fallbackMessage));
+  } finally {
+    isSavingEdit.value = false;
   }
 };
 
@@ -8764,7 +9032,9 @@ const buildMessageHtml = async (draft: string) => {
   });
 
   let escaped = contentEscape(sanitizedDraft);
-  escaped = await replaceUsernames(escaped);
+  if (escaped.includes('@')) {
+    escaped = await replaceUsernames(escaped);
+  }
   let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
     html = html.split(key).join(value);
@@ -8956,6 +9226,9 @@ const handleInlineFileChange = (event: Event) => {
 };
 
 watch(() => chat.editing?.messageId, (messageId, previousId) => {
+  if (messageId !== previousId) {
+    invalidateEditSession();
+  }
   if (!messageId && previousId) {
     stopEditingPreviewNow();
     clearInputModeCache();
@@ -9155,6 +9428,14 @@ const send = throttle(async () => {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
+  const now = Date.now();
+  const orderNow = getServerAlignedNowMs();
+  const sendOrder = resolveSendDisplayOrder(now, orderNow);
+  const localDisplayOrder = sendOrder.localDisplayOrder;
+  const explicitDisplayOrder = sendOrder.explicitDisplayOrder;
+  const typingDurationMs = sendOrder.typingDurationMs;
+  resetDraftOrderContext();
+
 	const replyTo = chat.curReplyTo || undefined;
 	stopTypingPreviewNow();
   suspendInlineSync = true;
@@ -9164,7 +9445,6 @@ const send = throttle(async () => {
   suspendInlineSync = false;
   chat.curReplyTo = null;
 
-  const now = Date.now();
   const clientId = nanoid();
   const wasAtBottom = isNearBottom();
   const tmpMsg: Message = {
@@ -9177,10 +9457,14 @@ const send = throttle(async () => {
     quote: replyTo,
   };
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
+  const activeChannelId = String(chat.curChannel?.id || '').trim();
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
     (tmpMsg as any).senderRoleId = activeIdentity.id;
     (tmpMsg as any).sender_role_id = activeIdentity.id;
+    if (activeChannelId) {
+      chat.recordIdentitySpoken(activeChannelId, activeIdentity.id, now);
+    }
     if (!tmpMsg.identity) {
       tmpMsg.identity = {
         id: activeIdentity.id,
@@ -9197,6 +9481,8 @@ const send = throttle(async () => {
   if (chat.curChannel) {
     (tmpMsg as any).channel = chat.curChannel;
   }
+  (tmpMsg as any).displayOrder = localDisplayOrder;
+  (tmpMsg as any).display_order = localDisplayOrder;
 
   const whisperTargetsForSend = chat.whisperTargets.slice();
   if (whisperTargetsForSend.length > 0) {
@@ -9231,8 +9517,9 @@ const send = throttle(async () => {
       whisperTargetIds[0],
       clientId,
       identityIdOverride,
-      undefined,
+      explicitDisplayOrder,
       whisperTargetIds,
+      typingDurationMs,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9329,6 +9616,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 };
 
 watch(textToSend, (value) => {
+  syncDraftStartedAt(value);
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
   scheduleSessionDraftSnapshot();
@@ -9369,6 +9657,7 @@ watch(
     if (channelId === previous) {
       return;
     }
+    resetDraftOrderContext();
     whisperCandidateColorMap.value = new Map();
     whisperMentionableCandidates.value = [];
     if (whisperPanelVisible.value) {
@@ -9393,6 +9682,7 @@ watch([
 
 watch(isEditing, (editing) => {
   if (editing) {
+    resetDraftOrderContext();
     removeSelfTypingPreview();
     return;
   }
@@ -9658,6 +9948,15 @@ chatEvent.on('message-created', (e?: Event) => {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  const incomingIdentityId = resolveMessageIdentityId(incoming);
+  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || '').trim();
+  if (incomingChannelId && incomingIdentityId) {
+    chat.recordIdentitySpoken(
+      incomingChannelId,
+      incomingIdentityId,
+      normalizeTimestamp(incoming.createdAt) ?? Date.now(),
+    );
+  }
   if (hasCardRefreshCommand(incoming.content || '')) {
     scheduleCharacterSheetRefresh();
   }
@@ -9818,7 +10117,7 @@ chatEvent.on('message-updated', (e?: Event) => {
   removeTypingPreview(e.user?.id, 'editing');
   if (chat.editing && chat.editing.messageId === e.message.id) {
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     clearInputModeCache();
     textToSend.value = '';
     syncSessionDraftSnapshot();
@@ -9990,7 +10289,14 @@ chatEvent.on('typing-preview', (e?: Event) => {
 chatEvent.off('channel-presence-updated', '*');
 chatEvent.on('channel-presence-updated', (e?: Event) => {
   const channelId = e?.channel?.id || '';
-  if (!e?.presence || channelId !== chat.curChannel?.id) {
+  if (!channelId) {
+    return;
+  }
+  const presenceList = Array.isArray(e?.presence) ? e.presence : [];
+  chat.patchChannelAttributes(channelId, {
+    membersCount: presenceList.length,
+  } as any);
+  if (channelId !== chat.curChannel?.id) {
     return;
   }
   if (channelId !== presenceBadgeChannelId) {
@@ -9999,19 +10305,25 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     presenceBadgeUsers.clear();
   }
   let hasNewPresence = false;
+  const nextChannelUsers: User[] = [];
+  const seenUserIds = new Set<string>();
   if (typeof (e as any)?.timestamp === 'number') {
     chat.syncServerTime((e as any).timestamp);
   }
-  e.presence.forEach((item) => {
+  presenceList.forEach((item) => {
     const userId = item?.user?.id;
-    if (!userId) {
+    if (!userId || seenUserIds.has(userId)) {
       return;
     }
+    seenUserIds.add(userId);
     if (!presenceBadgeUsers.has(userId)) {
       presenceBadgeUsers.add(userId);
       if (presenceBadgeInitialized) {
         hasNewPresence = true;
       }
+    }
+    if (item?.user) {
+      nextChannelUsers.push(item.user as User);
     }
     chat.updatePresence(userId, {
       lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
@@ -10019,6 +10331,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       isFocused: !!item?.focused,
     });
   });
+  chat.curChannelUsers = nextChannelUsers;
   if (!presenceBadgeInitialized) {
     presenceBadgeInitialized = true;
     return;
@@ -10111,7 +10424,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
-    chat.cancelEditing();
+    cancelEditingSession();
     if (!isReenter) {
       textToSend.value = '';
     }
@@ -10875,7 +11188,7 @@ const keyDown = function (e: KeyboardEvent) {
     }
     if (shouldSend) {
       if (isEditing.value) {
-        saveEdit();
+        void saveEdit();
       } else {
         send();
       }
@@ -11571,7 +11884,7 @@ onBeforeUnmount(() => {
     <div
       v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
       class="chat-pinned-zone px-4"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--has-background': !!channelBackgroundStyle }]"
     >
       <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
         <span class="chat-pinned-zone__title">置顶消息</span>
@@ -11591,6 +11904,7 @@ onBeforeUnmount(() => {
                 :item="pinItem"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[pinItem.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(pinItem)"
                 :show-avatar="display.showAvatar"
                 :hide-avatar="false"
@@ -11685,6 +11999,7 @@ onBeforeUnmount(() => {
                     :item="entry.message"
                     :all-message-ids="allMessageIds"
                     :editing-preview="editingPreviewMap[entry.message.id]"
+                    :edit-saving="isSavingEdit"
                     :tone="getMessageTone(entry.message)"
                     :show-avatar="false"
                     :hide-avatar="false"
@@ -11722,6 +12037,7 @@ onBeforeUnmount(() => {
                 :item="entry.message"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="false"
                 :hide-avatar="false"
@@ -11756,6 +12072,7 @@ onBeforeUnmount(() => {
                 :item="entry.message"
                 :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
+                :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="display.showAvatar"
                 :hide-avatar="display.showAvatar && entry.mergedWithPrev"
@@ -12767,7 +13084,7 @@ onBeforeUnmount(() => {
                 <template v-if="isEditing">
                   <div class="edit-actions-group">
                     <n-button size="medium" @click="saveEdit"
-                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      :disabled="isSavingEdit || spectatorInputDisabled || chat.connectState !== 'connected'"
                       class="edit-action-btn edit-action-btn--save">
                       <template #icon>
                         <n-icon :component="Check" size="16" />
@@ -13331,6 +13648,53 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--sc-bg-surface) 74%, transparent);
 }
 
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 72%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, var(--sc-bg-surface, #ffffff)) 22%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+/* 兜底：只要存在频道背景层，就让置顶区适配（避免类名状态不同步） */
+.channel-background-layer ~ .chat-pinned-zone .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 72%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, var(--sc-bg-surface, #ffffff)) 22%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+  color: color-mix(in srgb, var(--chat-text-secondary, #475569) 88%, var(--chat-text-primary, #0f172a) 12%);
+}
+
+.chat-pinned-zone.chat--has-background {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+}
+
+.channel-background-layer ~ .chat-pinned-zone {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+}
+
+.chat-pinned-zone.chat--has-background .chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.3)) 58%, transparent);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.18)) 78%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
+}
+
+:root[data-display-palette='night'] .channel-background-layer ~ .chat-pinned-zone .chat-pinned-zone__list {
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.18)) 78%, transparent);
+  background: color-mix(in srgb, var(--chat-stage-bg, #0f1117) 28%, transparent);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone.chat--has-background .chat-pinned-zone__header {
+  color: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 90%, var(--chat-text-secondary, #b5b5c5) 10%);
+}
+
 .message-row {
   position: relative;
   padding-top: calc(var(--chat-bubble-gap, 0.85rem) / 2);
@@ -13341,6 +13705,10 @@ onBeforeUnmount(() => {
   padding-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
   padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
   background-color: var(--chat-stage-bg, var(--sc-bg-surface));
+}
+
+.chat--layout-bubble.chat--has-background .message-row {
+  background-color: transparent;
 }
 
 :root[data-custom-theme='true'] .chat--layout-bubble .message-row {
@@ -13442,7 +13810,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: -0.15rem 0;
   border-radius: 1rem;
-  background-color: var(--chat-preview-bg);
+  background-color: var(--chat-editing-preview-bg, var(--chat-preview-bg));
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
   opacity: 0.9;
@@ -13450,12 +13818,12 @@ onBeforeUnmount(() => {
 }
 
 .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
 }
 
 .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
 }
 
@@ -13471,35 +13839,35 @@ onBeforeUnmount(() => {
 /* 气泡模式下移除编辑蒙版的网点纹理，仅保留纯色背景 */
 .chat--layout-bubble .message-row__surface--editing::before {
   background-image: none;
-  background-color: transparent;
+  background-color: var(--chat-preview-bg);
 }
 
 .chat--layout-bubble .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: transparent;
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: none;
 }
 
 .chat--layout-bubble .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: transparent;
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: none;
 }
 
 /* 紧凑模式下按 tone 细分颜色/网点，保持与本人编辑一致 */
 .chat--layout-compact .message-row__surface--tone-ic.message-row__surface--editing::before {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
 .chat--layout-compact .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
 /* 夜间紧凑模式编辑场外消息需保持纯黑底，避免灰色噪点 */
 .chat--layout-compact.chat--palette-night .message-row__surface--tone-ooc.message-row__surface--editing::before {
-  background-color: #2D2D31;
+  background-color: var(--chat-editing-preview-ooc-bg-night, var(--chat-editing-preview-ooc-bg, #2D2D31));
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
   background-size: 10px 10px;
 }
@@ -13525,6 +13893,12 @@ onBeforeUnmount(() => {
   letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
+.chat.chat--has-background {
+  background-color: transparent;
+  border-color: color-mix(in srgb, var(--sc-border-strong, rgba(148, 163, 184, 0.28)) 70%, transparent);
+  box-shadow: 0 14px 28px color-mix(in srgb, #000 18%, transparent);
+}
+
 .favorite-bar-wrapper {
   margin-top: 0.75rem;
   margin-bottom: 0.5rem;
@@ -13534,6 +13908,12 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 0;
   box-shadow: 0 22px 42px rgba(0, 0, 0, 0.6);
+}
+
+.chat.chat--palette-night.chat--has-background {
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.22)) 78%, transparent);
+  border-radius: 0;
+  box-shadow: 0 18px 34px color-mix(in srgb, #000 34%, transparent);
 }
 
 .chat::-webkit-scrollbar {
@@ -13564,6 +13944,10 @@ onBeforeUnmount(() => {
 .chat--palette-day {
   --chat-ic-bg: #FBFDF7;
   --chat-ooc-bg: #FFFFFF;
+  --chat-live-preview-ic-bg: var(--chat-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ic-bg: var(--chat-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-ooc-bg);
   --chat-preview-dot-ic: rgba(120, 130, 120, 0.35);
   --chat-preview-dot-ooc: rgba(148, 163, 184, 0.35);
 }
@@ -13571,6 +13955,11 @@ onBeforeUnmount(() => {
 .chat--palette-night {
   --chat-ic-bg: #3F3F46;
   --chat-ooc-bg: #2D2D31;
+  --chat-live-preview-ic-bg: var(--chat-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ic-bg: var(--chat-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-ooc-bg);
+  --chat-editing-preview-ooc-bg-night: var(--chat-ooc-bg);
   --chat-preview-dot-ic: rgba(255, 255, 255, 0.25);
   --chat-preview-dot-ooc: rgba(255, 255, 255, 0.35);
 }
@@ -13583,6 +13972,31 @@ onBeforeUnmount(() => {
   --chat-stage-bg: var(--custom-chat-stage-bg, var(--chat-stage-bg));
   --chat-preview-bg: var(--custom-chat-preview-bg, var(--chat-preview-bg));
   --chat-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot));
+  --chat-live-preview-ic-bg: var(--custom-chat-preview-bg, var(--custom-chat-ic-bg, var(--chat-ic-bg)));
+  --chat-live-preview-ooc-bg: var(--custom-chat-preview-bg, var(--custom-chat-ooc-bg, var(--chat-ooc-bg)));
+  --chat-editing-preview-ic-bg: var(--custom-chat-preview-bg, var(--custom-chat-ic-bg, var(--chat-ic-bg)));
+  --chat-editing-preview-ooc-bg: var(--custom-chat-preview-bg, var(--custom-chat-ooc-bg, var(--chat-ooc-bg)));
+  --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
+}
+
+.chat--has-background {
+  /* 频道背景开启时，预览/编辑框体使用半透明 tone 混合色，确保能随背景调整可见变化 */
+  --chat-bubble-ic-bg: color-mix(in srgb, var(--chat-ic-bg) 34%, transparent);
+  --chat-bubble-ooc-bg: color-mix(in srgb, var(--chat-ooc-bg) 34%, transparent);
+  --chat-live-preview-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-live-preview-ooc-bg: var(--chat-bubble-ooc-bg);
+  --chat-editing-preview-bg: color-mix(in srgb, var(--chat-preview-bg, var(--chat-ic-bg)) 34%, transparent);
+  --chat-editing-preview-ic-bg: var(--chat-bubble-ic-bg);
+  --chat-editing-preview-ooc-bg: var(--chat-bubble-ooc-bg);
+  --chat-editing-preview-ooc-bg-night: var(--chat-editing-preview-ooc-bg);
+  --chat-live-preview-ic-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 18%, transparent);
+  --chat-live-preview-ooc-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 16%, transparent);
+  --chat-live-preview-ic-border-night: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 30%, transparent);
+  --chat-live-preview-ooc-border-night: color-mix(in srgb, var(--chat-text-primary, #f4f4f5) 34%, transparent);
+  --chat-editing-preview-ic-border: var(--chat-live-preview-ic-border);
+  --chat-editing-preview-ooc-border: var(--chat-live-preview-ooc-border);
+  --chat-editing-preview-ic-border-night: var(--chat-live-preview-ic-border-night);
+  --chat-editing-preview-ooc-border-night: var(--chat-live-preview-ooc-border-night);
 }
 
 .chat--layout-compact {
@@ -13679,12 +14093,12 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--chat-compact-ooc-bg);
+  --typing-preview-bg: var(--chat-live-preview-ooc-bg, var(--chat-compact-ooc-bg));
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ic'],
 .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--chat-compact-ic-bg);
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--chat-compact-ic-bg));
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface::before {
@@ -13693,7 +14107,7 @@ onBeforeUnmount(() => {
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
   background-color: var(--typing-preview-bg);
   background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
@@ -13702,13 +14116,13 @@ onBeforeUnmount(() => {
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff));
+  --typing-preview-bg: var(--chat-live-preview-ooc-bg, var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ooc));
 }
 
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ic'],
 :root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7));
+  --typing-preview-bg: var(--chat-live-preview-ic-bg, var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7)));
   --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ic));
 }
 
@@ -14261,12 +14675,12 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ic']::before {
-  background-color: var(--chat-ic-bg, #fbfdf7);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #fbfdf7));
   --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ooc']::before {
-  background-color: var(--chat-ooc-bg, #ffffff);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
   --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
@@ -14280,32 +14694,32 @@ onBeforeUnmount(() => {
 .chat--layout-bubble .typing-preview-bubble {
   padding: 0.5rem 0.75rem;
   border-radius: var(--chat-message-radius, 0.85rem);
-  background-color: var(--chat-ic-bg, #f5f5f5);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #f5f5f5));
   border-color: transparent;
   background-image: none;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
-  background-color: var(--chat-ic-bg, #f5f5f5);
-  border-color: rgba(15, 23, 42, 0.14);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #f5f5f5));
+  border-color: var(--chat-live-preview-ic-border, rgba(15, 23, 42, 0.14));
   --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
-  background-color: var(--chat-ooc-bg, #ffffff);
-  border-color: rgba(15, 23, 42, 0.12);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
+  border-color: var(--chat-live-preview-ooc-border, rgba(15, 23, 42, 0.12));
   --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
-  background-color: var(--chat-ic-bg, #3f3f45);
-  border-color: rgba(255, 255, 255, 0.16);
+  background-color: var(--chat-live-preview-ic-bg, var(--chat-ic-bg, #3f3f46));
+  border-color: var(--chat-live-preview-ic-border-night, rgba(255, 255, 255, 0.16));
   color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
-  background-color: var(--chat-ooc-bg, #2D2D31);
-  border-color: rgba(255, 255, 255, 0.24);
+  background-color: var(--chat-live-preview-ooc-bg, var(--chat-ooc-bg, #2D2D31));
+  border-color: var(--chat-live-preview-ooc-border-night, rgba(255, 255, 255, 0.24));
   color: var(--chat-text-primary, #f5f3ff);
 }
 

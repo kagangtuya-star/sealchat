@@ -148,6 +148,7 @@ interface ChatState {
     activeIdentityBackup?: string | null;
   } | null
   revokedDrafts: Record<string, RevokedDraftEntry>
+  guildMemberListMemoized: ((guildId: string, next?: string) => Promise<any>) | null
 
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
@@ -156,6 +157,7 @@ interface ChatState {
   channelIdentityFavorites: Record<string, string[]>;
   channelIdentityMembership: Record<string, Record<string, string[]>>;
   channelIdentityLoadedAt: Record<string, number>;
+  channelIdentityRecentSpokenAt: Record<string, Record<string, number>>;
 
   // 新增状态
   icMode: 'ic' | 'ooc';
@@ -247,6 +249,7 @@ interface PendingApiRequest {
 const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const REVOKED_DRAFT_CACHE_MAX = 240;
 const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
+const CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY = 'sealchat_identity_recent_spoken_v1';
 const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
 const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
   const trimmed = String(content || '').trim();
@@ -336,9 +339,80 @@ const persistRevokedDraftsToSessionStorage = (drafts: Record<string, RevokedDraf
     // ignore storage quota / privacy mode errors
   }
 };
+const normalizeIdentityRecentSpokenMap = (raw: any): Record<string, Record<string, number>> => {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const normalized: Record<string, Record<string, number>> = {};
+  Object.entries(raw as Record<string, any>).forEach(([channelId, channelData]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId || !channelData || typeof channelData !== 'object') {
+      return;
+    }
+    const perChannel: Record<string, number> = {};
+    Object.entries(channelData as Record<string, any>).forEach(([identityId, value]) => {
+      const normalizedIdentityId = String(identityId || '').trim();
+      const timestamp = Number(value);
+      if (!normalizedIdentityId || !Number.isFinite(timestamp) || timestamp <= 0) {
+        return;
+      }
+      perChannel[normalizedIdentityId] = Math.floor(timestamp);
+    });
+    if (Object.keys(perChannel).length > 0) {
+      normalized[normalizedChannelId] = perChannel;
+    }
+  });
+  return normalized;
+};
+const loadIdentityRecentSpokenFromStorage = (): Record<string, Record<string, number>> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = localStorage.getItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    return normalizeIdentityRecentSpokenMap(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+};
+const persistIdentityRecentSpokenToStorage = (value: Record<string, Record<string, number>>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (!value || Object.keys(value).length === 0) {
+      localStorage.removeItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore storage failures
+  }
+};
 
 const apiMap = new Map<string, PendingApiRequest>();
-let _connectResolve: any = null;
+const pendingConnectResolvers: Array<() => void> = [];
+
+const enqueueConnectResolver = (resolve: () => void) => {
+  pendingConnectResolvers.push(resolve);
+};
+
+const resolvePendingConnectResolvers = () => {
+  if (!pendingConnectResolvers.length) {
+    return;
+  }
+  const resolvers = pendingConnectResolvers.splice(0);
+  resolvers.forEach((resolve) => {
+    try {
+      resolve();
+    } catch {
+      // ignore
+    }
+  });
+};
 
 const rejectPendingApiRequests = (reason: string) => {
   if (!apiMap.size) {
@@ -454,6 +528,8 @@ const ensureWorldGateway = () => {
 
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let latencyTimer: ReturnType<typeof setInterval> | null = null;
+let channelMembersCountRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let channelListRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
 let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const scheduleChannelTreeRefresh = (chat: any) => {
@@ -476,6 +552,8 @@ let wsLastForegroundRecoverAt = 0;
 
 let wsReconnectTimer: ReturnType<typeof setInterval> | null = null;
 let wsConnectionEpoch = 0;
+let wsConnectInFlight = false;
+let wsReconnectSuppressedEpoch = 0;
 let channelSwitchEpoch = 0;
 const channelSwitchGuard: {
   recent: Array<{ id: string; at: number }>;
@@ -629,6 +707,7 @@ export const useChatStore = defineStore({
 
     editing: null,
     revokedDrafts: loadRevokedDraftsFromSessionStorage(),
+    guildMemberListMemoized: null,
     canReorderAllMessages: false,
     channelIdentities: {},
     activeChannelIdentity: {},
@@ -636,6 +715,7 @@ export const useChatStore = defineStore({
     channelIdentityFavorites: {},
     channelIdentityMembership: {},
     channelIdentityLoadedAt: {},
+    channelIdentityRecentSpokenAt: loadIdentityRecentSpokenFromStorage(),
 
     // 新增状态初始值
     icMode: 'ic',
@@ -817,6 +897,8 @@ export const useChatStore = defineStore({
       this.stopPingLoop();
       clearPendingLatencyProbes();
       rejectPendingApiRequests(reason || 'ws disconnected');
+      wsReconnectSuppressedEpoch = wsConnectionEpoch;
+      wsConnectInFlight = false;
       try {
         this.subject?.complete();
         this.subject?.unsubscribe();
@@ -833,162 +915,194 @@ export const useChatStore = defineStore({
       if (this.subject && (this.connectState === 'connected' || this.connectState === 'connecting' || this.connectState === 'reconnecting')) {
         return;
       }
-
-      // 若存在重连倒计时，直接取消，立即发起连接
-      clearWsReconnectTimer(this);
-
-      const epoch = ++wsConnectionEpoch;
-
-      // 先清理现有连接，防止连接泄漏
-      const oldSubject = this.subject;
-      if (oldSubject) {
-        rejectPendingApiRequests('ws connection replaced');
-        try {
-          oldSubject.complete();
-          oldSubject.unsubscribe();
-          console.log('[WS] 清理旧连接');
-        } catch (e) {
-          console.warn('[WS] 清理旧连接失败', e);
-        }
-        this.subject = null;
+      if (wsConnectInFlight) {
+        return;
       }
+      wsConnectInFlight = true;
+      try {
+        // 若存在重连倒计时，直接取消，立即发起连接
+        clearWsReconnectTimer(this);
 
-      this.stopPingLoop();
-      if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
-        focusListenersBound = true;
-        const store = this;
-        const updateFocusState = () => {
-          const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
-          const isVisible = document.visibilityState !== 'hidden';
-          store.setFocusState(hasFocus && isVisible);
-        };
-        const triggerForegroundRecover = (reason: string) => {
-          if (document.visibilityState !== 'visible') {
-            return;
+        const epoch = ++wsConnectionEpoch;
+
+        // 先清理现有连接，防止连接泄漏
+        const oldSubject = this.subject;
+        if (oldSubject) {
+          rejectPendingApiRequests('ws connection replaced');
+          try {
+            oldSubject.complete();
+            oldSubject.unsubscribe();
+            console.log('[WS] 清理旧连接');
+          } catch (e) {
+            console.warn('[WS] 清理旧连接失败', e);
           }
-          store.recoverConnectionOnForeground(reason);
-        };
-        window.addEventListener('focus', () => {
-          updateFocusState();
-          triggerForegroundRecover('window-focus');
-        });
-        window.addEventListener('blur', updateFocusState);
-        window.addEventListener('online', () => {
-          triggerForegroundRecover('network-online');
-        });
-        window.addEventListener('pageshow', () => {
-          updateFocusState();
-          triggerForegroundRecover('window-pageshow');
-        });
-        document.addEventListener('visibilitychange', () => {
-          updateFocusState();
-          if (document.visibilityState === 'visible') {
-            triggerForegroundRecover('visibility-visible');
-          }
-        });
-        updateFocusState();
-      }
-      const u: User = {
-        id: '',
-      }
-      // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
-      this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
-
-      // 'ws://localhost:3212/ws/seal'
-      // const subject = webSocket(`ws:${urlBase}/ws/seal`);
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const subject = webSocket(`${protocol}${urlBase}/ws/seal`);
-
-      let isReady = false;
-
-      // 发送协议握手
-      // Opcode.IDENTIFY: 3
-      const user = useUserStore();
-      subject.next({
-        op: 3, body: {
-          token: user.token,
-          observer: this.observerMode,
-        }
-      });
-
-      // 保存当前 subject 引用，供错误处理使用
-      const currentSubject = subject;
-
-      subject.subscribe({
-        next: (msg: any) => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          this.markGatewayActivity();
-          // Opcode.READY
-          if (msg.op === 4) {
-            console.log('svr ready', msg);
-            isReady = true
-            this.connectReady(epoch);
-          } else if (msg.op === 0) {
-            // Opcode.EVENT
-            const e = msg as Event;
-            this.eventDispatch(e);
-          } else if (msg.op === 2) {
-            this.handlePong();
-          } else if (msg.op === 6) {
-            this.handleLatencyResult(msg?.body);
-          } else if (apiMap.get(msg.echo)) {
-            const pending = apiMap.get(msg.echo);
-            apiMap.delete(msg.echo);
-            pending?.resolve(msg);
-          }
-        },
-        error: err => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          console.log('[WS] 连接错误', err);
-          rejectPendingApiRequests('ws connection error');
           this.subject = null;
-          this.connectState = 'reconnecting';
-          clearForegroundProbeTimer();
-          this.stopPingLoop();
-          this.lastGatewayAckAt = 0;
-          this.reconnectAfter(5, () => {
-            try {
-              if (epoch !== wsConnectionEpoch) {
-                return;
-              }
-              err.target?.close();
-              // 使用保存的引用而非 this.subject（此时已为 null）
-              currentSubject?.unsubscribe();
-              console.log('[WS] 错误后清理完成');
-            } catch (e) {
-              console.warn('[WS] 错误后清理失败', e)
-            }
-          })
-        }, // Called if at any point WebSocket API signals some kind of error.
-        complete: () => {
-          if (epoch !== wsConnectionEpoch) {
-            return;
-          }
-          console.log('[WS] 连接关闭');
-          rejectPendingApiRequests('ws connection closed');
-          this.subject = null;
-          this.connectState = 'reconnecting';
-          clearForegroundProbeTimer();
-          this.stopPingLoop();
-          this.lastGatewayAckAt = 0;
-          this.reconnectAfter(5, () => {
-            try {
-              if (epoch !== wsConnectionEpoch) {
-                return;
-              }
-              currentSubject?.unsubscribe();
-            } catch {
-              // ignore
-            }
-          })
-        } // Called when connection is closed (for whatever reason).
-      });
+        }
 
-      this.subject = subject;
+        this.stopPingLoop();
+        if (!focusListenersBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
+          focusListenersBound = true;
+          const store = this;
+          const updateFocusState = () => {
+            const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+            const isVisible = document.visibilityState !== 'hidden';
+            store.setFocusState(hasFocus && isVisible);
+          };
+          const triggerForegroundRecover = (reason: string) => {
+            if (document.visibilityState !== 'visible') {
+              return;
+            }
+            store.recoverConnectionOnForeground(reason);
+          };
+          window.addEventListener('focus', () => {
+            updateFocusState();
+            triggerForegroundRecover('window-focus');
+          });
+          window.addEventListener('blur', updateFocusState);
+          window.addEventListener('online', () => {
+            triggerForegroundRecover('network-online');
+          });
+          window.addEventListener('pageshow', () => {
+            updateFocusState();
+            triggerForegroundRecover('window-pageshow');
+          });
+          document.addEventListener('visibilitychange', () => {
+            updateFocusState();
+            if (document.visibilityState === 'visible') {
+              triggerForegroundRecover('visibility-visible');
+            }
+          });
+          updateFocusState();
+        }
+        const u: User = {
+          id: '',
+        }
+        // 初次连接用 connecting；断线后的重连一直显示 reconnecting 直到恢复
+        this.connectState = wsConnectionEpoch === 1 ? 'connecting' : 'reconnecting';
+
+        // 'ws://localhost:3212/ws/seal'
+        // const subject = webSocket(`ws:${urlBase}/ws/seal`);
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const subject = webSocket(`${protocol}${urlBase}/ws/seal`);
+
+        let isReady = false;
+
+        // 发送协议握手
+        // Opcode.IDENTIFY: 3
+        const user = useUserStore();
+        subject.next({
+          op: 3, body: {
+            token: user.token,
+            observer: this.observerMode,
+          }
+        });
+ 
+        // 保存当前 subject 引用，供错误处理使用
+        const currentSubject = subject;
+
+        subject.subscribe({
+          next: (msg: any) => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            this.markGatewayActivity();
+            // Opcode.READY
+            if (msg.op === 4) {
+              console.log('svr ready', msg);
+              isReady = true
+              this.connectReady(epoch);
+            } else if (msg.op === 0) {
+              // Opcode.EVENT
+              const e = msg as Event;
+              this.eventDispatch(e);
+            } else if (msg.op === 2) {
+              this.handlePong();
+            } else if (msg.op === 6) {
+              this.handleLatencyResult(msg?.body);
+            } else if (apiMap.get(msg.echo)) {
+              const pending = apiMap.get(msg.echo);
+              apiMap.delete(msg.echo);
+              pending?.resolve(msg);
+            }
+          },
+          error: err => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            const reconnectSuppressed = wsReconnectSuppressedEpoch === epoch;
+            if (reconnectSuppressed) {
+              wsReconnectSuppressedEpoch = 0;
+            }
+            console.log('[WS] 连接错误', err);
+            rejectPendingApiRequests('ws connection error');
+            this.subject = null;
+            this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            clearForegroundProbeTimer();
+            this.stopPingLoop();
+            this.lastGatewayAckAt = 0;
+            if (reconnectSuppressed) {
+              try {
+                err.target?.close();
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+              return;
+            }
+            this.reconnectAfter(5, () => {
+              try {
+                if (epoch !== wsConnectionEpoch) {
+                  return;
+                }
+                err.target?.close();
+                // 使用保存的引用而非 this.subject（此时已为 null）
+                currentSubject?.unsubscribe();
+                console.log('[WS] 错误后清理完成');
+              } catch (e) {
+                console.warn('[WS] 错误后清理失败', e)
+              }
+            })
+          }, // Called if at any point WebSocket API signals some kind of error.
+          complete: () => {
+            if (epoch !== wsConnectionEpoch) {
+              return;
+            }
+            const reconnectSuppressed = wsReconnectSuppressedEpoch === epoch;
+            if (reconnectSuppressed) {
+              wsReconnectSuppressedEpoch = 0;
+            }
+            console.log('[WS] 连接关闭');
+            rejectPendingApiRequests('ws connection closed');
+            this.subject = null;
+            this.connectState = reconnectSuppressed ? 'disconnected' : 'reconnecting';
+            clearForegroundProbeTimer();
+            this.stopPingLoop();
+            this.lastGatewayAckAt = 0;
+            if (reconnectSuppressed) {
+              try {
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+              return;
+            }
+            this.reconnectAfter(5, () => {
+              try {
+                if (epoch !== wsConnectionEpoch) {
+                  return;
+                }
+                currentSubject?.unsubscribe();
+              } catch {
+                // ignore
+              }
+            })
+          }
+        });
+
+        this.subject = subject;
+      } finally {
+        wsConnectInFlight = false;
+      }
     },
 
     async reconnectAfter(secs: number, beforeConnect?: Function) {
@@ -1042,10 +1156,7 @@ export const useChatStore = defineStore({
 
       if (this.observerMode) {
         await this.initObserverSession();
-        if (_connectResolve) {
-          _connectResolve();
-          _connectResolve = null;
-        }
+        resolvePendingConnectResolvers();
         return;
       }
 
@@ -1057,30 +1168,31 @@ export const useChatStore = defineStore({
       await this.ChannelPrivateList();
       await this.channelMembersCountRefresh();
 
-      if (_connectResolve) {
-        _connectResolve();
-        _connectResolve = null;
-      }
+      resolvePendingConnectResolvers();
     },
 
     /** try to initialize */
     async tryInit() {
-      if (!this.subject) {
-        return new Promise((resolve) => {
-          _connectResolve = resolve;
-          this.connect();
-        });
+      if (this.connectState === 'connected') {
+        return;
       }
+      return new Promise<void>((resolve) => {
+        enqueueConnectResolver(resolve);
+        if (!this.subject && !wsConnectInFlight) {
+          this.connect();
+        }
+      });
     },
 
     async ensureConnectionReady() {
-      if (this.connectState === 'connected') {
+      const isConnected = () => this.connectState === 'connected';
+      if (isConnected()) {
         return;
       }
       if (!this.subject) {
         await this.tryInit();
       }
-      if (this.connectState === 'connected') {
+      if (isConnected()) {
         return;
       }
       await new Promise<void>((resolve) => {
@@ -1776,6 +1888,75 @@ export const useChatStore = defineStore({
       return this.getActiveIdentity(channelId)?.id || '';
     },
 
+    getIdentityLastSpokenAt(channelId?: string, identityId?: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedIdentityId = String(identityId || '').trim();
+      if (!normalizedChannelId || !normalizedIdentityId) {
+        return 0;
+      }
+      return this.channelIdentityRecentSpokenAt?.[normalizedChannelId]?.[normalizedIdentityId] || 0;
+    },
+
+    recordIdentitySpoken(channelId: string, identityId: string, spokenAt?: number) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedIdentityId = String(identityId || '').trim();
+      if (!normalizedChannelId || !normalizedIdentityId) {
+        return;
+      }
+      const resolvedAt = Number(spokenAt ?? Date.now());
+      if (!Number.isFinite(resolvedAt) || resolvedAt <= 0) {
+        return;
+      }
+      const perChannel = {
+        ...(this.channelIdentityRecentSpokenAt[normalizedChannelId] || {}),
+      };
+      const current = perChannel[normalizedIdentityId] || 0;
+      const next = Math.floor(resolvedAt);
+      if (current >= next) {
+        return;
+      }
+      perChannel[normalizedIdentityId] = next;
+      this.channelIdentityRecentSpokenAt = {
+        ...this.channelIdentityRecentSpokenAt,
+        [normalizedChannelId]: perChannel,
+      };
+      persistIdentityRecentSpokenToStorage(this.channelIdentityRecentSpokenAt);
+    },
+
+    pruneIdentityRecentSpoken(channelId: string, validIdentityIds?: string[]) {
+      const normalizedChannelId = String(channelId || '').trim();
+      if (!normalizedChannelId) {
+        return;
+      }
+      const current = this.channelIdentityRecentSpokenAt[normalizedChannelId];
+      if (!current) {
+        return;
+      }
+      const validSet = new Set(
+        (Array.isArray(validIdentityIds) ? validIdentityIds : [])
+          .map((id) => String(id || '').trim())
+          .filter((id) => id.length > 0),
+      );
+      const nextEntries = Object.entries(current).filter(([identityId, spokenAt]) => {
+        if (!validSet.size) {
+          return false;
+        }
+        if (!validSet.has(identityId)) {
+          return false;
+        }
+        const ts = Number(spokenAt);
+        return Number.isFinite(ts) && ts > 0;
+      });
+      const nextMap = { ...this.channelIdentityRecentSpokenAt };
+      if (!nextEntries.length) {
+        delete nextMap[normalizedChannelId];
+      } else {
+        nextMap[normalizedChannelId] = Object.fromEntries(nextEntries);
+      }
+      this.channelIdentityRecentSpokenAt = nextMap;
+      persistIdentityRecentSpokenToStorage(this.channelIdentityRecentSpokenAt);
+    },
+
     setActiveIdentity(channelId: string, identityId: string) {
       this.activeChannelIdentity = {
         ...this.activeChannelIdentity,
@@ -1832,6 +2013,7 @@ export const useChatStore = defineStore({
         ...this.channelIdentities,
         [identity.channelId]: list,
       };
+      this.pruneIdentityRecentSpoken(identity.channelId, list.map(item => item.id));
       if (identity.isDefault || !this.activeChannelIdentity[identity.channelId]) {
         this.setActiveIdentity(identity.channelId, identity.id);
       }
@@ -1854,6 +2036,7 @@ export const useChatStore = defineStore({
         ...this.channelIdentities,
         [channelId]: list,
       };
+      this.pruneIdentityRecentSpoken(channelId, list.map(item => item.id));
       if (this.activeChannelIdentity[channelId] === identityId) {
         const fallback = list.find(item => item.isDefault) || list[0];
         this.setActiveIdentity(channelId, fallback?.id || '');
@@ -1874,6 +2057,7 @@ export const useChatStore = defineStore({
       }
       if (!force && this.channelIdentities[channelId]) {
         const items = this.channelIdentities[channelId];
+        this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
@@ -1923,6 +2107,7 @@ export const useChatStore = defineStore({
           ...this.activeChannelIdentity,
           [channelId]: activeId,
         };
+        this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         return items;
       })();
       inFlightChannelIdentityLoads.set(channelId, task);
@@ -2670,17 +2855,17 @@ export const useChatStore = defineStore({
       if (this.observerMode) {
         return;
       }
-      setInterval(async () => {
-        await this.channelMembersCountRefresh();
-        if (this.curChannel?.id) {
-          const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': this.curChannel?.id });
-          this.curChannelUsers = resp2.data.data;
-        }
-      }, 10000);
+      if (!channelMembersCountRefreshTimer) {
+        channelMembersCountRefreshTimer = setInterval(() => {
+          void this.channelMembersCountRefresh();
+        }, 10000);
+      }
 
-      setInterval(async () => {
-        await this.channelList();
-      }, 20000);
+      if (!channelListRefreshTimer) {
+        channelListRefreshTimer = setInterval(() => {
+          void this.channelList();
+        }, 20000);
+      }
     },
 
     async messageList(channelId: string, next?: string, options?: {
@@ -2786,7 +2971,13 @@ export const useChatStore = defineStore({
     },
 
     async guildMemberList(guildId: string, next?: string) {
-      return memoizeWithTimeout(this.guildMemberListRaw, 30000)(guildId, next)
+      if (!this.guildMemberListMemoized) {
+        this.guildMemberListMemoized = memoizeWithTimeout(
+          (targetGuildId: string, targetNext?: string) => this.guildMemberListRaw(targetGuildId, targetNext),
+          30000,
+        );
+      }
+      return this.guildMemberListMemoized(guildId, next);
     },
 
     async messageDelete(channel_id: string, message_id: string) {
@@ -3175,6 +3366,7 @@ export const useChatStore = defineStore({
       identityId?: string,
       displayOrder?: number,
       whisperTargetIds?: string[],
+      typingDurationMs?: number,
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -3205,6 +3397,9 @@ export const useChatStore = defineStore({
       }
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
+      }
+      if (typeof typingDurationMs === 'number' && Number.isFinite(typingDurationMs) && typingDurationMs > 0) {
+        payload.typing_duration_ms = Math.floor(typingDurationMs);
       }
       const resp = await this.sendAPI('message.create', payload, { timeoutMs: 5_000 });
       const message = resp?.data;
@@ -3471,9 +3666,48 @@ export const useChatStore = defineStore({
       if (!channelId) {
         return { items: [], total: 0 };
       }
-      const resp = await api.get<{ items: Array<{ id: string; label: string }>; total: number }>(
+      const resp = await api.get<{ items: Array<{ id: string; label: string; color?: string }>; total: number }>(
         `api/v1/channels/${channelId}/speaker-options`,
       );
+      return resp.data;
+    },
+
+    async channelExportColorProfileGet(channelId: string) {
+      if (!channelId) {
+        return { channelId: '', exists: false, colors: {} as Record<string, string> };
+      }
+      const resp = await api.get<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        updatedAt?: number;
+      }>(`api/v1/channels/${channelId}/export-color-profile`);
+      return resp.data;
+    },
+
+    async channelExportColorProfileUpsert(channelId: string, colors: Record<string, string>) {
+      if (!channelId) {
+        throw new Error('缺少频道 ID');
+      }
+      const resp = await api.post<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        updatedAt?: number;
+      }>(`api/v1/channels/${channelId}/export-color-profile`, { colors });
+      return resp.data;
+    },
+
+    async channelExportColorProfileDelete(channelId: string) {
+      if (!channelId) {
+        throw new Error('缺少频道 ID');
+      }
+      const resp = await api.delete<{
+        channelId: string;
+        exists: boolean;
+        colors: Record<string, string>;
+        success: boolean;
+      }>(`api/v1/channels/${channelId}/export-color-profile`);
       return resp.data;
     },
 
@@ -3850,6 +4084,11 @@ export const useChatStore = defineStore({
         return;
       }
       this.lastLatencyMs = Math.round(rtt);
+      const serverSentAt = Number(payload?.serverSentAt);
+      if (Number.isFinite(serverSentAt) && serverSentAt > 0) {
+        const estimatedServerNow = serverSentAt + Math.floor(rtt / 2);
+        this.syncServerTime(estimatedServerNow);
+      }
       if (this.curChannel?.id) {
         this.updatePresence(useUserStore().info.id, {
           lastPing: Date.now(),
@@ -3886,8 +4125,20 @@ export const useChatStore = defineStore({
       if (typeof serverNowMs !== 'number' || !Number.isFinite(serverNowMs) || serverNowMs <= 0) {
         return;
       }
-      const measuredOffset = Date.now() - serverNowMs;
+      let normalizedServerNowMs = serverNowMs;
+      // 兼容秒/毫秒/微秒级时间戳，统一转换为毫秒。
+      if (normalizedServerNowMs < 1e11) {
+        normalizedServerNowMs *= 1000;
+      } else if (normalizedServerNowMs > 1e14) {
+        normalizedServerNowMs = Math.floor(normalizedServerNowMs / 1000);
+      }
+      const measuredOffset = Date.now() - normalizedServerNowMs;
       if (!Number.isFinite(this.serverTimeOffsetMs)) {
+        this.serverTimeOffsetMs = measuredOffset;
+        return;
+      }
+      // 偏移突变时直接收敛，避免单位异常导致排序时间漂移。
+      if (Math.abs(this.serverTimeOffsetMs - measuredOffset) > 5 * 60 * 1000) {
         this.serverTimeOffsetMs = measuredOffset;
         return;
       }
@@ -4118,6 +4369,8 @@ export const useChatStore = defineStore({
       timeRange?: [number, number];
       includeOoc?: boolean;
       includeArchived?: boolean;
+      includeImages?: boolean;
+      includeDiceCommands?: boolean;
       withoutTimestamp?: boolean;
       mergeMessages?: boolean;
       textColorizeBBCode?: boolean;
@@ -4125,12 +4378,15 @@ export const useChatStore = defineStore({
       maxConcurrency?: number;
       displaySettings?: DisplaySettings;
       displayName?: string;
+      textColorizeBBCodeMap?: Record<string, string>;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
         format: params.format,
         include_ooc: params.includeOoc ?? true,
         include_archived: params.includeArchived ?? false,
+        include_images: params.includeImages ?? true,
+        include_dice_commands: params.includeDiceCommands ?? true,
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
       };
@@ -4151,6 +4407,9 @@ export const useChatStore = defineStore({
       }
       if (params.textColorizeBBCode) {
         payload.text_bbcode_colorize = true;
+        if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
+          payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
       }
       const resp = await api.post('api/v1/chat/export', payload);
       return resp.data as {

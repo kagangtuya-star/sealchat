@@ -24,13 +24,14 @@ var (
 
 	// 基础设置 + 权限配置
 
-	PermFuncChannelManageInfo     = gorbac.NewStdPermission("func_channel_manage_info")      // 频道 - 频道设置 - 基础设置
-	PermFuncChannelManageRole     = gorbac.NewStdPermission("func_channel_manage_role")      // 频道 - 频道设置 - 权限管理
-	PermFuncChannelManageRoleRoot = gorbac.NewStdPermission("func_channel_manage_role_root") // 频道 - 频道设置 - 权限管理（Root管理员）
-	PermFuncChannelManageGallery  = gorbac.NewStdPermission("func_channel_manage_gallery")   // 频道 - 频道设置 - 快捷表情资源管理
-	PermFuncChannelMessagePin     = gorbac.NewStdPermission("func_channel_message_pin")      // 频道 - 消息 - 置顶
-	PermFuncChannelMessageArchive = gorbac.NewStdPermission("func_channel_message_archive")  // 频道 - 消息 - 归档
-	PermFuncChannelMessageDelete  = gorbac.NewStdPermission("func_channel_message_delete")   // 频道 - 消息 - 删除
+	PermFuncChannelManageInfo            = gorbac.NewStdPermission("func_channel_manage_info")              // 频道 - 频道设置 - 基础设置
+	PermFuncChannelManageRole            = gorbac.NewStdPermission("func_channel_manage_role")              // 频道 - 频道设置 - 权限管理
+	PermFuncChannelManageRoleRoot        = gorbac.NewStdPermission("func_channel_manage_role_root")         // 频道 - 频道设置 - 权限管理（Root管理员）
+	PermFuncChannelManageGallery         = gorbac.NewStdPermission("func_channel_manage_gallery")           // 频道 - 频道设置 - 快捷表情资源管理
+	PermFuncChannelMessagePin            = gorbac.NewStdPermission("func_channel_message_pin")              // 频道 - 消息 - 置顶
+	PermFuncChannelMessageArchive        = gorbac.NewStdPermission("func_channel_message_archive")          // 频道 - 消息 - 归档
+	PermFuncChannelMessageDelete         = gorbac.NewStdPermission("func_channel_message_delete")           // 频道 - 消息 - 删除
+	PermFuncChannelMessageReadWhisperAll = gorbac.NewStdPermission("func_channel_message_read_whisper_all") // 频道 - 消息 - 查看所有悄悄话
 
 	PermFuncChannelIFormManage    = gorbac.NewStdPermission("func_channel_iform_manage")    // 频道 - iForm - 配置管理
 	PermFuncChannelIFormBroadcast = gorbac.NewStdPermission("func_channel_iform_broadcast") // 频道 - iForm - 同步推送

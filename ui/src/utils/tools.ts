@@ -69,12 +69,27 @@ export function dataURItoBlob(dataURI: string) {
 }
 
 export function memoizeWithTimeout<T>(func: (...args: any[]) => T, timeout: number): (...args: any[]) => T {
-  const memoizedFunc = memoize(func);
+  const resolveMemoizeKey = (...args: any[]): string => args
+    .map((arg) => {
+      if (arg === null) return 'null';
+      const t = typeof arg;
+      if (t === 'string' || t === 'number' || t === 'boolean' || t === 'undefined') {
+        return `${t}:${String(arg)}`;
+      }
+      try {
+        return `json:${JSON.stringify(arg)}`;
+      } catch {
+        return `str:${String(arg)}`;
+      }
+    })
+    .join('|');
+  const memoizedFunc = memoize(func, resolveMemoizeKey);
 
   function timedMemoizedFunc(...args: any[]): T {
+    const cacheKey = resolveMemoizeKey(...args);
     const result = memoizedFunc(...args);
     setTimeout(() => {
-      memoizedFunc.cache.delete(args.toString());
+      memoizedFunc.cache.delete(cacheKey);
     }, timeout);
     return result;
   }

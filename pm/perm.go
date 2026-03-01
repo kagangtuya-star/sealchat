@@ -110,6 +110,7 @@ func Init() {
 
 	ensureChannelIFormPerms(chRoles)
 	ensureChannelMessagePinPerms(chRoles)
+	ensureObserverWhisperReadPerms(chRoles)
 
 	if num == 0 {
 		// 目前system roles表还未实用，每次创建是设计的一部分而不是bug
@@ -160,6 +161,19 @@ func ensureChannelMessagePinPerms(chRoles []*model.ChannelRoleModel) {
 			continue
 		}
 		if !(strings.HasSuffix(role.ID, "-owner") || strings.HasSuffix(role.ID, "-admin") || strings.HasSuffix(role.ID, "-member")) {
+			continue
+		}
+		ensureRoleHasPermissions(role.ID, targetPerms)
+	}
+}
+
+func ensureObserverWhisperReadPerms(chRoles []*model.ChannelRoleModel) {
+	targetPerms := []gorbac.Permission{PermFuncChannelMessageReadWhisperAll}
+	for _, role := range chRoles {
+		if role == nil {
+			continue
+		}
+		if !(strings.HasSuffix(role.ID, "-ob") || strings.HasSuffix(role.ID, "-spectator")) {
 			continue
 		}
 		ensureRoleHasPermissions(role.ID, targetPerms)

@@ -326,6 +326,19 @@ func (ctx *ChatContext) BroadcastEventInChannelToUsers(channelId string, userIds
 	for _, id := range userIds {
 		targets[id] = struct{}{}
 	}
+	if eventContainsWhisper(data) && ctx != nil && ctx.ChannelUsersMap != nil {
+		if userSet, ok := ctx.ChannelUsersMap.Load(channelId); ok && userSet != nil {
+			userSet.Range(func(userID string) bool {
+				if _, exists := targets[userID]; exists {
+					return true
+				}
+				if canUserReadAllWhispersInChannel(userID, channelId) {
+					targets[userID] = struct{}{}
+				}
+				return true
+			})
+		}
+	}
 	data.Timestamp = time.Now().Unix()
 	ctx.UserId2ConnInfo.Range(func(userId string, value *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		if _, ok := targets[userId]; !ok {

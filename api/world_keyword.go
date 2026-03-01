@@ -332,6 +332,97 @@ func WorldKeywordCategoriesHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"categories": categories})
 }
 
+func WorldKeywordCategoryCreateHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	name, err := service.WorldKeywordCategoryCreate(worldID, user.ID, payload.Name)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "category-created",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.Status(http.StatusCreated).JSON(fiber.Map{"name": name, "requestId": requestID})
+}
+
+func WorldKeywordCategoryRenameHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		OldName string `json:"oldName"`
+		NewName string `json:"newName"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	updated, newName, err := service.WorldKeywordCategoryRename(worldID, user.ID, payload.OldName, payload.NewName)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "category-renamed",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"updated": updated, "name": newName, "requestId": requestID})
+}
+
+func WorldKeywordCategoryDeleteHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	updated, err := service.WorldKeywordCategoryDelete(worldID, user.ID, payload.Name)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "category-deleted",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"updated": updated, "requestId": requestID})
+}
+
 func WorldKeywordPublicCategoriesHandler(c *fiber.Ctx) error {
 	worldID := c.Params("worldId")
 	categories, err := service.WorldKeywordListCategoriesPublic(worldID)

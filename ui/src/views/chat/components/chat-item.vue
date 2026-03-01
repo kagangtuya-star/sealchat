@@ -838,6 +838,10 @@ const props = defineProps({
   item: Object,
   identityColor: String,
   editingPreview: Object as PropType<EditingPreviewInfo | undefined>,
+  editSaving: {
+    type: Boolean,
+    default: false,
+  },
   tone: {
     type: String as PropType<'ic' | 'ooc' | 'archived'>,
     default: 'ic'
@@ -1088,6 +1092,9 @@ const selfEditingPreview = computed(() => (
 ));
 const otherEditingPreview = computed(() => (
   props.editingPreview && !props.editingPreview.isSelf ? props.editingPreview : null
+));
+const shouldUseSelfPreviewIdentity = computed(() => (
+  Boolean(selfEditingPreview.value && targetUserId.value && targetUserId.value === user.info.id)
 ));
 
 const contentClassList = computed(() => {
@@ -1810,9 +1817,44 @@ const processMessageLinks = () => {
 // 支持两种格式:
 // 1. [自定义标题](http://.../#/worldId/channelId?msg=messageId)
 // 2. http://.../#/worldId/channelId?msg=messageId
+// 3. http(s)://example.com（普通网页链接，自动新标签页打开）
+const PLAIN_WEB_URL_REGEX = /https?:\/\/[^\s<>"'`]+/g;
+const PLAIN_WEB_URL_TRAILING_PUNCTUATION_REGEX = /[),.;!?，。；：！？、）】》」]+$/;
+
+type PlainTextLinkSegment = {
+  type: 'titled' | 'plain' | 'external';
+  content: string;
+  title?: string;
+  url?: string;
+  index: number;
+  length: number;
+};
+
+const createExternalLinkElement = (url: string): HTMLAnchorElement | null => {
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.className = 'message-external-link';
+  link.textContent = url;
+  link.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+  return link;
+};
+
 const processPlainTextMessageLinks = (host: HTMLElement) => {
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
-  const nodesToProcess: { node: Text; segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> }[] = [];
+  const nodesToProcess: { node: Text; segments: PlainTextLinkSegment[] }[] = [];
 
   // 收集需要处理的文本节点
   let textNode: Text | null;
@@ -1822,7 +1864,6 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
     if (parent?.closest('.message-jump-link, a')) continue;
 
     const text = textNode.textContent || '';
-    const segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> = [];
 
     // 先匹配带标题的链接 [title](url)
     TITLED_MESSAGE_LINK_REGEX.lastIndex = 0;
@@ -1855,12 +1896,39 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
       }
     }
 
-    if (titledMatches.length === 0 && plainMatches.length === 0) continue;
+    // 继续匹配普通网页 URL，排除已经覆盖的消息链接区间
+    PLAIN_WEB_URL_REGEX.lastIndex = 0;
+    let externalMatch: RegExpExecArray | null;
+    const externalMatches: { index: number; length: number; url: string }[] = [];
+    while ((externalMatch = PLAIN_WEB_URL_REGEX.exec(text)) !== null) {
+      const rawUrl = externalMatch[0] || '';
+      const normalizedUrl = rawUrl.replace(PLAIN_WEB_URL_TRAILING_PUNCTUATION_REGEX, '');
+      if (!normalizedUrl) {
+        continue;
+      }
+
+      const matchStart = externalMatch.index;
+      const matchEnd = matchStart + normalizedUrl.length;
+      const isCoveredByMessageLink = titledMatches.some(t => matchStart >= t.index && matchEnd <= t.index + t.length)
+        || plainMatches.some(p => matchStart >= p.index && matchEnd <= p.index + p.length);
+      if (isCoveredByMessageLink) {
+        continue;
+      }
+
+      externalMatches.push({
+        index: matchStart,
+        length: normalizedUrl.length,
+        url: normalizedUrl,
+      });
+    }
+
+    if (titledMatches.length === 0 && plainMatches.length === 0 && externalMatches.length === 0) continue;
 
     // 合并并排序所有匹配
     const allMatches = [
       ...titledMatches.map(m => ({ ...m, type: 'titled' as const })),
       ...plainMatches.map(m => ({ ...m, type: 'plain' as const, title: undefined })),
+      ...externalMatches.map(m => ({ ...m, type: 'external' as const, title: undefined })),
     ].sort((a, b) => a.index - b.index);
 
     nodesToProcess.push({ node: textNode, segments: allMatches.map(m => ({
@@ -1909,6 +1977,13 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
           } else {
             fragment.appendChild(document.createTextNode(seg.content));
           }
+        } else {
+          fragment.appendChild(document.createTextNode(seg.content));
+        }
+      } else if (seg.type === 'external' && url) {
+        const externalLink = createExternalLinkElement(url);
+        if (externalLink) {
+          fragment.appendChild(externalLink);
         } else {
           fragment.appendChild(document.createTextNode(seg.content));
         }
@@ -2466,6 +2541,9 @@ const handleRevokedReedit = (e: MouseEvent | KeyboardEvent) => {
 
 const handleEditSave = (e: MouseEvent) => {
   e.stopPropagation();
+  if (props.editSaving) {
+    return;
+  }
   emit('edit-save', props.item);
 }
 
@@ -2746,8 +2824,8 @@ onBeforeUnmount(() => {
 });
 
 const nick = computed(() => {
-  // 编辑状态下优先使用编辑预览中的角色名称（自己或他人）
-  if (selfEditingPreview.value?.displayName) {
+  // 仅编辑自己的消息时，才使用本地编辑预览覆盖角色名称
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.displayName) {
     return selfEditingPreview.value.displayName;
   }
   if (otherEditingPreview.value?.displayName) {
@@ -2766,9 +2844,9 @@ const nick = computed(() => {
   return props.item?.member?.nick || props.item?.user?.name || '未知';
 });
 
-// 编辑状态下优先使用编辑预览中的头像（自己或他人）
+// 仅编辑自己的消息时，才使用本地编辑预览覆盖头像
 const displayAvatar = computed(() => {
-  if (selfEditingPreview.value?.avatar) {
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.avatar) {
     return selfEditingPreview.value.avatar;
   }
   if (otherEditingPreview.value?.avatar) {
@@ -3043,7 +3121,7 @@ const handleRetrySend = () => {
             </div>
           </div>
           <div v-if="selfEditingPreview" class="editing-self-actions">
-            <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" @click.stop="handleEditSave">
+            <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" :disabled="props.editSaving" @click.stop="handleEditSave">
               <n-icon :component="Check" size="14" class="editing-self-actions__btn-icon" />
               保存
             </n-button>
@@ -3426,7 +3504,7 @@ const handleRetrySend = () => {
   max-width: 100%;
   padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
   border-radius: var(--chat-message-radius, 0.85rem);
-  background: var(--chat-ic-bg, #f5f5f5);
+  background: var(--chat-message-ic-bg, var(--chat-ic-bg, #f5f5f5));
   color: var(--chat-text-primary, #111827);
   text-align: left;
   border: none;
@@ -3458,6 +3536,13 @@ const handleRetrySend = () => {
   border-radius: 0.85rem;
   padding: calc(var(--chat-message-padding-y, 0.85rem) * 0.8)
     calc(var(--chat-message-padding-x, 1.1rem) * 0.95);
+}
+
+.chat--has-background .chat-item--layout-bubble > .right > .content {
+  --chat-message-ic-bg: var(--chat-bubble-ic-bg, color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 34%, transparent));
+  background: var(--chat-message-ic-bg);
+  border: 1px solid color-mix(in srgb, var(--chat-bubble-border, rgba(15, 23, 42, 0.08)) 70%, transparent);
+  backdrop-filter: blur(4px);
 }
 
 .chat-item--layout-bubble.chat-item--self {
@@ -3800,9 +3885,55 @@ const handleRetrySend = () => {
   border-radius: 0.125rem;
 }
 
+.chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #3b82f6) 52%, var(--chat-text-primary, #1f2937));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #3b82f6) 68%, var(--chat-text-primary, #1f2937));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 58%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 76%, var(--chat-text-secondary, #64748b));
+}
+
+:root[data-display-palette='night'] .chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #60a5fa) 42%, var(--chat-text-primary, #e2e8f0));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #60a5fa) 56%, var(--chat-text-primary, #f8fafc));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 70%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 78%, var(--chat-text-secondary, #94a3b8));
+}
+
+:root[data-custom-theme='true'] .chat-item > .right > .content {
+  --message-link-color: color-mix(in srgb, var(--primary-color, #3b82f6) 50%, var(--chat-text-primary, #1f2937));
+  --message-link-hover-color: color-mix(in srgb, var(--primary-color, #3b82f6) 64%, var(--chat-text-primary, #1f2937));
+  --message-link-underline-color: color-mix(in srgb, var(--message-link-color) 66%, transparent);
+  --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 84%, var(--chat-text-secondary, #64748b));
+}
+
 .content a {
-  color: #3b82f6;
+  color: var(--message-link-color);
   text-decoration: underline;
+  text-decoration-color: var(--message-link-underline-color);
+  text-underline-offset: 2px;
+  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+}
+
+.content a:hover {
+  color: var(--message-link-hover-color);
+  text-decoration-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+}
+
+.content a.message-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.content a.message-external-link::after {
+  content: '↗';
+  font-size: 0.72em;
+  line-height: 1;
+  color: var(--message-link-indicator-color);
+  opacity: 0.92;
+  transform: translateY(-0.06em);
 }
 
 .content hr {
@@ -3820,8 +3951,9 @@ const handleRetrySend = () => {
   margin-top: var(--chat-paragraph-spacing, 0.5rem);
 }
 .edited-label {
-  @apply text-xs text-blue-500 font-medium;
+  @apply text-xs font-medium;
   margin-left: 0.2rem;
+  color: color-mix(in srgb, var(--primary-color, #3b82f6) 26%, var(--chat-text-secondary, #64748b));
 }
 
 .message-action-bar {
@@ -3891,29 +4023,29 @@ const handleRetrySend = () => {
 }
 
 .editing-preview__bubble[data-tone='ic'] {
-  --editing-preview-bg: #fbfdf7;
+  --editing-preview-bg: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg, #fbfdf7));
   --editing-preview-dot: var(--chat-preview-dot-ic, rgba(148, 163, 184, 0.35));
-  border-color: rgba(15, 23, 42, 0.14);
+  border-color: var(--chat-editing-preview-ic-border, rgba(15, 23, 42, 0.14));
 }
 
 .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: #ffffff;
+  --editing-preview-bg: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg, #ffffff));
   --editing-preview-dot: var(--chat-preview-dot-ooc, rgba(148, 163, 184, 0.25));
-  border-color: rgba(15, 23, 42, 0.12);
+  border-color: var(--chat-editing-preview-ooc-border, rgba(15, 23, 42, 0.12));
 }
 
 :root[data-display-palette='night'] .editing-preview__bubble[data-tone='ic'] {
-  --editing-preview-bg: #3f3f45;
-  --editing-preview-dot: var(--chat-preview-dot-ic-night, rgba(148, 163, 184, 0.2));
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #f4f4f5;
+  --editing-preview-bg: var(--chat-editing-preview-ic-bg, var(--chat-ic-bg, #3f3f45));
+  --editing-preview-dot: var(--chat-preview-dot-ic, rgba(148, 163, 184, 0.2));
+  border-color: var(--chat-editing-preview-ic-border-night, rgba(255, 255, 255, 0.16));
+  color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: #2D2D31;
-  --editing-preview-dot: var(--chat-preview-dot-ooc-night, rgba(148, 163, 184, 0.2));
-  border-color: rgba(255, 255, 255, 0.24);
-  color: #f5f3ff;
+  --editing-preview-bg: var(--chat-editing-preview-ooc-bg, var(--chat-ooc-bg, #2D2D31));
+  --editing-preview-dot: var(--chat-preview-dot-ooc, rgba(148, 163, 184, 0.2));
+  border-color: var(--chat-editing-preview-ooc-border-night, rgba(255, 255, 255, 0.24));
+  color: var(--chat-text-primary, #f5f3ff);
 }
 
 .chat-item--layout-compact .content--editing-preview .editing-preview__bubble,
@@ -4022,10 +4154,16 @@ const handleRetrySend = () => {
 
 /* Tone 样式 */
 .chat-item--ooc .right .content {
-  background: var(--chat-ooc-bg, rgba(156, 163, 175, 0.1));
+  background: var(--chat-message-ooc-bg, var(--chat-ooc-bg, rgba(156, 163, 175, 0.1)));
   border: none;
   color: var(--chat-ooc-text, var(--chat-text-secondary, #6b7280));
   font-size: calc(var(--chat-font-size, 0.95rem) - 2px);
+}
+
+.chat--has-background .chat-item--layout-bubble.chat-item--ooc .right .content {
+  --chat-message-ooc-bg: var(--chat-bubble-ooc-bg, color-mix(in srgb, var(--chat-ooc-bg, #ffffff) 34%, transparent));
+  background: var(--chat-message-ooc-bg);
+  border: 1px solid color-mix(in srgb, var(--chat-ooc-border, rgba(148, 163, 184, 0.35)) 72%, transparent);
 }
 
 .chat-item--archived {
@@ -4080,6 +4218,11 @@ const handleRetrySend = () => {
   padding: 0;
   background: transparent;
   color: var(--chat-text-secondary);
+}
+
+.chat--has-background .chat-item--ooc .right .content {
+  color: color-mix(in srgb, var(--chat-ooc-text, var(--chat-text-secondary, #6b7280)) 80%, transparent);
+  font-size: calc(var(--chat-font-size, 0.95rem) - 2.5px);
 }
 
 /* @ mention capsule styles */

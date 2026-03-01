@@ -152,14 +152,12 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	}
 
 	db := model.GetDB()
-	buildBaseQuery := func() *gorm.DB {
-		q := db.Model(&model.MessageModel{}).
-			Where("channel_id = ?", channelID).
-			Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
-				SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
-			))`, false, user.ID, user.ID, user.ID).
-			Where("is_revoked = ?", false).
-			Where("is_deleted = ?", false)
+		buildBaseQuery := func() *gorm.DB {
+			q := db.Model(&model.MessageModel{}).
+				Where("channel_id = ?", channelID).
+				Where("is_revoked = ?", false).
+				Where("is_deleted = ?", false)
+			q = applyWhisperVisibilityFilter(q, user.ID, channelID)
 
 		switch archivedFilter {
 		case "only":
@@ -196,9 +194,14 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	var tokens []string
 	var usedFTS bool
 	var backendName string
-	preferLikeFallback := matchMode == "fuzzy" && containsCJK(keyword)
+	forceLikeFallback := shouldForceLikeFallback(keyword, matchMode)
 
-	query, tokens, usedFTS, backendName := buildKeywordQuery(buildBaseQuery, keyword, matchMode)
+	query, tokens, usedFTS, backendName := buildKeywordQuery(
+		buildBaseQuery,
+		keyword,
+		matchMode,
+		forceFallbackOption(forceLikeFallback),
+	)
 
 	countQuery := query.Session(&gorm.Session{})
 	var total int64
@@ -221,7 +224,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 			})
 		}
 	}
-	if total == 0 && usedFTS && preferLikeFallback {
+	if total == 0 && usedFTS && forceLikeFallback {
 		log.Printf("消息搜索(%s)命中 0 条且包含 CJK 关键字，回退 LIKE 模糊匹配", backendName)
 		query, tokens, usedFTS, backendName = buildKeywordQuery(buildBaseQuery, keyword, matchMode, forceFallbackOption(true))
 		countQuery = query.Session(&gorm.Session{})
@@ -385,6 +388,10 @@ func parseQueryStringSlice(c *fiber.Ctx, key string) []string {
 		}
 	})
 	return values
+}
+
+func shouldForceLikeFallback(keyword, mode string) bool {
+	return mode == "fuzzy" && containsCJK(keyword)
 }
 
 func applyDefaultKeywordFilter(q *gorm.DB, keyword, mode string) (*gorm.DB, []string) {
