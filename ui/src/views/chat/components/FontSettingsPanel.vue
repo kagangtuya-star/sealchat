@@ -44,6 +44,8 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const localFontAvailable = computed(() => isLocalFontApiAvailable())
 const cacheAvailable = computed(() => isFontAssetCacheAvailable())
+const normalizeCachedAssetSourceType = (value: unknown): Extract<FontSourceType, 'upload' | 'url'> =>
+  value === 'upload' ? 'upload' : 'url'
 
 const selectedCachedAsset = computed(() =>
   cachedAssets.value.find(asset => asset.id === selectedCachedAssetId.value) || null,
@@ -117,11 +119,14 @@ const previewFamily = computed(() => {
   if (sourceMode.value === 'manual') {
     return sanitizeFontFamilyName(resolvedManualPreviewFamily.value) || currentDisplayFamily.value
   }
-  if (importedDraft.value) {
-    return sanitizeFontFamilyName(importedDraft.value.family) || currentDisplayFamily.value
-  }
-  if (selectedCachedAsset.value) {
-    return sanitizeFontFamilyName(selectedCachedAsset.value.family) || currentDisplayFamily.value
+  if (sourceMode.value === 'upload' || sourceMode.value === 'url') {
+    const sourceFieldFamily = sourceMode.value === 'upload' ? uploadFamily.value : urlFamily.value
+    const candidate = sanitizeFontFamilyName(
+      selectedCachedAsset.value?.family
+      || importedDraft.value?.family
+      || sourceFieldFamily,
+    )
+    return candidate || currentDisplayFamily.value
   }
   return currentDisplayFamily.value
 })
@@ -139,13 +144,32 @@ const refreshCachedAssets = async () => {
   }
 }
 
+const saveImportedFontToCache = async (draft: ImportedFontPayload): Promise<FontAssetMeta> => {
+  const saved = await saveFontAsset({
+    id: createFontAssetId(),
+    family: sanitizeFontFamilyName(draft.family),
+    sourceType: draft.sourceType,
+    mime: draft.mime,
+    size: draft.size,
+    blob: draft.blob,
+    sourceUrl: draft.sourceUrl,
+  })
+  if (saved.evictedIds.length > 0) {
+    message.info(`已自动清理 ${saved.evictedIds.length} 个较旧缓存字体`)
+  }
+  await refreshCachedAssets()
+  selectedCachedAssetId.value = saved.saved.id
+  importedDraft.value = null
+  return saved.saved
+}
+
 const setupDraftFromCurrent = async () => {
   const currentSource = display.settings.globalFontSourceType
   sourceMode.value = currentSource === 'default' ? 'system' : currentSource
   selectedLocalFamily.value = currentDisplayFamily.value
   manualFamily.value = currentDisplayFamily.value
-  uploadFamily.value = currentDisplayFamily.value
-  urlFamily.value = currentDisplayFamily.value
+  uploadFamily.value = ''
+  urlFamily.value = ''
   urlValue.value = ''
   importedDraft.value = null
   enhancedCoverageEnabled.value = !!display.settings.fontEnhancedCoverageEnabled
@@ -171,7 +195,7 @@ const handleLoadLocalFonts = async () => {
   try {
     const options = buildLocalFontOptions(await queryLocalFontCandidates())
     localFontOptions.value = options
-    if (!selectedLocalFamily.value && options.length > 0) {
+    if (options.length > 0 && !options.some(option => option.value === selectedLocalFamily.value)) {
       selectedLocalFamily.value = options[0].value
     }
     if (options.length === 0) {
@@ -188,6 +212,11 @@ const handleLoadLocalFonts = async () => {
   }
 }
 
+const handleSelectLocalFont = (value: string | null) => {
+  selectedLocalFamily.value = sanitizeFontFamilyName(value || '')
+  sourceMode.value = 'system'
+}
+
 const triggerFileSelect = () => {
   fileInputRef.value?.click()
 }
@@ -198,12 +227,22 @@ const handleFileChange = async (event: Event) => {
   if (!file) return
   processing.value = true
   try {
-    const loaded = await loadFontFromFile(file, uploadFamily.value)
+    const loaded = await loadFontFromFile(file)
     importedDraft.value = loaded
     sourceMode.value = 'upload'
     uploadFamily.value = loaded.family
     selectedCachedAssetId.value = null
-    message.success(`字体已加载：${loaded.family}`)
+    let cached = false
+    if (cacheAvailable.value) {
+      try {
+        await saveImportedFontToCache(loaded)
+        cached = true
+      } catch (cacheError) {
+        console.warn('上传字体后写入缓存失败', cacheError)
+        message.warning('字体已加载，但写入缓存失败；点击“保持”时将重试')
+      }
+    }
+    message.success(cached ? `字体已加载并加入缓存：${loaded.family}` : `字体已加载：${loaded.family}`)
   } catch (error: any) {
     message.error(error?.message || '字体文件加载失败')
   } finally {
@@ -215,12 +254,22 @@ const handleFileChange = async (event: Event) => {
 const handleImportFromUrl = async () => {
   processing.value = true
   try {
-    const loaded = await loadFontFromUrl(urlValue.value, urlFamily.value)
+    const loaded = await loadFontFromUrl(urlValue.value)
     importedDraft.value = loaded
     sourceMode.value = 'url'
     urlFamily.value = loaded.family
     selectedCachedAssetId.value = null
-    message.success(`字体已加载：${loaded.family}`)
+    let cached = false
+    if (cacheAvailable.value) {
+      try {
+        await saveImportedFontToCache(loaded)
+        cached = true
+      } catch (cacheError) {
+        console.warn('URL 导入字体后写入缓存失败', cacheError)
+        message.warning('字体已加载，但写入缓存失败；点击“保持”时将重试')
+      }
+    }
+    message.success(cached ? `字体已加载并加入缓存：${loaded.family}` : `字体已加载：${loaded.family}`)
   } catch (error: any) {
     message.error(error?.message || 'URL 字体加载失败')
   } finally {
@@ -229,20 +278,21 @@ const handleImportFromUrl = async () => {
 }
 
 const handleUseCachedAsset = async (asset: FontAssetMeta) => {
+  const normalizedSourceType = normalizeCachedAssetSourceType(asset.sourceType)
+  sourceMode.value = normalizedSourceType
+  selectedCachedAssetId.value = asset.id
+  importedDraft.value = null
+  if (normalizedSourceType === 'upload') {
+    uploadFamily.value = asset.family
+  } else {
+    urlFamily.value = asset.family
+  }
   processing.value = true
   try {
     await restoreCachedFontById(asset.id)
-    sourceMode.value = asset.sourceType
-    selectedCachedAssetId.value = asset.id
-    importedDraft.value = null
-    if (asset.sourceType === 'upload') {
-      uploadFamily.value = asset.family
-    } else {
-      urlFamily.value = asset.family
-    }
     message.success(`已选中缓存字体：${asset.family}`)
   } catch (error: any) {
-    message.error(error?.message || '读取缓存字体失败')
+    message.error(error?.message || '字体资源恢复失败，预览可能回退到系统字体')
   } finally {
     processing.value = false
   }
@@ -294,31 +344,19 @@ const resolveSubmitPayload = async (): Promise<{ family: string; sourceType: Fon
           assetId: null,
         }
       }
-      const saved = await saveFontAsset({
-        id: createFontAssetId(),
-        family: sanitizeFontFamilyName(importedDraft.value.family),
-        sourceType: importedDraft.value.sourceType,
-        mime: importedDraft.value.mime,
-        size: importedDraft.value.size,
-        blob: importedDraft.value.blob,
-        sourceUrl: importedDraft.value.sourceUrl,
-      })
-      if (saved.evictedIds.length > 0) {
-        message.info(`已自动清理 ${saved.evictedIds.length} 个较旧缓存字体`)
-      }
-      await refreshCachedAssets()
-      selectedCachedAssetId.value = saved.saved.id
+      const savedMeta = await saveImportedFontToCache(importedDraft.value)
       return {
-        family: saved.saved.family,
-        sourceType: saved.saved.sourceType,
-        assetId: saved.saved.id,
+        family: savedMeta.family,
+        sourceType: savedMeta.sourceType,
+        assetId: savedMeta.id,
       }
     }
     if (selectedCachedAsset.value) {
       await restoreCachedFontById(selectedCachedAsset.value.id)
+      const normalizedSourceType = normalizeCachedAssetSourceType(selectedCachedAsset.value.sourceType)
       return {
         family: selectedCachedAsset.value.family,
-        sourceType: selectedCachedAsset.value.sourceType,
+        sourceType: normalizedSourceType,
         assetId: selectedCachedAsset.value.id,
       }
     }
@@ -423,11 +461,12 @@ const handleRestoreDefault = () => {
           <span v-if="!localFontAvailable" class="tip-text">当前浏览器不支持该 API</span>
         </div>
         <n-select
-          v-model:value="selectedLocalFamily"
+          :value="selectedLocalFamily"
           filterable
           clearable
           :options="localFontOptions"
           placeholder="读取后选择字体"
+          @update:value="handleSelectLocalFont"
         />
       </section>
 
@@ -442,7 +481,7 @@ const handleRestoreDefault = () => {
       <section v-if="sourceMode === 'upload'" class="font-settings-section">
         <header>
           <p class="section-title">上传字体文件</p>
-          <p class="section-desc">支持 ttf/otf/woff/woff2，保存后会进入本地缓存（最多 3 个）</p>
+          <p class="section-desc">支持 ttf/otf/woff/woff2，导入成功后会自动进入本地缓存（最多 3 个）</p>
         </header>
         <div class="upload-row">
           <n-input v-model:value="uploadFamily" placeholder="可选：自定义字体名称" />
@@ -511,7 +550,7 @@ const handleRestoreDefault = () => {
         <n-space size="small">
           <n-button tertiary size="small" :disabled="processing" @click="handleRestoreDefault">恢复默认字体</n-button>
           <n-button quaternary size="small" @click="handleCancel">取消</n-button>
-          <n-button type="primary" size="small" :loading="processing" @click="handleKeep">保持</n-button>
+          <n-button type="primary" size="small" :loading="processing" @click="handleKeep">保存</n-button>
         </n-space>
       </n-space>
     </div>
@@ -658,7 +697,11 @@ const handleRestoreDefault = () => {
   border-radius: 0.75rem;
   border: 1px solid var(--sc-border-mute);
   background: var(--sc-bg-surface);
-  font-family: var(--preview-font-family);
+  font-family: var(--preview-font-family) !important;
+}
+
+.preview-box :where(*):not(code):not(pre):not(kbd):not(samp):not(.n-icon):not(svg):not(path) {
+  font-family: inherit !important;
 }
 
 .preview-title {
