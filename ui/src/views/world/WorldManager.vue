@@ -89,22 +89,20 @@ const confirmRemove = () => {
           ]" />
         </n-form-item>
         <n-form-item label="管理权限">
-          <n-switch v-model:value="form.allowAdminEditMessages" />
-          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
-            允许管理员编辑其他成员发言
-          </span>
-        </n-form-item>
-        <n-form-item label="管理权限">
-          <n-switch v-model:value="form.allowMemberEditKeywords" />
-          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
-            允许成员编辑世界术语
-          </span>
-        </n-form-item>
-        <n-form-item label="管理权限">
-          <n-switch v-model:value="form.strictWhisperPrivacy" />
-          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
-            不允许管理员查看所有的悄悄话
-          </span>
+          <div class="manager-permission-group">
+            <div class="manager-permission-row">
+              <n-switch v-model:value="form.allowAdminEditMessages" />
+              <span class="manager-permission-text">允许管理员编辑其他成员发言</span>
+            </div>
+            <div class="manager-permission-row">
+              <n-switch v-model:value="form.allowMemberEditKeywords" />
+              <span class="manager-permission-text">允许成员编辑世界术语</span>
+            </div>
+            <div class="manager-permission-row">
+              <n-switch v-model:value="form.strictWhisperPrivacy" />
+              <span class="manager-permission-text">不允许管理员查看所有的悄悄话</span>
+            </div>
+          </div>
         </n-form-item>
         <n-form-item label="徽章模板">
           <n-input
@@ -132,5 +130,23 @@ const confirmRemove = () => {
   max-height: 70vh;
   overflow: auto;
   padding-right: 4px;
+}
+
+.manager-permission-group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manager-permission-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-permission-text {
+  color: var(--sc-text-secondary);
+  font-size: 13px;
 }
 </style>
