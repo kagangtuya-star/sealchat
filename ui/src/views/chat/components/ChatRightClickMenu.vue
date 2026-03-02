@@ -717,10 +717,13 @@ const clickCopyMessageLink = async () => {
   background: rgba(15, 23, 42, 0.95);
   border-color: rgba(148, 163, 184, 0.35);
   color: #e2e8f0;
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
 }
 
 :deep(.context-menu.chat-menu--night .context-menu-item) {
   color: inherit;
+  font-family: inherit;
 }
 
 :deep(.context-menu.chat-menu--night .context-menu-item:hover) {
@@ -731,10 +734,13 @@ const clickCopyMessageLink = async () => {
   background: rgba(248, 250, 252, 0.98);
   border-color: rgba(15, 23, 42, 0.08);
   color: #0f172a;
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
 }
 
 :deep(.context-menu.chat-menu--day .context-menu-item) {
   color: inherit;
+  font-family: inherit;
 }
 
 :deep(.context-menu.chat-menu--day .context-menu-item:hover) {

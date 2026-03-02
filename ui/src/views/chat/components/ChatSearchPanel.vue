@@ -373,6 +373,7 @@ const shortContent = (text: string) => {
         v-if="panelVisible"
         ref="panelRef"
         class="chat-search-panel"
+        data-sc-font-surface="true"
         :class="{ 'chat-search-panel--mobile': isMobileUa }"
         :style="panelStyle"
       >
@@ -617,6 +618,8 @@ const shortContent = (text: string) => {
   position: fixed;
   top: 120px;
   right: 40px;
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
   background: rgba(255, 255, 255, 0.98);
   border-radius: 1rem;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);

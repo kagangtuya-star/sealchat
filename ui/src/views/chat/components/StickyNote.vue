@@ -1095,7 +1095,7 @@ if (typeof window !== 'undefined') {
   max-height: calc(100vh - 16px);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   overflow: hidden;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--sc-font-family);
   user-select: none;
   transition: box-shadow 0.2s;
 }

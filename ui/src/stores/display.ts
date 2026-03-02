@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia'
 import { useChatStore } from './chat'
+import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamilyName } from '@/services/font/fontUtils'
+import type { FontSourceType } from '@/services/font/types'
+import { restoreCachedFontById } from '@/services/font/fontLoader'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
@@ -88,6 +91,10 @@ export interface DisplaySettings {
   fontSize: number
   lineHeight: number
   letterSpacing: number
+  globalFontFamily: string
+  globalFontSourceType: FontSourceType
+  globalFontAssetId: string | null
+  fontEnhancedCoverageEnabled: boolean
   bubbleGap: number
   compactBubbleGap: number
   paragraphSpacing: number
@@ -212,6 +219,7 @@ const coerceQuickInputTrigger = (value?: string): string => {
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
+const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url']
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
   if (typeof value === 'string') {
     const normalized = value.trim() as TimestampFormat
@@ -220,6 +228,20 @@ const coerceTimestampFormat = (value?: string): TimestampFormat => {
     }
   }
   return TIMESTAMP_FORMAT_DEFAULT
+}
+const coerceFontSourceType = (value: unknown): FontSourceType => {
+  if (typeof value === 'string') {
+    const normalized = value.trim() as FontSourceType
+    if (FONT_SOURCE_TYPES.includes(normalized)) {
+      return normalized
+    }
+  }
+  return 'default'
+}
+const normalizeFontAssetId = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized || null
 }
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
@@ -399,6 +421,10 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   fontSize: FONT_SIZE_DEFAULT,
   lineHeight: LINE_HEIGHT_DEFAULT,
   letterSpacing: LETTER_SPACING_DEFAULT,
+  globalFontFamily: '',
+  globalFontSourceType: 'default',
+  globalFontAssetId: null,
+  fontEnhancedCoverageEnabled: false,
   bubbleGap: BUBBLE_GAP_DEFAULT,
   compactBubbleGap: COMPACT_BUBBLE_GAP_DEFAULT,
   paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
@@ -580,6 +606,10 @@ const loadSettings = (): DisplaySettings => {
         LETTER_SPACING_MIN,
         LETTER_SPACING_MAX,
       ),
+      globalFontFamily: sanitizeFontFamilyName((parsed as any)?.globalFontFamily),
+      globalFontSourceType: coerceFontSourceType((parsed as any)?.globalFontSourceType),
+      globalFontAssetId: normalizeFontAssetId((parsed as any)?.globalFontAssetId),
+      fontEnhancedCoverageEnabled: coerceBoolean((parsed as any)?.fontEnhancedCoverageEnabled ?? false),
       bubbleGap: coerceNumberInRange(parsed.bubbleGap, BUBBLE_GAP_DEFAULT, BUBBLE_GAP_MIN, BUBBLE_GAP_MAX),
       compactBubbleGap: coerceNumberInRange(
         parsed.compactBubbleGap,
@@ -718,6 +748,22 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
         LETTER_SPACING_MAX,
       )
       : base.letterSpacing,
+  globalFontFamily:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'globalFontFamily')
+      ? sanitizeFontFamilyName((patch as any).globalFontFamily)
+      : base.globalFontFamily,
+  globalFontSourceType:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'globalFontSourceType')
+      ? coerceFontSourceType((patch as any).globalFontSourceType)
+      : base.globalFontSourceType,
+  globalFontAssetId:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'globalFontAssetId')
+      ? normalizeFontAssetId((patch as any).globalFontAssetId)
+      : base.globalFontAssetId,
+  fontEnhancedCoverageEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'fontEnhancedCoverageEnabled')
+      ? coerceBoolean((patch as any).fontEnhancedCoverageEnabled)
+      : base.fontEnhancedCoverageEnabled,
   bubbleGap:
     patch && Object.prototype.hasOwnProperty.call(patch, 'bubbleGap')
       ? coerceNumberInRange(patch.bubbleGap, BUBBLE_GAP_DEFAULT, BUBBLE_GAP_MIN, BUBBLE_GAP_MAX)
@@ -1006,6 +1052,52 @@ export const useDisplayStore = defineStore('display', {
       this.pruneFavoriteHotkeys(filtered, worldId);
       this.persist();
     },
+    setGlobalFont(payload: { family: string; sourceType: FontSourceType; assetId?: string | null }) {
+      const normalizedFamily = sanitizeFontFamilyName(payload.family)
+      let normalizedSourceType = coerceFontSourceType(payload.sourceType)
+      let normalizedAssetId = normalizeFontAssetId(payload.assetId)
+
+      if (normalizedSourceType === 'upload' || normalizedSourceType === 'url') {
+        if (!normalizedAssetId) {
+          normalizedSourceType = normalizedFamily ? 'manual' : 'default'
+        }
+      } else {
+        normalizedAssetId = null
+      }
+      if (!normalizedFamily && normalizedSourceType !== 'default') {
+        normalizedSourceType = 'default'
+      }
+
+      this.settings.globalFontFamily = normalizedFamily
+      this.settings.globalFontSourceType = normalizedSourceType
+      this.settings.globalFontAssetId = normalizedAssetId
+      this.persist()
+      this.applyTheme()
+    },
+    async restoreGlobalFontAsset() {
+      const sourceType = this.settings.globalFontSourceType
+      if (sourceType !== 'upload' && sourceType !== 'url') return
+      const assetId = normalizeFontAssetId(this.settings.globalFontAssetId)
+      if (!assetId) return
+      try {
+        const restored = await restoreCachedFontById(assetId)
+        if (!restored) {
+          this.settings.globalFontAssetId = null
+          this.settings.globalFontSourceType = this.settings.globalFontFamily ? 'manual' : 'default'
+          this.persist()
+          this.applyTheme()
+          return
+        }
+        const normalizedFamily = sanitizeFontFamilyName(restored.family)
+        if (normalizedFamily && normalizedFamily !== this.settings.globalFontFamily) {
+          this.settings.globalFontFamily = normalizedFamily
+          this.persist()
+        }
+        this.applyTheme()
+      } catch (error) {
+        console.warn('恢复字体资源失败，继续使用当前字体设置', error)
+      }
+    },
     updateSettings(patch: Partial<DisplaySettings>) {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
@@ -1050,6 +1142,14 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)
+      setVar('--sc-font-family', buildGlobalFontFamilyStack(effective.globalFontFamily))
+      setVar('--n-font-family', buildGlobalFontFamilyStack(effective.globalFontFamily))
+      setVar('--sc-code-font', DEFAULT_MONO_FONT_STACK)
+      if (effective.fontEnhancedCoverageEnabled) {
+        root.dataset.fontCoverage = 'enhanced'
+      } else {
+        delete root.dataset.fontCoverage
+      }
 
       // Apply avatar style
       setVar('--chat-avatar-size', `${effective.avatarSize}px`)

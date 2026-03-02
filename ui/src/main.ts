@@ -7,6 +7,7 @@ import { i18n, setLocale, setLocaleByNavigatorWithStorage } from './lang'
 import App from './App.vue'
 import router from './router'
 import { useDisplayStore } from './stores/display'
+import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -120,5 +121,14 @@ document.head.appendChild(meta)
 
 const displayStore = useDisplayStore(pinia)
 displayStore.applyTheme()
+displayStore.restoreGlobalFontAsset()
+  .then(() => {
+    displayStore.applyTheme()
+  })
+  .catch((error) => {
+    console.warn('恢复缓存字体失败，继续使用默认字体链', error)
+    displayStore.applyTheme()
+  })
 
 app.mount('#app')
+startFontSurfaceAutoMarking()
