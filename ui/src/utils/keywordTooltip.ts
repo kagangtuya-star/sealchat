@@ -24,6 +24,7 @@ const TOOLTIP_PADDING = 8
 const TOOLTIP_MAX_WIDTH = 360
 const TOOLTIP_MIN_WIDTH = 180
 const TOOLTIP_MAX_HEIGHT_RATIO = 0.6 // 最大高度为视口高度的60%
+const FONT_SURFACE_ATTR = 'data-sc-font-surface'
 
 // 确保滚动条样式已注入到页面
 let tooltipStylesInjected = false
@@ -123,6 +124,7 @@ function createTooltipElement(level: number): HTMLDivElement {
   const tooltip = document.createElement('div')
   tooltip.id = `keyword-tooltip-${tooltipIdCounter}`
   tooltip.className = 'keyword-tooltip'
+  tooltip.setAttribute(FONT_SURFACE_ATTR, 'true')
   tooltip.dataset.level = String(level)
   tooltip.style.cssText = `
     display: none;

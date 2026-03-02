@@ -25,6 +25,7 @@ const FLOATING_SURFACE_SELECTOR = [
   '.n-time-picker-panel',
   '.n-color-picker-panel',
   '.n-image-preview-container',
+  '.keyword-tooltip',
   '.mx-context-menu',
   '.context-menu',
   '[role="dialog"]',
