@@ -16,6 +16,7 @@ const emit = defineEmits<{
 const message = useMessage();
 const utils = useUtilsStore();
 const user = useUserStore();
+const USER_CREATE_MODAL_Z_INDEX = 3200;
 
 const activeTab = ref<'single' | 'batch'>('single');
 const loading = ref(false);
@@ -207,6 +208,7 @@ const handleClose = () => {
 <template>
   <n-modal
     :show="show"
+    :z-index="USER_CREATE_MODAL_Z_INDEX"
     @update:show="handleClose"
     preset="card"
     title="新增用户"

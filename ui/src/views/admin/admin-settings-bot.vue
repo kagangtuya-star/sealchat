@@ -28,6 +28,8 @@ const avatarPreview = ref('')
 let avatarPreviewObjectUrl: string | null = null
 const uploadingAvatar = ref(false)
 const avatarVersion = ref(0)
+const BOT_CONFIG_MODAL_Z_INDEX = 3200
+const BOT_AVATAR_MODAL_Z_INDEX = 3210
 
 const appendAvatarVersion = (url: string, version?: number | string) => {
   if (!url || !version) {
@@ -309,7 +311,7 @@ watch(newTokenAvatar, (value, oldValue) => {
     <n-button @click="cancel">关闭</n-button>
     <!-- <n-button type="primary" :disabled="!modified" @click="save">保存</n-button> -->
   </div>
-  <n-modal v-model:show="showModal" preset="dialog" :title="editingToken ? '编辑机器人' : '配置机器人外观'" :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
+  <n-modal v-model:show="showModal" :z-index="BOT_CONFIG_MODAL_Z_INDEX" preset="dialog" :title="editingToken ? '编辑机器人' : '配置机器人外观'" :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
     :negative-text="$t('dialoChannelgNew.negativeText')" @positive-click="submitToken">
     <n-form label-placement="top">
       <n-form-item label="机器人名称">
@@ -346,6 +348,7 @@ watch(newTokenAvatar, (value, oldValue) => {
   </n-modal>
   <n-modal
     v-model:show="avatarEditorVisible"
+    :z-index="BOT_AVATAR_MODAL_Z_INDEX"
     preset="card"
     title="编辑头像"
     style="max-width: 450px;"
