@@ -35,13 +35,14 @@ type WorldCreateParams struct {
 }
 
 type WorldUpdateParams struct {
-	Name                   string
-	Description            string
-	Visibility             string
-	Avatar                 string
-	EnforceMembership      *bool
-	AllowAdminEditMessages *bool
-	AllowMemberEditKeywords *bool
+	Name                       string
+	Description                string
+	Visibility                 string
+	Avatar                     string
+	EnforceMembership          *bool
+	AllowAdminEditMessages     *bool
+	AllowMemberEditKeywords    *bool
+	StrictWhisperPrivacy       *bool
 	CharacterCardBadgeTemplate *string
 }
 
@@ -76,11 +77,12 @@ func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
 	}
 	// 如果不存在系统默认世界，创建一个新的
 	w := &model.WorldModel{
-		Name:            "公共世界",
-		Description:     "系统自动创建的默认世界",
-		Visibility:      model.WorldVisibilityPublic,
-		IsSystemDefault: true,
-		Status:          "active",
+		Name:                 "公共世界",
+		Description:          "系统自动创建的默认世界",
+		Visibility:           model.WorldVisibilityPublic,
+		StrictWhisperPrivacy: true,
+		IsSystemDefault:      true,
+		Status:               "active",
 	}
 	if err := db.Create(w).Error; err != nil {
 		return nil, err
@@ -220,14 +222,15 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 		visibility = model.WorldVisibilityPublic
 	}
 	world := &model.WorldModel{
-		Name:              name,
-		Description:       description,
-		Avatar:            params.Avatar,
-		Visibility:        visibility,
-		OwnerID:           ownerID,
-		EnforceMembership: false,
+		Name:                    name,
+		Description:             description,
+		Avatar:                  params.Avatar,
+		Visibility:              visibility,
+		OwnerID:                 ownerID,
+		EnforceMembership:       false,
 		AllowMemberEditKeywords: false,
-		Status:            "active",
+		StrictWhisperPrivacy:    true,
+		Status:                  "active",
 	}
 	db := model.GetDB()
 	err = db.Transaction(func(tx *gorm.DB) error {
@@ -294,6 +297,9 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	}
 	if params.AllowMemberEditKeywords != nil {
 		updates["allow_member_edit_keywords"] = *params.AllowMemberEditKeywords
+	}
+	if params.StrictWhisperPrivacy != nil {
+		updates["strict_whisper_privacy"] = *params.StrictWhisperPrivacy
 	}
 	if params.CharacterCardBadgeTemplate != nil {
 		template, err := normalizeWorldBadgeTemplate(*params.CharacterCardBadgeTemplate)

@@ -23,6 +23,7 @@ watch(() => props.worldId, async (id) => {
     visibility: detail.world?.visibility,
     allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
     allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
+    strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
     characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
   };
 }, { immediate: true });
@@ -97,6 +98,12 @@ const confirmRemove = () => {
           <n-switch v-model:value="form.allowMemberEditKeywords" />
           <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
             允许成员编辑世界术语
+          </span>
+        </n-form-item>
+        <n-form-item label="管理权限">
+          <n-switch v-model:value="form.strictWhisperPrivacy" />
+          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
+            不允许管理员查看所有的悄悄话
           </span>
         </n-form-item>
         <n-form-item label="徽章模板">
