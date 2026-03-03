@@ -121,6 +121,61 @@ func ChannelWebhookIntegrationList(channelID string) ([]*ChannelWebhookIntegrati
 	return items, nil
 }
 
+// WebhookBotUserIDSet returns webhook-bot user ids from integration records.
+// When botUserIDs is empty, it returns all webhook bot ids.
+func WebhookBotUserIDSet(botUserIDs []string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	q := db.Model(&ChannelWebhookIntegrationModel{}).
+		Select("DISTINCT bot_user_id").
+		Where("bot_user_id <> ''")
+
+	if len(botUserIDs) > 0 {
+		dedup := map[string]struct{}{}
+		cleaned := make([]string, 0, len(botUserIDs))
+		for _, id := range botUserIDs {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if _, ok := dedup[id]; ok {
+				continue
+			}
+			dedup[id] = struct{}{}
+			cleaned = append(cleaned, id)
+		}
+		if len(cleaned) == 0 {
+			return out, nil
+		}
+		q = q.Where("bot_user_id IN ?", cleaned)
+	}
+
+	var ids []string
+	if err := q.Pluck("bot_user_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return out, nil
+}
+
+func IsWebhookBotUser(userID string) (bool, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false, nil
+	}
+	set, err := WebhookBotUserIDSet([]string{userID})
+	if err != nil {
+		return false, err
+	}
+	_, ok := set[userID]
+	return ok, nil
+}
+
 func ChannelWebhookIntegrationCreate(channelID, name, source, botUserID, createdBy string, capabilities []string) (*ChannelWebhookIntegrationModel, error) {
 	channelID = strings.TrimSpace(channelID)
 	name = strings.TrimSpace(name)

@@ -27,20 +27,21 @@ var embedDirStatic embed.FS
 
 func main() {
 	var opts struct {
-		Install          bool     `short:"i" long:"install" description:"安装为系统服务"`
-		Uninstall        bool     `long:"uninstall" description:"删除系统服务"`
-		Download         bool     `short:"d" long:"download" description:"从github下载最新的压缩包"`
-		ConfigList       bool     `long:"config-list" description:"列出配置历史版本"`
-		ConfigShow       int64    `long:"config-show" description:"显示指定版本配置详情"`
-		ConfigRollback   int64    `long:"config-rollback" description:"回滚到指定配置版本"`
-		ConfigExport     int64    `long:"config-export" description:"导出指定版本配置到文件"`
-		SQLiteVacuum     bool     `long:"sqlite-vacuum" description:"手动执行 SQLite 数据库空间整理（VACUUM）"`
-		SQLiteFTSRebuild bool     `long:"sqlite-fts-rebuild" description:"手动全量重建 SQLite FTS 索引"`
-		UserSecret       string   `long:"user-secret" description:"用户秘密工具：list 列出平台管理员，reset 按用户名重置密码为123456" choice:"list" choice:"reset"`
-		Username         []string `long:"username" description:"目标用户名，可重复指定"`
-		AdminOnly        bool     `long:"admin-only" description:"仅允许重置平台管理员"`
-		Yes              bool     `long:"yes" description:"执行重置时跳过交互确认"`
-		Output           string   `long:"output" description:"导出配置的输出文件路径"`
+		Install                  bool     `short:"i" long:"install" description:"安装为系统服务"`
+		Uninstall                bool     `long:"uninstall" description:"删除系统服务"`
+		Download                 bool     `short:"d" long:"download" description:"从github下载最新的压缩包"`
+		ConfigList               bool     `long:"config-list" description:"列出配置历史版本"`
+		ConfigShow               int64    `long:"config-show" description:"显示指定版本配置详情"`
+		ConfigRollback           int64    `long:"config-rollback" description:"回滚到指定配置版本"`
+		ConfigExport             int64    `long:"config-export" description:"导出指定版本配置到文件"`
+		SQLiteVacuum             bool     `long:"sqlite-vacuum" description:"手动执行 SQLite 数据库空间整理（VACUUM）"`
+		SQLiteFTSRebuild         bool     `long:"sqlite-fts-rebuild" description:"手动全量重建 SQLite FTS 索引"`
+		CleanupWebhookBotFriends bool     `long:"cleanup-webhook-bot-friends" description:"清理 webhook BOT 历史遗留的好友关系与私聊频道（物理删除）"`
+		UserSecret               string   `long:"user-secret" description:"用户秘密工具：list 列出平台管理员，reset 按用户名重置密码为123456" choice:"list" choice:"reset"`
+		Username                 []string `long:"username" description:"目标用户名，可重复指定"`
+		AdminOnly                bool     `long:"admin-only" description:"仅允许重置平台管理员"`
+		Yes                      bool     `long:"yes" description:"执行重置时跳过交互确认"`
+		Output                   string   `long:"output" description:"导出配置的输出文件路径"`
 	}
 	_, err := flags.ParseArgs(&opts, os.Args)
 	if err != nil {
@@ -65,15 +66,15 @@ func main() {
 		return
 	}
 
-	if opts.UserSecret != "" && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.SQLiteFTSRebuild) {
+	if opts.UserSecret != "" && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.SQLiteFTSRebuild || opts.CleanupWebhookBotFriends) {
 		log.Fatal("--user-secret 不能与配置版本管理/数据库维护参数同时使用")
 	}
-	if opts.SQLiteFTSRebuild && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum) {
+	if opts.SQLiteFTSRebuild && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.CleanupWebhookBotFriends) {
 		log.Fatal("--sqlite-fts-rebuild 不能与配置版本管理/数据库维护参数同时使用")
 	}
 
 	// 配置管理命令需要先初始化数据库
-	if opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.UserSecret != "" {
+	if opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.CleanupWebhookBotFriends || opts.UserSecret != "" {
 		lo.Must0(os.MkdirAll("./data", 0755))
 		// 优先从配置文件读取 DSN，否则使用默认值
 		dsn := utils.GetDSNForCLI()
@@ -100,6 +101,12 @@ func main() {
 		if opts.SQLiteVacuum {
 			if err := handleSQLiteVacuum(); err != nil {
 				log.Fatalf("SQLite 空间整理失败: %v", err)
+			}
+			return
+		}
+		if opts.CleanupWebhookBotFriends {
+			if err := handleCleanupWebhookBotFriends(); err != nil {
+				log.Fatalf("Webhook BOT 历史好友数据清理失败: %v", err)
 			}
 			return
 		}

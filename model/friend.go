@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/samber/lo"
 	"gorm.io/gorm"
 
 	"sealchat/utils"
@@ -193,13 +192,24 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	webhookBotSet, err := webhookBotUserSetByRelations(friends, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	var userIds utils.SyncSet[string]
 	friendMap := map[string]*FriendModel{}
 
 	var friendIds []string
 	var strangerIds []string
-	_ = lo.Map(friends, func(item *FriendModel, index int) string {
+	for _, item := range friends {
+		if item == nil {
+			continue
+		}
+		targetUserID := item.getAnotherUserId(userID)
+		if _, blocked := webhookBotSet[targetUserID]; blocked {
+			continue
+		}
 		chId := fmt.Sprintf("%s:%s", item.UserID1, item.UserID2)
 		userIds.Add(item.UserID1)
 		userIds.Add(item.UserID2)
@@ -215,8 +225,10 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 				strangerIds = append(strangerIds, chId)
 			}
 		}
-		return chId
-	})
+	}
+	if len(friendIds) == 0 && len(strangerIds) == 0 {
+		return []*ChannelModel{}, nil
+	}
 
 	var channels []*ChannelModel
 	// 1. 频道ID在friendIds列表中
@@ -227,11 +239,16 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 	userIds.Delete(userID)
 	var users []*UserModel
 	userMap := map[string]*UserModel{}
-	db.Where("id in ?", userIds.ToArray()).Find(&users)
-	_ = lo.Map(users, func(item *UserModel, index int) string {
+	userIDList := userIds.ToArray()
+	if len(userIDList) > 0 {
+		db.Where("id in ?", userIDList).Find(&users)
+	}
+	for _, item := range users {
+		if item == nil {
+			continue
+		}
 		userMap[item.ID] = item
-		return ""
-	})
+	}
 
 	var validChannels []*ChannelModel
 	var orphanedChannelIDs []string
@@ -316,6 +333,21 @@ func (fr *FriendModel) getAnotherUserId(userID string) string {
 	}
 }
 
+func webhookBotUserSetByRelations(friends []*FriendModel, curUserID string) (map[string]struct{}, error) {
+	targetIDs := make([]string, 0, len(friends))
+	for _, item := range friends {
+		if item == nil {
+			continue
+		}
+		otherID := strings.TrimSpace(item.getAnotherUserId(curUserID))
+		if otherID == "" {
+			continue
+		}
+		targetIDs = append(targetIDs, otherID)
+	}
+	return WebhookBotUserIDSet(targetIDs)
+}
+
 // FriendList 获取用户的好友列表
 func FriendList(userID string, friendOnly bool) ([]*FriendModel, error) {
 	var friends []*FriendModel
@@ -331,12 +363,34 @@ func FriendList(userID string, friendOnly bool) ([]*FriendModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	webhookBotSet, err := webhookBotUserSetByRelations(friends, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(webhookBotSet) > 0 {
+		filtered := make([]*FriendModel, 0, len(friends))
+		for _, item := range friends {
+			if item == nil {
+				continue
+			}
+			if _, blocked := webhookBotSet[item.getAnotherUserId(userID)]; blocked {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		friends = filtered
+	}
+	if len(friends) == 0 {
+		return []*FriendModel{}, nil
+	}
 
 	utils.QueryOneToManyMap(db, friends, func(i *FriendModel) []string {
 		return []string{i.getAnotherUserId(userID)}
 	}, func(i *FriendModel, x []*UserModel) {
-		i.UserInfo = x[0]
+		if len(x) > 0 {
+			i.UserInfo = x[0]
+		}
 	}, "")
 
-	return friends, err
+	return friends, nil
 }

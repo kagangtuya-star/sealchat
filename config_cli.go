@@ -308,3 +308,15 @@ func handleSQLiteVacuum() error {
 	fmt.Println("SQLite VACUUM 执行完成")
 	return nil
 }
+
+func handleCleanupWebhookBotFriends() error {
+	stats, err := model.CleanupWebhookBotFriendData()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Webhook BOT 历史好友数据清理完成")
+	fmt.Printf("webhookBotCount: %d\n", stats.WebhookBotCount)
+	fmt.Printf("friendRelationDeleted: %d\n", stats.FriendRelationDeleted)
+	fmt.Printf("privateChannelDeleted: %d\n", stats.PrivateChannelDeleted)
+	return nil
+}
