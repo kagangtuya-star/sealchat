@@ -232,7 +232,7 @@ export const useChannelSearchStore = defineStore('channelSearch', {
         if (seq !== this.requestSeq) {
           return
         }
-        const message = error?.response?.data?.error || error?.message || '搜索失败，请稍后重试'
+        const message = error?.response?.data?.error || error?.response?.data?.message || error?.message || '搜索失败，请稍后重试'
         this.error = message
       } finally {
         if (seq === this.requestSeq) {
@@ -241,11 +241,20 @@ export const useChannelSearchStore = defineStore('channelSearch', {
       }
     },
     async fetchChannelSearch(channelId: string, params: Record<string, any>, channelNameHint?: string) {
-      const resp = await api.get(`api/v1/channels/${channelId}/messages/search`, {
-        params,
+      const chatStore = useChatStore()
+      const requestParams: Record<string, any> = { ...params }
+      let endpoint = `api/v1/channels/${channelId}/messages/search`
+      if (chatStore.observerMode) {
+        const observerSlug = (chatStore.observerSlug || '').trim()
+        if (observerSlug) {
+          requestParams.ob_slug = observerSlug
+          endpoint = `api/v1/public/ob/channels/${channelId}/messages/search`
+        }
+      }
+      const resp = await api.get(endpoint, {
+        params: requestParams,
       })
       const payload = resp?.data ?? {}
-      const chatStore = useChatStore()
       const resolvedChannelName =
         channelNameHint ||
         chatStore.findChannelById(channelId)?.name ||

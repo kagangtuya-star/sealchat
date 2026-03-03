@@ -661,6 +661,20 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <template #trigger>
           <button
             type="button"
+            class="sc-icon-button sc-search-button sc-search-button--channel"
+            :class="{ 'is-active': searchPanelActive }"
+            aria-label="搜索频道消息"
+            @click="toggleChannelSearch"
+          >
+            <n-icon :component="SearchOutline" size="16" />
+          </button>
+        </template>
+        <span>搜索频道消息</span>
+      </n-tooltip>
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
             class="sc-icon-button"
             aria-label="显示设置"
             @click="openDisplaySettings"

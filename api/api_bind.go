@@ -251,6 +251,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	})
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
+	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
 
