@@ -317,7 +317,9 @@ func UserRefreshAccessToken(tokenID string) (string, error) {
 		return "", ErrInvalidToken
 	}
 
-	if err := db.Model(&AccessTokenModel{}).Update("expired_at", expiredAt).Error; err != nil {
+	if err := db.Model(&AccessTokenModel{}).
+		Where("id = ?", tokenID).
+		Update("expired_at", expiredAt).Error; err != nil {
 		return "", fmt.Errorf("update failed")
 	}
 
