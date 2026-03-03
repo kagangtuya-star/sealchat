@@ -34,6 +34,7 @@
   sqlite:
     # 是否启用 WAL 日志，提高读写并发
     wal: true
+    # auto_vacuum 使用 FULL 模式，程序会在启动时自动检测并启用（含已有库）
     # busy_timeout 毫秒，避免高并发锁冲突，建议 5s-15s
     busyTimeout: 10000
     # page cache 大小，单位 KB；负值表示 KB。示例 512000=约512MB

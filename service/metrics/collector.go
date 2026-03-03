@@ -291,6 +291,14 @@ func (c *Collector) Retention() time.Duration {
 	return c.cfg.Retention
 }
 
+// CurrentConnectionCount 返回当前已认证连接数。
+func (c *Collector) CurrentConnectionCount() int64 {
+	if c == nil {
+		return 0
+	}
+	return c.connCount.Load()
+}
+
 // OnlineTTL 返回在线判定窗口。
 func (c *Collector) OnlineTTL() time.Duration {
 	if c == nil || c.cfg.OnlineTTL <= 0 {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -22,6 +24,15 @@ import (
 var db *gorm.DB
 var dbDriver string
 var sqliteFTSReady bool
+var sqliteVacuumMu sync.Mutex
+var lastDBWriteUnixMilli atomic.Int64
+var sqliteDBFilePath atomic.Value
+
+const (
+	sqliteAutoVacuumNone        = 0
+	sqliteAutoVacuumFull        = 1
+	sqliteAutoVacuumIncremental = 2
+)
 
 type StringPKBaseModel struct {
 	ID        string     `gorm:"primary_key" json:"id"`
@@ -63,12 +74,15 @@ func DBInit(cfg *utils.AppConfig) {
 
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		dbDriver = "postgres"
+		sqliteDBFilePath.Store("")
 		dialector = postgres.Open(dsn)
 	} else if strings.HasPrefix(dsn, "mysql://") || strings.Contains(dsn, "@tcp(") {
 		dbDriver = "mysql"
+		sqliteDBFilePath.Store("")
 		dsn = strings.TrimLeft(dsn, "mysql://")
 		dialector = mysql.Open(dsn)
 	} else if strings.HasSuffix(dsn, ".db") || strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, ":memory:") {
+		sqliteDBFilePath.Store(extractSQLiteFilePath(dsn))
 		dsn = ensureSQLiteDSNPath(dsn)
 		if sqliteCfg.TxLockImmediate && !strings.Contains(strings.ToLower(dsn), "_txlock=") {
 			if strings.Contains(dsn, "?") {
@@ -93,10 +107,12 @@ func DBInit(cfg *utils.AppConfig) {
 	if err != nil {
 		panic("连接数据库失败")
 	}
+	registerDBWriteActivityCallbacks(db)
 
 	if isSQLite {
 		applySQLitePragmas(db, sqliteCfg)
 		applySQLiteConnPool(db, sqliteCfg)
+		ensureSQLiteAutoVacuum(db)
 	}
 
 	if db.Migrator().HasTable(&UserModel{}) {
@@ -206,12 +222,15 @@ func DBInitMinimal(dsn string) error {
 
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		dbDriver = "postgres"
+		sqliteDBFilePath.Store("")
 		dialector = postgres.Open(dsn)
 	} else if strings.HasPrefix(dsn, "mysql://") || strings.Contains(dsn, "@tcp(") {
 		dbDriver = "mysql"
+		sqliteDBFilePath.Store("")
 		dsn = strings.TrimLeft(dsn, "mysql://")
 		dialector = mysql.Open(dsn)
 	} else {
+		sqliteDBFilePath.Store(extractSQLiteFilePath(dsn))
 		dsn = ensureSQLiteDSNPath(dsn)
 		if !strings.Contains(strings.ToLower(dsn), "_txlock=") {
 			if strings.Contains(dsn, "?") {
@@ -234,6 +253,7 @@ func DBInitMinimal(dsn string) error {
 	if err != nil {
 		return err
 	}
+	registerDBWriteActivityCallbacks(db)
 
 	if isSQLite {
 		applySQLitePragmas(db, utils.SQLiteConfig{
@@ -242,6 +262,7 @@ func DBInitMinimal(dsn string) error {
 			CacheSizeKB:   512000,
 			Synchronous:   "NORMAL",
 		})
+		ensureSQLiteAutoVacuum(db)
 	}
 
 	// 仅迁移配置表
@@ -269,6 +290,9 @@ func SQLiteFTSReady() bool {
 }
 
 func FlushWAL() {
+	if db == nil {
+		return
+	}
 	switch db.Dialector.(type) {
 	case *sqlite.Dialector: // SQLite 数据库，进行落盘
 	default:
@@ -277,6 +301,50 @@ func FlushWAL() {
 
 	_ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 	_ = db.Exec("PRAGMA shrink_memory")
+}
+
+// VacuumSQLite 执行 SQLite VACUUM，通常用于空闲期空间整理。
+func VacuumSQLite() error {
+	if db == nil || !IsSQLite() {
+		return nil
+	}
+	sqliteVacuumMu.Lock()
+	defer sqliteVacuumMu.Unlock()
+	return db.Exec("VACUUM").Error
+}
+
+// SQLiteFileSizeBytes 返回 SQLite 数据文件大小（字节）。
+func SQLiteFileSizeBytes() (int64, error) {
+	if !IsSQLite() {
+		return 0, fmt.Errorf("当前数据库不是 SQLite")
+	}
+	path := SQLiteDBFilePath()
+	if path == "" {
+		return 0, fmt.Errorf("当前 SQLite DSN 非文件路径，无法探测大小")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+func SQLiteDBFilePath() string {
+	value := sqliteDBFilePath.Load()
+	path, _ := value.(string)
+	return path
+}
+
+// HasRecentSQLiteWriteActivity 返回在给定窗口内是否检测到写入迹象。
+func HasRecentSQLiteWriteActivity(window time.Duration) bool {
+	if !IsSQLite() || window <= 0 {
+		return false
+	}
+	last := lastDBWriteUnixMilli.Load()
+	if last <= 0 {
+		return false
+	}
+	return time.Since(time.UnixMilli(last)) < window
 }
 
 func applySQLitePragmas(conn *gorm.DB, cfg utils.SQLiteConfig) {
@@ -324,6 +392,89 @@ func applySQLiteConnPool(conn *gorm.DB, cfg utils.SQLiteConfig) {
 	sqlDB.SetConnMaxLifetime(0)
 }
 
+func ensureSQLiteAutoVacuum(conn *gorm.DB) {
+	if conn == nil {
+		return
+	}
+	mode, err := querySQLiteAutoVacuumMode(conn)
+	if err != nil {
+		log.Printf("SQLite auto_vacuum 检查失败: %v", err)
+		return
+	}
+	if mode == sqliteAutoVacuumFull {
+		return
+	}
+
+	log.Printf("SQLite auto_vacuum 当前模式=%d，尝试切换为 FULL", mode)
+	if err := conn.Exec("PRAGMA auto_vacuum = FULL").Error; err != nil {
+		log.Printf("SQLite 启用 auto_vacuum 失败: %v", err)
+		return
+	}
+
+	sqliteVacuumMu.Lock()
+	vacuumErr := conn.Exec("VACUUM").Error
+	sqliteVacuumMu.Unlock()
+	if vacuumErr != nil {
+		log.Printf("SQLite 激活 auto_vacuum 失败（VACUUM）: %v", vacuumErr)
+		return
+	}
+
+	mode, err = querySQLiteAutoVacuumMode(conn)
+	if err != nil {
+		log.Printf("SQLite auto_vacuum 复检失败: %v", err)
+		return
+	}
+	if mode != sqliteAutoVacuumFull {
+		log.Printf("SQLite auto_vacuum 复检未生效，当前模式=%d", mode)
+		return
+	}
+	log.Printf("SQLite auto_vacuum 已启用 (FULL)")
+}
+
+func querySQLiteAutoVacuumMode(conn *gorm.DB) (int, error) {
+	var mode int
+	row := conn.Raw("PRAGMA auto_vacuum").Row()
+	if row == nil {
+		return sqliteAutoVacuumNone, fmt.Errorf("query auto_vacuum returned nil row")
+	}
+	if err := row.Scan(&mode); err != nil {
+		return sqliteAutoVacuumNone, err
+	}
+	if mode != sqliteAutoVacuumNone && mode != sqliteAutoVacuumFull && mode != sqliteAutoVacuumIncremental {
+		return sqliteAutoVacuumNone, fmt.Errorf("unknown auto_vacuum mode: %d", mode)
+	}
+	return mode, nil
+}
+
+func registerDBWriteActivityCallbacks(conn *gorm.DB) {
+	if conn == nil {
+		return
+	}
+	register := func(name string, registerFn func() error) {
+		if err := registerFn(); err != nil {
+			log.Printf("注册数据库写活动回调失败(%s): %v", name, err)
+		}
+	}
+	register("create", func() error {
+		_ = conn.Callback().Create().Remove("sealchat:write-activity:create")
+		return conn.Callback().Create().Before("gorm:create").Register("sealchat:write-activity:create", func(tx *gorm.DB) {
+			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
+		})
+	})
+	register("update", func() error {
+		_ = conn.Callback().Update().Remove("sealchat:write-activity:update")
+		return conn.Callback().Update().Before("gorm:update").Register("sealchat:write-activity:update", func(tx *gorm.DB) {
+			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
+		})
+	})
+	register("delete", func() error {
+		_ = conn.Callback().Delete().Remove("sealchat:write-activity:delete")
+		return conn.Callback().Delete().Before("gorm:delete").Register("sealchat:write-activity:delete", func(tx *gorm.DB) {
+			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
+		})
+	})
+}
+
 // ensureSQLiteDSNPath 确保 sqlite DSN 指向文件路径时存在目录
 func ensureSQLiteDSNPath(dsn string) string {
 	if strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, ":memory:") {
@@ -338,4 +489,54 @@ func ensureSQLiteDSNPath(dsn string) string {
 		_ = os.MkdirAll(dir, 0755)
 	}
 	return dsn
+}
+
+func extractSQLiteFilePath(dsn string) string {
+	raw := strings.TrimSpace(dsn)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if lower == ":memory:" || strings.HasPrefix(lower, "file::memory:") {
+		return ""
+	}
+	if idx := strings.Index(lower, "mode=memory"); idx >= 0 {
+		return ""
+	}
+
+	if strings.HasPrefix(lower, "file:") {
+		path := raw[len("file:"):]
+		if idx := strings.Index(path, "?"); idx >= 0 {
+			path = path[:idx]
+		}
+		path = strings.TrimSpace(path)
+		if path == "" || strings.EqualFold(path, ":memory:") {
+			return ""
+		}
+		if strings.HasPrefix(path, "//") {
+			path = strings.TrimPrefix(path, "//")
+			if path == "" {
+				return ""
+			}
+			if !strings.HasPrefix(path, "/") {
+				if slash := strings.Index(path, "/"); slash >= 0 {
+					path = path[slash:]
+				}
+			}
+		}
+		if path == "" || strings.EqualFold(path, ":memory:") {
+			return ""
+		}
+		return filepath.Clean(path)
+	}
+
+	path := raw
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		path = path[:idx]
+	}
+	path = strings.TrimSpace(path)
+	if path == "" || strings.EqualFold(path, ":memory:") {
+		return ""
+	}
+	return filepath.Clean(path)
 }

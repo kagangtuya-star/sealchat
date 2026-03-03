@@ -314,6 +314,22 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async adminSQLiteVacuumExecute() {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/sqlite/vacuum', {}, {
+        headers: { 'Authorization': user.token }
+      })
+      return resp
+    },
+
+    async adminSQLiteVacuumStatus() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/sqlite/vacuum/status', {
+        headers: { 'Authorization': user.token }
+      })
+      return resp
+    },
+
     async commandsRefresh() {
       const user = useUserStore();
       const resp = await api.get(`api/v1/commands`, {

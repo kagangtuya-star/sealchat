@@ -34,6 +34,7 @@ func main() {
 		ConfigShow     int64    `long:"config-show" description:"显示指定版本配置详情"`
 		ConfigRollback int64    `long:"config-rollback" description:"回滚到指定配置版本"`
 		ConfigExport   int64    `long:"config-export" description:"导出指定版本配置到文件"`
+		SQLiteVacuum   bool     `long:"sqlite-vacuum" description:"手动执行 SQLite 数据库空间整理（VACUUM）"`
 		UserSecret     string   `long:"user-secret" description:"用户秘密工具：list 列出平台管理员，reset 按用户名重置密码为123456" choice:"list" choice:"reset"`
 		Username       []string `long:"username" description:"目标用户名，可重复指定"`
 		AdminOnly      bool     `long:"admin-only" description:"仅允许重置平台管理员"`
@@ -63,12 +64,12 @@ func main() {
 		return
 	}
 
-	if opts.UserSecret != "" && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0) {
-		log.Fatal("--user-secret 不能与配置版本管理参数同时使用")
+	if opts.UserSecret != "" && (opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum) {
+		log.Fatal("--user-secret 不能与配置版本管理/数据库维护参数同时使用")
 	}
 
 	// 配置管理命令需要先初始化数据库
-	if opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.UserSecret != "" {
+	if opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 || opts.SQLiteVacuum || opts.UserSecret != "" {
 		lo.Must0(os.MkdirAll("./data", 0755))
 		// 优先从配置文件读取 DSN，否则使用默认值
 		dsn := utils.GetDSNForCLI()
@@ -90,6 +91,12 @@ func main() {
 		}
 		if opts.ConfigExport > 0 {
 			handleConfigExport(opts.ConfigExport, opts.Output)
+			return
+		}
+		if opts.SQLiteVacuum {
+			if err := handleSQLiteVacuum(); err != nil {
+				log.Fatalf("SQLite 空间整理失败: %v", err)
+			}
 			return
 		}
 		if opts.UserSecret != "" {
@@ -200,10 +207,57 @@ func main() {
 	}
 
 	autoSave := func() {
-		t := time.NewTicker(3 * 60 * time.Second)
+		walTicker := time.NewTicker(3 * 60 * time.Second)
+		vacuumTicker := time.NewTicker(15 * time.Minute)
+		defer walTicker.Stop()
+		defer vacuumTicker.Stop()
+
+		idleSince := time.Now()
+		lastVacuumAt := time.Time{}
+		const minIdleDuration = 30 * time.Minute
+		const writeActivityWindow = 10 * time.Minute
+
 		for {
-			<-t.C
-			model.FlushWAL()
+			select {
+			case <-ctx.Done():
+				return
+			case <-walTicker.C:
+				model.FlushWAL()
+			case <-vacuumTicker.C:
+				if !model.IsSQLite() {
+					continue
+				}
+				cfg := utils.GetConfig()
+				if cfg == nil || !cfg.SQLite.AutoVacuumEnabled {
+					continue
+				}
+				if collector != nil && collector.CurrentConnectionCount() > 0 {
+					idleSince = time.Now()
+					continue
+				}
+				if model.HasRecentSQLiteWriteActivity(writeActivityWindow) {
+					log.Printf("SQLite 空闲维护: 检测到近期写入活动，跳过 VACUUM")
+					continue
+				}
+				intervalHours := cfg.SQLite.AutoVacuumIntervalHours
+				if intervalHours <= 0 {
+					intervalHours = 168
+				}
+				minVacuumInterval := time.Duration(intervalHours) * time.Hour
+				now := time.Now()
+				if now.Sub(idleSince) < minIdleDuration {
+					continue
+				}
+				if !lastVacuumAt.IsZero() && now.Sub(lastVacuumAt) < minVacuumInterval {
+					continue
+				}
+				if err := model.VacuumSQLite(); err != nil {
+					log.Printf("SQLite 空闲 VACUUM 失败: %v", err)
+					continue
+				}
+				lastVacuumAt = now
+				log.Printf("SQLite 空闲维护: VACUUM 执行完成")
+			}
 		}
 	}
 	go autoSave()

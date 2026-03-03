@@ -261,6 +261,10 @@ type SQLiteConfig struct {
 	ReadConnections int `json:"readConnections" yaml:"readConnections"`
 	// 初始化时是否执行 PRAGMA optimize
 	OptimizeOnInit bool `json:"optimizeOnInit" yaml:"optimizeOnInit"`
+	// 是否启用自动空间整理（空闲时 VACUUM）
+	AutoVacuumEnabled bool `json:"autoVacuumEnabled" yaml:"autoVacuumEnabled"`
+	// 自动空间整理周期（小时）
+	AutoVacuumIntervalHours int `json:"autoVacuumIntervalHours" yaml:"autoVacuumIntervalHours"`
 }
 
 // 注: 实验型使用koanf，其实从需求上讲目前并无必要
@@ -338,13 +342,15 @@ func ReadConfig() *AppConfig {
 			},
 		},
 		SQLite: SQLiteConfig{
-			EnableWAL:       true,
-			BusyTimeoutMS:   10000,
-			CacheSizeKB:     512000,
-			Synchronous:     "NORMAL",
-			TxLockImmediate: true,
-			ReadConnections: runtime.NumCPU(),
-			OptimizeOnInit:  true,
+			EnableWAL:               true,
+			BusyTimeoutMS:           10000,
+			CacheSizeKB:             512000,
+			Synchronous:             "NORMAL",
+			TxLockImmediate:         true,
+			ReadConnections:         runtime.NumCPU(),
+			OptimizeOnInit:          true,
+			AutoVacuumEnabled:       true,
+			AutoVacuumIntervalHours: 168,
 		},
 		Captcha: CaptchaConfig{
 			Signup: CaptchaTargetConfig{Mode: CaptchaModeLocal},
@@ -488,6 +494,9 @@ func applySQLiteDefaults(cfg *SQLiteConfig) {
 	}
 	if cfg.ReadConnections <= 0 {
 		cfg.ReadConnections = runtime.NumCPU()
+	}
+	if cfg.AutoVacuumIntervalHours <= 0 {
+		cfg.AutoVacuumIntervalHours = 168
 	}
 	cfg.Synchronous = strings.ToUpper(cfg.Synchronous)
 	if cfg.Synchronous != "OFF" && cfg.Synchronous != "NORMAL" && cfg.Synchronous != "FULL" {
@@ -762,6 +771,15 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
 		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
+		_ = k.Set("sqlite.wal", config.SQLite.EnableWAL)
+		_ = k.Set("sqlite.busyTimeout", config.SQLite.BusyTimeoutMS)
+		_ = k.Set("sqlite.cacheSizeKB", config.SQLite.CacheSizeKB)
+		_ = k.Set("sqlite.synchronous", config.SQLite.Synchronous)
+		_ = k.Set("sqlite.txLockImmediate", config.SQLite.TxLockImmediate)
+		_ = k.Set("sqlite.readConnections", config.SQLite.ReadConnections)
+		_ = k.Set("sqlite.optimizeOnInit", config.SQLite.OptimizeOnInit)
+		_ = k.Set("sqlite.autoVacuumEnabled", config.SQLite.AutoVacuumEnabled)
+		_ = k.Set("sqlite.autoVacuumIntervalHours", config.SQLite.AutoVacuumIntervalHours)
 		_ = k.Set("export.storageDir", config.Export.StorageDir)
 		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
 		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)

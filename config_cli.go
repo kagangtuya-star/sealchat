@@ -279,3 +279,15 @@ func handleConfigExport(version int64, output string) {
 
 	fmt.Printf("已导出版本 %d 到 %s\n", version, output)
 }
+
+// handleSQLiteVacuum 手动执行 SQLite VACUUM 空间整理
+func handleSQLiteVacuum() error {
+	if !model.IsSQLite() {
+		return fmt.Errorf("当前数据库不是 SQLite，无法执行 VACUUM")
+	}
+	if err := model.VacuumSQLite(); err != nil {
+		return err
+	}
+	fmt.Println("SQLite VACUUM 执行完成")
+	return nil
+}
