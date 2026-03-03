@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import UserPresencePopover from '../chat/components/UserPresencePopover.vue';
 import { useChannelSearchStore } from '@/stores/channelSearch';
+import { useChannelImagesStore } from '@/stores/channelImages';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useIFormStore } from '@/stores/iform';
@@ -40,6 +41,7 @@ const user = useUserStore();
 const router = useRouter();
 const route = useRoute();
 const channelSearch = useChannelSearchStore();
+const channelImages = useChannelImagesStore();
 const audioStudio = useAudioStudioStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
@@ -400,6 +402,84 @@ const toggleChannelSearch = () => {
   channelSearch.togglePanel();
 };
 
+const channelImagesPanelActive = computed(() => channelImages.panelVisible);
+const openChannelImagesPanel = () => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.warning('请先选择一个频道');
+    return;
+  }
+  channelImages.openPanel(channelId);
+};
+
+const ROLELESS_FILTER_ID = '__roleless__';
+const observerRoleOptions = ref<Array<{ label: string; value: string }>>([]);
+let observerRoleRequestSeq = 0;
+
+const observerIcFilterLabel = computed(() => {
+  switch (chat.filterState.icFilter) {
+    case 'ic':
+      return '只看场内';
+    case 'ooc':
+      return '只看场外';
+    default:
+      return '全部消息';
+  }
+});
+
+const cycleObserverIcFilter = () => {
+  const order: Array<'all' | 'ic' | 'ooc'> = ['all', 'ic', 'ooc'];
+  const idx = order.indexOf(chat.filterState.icFilter);
+  const next = order[(idx + 1) % order.length];
+  chat.setFilterState({ icFilter: next });
+};
+
+const observerHideArchived = computed({
+  get: () => !chat.filterState.showArchived,
+  set: (value: boolean) => {
+    chat.setFilterState({ showArchived: !value });
+  },
+});
+
+const observerRoleFilterValue = computed({
+  get: () => Array.isArray(chat.filterState.roleIds) ? chat.filterState.roleIds : [],
+  set: (value: string[]) => {
+    const normalized = (Array.isArray(value) ? value : [])
+      .map((item) => String(item ?? '').trim())
+      .filter((item) => item.length > 0);
+    chat.setFilterState({ roleIds: normalized });
+  },
+});
+
+const loadObserverRoleOptions = async (channelId?: string | null) => {
+  const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
+  if (!isObserver.value || !normalizedChannelId) {
+    observerRoleOptions.value = [];
+    return;
+  }
+  const seq = ++observerRoleRequestSeq;
+  try {
+    const payload = await chat.channelSpeakerOptions(normalizedChannelId);
+    if (seq !== observerRoleRequestSeq) {
+      return;
+    }
+    const mapped = (Array.isArray(payload?.items) ? payload.items : [])
+      .map((item: any) => ({
+        label: item?.label || '未命名角色',
+        value: String(item?.id || '').trim(),
+      }))
+      .filter((item) => item.value.length > 0);
+    if (!mapped.some((item) => item.value === ROLELESS_FILTER_ID)) {
+      mapped.push({ label: '其他', value: ROLELESS_FILTER_ID });
+    }
+    observerRoleOptions.value = mapped;
+  } catch {
+    if (seq === observerRoleRequestSeq) {
+      observerRoleOptions.value = [];
+    }
+  }
+};
+
 const openAudioStudio = () => {
   audioStudio.toggleDrawer(true);
 };
@@ -416,6 +496,21 @@ watch(
   () => chat.curChannel?.id,
   (channelId) => {
     audioStudio.setActiveChannel(channelId || null);
+    if (isObserver.value) {
+      void loadObserverRoleOptions(channelId || '');
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => isObserver.value,
+  (observer) => {
+    if (!observer) {
+      observerRoleOptions.value = [];
+      return;
+    }
+    void loadObserverRoleOptions(chat.curChannel?.id || '');
   },
   { immediate: true },
 );
@@ -656,7 +751,32 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         </n-tooltip>
       </n-dropdown>
     </div>
-    <div v-else class="sc-actions flex items-center">
+    <div v-else class="sc-actions sc-actions--observer flex items-center">
+      <div class="sc-ob-filters">
+        <n-button
+          size="small"
+          class="sc-ob-filter-button"
+          :type="chat.filterState.icFilter !== 'all' ? 'primary' : 'default'"
+          :tertiary="chat.filterState.icFilter === 'all'"
+          @click="cycleObserverIcFilter"
+        >
+          {{ observerIcFilterLabel }}
+        </n-button>
+        <div class="sc-ob-archive-toggle">
+          <span class="sc-ob-filter-label">隐藏归档</span>
+          <n-switch v-model:value="observerHideArchived" size="small" />
+        </div>
+        <n-select
+          v-model:value="observerRoleFilterValue"
+          class="sc-ob-role-select"
+          :options="observerRoleOptions"
+          placeholder="筛选角色"
+          size="small"
+          multiple
+          clearable
+          max-tag-count="responsive"
+        />
+      </div>
       <n-tooltip placement="bottom" trigger="hover">
         <template #trigger>
           <button
@@ -670,6 +790,20 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           </button>
         </template>
         <span>搜索频道消息</span>
+      </n-tooltip>
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': channelImagesPanelActive }"
+            aria-label="图片浏览"
+            @click="openChannelImagesPanel"
+          >
+            <n-icon :component="Photo" size="16" />
+          </button>
+        </template>
+        <span>图片浏览</span>
       </n-tooltip>
       <n-tooltip placement="bottom" trigger="hover">
         <template #trigger>
@@ -712,6 +846,40 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 
 .sc-actions {
   gap: 0.45rem;
+}
+
+.sc-actions--observer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sc-ob-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-right: 0.2rem;
+}
+
+.sc-ob-filter-button {
+  white-space: nowrap;
+}
+
+.sc-ob-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--sc-text-secondary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.sc-ob-filter-label {
+  line-height: 1;
+}
+
+.sc-ob-role-select {
+  width: 160px;
+  min-width: 140px;
 }
 
 .sc-user-button {
@@ -820,6 +988,21 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 @media (max-width: 640px) {
   .sc-actions {
     gap: 0.32rem;
+  }
+
+  .sc-actions--observer {
+    row-gap: 0.4rem;
+  }
+
+  .sc-ob-filters {
+    width: 100%;
+    margin-right: 0;
+    justify-content: flex-end;
+  }
+
+  .sc-ob-role-select {
+    width: 130px;
+    min-width: 110px;
   }
 
   .sc-user-button {
