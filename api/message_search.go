@@ -152,12 +152,12 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	}
 
 	db := model.GetDB()
-		buildBaseQuery := func() *gorm.DB {
-			q := db.Model(&model.MessageModel{}).
-				Where("channel_id = ?", channelID).
-				Where("is_revoked = ?", false).
-				Where("is_deleted = ?", false)
-			q = applyWhisperVisibilityFilter(q, user.ID, channelID)
+	buildBaseQuery := func() *gorm.DB {
+		q := db.Model(&model.MessageModel{}).
+			Where("channel_id = ?", channelID).
+			Where("is_revoked = ?", false).
+			Where("is_deleted = ?", false)
+		q = applyWhisperVisibilityFilter(q, user.ID, channelID)
 
 		switch archivedFilter {
 		case "only":
@@ -272,6 +272,8 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		return buildMessageSearchItem(msg)
 	})
 
+	sqliteFTSStatus := model.SQLiteFTSStatus()
+
 	resp := messageSearchResponse{
 		Page:     page,
 		PageSize: pageSize,
@@ -297,8 +299,15 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		Metadata: map[string]any{
 			"search_backend": backendName,
 			"sqlite": map[string]any{
-				"ready":      model.SQLiteFTSReady(),
-				"last_error": model.LastFTSError(),
+				"ready":             sqliteFTSStatus.Ready,
+				"last_error":        sqliteFTSStatus.LastError,
+				"status":            sqliteFTSStatus.Status,
+				"version":           sqliteFTSStatus.Version,
+				"last_indexed_at":   sqliteFTSStatus.LastIndexedAt,
+				"last_rebuild_mode": sqliteFTSStatus.LastRebuildMode,
+				"lease_expire_at":   sqliteFTSStatus.LeaseExpireAt,
+				"message":           sqliteFTSStatus.Message,
+				"last_action":       sqliteFTSStatus.LastAction,
 			},
 			"postgres": map[string]any{
 				"ready":      model.PostgresFTSReady(),
