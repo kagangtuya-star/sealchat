@@ -268,6 +268,36 @@ func CanGuestAccessChannel(channelID string) (*model.ChannelModel, error) {
 	return channel, nil
 }
 
+// CanObserverAccessChannel 用于 OB 链接授权后的旁观访问校验。
+// 约束：只能访问授权世界内的非私聊、active 频道。
+func CanObserverAccessChannel(channelID, observerWorldID string) (*model.ChannelModel, error) {
+	channelID = strings.TrimSpace(channelID)
+	observerWorldID = strings.TrimSpace(observerWorldID)
+	if channelID == "" {
+		return nil, errors.New("频道ID不能为空")
+	}
+	if observerWorldID == "" {
+		return nil, errors.New("OB 旁观范围无效")
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel == nil || strings.TrimSpace(channel.ID) == "" {
+		return nil, errors.New("频道不存在")
+	}
+	if channel.IsPrivate {
+		return nil, errors.New("频道不可旁观访问")
+	}
+	if strings.TrimSpace(channel.WorldID) != observerWorldID {
+		return nil, errors.New("频道不在授权范围内")
+	}
+	if strings.ToLower(strings.TrimSpace(channel.Status)) != model.ChannelStatusActive {
+		return nil, errors.New("频道不可访问")
+	}
+	return channel, nil
+}
+
 func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentId string) *model.ChannelModel {
 	if strings.TrimSpace(worldID) == "" {
 		if w, err := GetOrCreateDefaultWorld(); err == nil && w != nil {

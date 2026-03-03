@@ -250,6 +250,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return c.Status(http.StatusOK).JSON(resp)
 	})
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
+	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
 
@@ -429,6 +430,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Post("/", WorldCreateHandler)
 	worldGroup.Post("", WorldCreateHandler)
 	worldGroup.Get("/:worldId", WorldDetail)
+	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
+	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
 	worldGroup.Delete("/:worldId", WorldDeleteHandler)
 	worldGroup.Post("/:worldId/join", WorldJoinHandler)

@@ -2,6 +2,7 @@
 import WorldInviteList from "./WorldInviteList.vue"
 import WorldManager from "./WorldManager.vue"
 import WorldMemberManager from "./WorldMemberManager.vue"
+import WorldObserverLinkCard from "./WorldObserverLinkCard.vue"
 
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -51,6 +52,7 @@ const goWorldLobby = () => {
 
 const worldManagerVisible = ref(false);
 const memberManagerVisible = ref(false);
+const obExpandedNames = ref<string[]>([]);
 
 const isMember = computed(() => !!detail.value?.isMember);
 const memberRole = computed(() => detail.value?.memberRole || '');
@@ -100,7 +102,7 @@ const handleLeaveWorld = () => {
 </script>
 
 <template>
-  <div class="p-4 space-y-4" v-if="detail?.world">
+  <div class="world-detail-page p-4 space-y-4" v-if="detail?.world">
     <n-card :title="detail.world.name">
       <div class="flex items-center gap-2">
         <p class="text-gray-600 flex-1">{{ detail.world.description }}</p>
@@ -135,6 +137,14 @@ const handleLeaveWorld = () => {
       </n-alert>
     </n-card>
 
+    <n-card class="world-ob-card">
+      <n-collapse v-model:expanded-names="obExpandedNames" arrow-placement="right">
+        <n-collapse-item name="ob-link" title="OB旁观链接">
+          <WorldObserverLinkCard :world-id="worldId" :can-manage="canManageWorld" />
+        </n-collapse-item>
+      </n-collapse>
+    </n-card>
+
     <n-card title="邀请链接" class="world-invite-card">
       <WorldInviteList :world-id="worldId" />
     </n-card>
@@ -145,6 +155,27 @@ const handleLeaveWorld = () => {
 </template>
 
 <style scoped>
+.world-detail-page {
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--n-border-color) transparent;
+}
+
+.world-detail-page::-webkit-scrollbar {
+  width: 6px;
+}
+
+.world-detail-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.world-detail-page::-webkit-scrollbar-thumb {
+  background-color: var(--n-border-color);
+  border-radius: 3px;
+}
+
 .world-action-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -167,12 +198,25 @@ const handleLeaveWorld = () => {
   --sc-invite-text: var(--n-text-color-1, #0f172a);
 }
 
-.world-invite-card :deep(.n-card__content) {
-  max-height: min(60vh, 520px);
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--n-border-color) transparent;
+.world-ob-card {
+  --sc-invite-surface: var(--n-card-color, var(--n-color, #f8fafc));
+  --sc-invite-border: var(--n-border-color, rgba(148, 163, 184, 0.4));
+}
+
+.world-ob-card :deep(.n-card) {
+  background-color: var(--sc-invite-surface);
+  border-color: var(--sc-invite-border);
+}
+
+.world-ob-card :deep(.n-card__content) {
+  padding-top: 8px;
+  overflow: visible;
+}
+
+.world-ob-card :deep(.observer-link-card),
+.world-ob-card :deep(.n-collapse-item__content-inner) {
+  max-height: none;
+  overflow: visible;
 }
 
 .world-invite-card :deep(.n-card) {
@@ -186,16 +230,4 @@ const handleLeaveWorld = () => {
   background-color: var(--sc-invite-surface);
 }
 
-.world-invite-card :deep(.n-card__content::-webkit-scrollbar) {
-  width: 6px;
-}
-
-.world-invite-card :deep(.n-card__content::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-.world-invite-card :deep(.n-card__content::-webkit-scrollbar-thumb) {
-  background-color: var(--n-border-color);
-  border-radius: 3px;
-}
 </style>

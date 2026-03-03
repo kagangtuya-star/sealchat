@@ -99,6 +99,7 @@ interface ChatState {
   observerMode: boolean,
   observerWorldId: string,
   observerChannelId: string,
+  observerSlug: string,
   joinedWorldIds: string[],
   worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
   worldLobbyMode: 'mine' | 'explore',
@@ -655,6 +656,7 @@ export const useChatStore = defineStore({
     observerMode: false,
     observerWorldId: '',
     observerChannelId: '',
+    observerSlug: '',
     joinedWorldIds: [],
     worldListCache: null,
     worldLobbyMode: 'mine',
@@ -826,20 +828,29 @@ export const useChatStore = defineStore({
   },
 
   actions: {
-    enableObserverMode(worldId: string, channelId?: string) {
+    enableObserverMode(worldId: string, channelId?: string, observerSlug?: string) {
       const normalizedWorldId = typeof worldId === 'string' ? worldId.trim() : '';
       const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
+      const normalizedObserverSlug = typeof observerSlug === 'string' ? observerSlug.trim() : '';
       const wasObserver = this.observerMode;
+      const prevWorldId = this.observerWorldId;
+      const prevObserverSlug = this.observerSlug;
       this.observerMode = true;
       this.observerWorldId = normalizedWorldId;
       this.observerChannelId = normalizedChannelId;
+      this.observerSlug = normalizedObserverSlug;
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
         if (!this.joinedWorldIds.includes(normalizedWorldId)) {
           this.joinedWorldIds = [normalizedWorldId];
         }
       }
-      if (!wasObserver && this.subject) {
+      const shouldReconnect = !!this.subject && (
+        !wasObserver
+        || prevWorldId !== normalizedWorldId
+        || prevObserverSlug !== normalizedObserverSlug
+      );
+      if (shouldReconnect) {
         this.disconnect('observer-enable');
         this.connect();
       }
@@ -852,6 +863,7 @@ export const useChatStore = defineStore({
       this.observerMode = false;
       this.observerWorldId = '';
       this.observerChannelId = '';
+      this.observerSlug = '';
       this.joinedWorldIds = [];
       if (this.subject) {
         this.disconnect('observer-disable');
@@ -994,6 +1006,7 @@ export const useChatStore = defineStore({
           op: 3, body: {
             token: user.token,
             observer: this.observerMode,
+            observerSlug: this.observerSlug,
           }
         });
  
@@ -1449,8 +1462,34 @@ export const useChatStore = defineStore({
       if (!options?.force && this.worldDetailMap[worldId]) {
         return this.worldDetailMap[worldId];
       }
-      const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
       try {
+        if (this.observerMode && this.observerSlug) {
+          const resp = await api.get(`/api/v1/public/ob/${encodeURIComponent(this.observerSlug)}`);
+          const resolvedWorldId = typeof resp?.data?.worldId === 'string' ? resp.data.worldId.trim() : '';
+          if (resolvedWorldId && resolvedWorldId !== worldId) {
+            return null;
+          }
+          const detail = {
+            world: resp?.data?.world || { id: worldId },
+            isMember: false,
+            memberRole: 'spectator',
+            memberCount: 0,
+          };
+          this.worldDetailMap[worldId] = detail;
+          if (detail.world) {
+            this.worldMap[worldId] = {
+              ...(this.worldMap[worldId] || {}),
+              ...detail.world,
+              id: worldId,
+            };
+          }
+          const resolvedChannelId = typeof resp?.data?.channelId === 'string' ? resp.data.channelId.trim() : '';
+          if (resolvedChannelId && !this.observerChannelId) {
+            this.observerChannelId = resolvedChannelId;
+          }
+          return detail;
+        }
+        const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
         const resp = await api.get(endpoint);
         this.worldDetailMap[worldId] = resp.data;
         if (resp.data.world) {
@@ -1492,6 +1531,34 @@ export const useChatStore = defineStore({
       if (this.worldDetailMap[worldId]) {
         this.worldDetailMap[worldId].editNoticeAcked = true;
       }
+      return resp.data;
+    },
+
+    async worldObserverLinkGet(worldId: string) {
+      if (!worldId) throw new Error('world id required');
+      const resp = await api.get(`/api/v1/worlds/${worldId}/observer-link`);
+      return resp.data;
+    },
+
+    async worldObserverLinkUpdate(worldId: string, payload: { slug?: string; enabled: boolean }) {
+      if (!worldId) throw new Error('world id required');
+      const resp = await api.put(`/api/v1/worlds/${worldId}/observer-link`, payload);
+      if (resp.data?.world) {
+        this.worldMap[worldId] = resp.data.world;
+        if (this.worldDetailMap[worldId]) {
+          this.worldDetailMap[worldId] = {
+            ...this.worldDetailMap[worldId],
+            world: resp.data.world,
+          };
+        }
+      }
+      return resp.data;
+    },
+
+    async resolveObserverLink(slug: string) {
+      const normalizedSlug = typeof slug === 'string' ? slug.trim() : '';
+      if (!normalizedSlug) throw new Error('slug required');
+      const resp = await api.get(`/api/v1/public/ob/${encodeURIComponent(normalizedSlug)}`);
       return resp.data;
     },
 

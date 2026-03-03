@@ -256,10 +256,7 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	// 权限检查
 	channelId := data.ChannelID
 	if ctx.IsReadOnly() {
-		if len(channelId) >= 30 {
-			return nil, fmt.Errorf("频道不可公开访问")
-		}
-		if _, err := service.CanGuestAccessChannel(channelId); err != nil {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelId); err != nil {
 			return nil, err
 		}
 	} else if len(channelId) < 30 {
@@ -304,10 +301,7 @@ func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 
 	// 权限检查（与 message.get 一致）
 	if ctx.IsReadOnly() {
-		if len(channelID) >= 30 {
-			return nil, fmt.Errorf("频道不可公开访问")
-		}
-		if _, err := service.CanGuestAccessChannel(channelID); err != nil {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelID); err != nil {
 			return nil, err
 		}
 	} else if len(channelID) < 30 {
@@ -385,10 +379,7 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 
 	// 权限检查（与 message.get 保持一致）
 	if ctx.IsReadOnly() {
-		if len(channelID) >= 30 {
-			return nil, fmt.Errorf("频道不可公开访问")
-		}
-		if _, err := service.CanGuestAccessChannel(channelID); err != nil {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelID); err != nil {
 			return nil, err
 		}
 	} else if len(channelID) < 30 {
@@ -2244,10 +2235,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	// 权限检查
 	channelId := data.ChannelID
 	if ctx.IsReadOnly() {
-		if len(channelId) >= 30 {
-			return nil, fmt.Errorf("频道不可公开访问")
-		}
-		if _, err := service.CanGuestAccessChannel(channelId); err != nil {
+		if _, err := checkReadOnlyChannelAccess(ctx, channelId); err != nil {
 			return nil, err
 		}
 	} else if len(channelId) < 30 { // 注意，这不是一个好的区分方式

@@ -7,6 +7,7 @@ import WorldLobby from '@/views/world/WorldLobby.vue'
 import WorldDetail from '@/views/world/WorldDetail.vue'
 import WorldPrivateHint from '@/views/world/WorldPrivateHint.vue'
 import InviteConsume from '@/views/invite/InviteConsume.vue'
+import ObserverEntry from '@/views/observer/ObserverEntry.vue'
 import StatusDashboard from '@/views/status/StatusDashboard.vue'
 
 
@@ -75,6 +76,11 @@ const router = createRouter({
       path: '/invite/:slug',
       name: 'invite-consume',
       component: InviteConsume,
+    },
+    {
+      path: '/ob/:slug',
+      name: 'observer-entry',
+      component: ObserverEntry,
     },
     {
       path: '/status',

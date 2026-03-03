@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,9 +24,21 @@ var (
 	ErrWorldOwnerImmutable       = errors.New("world owner immutable")
 	ErrWorldDescriptionTooLong   = errors.New("世界简介不能超过30字")
 	ErrWorldSystemDefaultProtect = errors.New("系统默认世界不可删除")
+	ErrWorldObserverSlugInvalid  = errors.New("world observer slug invalid")
+	ErrWorldObserverSlugConflict = errors.New("world observer slug conflict")
+	ErrWorldObserverLinkInvalid  = errors.New("world observer link invalid")
 )
 
 const worldDescriptionMaxLength = 30
+
+var worldObserverSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{3,31}$`)
+
+func worldObserverSlugValue(slug *string) string {
+	if slug == nil {
+		return ""
+	}
+	return strings.TrimSpace(*slug)
+}
 
 type WorldCreateParams struct {
 	Name        string
@@ -60,6 +73,130 @@ func normalizeWorldBadgeTemplate(template string) (string, error) {
 		return "", errors.New("徽章模板长度需在512个字符以内")
 	}
 	return template, nil
+}
+
+func normalizeWorldObserverSlug(slug string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(slug))
+	if normalized == "" {
+		return "", nil
+	}
+	if !worldObserverSlugPattern.MatchString(normalized) {
+		return "", ErrWorldObserverSlugInvalid
+	}
+	return normalized, nil
+}
+
+func isWorldUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "UNIQUE constraint failed") {
+		return true
+	}
+	if strings.Contains(msg, "Error 1062") || strings.Contains(msg, "Duplicate entry") {
+		return true
+	}
+	if strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "duplicate key value") {
+		return true
+	}
+	return false
+}
+
+func pickWorldObserverEntryChannelID(world *model.WorldModel) string {
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return ""
+	}
+	defaultChannelID := strings.TrimSpace(world.DefaultChannelID)
+	if defaultChannelID != "" {
+		if channel, err := CanObserverAccessChannel(defaultChannelID, world.ID); err == nil && channel != nil && strings.TrimSpace(channel.ID) != "" {
+			return channel.ID
+		}
+	}
+	channels, err := ChannelListByWorld(world.ID)
+	if err != nil {
+		return ""
+	}
+	for _, channel := range channels {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			continue
+		}
+		return channel.ID
+	}
+	return ""
+}
+
+func WorldObserverLinkGet(worldID, actorID string) (string, bool, error) {
+	world, err := GetWorldByID(worldID)
+	if err != nil {
+		return "", false, err
+	}
+	if !IsWorldAdmin(worldID, actorID) {
+		return "", false, ErrWorldPermission
+	}
+	slug := worldObserverSlugValue(world.ObserverSlug)
+	if slug == "" {
+		return "", false, nil
+	}
+	return slug, world.ObserverEnabled, nil
+}
+
+func WorldObserverLinkUpdate(worldID, actorID, slug string, enabled bool) (*model.WorldModel, error) {
+	_, err := GetWorldByID(worldID)
+	if err != nil {
+		return nil, err
+	}
+	if !IsWorldAdmin(worldID, actorID) {
+		return nil, ErrWorldPermission
+	}
+	normalizedSlug, err := normalizeWorldObserverSlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	if enabled {
+		if normalizedSlug == "" {
+			return nil, ErrWorldObserverSlugInvalid
+		}
+	}
+	updates := map[string]any{
+		"updated_at":       time.Now(),
+		"observer_enabled": enabled,
+	}
+	if normalizedSlug == "" {
+		updates["observer_slug"] = nil
+		updates["observer_enabled"] = false
+	} else {
+		updates["observer_slug"] = normalizedSlug
+	}
+	if err := model.GetDB().Model(&model.WorldModel{}).Where("id = ?", worldID).Updates(updates).Error; err != nil {
+		if isWorldUniqueConstraintError(err) {
+			return nil, ErrWorldObserverSlugConflict
+		}
+		return nil, err
+	}
+	return GetWorldByID(worldID)
+}
+
+func ResolveWorldObserverLink(slug string) (*model.WorldModel, string, error) {
+	normalizedSlug, err := normalizeWorldObserverSlug(slug)
+	if err != nil || normalizedSlug == "" {
+		return nil, "", ErrWorldObserverLinkInvalid
+	}
+	var world model.WorldModel
+	if err := model.GetDB().Where("observer_slug = ? AND status = ?", normalizedSlug, "active").Limit(1).Find(&world).Error; err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(world.ID) == "" {
+		return nil, "", ErrWorldObserverLinkInvalid
+	}
+	if !world.ObserverEnabled {
+		return nil, "", ErrWorldObserverLinkInvalid
+	}
+	channelID := pickWorldObserverEntryChannelID(&world)
+	return &world, channelID, nil
 }
 
 func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
@@ -287,7 +424,8 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 		updates["avatar"] = params.Avatar
 	}
 	if params.Visibility != "" {
-		updates["visibility"] = params.Visibility
+		visibility := strings.ToLower(strings.TrimSpace(params.Visibility))
+		updates["visibility"] = visibility
 	}
 	if params.EnforceMembership != nil {
 		updates["enforce_membership"] = *params.EnforceMembership
