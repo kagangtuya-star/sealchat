@@ -46,6 +46,7 @@ interface ChannelSearchState {
   currentChannelId: string | null
   requestSeq: number
   panelPosition: { x: number; y: number }
+  panelSize: { width: number; height: number }
 }
 
 const defaultFilters = (): ChannelSearchFilters => ({
@@ -92,6 +93,10 @@ export const useChannelSearchStore = defineStore('channelSearch', {
     panelPosition: {
       x: 48,
       y: 140,
+    },
+    panelSize: {
+      width: 420,
+      height: 700,
     },
   }),
 
@@ -146,6 +151,9 @@ export const useChannelSearchStore = defineStore('channelSearch', {
     },
     setPanelPosition(position: { x: number; y: number }) {
       this.panelPosition = { ...position }
+    },
+    setPanelSize(size: { width: number; height: number }) {
+      this.panelSize = { ...size }
     },
     bindChannel(channelId: string | null | undefined) {
       if (!channelId) {
