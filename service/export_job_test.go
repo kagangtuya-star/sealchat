@@ -160,7 +160,7 @@ func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
 		},
 		ChannelID:    channelID,
 		UserID:       sender.ID,
-		Content:      ".r1d5 掷骰异形表",
+		Content:      "@守秘人。r1d5 掷骰异形表",
 		DisplayOrder: float64(now.UnixMilli()),
 		ICMode:       "ic",
 	}).Error; err != nil {

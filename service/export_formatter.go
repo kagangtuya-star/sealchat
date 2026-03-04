@@ -2025,19 +2025,38 @@ func isSingleLineDiceCommandWithPrefixes(line string, prefixes []string) bool {
 	if line == "" || strings.Contains(line, "\n") {
 		return false
 	}
-	for _, prefix := range prefixes {
-		if prefix == "" || !strings.HasPrefix(line, prefix) {
-			continue
+	tokens := strings.Fields(line)
+	for _, token := range tokens {
+		for _, prefix := range prefixes {
+			if prefix == "" {
+				continue
+			}
+			searchFrom := 0
+			for searchFrom < len(token) {
+				idx := strings.Index(token[searchFrom:], prefix)
+				if idx < 0 {
+					break
+				}
+				idx += searchFrom
+				// 支持两种形态：
+				// 1) token 以指令前缀开头，如 ".ra"
+				// 2) token 以 @ 开头且内部包含指令前缀，如 "@用户。r"
+				if idx != 0 && token[0] != '@' {
+					searchFrom = idx + len(prefix)
+					continue
+				}
+				rest := strings.TrimSpace(token[idx+len(prefix):])
+				if rest == "" {
+					searchFrom = idx + len(prefix)
+					continue
+				}
+				first, _ := utf8.DecodeRuneInString(rest)
+				if first != utf8.RuneError && unicode.IsLetter(first) {
+					return true
+				}
+				searchFrom = idx + len(prefix)
+			}
 		}
-		rest := strings.TrimSpace(strings.TrimPrefix(line, prefix))
-		if rest == "" {
-			return false
-		}
-		first, _ := utf8.DecodeRuneInString(rest)
-		if first == utf8.RuneError {
-			return false
-		}
-		return unicode.IsLetter(first)
 	}
 	return false
 }
