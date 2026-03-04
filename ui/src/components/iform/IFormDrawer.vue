@@ -120,7 +120,7 @@
             <n-input v-model:value="formModel.url" placeholder="https://example.com" />
           </n-form-item>
           <n-form-item label="嵌入代码">
-            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 <iframe> 代码" :rows="3" />
+            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 HTML / iframe 代码（可含 script）" :rows="3" />
           </n-form-item>
           <n-form-item label="默认尺寸">
             <div class="iform-form__size">

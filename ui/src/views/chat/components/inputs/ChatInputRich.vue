@@ -1670,7 +1670,7 @@ defineExpose({
           <n-input
             type="textarea"
             v-model:value="quickIFormForm.embedCode"
-            placeholder="可选：粘贴 iframe 代码"
+            placeholder="可选：粘贴 HTML / iframe 代码（可含 script）"
             :rows="3"
           />
         </n-form-item>
