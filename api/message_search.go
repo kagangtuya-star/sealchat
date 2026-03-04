@@ -865,7 +865,7 @@ func buildSnippet(content string, limit int) string {
 	if limit <= 0 {
 		limit = 200
 	}
-	normalized := strings.TrimSpace(content)
+	normalized := service.NormalizeMessageContentToPlainText(content)
 	normalized = strings.ReplaceAll(normalized, "\r", " ")
 	normalized = strings.ReplaceAll(normalized, "\n", " ")
 	runes := []rune(normalized)
