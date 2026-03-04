@@ -6883,12 +6883,21 @@ const stripDiceChipMarkup = (html: string) => {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
-    doc.querySelectorAll('span.dice-chip').forEach((element) => {
+    let replaced = false;
+    doc.querySelectorAll('span').forEach((element) => {
+      const classAttr = element.getAttribute('class') || '';
+      if (!classAttr.includes('dice-chip')) {
+        return;
+      }
       const source = element.getAttribute('data-dice-source') || element.textContent || '';
       if (!element.parentNode) return;
       const replacement = doc.createTextNode(source);
       element.parentNode.replaceChild(replacement, element);
+      replaced = true;
     });
+    if (!replaced) {
+      return html;
+    }
     const first = doc.body.firstElementChild;
     if (first && first.tagName === 'DIV') {
       return first.innerHTML;
@@ -6905,11 +6914,11 @@ const convertMessageContentToDraft = (content?: string) => {
   if (!content) {
     return '';
   }
-  content = stripDiceChipMarkup(content);
-  if (isTipTapJson(content)) {
-    return content;
-  }
   let text = contentUnescape(content);
+  text = stripDiceChipMarkup(text);
+  if (isTipTapJson(text)) {
+    return text;
+  }
   const imageRecords: Array<{ id: string; token: string; attachmentId: string }> = [];
   text = text.replace(/<img\s+[^>]*src="([^"]+)"[^>]*\/?>/gi, (_, src) => {
     const markerId = nanoid();
