@@ -2281,10 +2281,8 @@ export const useChatStore = defineStore({
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
         if (activeId) {
-          this.activeChannelIdentity = {
-            ...this.activeChannelIdentity,
-            [channelId]: activeId,
-          };
+          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
+          this.setActiveIdentity(channelId, activeId);
         }
         return items;
       }
@@ -2322,10 +2320,15 @@ export const useChatStore = defineStore({
         const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
-        this.activeChannelIdentity = {
-          ...this.activeChannelIdentity,
-          [channelId]: activeId,
-        };
+        if (activeId) {
+          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
+          this.setActiveIdentity(channelId, activeId);
+        } else {
+          this.activeChannelIdentity = {
+            ...this.activeChannelIdentity,
+            [channelId]: '',
+          };
+        }
         this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         return items;
       })();
