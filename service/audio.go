@@ -280,7 +280,7 @@ func (s *localAudioStorage) moveFromTemp(tempPath, objectKey string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	if err := os.Rename(tempPath, full); err != nil {
+	if err := utils.MoveFile(tempPath, full); err != nil {
 		return 0, err
 	}
 	info, err := os.Stat(full)
