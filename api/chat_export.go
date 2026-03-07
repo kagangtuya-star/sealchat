@@ -621,28 +621,7 @@ func recordExportDownloadError(jobID, message string) {
 }
 
 func resolveDownloadFileName(job *model.MessageExportJobModel) string {
-	if job == nil {
-		return "export"
-	}
-	if fileName := strings.TrimSpace(job.FileName); fileName != "" {
-		return fileName
-	}
-	displayName := strings.TrimSpace(job.DisplayName)
-	if displayName != "" {
-		if !strings.Contains(displayName, ".") {
-			ext := strings.TrimSpace(job.Format)
-			if ext == "" {
-				ext = "txt"
-			}
-			return fmt.Sprintf("%s.%s", displayName, ext)
-		}
-		return displayName
-	}
-	format := strings.TrimSpace(job.Format)
-	if format == "" {
-		format = "txt"
-	}
-	return fmt.Sprintf("%s.%s", job.ChannelID, format)
+	return service.ResolveExportDownloadFileName(job)
 }
 
 func exportFileExists(job *model.MessageExportJobModel) bool {

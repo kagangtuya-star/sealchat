@@ -133,6 +133,28 @@ func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
 	}
 }
 
+func TestBuildExportResultFileNameUsesDisplayNameAndTaskID(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, time.March, 7, 9, 8, 7, 0, time.Local)
+	got := BuildExportResultFileName("  三月导出.txt ", "task-123", "txt", ts)
+	want := "三月导出-task-123-20260307-090807.txt"
+	if got != want {
+		t.Fatalf("unexpected file name, got=%q want=%q", got, want)
+	}
+}
+
+func TestBuildExportResultFileNameFallsBackToDefaultBaseName(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, time.March, 7, 18, 30, 45, 0, time.Local)
+	got := BuildExportResultFileName("", "task-456", "html", ts)
+	want := "频道记录-task-456-20260307-183045.html"
+	if got != want {
+		t.Fatalf("unexpected default file name, got=%q want=%q", got, want)
+	}
+}
+
 func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()
