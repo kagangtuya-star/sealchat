@@ -7,6 +7,7 @@ import { i18n, setLocale, setLocaleByNavigatorWithStorage } from './lang'
 import App from './App.vue'
 import router from './router'
 import { useDisplayStore } from './stores/display'
+import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -37,7 +38,7 @@ import { useChatStore } from './stores/chat'
 
 router.beforeEach(async (to, from, next) => {
   // 允许未登录访问的公开路由
-  const publicRoutes = ['user-signin', 'user-signup', 'password-recovery', 'world-private-hint'];
+  const publicRoutes = ['user-signin', 'user-signup', 'password-recovery', 'world-private-hint', 'observer-entry'];
   if (publicRoutes.includes(to.name as string)) {
     return next();
   }
@@ -120,5 +121,14 @@ document.head.appendChild(meta)
 
 const displayStore = useDisplayStore(pinia)
 displayStore.applyTheme()
+displayStore.restoreGlobalFontAsset()
+  .then(() => {
+    displayStore.applyTheme()
+  })
+  .catch((error) => {
+    console.warn('恢复缓存字体失败，继续使用默认字体链', error)
+    displayStore.applyTheme()
+  })
 
 app.mount('#app')
+startFontSurfaceAutoMarking()

@@ -112,6 +112,8 @@ let imageResizePointerState: {
 } | null = null;
 
 const diceChipHtmlPattern = /<span[^>]*class="[^"]*dice-chip[^"]*"/i;
+const BOT_STATE_WIDGET_PREFIX = '[[STATE_WIDGET]]';
+const BOT_USER_ID_PREFIX = 'BOT:';
 
 const MESSAGE_IFORM_MIN_WIDTH = 120;
 const MESSAGE_IFORM_MIN_HEIGHT = 72;
@@ -216,6 +218,39 @@ const resolveSingleStickyNoteLinkFromContent = (content: string) => {
     singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(plainText);
   }
   return singleStickyNoteLink;
+};
+
+const isBotMessageItem = (item: any): boolean => {
+  if (!item) {
+    return false;
+  }
+  if (item?.user?.is_bot) {
+    return true;
+  }
+  const candidateIds = [item?.user?.id, item?.user_id, item?.userId];
+  return candidateIds.some((id) => String(id || '').startsWith(BOT_USER_ID_PREFIX));
+};
+
+const resolveStateWidgetTextPolicy = (
+  item: any,
+  rawContent: unknown,
+): { content: string; allowParsing: boolean } => {
+  const content = String(rawContent || '');
+  if (!isBotMessageItem(item)) {
+    return { content, allowParsing: true };
+  }
+
+  const trimmedStart = content.trimStart();
+  if (!trimmedStart.startsWith(BOT_STATE_WIDGET_PREFIX)) {
+    return { content, allowParsing: false };
+  }
+
+  const leadingWhitespaceLength = content.length - trimmedStart.length;
+  const stripped = trimmedStart.slice(BOT_STATE_WIDGET_PREFIX.length).replace(/^\s*/, '');
+  return {
+    content: `${content.slice(0, leadingWhitespaceLength)}${stripped}`,
+    allowParsing: true,
+  };
 };
 
 const parseContent = (payload: any, overrideContent?: string) => {
@@ -1261,11 +1296,13 @@ const displayContent = computed(() => {
   if (isEditing.value && chat.editing) {
     const draft = chat.editing.draft || '';
     if (isTipTapJson(draft)) {
-      return draft;
+      return resolveStateWidgetTextPolicy(props.item as any, draft).content;
     }
-    return draft.replace(inlineImageTokenPattern, '[图片]');
+    const replacedDraft = draft.replace(inlineImageTokenPattern, '[图片]');
+    return resolveStateWidgetTextPolicy(props.item as any, replacedDraft).content;
   }
-  return props.item?.content ?? props.content ?? '';
+  const rawContent = props.item?.content ?? props.content ?? '';
+  return resolveStateWidgetTextPolicy(props.item as any, rawContent).content;
 });
 
 const resolveMessageChannelId = () => {
@@ -2250,6 +2287,10 @@ const processStateTextWidgets = () => {
     if (!host) return;
     const item = props.item as any;
     if (!item?.widgetData) return;
+    const policy = resolveStateWidgetTextPolicy(item, item.content || '');
+    if (!policy.allowParsing) {
+      return;
+    }
 
     const entries = parseMessageWidgetEntries(item.widgetData);
     if (!entries?.length) return;
@@ -3053,7 +3094,7 @@ const handleRetrySend = () => {
             <span v-else-if="!props.item?.editedByUserName">编辑时间未知</span>
           </div>
         </n-popover>
-        <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
+        <span v-if="isBotMessageItem(props.item)"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
       <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"

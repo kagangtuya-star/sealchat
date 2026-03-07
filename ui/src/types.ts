@@ -186,6 +186,11 @@ export interface BackupConfig {
   path: string;
 }
 
+export interface SQLiteConfig {
+  autoVacuumEnabled?: boolean;
+  autoVacuumIntervalHours?: number;
+}
+
 export interface BackupInfo {
   filename: string;
   size: number;
@@ -215,6 +220,7 @@ export interface ServerConfig {
     enabled: boolean;
   };
   backup?: BackupConfig;
+  sqlite?: SQLiteConfig;
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;

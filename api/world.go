@@ -216,6 +216,7 @@ func WorldDetail(c *fiber.Ctx) error {
 		"memberCount":             memberCount,
 		"allowAdminEditMessages":  world.AllowAdminEditMessages,
 		"allowMemberEditKeywords": world.AllowMemberEditKeywords,
+		"strictWhisperPrivacy":    world.StrictWhisperPrivacy,
 		"ownerNickname":           ownerNickname,
 		"editNoticeAcked":         editNoticeAcked,
 	})
@@ -240,6 +241,94 @@ func WorldPublicDetail(c *fiber.Ctx) error {
 		"isMember":    false,
 		"memberRole":  "",
 		"memberCount": memberCount,
+	})
+}
+
+func WorldPublicObserverResolveHandler(c *fiber.Ctx) error {
+	slug := c.Params("slug")
+	world, channelID, err := service.ResolveWorldObserverLink(slug)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldObserverLinkInvalid):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "旁观链接无效或已关闭"})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "解析旁观链接失败"})
+		}
+	}
+	return c.JSON(fiber.Map{
+		"worldId":   world.ID,
+		"channelId": channelID,
+		"world": fiber.Map{
+			"id":   world.ID,
+			"name": world.Name,
+		},
+	})
+}
+
+func WorldObserverLinkGetHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	slug, enabled, err := service.WorldObserverLinkGet(worldID, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
+		case errors.Is(err, service.ErrWorldPermission):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权查看 OB 旁观链接"})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取 OB 旁观链接失败"})
+		}
+	}
+	return c.JSON(fiber.Map{
+		"worldId": worldID,
+		"slug":    slug,
+		"enabled": enabled,
+	})
+}
+
+func WorldObserverLinkUpdateHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var body struct {
+		Slug    string `json:"slug"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	world, err := service.WorldObserverLinkUpdate(worldID, user.ID, body.Slug, body.Enabled)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
+		case errors.Is(err, service.ErrWorldPermission):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权编辑 OB 旁观链接"})
+		case errors.Is(err, service.ErrWorldObserverSlugInvalid):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "OB 链接仅允许小写字母、数字、-、_，长度 4-32"})
+		case errors.Is(err, service.ErrWorldObserverSlugConflict):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "OB 链接已被占用"})
+		case errors.Is(err, service.ErrWorldObserverLinkInvalid):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "OB 旁观链接配置无效"})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新 OB 旁观链接失败"})
+		}
+	}
+	slug := ""
+	if world.ObserverSlug != nil {
+		slug = strings.TrimSpace(*world.ObserverSlug)
+	}
+	return c.JSON(fiber.Map{
+		"world": world,
+		"observerLink": fiber.Map{
+			"slug":    slug,
+			"enabled": world.ObserverEnabled,
+		},
 	})
 }
 

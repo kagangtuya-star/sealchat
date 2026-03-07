@@ -99,6 +99,7 @@ interface ChatState {
   observerMode: boolean,
   observerWorldId: string,
   observerChannelId: string,
+  observerSlug: string,
   joinedWorldIds: string[],
   worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
   worldLobbyMode: 'mine' | 'explore',
@@ -481,6 +482,138 @@ const writeScopedLocalStorage = (baseKey: string, value: string) => {
   }
 };
 
+interface ObserverSessionEntry {
+  worldId: string;
+  channelId: string;
+  updatedAt: number;
+}
+
+const OBSERVER_SESSION_STORAGE_KEY = 'sealchat_observer_session_v1';
+const OBSERVER_SESSION_MAX_ITEMS = 20;
+
+const resolveObserverSessionKey = (observerSlug: string, worldId: string) => {
+  const normalizedSlug = String(observerSlug || '').trim();
+  if (normalizedSlug) {
+    return `slug:${normalizedSlug}`;
+  }
+  const normalizedWorldId = String(worldId || '').trim();
+  if (normalizedWorldId) {
+    return `world:${normalizedWorldId}`;
+  }
+  return '';
+};
+
+const normalizeObserverSessionEntry = (raw: any): ObserverSessionEntry | null => {
+  const worldId = String(raw?.worldId || '').trim();
+  const channelId = String(raw?.channelId || '').trim();
+  const updatedAt = Number(raw?.updatedAt || 0);
+  if (!worldId || !channelId || !Number.isFinite(updatedAt) || updatedAt <= 0) {
+    return null;
+  }
+  return {
+    worldId,
+    channelId,
+    updatedAt: Math.floor(updatedAt),
+  };
+};
+
+const normalizeObserverSessionMap = (raw: any): Record<string, ObserverSessionEntry> => {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const entries = Object.entries(raw as Record<string, any>)
+    .map(([key, value]) => {
+      const normalizedKey = String(key || '').trim();
+      const normalizedValue = normalizeObserverSessionEntry(value);
+      if (!normalizedKey || !normalizedValue) {
+        return null;
+      }
+      return [normalizedKey, normalizedValue] as const;
+    })
+    .filter((item): item is readonly [string, ObserverSessionEntry] => !!item)
+    .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+    .slice(-OBSERVER_SESSION_MAX_ITEMS);
+  return Object.fromEntries(entries);
+};
+
+const loadObserverSessionMap = (): Record<string, ObserverSessionEntry> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  try {
+    const raw = localStorage.getItem(OBSERVER_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeObserverSessionMap(parsed);
+  } catch {
+    return {};
+  }
+};
+
+const persistObserverSessionMap = (value: Record<string, ObserverSessionEntry>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    if (!value || Object.keys(value).length === 0) {
+      localStorage.removeItem(OBSERVER_SESSION_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(OBSERVER_SESSION_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+};
+
+const readObserverSessionChannel = (observerSlug: string, worldId: string): string => {
+  const normalizedWorldId = String(worldId || '').trim();
+  if (!normalizedWorldId) {
+    return '';
+  }
+  const map = loadObserverSessionMap();
+  const slugKey = resolveObserverSessionKey(observerSlug, normalizedWorldId);
+  const worldKey = resolveObserverSessionKey('', normalizedWorldId);
+  const orderedKeys = slugKey ? [slugKey, worldKey] : [worldKey];
+  for (const key of orderedKeys) {
+    if (!key) {
+      continue;
+    }
+    const entry = normalizeObserverSessionEntry(map[key]);
+    if (!entry) {
+      continue;
+    }
+    if (entry.worldId === normalizedWorldId && entry.channelId) {
+      return entry.channelId;
+    }
+  }
+  return '';
+};
+
+const writeObserverSessionChannel = (observerSlug: string, worldId: string, channelId: string) => {
+  const normalizedWorldId = String(worldId || '').trim();
+  const normalizedChannelId = String(channelId || '').trim();
+  if (!normalizedWorldId || !normalizedChannelId) {
+    return;
+  }
+  const map = loadObserverSessionMap();
+  const entry: ObserverSessionEntry = {
+    worldId: normalizedWorldId,
+    channelId: normalizedChannelId,
+    updatedAt: Date.now(),
+  };
+  const slugKey = resolveObserverSessionKey(observerSlug, normalizedWorldId);
+  const worldKey = resolveObserverSessionKey('', normalizedWorldId);
+  if (slugKey) {
+    map[slugKey] = entry;
+  }
+  if (worldKey) {
+    map[worldKey] = entry;
+  }
+  persistObserverSessionMap(normalizeObserverSessionMap(map));
+};
+
 type myEventName =
   | EventName
   | 'message-created'
@@ -655,6 +788,7 @@ export const useChatStore = defineStore({
     observerMode: false,
     observerWorldId: '',
     observerChannelId: '',
+    observerSlug: '',
     joinedWorldIds: [],
     worldListCache: null,
     worldLobbyMode: 'mine',
@@ -826,20 +960,38 @@ export const useChatStore = defineStore({
   },
 
   actions: {
-    enableObserverMode(worldId: string, channelId?: string) {
+    enableObserverMode(worldId: string, channelId?: string, observerSlug?: string) {
       const normalizedWorldId = typeof worldId === 'string' ? worldId.trim() : '';
       const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
+      const normalizedObserverSlug = typeof observerSlug === 'string'
+        ? observerSlug.trim()
+        : this.observerSlug;
+      const cachedChannelId = readObserverSessionChannel(normalizedObserverSlug, normalizedWorldId);
+      const effectiveChannelId = normalizedObserverSlug
+        ? (cachedChannelId || normalizedChannelId)
+        : (normalizedChannelId || cachedChannelId);
       const wasObserver = this.observerMode;
+      const prevWorldId = this.observerWorldId;
+      const prevObserverSlug = this.observerSlug;
       this.observerMode = true;
       this.observerWorldId = normalizedWorldId;
-      this.observerChannelId = normalizedChannelId;
+      this.observerChannelId = effectiveChannelId;
+      this.observerSlug = normalizedObserverSlug;
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
         if (!this.joinedWorldIds.includes(normalizedWorldId)) {
           this.joinedWorldIds = [normalizedWorldId];
         }
       }
-      if (!wasObserver && this.subject) {
+      if (normalizedWorldId && effectiveChannelId) {
+        writeObserverSessionChannel(normalizedObserverSlug, normalizedWorldId, effectiveChannelId);
+      }
+      const shouldReconnect = !!this.subject && (
+        !wasObserver
+        || prevWorldId !== normalizedWorldId
+        || prevObserverSlug !== normalizedObserverSlug
+      );
+      if (shouldReconnect) {
         this.disconnect('observer-enable');
         this.connect();
       }
@@ -852,6 +1004,7 @@ export const useChatStore = defineStore({
       this.observerMode = false;
       this.observerWorldId = '';
       this.observerChannelId = '';
+      this.observerSlug = '';
       this.joinedWorldIds = [];
       if (this.subject) {
         this.disconnect('observer-disable');
@@ -876,12 +1029,20 @@ export const useChatStore = defineStore({
         await this.channelList(worldId, true);
         let targetChannel = this.observerChannelId ? this.observerChannelId.trim() : '';
         if (!targetChannel) {
-          const world = this.worldMap[worldId];
-          targetChannel = world?.defaultChannelId || this.channelTreeByWorld[worldId]?.[0]?.id || this.channelTree[0]?.id || '';
+          targetChannel = readObserverSessionChannel(this.observerSlug, worldId);
+        }
+        const world = this.worldMap[worldId];
+        const fallbackChannel = world?.defaultChannelId || this.channelTreeByWorld[worldId]?.[0]?.id || this.channelTree[0]?.id || '';
+        if (!targetChannel) {
+          targetChannel = fallbackChannel;
         }
         if (targetChannel) {
           this.observerChannelId = targetChannel;
-          await this.channelSwitchTo(targetChannel);
+          const switched = await this.channelSwitchTo(targetChannel);
+          if (!switched && fallbackChannel && fallbackChannel !== targetChannel) {
+            this.observerChannelId = fallbackChannel;
+            await this.channelSwitchTo(fallbackChannel);
+          }
         }
         return true;
       } catch (err) {
@@ -994,6 +1155,7 @@ export const useChatStore = defineStore({
           op: 3, body: {
             token: user.token,
             observer: this.observerMode,
+            observerSlug: this.observerSlug,
           }
         });
  
@@ -1449,8 +1611,35 @@ export const useChatStore = defineStore({
       if (!options?.force && this.worldDetailMap[worldId]) {
         return this.worldDetailMap[worldId];
       }
-      const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
       try {
+        if (this.observerMode && this.observerSlug) {
+          const resp = await api.get(`/api/v1/public/ob/${encodeURIComponent(this.observerSlug)}`);
+          const resolvedWorldId = typeof resp?.data?.worldId === 'string' ? resp.data.worldId.trim() : '';
+          if (resolvedWorldId && resolvedWorldId !== worldId) {
+            return null;
+          }
+          const detail = {
+            world: resp?.data?.world || { id: worldId },
+            isMember: false,
+            memberRole: 'spectator',
+            memberCount: 0,
+          };
+          this.worldDetailMap[worldId] = detail;
+          if (detail.world) {
+            this.worldMap[worldId] = {
+              ...(this.worldMap[worldId] || {}),
+              ...detail.world,
+              id: worldId,
+            };
+          }
+          const resolvedChannelId = typeof resp?.data?.channelId === 'string' ? resp.data.channelId.trim() : '';
+          if (!this.observerChannelId) {
+            const cachedChannelId = readObserverSessionChannel(this.observerSlug, worldId);
+            this.observerChannelId = cachedChannelId || resolvedChannelId;
+          }
+          return detail;
+        }
+        const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
         const resp = await api.get(endpoint);
         this.worldDetailMap[worldId] = resp.data;
         if (resp.data.world) {
@@ -1466,7 +1655,7 @@ export const useChatStore = defineStore({
       }
     },
 
-    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean; allowMemberEditKeywords?: boolean; characterCardBadgeTemplate?: string }) {
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean; allowMemberEditKeywords?: boolean; strictWhisperPrivacy?: boolean; characterCardBadgeTemplate?: string }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
@@ -1492,6 +1681,34 @@ export const useChatStore = defineStore({
       if (this.worldDetailMap[worldId]) {
         this.worldDetailMap[worldId].editNoticeAcked = true;
       }
+      return resp.data;
+    },
+
+    async worldObserverLinkGet(worldId: string) {
+      if (!worldId) throw new Error('world id required');
+      const resp = await api.get(`/api/v1/worlds/${worldId}/observer-link`);
+      return resp.data;
+    },
+
+    async worldObserverLinkUpdate(worldId: string, payload: { slug?: string; enabled: boolean }) {
+      if (!worldId) throw new Error('world id required');
+      const resp = await api.put(`/api/v1/worlds/${worldId}/observer-link`, payload);
+      if (resp.data?.world) {
+        this.worldMap[worldId] = resp.data.world;
+        if (this.worldDetailMap[worldId]) {
+          this.worldDetailMap[worldId] = {
+            ...this.worldDetailMap[worldId],
+            world: resp.data.world,
+          };
+        }
+      }
+      return resp.data;
+    },
+
+    async resolveObserverLink(slug: string) {
+      const normalizedSlug = typeof slug === 'string' ? slug.trim() : '';
+      if (!normalizedSlug) throw new Error('slug required');
+      const resp = await api.get(`/api/v1/public/ob/${encodeURIComponent(normalizedSlug)}`);
       return resp.data;
     },
 
@@ -1725,6 +1942,8 @@ export const useChatStore = defineStore({
           syncCharacterCapabilityFromEnter(resp.data);
           this.curChannelUsers = [];
           this.whisperTargets = [];
+          this.observerChannelId = id;
+          writeObserverSessionChannel(this.observerSlug, this.observerWorldId || this.currentWorldId, id);
           writeScopedLocalStorage('lastChannel', id);
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
@@ -2062,10 +2281,8 @@ export const useChatStore = defineStore({
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
         if (activeId) {
-          this.activeChannelIdentity = {
-            ...this.activeChannelIdentity,
-            [channelId]: activeId,
-          };
+          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
+          this.setActiveIdentity(channelId, activeId);
         }
         return items;
       }
@@ -2103,10 +2320,15 @@ export const useChatStore = defineStore({
         const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
-        this.activeChannelIdentity = {
-          ...this.activeChannelIdentity,
-          [channelId]: activeId,
-        };
+        if (activeId) {
+          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
+          this.setActiveIdentity(channelId, activeId);
+        } else {
+          this.activeChannelIdentity = {
+            ...this.activeChannelIdentity,
+            [channelId]: '',
+          };
+        }
         this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
         return items;
       })();
@@ -3674,18 +3896,27 @@ export const useChatStore = defineStore({
 
     async channelExportColorProfileGet(channelId: string) {
       if (!channelId) {
-        return { channelId: '', exists: false, colors: {} as Record<string, string> };
+        return {
+          channelId: '',
+          exists: false,
+          colors: {} as Record<string, string>,
+          profiles: {} as Record<string, { color?: string; name?: string; originalName?: string }>,
+        };
       }
       const resp = await api.get<{
         channelId: string;
         exists: boolean;
         colors: Record<string, string>;
+        profiles: Record<string, { color?: string; name?: string; originalName?: string }>;
         updatedAt?: number;
       }>(`api/v1/channels/${channelId}/export-color-profile`);
       return resp.data;
     },
 
-    async channelExportColorProfileUpsert(channelId: string, colors: Record<string, string>) {
+    async channelExportColorProfileUpsert(
+      channelId: string,
+      profiles: Record<string, { color?: string; name?: string; originalName?: string }>,
+    ) {
       if (!channelId) {
         throw new Error('缺少频道 ID');
       }
@@ -3693,8 +3924,9 @@ export const useChatStore = defineStore({
         channelId: string;
         exists: boolean;
         colors: Record<string, string>;
+        profiles: Record<string, { color?: string; name?: string; originalName?: string }>;
         updatedAt?: number;
-      }>(`api/v1/channels/${channelId}/export-color-profile`, { colors });
+      }>(`api/v1/channels/${channelId}/export-color-profile`, { profiles });
       return resp.data;
     },
 
@@ -4379,6 +4611,7 @@ export const useChatStore = defineStore({
       displaySettings?: DisplaySettings;
       displayName?: string;
       textColorizeBBCodeMap?: Record<string, string>;
+      textColorizeBBCodeNameMap?: Record<string, string>;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
@@ -4409,6 +4642,9 @@ export const useChatStore = defineStore({
         payload.text_bbcode_colorize = true;
         if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
           payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
+        if (params.textColorizeBBCodeNameMap && Object.keys(params.textColorizeBBCodeNameMap).length > 0) {
+          payload.text_bbcode_name_map = params.textColorizeBBCodeNameMap;
         }
       }
       const resp = await api.post('api/v1/chat/export', payload);

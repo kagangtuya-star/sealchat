@@ -160,23 +160,47 @@ const fetchTasks = async () => {
 };
 
 const STREAMING_DOWNLOAD_THRESHOLD = 300 * 1024; // 300KB
+const DEFAULT_EXPORT_FILE_BASE_NAME = '频道记录';
 const DOWNLOAD_EXT_MAP: Record<string, string> = {
   txt: '.txt',
   json: '.json',
-  html: '.zip',
+  html: '.html',
+};
+
+const padTimestampPart = (value: number) => `${value}`.padStart(2, '0');
+
+const formatDownloadTimestamp = (timestamp?: number) => {
+  const date = new Date(timestamp || Date.now());
+  if (Number.isNaN(date.getTime())) {
+    return '00000000-000000';
+  }
+  const year = date.getFullYear();
+  const month = padTimestampPart(date.getMonth() + 1);
+  const day = padTimestampPart(date.getDate());
+  const hours = padTimestampPart(date.getHours());
+  const minutes = padTimestampPart(date.getMinutes());
+  const seconds = padTimestampPart(date.getSeconds());
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+};
+
+const stripExtension = (fileName?: string) => {
+  const normalized = fileName?.trim() || '';
+  const lastDotIndex = normalized.lastIndexOf('.');
+  if (lastDotIndex <= 0) {
+    return normalized;
+  }
+  return normalized.slice(0, lastDotIndex).trim();
 };
 
 const resolveDownloadFileName = (item: ExportTaskItem) => {
-  const rawName = (item.file_name || item.display_name || `export-${item.task_id.slice(0, 8)}`).trim();
+  const rawName = stripExtension(item.display_name) || DEFAULT_EXPORT_FILE_BASE_NAME;
   const formatExt = DOWNLOAD_EXT_MAP[item.format?.toLowerCase() || ''];
+  const timestamp = formatDownloadTimestamp(item.finished_at || item.requested_at);
+  const baseName = `${rawName}-${item.task_id}-${timestamp}`;
   if (!formatExt) {
-    return rawName || item.task_id;
+    return baseName;
   }
-  const lower = rawName.toLowerCase();
-  if (lower.endsWith(formatExt)) {
-    return rawName;
-  }
-  return `${rawName || item.task_id}${formatExt}`;
+  return `${baseName}${formatExt}`;
 };
 
 const startBrowserDownload = (item: ExportTaskItem) => {
@@ -203,7 +227,8 @@ const handleDownload = async (item: ExportTaskItem) => {
     return;
   }
   try {
-    const { blob, fileName } = await chat.downloadExportResult(item.task_id, item.display_name || item.file_name);
+    const fileName = resolveDownloadFileName(item);
+    const { blob } = await chat.downloadExportResult(item.task_id);
     triggerBlobDownload(blob, fileName);
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || (error as Error)?.message || '下载失败';

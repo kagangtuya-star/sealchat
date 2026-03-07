@@ -1809,15 +1809,23 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	if payload == nil || msg == nil {
 		return ""
 	}
+	senderName := resolveBBCodeSenderName(payload, msg)
 	var headerParts []string
 	if !payload.WithoutTimestamp {
 		headerParts = append(headerParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
 	}
-	headerParts = append(headerParts, fmt.Sprintf("<%s>", msg.SenderName))
+	headerParts = append(headerParts, fmt.Sprintf("<%s>", senderName))
 	header := strings.Join(headerParts, " ")
 	content := buildBBCodeBody(msg, payload.IncludeImages)
 	color := resolveBBCodeSenderColor(payload, msg)
 	return fmt.Sprintf("[color=silver]%s[/color][color=%s] %s [/color]", header, color, content)
+}
+
+func resolveBBCodeSenderName(payload *ExportPayload, msg *ExportMessage) string {
+	if override := lookupBBCodeNameOverride(payload, msg); override != "" {
+		return override
+	}
+	return strings.TrimSpace(msg.SenderName)
 }
 
 func resolveBBCodeSenderColor(payload *ExportPayload, msg *ExportMessage) string {
@@ -1838,6 +1846,32 @@ func lookupBBCodeColorOverride(payload *ExportPayload, msg *ExportMessage) strin
 		return ""
 	}
 	rawMap, ok := payload.ExtraMeta["text_colorize_bbcode_map"]
+	if !ok {
+		return ""
+	}
+	key := "identity:" + identityID
+	switch m := rawMap.(type) {
+	case map[string]string:
+		return strings.TrimSpace(m[key])
+	case map[string]interface{}:
+		if raw, exists := m[key]; exists {
+			if value, ok := raw.(string); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func lookupBBCodeNameOverride(payload *ExportPayload, msg *ExportMessage) string {
+	if payload == nil || msg == nil || payload.ExtraMeta == nil {
+		return ""
+	}
+	identityID := strings.TrimSpace(msg.SenderIdentityID)
+	if identityID == "" {
+		return ""
+	}
+	rawMap, ok := payload.ExtraMeta["text_colorize_bbcode_name_map"]
 	if !ok {
 		return ""
 	}
@@ -2025,19 +2059,38 @@ func isSingleLineDiceCommandWithPrefixes(line string, prefixes []string) bool {
 	if line == "" || strings.Contains(line, "\n") {
 		return false
 	}
-	for _, prefix := range prefixes {
-		if prefix == "" || !strings.HasPrefix(line, prefix) {
-			continue
+	tokens := strings.Fields(line)
+	for _, token := range tokens {
+		for _, prefix := range prefixes {
+			if prefix == "" {
+				continue
+			}
+			searchFrom := 0
+			for searchFrom < len(token) {
+				idx := strings.Index(token[searchFrom:], prefix)
+				if idx < 0 {
+					break
+				}
+				idx += searchFrom
+				// 支持两种形态：
+				// 1) token 以指令前缀开头，如 ".ra"
+				// 2) token 以 @ 开头且内部包含指令前缀，如 "@用户。r"
+				if idx != 0 && token[0] != '@' {
+					searchFrom = idx + len(prefix)
+					continue
+				}
+				rest := strings.TrimSpace(token[idx+len(prefix):])
+				if rest == "" {
+					searchFrom = idx + len(prefix)
+					continue
+				}
+				first, _ := utf8.DecodeRuneInString(rest)
+				if first != utf8.RuneError && unicode.IsLetter(first) {
+					return true
+				}
+				searchFrom = idx + len(prefix)
+			}
 		}
-		rest := strings.TrimSpace(strings.TrimPrefix(line, prefix))
-		if rest == "" {
-			return false
-		}
-		first, _ := utf8.DecodeRuneInString(rest)
-		if first == utf8.RuneError {
-			return false
-		}
-		return unicode.IsLetter(first)
 	}
 	return false
 }

@@ -111,7 +111,7 @@
         </n-spin>
       </n-space>
 
-      <n-modal v-model:show="formModalVisible" preset="dialog" :title="editingForm ? '编辑控件' : '新增控件'" :positive-text="editingForm ? '保存' : '创建'" negative-text="'取消'" @positive-click="handleSubmit" @negative-click="handleCancel">
+      <n-modal v-model:show="formModalVisible" preset="dialog" :title="editingForm ? '编辑控件' : '新增控件'" :positive-text="editingForm ? '保存' : '创建'" negative-text="取消" @positive-click="handleSubmit" @negative-click="handleCancel">
         <n-form label-placement="left" label-width="72">
           <n-form-item label="名称" required>
             <n-input v-model:value="formModel.name" placeholder="示例：战斗地图" maxlength="64" />
@@ -120,7 +120,7 @@
             <n-input v-model:value="formModel.url" placeholder="https://example.com" />
           </n-form-item>
           <n-form-item label="嵌入代码">
-            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 <iframe> 代码" :rows="3" />
+            <n-input type="textarea" v-model:value="formModel.embedCode" placeholder="支持粘贴 HTML / iframe 代码（可含 script）" :rows="3" />
           </n-form-item>
           <n-form-item label="默认尺寸">
             <div class="iform-form__size">

@@ -8,8 +8,10 @@ import { i18n } from './lang'
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { useDisplayStore } from '@/stores/display'
+import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 
 const display = useDisplayStore()
+const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
 
 const naiveTheme = computed<GlobalTheme | null>(() => (display.settings.palette === 'night' ? darkTheme : null))
 
@@ -24,6 +26,8 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
       textColor2: isNight ? 'rgba(248, 250, 252, 0.8)' : '#475569',
       textColor3: isNight ? 'rgba(248, 250, 252, 0.65)' : '#475569',
       bodyColor: isNight ? '#1b1b20' : '#ffffff',
+      fontFamily: globalFontFamily.value,
+      fontFamilyMono: DEFAULT_MONO_FONT_STACK,
     },
     Button: {},
   }

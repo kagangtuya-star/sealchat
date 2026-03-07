@@ -48,6 +48,7 @@ captcha:
 # SQLite 优化配置 (使用 SQLite 时生效)
 sqlite:
   wal: true
+  # auto_vacuum 使用 FULL 模式，程序会在启动时自动检测并启用（含已有库）
   busyTimeout: 10000
   cacheSizeKB: 512000
   synchronous: NORMAL

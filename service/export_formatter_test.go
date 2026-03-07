@@ -154,6 +154,28 @@ func TestBuildBBCodeTextLineFallsBackWhenOverrideInvalid(t *testing.T) {
 	}
 }
 
+func TestBuildBBCodeTextLineUsesOverrideNameMap(t *testing.T) {
+	payload := &ExportPayload{
+		WithoutTimestamp: true,
+		ExtraMeta: map[string]interface{}{
+			"text_colorize_bbcode":          true,
+			"text_colorize_bbcode_name_map": map[string]string{"identity:role-a": "阿尔法"},
+		},
+	}
+	msg := &ExportMessage{
+		SenderIdentityID: "role-a",
+		SenderName:       "测试",
+		SenderColor:      "#123abc",
+		CreatedAt:        time.Unix(1700000000, 0),
+		Content:          "hello",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if !strings.Contains(line, "<阿尔法>") {
+		t.Fatalf("expected override name in line, got %q", line)
+	}
+}
+
 func TestBuildBBCodeTextLineNormalizesNestedEntitiesForPlainText(t *testing.T) {
 	payload := &ExportPayload{WithoutTimestamp: true}
 	msg := &ExportMessage{
@@ -367,6 +389,15 @@ func TestIsSingleLineDiceCommandDefaultPrefixes(t *testing.T) {
 	}
 	if !isSingleLineDiceCommand("。掷骰 侦查") {
 		t.Fatalf("chinese dot prefix should match by default")
+	}
+	if !isSingleLineDiceCommand("@守秘人。r1d100 侦查") {
+		t.Fatalf("mention token with command should match")
+	}
+	if !isSingleLineDiceCommand("请看 .ra 侦查") {
+		t.Fatalf("command token in message should match")
+	}
+	if isSingleLineDiceCommand("普通消息。然后继续") {
+		t.Fatalf("normal sentence should not match as command")
 	}
 	if isSingleLineDiceCommand("/ra 侦查") {
 		t.Fatalf("slash prefix should not match by default")

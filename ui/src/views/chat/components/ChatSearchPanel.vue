@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import dayjs from 'dayjs'
 import { useDraggable, useWindowSize } from '@vueuse/core'
@@ -19,7 +19,11 @@ const emit = defineEmits<{
   (event: 'jump-to-message', payload: JumpPayload): void
 }>()
 
-const PANEL_WIDTH = 420
+const PANEL_DEFAULT_WIDTH = 420
+const PANEL_DEFAULT_HEIGHT = 700
+const PANEL_MIN_WIDTH = 320
+const PANEL_MIN_HEIGHT = 480
+const PANEL_VIEWPORT_MARGIN = 16
 const PANEL_Z_INDEX = 1800
 
 const chat = useChatStore()
@@ -43,6 +47,15 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
 const dragHandleRef = ref<HTMLElement | null>(null)
 const advancedFiltersVisible = ref(false)
+const panelWidth = ref(channelSearch.panelSize.width || PANEL_DEFAULT_WIDTH)
+const panelHeight = ref(channelSearch.panelSize.height || PANEL_DEFAULT_HEIGHT)
+const isResizing = ref(false)
+const resizeStart = ref({
+  x: 0,
+  y: 0,
+  width: panelWidth.value,
+  height: panelHeight.value,
+})
 
 const memberOptionsLoading = ref(false)
 let memberFetchSeq = 0
@@ -79,21 +92,39 @@ const isMobileUa = typeof navigator !== 'undefined'
   : false
 
 const { width: viewportWidth, height: viewportHeight } = useWindowSize()
+const draggableHandle = computed(() => (isMobileUa ? undefined : dragHandleRef.value))
 
 const { x, y } = useDraggable(panelRef, {
-  handle: dragHandleRef,
-  disabled: isMobileUa,
+  handle: draggableHandle,
   initialValue: channelSearch.panelPosition,
 })
 
-const desktopPanelWidth = computed(() => {
-  const width = viewportWidth.value || PANEL_WIDTH
-  return Math.max(320, Math.min(PANEL_WIDTH, width - 32))
-})
+const resolvePanelSizeLimits = () => {
+  const viewportW = viewportWidth.value || (typeof window !== 'undefined' ? window.innerWidth : PANEL_DEFAULT_WIDTH)
+  const viewportH = viewportHeight.value || (typeof window !== 'undefined' ? window.innerHeight : PANEL_DEFAULT_HEIGHT)
+
+  const maxWidth = Math.max(280, viewportW - PANEL_VIEWPORT_MARGIN * 2)
+  const maxHeight = Math.max(260, viewportH - PANEL_VIEWPORT_MARGIN * 2)
+  const minWidth = Math.min(PANEL_MIN_WIDTH, maxWidth)
+  const minHeight = Math.min(PANEL_MIN_HEIGHT, maxHeight)
+
+  return { minWidth, maxWidth, minHeight, maxHeight, viewportW, viewportH }
+}
+
+const clampSize = (width: number, height: number) => {
+  if (typeof window === 'undefined') {
+    return { width, height }
+  }
+  const limits = resolvePanelSizeLimits()
+  return {
+    width: Math.min(Math.max(limits.minWidth, width), limits.maxWidth),
+    height: Math.min(Math.max(limits.minHeight, height), limits.maxHeight),
+  }
+}
 
 const panelStyle = computed(() => {
   if (isMobileUa) {
-    const mobileWidth = Math.max(260, Math.min((viewportWidth.value || PANEL_WIDTH) - 24, 420))
+    const mobileWidth = Math.max(260, Math.min((viewportWidth.value || PANEL_DEFAULT_WIDTH) - 24, 420))
     return {
       left: '50%',
       top: '10vh',
@@ -106,23 +137,40 @@ const panelStyle = computed(() => {
   return {
     left: `${x.value}px`,
     top: `${y.value}px`,
-    width: `${desktopPanelWidth.value}px`,
+    width: `${panelWidth.value}px`,
+    height: `${panelHeight.value}px`,
     zIndex: PANEL_Z_INDEX,
   }
 })
 
-const clampPosition = (nx: number, ny: number) => {
+const clampPosition = (nx: number, ny: number, width = panelWidth.value, height = panelHeight.value) => {
   if (typeof window === 'undefined') {
     return { x: nx, y: ny }
   }
-  const width = desktopPanelWidth.value
-  const viewportW = viewportWidth.value || width
-  const viewportH = viewportHeight.value || window.innerHeight
-  const maxX = Math.max(16, viewportW - width - 16)
-  const maxY = Math.max(80, viewportH - 160)
+  const limits = resolvePanelSizeLimits()
+  const maxX = Math.max(PANEL_VIEWPORT_MARGIN, limits.viewportW - width - PANEL_VIEWPORT_MARGIN)
+  const maxY = Math.max(PANEL_VIEWPORT_MARGIN, limits.viewportH - height - PANEL_VIEWPORT_MARGIN)
   return {
-    x: Math.min(Math.max(16, nx), maxX),
-    y: Math.min(Math.max(80, ny), maxY),
+    x: Math.min(Math.max(PANEL_VIEWPORT_MARGIN, nx), maxX),
+    y: Math.min(Math.max(PANEL_VIEWPORT_MARGIN, ny), maxY),
+  }
+}
+
+const applyDesktopLayoutClamp = () => {
+  if (isMobileUa) return
+  const clampedSize = clampSize(panelWidth.value, panelHeight.value)
+  if (clampedSize.width !== panelWidth.value) {
+    panelWidth.value = clampedSize.width
+  }
+  if (clampedSize.height !== panelHeight.value) {
+    panelHeight.value = clampedSize.height
+  }
+  const clampedPosition = clampPosition(x.value, y.value, clampedSize.width, clampedSize.height)
+  if (clampedPosition.x !== x.value) {
+    x.value = clampedPosition.x
+  }
+  if (clampedPosition.y !== y.value) {
+    y.value = clampedPosition.y
   }
 }
 
@@ -135,6 +183,11 @@ watch(
       const { x: px, y: py } = channelSearch.panelPosition
       x.value = px
       y.value = py
+      panelWidth.value = channelSearch.panelSize.width || PANEL_DEFAULT_WIDTH
+      panelHeight.value = channelSearch.panelSize.height || PANEL_DEFAULT_HEIGHT
+      applyDesktopLayoutClamp()
+    } else {
+      stopResize()
     }
   },
   { immediate: true },
@@ -210,8 +263,8 @@ watch(
 watch(
   [x, y],
   ([nx, ny]) => {
-    if (!panelVisible.value) return
-    const clamped = clampPosition(nx, ny)
+    if (!panelVisible.value || isMobileUa) return
+    const clamped = clampPosition(nx, ny, panelWidth.value, panelHeight.value)
     if (clamped.x !== nx) {
       x.value = clamped.x
     }
@@ -222,6 +275,75 @@ watch(
   },
   { flush: 'post' },
 )
+
+watch(
+  [panelWidth, panelHeight],
+  ([width, height]) => {
+    if (!panelVisible.value || isMobileUa) return
+    const clampedSize = clampSize(width, height)
+    if (clampedSize.width !== width) {
+      panelWidth.value = clampedSize.width
+      return
+    }
+    if (clampedSize.height !== height) {
+      panelHeight.value = clampedSize.height
+      return
+    }
+    const clampedPosition = clampPosition(x.value, y.value, clampedSize.width, clampedSize.height)
+    if (clampedPosition.x !== x.value) {
+      x.value = clampedPosition.x
+    }
+    if (clampedPosition.y !== y.value) {
+      y.value = clampedPosition.y
+    }
+    channelSearch.setPanelSize(clampedSize)
+  },
+  { flush: 'post' },
+)
+
+watch(
+  [viewportWidth, viewportHeight],
+  () => {
+    if (!panelVisible.value || isMobileUa) return
+    applyDesktopLayoutClamp()
+  },
+  { flush: 'post' },
+)
+
+function handleResizeMove(event: MouseEvent) {
+  if (!isResizing.value) return
+  const nextWidth = resizeStart.value.width + (event.clientX - resizeStart.value.x)
+  const nextHeight = resizeStart.value.height + (event.clientY - resizeStart.value.y)
+  const clamped = clampSize(nextWidth, nextHeight)
+  panelWidth.value = clamped.width
+  panelHeight.value = clamped.height
+}
+
+function stopResize() {
+  if (!isResizing.value) return
+  isResizing.value = false
+  window.removeEventListener('mousemove', handleResizeMove)
+  window.removeEventListener('mouseup', stopResize)
+}
+
+function handleResizeStart(event: MouseEvent) {
+  if (isMobileUa || !panelVisible.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  isResizing.value = true
+  resizeStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    width: panelWidth.value,
+    height: panelHeight.value,
+  }
+  window.addEventListener('mousemove', handleResizeMove)
+  window.addEventListener('mouseup', stopResize)
+}
+
+onBeforeUnmount(() => {
+  stopResize()
+})
 
 const hasSearched = computed(() => !!lastKeyword.value)
 const showEmptyState = computed(() => hasSearched.value && !loading.value && results.value.length === 0)
@@ -373,7 +495,8 @@ const shortContent = (text: string) => {
         v-if="panelVisible"
         ref="panelRef"
         class="chat-search-panel"
-        :class="{ 'chat-search-panel--mobile': isMobileUa }"
+        data-sc-font-surface="true"
+        :class="{ 'chat-search-panel--mobile': isMobileUa, 'chat-search-panel--resizing': isResizing }"
         :style="panelStyle"
       >
         <div ref="dragHandleRef" class="chat-search-panel__header">
@@ -573,14 +696,23 @@ const shortContent = (text: string) => {
 
           <div class="chat-search-panel__footer" v-if="results.length || total > pageSize">
             <n-pagination
+              class="chat-search-panel__pagination"
               :page="page"
               :page-size="pageSize"
               :item-count="total"
               :show-size-picker="false"
+              size="small"
+              simple
               @update:page="handlePageChange"
             />
           </div>
         </div>
+        <div
+          v-if="!isMobileUa"
+          class="chat-search-panel__resize-handle"
+          role="presentation"
+          @mousedown="handleResizeStart"
+        ></div>
       </div>
     </transition>
     <n-modal v-model:show="speakerSelectorVisible" preset="card" title="选择发言人" :style="{ width: '360px' }" @after-leave="speakerKeyword = ''">
@@ -617,6 +749,8 @@ const shortContent = (text: string) => {
   position: fixed;
   top: 120px;
   right: 40px;
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
   background: rgba(255, 255, 255, 0.98);
   border-radius: 1rem;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
@@ -625,9 +759,12 @@ const shortContent = (text: string) => {
   backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 120px);
+  min-width: 320px;
+  max-width: calc(100vw - 32px);
   min-height: 360px;
+  max-height: calc(100vh - 32px);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .chat-search-panel--mobile {
@@ -698,8 +835,8 @@ const shortContent = (text: string) => {
 .chat-search-panel__body {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 1rem;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
   flex: 1;
   min-height: 0;
 }
@@ -707,6 +844,14 @@ const shortContent = (text: string) => {
 .chat-search-panel--mobile .chat-search-panel__body {
   max-height: 65vh;
   overflow-y: auto;
+}
+
+.chat-search-panel--mobile .chat-search-panel__results {
+  min-height: 0;
+}
+
+.chat-search-panel--resizing {
+  user-select: none;
 }
 
 .chat-search-panel__input-group {
@@ -742,25 +887,82 @@ const shortContent = (text: string) => {
 
 .chat-search-panel__results {
   flex: 1;
-  min-height: 260px;
+  min-height: 360px;
   min-width: 0;
   border: 1px solid rgba(226, 232, 240, 0.7);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.85);
   display: flex;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .chat-search-panel__results-scroll {
   flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: scroll;
   padding: 0.75rem 0.85rem 0.5rem 0.75rem;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.chat-search-panel__results-scroll::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+.chat-search-panel__results-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-search-panel__results-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+
+.chat-search-panel__results-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.65);
+}
+
+.chat-search-panel__results-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .chat-search-panel__results-spin {
+  display: flex;
+  flex: 1;
+  min-height: 0;
   width: 100%;
   height: 100%;
+}
+
+.chat-search-panel__results-spin :deep(.n-spin-container),
+.chat-search-panel__results-spin :deep(.n-spin-content) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-search-panel__resize-handle {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  border-radius: 4px;
+  background: linear-gradient(135deg, transparent 35%, rgba(100, 116, 139, 0.35) 35%, rgba(100, 116, 139, 0.35) 50%, transparent 50%, transparent 65%, rgba(100, 116, 139, 0.45) 65%, rgba(100, 116, 139, 0.45) 80%, transparent 80%);
+  z-index: 2;
+}
+
+.chat-search-panel--mobile .chat-search-panel__resize-handle {
+  display: none;
 }
 
 .chat-search-panel__filter-toggle {
@@ -768,7 +970,7 @@ const shortContent = (text: string) => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-top: 0.25rem;
+  margin-top: 0;
 }
 
 .filter-toggle-button {
@@ -820,7 +1022,7 @@ const shortContent = (text: string) => {
 }
 
 .search-result {
-  padding: 0.55rem 0;
+  padding: 0.38rem 0;
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
 }
 
@@ -837,15 +1039,20 @@ const shortContent = (text: string) => {
 
 .search-result__row--meta {
   justify-content: space-between;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  flex-wrap: nowrap;
 }
 
 .search-result__row--content {
-  margin-top: 0.25rem;
+  margin-top: 0.12rem;
   line-height: 1.4;
   color: #1f2937;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   padding-left: 0.15rem;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-result__row--content mark {
@@ -866,7 +1073,7 @@ const shortContent = (text: string) => {
 }
 
 .search-result__author {
-  max-width: 12rem;
+  max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -874,8 +1081,10 @@ const shortContent = (text: string) => {
 
 .search-result__badges {
   display: inline-flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
+  gap: 0.25rem;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .search-result__right {
@@ -893,9 +1102,15 @@ const shortContent = (text: string) => {
 .chat-search-panel__footer {
   display: flex;
   justify-content: center;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
+  margin-top: 0.2rem;
+  padding-top: 0.25rem;
   border-top: 1px solid rgba(226, 232, 240, 0.6);
+  flex-shrink: 0;
+}
+
+.chat-search-panel__pagination {
+  width: 100%;
+  justify-content: center;
 }
 
 .expand-enter-active,

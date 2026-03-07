@@ -1113,7 +1113,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 
 .sc-overlay-layer {
   pointer-events: auto;
-  z-index: 2600;
+  z-index: 1500; /* keep below Naive UI overlay base (>=2000) so nested popups/modal remain visible */
 }
 
 .world-lobby-overlay {

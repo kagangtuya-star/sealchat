@@ -3,7 +3,7 @@
   background: radial-gradient(circle at top, rgba(30, 64, 175, 0.06), rgba(2, 6, 23, 0.95));
   color: #f8fafc;
   padding: 2.5rem 1rem 3rem;
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--sc-font-family, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif);
 
   &[data-palette='day'] {
     background: radial-gradient(circle at top, rgba(59, 130, 246, 0.06), rgba(241, 245, 249, 0.95));

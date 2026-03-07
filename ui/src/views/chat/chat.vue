@@ -3946,6 +3946,7 @@ const handleExportMessages = async (params: {
   mergeMessages: boolean;
   textColorizeBBCode: boolean;
   textColorizeBBCodeMap?: Record<string, string>;
+  textColorizeBBCodeNameMap?: Record<string, string>;
   autoUpload: boolean;
   maxExportMessages: number;
   maxExportConcurrency: number;
@@ -3983,6 +3984,9 @@ const handleExportMessages = async (params: {
       textColorizeBBCode: params.textColorizeBBCode && params.format === 'txt',
       textColorizeBBCodeMap: params.textColorizeBBCode && params.format === 'txt'
         ? (params.textColorizeBBCodeMap || {})
+        : undefined,
+      textColorizeBBCodeNameMap: params.textColorizeBBCode && params.format === 'txt'
+        ? (params.textColorizeBBCodeNameMap || {})
         : undefined,
       sliceLimit,
       maxConcurrency,
@@ -4642,6 +4646,12 @@ interface SearchJumpContextResult {
 
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
+const sentConfirmHighlightIds = ref(new Set<string>());
+const sentConfirmHighlightTimers = new Map<string, number>();
+const sentConfirmDedupTimers = new Map<string, number>();
+
+const SENT_CONFIRM_HIGHLIGHT_DURATION_MS = 1600;
+const SENT_CONFIRM_DEDUP_DURATION_MS = 2500;
 
 const setMessageHighlight = (messageId: string, duration = 4000) => {
   if (!messageId) return;
@@ -4659,6 +4669,50 @@ const setMessageHighlight = (messageId: string, duration = 4000) => {
   }, duration);
   searchHighlightTimers.set(messageId, timer);
 };
+
+const setSentConfirmHighlight = (messageId: string, duration = SENT_CONFIRM_HIGHLIGHT_DURATION_MS) => {
+  if (!messageId) return;
+  if (sentConfirmHighlightTimers.has(messageId)) {
+    window.clearTimeout(sentConfirmHighlightTimers.get(messageId));
+  }
+  const next = new Set(sentConfirmHighlightIds.value);
+  next.add(messageId);
+  sentConfirmHighlightIds.value = next;
+  const timer = window.setTimeout(() => {
+    const updated = new Set(sentConfirmHighlightIds.value);
+    updated.delete(messageId);
+    sentConfirmHighlightIds.value = updated;
+    sentConfirmHighlightTimers.delete(messageId);
+  }, duration);
+  sentConfirmHighlightTimers.set(messageId, timer);
+};
+
+const resolveSentConfirmKey = (messageData?: any) => String(
+  messageData?.clientId
+  || messageData?.client_id
+  || messageData?.id
+  || ''
+).trim();
+
+const notifyNewMessageHighlight = (messageData?: any) => {
+  if (!display.settings.highlightNewlySentMessage) {
+    return;
+  }
+  const messageId = String(messageData?.id || '').trim();
+  const dedupKey = resolveSentConfirmKey(messageData) || messageId;
+  if (!messageId || !dedupKey) {
+    return;
+  }
+  if (sentConfirmDedupTimers.has(dedupKey)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    sentConfirmDedupTimers.delete(dedupKey);
+  }, SENT_CONFIRM_DEDUP_DURATION_MS);
+  sentConfirmDedupTimers.set(dedupKey, timer);
+  setSentConfirmHighlight(messageId);
+};
+
 const registerMessageRow = (el: HTMLElement | null, id: string) => {
   if (!id) {
     return;
@@ -5507,6 +5561,7 @@ const rowClass = (item: Message) => ({
   'message-row--drop-before': dragState.overId === item.id && dragState.position === 'before',
   'message-row--drop-after': dragState.overId === item.id && dragState.position === 'after',
   'message-row--search-hit': searchHighlightIds.value.has(item.id || ''),
+  'message-row--sent-confirm-hit': sentConfirmHighlightIds.value.has(item.id || ''),
   [`message-row--tone-${getMessageTone(item)}`]: true,
 });
 
@@ -6883,12 +6938,21 @@ const stripDiceChipMarkup = (html: string) => {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
-    doc.querySelectorAll('span.dice-chip').forEach((element) => {
+    let replaced = false;
+    doc.querySelectorAll('span').forEach((element) => {
+      const classAttr = element.getAttribute('class') || '';
+      if (!classAttr.includes('dice-chip')) {
+        return;
+      }
       const source = element.getAttribute('data-dice-source') || element.textContent || '';
       if (!element.parentNode) return;
       const replacement = doc.createTextNode(source);
       element.parentNode.replaceChild(replacement, element);
+      replaced = true;
     });
+    if (!replaced) {
+      return html;
+    }
     const first = doc.body.firstElementChild;
     if (first && first.tagName === 'DIV') {
       return first.innerHTML;
@@ -6905,11 +6969,11 @@ const convertMessageContentToDraft = (content?: string) => {
   if (!content) {
     return '';
   }
-  content = stripDiceChipMarkup(content);
-  if (isTipTapJson(content)) {
-    return content;
-  }
   let text = contentUnescape(content);
+  text = stripDiceChipMarkup(text);
+  if (isTipTapJson(text)) {
+    return text;
+  }
   const imageRecords: Array<{ id: string; token: string; attachmentId: string }> = [];
   text = text.replace(/<img\s+[^>]*src="([^"]+)"[^>]*\/?>/gi, (_, src) => {
     const markerId = nanoid();
@@ -7712,13 +7776,17 @@ const tryAutoRestoreHistory = () => {
   notifyAutoRestoreSuccess(channelKey);
 };
 
-const syncSessionDraftSnapshot = () => {
-  const channelKey = currentChannelKey.value;
+const persistSessionDraftForChannel = (
+  channelKey: string,
+  options: { clearWhenEmpty?: boolean } = {},
+) => {
   if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK || isEditing.value) {
     return;
   }
   if (!isContentMeaningful(inputMode.value, textToSend.value)) {
-    writeSessionDraftForChannel(channelKey, null);
+    if (options.clearWhenEmpty) {
+      writeSessionDraftForChannel(channelKey, null);
+    }
     return;
   }
   const images = inputMode.value === 'plain' ? collectCurrentImageInfo() : undefined;
@@ -7728,6 +7796,10 @@ const syncSessionDraftSnapshot = () => {
     updatedAt: Date.now(),
     images: images?.length ? images : undefined,
   });
+};
+
+const syncSessionDraftSnapshot = () => {
+  persistSessionDraftForChannel(currentChannelKey.value, { clearWhenEmpty: true });
 };
 
 const scheduleSessionDraftSnapshot = throttle(
@@ -9333,6 +9405,7 @@ const retrySendMessage = async (target?: Message) => {
     setMessageSendStatus(current as any, 'sent');
     instantMessages.delete(current);
     upsertMessage(current);
+    notifyNewMessageHighlight(current);
     toBottom();
   } catch (error) {
     const reason = resolveMessageSendFailureReason(error);
@@ -9533,6 +9606,7 @@ const send = throttle(async () => {
     setMessageSendStatus(tmpMsg as any, 'sent');
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
+    notifyNewMessageHighlight(tmpMsg);
     if (activeReeditSource) {
       try {
         await chat.messageRemove(activeReeditSource.channelId, activeReeditSource.messageId);
@@ -9984,6 +10058,7 @@ chatEvent.on('message-created', (e?: Event) => {
       Object.assign(matchedPending, incoming);
       setMessageSendStatus(matchedPending as any, 'sent');
       upsertMessage(matchedPending);
+      notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
       toBottom();
@@ -10056,6 +10131,9 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   }
   upsertMessage(incoming);
+  if (!isSelf) {
+    notifyNewMessageHighlight(incoming);
+  }
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
@@ -10421,6 +10499,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (!firstLoad) return;
     const payload = (e as any)?.argv || {};
     const isReenter = !!payload?.reenter;
+    const previousChannelId = String(payload?.previousChannelId || '').trim();
+    persistSessionDraftForChannel(previousChannelId);
     stopTypingPreviewNow();
     resetTypingPreview();
     stopEditingPreviewNow();
@@ -11039,6 +11119,11 @@ const handleKeywordSuggestHover = (index: number) => {
 
 const handleKeywordSuggestBlur = () => {
   keywordSuggestVisible.value = false;
+};
+
+const handleChatInputBlur = () => {
+  handleKeywordSuggestBlur();
+  syncSessionDraftSnapshot();
 };
 
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
@@ -13064,7 +13149,7 @@ onBeforeUnmount(() => {
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
-                  @blur="handleKeywordSuggestBlur"
+                  @blur="handleChatInputBlur"
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
@@ -14445,7 +14530,7 @@ onBeforeUnmount(() => {
   transition: background-color 0.15s ease;
 }
 
-.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--drag-source):hover .message-row__surface::after {
+.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--sent-confirm-hit):not(.message-row--drag-source):hover .message-row__surface::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -14486,6 +14571,17 @@ onBeforeUnmount(() => {
   animation: search-hit-pulse 2s ease forwards;
 }
 
+.message-row--sent-confirm-hit .message-row__surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 0.9rem;
+  z-index: 0;
+  background: rgba(59, 130, 246, 0.09);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12);
+  animation: sent-confirm-pulse 1.6s ease forwards;
+}
+
 @keyframes search-hit-pulse {
   0% {
     opacity: 0.9;
@@ -14493,6 +14589,20 @@ onBeforeUnmount(() => {
 
   50% {
     opacity: 0.4;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sent-confirm-pulse {
+  0% {
+    opacity: 0.74;
+  }
+
+  45% {
+    opacity: 0.28;
   }
 
   100% {

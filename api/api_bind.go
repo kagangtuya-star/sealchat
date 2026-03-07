@@ -151,6 +151,23 @@ func buildIndexPaths(webURL string) []string {
 	return paths
 }
 
+func buildObserverPrintPaths(webURL string) []string {
+	paths := []string{"/ob-print/:slug"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
+	return paths
+}
+
 func applyPageTitleToIndex(htmlSource string, title string) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
@@ -250,8 +267,14 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return c.Status(http.StatusOK).JSON(resp)
 	})
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
+	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
+	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
+	for _, routePath := range buildObserverPrintPaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, ObserverPrintPageHandler)
+	}
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)
@@ -429,6 +452,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Post("/", WorldCreateHandler)
 	worldGroup.Post("", WorldCreateHandler)
 	worldGroup.Get("/:worldId", WorldDetail)
+	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
+	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
 	worldGroup.Delete("/:worldId", WorldDeleteHandler)
 	worldGroup.Post("/:worldId/join", WorldJoinHandler)
@@ -509,6 +534,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
 	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
+	v1AuthAdmin.Get("/admin/sqlite/vacuum/status", AdminSQLiteVacuumStatus)
+	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

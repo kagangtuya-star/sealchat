@@ -98,17 +98,7 @@ func apiChannelList(ctx *ChatContext, data *struct {
 }) (any, error) {
 	worldID := strings.TrimSpace(data.WorldID)
 	if ctx.IsReadOnly() {
-		if worldID == "" {
-			return nil, fmt.Errorf("未找到世界")
-		}
-		world, err := service.GetWorldByID(worldID)
-		if err != nil {
-			return nil, err
-		}
-		if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
-			return nil, fmt.Errorf("世界未开放公开访问")
-		}
-		items, err := service.ChannelListPublicByWorld(worldID)
+		items, err := listReadOnlyChannelsByWorld(ctx, worldID)
 		if err != nil {
 			return nil, err
 		}
@@ -165,17 +155,7 @@ func apiChannelFavoriteList(ctx *ChatContext, data *struct {
 }) (any, error) {
 	worldID := strings.TrimSpace(data.WorldID)
 	if ctx.IsReadOnly() {
-		if worldID == "" {
-			return nil, fmt.Errorf("未找到世界")
-		}
-		world, err := service.GetWorldByID(worldID)
-		if err != nil {
-			return nil, err
-		}
-		if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
-			return nil, fmt.Errorf("世界未开放公开访问")
-		}
-		items, err := service.ChannelListPublicByWorld(worldID)
+		items, err := listReadOnlyChannelsByWorld(ctx, worldID)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +242,7 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 
 	// 权限检查
 	if ctx.IsReadOnly() {
-		channel, err := service.CanGuestAccessChannel(channelId)
+		channel, err := checkReadOnlyChannelAccess(ctx, channelId)
 		if err != nil {
 			return nil, err
 		}

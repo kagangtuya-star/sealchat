@@ -228,7 +228,7 @@ const getGenericDefaultTemplate = () => `<!DOCTYPE html>
       border-radius: 999px;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: var(--sc-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
       padding: 16px;
       background: var(--bg-body);
       color: var(--text-primary);
@@ -462,7 +462,7 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
       --c-hover: #21262d;
       
       --font-serif: "Songti SC", "SimSun", "Georgia", serif; /* 衬线体更有年代感 */
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-sans: var(--sc-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }

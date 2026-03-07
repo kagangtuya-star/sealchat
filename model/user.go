@@ -317,7 +317,9 @@ func UserRefreshAccessToken(tokenID string) (string, error) {
 		return "", ErrInvalidToken
 	}
 
-	if err := db.Model(&AccessTokenModel{}).Update("expired_at", expiredAt).Error; err != nil {
+	if err := db.Model(&AccessTokenModel{}).
+		Where("id = ?", tokenID).
+		Update("expired_at", expiredAt).Error; err != nil {
 		return "", fmt.Errorf("update failed")
 	}
 
@@ -366,7 +368,12 @@ func UserGet(id string) *UserModel {
 // UserBotList 查询所有启用的机器人用户
 func UserBotList() ([]*UserModel, error) {
 	var bots []*UserModel
-	err := db.Where("disabled = ? AND is_bot = ?", false, true).Find(&bots).Error
+	webhookBotSubQuery := db.Model(&ChannelWebhookIntegrationModel{}).
+		Select("DISTINCT bot_user_id").
+		Where("bot_user_id <> ''")
+	err := db.Where("disabled = ? AND is_bot = ?", false, true).
+		Where("id NOT IN (?)", webhookBotSubQuery).
+		Find(&bots).Error
 	if err != nil {
 		return nil, err
 	}

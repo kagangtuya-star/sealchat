@@ -43,19 +43,27 @@ func maskSensitiveFields(data map[string]interface{}) {
 	}
 }
 
-// initConfigWithDB 初始化配置并同步到数据库
+type configInitResult struct {
+	Config     *utils.AppConfig
+	SyncSource string
+	ShouldSync bool
+}
+
+// initConfigWithDB 初始化配置来源（不执行完整 DBInit）
 // 实现双路径启动逻辑：
 // - 配置文件存在 → 读取 → 同步到 DB
 // - 配置文件不存在 → 尝试从 DB 恢复
-func initConfigWithDB() *utils.AppConfig {
+func initConfigWithDB() configInitResult {
 	configExists := utils.ConfigFileExists()
 
 	if configExists {
 		// 路径A：配置文件存在
 		config := utils.ReadConfig()
-		model.DBInit(config)
-		syncConfigToDB(config, "file")
-		return config
+		return configInitResult{
+			Config:     config,
+			SyncSource: "file",
+			ShouldSync: true,
+		}
 	}
 
 	// 路径B：配置文件不存在
@@ -65,9 +73,11 @@ func initConfigWithDB() *utils.AppConfig {
 	if err := model.DBInitMinimal(dsn); err != nil {
 		log.Printf("[配置] 初始化数据库失败: %v，使用默认配置", err)
 		config := utils.ReadConfig()
-		model.DBInit(config)
-		syncConfigToDB(config, "init")
-		return config
+		return configInitResult{
+			Config:     config,
+			SyncSource: "init",
+			ShouldSync: true,
+		}
 	}
 
 	// 尝试从数据库读取配置
@@ -75,9 +85,11 @@ func initConfigWithDB() *utils.AppConfig {
 	if err != nil {
 		log.Printf("[配置] 读取数据库配置失败: %v，使用默认配置", err)
 		config := utils.ReadConfig()
-		model.DBInit(config)
-		syncConfigToDB(config, "init")
-		return config
+		return configInitResult{
+			Config:     config,
+			SyncSource: "init",
+			ShouldSync: true,
+		}
 	}
 
 	if dbConfig != nil && dbConfig.ConfigJSON != "" {
@@ -86,9 +98,11 @@ func initConfigWithDB() *utils.AppConfig {
 		if err := json.Unmarshal([]byte(dbConfig.ConfigJSON), &config); err != nil {
 			log.Printf("[配置] 解析数据库配置失败: %v，使用默认配置", err)
 			config := utils.ReadConfig()
-			model.DBInit(config)
-			syncConfigToDB(config, "init")
-			return config
+			return configInitResult{
+				Config:     config,
+				SyncSource: "init",
+				ShouldSync: true,
+			}
 		}
 
 		// 确保 DSN 不丢失（JSON 中 DSN 标记为 "-" 不会序列化）
@@ -99,17 +113,20 @@ func initConfigWithDB() *utils.AppConfig {
 		log.Println("[配置] 从数据库恢复配置成功")
 		// 写入配置文件
 		utils.WriteConfig(&config)
-		// 重新完整初始化数据库
-		model.DBInit(&config)
-		return &config
+		return configInitResult{
+			Config:     &config,
+			ShouldSync: false,
+		}
 	}
 
 	// 数据库中也没有配置，全新安装
 	log.Println("[配置] 数据库中无配置记录，创建默认配置")
 	config := utils.ReadConfig()
-	model.DBInit(config)
-	syncConfigToDB(config, "init")
-	return config
+	return configInitResult{
+		Config:     config,
+		SyncSource: "init",
+		ShouldSync: true,
+	}
 }
 
 // syncConfigToDB 将配置同步到数据库
@@ -278,4 +295,28 @@ func handleConfigExport(version int64, output string) {
 	}
 
 	fmt.Printf("已导出版本 %d 到 %s\n", version, output)
+}
+
+// handleSQLiteVacuum 手动执行 SQLite VACUUM 空间整理
+func handleSQLiteVacuum() error {
+	if !model.IsSQLite() {
+		return fmt.Errorf("当前数据库不是 SQLite，无法执行 VACUUM")
+	}
+	if err := model.VacuumSQLite(); err != nil {
+		return err
+	}
+	fmt.Println("SQLite VACUUM 执行完成")
+	return nil
+}
+
+func handleCleanupWebhookBotFriends() error {
+	stats, err := model.CleanupWebhookBotFriendData()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Webhook BOT 历史好友数据清理完成")
+	fmt.Printf("webhookBotCount: %d\n", stats.WebhookBotCount)
+	fmt.Printf("friendRelationDeleted: %d\n", stats.FriendRelationDeleted)
+	fmt.Printf("privateChannelDeleted: %d\n", stats.PrivateChannelDeleted)
+	return nil
 }

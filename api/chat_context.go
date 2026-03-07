@@ -40,6 +40,13 @@ func (ctx *ChatContext) IsReadOnly() bool {
 	return ctx.IsGuest() || ctx.IsObserver()
 }
 
+func (ctx *ChatContext) ObserverWorldID() string {
+	if ctx == nil || ctx.ConnInfo == nil {
+		return ""
+	}
+	return strings.TrimSpace(ctx.ConnInfo.ObserverWorldID)
+}
+
 func userHasChannelConnection(userId string, channelId string, userId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]], exclude *WsSyncConn) bool {
 	if userId == "" || channelId == "" || userId2ConnInfo == nil {
 		return false

@@ -111,12 +111,13 @@ func TestParseExportExtraOptionsDefaultsIncludeFlags(t *testing.T) {
 
 func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
 	raw, err := buildExportExtraOptions(&ExportJobOptions{
-		IncludeImages:         true,
-		IncludeDiceCommand:    true,
-		TextColorizeBBCode:    true,
-		TextColorizeBBCodeMap: map[string]string{"identity:role-a": "#123abc"},
-		SliceLimit:            5000,
-		MaxConcurrency:        2,
+		IncludeImages:             true,
+		IncludeDiceCommand:        true,
+		TextColorizeBBCode:        true,
+		TextColorizeBBCodeMap:     map[string]string{"identity:role-a": "#123abc"},
+		TextColorizeBBCodeNameMap: map[string]string{"identity:role-a": "阿尔法"},
+		SliceLimit:                5000,
+		MaxConcurrency:            2,
 	})
 	if err != nil {
 		t.Fatalf("buildExportExtraOptions failed: %v", err)
@@ -130,6 +131,31 @@ func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
 	}
 	if got := extra.TextColorizeBBCodeMap["identity:role-a"]; got != "#123abc" {
 		t.Fatalf("unexpected color map value: %q", got)
+	}
+	if got := extra.TextColorizeBBCodeNameMap["identity:role-a"]; got != "阿尔法" {
+		t.Fatalf("unexpected name map value: %q", got)
+	}
+}
+
+func TestBuildExportResultFileNameUsesDisplayNameAndTaskID(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, time.March, 7, 9, 8, 7, 0, time.Local)
+	got := BuildExportResultFileName("  三月导出.txt ", "task-123", "txt", ts)
+	want := "三月导出-task-123-20260307-090807.txt"
+	if got != want {
+		t.Fatalf("unexpected file name, got=%q want=%q", got, want)
+	}
+}
+
+func TestBuildExportResultFileNameFallsBackToDefaultBaseName(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2026, time.March, 7, 18, 30, 45, 0, time.Local)
+	got := BuildExportResultFileName("", "task-456", "html", ts)
+	want := "频道记录-task-456-20260307-183045.html"
+	if got != want {
+		t.Fatalf("unexpected default file name, got=%q want=%q", got, want)
 	}
 }
 
@@ -160,7 +186,7 @@ func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
 		},
 		ChannelID:    channelID,
 		UserID:       sender.ID,
-		Content:      ".r1d5 掷骰异形表",
+		Content:      "@守秘人。r1d5 掷骰异形表",
 		DisplayOrder: float64(now.UnixMilli()),
 		ICMode:       "ic",
 	}).Error; err != nil {

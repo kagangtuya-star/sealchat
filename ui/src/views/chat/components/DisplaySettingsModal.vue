@@ -6,6 +6,7 @@ import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
 import AvatarStylePanel from './AvatarStylePanel.vue'
+import FontSettingsPanel from './FontSettingsPanel.vue'
 
 interface Props {
   visible: boolean
@@ -23,6 +24,7 @@ const shortcutPanelVisible = ref(false)
 const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
 const avatarStylePanelVisible = ref(false)
+const fontSettingsPanelVisible = ref(false)
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
@@ -63,6 +65,10 @@ watch(
     draft.fontSize = value.fontSize
     draft.lineHeight = value.lineHeight
     draft.letterSpacing = value.letterSpacing
+    draft.globalFontFamily = value.globalFontFamily
+    draft.globalFontSourceType = value.globalFontSourceType
+    draft.globalFontAssetId = value.globalFontAssetId
+    draft.fontEnhancedCoverageEnabled = value.fontEnhancedCoverageEnabled
     draft.bubbleGap = value.bubbleGap
     draft.compactBubbleGap = value.compactBubbleGap
     draft.paragraphSpacing = value.paragraphSpacing
@@ -80,6 +86,7 @@ watch(
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
+  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
   draft.disableContextMenu = value.disableContextMenu
   draft.avatarSize = value.avatarSize
   draft.avatarBorderRadius = value.avatarBorderRadius
@@ -317,6 +324,23 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">全局字体</p>
+            <p class="section-desc">设置聊天与界面正文所使用的全局字体</p>
+          </div>
+        </header>
+        <div class="font-settings-row">
+          <n-button secondary size="small" @click="fontSettingsPanelVisible = true">
+            打开字体设置
+          </n-button>
+          <span class="active-theme-name">
+            当前：{{ display.settings.globalFontFamily || '系统默认字体链' }}
+          </span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">头像显示</p>
             <p class="section-desc">隐藏头像可获得更紧凑的布局</p>
           </div>
@@ -385,6 +409,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showDragIndicator">
           <template #checked>显示指示线</template>
           <template #unchecked>隐藏指示线</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">新消息弱高亮</p>
+            <p class="section-desc">新到达消息会短暂显示轻微高亮，包括自己发出和别人发来的消息</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.highlightNewlySentMessage">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
         </n-switch>
       </section>
 
@@ -864,6 +901,7 @@ const handleOpenTutorialHub = () => {
   <IcOocRoleConfigPanel v-model:show="roleConfigPanelVisible" />
   <CustomThemePanel v-model:show="customThemePanelVisible" />
   <AvatarStylePanel v-model:show="avatarStylePanelVisible" />
+  <FontSettingsPanel v-model:show="fontSettingsPanelVisible" />
 </template>
 
 <style scoped lang="scss">
@@ -1146,6 +1184,13 @@ const handleOpenTutorialHub = () => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.font-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .active-theme-name {

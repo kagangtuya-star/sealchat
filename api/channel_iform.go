@@ -487,11 +487,7 @@ func sanitizeEmbedCode(raw string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "<script") {
-		return "", errors.New("嵌入代码不可包含 <script>")
-	}
-	if len(trimmed) > 8192 {
+	if len(trimmed) > 88192 {
 		return "", errors.New("嵌入代码过长")
 	}
 	return trimmed, nil

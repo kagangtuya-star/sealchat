@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -75,6 +76,25 @@ type messageSearchIdentity struct {
 	AvatarID    string `json:"avatar_attachment"`
 }
 
+const (
+	observerSearchRateWindow          = time.Minute
+	observerSearchRateLimitGlobal     = 120
+	observerSearchRateLimitPerChannel = 12
+)
+
+type observerSearchRateState struct {
+	windowStart time.Time
+	count       int
+}
+
+var observerSearchRateLimiter = struct {
+	mu          sync.Mutex
+	entries     map[string]observerSearchRateState
+	nextCleanup time.Time
+}{
+	entries: map[string]observerSearchRateState{},
+}
+
 func ChannelMessageSearch(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
@@ -83,10 +103,149 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		})
 	}
 
-	channelID := strings.TrimSpace(c.Params("channelId"))
-	if channelID == "" {
+	channelID, ok := parseChannelSearchChannelID(c)
+	if !ok {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": "缺少频道ID",
+		})
+	}
+
+	channelRef, err := resolveChannelAccess(user.ID, channelID)
+	if err != nil {
+		if errors.Is(err, fiber.ErrForbidden) {
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+		}
+		if errors.Is(err, fiber.ErrNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
+	}
+	return executeChannelMessageSearch(c, channelID, user.ID, channelRef)
+}
+
+func ChannelMessageSearchObserver(c *fiber.Ctx) error {
+	channelID, ok := parseChannelSearchChannelID(c)
+	if !ok {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+	observerSlug := strings.TrimSpace(c.Query("ob_slug"))
+	if observerSlug == "" {
+		observerSlug = strings.TrimSpace(c.Get("X-Observer-Slug"))
+	}
+	if observerSlug == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少OB链接标识",
+		})
+	}
+
+	clientIP := getClientIP(c)
+	allowed, retryAfter := allowObserverSearchRequest(clientIP, observerSlug, channelID)
+	if !allowed {
+		if retryAfter > 0 {
+			c.Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		}
+		return c.Status(http.StatusTooManyRequests).JSON(fiber.Map{
+			"message": "搜索过于频繁，请稍后重试",
+		})
+	}
+
+	world, _, err := service.ResolveWorldObserverLink(observerSlug)
+	if err != nil {
+		if errors.Is(err, service.ErrWorldObserverLinkInvalid) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "旁观链接无效或已关闭"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "解析旁观链接失败"})
+	}
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "旁观链接无效或已关闭"})
+	}
+
+	channel, err := service.CanObserverAccessChannel(channelID, world.ID)
+	if err != nil {
+		if strings.Contains(err.Error(), "不存在") {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+	}
+
+	channelRef := &messageSearchChannelRef{
+		ID:   channel.ID,
+		Name: channel.Name,
+	}
+	return executeChannelMessageSearch(c, channelID, "", channelRef)
+}
+
+func parseChannelSearchChannelID(c *fiber.Ctx) (string, bool) {
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		return "", false
+	}
+	return channelID, true
+}
+
+func allowObserverSearchRequest(clientIP, observerSlug, channelID string) (bool, time.Duration) {
+	clientIP = strings.TrimSpace(strings.ToLower(clientIP))
+	observerSlug = strings.TrimSpace(strings.ToLower(observerSlug))
+	channelID = strings.TrimSpace(strings.ToLower(channelID))
+	if observerSlug == "" {
+		return false, 0
+	}
+	if clientIP == "" {
+		clientIP = "unknown"
+	}
+	now := time.Now()
+	limiter := &observerSearchRateLimiter
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+
+	if now.After(limiter.nextCleanup) {
+		for key, state := range limiter.entries {
+			if now.Sub(state.windowStart) >= observerSearchRateWindow {
+				delete(limiter.entries, key)
+			}
+		}
+		limiter.nextCleanup = now.Add(observerSearchRateWindow)
+	}
+
+	globalKey := "global|" + observerSlug + "|" + clientIP
+	allowed, retryAfter := consumeObserverSearchQuotaLocked(globalKey, observerSearchRateLimitGlobal, now)
+	if !allowed {
+		return false, retryAfter
+	}
+	channelKey := "channel|" + observerSlug + "|" + clientIP + "|" + channelID
+	return consumeObserverSearchQuotaLocked(channelKey, observerSearchRateLimitPerChannel, now)
+}
+
+func consumeObserverSearchQuotaLocked(key string, limit int, now time.Time) (bool, time.Duration) {
+	if limit <= 0 {
+		return true, 0
+	}
+	entry := observerSearchRateLimiter.entries[key]
+	if entry.windowStart.IsZero() || now.Sub(entry.windowStart) >= observerSearchRateWindow {
+		observerSearchRateLimiter.entries[key] = observerSearchRateState{
+			windowStart: now,
+			count:       1,
+		}
+		return true, 0
+	}
+	if entry.count >= limit {
+		retryAfter := observerSearchRateWindow - now.Sub(entry.windowStart)
+		if retryAfter < time.Second {
+			retryAfter = time.Second
+		}
+		return false, retryAfter
+	}
+	entry.count++
+	observerSearchRateLimiter.entries[key] = entry
+	return true, 0
+}
+
+func executeChannelMessageSearch(c *fiber.Ctx, channelID, viewerUserID string, channelRef *messageSearchChannelRef) error {
+	if channelRef == nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"message": "频道信息缺失",
 		})
 	}
 
@@ -140,24 +299,13 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 
 	sortMode := strings.ToLower(strings.TrimSpace(c.Query("sort", "time_desc")))
 
-	channelRef, err := resolveChannelAccess(user.ID, channelID)
-	if err != nil {
-		if errors.Is(err, fiber.ErrForbidden) {
-			return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
-		}
-		if errors.Is(err, fiber.ErrNotFound) {
-			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
-		}
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
-	}
-
 	db := model.GetDB()
-		buildBaseQuery := func() *gorm.DB {
-			q := db.Model(&model.MessageModel{}).
-				Where("channel_id = ?", channelID).
-				Where("is_revoked = ?", false).
-				Where("is_deleted = ?", false)
-			q = applyWhisperVisibilityFilter(q, user.ID, channelID)
+	buildBaseQuery := func() *gorm.DB {
+		q := db.Model(&model.MessageModel{}).
+			Where("channel_id = ?", channelID).
+			Where("is_revoked = ?", false).
+			Where("is_deleted = ?", false)
+		q = applyWhisperVisibilityFilter(q, viewerUserID, channelID)
 
 		switch archivedFilter {
 		case "only":
@@ -249,7 +397,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	}
 
 	var messages []*model.MessageModel
-	err = dataQuery.
+	if err := dataQuery.
 		Offset(offset).
 		Limit(pageSize).
 		Preload("User", func(tx *gorm.DB) *gorm.DB {
@@ -258,8 +406,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		Preload("Member", func(tx *gorm.DB) *gorm.DB {
 			return tx.Select("id, nickname, channel_id, user_id")
 		}).
-		Find(&messages).Error
-	if err != nil {
+		Find(&messages).Error; err != nil {
 		if usedFTS {
 			reportFTSError(backendName, err)
 		}
@@ -271,6 +418,8 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	items := lo.Map(messages, func(msg *model.MessageModel, _ int) messageSearchItem {
 		return buildMessageSearchItem(msg)
 	})
+
+	sqliteFTSStatus := model.SQLiteFTSStatus()
 
 	resp := messageSearchResponse{
 		Page:     page,
@@ -297,8 +446,15 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		Metadata: map[string]any{
 			"search_backend": backendName,
 			"sqlite": map[string]any{
-				"ready":      model.SQLiteFTSReady(),
-				"last_error": model.LastFTSError(),
+				"ready":             sqliteFTSStatus.Ready,
+				"last_error":        sqliteFTSStatus.LastError,
+				"status":            sqliteFTSStatus.Status,
+				"version":           sqliteFTSStatus.Version,
+				"last_indexed_at":   sqliteFTSStatus.LastIndexedAt,
+				"last_rebuild_mode": sqliteFTSStatus.LastRebuildMode,
+				"lease_expire_at":   sqliteFTSStatus.LeaseExpireAt,
+				"message":           sqliteFTSStatus.Message,
+				"last_action":       sqliteFTSStatus.LastAction,
 			},
 			"postgres": map[string]any{
 				"ready":      model.PostgresFTSReady(),
@@ -709,7 +865,7 @@ func buildSnippet(content string, limit int) string {
 	if limit <= 0 {
 		limit = 200
 	}
-	normalized := strings.TrimSpace(content)
+	normalized := service.NormalizeMessageContentToPlainText(content)
 	normalized = strings.ReplaceAll(normalized, "\r", " ")
 	normalized = strings.ReplaceAll(normalized, "\n", " ")
 	runes := []rune(normalized)

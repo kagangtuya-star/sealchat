@@ -48,6 +48,8 @@ type ConnInfo struct {
 	WorldId               string
 	IsGuest               bool
 	IsObserver            bool
+	ObserverSlug          string
+	ObserverWorldID       string
 	TypingEnabled         bool
 	TypingState           protocol.TypingState
 	TypingContent         string
@@ -306,10 +308,30 @@ func websocketWorks(app *fiber.App) {
 			}
 			token = strings.TrimSpace(token)
 			observer := false
+			observerSlug := ""
+			observerWorldID := ""
 			if observerRaw, exists := m["observer"]; exists {
 				if observerValue, ok := observerRaw.(bool); ok {
 					observer = observerValue
 				}
+			}
+			if observerSlugRaw, exists := m["observerSlug"]; exists {
+				if slugValue, ok := observerSlugRaw.(string); ok {
+					observerSlug = strings.TrimSpace(slugValue)
+				}
+			}
+			if observer && observerSlug != "" {
+				world, _, err := service.ResolveWorldObserverLink(observerSlug)
+				if err != nil || world == nil || strings.TrimSpace(world.ID) == "" {
+					_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+						Op: protocol.OpReady,
+						Body: map[string]any{
+							"errorMsg": "observer link invalid",
+						},
+					})
+					return nil, nil
+				}
+				observerWorldID = strings.TrimSpace(world.ID)
 			}
 
 			var user *model.UserModel
@@ -335,16 +357,18 @@ func websocketWorks(app *fiber.App) {
 				user.ID = guestID
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
 				curConnInfo = &ConnInfo{
-					Conn:          c,
-					ClientAddr:    clientAddr,
-					LastPingTime:  time.Now().UnixMilli(),
-					LastAliveTime: time.Now().UnixMilli(),
-					User:          user,
-					IsGuest:       true,
-					IsObserver:    observer,
-					TypingState:   protocol.TypingStateSilent,
-					TypingIcMode:  "ic",
-					Focused:       true,
+					Conn:            c,
+					ClientAddr:      clientAddr,
+					LastPingTime:    time.Now().UnixMilli(),
+					LastAliveTime:   time.Now().UnixMilli(),
+					User:            user,
+					IsGuest:         true,
+					IsObserver:      observer,
+					ObserverSlug:    observerSlug,
+					ObserverWorldID: observerWorldID,
+					TypingState:     protocol.TypingStateSilent,
+					TypingIcMode:    "ic",
+					Focused:         true,
 				}
 				m.Store(c, curConnInfo)
 				curUser = user
@@ -415,15 +439,17 @@ func websocketWorks(app *fiber.App) {
 				}
 
 				curConnInfo = &ConnInfo{
-					Conn:          c,
-					ClientAddr:    clientAddr,
-					LastPingTime:  time.Now().UnixMilli(),
-					LastAliveTime: time.Now().UnixMilli(),
-					User:          user,
-					IsObserver:    observer,
-					TypingState:   protocol.TypingStateSilent,
-					TypingIcMode:  "ic",
-					Focused:       true,
+					Conn:            c,
+					ClientAddr:      clientAddr,
+					LastPingTime:    time.Now().UnixMilli(),
+					LastAliveTime:   time.Now().UnixMilli(),
+					User:            user,
+					IsObserver:      observer,
+					ObserverSlug:    observerSlug,
+					ObserverWorldID: observerWorldID,
+					TypingState:     protocol.TypingStateSilent,
+					TypingIcMode:    "ic",
+					Focused:         true,
 				}
 				m.Store(c, curConnInfo)
 

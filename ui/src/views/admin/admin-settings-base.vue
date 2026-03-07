@@ -30,6 +30,7 @@ const model = ref<ServerConfig>({
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
   emailNotification: { enabled: false },
+  sqlite: { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 },
   audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true },
 })
 
@@ -178,6 +179,15 @@ onMounted(async () => {
   if (!model.value.audio) {
     model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
   }
+  if (!model.value.sqlite) {
+    model.value.sqlite = { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 };
+  }
+  if (model.value.sqlite.autoVacuumEnabled === undefined) {
+    model.value.sqlite.autoVacuumEnabled = true;
+  }
+  if (!model.value.sqlite.autoVacuumIntervalHours || model.value.sqlite.autoVacuumIntervalHours <= 0) {
+    model.value.sqlite.autoVacuumIntervalHours = 168;
+  }
   if (model.value.audio.allowNonAdminCreateWorld === undefined) {
     model.value.audio.allowNonAdminCreateWorld = true;
   }
@@ -186,6 +196,7 @@ onMounted(async () => {
   })
   await fetchUpdateStatus();
   fetchBackupList();
+  fetchSQLiteVacuumStatus();
 })
 
 watch(model, (v) => {
@@ -364,6 +375,39 @@ const feedbackWeburlShow = ref(false)
 const backupList = ref<BackupInfo[]>([]);
 const backupListLoading = ref(false);
 const backupExecuting = ref(false);
+const sqliteVacuumExecuting = ref(false);
+const sqliteVacuumStatusLoading = ref(false);
+const sqliteDbSizeBytes = ref<number | null>(null);
+const sqliteDbSizeError = ref('');
+const sqliteLastBeforeSizeBytes = ref<number | null>(null);
+const sqliteLastAfterSizeBytes = ref<number | null>(null);
+const sqliteLastReclaimedBytes = ref<number | null>(null);
+
+const toNullableNumber = (value: unknown): number | null => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return null;
+  }
+  return num;
+};
+
+const sqliteMaintenanceConfig = computed({
+  get: () => {
+    if (!model.value.sqlite) {
+      model.value.sqlite = { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 };
+    }
+    if (model.value.sqlite.autoVacuumEnabled === undefined) {
+      model.value.sqlite.autoVacuumEnabled = true;
+    }
+    if (!model.value.sqlite.autoVacuumIntervalHours || model.value.sqlite.autoVacuumIntervalHours <= 0) {
+      model.value.sqlite.autoVacuumIntervalHours = 168;
+    }
+    return model.value.sqlite;
+  },
+  set: (val) => {
+    model.value.sqlite = val;
+  }
+});
 
 const backupConfig = computed({
   get: () => {
@@ -399,6 +443,41 @@ const executeBackup = async () => {
     message.error('执行备份失败: ' + ((error as any)?.response?.data?.message || '未知错误'));
   } finally {
     backupExecuting.value = false;
+  }
+}
+
+const fetchSQLiteVacuumStatus = async () => {
+  sqliteVacuumStatusLoading.value = true;
+  try {
+    const resp = await utils.adminSQLiteVacuumStatus();
+    sqliteDbSizeBytes.value = toNullableNumber(resp.data?.dbSizeBytes);
+    sqliteDbSizeError.value = (resp.data?.dbSizeError || '').toString();
+  } catch (error) {
+    sqliteDbSizeError.value = (error as any)?.response?.data?.message || '获取 SQLite 大小失败';
+  } finally {
+    sqliteVacuumStatusLoading.value = false;
+  }
+}
+
+const executeSQLiteVacuum = async () => {
+  sqliteVacuumExecuting.value = true;
+  try {
+    const resp = await utils.adminSQLiteVacuumExecute();
+    sqliteLastBeforeSizeBytes.value = toNullableNumber(resp.data?.beforeSizeBytes);
+    sqliteLastAfterSizeBytes.value = toNullableNumber(resp.data?.afterSizeBytes);
+    sqliteLastReclaimedBytes.value = toNullableNumber(resp.data?.reclaimedBytes);
+    sqliteDbSizeBytes.value = sqliteLastAfterSizeBytes.value;
+    sqliteDbSizeError.value = (resp.data?.afterSizeError || '').toString();
+    const reclaimed = sqliteLastReclaimedBytes.value;
+    if (reclaimed !== null) {
+      message.success(`数据库空间整理已完成，本次回收 ${formatBytes(Math.max(0, reclaimed))}`);
+    } else {
+      message.success('数据库空间整理已完成');
+    }
+  } catch (error) {
+    message.error('执行空间整理失败: ' + ((error as any)?.response?.data?.message || '未知错误'));
+  } finally {
+    sqliteVacuumExecuting.value = false;
   }
 }
 
@@ -1010,6 +1089,113 @@ const clearLoginBg = () => {
             </div>
           </n-form-item>
         </n-collapse-item>
+        <n-collapse-item title="SQLite空间压缩" name="sqlite-space-compress">
+            <n-form-item label="当前数据库大小">
+              <div class="flex flex-col gap-1">
+                <span v-if="sqliteDbSizeBytes !== null">{{ formatBytes(sqliteDbSizeBytes) }}</span>
+                <span v-else-if="sqliteVacuumStatusLoading">读取中...</span>
+                <span v-else>未知</span>
+                <span v-if="sqliteDbSizeError" class="text-xs text-orange-500">{{ sqliteDbSizeError }}</span>
+              </div>
+            </n-form-item>
+            <n-form-item label="启用自动整理" feedback="仅 SQLite 生效：空闲时按周期自动执行 VACUUM">
+              <n-switch v-model:value="sqliteMaintenanceConfig.autoVacuumEnabled" />
+            </n-form-item>
+            <n-form-item label="整理周期">
+              <n-input-number v-model:value="sqliteMaintenanceConfig.autoVacuumIntervalHours" :min="1">
+                <template #suffix>小时</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item label="手动整理" feedback="立即触发一次 VACUUM 空间整理">
+              <div class="flex flex-col gap-1">
+                <n-button size="small" @click="executeSQLiteVacuum" :loading="sqliteVacuumExecuting">立即整理</n-button>
+                <span v-if="sqliteLastBeforeSizeBytes !== null && sqliteLastAfterSizeBytes !== null" class="text-xs text-gray-600 dark:text-gray-400">
+                  整理前 {{ formatBytes(sqliteLastBeforeSizeBytes) }}，整理后 {{ formatBytes(sqliteLastAfterSizeBytes) }}，
+                  回收 {{ formatBytes(Math.max(0, sqliteLastReclaimedBytes ?? 0)) }}
+                </span>
+              </div>
+            </n-form-item>
+          </n-collapse-item>
+
+          <n-collapse-item title="迁移到 S3" name="migrate-to-s3">
+            <n-form-item label="迁移类型">
+              <n-select
+                v-model:value="s3MigrationType"
+                :options="[
+                  { label: '图片附件', value: 'images' },
+                  { label: '音频', value: 'audio' },
+                ]"
+                class="w-52"
+              />
+            </n-form-item>
+            <n-form-item label="迁移状态">
+              <div class="flex flex-col gap-2 w-full">
+                <div v-if="s3MigrationStats" class="text-sm text-gray-600 dark:text-gray-400">
+                  待迁移: {{ s3MigrationStats.pending }} 项
+                </div>
+                <div class="flex gap-2 items-center">
+                  <n-button size="small" @click="fetchS3MigrationPreview" :loading="s3MigrationLoading">
+                    刷新预览
+                  </n-button>
+                </div>
+              </div>
+            </n-form-item>
+            <n-form-item label="批量大小">
+              <n-input-number v-model:value="s3MigrationBatchSize" :min="1" :max="1000" />
+            </n-form-item>
+            <n-form-item label="删除源文件" :feedback="s3MigrationType === 'images' ? '仅在确认上传成功且可访问后删除本地源文件' : ''">
+              <n-switch v-model:value="s3MigrationDeleteSource" />
+            </n-form-item>
+            <n-form-item label="执行迁移">
+              <div class="flex gap-2">
+                <n-button size="small" @click="executeS3Migration(true)" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
+                  模拟运行
+                </n-button>
+                <n-popconfirm @positive-click="executeS3Migration(false)">
+                  <template #trigger>
+                    <n-button size="small" type="warning" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
+                      执行迁移
+                    </n-button>
+                  </template>
+                  确定要执行迁移吗？此操作会将当前类型的本地资源迁移到 S3。
+                  <span v-if="s3MigrationDeleteSource">迁移成功且可访问后将删除本地源文件。</span>
+                </n-popconfirm>
+              </div>
+            </n-form-item>
+          </n-collapse-item>
+
+          <n-collapse-item title="图片压缩" name="image-migrate-webp">
+            <n-form-item label="迁移状态">
+              <div class="flex flex-col gap-2 w-full">
+                <div v-if="migrationStats" class="text-sm text-gray-600 dark:text-gray-400">
+                  待迁移（非Webp的图片）: {{ migrationStats.pending }} 张 (不含 GIF 和 S3 图片)
+                </div>
+                <div class="flex gap-2 items-center">
+                  <n-button size="small" @click="fetchMigrationPreview" :loading="migrationLoading">
+                    刷新预览
+                  </n-button>
+                </div>
+              </div>
+            </n-form-item>
+            <n-form-item label="批量大小">
+              <n-input-number v-model:value="migrationBatchSize" :min="1" :max="1000" />
+            </n-form-item>
+            <n-form-item label="执行迁移">
+              <div class="flex gap-2">
+                <n-button size="small" @click="executeMigration(true)" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
+                  模拟运行
+                </n-button>
+                <n-popconfirm @positive-click="executeMigration(false)">
+                  <template #trigger>
+                    <n-button size="small" type="warning" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
+                      执行迁移
+                    </n-button>
+                  </template>
+                  确定要执行迁移吗？此操作会将 {{ migrationBatchSize }} 张图片转换为 WebP 格式，原文件将被删除。
+                </n-popconfirm>
+              </div>
+            </n-form-item>
+          </n-collapse-item>
       </n-collapse>
 
       <n-divider>版本检测</n-divider>
@@ -1100,85 +1286,6 @@ const clearLoginBg = () => {
         </div>
       </n-form-item>
 
-      <!-- Image Migration Section -->
-      <n-divider>图片迁移 (WebP)</n-divider>
-      <n-form-item label="迁移状态">
-        <div class="flex flex-col gap-2 w-full">
-          <div v-if="migrationStats" class="text-sm text-gray-600 dark:text-gray-400">
-            待迁移: {{ migrationStats.pending }} 张 (不含 GIF 和 S3 图片)
-          </div>
-          <div class="flex gap-2 items-center">
-            <n-button size="small" @click="fetchMigrationPreview" :loading="migrationLoading">
-              刷新预览
-            </n-button>
-          </div>
-        </div>
-      </n-form-item>
-      <n-form-item label="批量大小">
-        <n-input-number v-model:value="migrationBatchSize" :min="1" :max="1000" />
-      </n-form-item>
-      <n-form-item label="执行迁移">
-        <div class="flex gap-2">
-          <n-button size="small" @click="executeMigration(true)" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
-            模拟运行
-          </n-button>
-          <n-popconfirm @positive-click="executeMigration(false)">
-            <template #trigger>
-              <n-button size="small" type="warning" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
-                执行迁移
-              </n-button>
-            </template>
-            确定要执行迁移吗？此操作会将 {{ migrationBatchSize }} 张图片转换为 WebP 格式，原文件将被删除。
-          </n-popconfirm>
-        </div>
-      </n-form-item>
-
-      <!-- S3 Migration Section -->
-      <n-divider>迁移到 S3</n-divider>
-      <n-form-item label="迁移类型">
-        <n-select
-          v-model:value="s3MigrationType"
-          :options="[
-            { label: '图片附件', value: 'images' },
-            { label: '音频', value: 'audio' },
-          ]"
-          class="w-52"
-        />
-      </n-form-item>
-      <n-form-item label="迁移状态">
-        <div class="flex flex-col gap-2 w-full">
-          <div v-if="s3MigrationStats" class="text-sm text-gray-600 dark:text-gray-400">
-            待迁移: {{ s3MigrationStats.pending }} 项
-          </div>
-          <div class="flex gap-2 items-center">
-            <n-button size="small" @click="fetchS3MigrationPreview" :loading="s3MigrationLoading">
-              刷新预览
-            </n-button>
-          </div>
-        </div>
-      </n-form-item>
-      <n-form-item label="批量大小">
-        <n-input-number v-model:value="s3MigrationBatchSize" :min="1" :max="1000" />
-      </n-form-item>
-      <n-form-item label="删除源文件" :feedback="s3MigrationType === 'images' ? '仅在确认上传成功且可访问后删除本地源文件' : ''">
-        <n-switch v-model:value="s3MigrationDeleteSource" />
-      </n-form-item>
-      <n-form-item label="执行迁移">
-        <div class="flex gap-2">
-          <n-button size="small" @click="executeS3Migration(true)" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
-            模拟运行
-          </n-button>
-          <n-popconfirm @positive-click="executeS3Migration(false)">
-            <template #trigger>
-              <n-button size="small" type="warning" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
-                执行迁移
-              </n-button>
-            </template>
-            确定要执行迁移吗？此操作会将当前类型的本地资源迁移到 S3。
-            <span v-if="s3MigrationDeleteSource">迁移成功且可访问后将删除本地源文件。</span>
-          </n-popconfirm>
-        </div>
-      </n-form-item>
     </n-form>
   </div>
   <div class="space-x-2 float-right">

@@ -42,6 +42,8 @@
   --sc-border-mute: rgba(15, 23, 42, 0.06);
   --sc-text-primary: #0f172a;
   --sc-text-secondary: #475569;
+  --sc-font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sc-code-font: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --sc-badge-bg: #ffffff;
   --sc-badge-text: #0f172a;
   --sc-sidebar-hover: #f0f0f0;
@@ -137,6 +139,7 @@
 #app {
   width: 100%;
   height: 100%;
+  font-family: var(--sc-font-family);
 }
 
 html,
@@ -148,7 +151,79 @@ body {
 body {
   background-color: var(--sc-bg-page);
   color: var(--sc-text-primary);
+  font-family: var(--sc-font-family);
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.n-config-provider {
+  font-family: var(--sc-font-family);
+}
+
+/* 默认模式补齐 Teleport 浮层字体继承（下拉菜单/Popover 等） */
+body .v-binder-follower-container,
+body .v-binder-follower-content,
+body .n-message-container,
+body .n-message-container .n-message-wrapper,
+body .n-message-container .n-message,
+body .n-notification-container,
+body .n-notification-container .n-notification-wrapper,
+body .n-notification-container .n-notification,
+body .n-dialog-container,
+body .n-dialog,
+body .n-dialog .n-dialog__title,
+body .n-dialog .n-dialog__content,
+body .n-modal,
+body .n-modal .n-card,
+body .n-modal .n-card__content,
+body .n-modal .n-card__header,
+body .n-modal .n-card__footer,
+body .n-drawer,
+body .n-drawer .n-drawer-content,
+body .n-drawer .n-drawer-body,
+body .n-drawer .n-drawer-header,
+body .n-drawer .n-drawer-header__main,
+body .n-drawer .n-drawer-content.n-drawer-content--native-scrollbar,
+body .n-dropdown-menu.n-popover-shared.n-dropdown,
+body .n-dropdown-menu.n-popover-shared.n-dropdown .n-dropdown-option,
+body .n-dropdown-menu.n-popover-shared.n-dropdown .n-dropdown-option__label,
+body .n-popover.n-popover-shared,
+body .n-popover.n-popover-shared .n-popover__content {
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
+}
+
+/* 默认模式补齐右键菜单字体（vue3-context-menu） */
+body .context-menu,
+body .mx-context-menu {
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
+}
+
+body .context-menu .context-menu-item,
+body .mx-context-menu .mx-context-menu-item {
+  font-family: inherit;
+}
+
+/* 通用独立浮层适配：给浮层根节点加 data-sc-font-surface="true" */
+body [data-sc-font-surface='true'] {
+  --n-font-family: var(--sc-font-family);
+  font-family: var(--sc-font-family);
+}
+
+body [data-sc-font-surface='true'] :where(*):not(code):not(pre):not(kbd):not(samp):not(.n-icon):not(svg):not(path):not(.material-symbols-outlined):not(.material-icons):not(.iconfont):not(.fa):not([class^='fa-']):not([class*=' fa-']) {
+  font-family: inherit;
+}
+
+/* 增强模式：高优先级兜底覆盖，默认关闭。覆盖 body 下文本，包含 Naive Teleport 浮层。 */
+:root[data-font-coverage='enhanced'] body :where(*):not(code):not(pre):not(kbd):not(samp):not(.n-icon):not(svg):not(path):not(.material-symbols-outlined):not(.material-icons):not(.iconfont):not(.fa):not([class^='fa-']):not([class*=' fa-']) {
+  font-family: var(--sc-font-family) !important;
+}
+
+input,
+textarea,
+button,
+select {
+  font-family: inherit;
 }
 
 /* Twemoji images */

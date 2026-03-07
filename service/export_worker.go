@@ -129,6 +129,9 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 		if len(extraOptions.TextColorizeBBCodeMap) > 0 {
 			payload.ExtraMeta["text_colorize_bbcode_map"] = cloneStringMap(extraOptions.TextColorizeBBCodeMap)
 		}
+		if len(extraOptions.TextColorizeBBCodeNameMap) > 0 {
+			payload.ExtraMeta["text_colorize_bbcode_name_map"] = cloneStringMap(extraOptions.TextColorizeBBCodeNameMap)
+		}
 	}
 
 	formatter, ok := getFormatter(job.Format)
@@ -148,7 +151,7 @@ func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerC
 		return err
 	}
 
-	fileName := buildExportFileName(payload, formatter.Ext())
+	fileName := BuildExportResultFileName(job.DisplayName, job.ID, formatter.Ext(), payload.GeneratedAt)
 	filePath := filepath.Join(cfg.StorageDir, fmt.Sprintf("%s.%s", job.ID, formatter.Ext()))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		_ = markJobFailed(job, err)
@@ -191,38 +194,12 @@ func markJobDone(job *model.MessageExportJobModel, filePath, fileName string) er
 		Updates(updates).Error
 }
 
-func buildExportFileName(payload *ExportPayload, ext string) string {
-	base := sanitizeFileName(payload.ChannelName)
-	if base == "" {
-		base = sanitizeFileName(payload.ChannelID)
-	}
-	if base == "" {
-		base = "channel"
-	}
-	rangeLabel := safeTimeRangeLabel(payload.StartTime, payload.EndTime)
-	if rangeLabel == "" {
-		rangeLabel = payload.GeneratedAt.Format("20060102_150405")
-	}
-	return fmt.Sprintf("%s_%s.%s", base, rangeLabel, ext)
-}
-
 func sanitizeFileName(input string) string {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return ""
 	}
 	return filenameSafeRe.ReplaceAllString(input, "_")
-}
-
-func safeTimeRangeLabel(start, end *time.Time) string {
-	var parts []string
-	if start != nil {
-		parts = append(parts, start.Format("20060102"))
-	}
-	if end != nil {
-		parts = append(parts, end.Format("20060102"))
-	}
-	return strings.Join(parts, "-")
 }
 
 func resolveChannelName(channelID string) string {
