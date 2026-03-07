@@ -3896,18 +3896,27 @@ export const useChatStore = defineStore({
 
     async channelExportColorProfileGet(channelId: string) {
       if (!channelId) {
-        return { channelId: '', exists: false, colors: {} as Record<string, string> };
+        return {
+          channelId: '',
+          exists: false,
+          colors: {} as Record<string, string>,
+          profiles: {} as Record<string, { color?: string; name?: string; originalName?: string }>,
+        };
       }
       const resp = await api.get<{
         channelId: string;
         exists: boolean;
         colors: Record<string, string>;
+        profiles: Record<string, { color?: string; name?: string; originalName?: string }>;
         updatedAt?: number;
       }>(`api/v1/channels/${channelId}/export-color-profile`);
       return resp.data;
     },
 
-    async channelExportColorProfileUpsert(channelId: string, colors: Record<string, string>) {
+    async channelExportColorProfileUpsert(
+      channelId: string,
+      profiles: Record<string, { color?: string; name?: string; originalName?: string }>,
+    ) {
       if (!channelId) {
         throw new Error('缺少频道 ID');
       }
@@ -3915,8 +3924,9 @@ export const useChatStore = defineStore({
         channelId: string;
         exists: boolean;
         colors: Record<string, string>;
+        profiles: Record<string, { color?: string; name?: string; originalName?: string }>;
         updatedAt?: number;
-      }>(`api/v1/channels/${channelId}/export-color-profile`, { colors });
+      }>(`api/v1/channels/${channelId}/export-color-profile`, { profiles });
       return resp.data;
     },
 
@@ -4601,6 +4611,7 @@ export const useChatStore = defineStore({
       displaySettings?: DisplaySettings;
       displayName?: string;
       textColorizeBBCodeMap?: Record<string, string>;
+      textColorizeBBCodeNameMap?: Record<string, string>;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
@@ -4631,6 +4642,9 @@ export const useChatStore = defineStore({
         payload.text_bbcode_colorize = true;
         if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
           payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
+        if (params.textColorizeBBCodeNameMap && Object.keys(params.textColorizeBBCodeNameMap).length > 0) {
+          payload.text_bbcode_name_map = params.textColorizeBBCodeNameMap;
         }
       }
       const resp = await api.post('api/v1/chat/export', payload);

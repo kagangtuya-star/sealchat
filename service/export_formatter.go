@@ -1809,15 +1809,23 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	if payload == nil || msg == nil {
 		return ""
 	}
+	senderName := resolveBBCodeSenderName(payload, msg)
 	var headerParts []string
 	if !payload.WithoutTimestamp {
 		headerParts = append(headerParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
 	}
-	headerParts = append(headerParts, fmt.Sprintf("<%s>", msg.SenderName))
+	headerParts = append(headerParts, fmt.Sprintf("<%s>", senderName))
 	header := strings.Join(headerParts, " ")
 	content := buildBBCodeBody(msg, payload.IncludeImages)
 	color := resolveBBCodeSenderColor(payload, msg)
 	return fmt.Sprintf("[color=silver]%s[/color][color=%s] %s [/color]", header, color, content)
+}
+
+func resolveBBCodeSenderName(payload *ExportPayload, msg *ExportMessage) string {
+	if override := lookupBBCodeNameOverride(payload, msg); override != "" {
+		return override
+	}
+	return strings.TrimSpace(msg.SenderName)
 }
 
 func resolveBBCodeSenderColor(payload *ExportPayload, msg *ExportMessage) string {
@@ -1838,6 +1846,32 @@ func lookupBBCodeColorOverride(payload *ExportPayload, msg *ExportMessage) strin
 		return ""
 	}
 	rawMap, ok := payload.ExtraMeta["text_colorize_bbcode_map"]
+	if !ok {
+		return ""
+	}
+	key := "identity:" + identityID
+	switch m := rawMap.(type) {
+	case map[string]string:
+		return strings.TrimSpace(m[key])
+	case map[string]interface{}:
+		if raw, exists := m[key]; exists {
+			if value, ok := raw.(string); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func lookupBBCodeNameOverride(payload *ExportPayload, msg *ExportMessage) string {
+	if payload == nil || msg == nil || payload.ExtraMeta == nil {
+		return ""
+	}
+	identityID := strings.TrimSpace(msg.SenderIdentityID)
+	if identityID == "" {
+		return ""
+	}
+	rawMap, ok := payload.ExtraMeta["text_colorize_bbcode_name_map"]
 	if !ok {
 		return ""
 	}

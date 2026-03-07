@@ -111,12 +111,13 @@ func TestParseExportExtraOptionsDefaultsIncludeFlags(t *testing.T) {
 
 func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
 	raw, err := buildExportExtraOptions(&ExportJobOptions{
-		IncludeImages:         true,
-		IncludeDiceCommand:    true,
-		TextColorizeBBCode:    true,
-		TextColorizeBBCodeMap: map[string]string{"identity:role-a": "#123abc"},
-		SliceLimit:            5000,
-		MaxConcurrency:        2,
+		IncludeImages:             true,
+		IncludeDiceCommand:        true,
+		TextColorizeBBCode:        true,
+		TextColorizeBBCodeMap:     map[string]string{"identity:role-a": "#123abc"},
+		TextColorizeBBCodeNameMap: map[string]string{"identity:role-a": "阿尔法"},
+		SliceLimit:                5000,
+		MaxConcurrency:            2,
 	})
 	if err != nil {
 		t.Fatalf("buildExportExtraOptions failed: %v", err)
@@ -130,6 +131,9 @@ func TestBuildAndParseExportExtraOptionsPreserveBBCodeColorMap(t *testing.T) {
 	}
 	if got := extra.TextColorizeBBCodeMap["identity:role-a"]; got != "#123abc" {
 		t.Fatalf("unexpected color map value: %q", got)
+	}
+	if got := extra.TextColorizeBBCodeNameMap["identity:role-a"]; got != "阿尔法" {
+		t.Fatalf("unexpected name map value: %q", got)
 	}
 }
 

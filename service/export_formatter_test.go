@@ -154,6 +154,28 @@ func TestBuildBBCodeTextLineFallsBackWhenOverrideInvalid(t *testing.T) {
 	}
 }
 
+func TestBuildBBCodeTextLineUsesOverrideNameMap(t *testing.T) {
+	payload := &ExportPayload{
+		WithoutTimestamp: true,
+		ExtraMeta: map[string]interface{}{
+			"text_colorize_bbcode":          true,
+			"text_colorize_bbcode_name_map": map[string]string{"identity:role-a": "阿尔法"},
+		},
+	}
+	msg := &ExportMessage{
+		SenderIdentityID: "role-a",
+		SenderName:       "测试",
+		SenderColor:      "#123abc",
+		CreatedAt:        time.Unix(1700000000, 0),
+		Content:          "hello",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if !strings.Contains(line, "<阿尔法>") {
+		t.Fatalf("expected override name in line, got %q", line)
+	}
+}
+
 func TestBuildBBCodeTextLineNormalizesNestedEntitiesForPlainText(t *testing.T) {
 	payload := &ExportPayload{WithoutTimestamp: true}
 	msg := &ExportMessage{

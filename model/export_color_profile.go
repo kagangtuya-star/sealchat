@@ -57,6 +57,22 @@ func ExportColorProfileUpsert(userID, channelID, colorsJSON string) (*ExportColo
 	return ExportColorProfileGet(userID, channelID)
 }
 
+func ExportColorProfileListByUser(userID string) ([]*ExportColorProfileModel, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return []*ExportColorProfileModel{}, nil
+	}
+	var items []*ExportColorProfileModel
+	err := db.Where("user_id = ?", userID).
+		Order("updated_at DESC").
+		Order("created_at DESC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func ExportColorProfileDelete(userID, channelID string) error {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)

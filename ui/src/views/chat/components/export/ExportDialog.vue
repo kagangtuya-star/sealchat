@@ -18,9 +18,16 @@ interface ExportParams {
   mergeMessages: boolean
   textColorizeBBCode: boolean
   textColorizeBBCodeMap?: Record<string, string>
+  textColorizeBBCodeNameMap?: Record<string, string>
   autoUpload: boolean
   maxExportMessages: number
   maxExportConcurrency: number
+}
+
+interface ExportColorProfileEntry {
+  color?: string
+  name?: string
+  originalName?: string
 }
 
 interface Props {
@@ -105,7 +112,7 @@ const utils = useUtilsStore()
 const display = useDisplayStore()
 const chat = useChatStore()
 const loading = ref(false)
-const textColorizeBBCodeMap = ref<Record<string, string>>({})
+const textColorizeBBCodeProfileMap = ref<Record<string, ExportColorProfileEntry>>({})
 const colorProfileVisible = ref(false)
 const colorProfileLoading = ref(false)
 const colorProfileSaving = ref(false)
@@ -118,6 +125,7 @@ interface ColorProfileRow {
   label: string
   defaultColor: string
   customColor: string
+  customName: string
 }
 
 interface SpeakerOption {
@@ -127,6 +135,8 @@ interface SpeakerOption {
 }
 
 const colorProfileRows = ref<ColorProfileRow[]>([])
+const editingColorProfileNameId = ref('')
+const colorProfileNameInputRefs = new Map<string, any>()
 
 const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
 const isApplyingPreset = ref(false)
@@ -154,13 +164,19 @@ const cloudUploadDefaultName = '频道名_时间范围（例如：新的_2025110
 const isSealFormatter = computed(() => form.format === 'json')
 const showZipOptions = computed(() => form.format === 'html')
 const showColorProfileTrigger = computed(() => form.format === 'txt')
-const colorProfileCount = computed(() => Object.keys(textColorizeBBCodeMap.value).length)
+const colorProfileCount = computed(() => Object.values(textColorizeBBCodeProfileMap.value)
+  .filter(item => !!(item?.color || item?.name)).length)
 const filteredColorProfileRows = computed(() => {
   const keyword = colorProfileKeyword.value.trim().toLowerCase()
   if (!keyword) {
     return colorProfileRows.value
   }
-  return colorProfileRows.value.filter(item => item.label.toLowerCase().includes(keyword))
+  return colorProfileRows.value.filter((item) => {
+    const originalName = item.label.toLowerCase()
+    const customName = item.customName.toLowerCase()
+    const displayName = getRowDisplayName(item).toLowerCase()
+    return originalName.includes(keyword) || customName.includes(keyword) || displayName.includes(keyword)
+  })
 })
 
 const normalizeHexColor = (value: string): string => {
@@ -179,21 +195,29 @@ const normalizeHexColor = (value: string): string => {
   return color
 }
 
-const normalizeColorMap = (input?: Record<string, string>) => {
-  const result: Record<string, string> = {}
+const normalizeProfileText = (value: string): string => value.trim()
+
+const normalizeProfileMap = (input?: Record<string, ExportColorProfileEntry>) => {
+  const result: Record<string, ExportColorProfileEntry> = {}
   if (!input) {
     return result
   }
-  Object.entries(input).forEach(([rawKey, rawColor]) => {
+  Object.entries(input).forEach(([rawKey, rawEntry]) => {
     const key = String(rawKey || '').trim()
     if (!key.startsWith('identity:')) {
       return
     }
-    const normalized = normalizeHexColor(String(rawColor || ''))
-    if (!normalized) {
+    const color = normalizeHexColor(String(rawEntry?.color || ''))
+    const name = normalizeProfileText(String(rawEntry?.name || ''))
+    const originalName = normalizeProfileText(String(rawEntry?.originalName || ''))
+    if (!color && !name) {
       return
     }
-    result[key] = normalized
+    result[key] = {
+      ...(color ? { color } : {}),
+      ...(name ? { name } : {}),
+      ...(originalName ? { originalName } : {}),
+    }
   })
   return result
 }
@@ -219,21 +243,48 @@ const buildDefaultColorMapFromSpeakerOptions = (items?: SpeakerOption[]) => {
   return defaults
 }
 
-const buildColorOverridesFromRows = () => {
-  const result: Record<string, string> = {}
+const buildProfileOverridesFromRows = () => {
+  const result: Record<string, ExportColorProfileEntry> = {}
   colorProfileRows.value.forEach((item) => {
     const key = item.mapKey
     if (!key) {
       return
     }
     const normalizedCustom = normalizeHexColor(item.customColor || '')
-    if (!normalizedCustom) {
+    const normalizedName = normalizeProfileText(item.customName || '')
+    const entry: ExportColorProfileEntry = {
+      originalName: item.label,
+    }
+    if (normalizedCustom && (!item.defaultColor || normalizedCustom !== item.defaultColor)) {
+      entry.color = normalizedCustom
+    }
+    if (normalizedName && normalizedName !== item.label) {
+      entry.name = normalizedName
+    }
+    if (!entry.color && !entry.name) {
       return
     }
-    if (item.defaultColor && normalizedCustom === item.defaultColor) {
-      return
+    result[key] = entry
+  })
+  return result
+}
+
+const buildColorMapFromProfiles = (input?: Record<string, ExportColorProfileEntry>) => {
+  const result: Record<string, string> = {}
+  Object.entries(normalizeProfileMap(input)).forEach(([key, item]) => {
+    if (item.color) {
+      result[key] = item.color
     }
-    result[key] = normalizedCustom
+  })
+  return result
+}
+
+const buildNameMapFromProfiles = (input?: Record<string, ExportColorProfileEntry>) => {
+  const result: Record<string, string> = {}
+  Object.entries(normalizeProfileMap(input)).forEach(([key, item]) => {
+    if (item.name) {
+      result[key] = item.name
+    }
   })
   return result
 }
@@ -242,17 +293,53 @@ const getRowPreviewColor = (item: ColorProfileRow) => {
   return normalizeHexColor(item.customColor || '') || item.defaultColor || '#111111'
 }
 
-const loadSavedColorMap = async (channelId?: string) => {
+const getRowDisplayName = (item: ColorProfileRow) => {
+  return normalizeProfileText(item.customName || '') || item.label
+}
+
+const setColorProfileNameInputRef = (identityId: string, el: any) => {
+  if (!identityId) {
+    return
+  }
+  if (!el) {
+    colorProfileNameInputRefs.delete(identityId)
+    return
+  }
+  colorProfileNameInputRefs.set(identityId, el)
+}
+
+const startNameEdit = (item: ColorProfileRow) => {
+  if (!item.identityId) {
+    return
+  }
+  if (!item.customName) {
+    item.customName = item.label
+  }
+  editingColorProfileNameId.value = item.identityId
+  void nextTick(() => {
+    colorProfileNameInputRefs.get(item.identityId)?.focus?.()
+  })
+}
+
+const finishNameEdit = (item: ColorProfileRow) => {
+  const normalized = normalizeProfileText(item.customName || '')
+  item.customName = normalized && normalized !== item.label ? normalized : ''
+  if (editingColorProfileNameId.value === item.identityId) {
+    editingColorProfileNameId.value = ''
+  }
+}
+
+const loadSavedColorProfiles = async (channelId?: string) => {
   if (!channelId) {
-    textColorizeBBCodeMap.value = {}
+    textColorizeBBCodeProfileMap.value = {}
     return
   }
   try {
     const profile = await chat.channelExportColorProfileGet(channelId)
-    textColorizeBBCodeMap.value = normalizeColorMap(profile?.colors)
+    textColorizeBBCodeProfileMap.value = normalizeProfileMap(profile?.profiles)
   } catch (error) {
     console.warn('加载导出颜色配置失败', error)
-    textColorizeBBCodeMap.value = {}
+    textColorizeBBCodeProfileMap.value = {}
   }
 }
 
@@ -273,8 +360,8 @@ const openColorProfilePanel = async () => {
     if (seq !== colorProfileLoadSeq) {
       return
     }
-    const savedMap = normalizeColorMap(profileResp?.colors)
-    textColorizeBBCodeMap.value = savedMap
+    const savedProfiles = normalizeProfileMap(profileResp?.profiles)
+    textColorizeBBCodeProfileMap.value = savedProfiles
     const rows = (speakerResp?.items || [])
       .map((item) => {
         const identityId = String(item?.id || '').trim()
@@ -282,12 +369,14 @@ const openColorProfilePanel = async () => {
         if (!identityId || !mapKey) {
           return null
         }
+        const savedProfile = savedProfiles[mapKey] || {}
         return {
           identityId,
           mapKey,
           label: String(item?.label || '').trim() || '未命名角色',
           defaultColor: normalizeHexColor(String(item?.color || '')),
-          customColor: savedMap[mapKey] || '',
+          customColor: normalizeHexColor(String(savedProfile.color || '')),
+          customName: normalizeProfileText(String(savedProfile.name || '')),
         } as ColorProfileRow
       })
       .filter((item): item is ColorProfileRow => !!item)
@@ -319,6 +408,10 @@ const handleColorRowBlur = (item: ColorProfileRow) => {
   item.customColor = normalized
 }
 
+const handleNameRowBlur = (item: ColorProfileRow) => {
+  finishNameEdit(item)
+}
+
 const handleColorPickerInput = (item: ColorProfileRow, event: Event) => {
   const target = event.target as HTMLInputElement | null
   if (!target) {
@@ -333,11 +426,13 @@ const handleColorPickerInput = (item: ColorProfileRow, event: Event) => {
 
 const resetColorRow = (item: ColorProfileRow) => {
   item.customColor = ''
+  item.customName = ''
 }
 
 const resetAllColorRows = () => {
   colorProfileRows.value.forEach((item) => {
     item.customColor = ''
+    item.customName = ''
   })
 }
 
@@ -346,17 +441,18 @@ const saveColorProfile = async () => {
     message.error('未选择频道')
     return
   }
-  const colorMap = buildColorOverridesFromRows()
+  const profiles = buildProfileOverridesFromRows()
   colorProfileSaving.value = true
   try {
-    if (Object.keys(colorMap).length === 0) {
+    if (Object.keys(profiles).length === 0) {
       await chat.channelExportColorProfileDelete(props.channelId)
     } else {
-      await chat.channelExportColorProfileUpsert(props.channelId, colorMap)
+      await chat.channelExportColorProfileUpsert(props.channelId, profiles)
     }
-    textColorizeBBCodeMap.value = colorMap
-    message.success('导出颜色配置已保存')
+    textColorizeBBCodeProfileMap.value = profiles
+    message.success('导出配置已保存')
     colorProfileVisible.value = false
+    editingColorProfileNameId.value = ''
   } catch (error: any) {
     const errMsg = error?.response?.data?.message || error?.response?.data?.error || (error as Error)?.message || '保存失败'
     message.error(`保存失败：${errMsg}`)
@@ -401,9 +497,10 @@ watch(
   (visible) => {
     if (visible) {
       syncExportSettingsFromStore()
-      void loadSavedColorMap(props.channelId)
+      void loadSavedColorProfiles(props.channelId)
     } else {
       colorProfileVisible.value = false
+      editingColorProfileNameId.value = ''
     }
   },
 )
@@ -412,7 +509,7 @@ watch(
   () => props.channelId,
   (channelId) => {
     if (props.visible) {
-      void loadSavedColorMap(channelId)
+      void loadSavedColorProfiles(channelId)
     }
   },
 )
@@ -430,6 +527,7 @@ watch(
 watch(showColorProfileTrigger, (enabled) => {
   if (!enabled) {
     colorProfileVisible.value = false
+    editingColorProfileNameId.value = ''
   }
 })
 
@@ -517,6 +615,7 @@ const handleExport = async () => {
   loading.value = true
   try {
     let colorMap: Record<string, string> | undefined
+    let nameMap: Record<string, string> | undefined
     if (form.textColorizeBBCode && form.format === 'txt') {
       try {
         const [speakerResp, profileResp] = await Promise.all([
@@ -524,18 +623,23 @@ const handleExport = async () => {
           chat.channelExportColorProfileGet(props.channelId),
         ])
         const defaultMap = buildDefaultColorMapFromSpeakerOptions(speakerResp?.items as SpeakerOption[] | undefined)
-        const savedMap = normalizeColorMap(profileResp?.colors)
-        textColorizeBBCodeMap.value = savedMap
-        colorMap = Object.keys(defaultMap).length > 0 || Object.keys(savedMap).length > 0
-          ? { ...defaultMap, ...savedMap }
+        const savedProfiles = normalizeProfileMap(profileResp?.profiles)
+        textColorizeBBCodeProfileMap.value = savedProfiles
+        const savedColorMap = buildColorMapFromProfiles(savedProfiles)
+        const savedNameMap = buildNameMapFromProfiles(savedProfiles)
+        colorMap = Object.keys(defaultMap).length > 0 || Object.keys(savedColorMap).length > 0
+          ? { ...defaultMap, ...savedColorMap }
           : undefined
+        nameMap = Object.keys(savedNameMap).length > 0 ? savedNameMap : undefined
       } catch (error) {
-        colorMap = normalizeColorMap(textColorizeBBCodeMap.value)
+        colorMap = buildColorMapFromProfiles(textColorizeBBCodeProfileMap.value)
+        nameMap = buildNameMapFromProfiles(textColorizeBBCodeProfileMap.value)
       }
     }
     emit('export', {
       ...form,
       textColorizeBBCodeMap: colorMap,
+      textColorizeBBCodeNameMap: nameMap,
       displayName: form.displayName?.trim() || undefined,
     })
   } catch (error) {
@@ -559,10 +663,11 @@ const handleClose = () => {
   form.textColorizeBBCode = false
   form.autoUpload = false
   form.displayName = ''
-  textColorizeBBCodeMap.value = {}
+  textColorizeBBCodeProfileMap.value = {}
   colorProfileRows.value = []
   colorProfileKeyword.value = ''
   colorProfileVisible.value = false
+  editingColorProfileNameId.value = ''
   syncExportSettingsFromStore()
   timePreset.value = 'none'
 }
@@ -772,7 +877,7 @@ const shortcuts = {
             仅对纯文本导出生效，会使用 [color] 标签包裹角色名与内容，并引用频道内的昵称颜色。
           </n-tooltip>
           <n-text depth="3" v-if="showColorProfileTrigger">
-            已保存 {{ colorProfileCount }} 个角色颜色覆盖。
+            已保存 {{ colorProfileCount }} 条角色导出配置（颜色 / 名字）。
           </n-text>
         </n-space>
       </n-form-item>
@@ -807,6 +912,7 @@ const shortcuts = {
     preset="card"
     title="BBCode 染色配置"
     class="export-color-profile-modal"
+    style="width: min(980px, 96vw)"
     :auto-focus="false"
     @update:show="colorProfileVisible = $event"
   >
@@ -816,11 +922,14 @@ const shortcuts = {
           v-model:value="colorProfileKeyword"
           clearable
           size="small"
-          placeholder="搜索角色名称"
+          placeholder="搜索原始名 / 自定义名"
         />
         <n-button size="small" tertiary @click="resetAllColorRows" :disabled="!colorProfileRows.length">
           恢复默认
         </n-button>
+      </div>
+      <div class="color-profile-note">
+        双击名字可修改导出使用的角色名，点击色块可修改导出使用的颜色。
       </div>
       <div class="color-profile-list" v-if="filteredColorProfileRows.length">
         <div
@@ -829,10 +938,28 @@ const shortcuts = {
           class="color-profile-item"
         >
           <div class="color-profile-item__meta">
-            <p class="color-profile-item__name">{{ item.label }}</p>
-            <p class="color-profile-item__desc">
-              默认颜色：{{ item.defaultColor || '无（将使用系统回退色）' }}
-            </p>
+            <div class="color-profile-item__name-row">
+              <n-input
+                v-if="editingColorProfileNameId === item.identityId"
+                :ref="(el) => setColorProfileNameInputRef(item.identityId, el)"
+                v-model:value="item.customName"
+                size="small"
+                class="color-profile-item__name-input"
+                placeholder="输入自定义名字"
+                @blur="handleNameRowBlur(item)"
+                @keyup.enter="finishNameEdit(item)"
+              />
+              <p
+                v-else
+                class="color-profile-item__name"
+                title="双击修改名字"
+                @dblclick="startNameEdit(item)"
+              >
+                {{ getRowDisplayName(item) }}
+              </p>
+            </div>
+            <p class="color-profile-item__desc">默认名字：{{ item.label }}</p>
+            <p class="color-profile-item__desc">默认颜色：{{ item.defaultColor || '无（将使用系统回退色）' }}</p>
           </div>
           <div class="color-profile-item__editor">
             <label class="color-profile-item__picker" title="点击选择颜色">
@@ -873,7 +1000,12 @@ const shortcuts = {
 }
 
 .export-color-profile-modal {
-  width: min(760px, 92vw);
+  width: min(920px, 96vw);
+}
+
+.export-color-profile-modal :deep(.n-card) {
+  width: min(980px, 96vw);
+  max-width: calc(100vw - 16px);
 }
 
 .export-dialog :deep(.n-input),
@@ -985,6 +1117,21 @@ const shortcuts = {
   margin-bottom: 0.75rem;
 }
 
+.color-profile-toolbar :deep(.n-input) {
+  flex: 1;
+}
+
+.color-profile-note {
+  margin-bottom: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.08));
+  border-radius: 10px;
+  background: var(--sc-bg-secondary, rgba(127, 127, 127, 0.08));
+  color: var(--sc-text-secondary, #8b90a0);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .color-profile-list {
   max-height: 56vh;
   overflow-y: auto;
@@ -995,25 +1142,49 @@ const shortcuts = {
 
 .color-profile-item {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.9rem;
   border: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.08));
-  border-radius: 8px;
-  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
 }
 
 .color-profile-item__meta {
   min-width: 0;
+  flex: 1 1 320px;
+}
+
+.color-profile-item__name-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
 }
 
 .color-profile-item__name {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 1.02rem;
+  line-height: 1.2;
   margin: 0;
+  cursor: text;
+  color: var(--sc-text-primary, #111111);
+  white-space: normal;
+  word-break: break-word;
+}
+
+.color-profile-item__name:hover {
+  opacity: 0.88;
+}
+
+.color-profile-item__name-input {
+  width: 100%;
+  max-width: 220px;
 }
 
 .color-profile-item__desc {
-  margin: 0.2rem 0 0;
+  margin: 0.22rem 0 0;
   font-size: 12px;
   color: var(--sc-text-tertiary, #6b7280);
 }
@@ -1021,9 +1192,66 @@ const shortcuts = {
 .color-profile-item__editor {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  flex: 1;
-  max-width: 360px;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  flex: 0 0 260px;
+  width: 260px;
+  min-width: 260px;
+  max-width: 100%;
+}
+
+.color-profile-item__editor :deep(.n-input) {
+  width: 118px;
+}
+
+@media (max-width: 900px) {
+  .color-profile-item__meta {
+    flex-basis: 100%;
+  }
+
+  .color-profile-item__editor {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .export-color-profile-modal {
+    width: min(100vw - 16px, 96vw);
+  }
+
+  .export-color-profile-modal :deep(.n-card) {
+    width: calc(100vw - 16px);
+  }
+
+  .color-profile-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .color-profile-item__meta {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .color-profile-item__name-input {
+    max-width: none;
+  }
+
+  .color-profile-item__editor {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .color-profile-item__editor :deep(.n-input) {
+    width: calc(100% - 104px);
+    min-width: 120px;
+    flex: 1;
+  }
 }
 
 .color-profile-item__picker {
