@@ -4646,6 +4646,12 @@ interface SearchJumpContextResult {
 
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
+const sentConfirmHighlightIds = ref(new Set<string>());
+const sentConfirmHighlightTimers = new Map<string, number>();
+const sentConfirmDedupTimers = new Map<string, number>();
+
+const SENT_CONFIRM_HIGHLIGHT_DURATION_MS = 1600;
+const SENT_CONFIRM_DEDUP_DURATION_MS = 2500;
 
 const setMessageHighlight = (messageId: string, duration = 4000) => {
   if (!messageId) return;
@@ -4663,6 +4669,50 @@ const setMessageHighlight = (messageId: string, duration = 4000) => {
   }, duration);
   searchHighlightTimers.set(messageId, timer);
 };
+
+const setSentConfirmHighlight = (messageId: string, duration = SENT_CONFIRM_HIGHLIGHT_DURATION_MS) => {
+  if (!messageId) return;
+  if (sentConfirmHighlightTimers.has(messageId)) {
+    window.clearTimeout(sentConfirmHighlightTimers.get(messageId));
+  }
+  const next = new Set(sentConfirmHighlightIds.value);
+  next.add(messageId);
+  sentConfirmHighlightIds.value = next;
+  const timer = window.setTimeout(() => {
+    const updated = new Set(sentConfirmHighlightIds.value);
+    updated.delete(messageId);
+    sentConfirmHighlightIds.value = updated;
+    sentConfirmHighlightTimers.delete(messageId);
+  }, duration);
+  sentConfirmHighlightTimers.set(messageId, timer);
+};
+
+const resolveSentConfirmKey = (messageData?: any) => String(
+  messageData?.clientId
+  || messageData?.client_id
+  || messageData?.id
+  || ''
+).trim();
+
+const notifyNewMessageHighlight = (messageData?: any) => {
+  if (!display.settings.highlightNewlySentMessage) {
+    return;
+  }
+  const messageId = String(messageData?.id || '').trim();
+  const dedupKey = resolveSentConfirmKey(messageData) || messageId;
+  if (!messageId || !dedupKey) {
+    return;
+  }
+  if (sentConfirmDedupTimers.has(dedupKey)) {
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    sentConfirmDedupTimers.delete(dedupKey);
+  }, SENT_CONFIRM_DEDUP_DURATION_MS);
+  sentConfirmDedupTimers.set(dedupKey, timer);
+  setSentConfirmHighlight(messageId);
+};
+
 const registerMessageRow = (el: HTMLElement | null, id: string) => {
   if (!id) {
     return;
@@ -5511,6 +5561,7 @@ const rowClass = (item: Message) => ({
   'message-row--drop-before': dragState.overId === item.id && dragState.position === 'before',
   'message-row--drop-after': dragState.overId === item.id && dragState.position === 'after',
   'message-row--search-hit': searchHighlightIds.value.has(item.id || ''),
+  'message-row--sent-confirm-hit': sentConfirmHighlightIds.value.has(item.id || ''),
   [`message-row--tone-${getMessageTone(item)}`]: true,
 });
 
@@ -9354,6 +9405,7 @@ const retrySendMessage = async (target?: Message) => {
     setMessageSendStatus(current as any, 'sent');
     instantMessages.delete(current);
     upsertMessage(current);
+    notifyNewMessageHighlight(current);
     toBottom();
   } catch (error) {
     const reason = resolveMessageSendFailureReason(error);
@@ -9554,6 +9606,7 @@ const send = throttle(async () => {
     setMessageSendStatus(tmpMsg as any, 'sent');
     instantMessages.delete(tmpMsg);
     upsertMessage(tmpMsg);
+    notifyNewMessageHighlight(tmpMsg);
     if (activeReeditSource) {
       try {
         await chat.messageRemove(activeReeditSource.channelId, activeReeditSource.messageId);
@@ -10005,6 +10058,7 @@ chatEvent.on('message-created', (e?: Event) => {
       Object.assign(matchedPending, incoming);
       setMessageSendStatus(matchedPending as any, 'sent');
       upsertMessage(matchedPending);
+      notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
       toBottom();
@@ -10077,6 +10131,9 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   }
   upsertMessage(incoming);
+  if (!isSelf) {
+    notifyNewMessageHighlight(incoming);
+  }
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
@@ -14473,7 +14530,7 @@ onBeforeUnmount(() => {
   transition: background-color 0.15s ease;
 }
 
-.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--drag-source):hover .message-row__surface::after {
+.chat--layout-compact .message-row:not(.message-row--search-hit):not(.message-row--sent-confirm-hit):not(.message-row--drag-source):hover .message-row__surface::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -14514,6 +14571,17 @@ onBeforeUnmount(() => {
   animation: search-hit-pulse 2s ease forwards;
 }
 
+.message-row--sent-confirm-hit .message-row__surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 0.9rem;
+  z-index: 0;
+  background: rgba(59, 130, 246, 0.09);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12);
+  animation: sent-confirm-pulse 1.6s ease forwards;
+}
+
 @keyframes search-hit-pulse {
   0% {
     opacity: 0.9;
@@ -14521,6 +14589,20 @@ onBeforeUnmount(() => {
 
   50% {
     opacity: 0.4;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sent-confirm-pulse {
+  0% {
+    opacity: 0.74;
+  }
+
+  45% {
+    opacity: 0.28;
   }
 
   100% {

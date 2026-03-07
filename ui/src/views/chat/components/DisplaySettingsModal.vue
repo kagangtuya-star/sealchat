@@ -86,6 +86,7 @@ watch(
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
+  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
   draft.disableContextMenu = value.disableContextMenu
   draft.avatarSize = value.avatarSize
   draft.avatarBorderRadius = value.avatarBorderRadius
@@ -408,6 +409,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showDragIndicator">
           <template #checked>显示指示线</template>
           <template #unchecked>隐藏指示线</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">新消息弱高亮</p>
+            <p class="section-desc">新到达消息会短暂显示轻微高亮，包括自己发出和别人发来的消息</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.highlightNewlySentMessage">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
         </n-switch>
       </section>
 
