@@ -151,6 +151,23 @@ func buildIndexPaths(webURL string) []string {
 	return paths
 }
 
+func buildObserverPrintPaths(webURL string) []string {
+	paths := []string{"/ob-print/:slug"}
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return paths
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" || webRoot == "/" {
+		return paths
+	}
+	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
+	return paths
+}
+
 func applyPageTitleToIndex(htmlSource string, title string) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
@@ -254,6 +271,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
+	for _, routePath := range buildObserverPrintPaths(config.WebUrl) {
+		pathCopy := routePath
+		app.Get(pathCopy, ObserverPrintPageHandler)
+	}
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)
