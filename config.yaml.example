@@ -50,7 +50,7 @@
 
   audio:
     storageDir: ./static/audio
-    tempDir: ./data/audio-temp
+    tempDir: ./static/audio-temp
     importDir: ./static/audio/import # 读取数据目录导入的扫描路径
     maxUploadSizeMB: 80
     allowedMimeTypes:
@@ -83,7 +83,7 @@
     local:
       uploadDir: ./sealchat-data/upload
       audioDir: ./sealchat-data/static/audio
-      tempDir: ./data/temp
+      tempDir: ./sealchat-data/temp
       baseUrl: ""   # 若通过 Nginx 暴露本地附件，可填例如 https://files.example.com
     s3:
       enabled: true
