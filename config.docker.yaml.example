@@ -127,3 +127,28 @@ authSession:
   refreshThresholdDays: 7                      # 剩余有效期小于等于该值时自动续签（天）
 
 version: 1
+
+# 邮件通知配置（邮件提醒与邮箱验证码共用此 SMTP 配置）
+emailNotification:
+  enabled: false                # 是否启用邮件通知功能
+  checkIntervalSec: 60          # 检查未读消息的间隔（秒）
+  maxPerHour: 5                 # 每用户每小时最大推送次数
+  minDelayMinutes: 10           # 最小延迟时间（分钟）
+  maxDelayMinutes: 30           # 最大延迟时间（分钟）
+  smtp:
+    host: smtp.example.com      # SMTP 服务器地址
+    port: 587                   # SMTP 端口
+    username: your@email.com    # SMTP 用户名
+    password: ""                # 留空，改用环境变量 SEALCHAT_SMTP_PASSWORD
+    fromAddress: noreply@example.com  # 发件人地址
+    fromName: SealChat          # 发件人名称
+    useTLS: true                # 是否使用 TLS
+    skipVerify: false           # 是否跳过证书验证（不建议）
+
+# 邮箱认证配置（注册验证、密码重置等，复用上方 emailNotification.smtp）
+emailAuth:
+  enabled: false                # 是否启用邮箱验证功能
+  codeLength: 6                 # 验证码长度
+  codeTTLSeconds: 300           # 验证码有效期（秒）
+  maxAttempts: 5                # 单个验证码最大尝试次数
+  rateLimitPerIP: 5             # 每 IP 每小时发送上限
