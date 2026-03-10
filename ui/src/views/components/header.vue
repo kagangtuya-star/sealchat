@@ -4,11 +4,10 @@ import { useUserStore } from '@/stores/user';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
+import { computed, ref, shallowRef, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
-const InputStats = defineAsyncComponent(() => import('./InputStats.vue'))
 import Avatar from '@/components/avatar.vue';
 // import AdminSettings from './admin-settings.vue'
 import { useI18n } from 'vue-i18n'
@@ -38,6 +37,8 @@ const notifShow = ref(false)
 const userProfileShow = ref(false)
 const adminShow = ref(false)
 const inputStatsShow = ref(false)
+const inputStatsLoading = ref(false)
+const inputStatsComponent = shallowRef<Component | null>(null)
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
@@ -177,6 +178,35 @@ const options = computed(() => [
   }
 ].filter(i => i != null))
 
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return
+  }
+  inputStatsLoading.value = true
+  try {
+    inputStatsComponent.value = (await import('./InputStats.vue')).default
+  } catch (err) {
+    console.error('load input stats component failed', err)
+    inputStatsShow.value = false
+  } finally {
+    inputStatsLoading.value = false
+  }
+}
+
+const toggleInputStats = async () => {
+  notifShow.value = false
+  adminShow.value = false
+  userProfileShow.value = false
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false
+    return
+  }
+
+  inputStatsShow.value = true
+  await ensureInputStatsLoaded()
+}
+
 
 const handleSelect = async (key: string | number) => {
   switch (key) {
@@ -194,10 +224,7 @@ const handleSelect = async (key: string | number) => {
       break;
 
     case 'inputStats':
-      notifShow.value = false;
-      adminShow.value = false;
-      userProfileShow.value = false;
-      inputStatsShow.value = !inputStatsShow.value;
+      await toggleInputStats();
       break;
 
     case 'admin':
@@ -853,7 +880,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
     class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
   >
-    <InputStats :current-world-id="chat.currentWorldId" @close="inputStatsShow = false" />
+    <component
+      :is="inputStatsComponent"
+      v-if="inputStatsComponent"
+      :current-world-id="chat.currentWorldId"
+      @close="inputStatsShow = false"
+    />
+    <div v-else class="input-stats-loading">输入统计加载中...</div>
   </div>
   <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
@@ -873,6 +906,18 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-actions--observer {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background-color: var(--sc-bg-elevated, var(--n-color));
 }
 
 .sc-ob-filters {

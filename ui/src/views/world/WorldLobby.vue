@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -65,7 +65,6 @@ const dialog = useDialog();
 const router = useRouter();
 const { t } = useI18n();
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
-const InputStats = defineAsyncComponent(() => import('@/views/components/InputStats.vue'));
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -76,6 +75,8 @@ const creating = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
+const inputStatsLoading = ref(false);
+const inputStatsComponent = shallowRef<Component | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -103,6 +104,35 @@ const createForm = ref({
   description: '',
   visibility: 'public',
 });
+
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return;
+  }
+  inputStatsLoading.value = true;
+  try {
+    inputStatsComponent.value = (await import('@/views/components/InputStats.vue')).default;
+  } catch (err) {
+    console.error('load input stats component failed', err);
+    message.error('输入统计加载失败');
+    inputStatsShow.value = false;
+  } finally {
+    inputStatsLoading.value = false;
+  }
+};
+
+const toggleInputStats = async () => {
+  adminShow.value = false;
+  userProfileShow.value = false;
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false;
+    return;
+  }
+
+  inputStatsShow.value = true;
+  await ensureInputStatsLoaded();
+};
 
 const normalizePositiveInt = (value: unknown, fallback: number) => {
   const num = Number(value);
@@ -728,7 +758,7 @@ const headerMenuOptions = computed(() => [
   },
 ].filter(Boolean));
 
-const handleHeaderMenuSelect = (key: string | number) => {
+const handleHeaderMenuSelect = async (key: string | number) => {
   switch (key) {
     case 'profile':
       adminShow.value = false;
@@ -738,7 +768,7 @@ const handleHeaderMenuSelect = (key: string | number) => {
     case 'inputStats':
       adminShow.value = false;
       userProfileShow.value = false;
-      inputStatsShow.value = !inputStatsShow.value;
+      await toggleInputStats();
       break;
     case 'admin':
       userProfileShow.value = false;
@@ -1065,7 +1095,12 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       v-if="inputStatsShow"
       class="world-lobby-overlay world-lobby-overlay--stats sc-overlay-layer"
     >
-      <InputStats @close="inputStatsShow = false" />
+      <component
+        :is="inputStatsComponent"
+        v-if="inputStatsComponent"
+        @close="inputStatsShow = false"
+      />
+      <div v-else class="input-stats-loading">输入统计加载中...</div>
     </div>
   </div>
 </template>
@@ -1169,6 +1204,17 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   box-shadow:
     0 20px 46px rgba(15, 23, 42, 0.2),
     0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background: var(--n-color);
 }
 
 :global(:root[data-display-palette='day']) .world-lobby-overlay {

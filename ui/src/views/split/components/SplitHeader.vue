@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { computed, defineAsyncComponent, h, ref, type Component } from 'vue';
+import { computed, defineAsyncComponent, h, ref, shallowRef, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { NDropdown, NIcon, NTooltip, useDialog } from 'naive-ui';
@@ -13,7 +13,6 @@ import { useChatStore } from '@/stores/chat';
 import Avatar from '@/components/avatar.vue';
 
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
-const InputStats = defineAsyncComponent(() => import('@/views/components/InputStats.vue'));
 
 const chat = useChatStore();
 
@@ -60,6 +59,8 @@ const notifShow = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
+const inputStatsLoading = ref(false);
+const inputStatsComponent = shallowRef<Component | null>(null);
 
 const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
 
@@ -96,6 +97,35 @@ const options = computed(() => [
   { label: t('headerMenu.logout'), key: 'logout' },
 ].filter(Boolean));
 
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return;
+  }
+  inputStatsLoading.value = true;
+  try {
+    inputStatsComponent.value = (await import('@/views/components/InputStats.vue')).default;
+  } catch (err) {
+    console.error('load input stats component failed', err);
+    inputStatsShow.value = false;
+  } finally {
+    inputStatsLoading.value = false;
+  }
+};
+
+const toggleInputStats = async () => {
+  notifShow.value = false;
+  adminShow.value = false;
+  userProfileShow.value = false;
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false;
+    return;
+  }
+
+  inputStatsShow.value = true;
+  await ensureInputStatsLoaded();
+};
+
 const handleSelect = async (key: string | number) => {
   switch (key) {
     case 'profile':
@@ -105,10 +135,7 @@ const handleSelect = async (key: string | number) => {
       userProfileShow.value = !userProfileShow.value;
       break;
     case 'inputStats':
-      notifShow.value = false;
-      adminShow.value = false;
-      userProfileShow.value = false;
-      inputStatsShow.value = !inputStatsShow.value;
+      await toggleInputStats();
       break;
     case 'admin':
       notifShow.value = false;
@@ -278,7 +305,13 @@ const handleSelect = async (key: string | number) => {
     style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
     class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
   >
-    <InputStats :current-world-id="chat.currentWorldId" @close="inputStatsShow = false" />
+    <component
+      :is="inputStatsComponent"
+      v-if="inputStatsComponent"
+      :current-world-id="chat.currentWorldId"
+      @close="inputStatsShow = false"
+    />
+    <div v-else class="input-stats-loading">输入统计加载中...</div>
   </div>
   <Notif v-show="notifShow" />
 </template>
@@ -288,6 +321,18 @@ const handleSelect = async (key: string | number) => {
   background-color: var(--sc-bg-header);
   color: var(--sc-text-primary);
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background-color: var(--sc-bg-elevated, var(--n-color));
 }
 
 .sc-actions {
