@@ -65,6 +65,7 @@ const dialog = useDialog();
 const router = useRouter();
 const { t } = useI18n();
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
+const InputStats = defineAsyncComponent(() => import('@/views/components/InputStats.vue'));
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -74,6 +75,7 @@ const createVisible = ref(false);
 const creating = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
+const inputStatsShow = ref(false);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -690,6 +692,10 @@ const headerMenuOptions = computed(() => [
     label: t('headerMenu.profile'),
     key: 'profile',
   },
+  {
+    label: t('headerMenu.inputStats'),
+    key: 'inputStats',
+  },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
     key: 'admin',
@@ -726,10 +732,17 @@ const handleHeaderMenuSelect = (key: string | number) => {
   switch (key) {
     case 'profile':
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+    case 'inputStats':
+      adminShow.value = false;
+      userProfileShow.value = false;
+      inputStatsShow.value = !inputStatsShow.value;
       break;
     case 'admin':
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
     case 'logout':
@@ -1047,6 +1060,12 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       class="world-lobby-overlay world-lobby-overlay--admin sc-overlay-layer"
     >
       <AdminSettings @close="adminShow = false" />
+    </div>
+    <div
+      v-if="inputStatsShow"
+      class="world-lobby-overlay world-lobby-overlay--stats sc-overlay-layer"
+    >
+      <InputStats @close="inputStatsShow = false" />
     </div>
   </div>
 </template>

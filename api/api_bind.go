@@ -303,6 +303,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/user/preferences", UserPreferencesGet)
 	v1Auth.Post("/user/preferences", UserPreferencesUpsert)
 
+	// User input stats
+	v1Auth.Get("/user/input-stats/overview", UserInputStatsOverview)
+	v1Auth.Get("/user/input-stats/by-world", UserInputStatsByWorld)
+	v1Auth.Get("/user/input-stats/by-channel", UserInputStatsByChannel)
+	v1Auth.Get("/user/input-stats/timeline", UserInputStatsTimeline)
+	v1Auth.Get("/user/input-stats/sessions", UserInputStatsSessions)
+
 	v1Auth.Get("/gallery/collections", GalleryCollectionsList)
 	v1Auth.Post("/gallery/collections", GalleryCollectionCreate)
 	v1Auth.Patch("/gallery/collections/:id", GalleryCollectionUpdate)

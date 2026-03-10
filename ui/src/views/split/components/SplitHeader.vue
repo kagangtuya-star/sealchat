@@ -9,9 +9,13 @@ import Notif from '@/views/notif.vue';
 import UserProfile from '@/views/components/user-profile.vue';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useUserStore } from '@/stores/user';
+import { useChatStore } from '@/stores/chat';
 import Avatar from '@/components/avatar.vue';
 
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
+const InputStats = defineAsyncComponent(() => import('@/views/components/InputStats.vue'));
+
+const chat = useChatStore();
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -55,6 +59,7 @@ const user = useUserStore();
 const notifShow = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
+const inputStatsShow = ref(false);
 
 const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
 
@@ -76,6 +81,7 @@ const connectionStatus = computed(() => {
 
 const options = computed(() => [
   { label: t('headerMenu.profile'), key: 'profile' },
+  { label: t('headerMenu.inputStats'), key: 'inputStats' },
   user.checkPerm('mod_admin') ? { label: t('headerMenu.admin'), key: 'admin' } : null,
   {
     label: t('headerMenu.lang'),
@@ -95,11 +101,19 @@ const handleSelect = async (key: string | number) => {
     case 'profile':
       notifShow.value = false;
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+    case 'inputStats':
+      notifShow.value = false;
+      adminShow.value = false;
+      userProfileShow.value = false;
+      inputStatsShow.value = !inputStatsShow.value;
       break;
     case 'admin':
       notifShow.value = false;
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
     case 'logout':
@@ -258,6 +272,13 @@ const handleSelect = async (key: string | number) => {
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer"
   >
     <AdminSettings @close="adminShow = false" />
+  </div>
+  <div
+    v-if="inputStatsShow"
+    style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
+    class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
+  >
+    <InputStats :current-world-id="chat.currentWorldId" @close="inputStatsShow = false" />
   </div>
   <Notif v-show="notifShow" />
 </template>

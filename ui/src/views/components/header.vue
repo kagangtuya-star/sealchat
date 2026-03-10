@@ -8,6 +8,7 @@ import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount
 import { useRoute, useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
+const InputStats = defineAsyncComponent(() => import('./InputStats.vue'))
 import Avatar from '@/components/avatar.vue';
 // import AdminSettings from './admin-settings.vue'
 import { useI18n } from 'vue-i18n'
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 const notifShow = ref(false)
 const userProfileShow = ref(false)
 const adminShow = ref(false)
+const inputStatsShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
@@ -130,7 +132,10 @@ const options = computed(() => [
   {
     label: t('headerMenu.profile'),
     key: 'profile',
-    // icon: renderIcon(UserIcon)
+  },
+  {
+    label: t('headerMenu.inputStats'),
+    key: 'inputStats',
   },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
@@ -184,12 +189,21 @@ const handleSelect = async (key: string | number) => {
     case 'profile':
       notifShow.value = false;
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+
+    case 'inputStats':
+      notifShow.value = false;
+      adminShow.value = false;
+      userProfileShow.value = false;
+      inputStatsShow.value = !inputStatsShow.value;
       break;
 
     case 'admin':
       notifShow.value = false;
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
 
@@ -558,6 +572,7 @@ const emitOverlayState = (source: string, visible: boolean, prevVisible?: boolea
 watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', visible, prevVisible));
 watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
 watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
+watch(inputStatsShow, (visible, prevVisible) => emitOverlayState('input-stats', visible, prevVisible));
 watch(notifShow, async (visible) => {
   if (!visible || !isAdmin.value) {
     return;
@@ -832,6 +847,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer"
   >
     <AdminSettings @close="adminShow = false" />
+  </div>
+  <div
+    v-if="inputStatsShow"
+    style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
+    class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
+  >
+    <InputStats :current-world-id="chat.currentWorldId" @close="inputStatsShow = false" />
   </div>
   <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
