@@ -62,7 +62,7 @@ import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
-import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
+import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
@@ -6939,6 +6939,13 @@ const stripDiceChipMarkup = (html: string) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
     let replaced = false;
+    doc.querySelectorAll('span.dice-roll-group').forEach((element) => {
+      const source = element.getAttribute('data-dice-source') || '';
+      if (!element.parentNode) return;
+      const replacement = doc.createTextNode(source);
+      element.parentNode.replaceChild(replacement, element);
+      replaced = true;
+    });
     doc.querySelectorAll('span').forEach((element) => {
       const classAttr = element.getAttribute('class') || '';
       if (!classAttr.includes('dice-chip')) {
@@ -8973,11 +8980,19 @@ const extractTipTapText = (node: any): string => {
 // 渲染预览内容（支持图片和富文本）
 const diceChipIconSvg = '<span class="dice-chip__icon" aria-hidden="true">🎲</span>';
 const resolveDiceToneClass = () => (chat.icMode === 'ooc' ? 'ooc' : 'ic');
-const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
-  const source = escapeHtml(match.source);
-  const formula = escapeHtml(match.normalized);
+const buildSinglePreviewDiceChip = (formula: string, source: string, index: string | number) => {
   const tone = resolveDiceToneClass();
   return `<span class="dice-chip dice-chip--preview dice-chip--tone-${tone}" data-dice-tone="${tone}" data-index="${index}" title="${source}">${diceChipIconSvg}<span class="dice-chip__formula">${formula}</span><span class="dice-chip__equals">=</span><span class="dice-chip__result">?</span></span>`;
+};
+
+const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
+  const source = escapeHtml(match.source);
+  const { repeatCount, formula } = parseMultiDiceExpression(match.normalized, defaultDiceExpr.value);
+  const escapedFormula = escapeHtml(formula);
+  if (repeatCount <= 1) {
+    return buildSinglePreviewDiceChip(escapedFormula, source, index);
+  }
+  return `<span class="dice-roll-group" data-dice-source="${source}">${Array.from({ length: repeatCount }, (_, offset) => buildSinglePreviewDiceChip(escapedFormula, source, `${index}-${offset}`)).join('')}</span>`;
 };
 
 const renderDicePreviewSegment = (text: string) => {
@@ -17118,6 +17133,14 @@ onBeforeUnmount(() => {
   vertical-align: middle;
   white-space: nowrap;
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.dice-roll-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  vertical-align: middle;
 }
 
 .dice-chip__icon {
