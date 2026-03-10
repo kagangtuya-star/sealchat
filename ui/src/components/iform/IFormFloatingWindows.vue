@@ -4,6 +4,7 @@
       v-for="window in floatingWindows"
       :key="window.windowId"
       class="iform-floating"
+      data-sc-font-surface="true"
       :class="{ 'is-minimized': window.minimized }"
       :style="floatingStyle(window)"
     >

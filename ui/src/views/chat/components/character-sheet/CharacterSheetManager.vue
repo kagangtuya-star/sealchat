@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="character-sheet-overlay" v-if="sheetStore.activeWindowIds.length > 0">
+    <div class="character-sheet-overlay" data-sc-font-surface="true" v-if="sheetStore.activeWindowIds.length > 0">
       <CharacterSheetWindow
         v-for="windowId in expandedWindowIds"
         :key="windowId"

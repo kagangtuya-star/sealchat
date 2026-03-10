@@ -138,6 +138,7 @@ onBeforeUnmount(() => {
     <div
       v-if="props.show"
       class="theme-live-preview-floating"
+      data-sc-font-surface="true"
       :style="floatingStyle"
       role="dialog"
       aria-label="主题实时预览浮窗"
