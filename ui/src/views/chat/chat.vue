@@ -5591,6 +5591,7 @@ const createGhostElement = (rowEl: HTMLElement) => {
   const rect = rowEl.getBoundingClientRect();
   const ghost = document.createElement('div');
   ghost.className = 'message-row__ghost-float';
+  ghost.setAttribute('data-sc-font-surface', 'true');
   
   const isDark = document.documentElement.classList.contains('dark') || 
                  document.body.classList.contains('dark');
