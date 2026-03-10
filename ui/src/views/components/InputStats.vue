@@ -427,16 +427,16 @@ function renderChart() {
       textStyle: { color: colors.legendColor },
     },
     grid: {
-      left: '3%', right: '4%', bottom: '15%', containLabel: true,
+      left: '3%', right: '4%', top: 36, bottom: 78, containLabel: true,
     },
     dataZoom: [
       { type: 'inside', start: 0, end: 100 },
-      { type: 'slider', start: 0, end: 100, height: 20, bottom: 0 },
+      { type: 'slider', start: 0, end: 100, height: 18, bottom: 10, brushSelect: false },
     ],
     xAxis: {
       type: 'category',
       data: dates,
-      axisLabel: { rotate: 30, color: colors.textColor, fontSize: 10 },
+      axisLabel: { rotate: 30, margin: 14, hideOverlap: true, color: colors.textColor, fontSize: 10 },
     },
     yAxis: [
       {
@@ -1209,7 +1209,7 @@ const currentWorldName = computed(() => {
 
 .chart-container {
   width: 100%;
-  height: 280px;
+  height: 320px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--sc-bg-surface, #000) 60%, transparent);
   transition: background 0.25s ease;
