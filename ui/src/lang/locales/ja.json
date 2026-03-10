@@ -69,7 +69,8 @@
     "minutes": "分",
     "back": "戻る",
     "viewChannels": "チャンネルを見る",
-    "sessionCount": "セッション数"
+    "sessionCount": "セッション数",
+    "includeImported": "インポート済みメッセージを含める"
   },
   "userProfile": {
     "title": "プロフィール",

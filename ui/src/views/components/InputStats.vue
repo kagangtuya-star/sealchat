@@ -38,7 +38,7 @@ const isDark = computed(() => {
 // === State ===
 const loading = ref(false)
 const activeTab = ref<'all' | 'ic' | 'ooc'>('all')
-const timeRange = ref<'all' | '7d' | '30d' | 'custom'>('all')
+const timeRange = ref<'all' | '7d' | '30d' | 'custom'>('30d')
 const customStart = ref<number | null>(null)
 const customEnd = ref<number | null>(null)
 
@@ -47,6 +47,7 @@ const filterMode = ref<'none' | 'include' | 'exclude'>('none')
 const selectedWorldIds = ref<string[]>([])
 const selectedChannelIds = ref<string[]>([])
 const filterChannelMode = ref<'none' | 'include' | 'exclude'>('none')
+const includeImported = ref(false)
 
 // Session threshold
 const sessionThreshold = ref(30)
@@ -68,6 +69,7 @@ function savePrefs() {
       sessionIcMode: sessionIcMode.value,
       filterChannelMode: filterChannelMode.value,
       selectedChannelIds: selectedChannelIds.value,
+      includeImported: includeImported.value,
     }
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
   } catch { /* ignore */ }
@@ -83,6 +85,7 @@ function loadPrefs() {
     if (prefs.sessionIcMode) sessionIcMode.value = prefs.sessionIcMode
     if (prefs.filterChannelMode) filterChannelMode.value = prefs.filterChannelMode
     if (prefs.selectedChannelIds) selectedChannelIds.value = prefs.selectedChannelIds
+    if (prefs.includeImported != null) includeImported.value = !!prefs.includeImported
   } catch { /* ignore */ }
 }
 
@@ -123,6 +126,7 @@ const icMode = computed(() => {
 const queryParams = computed(() => {
   const p: Record<string, string> = {}
   if (icMode.value) p.icMode = icMode.value
+  if (includeImported.value) p.includeImported = 'true'
 
   if (timeRange.value === '7d') {
     p.start = String(Date.now() - 7 * 24 * 60 * 60 * 1000)
@@ -712,6 +716,11 @@ watch([activeTab, timeRange, customStart, customEnd], () => {
   fetchAll()
 })
 
+watch(includeImported, () => {
+  savePrefs()
+  fetchAll()
+})
+
 // Re-render chart when hideZeroAxis changes
 watch(hideZeroAxis, () => {
   renderChart()
@@ -840,6 +849,13 @@ const currentWorldName = computed(() => {
             应用
           </n-button>
         </div>
+      </div>
+
+      <div class="control-group">
+        <label class="zero-toggle">
+          <n-switch v-model:value="includeImported" size="small" />
+          <span class="zero-toggle-label">{{ t('inputStats.includeImported') }}</span>
+        </label>
       </div>
 
       <!-- Hide zero axis toggle -->

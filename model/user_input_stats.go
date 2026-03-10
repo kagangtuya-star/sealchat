@@ -14,6 +14,7 @@ type InputStatsFilter struct {
 	StartTime         *time.Time
 	EndTime           *time.Time
 	ICMode            string   // "ic", "ooc", or "" (all)
+	IncludeImported   bool     // 是否包含导入消息
 	IncludeWorldIDs   []string // 仅包含这些世界（为空表示不限）
 	ExcludeWorldIDs   []string // 排除这些世界
 	IncludeChannelIDs []string // 仅包含这些频道（为空表示不限）
@@ -77,6 +78,9 @@ func applyBaseFilter(q *gorm.DB, userID string, f InputStatsFilter, tableAlias s
 	}
 
 	q = q.Where(prefix+"user_id = ? AND "+prefix+"is_deleted = ? AND "+prefix+"is_revoked = ?", userID, false, false)
+	if !f.IncludeImported {
+		q = q.Where("("+prefix+"is_imported = ? OR "+prefix+"is_imported IS NULL)", false)
+	}
 
 	if f.StartTime != nil {
 		q = q.Where(prefix+"created_at >= ?", *f.StartTime)

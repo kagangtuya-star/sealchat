@@ -209,7 +209,7 @@ func executeImportJob(job *model.ChatImportJobModel, content string, config *mod
 		}
 
 		batch := entries[i:end]
-		importedCount, err := batchInsertImportedMessages(job.ChannelID, batch, identityMap)
+		importedCount, err := batchInsertImportedMessages(job.ID, job.ChannelID, batch, identityMap)
 		if err != nil {
 			log.Printf("批量插入消息失败: %v", err)
 			job.Status = model.ChatImportStatusFailed
@@ -371,7 +371,7 @@ func createImportIdentity(channelID, userID, displayName, color, avatarID string
 }
 
 // batchInsertImportedMessages 批量插入导入的消息
-func batchInsertImportedMessages(channelID string, entries []*model.ParsedLogEntry, identityMap map[string]*model.ChannelIdentityModel) (int, error) {
+func batchInsertImportedMessages(importJobID string, channelID string, entries []*model.ParsedLogEntry, identityMap map[string]*model.ChannelIdentityModel) (int, error) {
 	if len(entries) == 0 {
 		return 0, nil
 	}
@@ -411,6 +411,8 @@ func batchInsertImportedMessages(channelID string, entries []*model.ParsedLogEnt
 			UserID:              identity.UserID,
 			DisplayOrder:        displayOrder,
 			ICMode:              icMode,
+			IsImported:          true,
+			ImportJobID:         importJobID,
 			SenderIdentityID:    identity.ID,
 			SenderIdentityName:  identity.DisplayName,
 			SenderIdentityColor: identity.Color,

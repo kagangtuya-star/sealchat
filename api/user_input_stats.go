@@ -81,6 +81,11 @@ func parseStatsFilterParams(c *fiber.Ctx) model.InputStatsFilter {
 	if icMode == "ic" || icMode == "ooc" {
 		f.ICMode = icMode
 	}
+	if raw := strings.TrimSpace(c.Query("includeImported")); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			f.IncludeImported = parsed
+		}
+	}
 
 	if s := strings.TrimSpace(c.Query("includeWorlds")); s != "" {
 		f.IncludeWorldIDs = splitIDs(s)

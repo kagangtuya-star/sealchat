@@ -79,7 +79,8 @@
     "minutes": "分钟",
     "back": "返回",
     "viewChannels": "查看频道",
-    "sessionCount": "累计团次"
+    "sessionCount": "累计团次",
+    "includeImported": "统计导入消息"
   },
   "userProfile": {
     "title": "个人信息",

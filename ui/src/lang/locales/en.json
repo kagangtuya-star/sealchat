@@ -69,7 +69,8 @@
     "minutes": "min",
     "back": "Back",
     "viewChannels": "View Channels",
-    "sessionCount": "Sessions"
+    "sessionCount": "Sessions",
+    "includeImported": "Include imported messages"
   },
   "userProfile": {
     "title": "Profile",
