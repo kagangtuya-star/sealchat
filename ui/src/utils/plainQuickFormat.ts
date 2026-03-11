@@ -80,3 +80,80 @@ export const renderQuickFormatHtmlFromEscaped = (escapedInput: string) => {
 
   return text;
 };
+
+const normalizeQuickFormatText = (value: string) => value.replace(/\u00a0/g, ' ');
+
+const isBlockNode = (tagName: string) => ['DIV', 'P', 'PRE', 'BLOCKQUOTE', 'LI'].includes(tagName);
+
+const serializeQuickFormatNode = (node: Node, inCodeBlock = false): string => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return normalizeQuickFormatText(node.textContent || '');
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return '';
+  }
+
+  const el = node as HTMLElement;
+  const tag = el.tagName.toUpperCase();
+  const children = Array.from(el.childNodes).map((child) => serializeQuickFormatNode(child, inCodeBlock)).join('');
+
+  switch (tag) {
+    case 'BR':
+      return '\n';
+    case 'IMG':
+      return '[图片]';
+    case 'AT': {
+      const name = (el.getAttribute('name') || '').trim();
+      const id = (el.getAttribute('id') || '').trim();
+      return `@${name || id || '用户'}`;
+    }
+    case 'STRONG':
+    case 'B':
+      return children ? `**${children}**` : '';
+    case 'EM':
+    case 'I':
+      return children ? `*${children}*` : '';
+    case 'S':
+    case 'STRIKE':
+    case 'DEL':
+      return children ? `~~${children}~~` : '';
+    case 'CODE':
+      return inCodeBlock ? children : (children ? `\`${children}\`` : '');
+    case 'PRE': {
+      const code = children.replace(/\n+$/g, '');
+      return code ? `\`\`\`\n${code}\n\`\`\`` : '';
+    }
+    case 'A': {
+      const href = (el.getAttribute('href') || '').trim();
+      return href ? `[${children}](${href})` : children;
+    }
+    default:
+      return children;
+  }
+};
+
+export const restoreQuickFormatTextFromHtml = (htmlInput: string) => {
+  if (!htmlInput || !/[<>]/.test(htmlInput)) {
+    return htmlInput || '';
+  }
+
+  const container = document.createElement('div');
+  container.innerHTML = htmlInput;
+  const parts: string[] = [];
+
+  Array.from(container.childNodes).forEach((node) => {
+    const chunk = serializeQuickFormatNode(node, false);
+    if (!chunk) {
+      return;
+    }
+    parts.push(chunk);
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node as HTMLElement).tagName.toUpperCase();
+      if (isBlockNode(tag) && !chunk.endsWith('\n')) {
+        parts.push('\n');
+      }
+    }
+  });
+
+  return parts.join('').replace(/\n{3,}/g, '\n\n').replace(/\n+$/g, '');
+};

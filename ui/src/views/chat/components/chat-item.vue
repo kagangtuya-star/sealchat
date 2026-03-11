@@ -16,6 +16,8 @@ import Avatar from '@/components/avatar.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { contentEscape, contentUnescape } from '@/utils/tools';
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
@@ -516,6 +518,10 @@ const parseContent = (payload: any, overrideContent?: string) => {
         const raw = item.toString();
         if (diceChipHtmlPattern.test(raw)) {
           textItems.push(raw);
+        } else if (item.type === 'text') {
+          const textContent = typeof item.attrs?.content === 'string' ? item.attrs.content : raw;
+          const rendered = renderQuickFormatHtmlFromEscaped(contentEscape(String(textContent || '')));
+          textItems.push(`<span style="white-space: pre-wrap">${rendered}</span>`);
         } else {
           textItems.push(`<span style="white-space: pre-wrap">${raw}</span>`);
         }
@@ -1046,6 +1052,10 @@ const buildQuoteSummary = (quote?: any) => {
       return '[图片]';
     }
   }
+  const restored = restoreQuickFormatTextFromHtml(contentUnescape(content)).replace(quoteInlineImageTokenPattern, '[图片]').trim();
+  if (restored) {
+    return restored;
+  }
   const items = Element.parse(content);
   let text = '';
   let fallback = '';
@@ -1120,6 +1130,9 @@ const quoteNameColor = computed(() => quoteItem.value?.identity?.color
 const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_deleted || (quoteItem.value as any)?.isDeleted));
 const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
 const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
+const quoteSummaryHtml = computed(() => DOMPurify.sanitize(
+  renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
+));
 const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
 const selfEditingPreview = computed(() => (
@@ -3130,9 +3143,7 @@ const handleRetrySend = () => {
                 <span class="message-quote__name" :style="quoteNameColor ? { color: quoteNameColor } : undefined">
                   {{ quoteDisplayName }}
                 </span>
-                <span class="message-quote__summary">
-                  {{ quoteSummary }}
-                </span>
+                <span class="message-quote__summary" v-html="quoteSummaryHtml"></span>
               </div>
             </div>
             <component :is="parseContent(props, displayContent)" />

@@ -68,7 +68,7 @@ import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
-import { renderQuickFormatHtmlFromEscaped } from '@/utils/plainQuickFormat';
+import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -7101,6 +7101,7 @@ const convertMessageContentToDraft = (content?: string) => {
   });
   text = text.replace(/<at\s+[^>]*name="([^"]+)"[^>]*\/>/gi, (_, name) => `@${name}`);
   text = text.replace(/<at\s+[^>]*id="([^"]+)"[^>]*\/>/gi, (_, id) => `@${id}`);
+  text = restoreQuickFormatTextFromHtml(text);
   text = text.replace(/<br\s*\/?>/gi, '\n');
   return text;
 };
@@ -8563,7 +8564,7 @@ const saveEdit = async () => {
         finalContent = processedDraft;
       }
     } else {
-      finalContent = await buildMessageHtml(processedDraft);
+      finalContent = await normalizePlainMessageContent(processedDraft);
     }
     if (!isEditSaveSnapshotAlive(snapshot)) {
       return;
@@ -9068,7 +9069,7 @@ const escapeHtml = (text: string): string => {
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
 };
 
-const buildMessageHtml = async (draft: string) => {
+const normalizePlainMessageContent = async (draft: string) => {
   const placeholderMap = new Map<string, string>();
   let index = 0;
   inlineImageMarkerRegexp.lastIndex = 0;
@@ -9097,11 +9098,10 @@ const buildMessageHtml = async (draft: string) => {
   if (escaped.includes('@')) {
     escaped = await replaceUsernames(escaped);
   }
-  let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
-    html = html.split(key).join(value);
+    escaped = escaped.split(key).join(value);
   });
-  return html;
+  return escaped;
 };
 
 const captureSelectionRange = (): SelectionRange => {
@@ -9574,8 +9574,8 @@ const send = throttle(async () => {
       // 富文本模式：直接发送 JSON
       finalContent = draft;
     } else {
-      // 纯文本模式：转换为 HTML
-      finalContent = await buildMessageHtml(draft);
+      // 纯文本模式：仅做安全转义与 Satori 占位替换，轻量 Markdown 交给前端渲染
+      finalContent = await normalizePlainMessageContent(draft);
     }
 
     tmpMsg.content = finalContent;

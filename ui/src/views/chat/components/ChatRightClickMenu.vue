@@ -10,6 +10,8 @@ import { useUserStore } from '@/stores/user';
 import { useGalleryStore } from '@/stores/gallery';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { contentUnescape } from '@/utils/tools';
 import { useDisplayStore } from '@/stores/display';
 import { generateMessageLink } from '@/utils/messageLink';
 import { copyTextWithFallback } from '@/utils/clipboard';
@@ -582,12 +584,7 @@ const clickCopy = async () => {
       copyText = '';
     }
   } else {
-    const items = Element.parse(content);
-    for (const item of items) {
-      if (item.type === 'text') {
-        copyText += item.toString();
-      }
-    }
+    copyText = restoreQuickFormatTextFromHtml(contentUnescape(content)).trim();
   }
 
   const copied = await copyTextWithFallback(copyText);
@@ -708,12 +705,7 @@ const summarizeMessageForInsertTarget = (raw?: any) => {
     }
   }
   if (!plain) {
-    const items = Element.parse(content);
-    for (const item of items) {
-      if (item.type === 'text') {
-        plain += item.toString();
-      }
-    }
+    plain = restoreQuickFormatTextFromHtml(contentUnescape(content));
   }
   const normalized = plain.replace(/\s+/g, ' ').trim();
   if (!normalized) {
