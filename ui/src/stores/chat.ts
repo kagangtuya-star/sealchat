@@ -4228,7 +4228,7 @@ export const useChatStore = defineStore({
         const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;
         if (audioPayload) {
           const audioStudio = useAudioStudioStore();
-          await audioStudio.applyRemotePlayback(audioPayload);
+          await audioStudio.handleRemotePlaybackEvent(audioPayload);
         }
       }
       chatEvent.emit(e.type as any, e);

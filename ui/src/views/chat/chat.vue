@@ -35,6 +35,7 @@ import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
+import { useAudioStudioStore } from '@/stores/audioStudio';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
@@ -139,19 +140,27 @@ const scheduleCharacterSheetRefresh = () => {
   }, ST_REFRESH_DELAY);
 };
 
-const openSplitView = () => {
+const audioStudio = useAudioStudioStore();
+
+const openSplitView = async () => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
-  router.push({
-    name: 'split',
-    query: {
-      layout: 'left-column',
-      worldId,
-      a: currentChannelId,
-      b: '',
-      notify: '',
-    },
-  });
+  audioStudio.setPlaybackAuthority(false);
+  try {
+    await router.push({
+      name: 'split',
+      query: {
+        layout: 'left-column',
+        worldId,
+        a: currentChannelId,
+        b: '',
+        notify: '',
+      },
+    });
+  } catch (error) {
+    audioStudio.setPlaybackAuthority(true);
+    throw error;
+  }
 };
 
 const toggleStickyNotes = () => {
