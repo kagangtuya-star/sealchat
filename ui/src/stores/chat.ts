@@ -4875,7 +4875,6 @@ export const useChatStore = defineStore({
       };
 
       copyHistoryEntry('sealchat_input_history_v1');
-      copyHistoryEntry('sealchat_input_history_autorestore_v1');
 
       if (userId) {
         tryCopy(`sealchat_sticky_notes:${userId}:${sourceChannelId}`, `sealchat_sticky_notes:${userId}:${targetChannelId}`);

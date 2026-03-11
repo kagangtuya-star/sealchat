@@ -7122,28 +7122,10 @@ const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
 const HISTORY_CHANNEL_FALLBACK = '__global__';
 const MAX_HISTORY_PER_CHANNEL = 5;
 const HISTORY_PREVIEW_MAX = 120;
-const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
-const pendingHistoryRestoreChannelKey = ref<string | null>(null);
-const HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
+const LEGACY_HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
 const HISTORY_SESSION_DRAFT_PREFIX = 'sealchat_input_session_draft_v1';
 const HISTORY_SESSION_DRAFT_WINDOW_PREFIX = 'sealchat_input_session_draft_window_v1:';
 const HISTORY_SESSION_DRAFT_TTL = 24 * 60 * 60 * 1000;
-
-interface HistoryAutoRestoreEntry {
-  entryId: string;
-  updatedAt: number;
-}
-
-type HistoryAutoRestoreStore = Record<string, HistoryAutoRestoreEntry>;
-
-const scheduleHistoryAutoRestore = () => {
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  pendingHistoryRestoreChannelKey.value = String(channelId);
-};
 
 interface HistoryImageInfo {
   markerId: string;
@@ -7317,58 +7299,11 @@ const writeHistoryStore = (store: HistoryStore) => {
   }
 };
 
-const readHistoryAutoRestoreStore = (): HistoryAutoRestoreStore => {
+const clearLegacyHistoryAutoRestoreStore = () => {
   try {
-    const raw = localStorage.getItem(HISTORY_AUTORESTORE_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as HistoryAutoRestoreStore;
-    }
+    localStorage.removeItem(LEGACY_HISTORY_AUTORESTORE_STORAGE_KEY);
   } catch (e) {
-    console.error('读取自动恢复状态失败', e);
-  }
-  return {};
-};
-
-const writeHistoryAutoRestoreStore = (store: HistoryAutoRestoreStore) => {
-  try {
-    localStorage.setItem(HISTORY_AUTORESTORE_STORAGE_KEY, JSON.stringify(store));
-  } catch (e) {
-    console.error('写入自动恢复状态失败', e);
-  }
-};
-
-const getAutoRestoreEntryForChannel = (channelKey: string): HistoryAutoRestoreEntry | null => {
-  if (!channelKey) {
-    return null;
-  }
-  const store = readHistoryAutoRestoreStore();
-  return store[channelKey] || null;
-};
-
-const markAutoRestoreEntry = (channelKey: string, entryId: string) => {
-  if (!channelKey) {
-    return;
-  }
-  const store = readHistoryAutoRestoreStore();
-  store[channelKey] = {
-    entryId,
-    updatedAt: Date.now(),
-  };
-  writeHistoryAutoRestoreStore(store);
-};
-
-const clearAutoRestoreEntry = (channelKey: string) => {
-  if (!channelKey) {
-    return;
-  }
-  const store = readHistoryAutoRestoreStore();
-  if (store[channelKey]) {
-    delete store[channelKey];
-    writeHistoryAutoRestoreStore(store);
+    console.warn('清理旧版历史自动恢复状态失败', e);
   }
 };
 
@@ -7562,12 +7497,6 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   }
   const signature = buildHistorySignature(mode, content);
   if (!options.force && signature === lastHistorySignature.value) {
-    const existingEntry = historyEntries.value.find(
-      (entry) => buildHistorySignature(entry.mode, entry.content) === signature,
-    );
-    if (existingEntry) {
-      markAutoRestoreEntry(currentChannelKey.value, existingEntry.id);
-    }
     return false;
   }
   const channelKey = currentChannelKey.value;
@@ -7589,9 +7518,6 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
   lastHistorySignature.value = signature;
-  if (!options.force) {
-    markAutoRestoreEntry(channelKey, newEntry.id);
-  }
   return true;
 };
 
@@ -7697,8 +7623,7 @@ const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolea
     // 恢复图片信息
     restoreImagesFromHistory(entry);
     syncInlineMarkersWithText(entry.content);
-    
-    markAutoRestoreEntry(currentChannelKey.value, entry.id);
+
     if (!options?.silent) {
       message.success('已恢复历史输入');
     }
@@ -7735,53 +7660,6 @@ const notifyAutoRestoreSuccess = (channelKey: string) => {
   lastAutoRestoreNoticeChannelKey = channelKey;
   lastAutoRestoreNoticeAt = now;
   message.info('已自动恢复上次输入');
-};
-
-const findHistoryEntryById = (channelKey: string, entryId: string): InputHistoryEntry | null => {
-  const inMemory = historyEntries.value.find((entry) => entry.id === entryId);
-  if (inMemory) {
-    return inMemory;
-  }
-  const store = readHistoryStore();
-  const candidates = normalizeHistoryEntries(store[channelKey] || []);
-  return candidates.find((entry) => entry.id === entryId) || null;
-};
-
-const tryAutoRestoreHistory = () => {
-  const channelKey = currentChannelKey.value;
-  if (
-    !channelKey ||
-    channelKey === HISTORY_CHANNEL_FALLBACK ||
-    pendingHistoryRestoreChannelKey.value !== channelKey
-  ) {
-    return;
-  }
-  if (!chat.curChannel?.id || isEditing.value) {
-    return;
-  }
-  if (hasMeaningfulDraftInInput()) {
-    return;
-  }
-  const autoRestoreEntry = getAutoRestoreEntryForChannel(channelKey);
-  if (!autoRestoreEntry) {
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  const withinWindow = Date.now() - autoRestoreEntry.updatedAt <= HISTORY_AUTO_RESTORE_WINDOW;
-  if (!withinWindow) {
-    clearAutoRestoreEntry(channelKey);
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  const target = findHistoryEntryById(channelKey, autoRestoreEntry.entryId);
-  if (!target) {
-    clearAutoRestoreEntry(channelKey);
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  applyHistoryEntry(target, { silent: true });
-  pendingHistoryRestoreChannelKey.value = null;
-  notifyAutoRestoreSuccess(channelKey);
 };
 
 const persistSessionDraftForChannel = (
@@ -7857,10 +7735,8 @@ const scheduleHistorySnapshot = throttle(
 watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
   });
 });
 
@@ -7878,11 +7754,10 @@ watch(hasHistoryEntries, (has) => {
 });
 
 onMounted(() => {
+  clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
   });
 });
 
@@ -9444,7 +9319,6 @@ const send = throttle(async () => {
     return;
   }
   const sendMode = inputMode.value;
-  const channelKey = currentChannelKey.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
   const activeReeditSource = (() => {
@@ -9644,9 +9518,6 @@ const send = throttle(async () => {
     resetInlineImages();
     pendingInlineSelection = null;
 
-    if (channelKey) {
-      clearAutoRestoreEntry(channelKey);
-    }
     textToSend.value = '';
     syncSessionDraftSnapshot();
     clearInputModeCache();
@@ -9953,8 +9824,8 @@ const emit = defineEmits(['drawer-show'])
 let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
+  clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityResume);
   }
@@ -10533,10 +10404,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
-    scheduleHistoryAutoRestore();
     nextTick(() => {
       tryAutoRestoreSessionDraft();
-      tryAutoRestoreHistory();
     });
     const fetchTask = fetchLatestMessages();
     fetchTask.finally(() => {
@@ -10774,7 +10643,6 @@ const fetchLatestMessages = async () => {
     showButton.value = false;
     await autoFillIfNeeded();
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
     console.info('[channel-load] messages-rendered', {
       channelId: channelIdAtStart,
       fetchEpoch,
