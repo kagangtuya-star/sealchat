@@ -963,6 +963,14 @@ watch(() => chat.curChannel?.id, (id) => {
     chat.ensureChannelPermissionCache(id);
   }
 }, { immediate: true });
+watch(() => chat.curChannel?.id, (id, prevId) => {
+  if (id === prevId) {
+    return;
+  }
+  if (chat.messageInsertTarget.enabled) {
+    chat.clearMessageInsertTarget();
+  }
+});
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
 const compactInlineStackLayout = computed(() => {
@@ -4626,6 +4634,88 @@ const deriveLocalDisplayOrder = (list: Message[], index: number, fallback: numbe
   }
   return fallback;
 };
+
+interface MessageInsertPlacement {
+  anchorMessageId: string;
+  beforeId: string;
+  afterId?: string;
+  localDisplayOrder: number;
+  summary: string;
+}
+
+const activeMessageInsertTarget = computed(() => {
+  const target = chat.messageInsertTarget;
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!target.enabled || !channelId || target.channelId !== channelId || !target.messageId) {
+    return null;
+  }
+  return target;
+});
+
+const messageInsertHintText = computed(() => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return '';
+  }
+  return target.summary || '该消息';
+});
+
+const clearMessageInsertTarget = () => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  chat.clearMessageInsertTarget(channelId);
+};
+
+const resolveMessageInsertPlacement = (): MessageInsertPlacement | null => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return null;
+  }
+  const anchorIndex = rows.value.findIndex((item) => item.id === target.messageId);
+  if (anchorIndex < 0) {
+    return null;
+  }
+  const anchor = rows.value[anchorIndex];
+  if (!anchor?.id) {
+    return null;
+  }
+  const beforeId = anchor.id;
+  const afterId = rows.value[anchorIndex - 1]?.id || '';
+  const beforeOrder = getMessageDisplayOrderValue(anchor);
+  const afterOrder = getMessageDisplayOrderValue(rows.value[anchorIndex - 1]);
+  let localDisplayOrder = beforeOrder ?? Date.now();
+  if (afterOrder !== null && beforeOrder !== null) {
+    localDisplayOrder = (afterOrder + beforeOrder) / 2;
+  } else if (beforeOrder !== null) {
+    localDisplayOrder = beforeOrder - 1;
+  } else if (afterOrder !== null) {
+    localDisplayOrder = afterOrder + 1;
+  }
+  return {
+    anchorMessageId: target.messageId,
+    beforeId,
+    afterId: afterId || undefined,
+    localDisplayOrder,
+    summary: target.summary || '该消息',
+  };
+};
+
+const validateMessageInsertTarget = (options?: { silent?: boolean }) => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return true;
+  }
+  const placement = resolveMessageInsertPlacement();
+  if (placement) {
+    return true;
+  }
+  clearMessageInsertTarget();
+  if (!options?.silent) {
+    message.warning('目标消息已不可用，已恢复普通发送');
+  }
+  return false;
+};
+
+const shouldAutoScrollForSelfMessage = (messageData?: any) => !Boolean(messageData?.insertAboveTargetId);
 
 const localReorderOps = new Set<string>();
 
@@ -9391,11 +9481,17 @@ const send = throttle(async () => {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
+  let insertPlacement = resolveMessageInsertPlacement();
+  if (activeMessageInsertTarget.value && !insertPlacement) {
+    validateMessageInsertTarget();
+    insertPlacement = null;
+  }
+
   const now = Date.now();
   const orderNow = getServerAlignedNowMs();
   const sendOrder = resolveSendDisplayOrder(now, orderNow);
-  const localDisplayOrder = sendOrder.localDisplayOrder;
-  const explicitDisplayOrder = sendOrder.explicitDisplayOrder;
+  const localDisplayOrder = insertPlacement?.localDisplayOrder ?? sendOrder.localDisplayOrder;
+  const explicitDisplayOrder = insertPlacement ? undefined : sendOrder.explicitDisplayOrder;
   const typingDurationMs = sendOrder.typingDurationMs;
   resetDraftOrderContext();
 
@@ -9446,6 +9542,9 @@ const send = throttle(async () => {
   }
   (tmpMsg as any).displayOrder = localDisplayOrder;
   (tmpMsg as any).display_order = localDisplayOrder;
+  if (insertPlacement) {
+    (tmpMsg as any).insertAboveTargetId = insertPlacement.anchorMessageId;
+  }
 
   const whisperTargetsForSend = chat.whisperTargets.slice();
   if (whisperTargetsForSend.length > 0) {
@@ -9483,6 +9582,7 @@ const send = throttle(async () => {
       explicitDisplayOrder,
       whisperTargetIds,
       typingDurationMs,
+      insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9539,7 +9639,7 @@ const send = throttle(async () => {
     }
   }
 
-  if (wasAtBottom) {
+  if (wasAtBottom && !insertPlacement) {
     toBottom();
   }
 }, 500);
@@ -9894,6 +9994,9 @@ chatEvent.on('message-removed', (e?: Event) => {
       }
   }
   rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
+  if (chat.isMessageInsertTarget(removedChannelId, targetId)) {
+    chat.clearMessageInsertTarget(removedChannelId);
+  }
   removePinnedMessage(targetId);
   if (archiveDrawerVisible.value) {
       const index = archivedMessagesRaw.value.findIndex((item) => item.id === targetId);
@@ -9948,7 +10051,9 @@ chatEvent.on('message-created', (e?: Event) => {
       notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      toBottom();
+      if (shouldAutoScrollForSelfMessage(matchedPending)) {
+        toBottom();
+      }
       return;
     }
   } else {
@@ -10024,7 +10129,9 @@ chatEvent.on('message-created', (e?: Event) => {
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
-    toBottom();
+    if (shouldAutoScrollForSelfMessage(incoming)) {
+      toBottom();
+    }
   } else if (!inHistoryMode.value && !historyLocked.value) {
     nextTick(() => {
       scrollToBottom();
@@ -10119,6 +10226,9 @@ chatEvent.on('message-archived', (e?: Event) => {
     const index = rows.value.findIndex(item => item.id === incoming.id);
     if (index >= 0) {
       rows.value.splice(index, 1);
+    }
+    if (chat.isMessageInsertTarget(chat.curChannel?.id, incoming.id)) {
+      clearMessageInsertTarget();
     }
   }
   removePinnedMessage(incoming.id);
@@ -10398,6 +10508,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     clearInputModeCache();
     resetWindowState('live');
     pinnedRows.value = [];
+    chat.clearMessageInsertTarget();
     resetDragState();
     localReorderOps.clear();
     showButton.value = false;
@@ -10636,6 +10747,7 @@ const fetchLatestMessages = async () => {
     });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
+    validateMessageInsertTarget({ silent: true });
     applyCursorUpdate({ before: resp?.next ?? '' });
     computeAfterCursorFromRows();
     await nextTick();
@@ -12309,6 +12421,15 @@ onBeforeUnmount(() => {
           :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
           @pointerdown="handleInputBorderPointerDown"
         >
+          <div v-if="activeMessageInsertTarget" class="message-insert-banner">
+            <div class="message-insert-banner__main">
+              <span class="message-insert-banner__badge">插入到上方</span>
+              <span class="message-insert-banner__text">后续新消息将插到：{{ messageInsertHintText }} 上方</span>
+            </div>
+            <div class="message-insert-banner__actions">
+              <n-button size="small" quaternary @click="clearMessageInsertTarget">取消</n-button>
+            </div>
+          </div>
           <div v-if="whisperTargets.length" class="whisper-pills">
             <span class="whisper-pill-prefix">{{ t('inputBox.whisperPillPrefix') }}</span>
             <n-tag
@@ -16246,6 +16367,48 @@ onBeforeUnmount(() => {
   padding: 4px 8px;
   background: var(--sc-bg-elevated);
   border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.message-insert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--sc-bg-elevated);
+  border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.message-insert-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.message-insert-banner__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sc-primary-color, #2563eb);
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
+  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+  white-space: nowrap;
+}
+
+.message-insert-banner__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sc-text-primary);
+}
+
+.message-insert-banner__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
 .whisper-pill-prefix {
