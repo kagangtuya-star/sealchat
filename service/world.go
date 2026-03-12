@@ -503,6 +503,9 @@ func WorldDelete(worldID, actorID string) error {
 			Updates(map[string]any{"is_archived": true, "archived_at": time.Now(), "archive_reason": "world_deleted"}).Error; err != nil {
 			return err
 		}
+		if err := ArchiveAnnouncementsByScope(tx, model.AnnouncementScopeWorld, worldID); err != nil {
+			return err
+		}
 		return nil
 	})
 }

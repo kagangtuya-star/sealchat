@@ -157,6 +157,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
+	db.AutoMigrate(&AnnouncementModel{}, &AnnouncementUserStateModel{})
 	db.AutoMigrate(&ServiceMetricSample{})
 	db.AutoMigrate(&ChatImportJobModel{})
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})

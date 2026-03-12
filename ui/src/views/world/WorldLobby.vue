@@ -9,6 +9,10 @@ import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
+import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
+import { useAnnouncementStore } from '@/stores/announcement';
+import type { AnnouncementItem } from '@/models/announcement';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -65,6 +69,7 @@ const dialog = useDialog();
 const router = useRouter();
 const { t } = useI18n();
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
+const announcementStore = useAnnouncementStore();
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -77,6 +82,9 @@ const adminShow = ref(false);
 const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
 const inputStatsComponent = shallowRef<Component | null>(null);
+const announcementVisible = ref(false);
+const popupVisible = ref(false);
+const popupItem = ref<AnnouncementItem | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -275,12 +283,30 @@ const showPagination = computed(() => activePagination.value.total > activePagin
 
 const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
 const viewToggleLabel = computed(() => (viewMode.value === 'list' ? '网格视图' : '列表视图'));
+const canManageLobbyAnnouncements = computed(() => !!user.checkPerm('mod_admin'));
 
 const refreshCurrentMode = async () => {
   if (lobbyMode.value === 'mine') {
     await fetchList();
   } else {
     await fetchExploreList();
+  }
+};
+
+const openAnnouncementPanel = () => {
+  announcementVisible.value = true;
+};
+
+const checkLobbyAnnouncementPopup = async () => {
+  if (!user.info.id) return;
+  try {
+    const item = await announcementStore.fetchLobbyPending();
+    if (!item) return;
+    popupItem.value = item;
+    popupVisible.value = true;
+    await announcementStore.markLobbyPopup(item.id);
+  } catch (error) {
+    console.warn('check lobby announcement popup failed', error);
   }
 };
 
@@ -361,6 +387,7 @@ onMounted(async () => {
       mobileGridActionMediaQuery.addListener(syncMobileGridActionMode);
     }
   }
+  await checkLobbyAnnouncementPopup();
   await chat.fetchFavoriteWorlds().catch(() => {});
   await refreshCurrentMode();
 });
@@ -844,6 +871,9 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         </n-dropdown>
       </div>
       <div class="world-lobby-header-buttons">
+        <n-button size="small" quaternary @click="openAnnouncementPanel">
+          公告
+        </n-button>
         <n-button size="small" quaternary @click="toggleViewMode">
           <template #icon>
             <n-icon>
@@ -1102,6 +1132,16 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       />
       <div v-else class="input-stats-loading">输入统计加载中...</div>
     </div>
+    <AnnouncementManagerModal
+      v-model:visible="announcementVisible"
+      scope-type="lobby"
+      title="大厅公告"
+      :can-manage="canManageLobbyAnnouncements"
+    />
+    <AnnouncementPopupModal
+      v-model:visible="popupVisible"
+      :item="popupItem"
+    />
   </div>
 </template>
 

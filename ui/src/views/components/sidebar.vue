@@ -26,6 +26,10 @@ import ChannelSortModal from './ChannelSortModal.vue';
 import ChannelArchiveModal from './ChannelArchiveModal.vue';
 import { usePushNotificationStore } from '@/stores/pushNotification';
 import AdminEditNoticeModal from '@/components/AdminEditNoticeModal.vue';
+import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
+import { useAnnouncementStore } from '@/stores/announcement';
+import type { AnnouncementItem } from '@/models/announcement';
 
 const { t } = useI18n()
 
@@ -37,6 +41,7 @@ const display = useDisplayStore();
 const user = useUserStore();
 const worldGlossary = useWorldGlossaryStore();
 const pushStore = usePushNotificationStore();
+const announcementStore = useAnnouncementStore();
 const props = withDefaults(defineProps<{
   sidebarWidthResizeAvailable?: boolean;
   sidebarWidthResizeMode?: boolean;
@@ -173,6 +178,7 @@ onMounted(() => {
 watch(() => chat.currentWorldId, async (newWorldId) => {
   if (newWorldId) {
     await chat.worldDetail(newWorldId);
+    await checkWorldAnnouncementPopup(newWorldId);
   }
 }, { immediate: true });
 
@@ -459,6 +465,9 @@ const showSortModal = ref(false);
 const showArchiveModal = ref(false);
 const showEditNoticeModal = ref(false);
 const editNoticeOwnerNickname = ref('');
+const showAnnouncementModal = ref(false);
+const showAnnouncementPopup = ref(false);
+const announcementPopupItem = ref<AnnouncementItem | null>(null);
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -480,6 +489,55 @@ const handleOpenWorldGlossary = () => {
   }
   worldGlossary.ensureKeywords(worldId, { force: true });
   worldGlossary.setManagerVisible(true);
+};
+
+const canManageWorldAnnouncements = computed(() => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const role = chat.worldDetailMap[worldId]?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
+
+const handleOpenWorldAnnouncements = () => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) {
+    message.warning('请选择一个世界');
+    return;
+  }
+  showAnnouncementModal.value = true;
+};
+
+const checkWorldAnnouncementPopup = async (worldId: string) => {
+  if (!worldId || !user.info.id || chat.isObserver) {
+    return;
+  }
+  try {
+    const item = await announcementStore.fetchWorldPending(worldId);
+    if (!item) {
+      return;
+    }
+    announcementPopupItem.value = item;
+    showAnnouncementPopup.value = true;
+    await announcementStore.markWorldPopup(worldId, item.id);
+  } catch (error) {
+    console.warn('检查世界公告失败', error);
+  }
+};
+
+const handleAckWorldAnnouncement = async () => {
+  const worldId = chat.currentWorldId;
+  const item = announcementPopupItem.value;
+  if (!worldId || !item?.id) {
+    return;
+  }
+  try {
+    const updated = await announcementStore.ackWorld(worldId, item.id);
+    announcementPopupItem.value = updated;
+    showAnnouncementPopup.value = false;
+    message.success('已确认公告');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '确认公告失败');
+  }
 };
 </script>
 
@@ -511,6 +569,9 @@ const handleOpenWorldGlossary = () => {
           @click="handleOpenWorldGlossary"
         >
           术语管理
+        </n-button>
+        <n-button quaternary size="tiny" @click="handleOpenWorldAnnouncements">
+          公告
         </n-button>
       </div>
     </div>
@@ -828,6 +889,18 @@ const handleOpenWorldGlossary = () => {
     v-model:visible="showEditNoticeModal"
     :world-id="chat.currentWorldId"
     :owner-nickname="editNoticeOwnerNickname"
+  />
+  <AnnouncementManagerModal
+    v-model:visible="showAnnouncementModal"
+    scope-type="world"
+    :scope-id="chat.currentWorldId"
+    title="世界公告"
+    :can-manage="canManageWorldAnnouncements"
+  />
+  <AnnouncementPopupModal
+    v-model:visible="showAnnouncementPopup"
+    :item="announcementPopupItem"
+    @ack="handleAckWorldAnnouncement"
   />
 
 </template>
