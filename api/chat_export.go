@@ -17,6 +17,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 type chatExportRequest struct {
@@ -383,7 +384,7 @@ func ChatExportTest(c *fiber.Ctx) error {
 }
 
 func ChatExportUpload(c *fiber.Ctx) error {
-	if appConfig == nil || !appConfig.LogUpload.Enabled || strings.TrimSpace(appConfig.LogUpload.Endpoint) == "" {
+	if appConfig == nil || !appConfig.LogUpload.Enabled || len(utils.NormalizeLogUploadEndpoints(appConfig.LogUpload.Endpoint, appConfig.LogUpload.Endpoints)) == 0 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "未启用云端日志上传"})
 	}
 	user := getCurUser(c)
@@ -406,6 +407,7 @@ func ChatExportUpload(c *fiber.Ctx) error {
 	opts := service.LogUploadOptions{
 		Name:           req.Name,
 		Endpoint:       appConfig.LogUpload.Endpoint,
+		Endpoints:      appConfig.LogUpload.Endpoints,
 		Token:          appConfig.LogUpload.Token,
 		UniformID:      appConfig.LogUpload.UniformID,
 		Client:         appConfig.LogUpload.Client,

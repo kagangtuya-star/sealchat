@@ -1,6 +1,12 @@
 package utils
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/knadh/koanf/v2"
+)
 
 func TestDefaultImageBaseURLIPv6(t *testing.T) {
 	got := defaultImageBaseURL("[2001:db8::1]:4000")
@@ -36,5 +42,101 @@ func TestNormalizeDomainIPv6(t *testing.T) {
 	}
 	if got != "[2001:db8::1]:3212" {
 		t.Fatalf("unexpected normalized domain: %s", got)
+	}
+}
+
+func TestReadConfigLogUploadEndpointOverride(t *testing.T) {
+	oldK := k
+	oldCurrentConfig := currentConfig
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := []byte("logUpload:\n  endpoint: https://example.com/custom-shader\n")
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	k = koanf.New(".")
+	currentConfig = nil
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chdir(oldCwd)
+		k = oldK
+		currentConfig = oldCurrentConfig
+	})
+
+	cfg := ReadConfig()
+	if cfg.LogUpload.Endpoint != "https://example.com/custom-shader" {
+		t.Fatalf("unexpected log upload endpoint: %s", cfg.LogUpload.Endpoint)
+	}
+	if len(cfg.LogUpload.Endpoints) != 1 || cfg.LogUpload.Endpoints[0] != "https://example.com/custom-shader" {
+		t.Fatalf("unexpected normalized log upload endpoints: %#v", cfg.LogUpload.Endpoints)
+	}
+	if !cfg.LogUpload.Enabled {
+		t.Fatalf("expected log upload to remain enabled by default")
+	}
+	if cfg.LogUpload.TimeoutSeconds != 15 {
+		t.Fatalf("unexpected default log upload timeout: %d", cfg.LogUpload.TimeoutSeconds)
+	}
+}
+
+func TestReadConfigLogUploadEndpointsFallbackOrder(t *testing.T) {
+	oldK := k
+	oldCurrentConfig := currentConfig
+	oldCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := []byte(
+		"logUpload:\n" +
+			"  endpoint: https://primary.example.com/dice/api/log\n" +
+			"  endpoints:\n" +
+			"    - https://backup-a.example.com/dice/api/log\n" +
+			"    - https://primary.example.com/dice/api/log\n" +
+			"    - \"  \"\n" +
+			"    - https://backup-b.example.com/dice/api/log\n",
+	)
+	if err := os.WriteFile(configPath, configContent, 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	k = koanf.New(".")
+	currentConfig = nil
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chdir(oldCwd)
+		k = oldK
+		currentConfig = oldCurrentConfig
+	})
+
+	cfg := ReadConfig()
+	expected := []string{
+		"https://primary.example.com/dice/api/log",
+		"https://backup-a.example.com/dice/api/log",
+		"https://backup-b.example.com/dice/api/log",
+	}
+	if cfg.LogUpload.Endpoint != expected[0] {
+		t.Fatalf("unexpected primary log upload endpoint: %s", cfg.LogUpload.Endpoint)
+	}
+	if len(cfg.LogUpload.Endpoints) != len(expected) {
+		t.Fatalf("unexpected endpoint count: %#v", cfg.LogUpload.Endpoints)
+	}
+	for idx, want := range expected {
+		if cfg.LogUpload.Endpoints[idx] != want {
+			t.Fatalf("unexpected endpoint at %d: got %s want %s", idx, cfg.LogUpload.Endpoints[idx], want)
+		}
 	}
 }

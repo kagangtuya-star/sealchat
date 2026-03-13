@@ -3863,7 +3863,16 @@ const handleUnarchiveMessages = async (messageIds: string[]) => {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const logUploadConfig = computed(() => utils.config?.logUpload);
-const canUseCloudUpload = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false);
+const hasLogUploadEndpoints = (config?: { endpoint?: string; endpoints?: string[]; enabled?: boolean } | null) => {
+  if (!config || config.enabled === false) {
+    return false;
+  }
+  const targets = [config.endpoint, ...(config.endpoints || [])]
+    .map((item) => (item || '').trim())
+    .filter((item, index, list) => !!item && list.indexOf(item) === index);
+  return targets.length > 0;
+};
+const canUseCloudUpload = computed(() => hasLogUploadEndpoints(logUploadConfig.value));
 
 type CloudUploadResult = {
   url?: string;

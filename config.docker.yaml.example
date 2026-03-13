@@ -26,6 +26,18 @@ imageCompress: true                          # 是否压缩图片
 imageCompressQuality: 85                     # 压缩质量 (1-100)
 imageSizeLimit: 8192                         # 上传大小限制 (KB)
 galleryQuotaMB: 100                          # 图库配额 (MB)
+logUpload:
+  enabled: true
+  endpoint: https://dice.weizaima.com/dice/api/log # 主海豹染色器后端地址
+  endpoints:
+    - https://backup1.example.com/dice/api/log # 备份地址，主地址失效后按顺序回退
+    - https://backup2.example.com/dice/api/log
+  token: ""                                # 如后端要求鉴权可填写，留空则不发送
+  timeoutSeconds: 15
+  client: Others
+  uniformId: Sealchat
+  version: 105
+  note: "默认上传到海豹染色器获取BBcode/Docx"
 
 # 验证码配置
 captcha:

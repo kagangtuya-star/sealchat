@@ -20,6 +20,7 @@ import (
 type LogUploadOptions struct {
 	Name           string
 	Endpoint       string
+	Endpoints      []string
 	Token          string
 	UniformID      string
 	Client         string
@@ -47,8 +48,8 @@ func UploadExportLog(job *model.MessageExportJobModel, opts LogUploadOptions) (*
 	if strings.TrimSpace(job.FilePath) == "" {
 		return nil, fmt.Errorf("导出文件缺失")
 	}
-	endpoint := strings.TrimSpace(opts.Endpoint)
-	if endpoint == "" {
+	endpoints := normalizeUploadEndpoints(opts.Endpoint, opts.Endpoints)
+	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("上传接口未配置")
 	}
 	uniformID := normalizeUniformID(opts.UniformID)
@@ -78,44 +79,14 @@ func UploadExportLog(job *model.MessageExportJobModel, opts LogUploadOptions) (*
 		return nil, err
 	}
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	_ = writer.WriteField("name", name)
-	_ = writer.WriteField("uniform_id", uniformID)
-	_ = writer.WriteField("client", clientName)
-	_ = writer.WriteField("version", strconv.Itoa(version))
-	part, err := writer.CreateFormFile("file", "log-zlib-compressed")
-	if err != nil {
-		return nil, err
+	payload := preparedLogUploadPayload{
+		Name:      name,
+		UniformID: uniformID,
+		Client:    clientName,
+		Version:   version,
+		Data:      compressed,
 	}
-	if _, err := part.Write(compressed); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, endpoint, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if token := strings.TrimSpace(opts.Token); token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	}
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("云端上传失败：HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	url, err := extractUploadURL(respBody)
+	url, usedEndpoint, err := uploadCompressedExportLog(endpoints, payload, strings.TrimSpace(opts.Token), timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +97,7 @@ func UploadExportLog(job *model.MessageExportJobModel, opts LogUploadOptions) (*
 		"uniform_id": uniformID,
 		"client":     clientName,
 		"version":    version,
+		"endpoint":   usedEndpoint,
 	}
 	metaBytes, _ := json.Marshal(meta)
 	updates := map[string]any{
@@ -149,6 +121,87 @@ func UploadExportLog(job *model.MessageExportJobModel, opts LogUploadOptions) (*
 		FileName:   job.FileName,
 		UploadedAt: now,
 	}, nil
+}
+
+type preparedLogUploadPayload struct {
+	Name      string
+	UniformID string
+	Client    string
+	Version   int
+	Data      []byte
+}
+
+func normalizeUploadEndpoints(primary string, backups []string) []string {
+	normalized := make([]string, 0, 1+len(backups))
+	seen := make(map[string]struct{}, 1+len(backups))
+	for _, raw := range append([]string{primary}, backups...) {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
+func uploadCompressedExportLog(endpoints []string, payload preparedLogUploadPayload, token string, timeout time.Duration) (string, string, error) {
+	client := &http.Client{Timeout: timeout}
+	return uploadCompressedExportLogWithClient(client, endpoints, payload, token)
+}
+
+func uploadCompressedExportLogWithClient(client *http.Client, endpoints []string, payload preparedLogUploadPayload, token string) (string, string, error) {
+	failures := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		url, err := uploadCompressedExportLogOnce(client, endpoint, payload, token)
+		if err == nil {
+			return url, endpoint, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", endpoint, err))
+	}
+	return "", "", fmt.Errorf("所有云端上传地址均失败：%s", strings.Join(failures, "; "))
+}
+
+func uploadCompressedExportLogOnce(client *http.Client, endpoint string, payload preparedLogUploadPayload, token string) (string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("name", payload.Name)
+	_ = writer.WriteField("uniform_id", payload.UniformID)
+	_ = writer.WriteField("client", payload.Client)
+	_ = writer.WriteField("version", strconv.Itoa(payload.Version))
+	part, err := writer.CreateFormFile("file", "log-zlib-compressed")
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(payload.Data); err != nil {
+		return "", err
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, endpoint, body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return extractUploadURL(respBody)
 }
 
 func compressJSONFile(path string) ([]byte, error) {

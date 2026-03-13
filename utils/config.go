@@ -17,14 +17,15 @@ import (
 )
 
 type LogUploadConfig struct {
-	Enabled        bool   `json:"enabled" yaml:"enabled"`
-	Endpoint       string `json:"endpoint" yaml:"endpoint"`
-	Token          string `json:"token,omitempty" yaml:"token"`
-	TimeoutSeconds int    `json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	Client         string `json:"client" yaml:"client"`
-	UniformID      string `json:"uniformId" yaml:"uniformId"`
-	Version        int    `json:"version" yaml:"version"`
-	Note           string `json:"note" yaml:"note"`
+	Enabled        bool     `json:"enabled" yaml:"enabled"`
+	Endpoint       string   `json:"endpoint" yaml:"endpoint"`
+	Endpoints      []string `json:"endpoints,omitempty" yaml:"endpoints"`
+	Token          string   `json:"token,omitempty" yaml:"token"`
+	TimeoutSeconds int      `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	Client         string   `json:"client" yaml:"client"`
+	UniformID      string   `json:"uniformId" yaml:"uniformId"`
+	Version        int      `json:"version" yaml:"version"`
+	Note           string   `json:"note" yaml:"note"`
 }
 
 type AudioConfig struct {
@@ -55,6 +56,12 @@ const (
 	defaultExportHTMLPageSize       = 100
 	defaultExportHTMLPageSizeMax    = 500
 	defaultExportHTMLMaxConcurrency = 2
+	defaultLogUploadEndpoint        = "https://dice.weizaima.com/dice/api/log"
+	defaultLogUploadTimeoutSeconds  = 15
+	defaultLogUploadClient          = "Others"
+	defaultLogUploadUniformID       = "Sealchat"
+	defaultLogUploadVersion         = 105
+	defaultLogUploadNote            = "默认上传到海豹染色器获取 BBcode/Docx"
 	defaultBackupPath               = "./backups"
 	defaultBackupIntervalHours      = 12
 	defaultBackupRetentionCount     = 5
@@ -296,12 +303,12 @@ func ReadConfig() *AppConfig {
 		GalleryQuotaMB:            100,
 		LogUpload: LogUploadConfig{
 			Enabled:        true,
-			Endpoint:       "https://dice.weizaima.com/dice/api/log",
-			TimeoutSeconds: 15,
-			Client:         "Others",
-			UniformID:      "Sealchat",
-			Version:        105,
-			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
+			Endpoint:       defaultLogUploadEndpoint,
+			TimeoutSeconds: defaultLogUploadTimeoutSeconds,
+			Client:         defaultLogUploadClient,
+			UniformID:      defaultLogUploadUniformID,
+			Version:        defaultLogUploadVersion,
+			Note:           defaultLogUploadNote,
 		},
 		Audio: AudioConfig{
 			StorageDir:               "./static/audio",
@@ -467,6 +474,7 @@ func ReadConfig() *AppConfig {
 	applyImageBaseURLFallback(&config)
 	applySQLiteDefaults(&config.SQLite)
 	applyExportDefaults(&config.Export)
+	applyLogUploadDefaults(&config.LogUpload)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
 	applyEmailAuthDefaults(&config.EmailAuth)
@@ -530,6 +538,50 @@ func applyExportDefaults(cfg *ExportConfig) {
 		cfg.DownloadBurstKB = 0
 	}
 	cfg.DiceCommandPrefixes = normalizeExportDiceCommandPrefixes(cfg.DiceCommandPrefixes)
+}
+
+func applyLogUploadDefaults(cfg *LogUploadConfig) {
+	if cfg == nil {
+		return
+	}
+	targets := NormalizeLogUploadEndpoints(cfg.Endpoint, cfg.Endpoints)
+	if len(targets) == 0 {
+		targets = []string{defaultLogUploadEndpoint}
+	}
+	cfg.Endpoint = targets[0]
+	cfg.Endpoints = targets
+	if cfg.TimeoutSeconds <= 0 {
+		cfg.TimeoutSeconds = defaultLogUploadTimeoutSeconds
+	}
+	if strings.TrimSpace(cfg.Client) == "" {
+		cfg.Client = defaultLogUploadClient
+	}
+	if strings.TrimSpace(cfg.UniformID) == "" {
+		cfg.UniformID = defaultLogUploadUniformID
+	}
+	if cfg.Version <= 0 {
+		cfg.Version = defaultLogUploadVersion
+	}
+	if strings.TrimSpace(cfg.Note) == "" {
+		cfg.Note = defaultLogUploadNote
+	}
+}
+
+func NormalizeLogUploadEndpoints(primary string, backups []string) []string {
+	normalized := make([]string, 0, 1+len(backups))
+	seen := make(map[string]struct{}, 1+len(backups))
+	for _, raw := range append([]string{primary}, backups...) {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
 }
 
 func normalizeExportDiceCommandPrefixes(prefixes []string) []string {
@@ -754,6 +806,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("imageBaseUrl", config.ImageBaseURL)
 		_ = k.Set("logUpload.enabled", config.LogUpload.Enabled)
 		_ = k.Set("logUpload.endpoint", config.LogUpload.Endpoint)
+		_ = k.Set("logUpload.endpoints", config.LogUpload.Endpoints)
 		_ = k.Set("logUpload.token", config.LogUpload.Token)
 		_ = k.Set("logUpload.timeoutSeconds", config.LogUpload.TimeoutSeconds)
 		_ = k.Set("logUpload.client", config.LogUpload.Client)
