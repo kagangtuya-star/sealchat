@@ -4,6 +4,7 @@
       <div
         v-if="visible"
         class="dice-roll-popover-overlay"
+        data-sc-font-surface="true"
         @click.self="handleCancel"
       >
         <div

@@ -122,6 +122,13 @@ interface ChatState {
 
   whisperTargets: User[],
 
+  messageInsertTarget: {
+    enabled: boolean,
+    channelId: string,
+    messageId: string,
+    summary: string,
+  },
+
   messageMenu: {
     show: boolean
     optionsComponent: MenuOptions
@@ -812,6 +819,13 @@ export const useChatStore = defineStore({
 
     whisperTargets: [],
 
+    messageInsertTarget: {
+      enabled: false,
+      channelId: '',
+      messageId: '',
+      summary: '',
+    },
+
     messageMenu: {
       show: false,
       optionsComponent: {
@@ -1368,6 +1382,41 @@ export const useChatStore = defineStore({
 
     async setReplayTo(item: any) {
       this.curReplyTo = item;
+    },
+
+    setMessageInsertTarget(payload: { channelId: string; messageId: string; summary?: string }) {
+      const channelId = String(payload?.channelId || '').trim();
+      const messageId = String(payload?.messageId || '').trim();
+      if (!channelId || !messageId) {
+        return;
+      }
+      this.messageInsertTarget = {
+        enabled: true,
+        channelId,
+        messageId,
+        summary: String(payload?.summary || '').trim(),
+      };
+    },
+
+    clearMessageInsertTarget(channelId?: string) {
+      const targetChannelId = String(channelId || '').trim();
+      if (targetChannelId && this.messageInsertTarget.channelId && this.messageInsertTarget.channelId !== targetChannelId) {
+        return;
+      }
+      this.messageInsertTarget = {
+        enabled: false,
+        channelId: '',
+        messageId: '',
+        summary: '',
+      };
+    },
+
+    isMessageInsertTarget(channelId?: string, messageId?: string) {
+      if (!this.messageInsertTarget.enabled) {
+        return false;
+      }
+      return this.messageInsertTarget.channelId === String(channelId || '').trim()
+        && this.messageInsertTarget.messageId === String(messageId || '').trim();
     },
 
     async sendAPI<T = any>(api: string, data: APIMessage, options?: { timeoutMs?: number }): Promise<T> {
@@ -3589,6 +3638,7 @@ export const useChatStore = defineStore({
       displayOrder?: number,
       whisperTargetIds?: string[],
       typingDurationMs?: number,
+      position?: { beforeId?: string; afterId?: string },
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -3619,6 +3669,12 @@ export const useChatStore = defineStore({
       }
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
+      }
+      if (position?.beforeId) {
+        payload.before_id = position.beforeId;
+      }
+      if (position?.afterId) {
+        payload.after_id = position.afterId;
       }
       if (typeof typingDurationMs === 'number' && Number.isFinite(typingDurationMs) && typingDurationMs > 0) {
         payload.typing_duration_ms = Math.floor(typingDurationMs);
@@ -4172,7 +4228,7 @@ export const useChatStore = defineStore({
         const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;
         if (audioPayload) {
           const audioStudio = useAudioStudioStore();
-          await audioStudio.applyRemotePlayback(audioPayload);
+          await audioStudio.handleRemotePlaybackEvent(audioPayload);
         }
       }
       chatEvent.emit(e.type as any, e);
@@ -4875,7 +4931,6 @@ export const useChatStore = defineStore({
       };
 
       copyHistoryEntry('sealchat_input_history_v1');
-      copyHistoryEntry('sealchat_input_history_autorestore_v1');
 
       if (userId) {
         tryCopy(`sealchat_sticky_notes:${userId}:${sourceChannelId}`, `sealchat_sticky_notes:${userId}:${targetChannelId}`);

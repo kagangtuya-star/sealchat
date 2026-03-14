@@ -4,6 +4,7 @@
       v-if="note && !userState?.minimized"
       ref="noteEl"
       class="sticky-note"
+      data-sc-font-surface="true"
       :class="[
         `sticky-note--${note.color || 'yellow'}`,
         { 'sticky-note--editing': isEditing, 'sticky-note--highlight': isHighlighted }

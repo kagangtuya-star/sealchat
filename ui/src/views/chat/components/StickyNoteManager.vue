@@ -81,7 +81,7 @@
                   <Transition name="fade">
                     <div v-if="showTypeSelector" class="sticky-note-type-popup">
                       <div class="sticky-note-type-popup__backdrop" @click="closeTypeSelector"></div>
-                      <div ref="typePopupRef" class="sticky-note-type-popup__content" :style="typePopupStyle">
+                      <div ref="typePopupRef" class="sticky-note-type-popup__content" data-sc-font-surface="true" :style="typePopupStyle">
                         <StickyNoteTypeSelector @select="handleTypeSelect" />
                       </div>
                     </div>

@@ -333,6 +333,58 @@ func TestBuildExportPayloadFiltersImagesWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildExportPayloadAppliesStoredImageLayoutToHTML(t *testing.T) {
+	initTestDB(t)
+	now := time.Unix(1700001500, 0)
+	channelID := "channel-image-layout-export"
+	if err := model.ChannelAttachmentImageLayoutUpsertBatch(channelID, "tester", []model.ChannelAttachmentImageLayoutUpsertItem{
+		{
+			AttachmentID: "layout-att-1",
+			Width:        320,
+			Height:       180,
+		},
+	}); err != nil {
+		t.Fatalf("upsert image layout failed: %v", err)
+	}
+
+	job := &model.MessageExportJobModel{
+		ChannelID:       channelID,
+		IncludeOOC:      true,
+		IncludeArchived: true,
+		MergeMessages:   false,
+	}
+	messages := []*model.MessageModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "img-layout", CreatedAt: now, UpdatedAt: now},
+			UserID:            "user-a",
+			Content:           `<img src="id:layout-att-1" alt="图" />`,
+			ICMode:            "ic",
+		},
+	}
+
+	payload := buildExportPayload(job, "图片尺寸频道", messages, nil, &exportExtraOptions{
+		IncludeImages:      true,
+		IncludeDiceCommand: true,
+	})
+
+	if payload == nil || len(payload.Messages) != 1 {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	html := payload.Messages[0].ContentHTML
+	expects := []string{
+		`data-attachment-id="layout-att-1"`,
+		`width:320px;`,
+		`height:180px;`,
+		`max-width:none;`,
+		`max-height:none;`,
+	}
+	for _, expected := range expects {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected content html contains %q, got %q", expected, html)
+		}
+	}
+}
+
 func TestBuildExportPayloadFiltersSingleLineDiceCommandWhenDisabled(t *testing.T) {
 	initTestDB(t)
 	now := time.Unix(1700002000, 0)

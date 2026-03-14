@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"sealchat/utils"
 )
 
 type localBackend struct {
@@ -67,7 +69,7 @@ func (l *localBackend) upload(input UploadInput) (*UploadResult, error) {
 			Size:      size,
 		}, nil
 	}
-	if err := os.Rename(input.LocalPath, target); err != nil {
+	if err := utils.MoveFile(input.LocalPath, target); err != nil {
 		return nil, err
 	}
 	info, err := os.Stat(target)

@@ -4,7 +4,7 @@ import { useUserStore } from '@/stores/user';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
+import { computed, ref, shallowRef, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
@@ -36,6 +36,9 @@ const emit = defineEmits<{
 const notifShow = ref(false)
 const userProfileShow = ref(false)
 const adminShow = ref(false)
+const inputStatsShow = ref(false)
+const inputStatsLoading = ref(false)
+const inputStatsComponent = shallowRef<Component | null>(null)
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
@@ -130,7 +133,10 @@ const options = computed(() => [
   {
     label: t('headerMenu.profile'),
     key: 'profile',
-    // icon: renderIcon(UserIcon)
+  },
+  {
+    label: t('headerMenu.inputStats'),
+    key: 'inputStats',
   },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
@@ -172,6 +178,35 @@ const options = computed(() => [
   }
 ].filter(i => i != null))
 
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return
+  }
+  inputStatsLoading.value = true
+  try {
+    inputStatsComponent.value = (await import('./InputStats.vue')).default
+  } catch (err) {
+    console.error('load input stats component failed', err)
+    inputStatsShow.value = false
+  } finally {
+    inputStatsLoading.value = false
+  }
+}
+
+const toggleInputStats = async () => {
+  notifShow.value = false
+  adminShow.value = false
+  userProfileShow.value = false
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false
+    return
+  }
+
+  inputStatsShow.value = true
+  await ensureInputStatsLoaded()
+}
+
 
 const handleSelect = async (key: string | number) => {
   switch (key) {
@@ -184,12 +219,18 @@ const handleSelect = async (key: string | number) => {
     case 'profile':
       notifShow.value = false;
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+
+    case 'inputStats':
+      await toggleInputStats();
       break;
 
     case 'admin':
       notifShow.value = false;
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
 
@@ -558,6 +599,7 @@ const emitOverlayState = (source: string, visible: boolean, prevVisible?: boolea
 watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', visible, prevVisible));
 watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
 watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
+watch(inputStatsShow, (visible, prevVisible) => emitOverlayState('input-stats', visible, prevVisible));
 watch(notifShow, async (visible) => {
   if (!visible || !isAdmin.value) {
     return;
@@ -833,6 +875,19 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   >
     <AdminSettings @close="adminShow = false" />
   </div>
+  <div
+    v-if="inputStatsShow"
+    style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
+    class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
+  >
+    <component
+      :is="inputStatsComponent"
+      v-if="inputStatsComponent"
+      :current-world-id="chat.currentWorldId"
+      @close="inputStatsShow = false"
+    />
+    <div v-else class="input-stats-loading">输入统计加载中...</div>
+  </div>
   <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
 </template>
@@ -851,6 +906,18 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-actions--observer {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background-color: var(--sc-bg-elevated, var(--n-color));
 }
 
 .sc-ob-filters {

@@ -1,6 +1,75 @@
 (function () {
   const app = document.getElementById('app')
 
+  function resolvePalette(value) {
+    return value === 'day' ? 'day' : 'night'
+  }
+
+  function resolveScheme(value) {
+    return value === 'dossier' ? 'dossier' : 'tabletop'
+  }
+
+  function applyDisplayState(displayOptions) {
+    document.body.dataset.scheme = resolveScheme(displayOptions.scheme)
+    document.body.dataset.palette = resolvePalette(displayOptions.palette)
+    document.body.dataset.layout = displayOptions.layout === 'bubble' ? 'bubble' : 'compact'
+    document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
+    document.body.dataset.hideTimestamp = displayOptions.showTimestamp ? 'false' : 'true'
+    document.body.dataset.hideIc = displayOptions.showIC === false ? 'true' : 'false'
+    document.body.dataset.hideOoc = displayOptions.showOOC === false ? 'true' : 'false'
+    if (!document.body.dataset.searchOpen) {
+      document.body.dataset.searchOpen = 'false'
+    }
+  }
+
+  function refreshDisplayButtons() {
+    document.querySelectorAll('.viewer-display button').forEach((btn) => {
+      const action = btn.getAttribute('data-action')
+      let active = false
+      switch (action) {
+        case 'scheme-tabletop':
+          active = document.body.dataset.scheme === 'tabletop'
+          break
+        case 'scheme-dossier':
+          active = document.body.dataset.scheme === 'dossier'
+          break
+        case 'palette-day':
+          active = document.body.dataset.palette === 'day'
+          break
+        case 'palette-night':
+          active = document.body.dataset.palette === 'night'
+          break
+        case 'layout-bubble':
+          active = document.body.dataset.layout === 'bubble'
+          break
+        case 'layout-compact':
+          active = document.body.dataset.layout === 'compact'
+          break
+        case 'toggle-avatar':
+          active = document.body.dataset.hideAvatar !== 'true'
+          btn.textContent = '头像 ' + (active ? '开' : '关')
+          break
+        case 'toggle-timestamp':
+          active = document.body.dataset.hideTimestamp !== 'true'
+          btn.textContent = '时间 ' + (active ? '开' : '关')
+          break
+        case 'toggle-ic':
+          active = document.body.dataset.hideIc !== 'true'
+          btn.textContent = 'IC ' + (active ? '开' : '关')
+          break
+        case 'toggle-ooc':
+          active = document.body.dataset.hideOoc !== 'true'
+          btn.textContent = 'OOC ' + (active ? '开' : '关')
+          break
+        case 'toggle-search':
+          active = document.body.dataset.searchOpen === 'true'
+          btn.textContent = '搜索 ' + (active ? '开' : '关')
+          break
+      }
+      btn.dataset.active = active ? 'true' : 'false'
+    })
+  }
+
   function formatTime(value) {
     if (!value) return '--'
     try {
@@ -41,7 +110,15 @@
   }
 
   function renderIndex(manifest) {
-    document.body.dataset.palette = manifest.display_options?.palette || 'night'
+    applyDisplayState({
+      scheme: manifest.display_options?.scheme || 'tabletop',
+      palette: manifest.display_options?.palette || 'night',
+      layout: manifest.display_options?.layout || 'compact',
+      showAvatar: manifest.display_options?.showAvatar !== false,
+      showTimestamp: true,
+      showIC: true,
+      showOOC: true,
+    })
     const shell = document.createElement('div')
     shell.className = 'viewer-shell'
 
@@ -82,13 +159,15 @@
 
   function renderPart(payload) {
     const displayOptions = {
-      layout: payload.display_options?.layout || 'bubble',
+      scheme: payload.display_options?.scheme || 'tabletop',
+      layout: payload.display_options?.layout || 'compact',
       palette: payload.display_options?.palette || 'night',
       showAvatar: payload.display_options?.showAvatar !== false,
+      showTimestamp: payload.without_timestamp !== true,
+      showIC: true,
+      showOOC: true,
     }
-    document.body.dataset.palette = displayOptions.palette
-    document.body.dataset.layout = displayOptions.layout
-    document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
+    applyDisplayState(displayOptions)
 
     const shell = document.createElement('div')
     shell.className = 'viewer-shell'
@@ -114,20 +193,31 @@
     shell.appendChild(header)
 
     const controls = document.createElement('div')
-    controls.className = 'viewer-controls'
+    controls.className = 'viewer-controls viewer-search-panel'
     controls.innerHTML = `
-      <input id="viewer-search-input" placeholder="关键词 / 正则表达式" />
-      <label><input type="checkbox" id="viewer-case" />区分大小写</label>
-      <label><input type="checkbox" id="viewer-regex" />正则</label>
-      <button type="button" id="viewer-prev">上一条</button>
-      <button type="button" id="viewer-next">下一条</button>
-      <span class="viewer-chip" id="viewer-counter">0 / 0</span>
+      <div class="viewer-search-panel__header">
+        <strong>消息搜索</strong>
+        <button type="button" id="viewer-search-close">收起</button>
+      </div>
+      <div class="viewer-search-panel__body">
+        <input id="viewer-search-input" type="text" placeholder="关键词 / 正则表达式" />
+        <label><input type="checkbox" id="viewer-case" />区分大小写</label>
+        <label><input type="checkbox" id="viewer-regex" />正则</label>
+      </div>
+      <div class="viewer-search-panel__nav">
+        <button type="button" id="viewer-prev">上一条</button>
+        <button type="button" id="viewer-next">下一条</button>
+        <span class="viewer-chip" id="viewer-counter">0 / 0</span>
+      </div>
     `
-    shell.appendChild(controls)
 
     const display = document.createElement('div')
     display.className = 'viewer-display'
     display.innerHTML = `
+      <div>
+        <button type="button" data-action="scheme-tabletop">桌游风</button>
+        <button type="button" data-action="scheme-dossier">档案风</button>
+      </div>
       <div>
         <button type="button" data-action="layout-bubble">气泡</button>
         <button type="button" data-action="layout-compact">紧凑</button>
@@ -139,8 +229,19 @@
       <div>
         <button type="button" data-action="toggle-avatar">头像 ${displayOptions.showAvatar ? '开' : '关'}</button>
       </div>
+      <div>
+        <button type="button" data-action="toggle-timestamp">时间 ${displayOptions.showTimestamp ? '开' : '关'}</button>
+      </div>
+      <div>
+        <button type="button" data-action="toggle-search">搜索 关</button>
+      </div>
+      <div>
+        <button type="button" data-action="toggle-ic">IC 开</button>
+        <button type="button" data-action="toggle-ooc">OOC 开</button>
+      </div>
     `
     shell.appendChild(display)
+    shell.appendChild(controls)
 
     const list = document.createElement('div')
     list.className = 'viewer-message-list'
@@ -172,19 +273,23 @@
     }
 
     app.appendChild(shell)
-    attachSearch(payload)
-    attachDisplayControls(payload, displayOptions)
+    attachSearch()
+    attachDisplayControls(displayOptions)
   }
 
-  function attachDisplayControls(payload, displayOptions) {
-    document.body.dataset.layout = displayOptions.layout
-    document.body.dataset.palette = displayOptions.palette
-    document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
-
+  function attachDisplayControls(displayOptions) {
+    applyDisplayState(displayOptions)
+    refreshDisplayButtons()
     document.querySelectorAll('.viewer-display button').forEach((btn) => {
       btn.addEventListener('click', () => {
         const action = btn.getAttribute('data-action')
         switch (action) {
+          case 'scheme-tabletop':
+            document.body.dataset.scheme = 'tabletop'
+            break
+          case 'scheme-dossier':
+            document.body.dataset.scheme = 'dossier'
+            break
           case 'layout-bubble':
             document.body.dataset.layout = 'bubble'
             break
@@ -203,13 +308,38 @@
             btn.textContent =
               '头像 ' + (document.body.dataset.hideAvatar === 'true' ? '关' : '开')
             break
+          case 'toggle-timestamp':
+            document.body.dataset.hideTimestamp =
+              document.body.dataset.hideTimestamp === 'true' ? 'false' : 'true'
+            break
+          case 'toggle-ic':
+            document.body.dataset.hideIc =
+              document.body.dataset.hideIc === 'true' ? 'false' : 'true'
+            break
+          case 'toggle-ooc':
+            document.body.dataset.hideOoc =
+              document.body.dataset.hideOoc === 'true' ? 'false' : 'true'
+            break
+          case 'toggle-search':
+            document.body.dataset.searchOpen =
+              document.body.dataset.searchOpen === 'true' ? 'false' : 'true'
+            if (document.body.dataset.searchOpen === 'true') {
+              const searchInput = document.getElementById('viewer-search-input')
+              if (searchInput && typeof searchInput.focus === 'function') {
+                searchInput.focus()
+              }
+            }
+            break
         }
+        refreshDisplayButtons()
       })
     })
   }
 
-  function attachSearch(payload) {
+  function attachSearch() {
+    const panel = document.querySelector('.viewer-search-panel')
     const input = document.getElementById('viewer-search-input')
+    const closeBtn = document.getElementById('viewer-search-close')
     const counter = document.getElementById('viewer-counter')
     const prevBtn = document.getElementById('viewer-prev')
     const nextBtn = document.getElementById('viewer-next')
@@ -231,10 +361,12 @@
         counter.textContent = '0 / 0'
         return
       }
+      document.body.dataset.searchOpen = 'true'
+      refreshDisplayButtons()
       let matcher
       try {
         if (useRegex) {
-          const reg = new RegExp(raw, caseSensitive ? 'g' : 'gi')
+          const reg = new RegExp(raw, caseSensitive ? '' : 'i')
           matcher = (text) => reg.test(text)
         } else {
           const needle = caseSensitive ? raw : raw.toLowerCase()
@@ -280,6 +412,26 @@
     regexBox.addEventListener('change', updateHits)
     prevBtn.addEventListener('click', () => jump(-1))
     nextBtn.addEventListener('click', () => jump(1))
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        document.body.dataset.searchOpen = 'false'
+        refreshDisplayButtons()
+      })
+    }
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        jump(event.shiftKey ? -1 : 1)
+        return
+      }
+      if (event.key === 'Escape' && !input.value.trim()) {
+        document.body.dataset.searchOpen = 'false'
+        refreshDisplayButtons()
+      }
+    })
+    if (panel && input.value.trim()) {
+      document.body.dataset.searchOpen = 'true'
+    }
 
     updateHits()
   }
@@ -292,12 +444,13 @@
     article.dataset.icMode = (msg.ic_mode || 'ic').toLowerCase()
     // 使用 content_html 进行渲染，fallback 到 content
     const displayContent = msg.content_html || msg.content || ''
-    article.dataset.searchText = (stripHTML(displayContent) + ' ' + name).toLowerCase()
+    article.dataset.searchText = stripHTML(displayContent) + ' ' + name
 
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
-    avatar.style.background = msg.sender_color || 'rgba(148, 163, 184, 0.35)'
-    if (msg.sender_avatar && msg.sender_avatar.startsWith('data:')) {
+    const hasAvatarImage = Boolean(msg.sender_avatar && msg.sender_avatar.startsWith('data:'))
+    avatar.style.background = hasAvatarImage ? 'transparent' : (msg.sender_color || 'rgba(148, 163, 184, 0.35)')
+    if (hasAvatarImage) {
       const img = document.createElement('img')
       img.src = msg.sender_avatar
       img.alt = name
@@ -315,15 +468,19 @@
     header.innerHTML = `
       <div class="viewer-message__title">
         <strong>${name}</strong>
-        <span class="viewer-message__tag">${(msg.ic_mode || 'ic').toUpperCase()}</span>
       </div>
-      <span>${formatTime(msg.created_at)}</span>
+      <span class="viewer-message__time">${formatTime(msg.created_at)}</span>
     `
     main.appendChild(header)
 
     const body = document.createElement('div')
     body.className = 'viewer-message__body'
     body.innerHTML = displayContent
+    const hasImage = body.querySelector('img') !== null
+    const bodyText = stripHTML(displayContent).replace(/\s+/g, '').trim()
+    if (hasImage && !bodyText) {
+      article.classList.add('viewer-message--image-only')
+    }
     main.appendChild(body)
 
     article.appendChild(main)

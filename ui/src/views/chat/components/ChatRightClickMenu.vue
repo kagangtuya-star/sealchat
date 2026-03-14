@@ -10,6 +10,8 @@ import { useUserStore } from '@/stores/user';
 import { useGalleryStore } from '@/stores/gallery';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { contentUnescape } from '@/utils/tools';
 import { useDisplayStore } from '@/stores/display';
 import { generateMessageLink } from '@/utils/messageLink';
 import { copyTextWithFallback } from '@/utils/clipboard';
@@ -237,6 +239,27 @@ const canArchiveByRule = computed(() => {
 
 const showArchiveAction = computed(() => !isArchivedMessage.value && canArchiveByRule.value);
 const showUnarchiveAction = computed(() => isArchivedMessage.value && canArchiveByRule.value);
+const insertTargetMessageId = computed(() => String(menuMessage.value.raw?.id || '').trim());
+const isCurrentInsertTarget = computed(() => chat.isMessageInsertTarget(channelId.value, insertTargetMessageId.value));
+const hasActiveInsertTarget = computed(() => (
+  chat.messageInsertTarget.enabled
+  && chat.messageInsertTarget.channelId === channelId.value
+  && !!chat.messageInsertTarget.messageId
+));
+const insertTargetMenuLabel = computed(() => {
+  if (isCurrentInsertTarget.value) {
+    return '取消插入';
+  }
+  if (hasActiveInsertTarget.value) {
+    return '改为插到其上';
+  }
+  return '新消息插到其上';
+});
+const canSetMessageInsertTarget = computed(() => (
+  !!channelId.value
+  && !!insertTargetMessageId.value
+  && !isArchivedMessage.value
+));
 const isPinnedMessage = computed(() => {
   const raw: any = menuMessage.value.raw;
   if (!raw) {
@@ -561,12 +584,7 @@ const clickCopy = async () => {
       copyText = '';
     }
   } else {
-    const items = Element.parse(content);
-    for (const item of items) {
-      if (item.type === 'text') {
-        copyText += item.toString();
-      }
-    }
+    copyText = restoreQuickFormatTextFromHtml(contentUnescape(content)).trim();
   }
 
   const copied = await copyTextWithFallback(copyText);
@@ -673,6 +691,47 @@ const clickCopyMessageLink = async () => {
   chat.messageMenu.show = false;
 };
 
+const summarizeMessageForInsertTarget = (raw?: any) => {
+  const content = String(raw?.content || '').trim();
+  if (!content) {
+    return '该消息';
+  }
+  let plain = '';
+  if (detectContentMode(content) === 'rich') {
+    try {
+      plain = tiptapJsonToPlainText(JSON.parse(content));
+    } catch {
+      plain = '';
+    }
+  }
+  if (!plain) {
+    plain = restoreQuickFormatTextFromHtml(contentUnescape(content));
+  }
+  const normalized = plain.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '该消息';
+  }
+  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized;
+};
+
+const clickToggleMessageInsertTarget = () => {
+  if (!canSetMessageInsertTarget.value) {
+    return;
+  }
+  if (isCurrentInsertTarget.value) {
+    chat.clearMessageInsertTarget(channelId.value);
+    message.success('已取消插到这条上方');
+  } else {
+    chat.setMessageInsertTarget({
+      channelId: channelId.value,
+      messageId: insertTargetMessageId.value,
+      summary: summarizeMessageForInsertTarget(menuMessage.value.raw),
+    });
+    message.success('后续新消息将插到这条上方');
+  }
+  chat.messageMenu.show = false;
+};
+
 </script>
 
 <template>
@@ -690,6 +749,7 @@ const clickCopyMessageLink = async () => {
     <context-menu-item label="复制消息链接" @click="clickCopyMessageLink" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
+    <context-menu-item v-if="canSetMessageInsertTarget" :label="insertTargetMenuLabel" @click="clickToggleMessageInsertTarget" />
     <context-menu-item v-if="canPinByRule" label="置顶消息" @click="clickPin" />
     <context-menu-item v-if="canUnpinByRule" label="取消置顶" @click="clickUnpin" />
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />

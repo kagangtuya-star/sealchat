@@ -35,6 +35,7 @@ import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
+import { useAudioStudioStore } from '@/stores/audioStudio';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
@@ -62,12 +63,12 @@ import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
-import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
+import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
-import { renderQuickFormatHtmlFromEscaped } from '@/utils/plainQuickFormat';
+import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -139,19 +140,27 @@ const scheduleCharacterSheetRefresh = () => {
   }, ST_REFRESH_DELAY);
 };
 
-const openSplitView = () => {
+const audioStudio = useAudioStudioStore();
+
+const openSplitView = async () => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
-  router.push({
-    name: 'split',
-    query: {
-      layout: 'left-column',
-      worldId,
-      a: currentChannelId,
-      b: '',
-      notify: '',
-    },
-  });
+  audioStudio.setPlaybackAuthority(false);
+  try {
+    await router.push({
+      name: 'split',
+      query: {
+        layout: 'left-column',
+        worldId,
+        a: currentChannelId,
+        b: '',
+        notify: '',
+      },
+    });
+  } catch (error) {
+    audioStudio.setPlaybackAuthority(true);
+    throw error;
+  }
 };
 
 const toggleStickyNotes = () => {
@@ -963,6 +972,14 @@ watch(() => chat.curChannel?.id, (id) => {
     chat.ensureChannelPermissionCache(id);
   }
 }, { immediate: true });
+watch(() => chat.curChannel?.id, (id, prevId) => {
+  if (id === prevId) {
+    return;
+  }
+  if (chat.messageInsertTarget.enabled) {
+    chat.clearMessageInsertTarget();
+  }
+});
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
 const compactInlineStackLayout = computed(() => {
@@ -3846,7 +3863,16 @@ const handleUnarchiveMessages = async (messageIds: string[]) => {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const logUploadConfig = computed(() => utils.config?.logUpload);
-const canUseCloudUpload = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false);
+const hasLogUploadEndpoints = (config?: { endpoint?: string; endpoints?: string[]; enabled?: boolean } | null) => {
+  if (!config || config.enabled === false) {
+    return false;
+  }
+  const targets = [config.endpoint, ...(config.endpoints || [])]
+    .map((item) => (item || '').trim())
+    .filter((item, index, list) => !!item && list.indexOf(item) === index);
+  return targets.length > 0;
+};
+const canUseCloudUpload = computed(() => hasLogUploadEndpoints(logUploadConfig.value));
 
 type CloudUploadResult = {
   url?: string;
@@ -4626,6 +4652,88 @@ const deriveLocalDisplayOrder = (list: Message[], index: number, fallback: numbe
   }
   return fallback;
 };
+
+interface MessageInsertPlacement {
+  anchorMessageId: string;
+  beforeId: string;
+  afterId?: string;
+  localDisplayOrder: number;
+  summary: string;
+}
+
+const activeMessageInsertTarget = computed(() => {
+  const target = chat.messageInsertTarget;
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!target.enabled || !channelId || target.channelId !== channelId || !target.messageId) {
+    return null;
+  }
+  return target;
+});
+
+const messageInsertHintText = computed(() => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return '';
+  }
+  return target.summary || '该消息';
+});
+
+const clearMessageInsertTarget = () => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  chat.clearMessageInsertTarget(channelId);
+};
+
+const resolveMessageInsertPlacement = (): MessageInsertPlacement | null => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return null;
+  }
+  const anchorIndex = rows.value.findIndex((item) => item.id === target.messageId);
+  if (anchorIndex < 0) {
+    return null;
+  }
+  const anchor = rows.value[anchorIndex];
+  if (!anchor?.id) {
+    return null;
+  }
+  const beforeId = anchor.id;
+  const afterId = rows.value[anchorIndex - 1]?.id || '';
+  const beforeOrder = getMessageDisplayOrderValue(anchor);
+  const afterOrder = getMessageDisplayOrderValue(rows.value[anchorIndex - 1]);
+  let localDisplayOrder = beforeOrder ?? Date.now();
+  if (afterOrder !== null && beforeOrder !== null) {
+    localDisplayOrder = (afterOrder + beforeOrder) / 2;
+  } else if (beforeOrder !== null) {
+    localDisplayOrder = beforeOrder - 1;
+  } else if (afterOrder !== null) {
+    localDisplayOrder = afterOrder + 1;
+  }
+  return {
+    anchorMessageId: target.messageId,
+    beforeId,
+    afterId: afterId || undefined,
+    localDisplayOrder,
+    summary: target.summary || '该消息',
+  };
+};
+
+const validateMessageInsertTarget = (options?: { silent?: boolean }) => {
+  const target = activeMessageInsertTarget.value;
+  if (!target) {
+    return true;
+  }
+  const placement = resolveMessageInsertPlacement();
+  if (placement) {
+    return true;
+  }
+  clearMessageInsertTarget();
+  if (!options?.silent) {
+    message.warning('目标消息已不可用，已恢复普通发送');
+  }
+  return false;
+};
+
+const shouldAutoScrollForSelfMessage = (messageData?: any) => !Boolean(messageData?.insertAboveTargetId);
 
 const localReorderOps = new Set<string>();
 
@@ -5591,6 +5699,7 @@ const createGhostElement = (rowEl: HTMLElement) => {
   const rect = rowEl.getBoundingClientRect();
   const ghost = document.createElement('div');
   ghost.className = 'message-row__ghost-float';
+  ghost.setAttribute('data-sc-font-surface', 'true');
   
   const isDark = document.documentElement.classList.contains('dark') || 
                  document.body.classList.contains('dark');
@@ -6939,6 +7048,13 @@ const stripDiceChipMarkup = (html: string) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
     let replaced = false;
+    doc.querySelectorAll('span.dice-roll-group').forEach((element) => {
+      const source = element.getAttribute('data-dice-source') || '';
+      if (!element.parentNode) return;
+      const replacement = doc.createTextNode(source);
+      element.parentNode.replaceChild(replacement, element);
+      replaced = true;
+    });
     doc.querySelectorAll('span').forEach((element) => {
       const classAttr = element.getAttribute('class') || '';
       if (!classAttr.includes('dice-chip')) {
@@ -6994,6 +7110,7 @@ const convertMessageContentToDraft = (content?: string) => {
   });
   text = text.replace(/<at\s+[^>]*name="([^"]+)"[^>]*\/>/gi, (_, name) => `@${name}`);
   text = text.replace(/<at\s+[^>]*id="([^"]+)"[^>]*\/>/gi, (_, id) => `@${id}`);
+  text = restoreQuickFormatTextFromHtml(text);
   text = text.replace(/<br\s*\/?>/gi, '\n');
   return text;
 };
@@ -7114,28 +7231,10 @@ const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
 const HISTORY_CHANNEL_FALLBACK = '__global__';
 const MAX_HISTORY_PER_CHANNEL = 5;
 const HISTORY_PREVIEW_MAX = 120;
-const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
-const pendingHistoryRestoreChannelKey = ref<string | null>(null);
-const HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
+const LEGACY_HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
 const HISTORY_SESSION_DRAFT_PREFIX = 'sealchat_input_session_draft_v1';
 const HISTORY_SESSION_DRAFT_WINDOW_PREFIX = 'sealchat_input_session_draft_window_v1:';
 const HISTORY_SESSION_DRAFT_TTL = 24 * 60 * 60 * 1000;
-
-interface HistoryAutoRestoreEntry {
-  entryId: string;
-  updatedAt: number;
-}
-
-type HistoryAutoRestoreStore = Record<string, HistoryAutoRestoreEntry>;
-
-const scheduleHistoryAutoRestore = () => {
-  const channelId = chat.curChannel?.id;
-  if (!channelId) {
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  pendingHistoryRestoreChannelKey.value = String(channelId);
-};
 
 interface HistoryImageInfo {
   markerId: string;
@@ -7309,58 +7408,11 @@ const writeHistoryStore = (store: HistoryStore) => {
   }
 };
 
-const readHistoryAutoRestoreStore = (): HistoryAutoRestoreStore => {
+const clearLegacyHistoryAutoRestoreStore = () => {
   try {
-    const raw = localStorage.getItem(HISTORY_AUTORESTORE_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as HistoryAutoRestoreStore;
-    }
+    localStorage.removeItem(LEGACY_HISTORY_AUTORESTORE_STORAGE_KEY);
   } catch (e) {
-    console.error('读取自动恢复状态失败', e);
-  }
-  return {};
-};
-
-const writeHistoryAutoRestoreStore = (store: HistoryAutoRestoreStore) => {
-  try {
-    localStorage.setItem(HISTORY_AUTORESTORE_STORAGE_KEY, JSON.stringify(store));
-  } catch (e) {
-    console.error('写入自动恢复状态失败', e);
-  }
-};
-
-const getAutoRestoreEntryForChannel = (channelKey: string): HistoryAutoRestoreEntry | null => {
-  if (!channelKey) {
-    return null;
-  }
-  const store = readHistoryAutoRestoreStore();
-  return store[channelKey] || null;
-};
-
-const markAutoRestoreEntry = (channelKey: string, entryId: string) => {
-  if (!channelKey) {
-    return;
-  }
-  const store = readHistoryAutoRestoreStore();
-  store[channelKey] = {
-    entryId,
-    updatedAt: Date.now(),
-  };
-  writeHistoryAutoRestoreStore(store);
-};
-
-const clearAutoRestoreEntry = (channelKey: string) => {
-  if (!channelKey) {
-    return;
-  }
-  const store = readHistoryAutoRestoreStore();
-  if (store[channelKey]) {
-    delete store[channelKey];
-    writeHistoryAutoRestoreStore(store);
+    console.warn('清理旧版历史自动恢复状态失败', e);
   }
 };
 
@@ -7554,12 +7606,6 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   }
   const signature = buildHistorySignature(mode, content);
   if (!options.force && signature === lastHistorySignature.value) {
-    const existingEntry = historyEntries.value.find(
-      (entry) => buildHistorySignature(entry.mode, entry.content) === signature,
-    );
-    if (existingEntry) {
-      markAutoRestoreEntry(currentChannelKey.value, existingEntry.id);
-    }
     return false;
   }
   const channelKey = currentChannelKey.value;
@@ -7581,9 +7627,6 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
   lastHistorySignature.value = signature;
-  if (!options.force) {
-    markAutoRestoreEntry(channelKey, newEntry.id);
-  }
   return true;
 };
 
@@ -7689,8 +7732,7 @@ const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolea
     // 恢复图片信息
     restoreImagesFromHistory(entry);
     syncInlineMarkersWithText(entry.content);
-    
-    markAutoRestoreEntry(currentChannelKey.value, entry.id);
+
     if (!options?.silent) {
       message.success('已恢复历史输入');
     }
@@ -7727,53 +7769,6 @@ const notifyAutoRestoreSuccess = (channelKey: string) => {
   lastAutoRestoreNoticeChannelKey = channelKey;
   lastAutoRestoreNoticeAt = now;
   message.info('已自动恢复上次输入');
-};
-
-const findHistoryEntryById = (channelKey: string, entryId: string): InputHistoryEntry | null => {
-  const inMemory = historyEntries.value.find((entry) => entry.id === entryId);
-  if (inMemory) {
-    return inMemory;
-  }
-  const store = readHistoryStore();
-  const candidates = normalizeHistoryEntries(store[channelKey] || []);
-  return candidates.find((entry) => entry.id === entryId) || null;
-};
-
-const tryAutoRestoreHistory = () => {
-  const channelKey = currentChannelKey.value;
-  if (
-    !channelKey ||
-    channelKey === HISTORY_CHANNEL_FALLBACK ||
-    pendingHistoryRestoreChannelKey.value !== channelKey
-  ) {
-    return;
-  }
-  if (!chat.curChannel?.id || isEditing.value) {
-    return;
-  }
-  if (hasMeaningfulDraftInInput()) {
-    return;
-  }
-  const autoRestoreEntry = getAutoRestoreEntryForChannel(channelKey);
-  if (!autoRestoreEntry) {
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  const withinWindow = Date.now() - autoRestoreEntry.updatedAt <= HISTORY_AUTO_RESTORE_WINDOW;
-  if (!withinWindow) {
-    clearAutoRestoreEntry(channelKey);
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  const target = findHistoryEntryById(channelKey, autoRestoreEntry.entryId);
-  if (!target) {
-    clearAutoRestoreEntry(channelKey);
-    pendingHistoryRestoreChannelKey.value = null;
-    return;
-  }
-  applyHistoryEntry(target, { silent: true });
-  pendingHistoryRestoreChannelKey.value = null;
-  notifyAutoRestoreSuccess(channelKey);
 };
 
 const persistSessionDraftForChannel = (
@@ -7849,10 +7844,8 @@ const scheduleHistorySnapshot = throttle(
 watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
   });
 });
 
@@ -7870,11 +7863,10 @@ watch(hasHistoryEntries, (has) => {
 });
 
 onMounted(() => {
+  clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   nextTick(() => {
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
   });
 });
 
@@ -8581,7 +8573,7 @@ const saveEdit = async () => {
         finalContent = processedDraft;
       }
     } else {
-      finalContent = await buildMessageHtml(processedDraft);
+      finalContent = await normalizePlainMessageContent(processedDraft);
     }
     if (!isEditSaveSnapshotAlive(snapshot)) {
       return;
@@ -8973,11 +8965,19 @@ const extractTipTapText = (node: any): string => {
 // 渲染预览内容（支持图片和富文本）
 const diceChipIconSvg = '<span class="dice-chip__icon" aria-hidden="true">🎲</span>';
 const resolveDiceToneClass = () => (chat.icMode === 'ooc' ? 'ooc' : 'ic');
-const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
-  const source = escapeHtml(match.source);
-  const formula = escapeHtml(match.normalized);
+const buildSinglePreviewDiceChip = (formula: string, source: string, index: string | number) => {
   const tone = resolveDiceToneClass();
   return `<span class="dice-chip dice-chip--preview dice-chip--tone-${tone}" data-dice-tone="${tone}" data-index="${index}" title="${source}">${diceChipIconSvg}<span class="dice-chip__formula">${formula}</span><span class="dice-chip__equals">=</span><span class="dice-chip__result">?</span></span>`;
+};
+
+const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
+  const source = escapeHtml(match.source);
+  const { repeatCount, formula } = parseMultiDiceExpression(match.normalized, defaultDiceExpr.value);
+  const escapedFormula = escapeHtml(formula);
+  if (repeatCount <= 1) {
+    return buildSinglePreviewDiceChip(escapedFormula, source, index);
+  }
+  return `<span class="dice-roll-group" data-dice-source="${source}">${Array.from({ length: repeatCount }, (_, offset) => buildSinglePreviewDiceChip(escapedFormula, source, `${index}-${offset}`)).join('')}</span>`;
 };
 
 const renderDicePreviewSegment = (text: string) => {
@@ -9078,7 +9078,7 @@ const escapeHtml = (text: string): string => {
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
 };
 
-const buildMessageHtml = async (draft: string) => {
+const normalizePlainMessageContent = async (draft: string) => {
   const placeholderMap = new Map<string, string>();
   let index = 0;
   inlineImageMarkerRegexp.lastIndex = 0;
@@ -9107,11 +9107,10 @@ const buildMessageHtml = async (draft: string) => {
   if (escaped.includes('@')) {
     escaped = await replaceUsernames(escaped);
   }
-  let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
-    html = html.split(key).join(value);
+    escaped = escaped.split(key).join(value);
   });
-  return html;
+  return escaped;
 };
 
 const captureSelectionRange = (): SelectionRange => {
@@ -9428,7 +9427,6 @@ const send = throttle(async () => {
     return;
   }
   const sendMode = inputMode.value;
-  const channelKey = currentChannelKey.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
   const activeReeditSource = (() => {
@@ -9501,11 +9499,17 @@ const send = throttle(async () => {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
+  let insertPlacement = resolveMessageInsertPlacement();
+  if (activeMessageInsertTarget.value && !insertPlacement) {
+    validateMessageInsertTarget();
+    insertPlacement = null;
+  }
+
   const now = Date.now();
   const orderNow = getServerAlignedNowMs();
   const sendOrder = resolveSendDisplayOrder(now, orderNow);
-  const localDisplayOrder = sendOrder.localDisplayOrder;
-  const explicitDisplayOrder = sendOrder.explicitDisplayOrder;
+  const localDisplayOrder = insertPlacement?.localDisplayOrder ?? sendOrder.localDisplayOrder;
+  const explicitDisplayOrder = insertPlacement ? undefined : sendOrder.explicitDisplayOrder;
   const typingDurationMs = sendOrder.typingDurationMs;
   resetDraftOrderContext();
 
@@ -9556,6 +9560,9 @@ const send = throttle(async () => {
   }
   (tmpMsg as any).displayOrder = localDisplayOrder;
   (tmpMsg as any).display_order = localDisplayOrder;
+  if (insertPlacement) {
+    (tmpMsg as any).insertAboveTargetId = insertPlacement.anchorMessageId;
+  }
 
   const whisperTargetsForSend = chat.whisperTargets.slice();
   if (whisperTargetsForSend.length > 0) {
@@ -9576,8 +9583,8 @@ const send = throttle(async () => {
       // 富文本模式：直接发送 JSON
       finalContent = draft;
     } else {
-      // 纯文本模式：转换为 HTML
-      finalContent = await buildMessageHtml(draft);
+      // 纯文本模式：仅做安全转义与 Satori 占位替换，轻量 Markdown 交给前端渲染
+      finalContent = await normalizePlainMessageContent(draft);
     }
 
     tmpMsg.content = finalContent;
@@ -9593,6 +9600,7 @@ const send = throttle(async () => {
       explicitDisplayOrder,
       whisperTargetIds,
       typingDurationMs,
+      insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9628,9 +9636,6 @@ const send = throttle(async () => {
     resetInlineImages();
     pendingInlineSelection = null;
 
-    if (channelKey) {
-      clearAutoRestoreEntry(channelKey);
-    }
     textToSend.value = '';
     syncSessionDraftSnapshot();
     clearInputModeCache();
@@ -9652,7 +9657,7 @@ const send = throttle(async () => {
     }
   }
 
-  if (wasAtBottom) {
+  if (wasAtBottom && !insertPlacement) {
     toBottom();
   }
 }, 500);
@@ -9937,8 +9942,8 @@ const emit = defineEmits(['drawer-show'])
 let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
+  clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
-  scheduleHistoryAutoRestore();
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityResume);
   }
@@ -10007,6 +10012,9 @@ chatEvent.on('message-removed', (e?: Event) => {
       }
   }
   rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
+  if (chat.isMessageInsertTarget(removedChannelId, targetId)) {
+    chat.clearMessageInsertTarget(removedChannelId);
+  }
   removePinnedMessage(targetId);
   if (archiveDrawerVisible.value) {
       const index = archivedMessagesRaw.value.findIndex((item) => item.id === targetId);
@@ -10061,7 +10069,9 @@ chatEvent.on('message-created', (e?: Event) => {
       notifyNewMessageHighlight(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      toBottom();
+      if (shouldAutoScrollForSelfMessage(matchedPending)) {
+        toBottom();
+      }
       return;
     }
   } else {
@@ -10137,7 +10147,9 @@ chatEvent.on('message-created', (e?: Event) => {
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
-    toBottom();
+    if (shouldAutoScrollForSelfMessage(incoming)) {
+      toBottom();
+    }
   } else if (!inHistoryMode.value && !historyLocked.value) {
     nextTick(() => {
       scrollToBottom();
@@ -10232,6 +10244,9 @@ chatEvent.on('message-archived', (e?: Event) => {
     const index = rows.value.findIndex(item => item.id === incoming.id);
     if (index >= 0) {
       rows.value.splice(index, 1);
+    }
+    if (chat.isMessageInsertTarget(chat.curChannel?.id, incoming.id)) {
+      clearMessageInsertTarget();
     }
   }
   removePinnedMessage(incoming.id);
@@ -10511,16 +10526,15 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     clearInputModeCache();
     resetWindowState('live');
     pinnedRows.value = [];
+    chat.clearMessageInsertTarget();
     resetDragState();
     localReorderOps.clear();
     showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
-    scheduleHistoryAutoRestore();
     nextTick(() => {
       tryAutoRestoreSessionDraft();
-      tryAutoRestoreHistory();
     });
     const fetchTask = fetchLatestMessages();
     fetchTask.finally(() => {
@@ -10751,6 +10765,7 @@ const fetchLatestMessages = async () => {
     });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
+    validateMessageInsertTarget({ silent: true });
     applyCursorUpdate({ before: resp?.next ?? '' });
     computeAfterCursorFromRows();
     await nextTick();
@@ -10758,7 +10773,6 @@ const fetchLatestMessages = async () => {
     showButton.value = false;
     await autoFillIfNeeded();
     tryAutoRestoreSessionDraft();
-    tryAutoRestoreHistory();
     console.info('[channel-load] messages-rendered', {
       channelId: channelIdAtStart,
       fetchEpoch,
@@ -12425,6 +12439,15 @@ onBeforeUnmount(() => {
           :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
           @pointerdown="handleInputBorderPointerDown"
         >
+          <div v-if="activeMessageInsertTarget" class="message-insert-banner">
+            <div class="message-insert-banner__main">
+              <span class="message-insert-banner__badge">插入到上方</span>
+              <span class="message-insert-banner__text">后续新消息将插到：{{ messageInsertHintText }} 上方</span>
+            </div>
+            <div class="message-insert-banner__actions">
+              <n-button size="small" quaternary @click="clearMessageInsertTarget">取消</n-button>
+            </div>
+          </div>
           <div v-if="whisperTargets.length" class="whisper-pills">
             <span class="whisper-pill-prefix">{{ t('inputBox.whisperPillPrefix') }}</span>
             <n-tag
@@ -16364,6 +16387,48 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--sc-border-mute);
 }
 
+.message-insert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--sc-bg-elevated);
+  border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.message-insert-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.message-insert-banner__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sc-primary-color, #2563eb);
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
+  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+  white-space: nowrap;
+}
+
+.message-insert-banner__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sc-text-primary);
+}
+
+.message-insert-banner__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
 .whisper-pill-prefix {
   font-size: 12px;
   color: var(--sc-text-secondary);
@@ -17118,6 +17183,14 @@ onBeforeUnmount(() => {
   vertical-align: middle;
   white-space: nowrap;
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.dice-roll-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  vertical-align: middle;
 }
 
 .dice-chip__icon {

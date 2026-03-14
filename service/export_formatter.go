@@ -116,6 +116,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		includeDiceCommand = extra.IncludeDiceCommand
 	}
 	identityResolver := newIdentityResolver(job.ChannelID)
+	imageLayoutResolver := newExportImageLayoutResolver(job.ChannelID)
 	exportMessages := make([]ExportMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
@@ -138,6 +139,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		}
 		// 将 <at> 标签转换为带样式的 HTML
 		htmlContent = convertAtTagsToHTML(htmlContent)
+		htmlContent = imageLayoutResolver.enhanceHTML(htmlContent)
 		if !includeImages {
 			htmlContent = stripImageTagsFromHTML(htmlContent)
 		}
@@ -249,6 +251,195 @@ func resolveSenderAvatar(msg *model.MessageModel) string {
 		}
 	}
 	return ""
+}
+
+type exportImageLayout struct {
+	Width  int
+	Height int
+}
+
+type exportImageLayoutResolver struct {
+	channelID string
+	cache     map[string]*exportImageLayout
+}
+
+func newExportImageLayoutResolver(channelID string) *exportImageLayoutResolver {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	return &exportImageLayoutResolver{
+		channelID: channelID,
+		cache:     make(map[string]*exportImageLayout),
+	}
+}
+
+func (r *exportImageLayoutResolver) enhanceHTML(content string) string {
+	if r == nil || !strings.Contains(strings.ToLower(content), "<img") {
+		return content
+	}
+	nodes, err := htmlnode.ParseFragment(strings.NewReader(content), nil)
+	if err != nil {
+		return content
+	}
+	attachmentIDs := make([]string, 0, 4)
+	for _, node := range nodes {
+		collectImageAttachmentIDsFromHTML(node, &attachmentIDs)
+	}
+	r.ensureLayouts(attachmentIDs)
+
+	changed := false
+	for _, node := range nodes {
+		if r.decorateImageNodes(node) {
+			changed = true
+		}
+	}
+	if !changed {
+		return content
+	}
+
+	var buf bytes.Buffer
+	for _, node := range nodes {
+		if err := htmlnode.Render(&buf, node); err != nil {
+			return content
+		}
+	}
+	return buf.String()
+}
+
+func collectImageAttachmentIDsFromHTML(node *htmlnode.Node, out *[]string) {
+	if node == nil || out == nil {
+		return
+	}
+	if node.Type == htmlnode.ElementNode && strings.EqualFold(node.Data, "img") {
+		for _, attr := range node.Attr {
+			if !strings.EqualFold(attr.Key, "src") {
+				continue
+			}
+			if token := extractAttachmentToken(attr.Val); token != "" {
+				*out = append(*out, token)
+			}
+			break
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		collectImageAttachmentIDsFromHTML(child, out)
+	}
+}
+
+func (r *exportImageLayoutResolver) ensureLayouts(attachmentIDs []string) {
+	if r == nil || len(attachmentIDs) == 0 {
+		return
+	}
+	missing := make([]string, 0, len(attachmentIDs))
+	seen := make(map[string]struct{}, len(attachmentIDs))
+	for _, rawID := range attachmentIDs {
+		attachmentID := strings.TrimSpace(rawID)
+		if attachmentID == "" {
+			continue
+		}
+		if _, ok := seen[attachmentID]; ok {
+			continue
+		}
+		seen[attachmentID] = struct{}{}
+		if _, ok := r.cache[attachmentID]; ok {
+			continue
+		}
+		missing = append(missing, attachmentID)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	layouts, err := model.ChannelAttachmentImageLayoutBatchGet(r.channelID, missing)
+	if err != nil {
+		for _, attachmentID := range missing {
+			r.cache[attachmentID] = nil
+		}
+		return
+	}
+	for _, attachmentID := range missing {
+		r.cache[attachmentID] = nil
+	}
+	for _, layout := range layouts {
+		if layout == nil {
+			continue
+		}
+		r.cache[strings.TrimSpace(layout.AttachmentID)] = &exportImageLayout{
+			Width:  layout.Width,
+			Height: layout.Height,
+		}
+	}
+}
+
+func (r *exportImageLayoutResolver) decorateImageNodes(node *htmlnode.Node) bool {
+	if node == nil {
+		return false
+	}
+	changed := false
+	if node.Type == htmlnode.ElementNode && strings.EqualFold(node.Data, "img") {
+		srcIndex := -1
+		styleIndex := -1
+		dataAttachmentIndex := -1
+		attachmentID := ""
+		for idx, attr := range node.Attr {
+			switch strings.ToLower(strings.TrimSpace(attr.Key)) {
+			case "src":
+				srcIndex = idx
+				attachmentID = extractAttachmentToken(attr.Val)
+			case "style":
+				styleIndex = idx
+			case "data-attachment-id":
+				dataAttachmentIndex = idx
+			}
+		}
+		if attachmentID != "" {
+			if dataAttachmentIndex >= 0 {
+				if node.Attr[dataAttachmentIndex].Val != attachmentID {
+					node.Attr[dataAttachmentIndex].Val = attachmentID
+					changed = true
+				}
+			} else {
+				node.Attr = append(node.Attr, htmlnode.Attribute{Key: "data-attachment-id", Val: attachmentID})
+				changed = true
+			}
+			if layout := r.cache[attachmentID]; layout != nil && layout.Width > 0 && layout.Height > 0 {
+				styleValue := fmt.Sprintf("width:%dpx;height:%dpx;max-width:none;max-height:none;", layout.Width, layout.Height)
+				if styleIndex >= 0 {
+					merged := mergeInlineStyle(node.Attr[styleIndex].Val, styleValue)
+					if merged != node.Attr[styleIndex].Val {
+						node.Attr[styleIndex].Val = merged
+						changed = true
+					}
+				} else {
+					node.Attr = append(node.Attr, htmlnode.Attribute{Key: "style", Val: styleValue})
+					changed = true
+				}
+			}
+		} else if srcIndex >= 0 {
+			_ = srcIndex
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if r.decorateImageNodes(child) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func mergeInlineStyle(existing string, additions string) string {
+	existing = strings.TrimSpace(existing)
+	additions = strings.TrimSpace(additions)
+	if existing == "" {
+		return additions
+	}
+	if additions == "" {
+		return existing
+	}
+	if !strings.HasSuffix(existing, ";") {
+		existing += ";"
+	}
+	return existing + additions
 }
 
 func convertTipTapToHTML(input string) (string, bool) {

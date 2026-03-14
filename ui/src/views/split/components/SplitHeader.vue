@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { computed, defineAsyncComponent, h, ref, type Component } from 'vue';
+import { computed, defineAsyncComponent, h, ref, shallowRef, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { NDropdown, NIcon, NTooltip, useDialog } from 'naive-ui';
@@ -9,9 +9,12 @@ import Notif from '@/views/notif.vue';
 import UserProfile from '@/views/components/user-profile.vue';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useUserStore } from '@/stores/user';
+import { useChatStore } from '@/stores/chat';
 import Avatar from '@/components/avatar.vue';
 
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
+
+const chat = useChatStore();
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -55,6 +58,9 @@ const user = useUserStore();
 const notifShow = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
+const inputStatsShow = ref(false);
+const inputStatsLoading = ref(false);
+const inputStatsComponent = shallowRef<Component | null>(null);
 
 const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
 
@@ -76,6 +82,7 @@ const connectionStatus = computed(() => {
 
 const options = computed(() => [
   { label: t('headerMenu.profile'), key: 'profile' },
+  { label: t('headerMenu.inputStats'), key: 'inputStats' },
   user.checkPerm('mod_admin') ? { label: t('headerMenu.admin'), key: 'admin' } : null,
   {
     label: t('headerMenu.lang'),
@@ -90,16 +97,50 @@ const options = computed(() => [
   { label: t('headerMenu.logout'), key: 'logout' },
 ].filter(Boolean));
 
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return;
+  }
+  inputStatsLoading.value = true;
+  try {
+    inputStatsComponent.value = (await import('@/views/components/InputStats.vue')).default;
+  } catch (err) {
+    console.error('load input stats component failed', err);
+    inputStatsShow.value = false;
+  } finally {
+    inputStatsLoading.value = false;
+  }
+};
+
+const toggleInputStats = async () => {
+  notifShow.value = false;
+  adminShow.value = false;
+  userProfileShow.value = false;
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false;
+    return;
+  }
+
+  inputStatsShow.value = true;
+  await ensureInputStatsLoaded();
+};
+
 const handleSelect = async (key: string | number) => {
   switch (key) {
     case 'profile':
       notifShow.value = false;
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+    case 'inputStats':
+      await toggleInputStats();
       break;
     case 'admin':
       notifShow.value = false;
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
     case 'logout':
@@ -259,6 +300,19 @@ const handleSelect = async (key: string | number) => {
   >
     <AdminSettings @close="adminShow = false" />
   </div>
+  <div
+    v-if="inputStatsShow"
+    style="background-color: var(--n-color); margin-left: -1.5rem; padding-top: 2rem;"
+    class="absolute flex justify-center items-start w-full h-full sc-overlay-layer"
+  >
+    <component
+      :is="inputStatsComponent"
+      v-if="inputStatsComponent"
+      :current-world-id="chat.currentWorldId"
+      @close="inputStatsShow = false"
+    />
+    <div v-else class="input-stats-loading">输入统计加载中...</div>
+  </div>
   <Notif v-show="notifShow" />
 </template>
 
@@ -267,6 +321,18 @@ const handleSelect = async (key: string | number) => {
   background-color: var(--sc-bg-header);
   color: var(--sc-text-primary);
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background-color: var(--sc-bg-elevated, var(--n-color));
 }
 
 .sc-actions {

@@ -31,6 +31,11 @@ const (
 	displayOrderEpsilon = 1e-6
 )
 
+type messageOrderPlacement struct {
+	BeforeID string
+	AfterID  string
+}
+
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
 var atTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
 
@@ -134,6 +139,69 @@ func isUniqueConstraintError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func resolveMessageDisplayOrderForPlacement(db *gorm.DB, channelID string, placement messageOrderPlacement, currentMessageID string, fallback float64) (float64, error) {
+	beforeID := strings.TrimSpace(placement.BeforeID)
+	afterID := strings.TrimSpace(placement.AfterID)
+	currentMessageID = strings.TrimSpace(currentMessageID)
+	if beforeID == "" && afterID == "" {
+		return fallback, nil
+	}
+
+	var beforeMsg, afterMsg model.MessageModel
+	loadNeighbor := func(messageID string, target *model.MessageModel) error {
+		if messageID == "" || messageID == currentMessageID {
+			return nil
+		}
+		if err := db.Where("id = ? AND channel_id = ? AND is_deleted = ?", messageID, channelID, false).Limit(1).Find(target).Error; err != nil {
+			return err
+		}
+		if target.ID == "" {
+			if messageID == beforeID {
+				return fmt.Errorf("before_id 指定的消息不存在")
+			}
+			return fmt.Errorf("after_id 指定的消息不存在")
+		}
+		return nil
+	}
+
+	if err := loadNeighbor(beforeID, &beforeMsg); err != nil {
+		return 0, err
+	}
+	if err := loadNeighbor(afterID, &afterMsg); err != nil {
+		return 0, err
+	}
+
+	if beforeMsg.ID != "" && afterMsg.ID != "" && beforeMsg.ID == afterMsg.ID {
+		return 0, fmt.Errorf("before_id 与 after_id 不应指向同一条消息")
+	}
+
+	newOrder := fallback
+	switch {
+	case beforeMsg.ID != "" && afterMsg.ID != "":
+		if beforeMsg.DisplayOrder <= afterMsg.DisplayOrder+displayOrderEpsilon {
+			if err := model.RebalanceChannelDisplayOrder(channelID); err != nil {
+				return 0, err
+			}
+			if err := loadNeighbor(beforeID, &beforeMsg); err != nil {
+				return 0, err
+			}
+			if err := loadNeighbor(afterID, &afterMsg); err != nil {
+				return 0, err
+			}
+		}
+		if beforeMsg.ID == "" || afterMsg.ID == "" {
+			return 0, fmt.Errorf("无法获取目标位置的邻居消息")
+		}
+		newOrder = (beforeMsg.DisplayOrder + afterMsg.DisplayOrder) / 2
+	case beforeMsg.ID != "":
+		newOrder = beforeMsg.DisplayOrder - displayOrderGap/2
+	case afterMsg.ID != "":
+		newOrder = afterMsg.DisplayOrder + displayOrderGap/2
+	}
+
+	return newOrder, nil
 }
 
 type typingOrderCandidate struct {
@@ -1614,6 +1682,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	ClientID         string   `json:"client_id"`
 	IdentityID       string   `json:"identity_id"`
 	ICMode           string   `json:"ic_mode"`
+	BeforeID         string   `json:"before_id"`
+	AfterID          string   `json:"after_id"`
 	DisplayOrder     *float64 `json:"display_order"`
 	TypingDurationMs *int64   `json:"typing_duration_ms"`
 }) (any, error) {
@@ -1939,8 +2009,19 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
+	hasPlacement := strings.TrimSpace(data.BeforeID) != "" || strings.TrimSpace(data.AfterID) != ""
+	if !hasExplicitDisplayOrder && hasPlacement {
+		resolvedOrder, err := resolveMessageDisplayOrderForPlacement(db, channelId, messageOrderPlacement{
+			BeforeID: data.BeforeID,
+			AfterID:  data.AfterID,
+		}, "", displayOrder)
+		if err != nil {
+			return nil, err
+		}
+		displayOrder = resolvedOrder
+	}
 	hasTypingDuration := data.TypingDurationMs != nil && *data.TypingDurationMs > 0
-	if !hasExplicitDisplayOrder && hasTypingDuration {
+	if !hasExplicitDisplayOrder && !hasPlacement && hasTypingDuration {
 		durationMs := *data.TypingDurationMs
 		maxDurationMs := int64(24 * 60 * 60 * 1000)
 		if durationMs > maxDurationMs {
@@ -1952,7 +2033,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 		displayOrder = float64(estimatedStart)
 	}
-	if !hasExplicitDisplayOrder && !hasTypingDuration && whisperTo == "" {
+	if !hasExplicitDisplayOrder && !hasPlacement && !hasTypingDuration && whisperTo == "" {
 		windowMs := int64(0)
 		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
 			windowMs = cfg.TypingOrderWindowMs
@@ -2867,51 +2948,12 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 		return nil, fmt.Errorf("缺少目标位置参数")
 	}
 
-	var beforeMsg, afterMsg model.MessageModel
-	if data.BeforeID != "" && data.BeforeID != data.MessageID {
-		if err := db.Where("id = ? AND channel_id = ? AND is_deleted = ?", data.BeforeID, data.ChannelID, false).Limit(1).Find(&beforeMsg).Error; err != nil {
-			return nil, err
-		}
-		if beforeMsg.ID == "" {
-			return nil, fmt.Errorf("before_id 指定的消息不存在")
-		}
-	}
-
-	if data.AfterID != "" && data.AfterID != data.MessageID {
-		if err := db.Where("id = ? AND channel_id = ? AND is_deleted = ?", data.AfterID, data.ChannelID, false).Limit(1).Find(&afterMsg).Error; err != nil {
-			return nil, err
-		}
-		if afterMsg.ID == "" {
-			return nil, fmt.Errorf("after_id 指定的消息不存在")
-		}
-	}
-
-	if beforeMsg.ID != "" && afterMsg.ID != "" && beforeMsg.ID == afterMsg.ID {
-		return nil, fmt.Errorf("before_id 与 after_id 不应指向同一条消息")
-	}
-
-	newOrder := msg.DisplayOrder
-	switch {
-	case beforeMsg.ID != "" && afterMsg.ID != "":
-		if beforeMsg.DisplayOrder <= afterMsg.DisplayOrder+displayOrderEpsilon {
-			if err := model.RebalanceChannelDisplayOrder(data.ChannelID); err != nil {
-				return nil, err
-			}
-			if err := db.Where("id = ? AND channel_id = ?", data.BeforeID, data.ChannelID).Limit(1).Find(&beforeMsg).Error; err != nil {
-				return nil, err
-			}
-			if err := db.Where("id = ? AND channel_id = ?", data.AfterID, data.ChannelID).Limit(1).Find(&afterMsg).Error; err != nil {
-				return nil, err
-			}
-		}
-		if beforeMsg.ID == "" || afterMsg.ID == "" {
-			return nil, fmt.Errorf("无法获取目标位置的邻居消息")
-		}
-		newOrder = (beforeMsg.DisplayOrder + afterMsg.DisplayOrder) / 2
-	case beforeMsg.ID != "":
-		newOrder = beforeMsg.DisplayOrder - displayOrderGap/2
-	case afterMsg.ID != "":
-		newOrder = afterMsg.DisplayOrder + displayOrderGap/2
+	newOrder, err := resolveMessageDisplayOrderForPlacement(db, data.ChannelID, messageOrderPlacement{
+		BeforeID: data.BeforeID,
+		AfterID:  data.AfterID,
+	}, data.MessageID, msg.DisplayOrder)
+	if err != nil {
+		return nil, err
 	}
 
 	if math.Abs(newOrder-msg.DisplayOrder) < displayOrderEpsilon {

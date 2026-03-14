@@ -48,6 +48,8 @@ type MessageModel struct {
 	IsDeleted     bool       `json:"is_deleted" gorm:"default:false;index:idx_msg_deleted"` // 删除后不再展示
 	DeletedAt     *time.Time `json:"deleted_at"`
 	DeletedBy     string     `json:"deleted_by" gorm:"size:100"`
+	IsImported    bool       `json:"isImported" gorm:"default:false;index:idx_msg_imported"`
+	ImportJobID   string     `json:"importJobId" gorm:"size:100;index:idx_msg_import_job_id"`
 
 	SenderMemberName       string `json:"sender_member_name"` // 用户在当时的名字
 	SenderIdentityID       string `json:"sender_identity_id" gorm:"size:100"`

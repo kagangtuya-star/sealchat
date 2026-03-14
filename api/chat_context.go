@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"sealchat/model"
 	"sealchat/protocol"
@@ -237,22 +236,83 @@ func normalizeEventForBot(event *protocol.Event) *protocol.Event {
 }
 
 func normalizeBotCommandContent(content string) string {
+	return normalizeBotCommandContentWithPrefixes(content, resolveBotCommandPrefixes())
+}
+
+func normalizeBotCommandContentWithPrefixes(content string, prefixes []string) string {
+	normalizedSource := content
 	leading := strings.TrimLeft(content, " \t\r\n")
-	if leading == "" || service.LooksLikeTipTapJSON(leading) {
+	if leading == "" {
 		return content
 	}
-	firstRune, _ := utf8.DecodeRuneInString(leading)
-	switch firstRune {
-	case '.', '/', '。', '．', '｡':
-	default:
+
+	if service.LooksLikeTipTapJSON(leading) {
+		if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
+			normalizedSource = serialized
+		} else {
+			return content
+		}
+	} else if !hasBotCommandPrefix(leading, prefixes) {
 		return content
+	} else if serialized, ok := service.SerializeMessageContentToCommandText(content); ok {
+		normalizedSource = serialized
 	}
-	normalized := botCommandTailCleanupPattern.ReplaceAllString(content, "")
+
+	normalized := botCommandTailCleanupPattern.ReplaceAllString(normalizedSource, "")
 	normalized = strings.TrimRight(normalized, " \t\r\n")
 	if normalized == "" {
 		return content
 	}
 	return normalized
+}
+
+func hasBotCommandPrefix(content string, prefixes []string) bool {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" {
+		return false
+	}
+	for _, prefix := range prefixes {
+		trimmed := strings.TrimSpace(prefix)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(leading, trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveBotCommandPrefixes() []string {
+	collected := make([]string, 0, 6)
+	seen := map[string]struct{}{}
+	appendPrefix := func(prefix string) {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			return
+		}
+		if _, ok := seen[prefix]; ok {
+			return
+		}
+		seen[prefix] = struct{}{}
+		collected = append(collected, prefix)
+	}
+
+	if cfg := utils.GetConfig(); cfg != nil {
+		for _, prefix := range cfg.Export.DiceCommandPrefixes {
+			appendPrefix(prefix)
+		}
+	}
+	if len(collected) == 0 {
+		appendPrefix(".")
+		appendPrefix("。")
+	}
+	if _, ok := seen["."]; ok {
+		appendPrefix("．")
+		appendPrefix("｡")
+	}
+	appendPrefix("/")
+	return collected
 }
 
 func extractBotWhisperTargetIDs(event *protocol.Event) []string {

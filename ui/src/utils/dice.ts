@@ -1,6 +1,7 @@
 const COMMAND_PATTERN = /[\.。．｡]rh?[^\s　,，。！？!?;；:：]*/gi;
 const BRACE_PATTERN = /\{([^{}]+)\}/g;
 const INCOMPLETE_PATTERN = /(\b\d*)d\b/gi;
+const MULTI_DICE_PATTERN = /^\s*(\d+)\s*#\s*(.*)$/;
 
 export interface DiceMatch {
   start: number;
@@ -10,7 +11,13 @@ export interface DiceMatch {
   kind: 'command' | 'brace';
 }
 
+export interface ParsedMultiDiceExpression {
+  repeatCount: number;
+  formula: string;
+}
+
 export const DEFAULT_DICE_EXPR = 'd20';
+export const MAX_MULTI_DICE_COUNT = 100;
 
 export const ensureDefaultDiceExpr = (value?: string): string => {
   const trimmed = (value || '').trim().toLowerCase();
@@ -117,3 +124,23 @@ const normalizeFormula = (raw: string, kind: DiceMatch['kind'], defaultDiceExpr:
 };
 
 export const isHiddenDiceCommand = (text: string): boolean => /[\.。．｡]rh/i.test(text);
+
+export const parseMultiDiceExpression = (
+  normalized: string,
+  defaultDiceExpr?: string,
+): ParsedMultiDiceExpression => {
+  const fallback = ensureDefaultDiceExpr(defaultDiceExpr);
+  const trimmed = (normalized || '').trim();
+  const matched = trimmed.match(MULTI_DICE_PATTERN);
+  if (!matched) {
+    return { repeatCount: 1, formula: trimmed || fallback };
+  }
+  const repeatCount = Number.parseInt(matched[1], 10);
+  if (!Number.isFinite(repeatCount) || repeatCount <= 0) {
+    return { repeatCount: 1, formula: trimmed || fallback };
+  }
+  return {
+    repeatCount: Math.min(repeatCount, MAX_MULTI_DICE_COUNT),
+    formula: matched[2].trim() || fallback,
+  };
+};

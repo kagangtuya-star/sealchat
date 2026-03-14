@@ -96,6 +96,8 @@ docker run -d --name sealchat --restart unless-stopped \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```
 
+说明：在群晖 NAS、Btrfs 子卷、多个外部挂载目录等场景下，建议将上传/音频的临时目录配置到与最终存储目录相同的挂载点下，例如将 `storage.local.tempDir` 设为 `./sealchat-data/temp`、将 `audio.tempDir` 设为 `./static/audio-temp`，可避免跨设备移动带来的额外复制开销。
+
 > 详细的 Docker 部署说明请参考 [`deploy_zh.md`](deploy_zh.md) 中的 Docker 部署章节。
 
 ### 二进制部署

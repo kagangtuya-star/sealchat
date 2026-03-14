@@ -123,3 +123,72 @@ func TestRenderDiceContentRichPayload(t *testing.T) {
 		t.Fatalf("rich payload should not produce rolls")
 	}
 }
+
+func TestRenderDiceContentMultiRoll(t *testing.T) {
+	input := "测试 .r3#d20+1 力量"
+	result, err := RenderDiceContent(input, "d20", nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if result == nil {
+		t.Fatalf("nil result")
+	}
+	if len(result.Rolls) != 3 {
+		t.Fatalf("expected 3 rolls, got %d", len(result.Rolls))
+	}
+	for index, roll := range result.Rolls {
+		if roll.RollIndex != index {
+			t.Fatalf("unexpected roll index at %d: %d", index, roll.RollIndex)
+		}
+		if roll.Formula != "d20+1" {
+			t.Fatalf("unexpected formula at %d: %s", index, roll.Formula)
+		}
+		if strings.TrimSpace(roll.SourceText) != ".r3#d20+1" {
+			t.Fatalf("unexpected source text at %d: %s", index, roll.SourceText)
+		}
+	}
+	if strings.Count(result.Content, `class="dice-chip"`) != 3 {
+		t.Fatalf("expected 3 dice chips, got content: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "dice-roll-group") {
+		t.Fatalf("expected dice roll group markup, got: %s", result.Content)
+	}
+}
+
+func TestRenderDiceContentMultiRollReuse(t *testing.T) {
+	existing := []*model.MessageDiceRollModel{
+		{
+			RollIndex:       0,
+			Formula:         "d20+1",
+			ResultText:      "first",
+			ResultValueText: "2",
+			ResultDetail:    "detail-1",
+		},
+		{
+			RollIndex:       1,
+			Formula:         "d20+1",
+			ResultText:      "second",
+			ResultValueText: "11",
+			ResultDetail:    "detail-2",
+		},
+		{
+			RollIndex:       2,
+			Formula:         "d20+1",
+			ResultText:      "third",
+			ResultValueText: "19",
+			ResultDetail:    "detail-3",
+		},
+	}
+	result, err := RenderDiceContent("依旧 .r3#d20+1", "d20", existing)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if len(result.Rolls) != 3 {
+		t.Fatalf("expected 3 rolls, got %d", len(result.Rolls))
+	}
+	for index, want := range []string{"2", "11", "19"} {
+		if result.Rolls[index].ResultValueText != want {
+			t.Fatalf("expected reused value %s at %d, got %s", want, index, result.Rolls[index].ResultValueText)
+		}
+	}
+}

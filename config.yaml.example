@@ -8,6 +8,18 @@
   imageCompressQuality: 85
   imageSizeLimit: 8192
   galleryQuotaMB: 100
+  logUpload:
+    enabled: true
+    endpoint: https://dice.weizaima.com/dice/api/log # 主海豹染色器后端地址
+    endpoints:
+      - https://backup1.example.com/dice/api/log # 备份地址，主地址失效后按顺序回退
+      - https://backup2.example.com/dice/api/log
+    token: "" # 如后端要求鉴权可填写，留空则不发送
+    timeoutSeconds: 15
+    client: Others
+    uniformId: Sealchat
+    version: 105
+    note: "默认上传到海豹染色器获取BBcode/Docx"
   registerOpen: true
   serveAt: :3212
   version: 1
@@ -50,7 +62,7 @@
 
   audio:
     storageDir: ./static/audio
-    tempDir: ./data/audio-temp
+    tempDir: ./static/audio-temp
     importDir: ./static/audio/import # 读取数据目录导入的扫描路径
     maxUploadSizeMB: 80
     allowedMimeTypes:
@@ -83,7 +95,7 @@
     local:
       uploadDir: ./sealchat-data/upload
       audioDir: ./sealchat-data/static/audio
-      tempDir: ./data/temp
+      tempDir: ./sealchat-data/temp
       baseUrl: ""   # 若通过 Nginx 暴露本地附件，可填例如 https://files.example.com
     s3:
       enabled: true

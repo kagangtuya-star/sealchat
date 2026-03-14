@@ -1495,6 +1495,7 @@ defineExpose({
             <div
               v-if="mentionVisible"
               class="mention-dropdown"
+              data-sc-font-surface="true"
               :style="mentionDropdownStyle"
               tabindex="-1"
               ref="mentionDropdownRef"

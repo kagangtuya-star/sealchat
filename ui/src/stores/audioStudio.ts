@@ -88,6 +88,7 @@ interface AudioStudioState {
   error: string | null;
   currentChannelId: string | null;
   currentWorldId: string | null;
+  playbackAuthority: 'active' | 'standby';
   remoteState: AudioPlaybackStatePayload | null;
   isApplyingRemoteState: boolean;
   pendingSyncHandle: number | null;
@@ -380,6 +381,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     error: null,
     currentChannelId: null,
     currentWorldId: null,
+    playbackAuthority: 'active',
     remoteState: null,
     isApplyingRemoteState: false,
     pendingSyncHandle: null,
@@ -412,6 +414,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     canManage(): boolean {
       return this.canManageCurrentWorld;
+    },
+
+    hasPlaybackAuthority(state): boolean {
+      return state.playbackAuthority === 'active';
     },
 
     isSystemAdmin(): boolean {
@@ -525,7 +531,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     flushPlaybackStateOnExit(reason: string) {
-      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+      if (!this.hasPlaybackAuthority || !this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
       if (typeof window !== 'undefined' && this.pendingSyncHandle) {
@@ -549,6 +555,34 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       this.pendingCommitPayload = payload;
       void this.flushPendingPlaybackSync('commit');
+    },
+
+    deactivatePlaybackRuntime() {
+      if (typeof window !== 'undefined' && this.pendingSyncHandle) {
+        window.clearTimeout(this.pendingSyncHandle);
+        this.pendingSyncHandle = null;
+      }
+      this.pendingCommitPayload = null;
+      this.clearRetrySyncTimer();
+      this.syncRetryAttempt = 0;
+      this.currentChannelId = null;
+      this.remoteState = null;
+      this.drawerVisible = false;
+      this.resetLocalPlaybackRuntime();
+    },
+
+    setPlaybackAuthority(enabled: boolean) {
+      const nextAuthority = enabled ? 'active' : 'standby';
+      if (this.playbackAuthority === nextAuthority) {
+        if (!enabled) {
+          this.deactivatePlaybackRuntime();
+        }
+        return;
+      }
+      this.playbackAuthority = nextAuthority;
+      if (!enabled) {
+        this.deactivatePlaybackRuntime();
+      }
     },
 
     ensureSyncLifecycleBindings() {
@@ -617,7 +651,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!payload) {
         return;
       }
-      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+      if (!this.hasPlaybackAuthority || !this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
       if (payload.channelId !== this.currentChannelId && !payload.worldPlaybackEnabled) {
@@ -690,7 +724,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         void this.fetchFolders();
         void this.fetchAssets({ pagination: { page: 1 } });
       }
-      if (this.worldPlaybackEnabled && this.currentChannelId) {
+      if (this.hasPlaybackAuthority && this.worldPlaybackEnabled && this.currentChannelId) {
         void this.fetchPlaybackState(this.currentChannelId, { force: true, reason: 'world-changed' });
       }
     },
@@ -755,7 +789,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           return;
         }
       }
-      if (!this.worldPlaybackEnabled) {
+      if (!this.hasPlaybackAuthority || !this.worldPlaybackEnabled) {
         this.resetLocalPlaybackRuntime();
       }
       if (switchSeq !== this.channelSwitchSeq) {
@@ -800,6 +834,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async fetchPlaybackState(channelId: string, options?: PlaybackFetchOptions) {
+      if (!this.hasPlaybackAuthority) return;
       const normalizedChannelId = String(channelId || '').trim();
       if (!normalizedChannelId) return;
       const scopeKey = this.getScopeKey(normalizedChannelId, this.worldPlaybackEnabled);
@@ -823,7 +858,17 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    async handleRemotePlaybackEvent(payload: AudioPlaybackStatePayload | null, options?: RemotePlaybackApplyOptions) {
+      if (!this.hasPlaybackAuthority) {
+        return;
+      }
+      await this.applyRemotePlayback(payload, options);
+    },
+
     async applyRemotePlayback(payload: AudioPlaybackStatePayload | null, options?: RemotePlaybackApplyOptions) {
+      if (!this.hasPlaybackAuthority) {
+        return;
+      }
       const source = options?.source || 'push';
       if (payload && typeof payload.worldPlaybackEnabled === 'boolean') {
         this.worldPlaybackEnabled = payload.worldPlaybackEnabled;
@@ -1079,6 +1124,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     tryResumeRemotePlayback() {
+      if (!this.hasPlaybackAuthority) {
+        return;
+      }
       if (!this.pendingRemotePlay) {
         return;
       }
@@ -1118,7 +1166,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     queuePlaybackSync(options?: { persist?: boolean; syncReason?: string }) {
-      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+      if (!this.hasPlaybackAuthority || !this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
       if (typeof window === 'undefined') {
@@ -1135,7 +1183,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async commitPlaybackSync(options?: { persist?: boolean; syncReason?: string }) {
-      if (!this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
+      if (!this.hasPlaybackAuthority || !this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
       const payload = this.serializePlaybackState(options);
@@ -1231,6 +1279,10 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async toggleDrawer(next?: boolean) {
       const target = typeof next === 'boolean' ? next : !this.drawerVisible;
+      if (target && !this.hasPlaybackAuthority) {
+        this.drawerVisible = false;
+        return;
+      }
       this.drawerVisible = target;
       if (target) {
         await this.ensureInitialized();

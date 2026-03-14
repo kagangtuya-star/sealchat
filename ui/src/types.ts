@@ -101,6 +101,7 @@ export interface MessageReactionEvent {
 export interface LogUploadConfig {
   enabled?: boolean;
   endpoint?: string;
+  endpoints?: string[];
   client?: string;
   uniformId?: string;
   version?: number;

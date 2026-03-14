@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -9,6 +9,10 @@ import { useI18n } from 'vue-i18n';
 import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
+import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
+import { useAnnouncementStore } from '@/stores/announcement';
+import type { AnnouncementItem } from '@/models/announcement';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -65,6 +69,7 @@ const dialog = useDialog();
 const router = useRouter();
 const { t } = useI18n();
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
+const announcementStore = useAnnouncementStore();
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -74,6 +79,12 @@ const createVisible = ref(false);
 const creating = ref(false);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
+const inputStatsShow = ref(false);
+const inputStatsLoading = ref(false);
+const inputStatsComponent = shallowRef<Component | null>(null);
+const announcementVisible = ref(false);
+const popupVisible = ref(false);
+const popupItem = ref<AnnouncementItem | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -101,6 +112,35 @@ const createForm = ref({
   description: '',
   visibility: 'public',
 });
+
+const ensureInputStatsLoaded = async () => {
+  if (inputStatsComponent.value || inputStatsLoading.value) {
+    return;
+  }
+  inputStatsLoading.value = true;
+  try {
+    inputStatsComponent.value = (await import('@/views/components/InputStats.vue')).default;
+  } catch (err) {
+    console.error('load input stats component failed', err);
+    message.error('输入统计加载失败');
+    inputStatsShow.value = false;
+  } finally {
+    inputStatsLoading.value = false;
+  }
+};
+
+const toggleInputStats = async () => {
+  adminShow.value = false;
+  userProfileShow.value = false;
+
+  if (inputStatsShow.value) {
+    inputStatsShow.value = false;
+    return;
+  }
+
+  inputStatsShow.value = true;
+  await ensureInputStatsLoaded();
+};
 
 const normalizePositiveInt = (value: unknown, fallback: number) => {
   const num = Number(value);
@@ -243,12 +283,30 @@ const showPagination = computed(() => activePagination.value.total > activePagin
 
 const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
 const viewToggleLabel = computed(() => (viewMode.value === 'list' ? '网格视图' : '列表视图'));
+const canManageLobbyAnnouncements = computed(() => !!user.checkPerm('mod_admin'));
 
 const refreshCurrentMode = async () => {
   if (lobbyMode.value === 'mine') {
     await fetchList();
   } else {
     await fetchExploreList();
+  }
+};
+
+const openAnnouncementPanel = () => {
+  announcementVisible.value = true;
+};
+
+const checkLobbyAnnouncementPopup = async () => {
+  if (!user.info.id) return;
+  try {
+    const item = await announcementStore.fetchLobbyPending();
+    if (!item) return;
+    popupItem.value = item;
+    popupVisible.value = true;
+    await announcementStore.markLobbyPopup(item.id);
+  } catch (error) {
+    console.warn('check lobby announcement popup failed', error);
   }
 };
 
@@ -329,6 +387,7 @@ onMounted(async () => {
       mobileGridActionMediaQuery.addListener(syncMobileGridActionMode);
     }
   }
+  await checkLobbyAnnouncementPopup();
   await chat.fetchFavoriteWorlds().catch(() => {});
   await refreshCurrentMode();
 });
@@ -690,6 +749,10 @@ const headerMenuOptions = computed(() => [
     label: t('headerMenu.profile'),
     key: 'profile',
   },
+  {
+    label: t('headerMenu.inputStats'),
+    key: 'inputStats',
+  },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
     key: 'admin',
@@ -722,14 +785,21 @@ const headerMenuOptions = computed(() => [
   },
 ].filter(Boolean));
 
-const handleHeaderMenuSelect = (key: string | number) => {
+const handleHeaderMenuSelect = async (key: string | number) => {
   switch (key) {
     case 'profile':
       adminShow.value = false;
+      inputStatsShow.value = false;
       userProfileShow.value = !userProfileShow.value;
+      break;
+    case 'inputStats':
+      adminShow.value = false;
+      userProfileShow.value = false;
+      await toggleInputStats();
       break;
     case 'admin':
       userProfileShow.value = false;
+      inputStatsShow.value = false;
       adminShow.value = !adminShow.value;
       break;
     case 'logout':
@@ -801,6 +871,9 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         </n-dropdown>
       </div>
       <div class="world-lobby-header-buttons">
+        <n-button size="small" quaternary @click="openAnnouncementPanel">
+          公告
+        </n-button>
         <n-button size="small" quaternary @click="toggleViewMode">
           <template #icon>
             <n-icon>
@@ -1048,6 +1121,27 @@ const handleExplorePageSizeChange = (pageSize: number) => {
     >
       <AdminSettings @close="adminShow = false" />
     </div>
+    <div
+      v-if="inputStatsShow"
+      class="world-lobby-overlay world-lobby-overlay--stats sc-overlay-layer"
+    >
+      <component
+        :is="inputStatsComponent"
+        v-if="inputStatsComponent"
+        @close="inputStatsShow = false"
+      />
+      <div v-else class="input-stats-loading">输入统计加载中...</div>
+    </div>
+    <AnnouncementManagerModal
+      v-model:visible="announcementVisible"
+      scope-type="lobby"
+      title="大厅公告"
+      :can-manage="canManageLobbyAnnouncements"
+    />
+    <AnnouncementPopupModal
+      v-model:visible="popupVisible"
+      :item="popupItem"
+    />
   </div>
 </template>
 
@@ -1150,6 +1244,17 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   box-shadow:
     0 20px 46px rgba(15, 23, 42, 0.2),
     0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+.input-stats-loading {
+  width: min(1100px, calc(100vw - 3rem));
+  min-height: 16rem;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
+  background: var(--n-color);
 }
 
 :global(:root[data-display-palette='day']) .world-lobby-overlay {

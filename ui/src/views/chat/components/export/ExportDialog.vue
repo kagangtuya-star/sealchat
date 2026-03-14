@@ -157,7 +157,16 @@ const form = reactive<ExportParams>({
 })
 
 const logUploadConfig = computed(() => utils.config?.logUpload)
-const cloudUploadEnabled = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false)
+const hasLogUploadEndpoints = (config?: { endpoint?: string; endpoints?: string[]; enabled?: boolean } | null) => {
+  if (!config || config.enabled === false) {
+    return false
+  }
+  const targets = [config.endpoint, ...(config.endpoints || [])]
+    .map(item => (item || '').trim())
+    .filter((item, index, list) => !!item && list.indexOf(item) === index)
+  return targets.length > 0
+}
+const cloudUploadEnabled = computed(() => hasLogUploadEndpoints(logUploadConfig.value))
 const cloudUploadHint = computed(() => logUploadConfig.value?.note || '可上传到 DicePP 云端，获得海豹染色器 BBcode/Docx 文件。')
 const showCloudUploadOption = computed(() => cloudUploadEnabled.value && form.format === 'json')
 const cloudUploadDefaultName = '频道名_时间范围（例如：新的_20251107-20251108）'

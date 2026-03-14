@@ -8,6 +8,7 @@ import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
 import { setChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
+import { useAudioStudioStore } from '@/stores/audioStudio';
 import { characterApiUnsupportedText } from '@/stores/characterCard';
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
@@ -92,8 +93,11 @@ type OperationTarget = 'follow' | PaneId;
 
 const router = useRouter();
 const route = useRoute();
+const audioStudio = useAudioStudioStore();
 // 分屏壳页面自身不需要 WS：关闭主实例连接，避免占用连接数导致 iframe embed 连接失败
 useChatStore().disconnect('split-shell');
+// 进入分屏时，主 SPA 壳层不应继续持有本地音频播放，否则会与 iframe owner 形成双播。
+audioStudio.setPlaybackAuthority(false);
 const message = useMessage();
 const { width } = useWindowSize();
 
@@ -101,7 +105,7 @@ const isMobileViewport = computed(() => width.value < 700);
 
 const activePaneId = ref<PaneId>('A');
 const operationTarget = ref<OperationTarget>('follow');
-const audioPlaybackTarget = ref<OperationTarget>('follow');
+const audioPlaybackTarget = ref<OperationTarget>('A');
 const lockSameWorld = ref(false);
 const notifyOwnerPaneId = ref<PaneId | null>(null);
 const webTargetPaneId = ref<PaneId>('A');
@@ -239,7 +243,17 @@ const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
 const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
 const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
 const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
-const effectiveAudioPaneId = computed<PaneId>(() => (audioPlaybackTarget.value === 'follow' ? activePaneId.value : audioPlaybackTarget.value));
+const effectiveAudioPaneId = computed<PaneId>(() => {
+  const preferredPaneId = audioPlaybackTarget.value === 'follow' ? activePaneId.value : audioPlaybackTarget.value;
+  if (getPaneById(preferredPaneId).mode === 'chat') {
+    return preferredPaneId;
+  }
+  const fallbackPaneId: PaneId = preferredPaneId === 'A' ? 'B' : 'A';
+  if (getPaneById(fallbackPaneId).mode === 'chat') {
+    return fallbackPaneId;
+  }
+  return preferredPaneId;
+});
 const activePaneHasChannel = computed(() => activePane.value.mode === 'chat' && !!activePane.value.channelId);
 
 const activeChannelTitle = computed(() => {
@@ -636,6 +650,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  audioStudio.setPlaybackAuthority(true);
   window.removeEventListener('message', handleEmbedMessage);
 });
 

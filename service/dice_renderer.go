@@ -22,11 +22,13 @@ var (
 	diceBracePattern      = regexp.MustCompile(`\{([^{}]+)\}`)
 	incompleteDicePattern = regexp.MustCompile(`(?i)(\b\d*)d\b`)
 	hiddenDicePattern     = regexp.MustCompile(`(?i)[\.。．｡]rh`)
+	multiDicePattern      = regexp.MustCompile(`^\s*(\d+)\s*#\s*(.*)$`)
 )
 
 const (
 	defaultDiceExprFallback = "d20"
 	diceIconSVG             = `<span class="dice-chip__icon" aria-hidden="true">🎲</span>`
+	maxMultiDiceCount       = 100
 )
 
 // DiceRenderResult 处理后的内容
@@ -181,8 +183,8 @@ func (r *diceRenderer) processTextNode(node *htmlparser.Node) bool {
 			before := &htmlparser.Node{Type: htmlparser.TextNode, Data: text[cursor:match.start]}
 			parent.InsertBefore(before, node)
 		}
-		roll := r.buildRoll(match)
-		chipHTML := buildDiceChipHTML(roll)
+		rolls := r.buildRolls(match)
+		chipHTML := buildDiceRenderedHTML(match.raw, rolls)
 		fragment, err := htmlparser.ParseFragment(strings.NewReader(chipHTML), parent)
 		if err != nil {
 			// 插入失败时降级为原文本
@@ -268,38 +270,92 @@ func overlaps(used []bool, start, end int) bool {
 	return false
 }
 
-func (r *diceRenderer) buildRoll(match diceTextMatch) *model.MessageDiceRollModel {
-	index := len(r.rolls)
+func (r *diceRenderer) buildRolls(match diceTextMatch) []*model.MessageDiceRollModel {
 	normalized, err := r.normalizeFormula(match)
+	if err != nil || normalized == "" {
+		roll := r.buildErrorRoll(strings.TrimSpace(match.raw), normalized, err)
+		r.rolls = append(r.rolls, roll)
+		return []*model.MessageDiceRollModel{roll}
+	}
+
+	repeatCount, formula, multiErr := r.parseMultiRoll(normalized)
+	if multiErr != nil {
+		roll := r.buildErrorRoll(strings.TrimSpace(match.raw), normalized, multiErr)
+		r.rolls = append(r.rolls, roll)
+		return []*model.MessageDiceRollModel{roll}
+	}
+	if repeatCount <= 1 {
+		roll := r.buildSingleRoll(strings.TrimSpace(match.raw), formula)
+		r.rolls = append(r.rolls, roll)
+		return []*model.MessageDiceRollModel{roll}
+	}
+
+	rolls := make([]*model.MessageDiceRollModel, 0, repeatCount)
+	for i := 0; i < repeatCount; i++ {
+		roll := r.buildSingleRoll(strings.TrimSpace(match.raw), formula)
+		r.rolls = append(r.rolls, roll)
+		rolls = append(rolls, roll)
+	}
+	return rolls
+}
+
+func (r *diceRenderer) buildErrorRoll(sourceText string, formula string, err error) *model.MessageDiceRollModel {
+	index := len(r.rolls)
 	roll := &model.MessageDiceRollModel{
 		RollIndex:  index,
-		SourceText: strings.TrimSpace(match.raw),
-		Formula:    normalized,
+		SourceText: sourceText,
+		Formula:    formula,
 	}
-	if err != nil || normalized == "" {
-		roll.IsError = true
-		if err != nil {
-			roll.ResultText = err.Error()
-		} else {
-			roll.ResultText = "表达式为空"
-		}
+	roll.IsError = true
+	if err != nil {
+		roll.ResultText = err.Error()
 	} else {
-		key := fmt.Sprintf("%d|%s", index, strings.ToLower(strings.TrimSpace(normalized)))
-		if prev, ok := r.existing[key]; ok {
-			roll.ResultDetail = prev.ResultDetail
-			roll.ResultValueText = prev.ResultValueText
-			roll.ResultText = prev.ResultText
-			roll.IsError = prev.IsError
-		} else {
-			computed := r.evaluateFormula(normalized)
-			roll.ResultDetail = computed.ResultDetail
-			roll.ResultValueText = computed.ResultValueText
-			roll.ResultText = computed.ResultText
-			roll.IsError = computed.IsError
-		}
+		roll.ResultText = "表达式为空"
 	}
-	r.rolls = append(r.rolls, roll)
 	return roll
+}
+
+func (r *diceRenderer) buildSingleRoll(sourceText string, formula string) *model.MessageDiceRollModel {
+	index := len(r.rolls)
+	roll := &model.MessageDiceRollModel{
+		RollIndex:  index,
+		SourceText: sourceText,
+		Formula:    formula,
+	}
+	key := fmt.Sprintf("%d|%s", index, strings.ToLower(strings.TrimSpace(formula)))
+	if prev, ok := r.existing[key]; ok {
+		roll.ResultDetail = prev.ResultDetail
+		roll.ResultValueText = prev.ResultValueText
+		roll.ResultText = prev.ResultText
+		roll.IsError = prev.IsError
+		return roll
+	}
+	computed := r.evaluateFormula(formula)
+	roll.ResultDetail = computed.ResultDetail
+	roll.ResultValueText = computed.ResultValueText
+	roll.ResultText = computed.ResultText
+	roll.IsError = computed.IsError
+	return roll
+}
+
+func (r *diceRenderer) parseMultiRoll(normalized string) (int, string, error) {
+	trimmed := strings.TrimSpace(normalized)
+	groups := multiDicePattern.FindStringSubmatch(trimmed)
+	if len(groups) != 3 {
+		return 1, trimmed, nil
+	}
+	repeatCount, err := strconv.Atoi(groups[1])
+	if err != nil {
+		return 0, trimmed, errors.New("多重掷骰次数无效")
+	}
+	if repeatCount <= 0 || repeatCount > maxMultiDiceCount {
+		return 0, trimmed, fmt.Errorf("多重掷骰次数需为 1-%d", maxMultiDiceCount)
+	}
+	formula := strings.TrimSpace(groups[2])
+	if formula == "" {
+		formula = r.defaultDiceExpr
+	}
+	return repeatCount, formula, nil
 }
 
 func (r *diceRenderer) normalizeFormula(match diceTextMatch) (string, error) {
@@ -430,6 +486,25 @@ func buildDiceChipHTML(roll *model.MessageDiceRollModel) string {
 		builder.WriteString("?")
 	}
 	builder.WriteString(`</span></span>`)
+	return builder.String()
+}
+
+func buildDiceRenderedHTML(sourceText string, rolls []*model.MessageDiceRollModel) string {
+	if len(rolls) <= 1 {
+		if len(rolls) == 0 {
+			return html.EscapeString(sourceText)
+		}
+		return buildDiceChipHTML(rolls[0])
+	}
+	builder := &strings.Builder{}
+	fmt.Fprintf(builder, `<span class="dice-roll-group" data-dice-source="%s">`, html.EscapeString(strings.TrimSpace(sourceText)))
+	for _, roll := range rolls {
+		if roll == nil {
+			continue
+		}
+		builder.WriteString(buildDiceChipHTML(roll))
+	}
+	builder.WriteString(`</span>`)
 	return builder.String()
 }
 

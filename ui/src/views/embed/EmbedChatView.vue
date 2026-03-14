@@ -206,8 +206,8 @@ const postStateThrottled = throttle((type: 'sealchat.embed.ready' | 'sealchat.em
 const syncAudioStudioContext = () => {
   if (!audioOwner.value) return;
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
-  audioStudio.setActiveChannel(channelId || null);
   audioStudio.setCurrentWorld(chat.currentWorldId || null);
+  audioStudio.setActiveChannel(channelId || null);
 };
 
 const postFocus = () => {
@@ -237,10 +237,9 @@ const handleMessage = async (event: MessageEvent) => {
   if (data.type === 'sealchat.embed.setAudioOwner') {
     const enabled = !!data.enabled;
     audioOwner.value = enabled;
+    audioStudio.setPlaybackAuthority(enabled);
     if (enabled) {
       syncAudioStudioContext();
-    } else {
-      audioStudio.setActiveChannel(null);
     }
     postStateThrottled('sealchat.embed.state');
     return;
@@ -410,10 +409,9 @@ watch(
 watch(
   audioOwner,
   (enabled) => {
+    audioStudio.setPlaybackAuthority(enabled);
     if (enabled) {
       syncAudioStudioContext();
-    } else {
-      audioStudio.setActiveChannel(null);
     }
   },
   { immediate: true },
