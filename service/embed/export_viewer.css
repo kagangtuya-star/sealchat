@@ -160,14 +160,40 @@ body[data-hide-avatar='true'] .viewer-message__avatar {
 }
 
 body[data-layout='compact'] .viewer-message {
-  border-radius: 12px;
-  border-left: 4px solid rgba(148, 163, 184, 0.4);
-  background: rgba(15, 23, 42, 0.35);
+  gap: 0.8rem;
+  padding: 1rem 1.25rem;
+  border-radius: 0;
+  border-width: 0 0 1px 0;
+  border-color: rgba(148, 163, 184, 0.12);
+  background: transparent;
 }
 
 body[data-palette='day'] .viewer-message {
   background: rgba(248, 250, 252, 0.92);
   border-color: rgba(15, 23, 42, 0.08);
+}
+
+body[data-palette='day'] .viewer-message.viewer-message--image-only {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+body[data-layout='compact'] .viewer-message-list {
+  gap: 0;
+  margin-top: 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+body[data-layout='compact'][data-palette='day'] .viewer-message-list {
+  border-top-color: rgba(15, 23, 42, 0.1);
+  border-bottom-color: rgba(15, 23, 42, 0.1);
+}
+
+body[data-layout='compact'][data-palette='day'] .viewer-message {
+  background: transparent;
+  border-color: rgba(15, 23, 42, 0.1);
 }
 
 .viewer-message.search-hit {
@@ -184,9 +210,9 @@ body[data-palette='day'] .viewer-message {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 0.9rem;
-  margin-bottom: 0.4rem;
-  color: rgba(226, 232, 240, 0.85);
+  font-size: 0.88rem;
+  margin-bottom: 0.35rem;
+  color: rgba(226, 232, 240, 0.72);
   gap: 1rem;
 }
 
@@ -195,10 +221,11 @@ body[data-palette='day'] .viewer-message {
   align-items: center;
   gap: 0.45rem;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .viewer-message__title strong {
-  font-size: 1rem;
+  font-size: 1.02rem;
   color: inherit;
 }
 
@@ -215,9 +242,24 @@ body[data-palette='day'] .viewer-message__header {
   color: rgba(15, 23, 42, 0.75);
 }
 
+.viewer-message__time {
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+body[data-hide-timestamp='true'] .viewer-message__time {
+  display: none;
+}
+
 .viewer-message__body {
   white-space: pre-wrap;
-  line-height: 1.65;
+  line-height: 1.75;
+  color: rgba(241, 245, 249, 0.96);
+  font-size: 1rem;
+}
+
+body[data-palette='day'] .viewer-message__body {
+  color: rgba(15, 23, 42, 0.88);
 }
 
 .viewer-message__body p {

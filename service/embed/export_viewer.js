@@ -82,13 +82,15 @@
 
   function renderPart(payload) {
     const displayOptions = {
-      layout: payload.display_options?.layout || 'bubble',
+      layout: payload.display_options?.layout || 'compact',
       palette: payload.display_options?.palette || 'night',
       showAvatar: payload.display_options?.showAvatar !== false,
+      showTimestamp: payload.without_timestamp !== true,
     }
     document.body.dataset.palette = displayOptions.palette
     document.body.dataset.layout = displayOptions.layout
     document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
+    document.body.dataset.hideTimestamp = displayOptions.showTimestamp ? 'false' : 'true'
 
     const shell = document.createElement('div')
     shell.className = 'viewer-shell'
@@ -139,6 +141,9 @@
       <div>
         <button type="button" data-action="toggle-avatar">头像 ${displayOptions.showAvatar ? '开' : '关'}</button>
       </div>
+      <div>
+        <button type="button" data-action="toggle-timestamp">时间 ${displayOptions.showTimestamp ? '开' : '关'}</button>
+      </div>
     `
     shell.appendChild(display)
 
@@ -180,6 +185,7 @@
     document.body.dataset.layout = displayOptions.layout
     document.body.dataset.palette = displayOptions.palette
     document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
+    document.body.dataset.hideTimestamp = displayOptions.showTimestamp ? 'false' : 'true'
 
     document.querySelectorAll('.viewer-display button').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -202,6 +208,12 @@
               document.body.dataset.hideAvatar === 'true' ? 'false' : 'true'
             btn.textContent =
               '头像 ' + (document.body.dataset.hideAvatar === 'true' ? '关' : '开')
+            break
+          case 'toggle-timestamp':
+            document.body.dataset.hideTimestamp =
+              document.body.dataset.hideTimestamp === 'true' ? 'false' : 'true'
+            btn.textContent =
+              '时间 ' + (document.body.dataset.hideTimestamp === 'true' ? '关' : '开')
             break
         }
       })
@@ -318,13 +330,18 @@
         <strong>${name}</strong>
         <span class="viewer-message__tag">${(msg.ic_mode || 'ic').toUpperCase()}</span>
       </div>
-      <span>${formatTime(msg.created_at)}</span>
+      <span class="viewer-message__time">${formatTime(msg.created_at)}</span>
     `
     main.appendChild(header)
 
     const body = document.createElement('div')
     body.className = 'viewer-message__body'
     body.innerHTML = displayContent
+    const hasImage = body.querySelector('img') !== null
+    const bodyText = stripHTML(displayContent).replace(/\s+/g, '').trim()
+    if (hasImage && !bodyText) {
+      article.classList.add('viewer-message--image-only')
+    }
     main.appendChild(body)
 
     article.appendChild(main)
