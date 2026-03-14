@@ -1092,7 +1092,7 @@ function stopDrag(e: PointerEvent) {
   stickyNoteStore.updateUserState(props.noteId, {
     positionX: Math.round(rect.left),
     positionY: Math.round(rect.top)
-  }, { persistRemote: false })
+  })
 }
 
 // 调整大小逻辑
@@ -1147,7 +1147,7 @@ function stopResize(e: PointerEvent) {
   stickyNoteStore.updateUserState(props.noteId, {
     width: Math.round(rect.width),
     height: Math.round(rect.height)
-  }, { persistRemote: false })
+  })
 }
 
 // 监听便签变化同步本地状态
