@@ -520,6 +520,8 @@ function renderSessionChart() {
       color: '#5b8ff9',
       gradientStart: 'rgba(91,143,249,0.25)',
       gradientEnd: 'rgba(91,143,249,0.02)',
+      barStart: 'rgba(91,143,249,0.82)',
+      barEnd: 'rgba(91,143,249,0.24)',
       yAxisName: t('inputStats.totalChars'),
       getValue: (s: typeof data[number]) => s.totalChars,
     }
@@ -528,6 +530,8 @@ function renderSessionChart() {
         color: '#5dd4a6',
         gradientStart: 'rgba(93,212,166,0.25)',
         gradientEnd: 'rgba(93,212,166,0.02)',
+        barStart: 'rgba(93,212,166,0.82)',
+        barEnd: 'rgba(93,212,166,0.24)',
         yAxisName: `${t('inputStats.typingSpeed')} (${t('inputStats.charsPerMin')})`,
         getValue: (s: typeof data[number]) => s.typingSpeed,
       }
@@ -535,6 +539,8 @@ function renderSessionChart() {
         color: '#f6ad55',
         gradientStart: 'rgba(246,173,85,0.25)',
         gradientEnd: 'rgba(246,173,85,0.02)',
+        barStart: 'rgba(246,173,85,0.82)',
+        barEnd: 'rgba(246,173,85,0.24)',
         yAxisName: `${t('inputStats.sessionTime')} (${t('inputStats.minutes')})`,
         getValue: (s: typeof data[number]) => s.duration,
       }
@@ -552,13 +558,20 @@ function renderSessionChart() {
   sessionChartInstance.setOption({
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'item',
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow',
+        shadowStyle: {
+          color: isDark.value ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+        },
+      },
       backgroundColor: isDark.value ? 'rgba(30,30,35,0.95)' : 'rgba(255,255,255,0.96)',
       borderColor: isDark.value ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
       textStyle: { color: isDark.value ? '#e0e0e6' : '#333', fontSize: 12 },
       padding: [10, 14],
       formatter: (params: any) => {
-        const s = params.data?.session
+        const list = Array.isArray(params) ? params : [params]
+        const s = list.find((item: any) => item?.data?.session)?.data?.session
         if (!s) return ''
         return [
           `<div style="font-weight:700;color:${metricConfig.color};margin-bottom:4px">${t('inputStats.sessionNo')} #${s.index}</div>`,
@@ -573,8 +586,12 @@ function renderSessionChart() {
       },
     },
     grid: {
-      left: '3%', right: '4%', bottom: '6%', top: '12%', containLabel: true,
+      left: '3%', right: '4%', top: '12%', bottom: 78, containLabel: true,
     },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 18, bottom: 10, brushSelect: false },
+    ],
     xAxis: {
       type: 'category',
       data: xLabels,
@@ -591,11 +608,31 @@ function renderSessionChart() {
     series: [
       {
         name: metricConfig.yAxisName,
+        type: 'bar',
+        data: chartData,
+        barMaxWidth: 20,
+        z: 1,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: metricConfig.barStart },
+            { offset: 1, color: metricConfig.barEnd },
+          ]),
+          borderRadius: [6, 6, 0, 0],
+        },
+        emphasis: {
+          itemStyle: {
+            color: metricConfig.color,
+          },
+        },
+      },
+      {
+        name: metricConfig.yAxisName,
         type: 'line',
         smooth: true,
         data: chartData,
         symbolSize: 10,
         symbol: 'circle',
+        z: 3,
         lineStyle: {
           color: metricConfig.color,
           width: 2.5,
