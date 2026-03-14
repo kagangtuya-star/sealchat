@@ -497,6 +497,7 @@ const linkOpenInNewTab = ref(false);
 
 const quickIFormModalShow = ref(false);
 const creatingIForm = ref(false);
+const overlayInteractionAt = ref(0);
 const quickIFormForm = reactive({
   name: '',
   url: '',
@@ -689,22 +690,18 @@ const initEditor = async () => {
       { Editor: EditorClass, Node: TiptapNodeClass, mergeAttributes },
       { EditorContent: EditorContentComp, BubbleMenu: BubbleMenuComp },
       { default: StarterKit },
-      { default: Link },
       { default: TextStyle },
       { default: Color },
       { default: Image },
-      { default: Underline },
       { default: Highlight },
       { default: TextAlign },
     ] = await Promise.all([
       import('@tiptap/core'),
       import('@tiptap/vue-3'),
       import('@tiptap/starter-kit'),
-      import('@tiptap/extension-link'),
       import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
       import('@tiptap/extension-color').then(m => ({ default: m.Color })),
       import('@tiptap/extension-image'),
-      import('@tiptap/extension-underline'),
       import('@tiptap/extension-highlight'),
       import('@tiptap/extension-text-align'),
     ]);
@@ -765,24 +762,24 @@ const initEditor = async () => {
               class: 'code-block',
             },
           },
+          underline: {},
+          link: {
+            openOnClick: false,
+            HTMLAttributes: {
+              class: 'text-blue-500 underline cursor-pointer',
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+          },
         }),
         TextStyle,
         Color,
-        Underline,
         Highlight.configure({
           multicolor: true,
         }),
         Spoiler,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
-        }),
-        Link.configure({
-          openOnClick: false,
-          HTMLAttributes: {
-            class: 'text-blue-500 underline cursor-pointer',
-            target: '_blank',
-            rel: 'noopener noreferrer',
-          },
         }),
         Image.configure({
           inline: true,
@@ -1111,6 +1108,22 @@ const isActive = (name: string, attrs?: Record<string, any>) => {
   return editor.value?.isActive(name, attrs) ?? false;
 };
 
+const markOverlayInteraction = () => {
+  overlayInteractionAt.value = Date.now();
+};
+
+const hasOpenOverlay = () => {
+  return mentionVisible.value
+    || highlightColorPopoverShow.value
+    || textColorPopoverShow.value
+    || linkModalShow.value
+    || quickIFormModalShow.value;
+};
+
+const hasRecentOverlayInteraction = (thresholdMs = 250) => {
+  return Date.now() - overlayInteractionAt.value <= thresholdMs;
+};
+
 const handleCompositionStart = () => {
   isComposing.value = true;
   emit('composition-start');
@@ -1147,6 +1160,8 @@ defineExpose({
   getEditor: () => editor.value,
   getJson: () => editor.value?.getJSON(),
   insertImagePlaceholder,
+  hasOpenOverlay,
+  hasRecentOverlayInteraction,
 });
 </script>
 
@@ -1273,7 +1288,7 @@ defineExpose({
                 <span class="tiptap-highlight-icon">H</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker">
+            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in highlightColors"
                 :key="color"
@@ -1315,7 +1330,7 @@ defineExpose({
                 <span class="tiptap-textcolor-icon">A</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker">
+            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in textColors"
                 :key="color"
@@ -1499,7 +1514,7 @@ defineExpose({
               :style="mentionDropdownStyle"
               tabindex="-1"
               ref="mentionDropdownRef"
-              @pointerdown.stop
+              @pointerdown.stop="markOverlayInteraction"
             >
               <input
                 v-model="mentionSearchValue"
@@ -1540,7 +1555,7 @@ defineExpose({
           :editor="editor"
           :tippy-options="{ duration: 100, placement: 'top' }"
         >
-          <div class="tiptap-bubble-menu">
+          <div class="tiptap-bubble-menu" @pointerdown.stop="markOverlayInteraction">
             <n-button
               size="tiny"
               text
@@ -1618,6 +1633,7 @@ defineExpose({
       title="插入链接"
       style="width: 360px; max-width: 90vw;"
       :mask-closable="true"
+      @pointerdown.stop="markOverlayInteraction"
     >
       <n-form label-placement="top">
         <n-form-item label="链接文本">
@@ -1653,6 +1669,7 @@ defineExpose({
       title="创建消息嵌入 iForm"
       style="width: 460px; max-width: 92vw;"
       :mask-closable="!creatingIForm"
+      @pointerdown.stop="markOverlayInteraction"
     >
       <n-form label-placement="top">
         <n-form-item label="名称">

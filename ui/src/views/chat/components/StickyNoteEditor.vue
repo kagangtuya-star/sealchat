@@ -133,21 +133,17 @@ const initEditor = async () => {
       { Editor: EditorClass },
       { EditorContent: EditorContentComp },
       { default: StarterKit },
-      { default: Link },
       { default: TextStyle },
       { default: Color },
       { default: Image },
-      { default: Underline },
       { default: Highlight },
     ] = await Promise.all([
       import('@tiptap/core'),
       import('@tiptap/vue-3'),
       import('@tiptap/starter-kit'),
-      import('@tiptap/extension-link'),
       import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
       import('@tiptap/extension-color').then(m => ({ default: m.Color })),
       import('@tiptap/extension-image'),
-      import('@tiptap/extension-underline'),
       import('@tiptap/extension-highlight'),
     ]);
 
@@ -160,22 +156,22 @@ const initEditor = async () => {
         StarterKit.configure({
           heading: false,
           codeBlock: false,
+          underline: {},
+          link: {
+            openOnClick: false,
+            HTMLAttributes: {
+              class: 'text-blue-500 underline cursor-pointer',
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+          },
         }),
         TextStyle,
         Color,
-        Underline,
         Highlight.configure({
           multicolor: true,
         }),
         Spoiler,
-        Link.configure({
-          openOnClick: false,
-          HTMLAttributes: {
-            class: 'text-blue-500 underline cursor-pointer',
-            target: '_blank',
-            rel: 'noopener noreferrer',
-          },
-        }),
         Image.configure({
           inline: true,
           allowBase64: true,
