@@ -451,25 +451,25 @@ func registerDBWriteActivityCallbacks(conn *gorm.DB) {
 	if conn == nil {
 		return
 	}
-	register := func(name string, registerFn func() error) {
+	register := func(name string, getFn func(string) func(*gorm.DB), registerFn func() error) {
+		if getFn(name) != nil {
+			return
+		}
 		if err := registerFn(); err != nil {
 			log.Printf("注册数据库写活动回调失败(%s): %v", name, err)
 		}
 	}
-	register("create", func() error {
-		_ = conn.Callback().Create().Remove("sealchat:write-activity:create")
+	register("sealchat:write-activity:create", conn.Callback().Create().Get, func() error {
 		return conn.Callback().Create().Before("gorm:create").Register("sealchat:write-activity:create", func(tx *gorm.DB) {
 			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
 		})
 	})
-	register("update", func() error {
-		_ = conn.Callback().Update().Remove("sealchat:write-activity:update")
+	register("sealchat:write-activity:update", conn.Callback().Update().Get, func() error {
 		return conn.Callback().Update().Before("gorm:update").Register("sealchat:write-activity:update", func(tx *gorm.DB) {
 			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
 		})
 	})
-	register("delete", func() error {
-		_ = conn.Callback().Delete().Remove("sealchat:write-activity:delete")
+	register("sealchat:write-activity:delete", conn.Callback().Delete().Get, func() error {
 		return conn.Callback().Delete().Before("gorm:delete").Register("sealchat:write-activity:delete", func(tx *gorm.DB) {
 			lastDBWriteUnixMilli.Store(time.Now().UnixMilli())
 		})
