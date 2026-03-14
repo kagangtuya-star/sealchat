@@ -253,11 +253,15 @@ body[data-palette='day'] .viewer-message__header {
 }
 
 .viewer-message__body img {
-  max-width: min(720px, 100%);
+  max-width: min(36vw, 200px);
+  max-height: 6rem;
+  width: auto;
+  height: auto;
   border-radius: 14px;
-  margin-top: 0.7rem;
-  display: block;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.4);
+  margin: 0.15rem 0.25rem;
+  display: inline-block;
+  vertical-align: middle;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.28);
 }
 
 .viewer-nav {

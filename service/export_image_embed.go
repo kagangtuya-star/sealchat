@@ -49,11 +49,15 @@ func (e *inlineImageEmbedder) inlinePayload(payload *ExportPayload) {
 		return
 	}
 	for i := range payload.Messages {
-		if !strings.Contains(strings.ToLower(payload.Messages[i].Content), "<img") {
-			continue
+		if strings.Contains(strings.ToLower(payload.Messages[i].Content), "<img") {
+			if html, ok := e.inlineHTML(payload.Messages[i].Content); ok {
+				payload.Messages[i].Content = html
+			}
 		}
-		if html, ok := e.inlineHTML(payload.Messages[i].Content); ok {
-			payload.Messages[i].Content = html
+		if strings.Contains(strings.ToLower(payload.Messages[i].ContentHTML), "<img") {
+			if html, ok := e.inlineHTML(payload.Messages[i].ContentHTML); ok {
+				payload.Messages[i].ContentHTML = html
+			}
 		}
 		if avatar := strings.TrimSpace(payload.Messages[i].SenderAvatar); avatar != "" {
 			if inlined, ok := e.resolveDataURL(avatar); ok {

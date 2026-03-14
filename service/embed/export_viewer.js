@@ -296,8 +296,9 @@
 
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
-    avatar.style.background = msg.sender_color || 'rgba(148, 163, 184, 0.35)'
-    if (msg.sender_avatar && msg.sender_avatar.startsWith('data:')) {
+    const hasAvatarImage = Boolean(msg.sender_avatar && msg.sender_avatar.startsWith('data:'))
+    avatar.style.background = hasAvatarImage ? 'transparent' : (msg.sender_color || 'rgba(148, 163, 184, 0.35)')
+    if (hasAvatarImage) {
       const img = document.createElement('img')
       img.src = msg.sender_avatar
       img.alt = name
