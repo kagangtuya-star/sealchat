@@ -8799,6 +8799,31 @@ const replaceAtTokensWithDisplayText = (value: string) => {
   });
 };
 
+const extractPushNotificationPreview = (content: string) => {
+  if (!content) {
+    return '';
+  }
+
+  if (isTipTapJson(content)) {
+    try {
+      return tiptapJsonToPlainText(content).replace(/\s+/g, ' ').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  return contentUnescape(
+    replaceAtTokensWithDisplayText(content)
+      .replace(/\[\[(?:图片:[^\]]+|img:id:[^\]]+)\]\]/g, '[图片]')
+      .replace(/<img\s+[^>]*>/gi, '[图片]')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|h[1-6]|blockquote|pre)>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 const collectMentionIdsFromText = (value: string, output: Set<string>) => {
   AT_TOKEN_FLEX_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -10138,9 +10163,9 @@ chatEvent.on('message-created', (e?: Event) => {
             || incoming.user?.nick
             || '新消息';
           
-          // 提取消息内容预览（移除 HTML 标签）
+          // 提取消息内容预览，兼容富文本、旧 HTML 和实体编码
           const rawContent = incoming.content || '';
-          const plainText = rawContent.replace(/<[^>]*>/g, '').trim();
+          const plainText = extractPushNotificationPreview(rawContent);
           const preview = plainText.length > 50 ? plainText.slice(0, 50) + '...' : plainText;
           
           // 获取发送者头像（优先角色头像，其次用户/成员头像）
