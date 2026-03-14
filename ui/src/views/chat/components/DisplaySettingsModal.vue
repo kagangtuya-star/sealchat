@@ -25,6 +25,8 @@ const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
 const avatarStylePanelVisible = ref(false)
 const fontSettingsPanelVisible = ref(false)
+const keywordQuickInputTriggerDraft = ref('/')
+const identityQuickSwitchTriggerDraft = ref('/')
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
@@ -39,6 +41,61 @@ const syncFavoriteBar = (source?: DisplaySettings) => {
   draft.favoriteChannelBarEnabled = source.favoriteChannelBarEnabled
 }
 
+const extractSingleTriggerChar = (value: string | null | undefined) => {
+  const [firstChar = ''] = Array.from(value ?? '')
+  return firstChar
+}
+
+const syncTriggerDrafts = (source?: DisplaySettings) => {
+  keywordQuickInputTriggerDraft.value = source?.worldKeywordQuickInputTrigger || '/'
+  identityQuickSwitchTriggerDraft.value = source?.identityQuickSwitchTrigger || '/'
+}
+
+const updateTriggerDraft = (
+  key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger',
+  value: string,
+) => {
+  const normalized = extractSingleTriggerChar(value)
+  if (key === 'worldKeywordQuickInputTrigger') {
+    keywordQuickInputTriggerDraft.value = normalized
+  } else {
+    identityQuickSwitchTriggerDraft.value = normalized
+  }
+  if (!normalized) {
+    return
+  }
+  draft[key] = normalized
+}
+
+const finalizeTriggerDraft = (key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger') => {
+  const current = key === 'worldKeywordQuickInputTrigger'
+    ? keywordQuickInputTriggerDraft.value
+    : identityQuickSwitchTriggerDraft.value
+  const normalized = extractSingleTriggerChar(current) || '/'
+  if (key === 'worldKeywordQuickInputTrigger') {
+    keywordQuickInputTriggerDraft.value = normalized
+  } else {
+    identityQuickSwitchTriggerDraft.value = normalized
+  }
+  draft[key] = normalized
+}
+
+const handleIdentityQuickSwitchTriggerUpdate = (value: string) => {
+  updateTriggerDraft('identityQuickSwitchTrigger', value)
+}
+
+const handleIdentityQuickSwitchTriggerBlur = () => {
+  finalizeTriggerDraft('identityQuickSwitchTrigger')
+}
+
+const handleKeywordQuickInputTriggerUpdate = (value: string) => {
+  updateTriggerDraft('worldKeywordQuickInputTrigger', value)
+}
+
+const handleKeywordQuickInputTriggerBlur = () => {
+  finalizeTriggerDraft('worldKeywordQuickInputTrigger')
+}
+
 // Sync avatar settings when AvatarStylePanel closes (it saves directly to store)
 watch(avatarStylePanelVisible, (visible) => {
   if (!visible) {
@@ -51,6 +108,7 @@ watch(
   () => props.settings,
   (value) => {
     if (!value) return
+    syncTriggerDrafts(value)
     draft.layout = value.layout
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
@@ -134,6 +192,7 @@ const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
   Object.assign(draft, defaults)
+  syncTriggerDrafts(defaults)
   syncFavoriteBar(props.settings)
 }
 
@@ -510,13 +569,15 @@ const handleOpenTutorialHub = () => {
         <div class="keyword-quick-input-row">
           <span class="quick-input-hint">触发字符</span>
           <n-input
-            v-model:value="draft.identityQuickSwitchTrigger"
+            :value="identityQuickSwitchTriggerDraft"
             size="small"
             :maxlength="1"
             style="width: 50px; text-align: center"
             placeholder="/"
+            @update:value="handleIdentityQuickSwitchTriggerUpdate"
+            @blur="handleIdentityQuickSwitchTriggerBlur"
           />
-          <span class="quick-input-hint">示例：{{ draft.identityQuickSwitchTrigger || '/' }}角色名 正文</span>
+          <span class="quick-input-hint">示例：{{ identityQuickSwitchTriggerDraft || '/' }}角色名 正文</span>
         </div>
       </section>
 
@@ -627,12 +688,14 @@ const handleOpenTutorialHub = () => {
           </n-switch>
           <span class="quick-input-hint">触发字符</span>
           <n-input
-            v-model:value="draft.worldKeywordQuickInputTrigger"
+            :value="keywordQuickInputTriggerDraft"
             size="small"
             :maxlength="1"
             :disabled="!draft.worldKeywordQuickInputEnabled"
             style="width: 50px; text-align: center"
             placeholder="/"
+            @update:value="handleKeywordQuickInputTriggerUpdate"
+            @blur="handleKeywordQuickInputTriggerBlur"
           />
           <span class="quick-input-hint">输入该字符后可快速搜索并插入世界术语</span>
         </div>
