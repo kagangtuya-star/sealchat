@@ -246,6 +246,30 @@ export interface UserInfo {
   emailVerifiedAt?: string;
 }
 
+export interface ChannelMemberCandidateItem {
+  userId: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  worldRole: string;
+  joinedAt?: string;
+  alreadyInChannel: boolean;
+}
+
+export interface ChannelMemberCandidatesResponse {
+  items: ChannelMemberCandidateItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ChannelAddWorldMembersResponse {
+  roleId: string;
+  candidateCount: number;
+  addedCount: number;
+  skippedExistingCount: number;
+}
+
 export interface TalkMessage {
   id: string;
   time: number;
@@ -283,6 +307,7 @@ export interface BackgroundPreset {
 
 export interface SChannel extends Channel {
   isPrivate?: boolean;
+  worldId?: string;
   createdAt?: string; // 频道创建时间
   updatedAt?: string; // 频道最后更新时间
   rootId?: string; // 根频道ID

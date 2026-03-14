@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIdentity, ChannelIdentityFolder, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -3930,6 +3930,20 @@ export const useChatStore = defineStore({
       return resp;
     },
 
+    async channelMemberCandidates(channelId: string, params?: { page?: number; pageSize?: number; keyword?: string; roleKey?: string; includeSpectator?: boolean; excludeExisting?: boolean }) {
+      const resp = await api.get<ChannelMemberCandidatesResponse>(`api/v1/channels/${channelId}/member-candidates`, {
+        params: {
+          page: params?.page,
+          pageSize: params?.pageSize,
+          keyword: params?.keyword,
+          roleKey: params?.roleKey,
+          includeSpectator: params?.includeSpectator,
+          excludeExisting: params?.excludeExisting,
+        },
+      });
+      return resp.data;
+    },
+
     async channelMemberOptions(channelId: string) {
       if (!channelId) {
         return { items: [], total: 0 };
@@ -4019,6 +4033,11 @@ export const useChatStore = defineStore({
     async userRoleUnlink(roleId: string, userIds: string[]) {
       const resp = await api.post<{ data: boolean }>('api/v1/user-role-unlink', { roleId, userIds });
       return resp?.data;
+    },
+
+    async channelAddWorldMembers(channelId: string, payload?: { includeSpectator?: boolean }) {
+      const resp = await api.post<ChannelAddWorldMembersResponse>(`api/v1/channels/${channelId}/add-world-members`, payload || {});
+      return resp.data;
     },
 
     async friendList() {

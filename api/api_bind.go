@@ -443,6 +443,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)
+	v1Auth.Get("/channels/:channelId/member-candidates", ChannelMemberCandidates)
+	v1Auth.Post("/channels/:channelId/add-world-members", ChannelAddWorldMembers)
 	v1Auth.Get("/channels/:channelId/member-options", ChannelMemberOptions)
 	v1Auth.Get("/channels/:channelId/speaker-options", ChannelSpeakerOptions)
 	v1Auth.Get("/channels/:channelId/speaker-role-options", ChannelSpeakerRoleOptions)
