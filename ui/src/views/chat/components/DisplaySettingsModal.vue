@@ -83,6 +83,7 @@ watch(
   draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
+  draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
@@ -497,6 +498,26 @@ const handleOpenTutorialHub = () => {
         <n-button secondary size="small" @click="shortcutPanelVisible = true">
           配置快捷键
         </n-button>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">角色快捷切换</p>
+            <p class="section-desc">在文本框中输入“触发字符 + 频道角色名 + 空格 + 正文”时，发送前会先切换到对应频道角色</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <span class="quick-input-hint">触发字符</span>
+          <n-input
+            v-model:value="draft.identityQuickSwitchTrigger"
+            size="small"
+            :maxlength="1"
+            style="width: 50px; text-align: center"
+            placeholder="/"
+          />
+          <span class="quick-input-hint">示例：{{ draft.identityQuickSwitchTrigger || '/' }}角色名 正文</span>
+        </div>
       </section>
 
       <section class="display-settings__section">

@@ -2233,8 +2233,14 @@ type IdentityShortcutMatchResult = {
   ambiguous: boolean;
 };
 
-const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdentity[]): IdentityShortcutMatchResult | null => {
-  const shortcutMatch = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(rawDraft);
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const resolveIdentityShortcutMatch = (
+  rawDraft: string,
+  identities: ChannelIdentity[],
+  trigger = '/',
+): IdentityShortcutMatchResult | null => {
+  const shortcutMatch = new RegExp(`^${escapeRegExp(trigger)}(\\S+)(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
   if (!shortcutMatch) {
     return null;
   }
@@ -2295,6 +2301,17 @@ const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdent
     restContent,
     ambiguous: false,
   };
+};
+
+const shouldSuppressKeywordSuggestForIdentityShortcut = (rawDraft: string, trigger: string): boolean => {
+  const channelId = chat.curChannel?.id;
+  const identityTrigger = display.settings.identityQuickSwitchTrigger || '/';
+  if (!channelId || trigger !== identityTrigger) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  const shortcutResult = resolveIdentityShortcutMatch(rawDraft, identities, identityTrigger);
+  return !!shortcutResult?.matched || !!shortcutResult?.ambiguous;
 };
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
@@ -9440,10 +9457,12 @@ const send = throttle(async () => {
     return { ...source };
   })();
 
-  // 仅纯文本模式支持 `/角色名` 或 `/角色名 内容` 快捷切换
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
+  const identityQuickSwitchTrigger = display.settings.identityQuickSwitchTrigger || '/';
+
+  // 仅纯文本模式支持 `触发字符 + 角色名` 或 `触发字符 + 角色名 内容` 快捷切换
+  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityQuickSwitchTrigger)) {
     const identities = chat.channelIdentities[chat.curChannel.id] || [];
-    const shortcutResult = resolveIdentityShortcutMatch(draft, identities);
+    const shortcutResult = resolveIdentityShortcutMatch(draft, identities, identityQuickSwitchTrigger);
     if (shortcutResult?.ambiguous) {
       message.warning('匹配到多个同长度角色，请输入更长名称');
       return;
@@ -11018,9 +11037,15 @@ const checkKeywordSuggest = () => {
 
   // 提取查询内容
   const query = beforeCursor.slice(slashIndex + 1);
+  const shortcutDraft = beforeCursor.slice(slashIndex);
 
   // 检测是否是快捷命令模式 (/e 空格 或 /w 空格) - 仅当触发字符为 / 时检查
   if (trigger === '/' && /^[ew]\s/.test(query)) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  if (shouldSuppressKeywordSuggestForIdentityShortcut(shortcutDraft, trigger)) {
     keywordSuggestVisible.value = false;
     return;
   }

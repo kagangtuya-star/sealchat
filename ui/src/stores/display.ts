@@ -112,6 +112,7 @@ export interface DisplaySettings {
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
   worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
+  identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -443,6 +444,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   worldKeywordQuickInputEnabled: true,
   worldKeywordQuickInputTrigger: '/',
+  identityQuickSwitchTrigger: '/',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -654,6 +656,7 @@ const loadSettings = (): DisplaySettings => {
       ),
       worldKeywordQuickInputEnabled: coerceBoolean((parsed as any)?.worldKeywordQuickInputEnabled ?? true),
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
+      identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -855,6 +858,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputTrigger')
       ? coerceQuickInputTrigger((patch as any).worldKeywordQuickInputTrigger)
       : base.worldKeywordQuickInputTrigger,
+  identityQuickSwitchTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickSwitchTrigger')
+      ? coerceQuickInputTrigger((patch as any).identityQuickSwitchTrigger)
+      : base.identityQuickSwitchTrigger,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
