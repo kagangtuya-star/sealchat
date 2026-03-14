@@ -69,6 +69,7 @@
     "sessionAnalysis": "团次分析",
     "sessionThreshold": "团次间隔阈值（分钟）",
     "sessionNo": "团次",
+    "sessionTime": "团次时间",
     "startTime": "开始时间",
     "endTime": "结束时间",
     "duration": "持续时间",
