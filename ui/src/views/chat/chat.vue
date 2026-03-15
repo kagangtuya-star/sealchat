@@ -7288,6 +7288,7 @@ const historyEntries = ref<InputHistoryEntry[]>([]);
 const historyPopoverVisible = ref(false);
 const hasHistoryEntries = computed(() => historyEntries.value.length > 0);
 const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curChannel.id) : HISTORY_CHANNEL_FALLBACK);
+const draftOwnerChannelKey = ref(HISTORY_CHANNEL_FALLBACK);
 const lastHistorySignature = ref<string | null>(null);
 
 const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
@@ -7740,6 +7741,7 @@ const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
 
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
+    draftOwnerChannelKey.value = entry.channelKey || currentChannelKey.value;
     clearInputModeCache();
     inputMode.value = entry.mode;
     suspendInlineSync = true;
@@ -7810,8 +7812,20 @@ const persistSessionDraftForChannel = (
   });
 };
 
+const resolveDraftOwnerChannelKey = () => {
+  const owner = String(draftOwnerChannelKey.value || '').trim();
+  if (owner && owner !== HISTORY_CHANNEL_FALLBACK) {
+    return owner;
+  }
+  return currentChannelKey.value;
+};
+
+const persistOwnedSessionDraft = (options: { clearWhenEmpty?: boolean } = {}) => {
+  persistSessionDraftForChannel(resolveDraftOwnerChannelKey(), options);
+};
+
 const syncSessionDraftSnapshot = () => {
-  persistSessionDraftForChannel(currentChannelKey.value, { clearWhenEmpty: true });
+  persistOwnedSessionDraft({ clearWhenEmpty: true });
 };
 
 const scheduleSessionDraftSnapshot = throttle(
@@ -7832,6 +7846,7 @@ const tryAutoRestoreSessionDraft = () => {
   }
   const draft = readSessionDraftForChannel(channelKey);
   if (!draft || !isContentMeaningful(draft.mode, draft.content)) {
+    draftOwnerChannelKey.value = channelKey;
     writeSessionDraftForChannel(channelKey, null);
     return;
   }
@@ -7861,9 +7876,6 @@ const scheduleHistorySnapshot = throttle(
 watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
-  nextTick(() => {
-    tryAutoRestoreSessionDraft();
-  });
 });
 
 const handleHistoryPopoverShow = (show: boolean) => {
@@ -9984,8 +9996,42 @@ const scrollToBottom = () => {
 const emit = defineEmits(['drawer-show'])
 
 let firstLoad = false;
+const handleChannelSwitchEvent = (e: any) => {
+  if (!firstLoad) return;
+  const payload = (e as any)?.argv || {};
+  const isReenter = !!payload?.reenter;
+  persistOwnedSessionDraft();
+  stopTypingPreviewNow();
+  resetTypingPreview();
+  stopEditingPreviewNow();
+  cancelEditingSession();
+  if (!isReenter) {
+    textToSend.value = '';
+  }
+  draftOwnerChannelKey.value = currentChannelKey.value;
+  clearInputModeCache();
+  resetWindowState('live');
+  pinnedRows.value = [];
+  chat.clearMessageInsertTarget();
+  resetDragState();
+  localReorderOps.clear();
+  showButton.value = false;
+  // 具体不知道原因，但是必须在这个位置reset才行
+  // virtualListRef.value?.reset();
+  refreshHistoryEntries();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
+  const fetchTask = fetchLatestMessages();
+  fetchTask.finally(() => {
+    void fetchPinnedMessages();
+    void maybePromptIdentitySync();
+  });
+};
+
 onMounted(async () => {
   await chat.tryInit();
+  draftOwnerChannelKey.value = currentChannelKey.value;
   clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
   if (typeof document !== 'undefined') {
@@ -10554,38 +10600,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     });
   });
 
-  chatEvent.on('channel-switch-to', (e) => {
-    if (!firstLoad) return;
-    const payload = (e as any)?.argv || {};
-    const isReenter = !!payload?.reenter;
-    const previousChannelId = String(payload?.previousChannelId || '').trim();
-    persistSessionDraftForChannel(previousChannelId);
-    stopTypingPreviewNow();
-    resetTypingPreview();
-    stopEditingPreviewNow();
-    cancelEditingSession();
-    if (!isReenter) {
-      textToSend.value = '';
-    }
-    clearInputModeCache();
-    resetWindowState('live');
-    pinnedRows.value = [];
-    chat.clearMessageInsertTarget();
-    resetDragState();
-    localReorderOps.clear();
-    showButton.value = false;
-    // 具体不知道原因，但是必须在这个位置reset才行
-    // virtualListRef.value?.reset();
-    refreshHistoryEntries();
-    nextTick(() => {
-      tryAutoRestoreSessionDraft();
-    });
-    const fetchTask = fetchLatestMessages();
-    fetchTask.finally(() => {
-      void fetchPinnedMessages();
-      void maybePromptIdentitySync();
-    });
-  })
+  chatEvent.on('channel-switch-to', handleChannelSwitchEvent as any)
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
@@ -11927,6 +11942,7 @@ onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
+  chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
