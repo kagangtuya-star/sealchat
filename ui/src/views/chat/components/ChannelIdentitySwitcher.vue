@@ -15,9 +15,17 @@ import { useI18n } from 'vue-i18n';
 const props = withDefaults(defineProps<{
   channelId?: string;
   disabled?: boolean;
+  previewAppearance?: {
+    identityId?: string;
+    displayName?: string;
+    color?: string;
+    avatarAttachmentId?: string;
+    variantId?: string;
+  } | null;
 }>(), {
   channelId: undefined,
   disabled: false,
+  previewAppearance: null,
 });
 
 const emit = defineEmits<{
@@ -123,8 +131,22 @@ const resolveIdentityAvatarToken = (identity?: { id?: string; avatarAttachmentId
   return variant?.avatarAttachmentId || identity.avatarAttachmentId || '';
 };
 
-const displayName = computed(() => activeIdentity.value?.displayName || fallbackName.value);
-const displayColor = computed(() => activeIdentity.value?.color || '');
+const displayIdentityId = computed(() => {
+  const previewIdentityId = String(props.previewAppearance?.identityId || '').trim();
+  return previewIdentityId || activeIdentity.value?.id || '';
+});
+const displayName = computed(() => (
+  props.previewAppearance?.displayName
+  || activeIdentityVariant.value?.displayName
+  || activeIdentity.value?.displayName
+  || fallbackName.value
+));
+const displayColor = computed(() => (
+  props.previewAppearance?.color
+  || activeIdentityVariant.value?.color
+  || activeIdentity.value?.color
+  || ''
+));
 
 // Mobile detection for responsive display
 const isMobile = ref(false);
@@ -150,7 +172,11 @@ const displayedButtonLabel = computed(() => {
 });
 
 const avatarSrc = computed(() => {
-  return buildAttachmentUrl(activeIdentityVariant.value?.avatarAttachmentId || activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
+  return buildAttachmentUrl(
+    props.previewAppearance?.avatarAttachmentId
+    || activeIdentityVariant.value?.avatarAttachmentId
+    || activeIdentity.value?.avatarAttachmentId,
+  ) || fallbackAvatar.value;
 });
 const toggleActionLabel = computed(() => (
   filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
@@ -227,7 +253,7 @@ const options = computed<DropdownMixedOption[]>(() => {
         src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || fallbackAvatar.value}
       />
     ),
-    class: item.id === activeIdentity.value?.id ? 'identity-option identity-option--active' : 'identity-option',
+    class: item.id === displayIdentityId.value ? 'identity-option identity-option--active' : 'identity-option',
     extra: item.color,
   }));
   if (!list.length) {
@@ -342,7 +368,7 @@ const renderOption: DropdownRenderOption = ({ node, option }) => {
     });
   }
   const color = (option as any).extra as string | undefined;
-  const isActive = activeIdentity.value?.id === option.key;
+  const isActive = displayIdentityId.value === option.key;
   return cloneVNode(
     node,
     {

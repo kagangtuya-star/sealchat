@@ -4046,7 +4046,15 @@ export const useChatStore = defineStore({
       state: 'indicator' | 'content' | 'silent',
       content: string,
       channelId?: string,
-      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc'; orderKey?: number },
+      extra?: {
+        mode?: string;
+        messageId?: string;
+        whisperTo?: string;
+        icMode?: 'ic' | 'ooc';
+        orderKey?: number;
+        identityId?: string | null;
+        identityVariantId?: string | null;
+      },
     ) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
@@ -4081,9 +4089,14 @@ export const useChatStore = defineStore({
         if (whisperTargetId) {
           payload.whisper_to = whisperTargetId;
         }
-        const activeIdentity = this.getActiveIdentity(targetChannelId);
-        if (activeIdentity) {
-          payload.identity_id = activeIdentity.id;
+        const resolvedIdentityId = String(extra?.identityId || '').trim() || this.getActiveIdentityId(targetChannelId);
+        if (resolvedIdentityId) {
+          payload.identity_id = resolvedIdentityId;
+        }
+        const resolvedIdentityVariantId = String(extra?.identityVariantId || '').trim()
+          || this.getActiveIdentityVariantId(targetChannelId, resolvedIdentityId);
+        if (resolvedIdentityVariantId) {
+          payload.identity_variant_id = resolvedIdentityVariantId;
         }
         if (typeof extra?.orderKey === 'number' && Number.isFinite(extra.orderKey) && extra.orderKey > 0) {
           payload.order_key = extra.orderKey;
@@ -4099,6 +4112,7 @@ export const useChatStore = defineStore({
             'channel=', payload.channel_id,
             'messageId=', payload.message_id,
             'identityId=', payload.identity_id || '(none)',
+            'identityVariantId=', payload.identity_variant_id || '(none)',
             'contentSample=',
             typeof payload.content === 'string' ? payload.content.slice(0, 20) : payload.content,
           );

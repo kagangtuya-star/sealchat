@@ -3278,17 +3278,18 @@ func normalizeIcMode(raw string) string {
 }
 
 func apiMessageTyping(ctx *ChatContext, data *struct {
-	ChannelID   string   `json:"channel_id"`
-	State       string   `json:"state"`
-	Content     string   `json:"content"`
-	MessageID   string   `json:"message_id"`
-	Mode        string   `json:"mode"`
-	Enabled     *bool    `json:"enabled"`
-	IdentityID  string   `json:"identity_id"`
-	WhisperTo   string   `json:"whisper_to"`
-	ICModeSnake string   `json:"ic_mode"`
-	ICModeCamel string   `json:"icMode"`
-	OrderKey    *float64 `json:"order_key"`
+	ChannelID         string   `json:"channel_id"`
+	State             string   `json:"state"`
+	Content           string   `json:"content"`
+	MessageID         string   `json:"message_id"`
+	Mode              string   `json:"mode"`
+	Enabled           *bool    `json:"enabled"`
+	IdentityID        string   `json:"identity_id"`
+	IdentityVariantID string   `json:"identity_variant_id"`
+	WhisperTo         string   `json:"whisper_to"`
+	ICModeSnake       string   `json:"ic_mode"`
+	ICModeCamel       string   `json:"icMode"`
+	OrderKey          *float64 `json:"order_key"`
 }) (any, error) {
 	channelId := data.ChannelID
 	var privateOtherUser string
@@ -3345,6 +3346,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo &&
 			ctx.ConnInfo.TypingIcMode == typingTone &&
 			ctx.ConnInfo.TypingIdentityID == data.IdentityID &&
+			ctx.ConnInfo.TypingIdentityVariantID == data.IdentityVariantID &&
 			(broadcastOrderKey == 0 || ctx.ConnInfo.TypingOrderKey == broadcastOrderKey) {
 			return &struct {
 				Success bool `json:"success"`
@@ -3357,6 +3359,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = now
 		ctx.ConnInfo.TypingIcMode = typingTone
 		ctx.ConnInfo.TypingIdentityID = data.IdentityID
+		ctx.ConnInfo.TypingIdentityVariantID = data.IdentityVariantID
 		if broadcastOrderKey > 0 {
 			ctx.ConnInfo.TypingOrderKey = broadcastOrderKey
 		}
@@ -3368,6 +3371,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = 0
 		ctx.ConnInfo.TypingIcMode = "ic"
 		ctx.ConnInfo.TypingIdentityID = ""
+		ctx.ConnInfo.TypingIdentityVariantID = ""
 		ctx.ConnInfo.TypingOrderKey = 0
 	}
 
@@ -3428,7 +3432,18 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	if data.IdentityID != "" {
 		identity, _ := model.ChannelIdentityGetByID(data.IdentityID)
 		if identity != nil && identity.ChannelID == channelId && identity.UserID == ctx.User.ID {
-			event.Member.Identity = identity.ToProtocolType()
+			variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, channelId, identity, data.IdentityVariantID)
+			if err != nil {
+				return nil, err
+			}
+			appearance := service.ResolveChannelIdentityAppearance(identity, variant)
+			resolvedIdentityProto := identity.ToProtocolType()
+			if resolvedIdentityProto != nil && appearance != nil {
+				resolvedIdentityProto.DisplayName = appearance.DisplayName
+				resolvedIdentityProto.Color = appearance.Color
+				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+			}
+			event.Member.Identity = resolvedIdentityProto
 		}
 	}
 

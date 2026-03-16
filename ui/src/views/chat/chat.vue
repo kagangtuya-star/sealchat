@@ -1376,7 +1376,7 @@ const identityVariantTabTooltip = computed(() => {
       ? '当前频道角色尚未配置头像差分，点击前往设置'
       : '当前频道角色尚未配置头像差分';
   }
-  return '切换当前频道角色的头像差分，可用 =关键词 快捷切换';
+  return '切换当前频道角色的头像差分，可用 =关键词 快捷切换 =还原 恢复';
 });
 
 const describeIdentityVariantCard = (variant?: ChannelIdentityVariant | null) => {
@@ -2364,6 +2364,7 @@ type IdentityVariantShortcutMatchResult = {
   matched: ChannelIdentityVariant | null;
   restContent: string;
   ambiguous: boolean;
+  resetToDefault?: boolean;
 };
 
 type IdentityAppearancePreview = {
@@ -2470,6 +2471,14 @@ const resolveIdentityVariantShortcutMatch = (
   }
   const restContent = shortcutMatch[2] ?? '';
   const targetKeyword = targetKeywordRaw.toLowerCase();
+  if (targetKeyword === '还原') {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: false,
+      resetToDefault: true,
+    };
+  }
   const normalizedCandidates = variants
     .filter(item => item?.enabled !== false)
     .map((item, index) => ({
@@ -7325,14 +7334,68 @@ const shouldObserveTypingPreview = computed(() => (
   && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
 ));
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
-const activeIdentityVariantForPreview = computed(() => {
+const activeIdentityVariantShortcutContext = computed(() => {
+  const rawDraft = textToSend.value;
   const channelId = chat.curChannel?.id || '';
-  const identityId = activeIdentityForPreview.value?.id || '';
-  return chat.getActiveIdentityVariant(channelId, identityId);
+  const identity = activeIdentityForPreview.value;
+  const fallbackVariant = identity ? chat.getActiveIdentityVariant(channelId, identity.id) : null;
+  if (isEditing.value || inputMode.value !== 'plain' || !channelId || !identity) {
+    return {
+      draftContent: rawDraft,
+      variant: fallbackVariant,
+      matched: false,
+    };
+  }
+  const trigger = display.settings.identityVariantQuickSwitchTrigger || '=';
+  if (!rawDraft.startsWith(trigger)) {
+    return {
+      draftContent: rawDraft,
+      variant: fallbackVariant,
+      matched: false,
+    };
+  }
+  const shortcutResult = resolveIdentityVariantShortcutMatch(
+    rawDraft,
+    chat.getIdentityVariants(channelId, identity.id),
+    trigger,
+  );
+  if (shortcutResult?.matched) {
+    return {
+      draftContent: shortcutResult.restContent,
+      variant: shortcutResult.matched,
+      matched: true,
+    };
+  }
+  if (shortcutResult?.resetToDefault) {
+    return {
+      draftContent: shortcutResult.restContent,
+      variant: null,
+      matched: true,
+    };
+  }
+  return {
+    draftContent: rawDraft,
+    variant: fallbackVariant,
+    matched: false,
+  };
+});
+const activeIdentityVariantForPreview = computed(() => {
+  return activeIdentityVariantShortcutContext.value.variant;
 });
 const activeIdentityAppearanceForPreview = computed(() => (
   resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value)
 ));
+const activeIdentityAppearancePreviewSignature = computed(() => {
+  const appearance = activeIdentityAppearanceForPreview.value;
+  return [
+    appearance?.identityId || '',
+    appearance?.variantId || '',
+    appearance?.displayName || '',
+    appearance?.color || '',
+    appearance?.avatarAttachmentId || '',
+  ].join('__');
+});
+const effectiveIdentityVariantForEmojiPanel = computed(() => activeIdentityVariantForPreview.value);
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
   typingPreviewList.value
@@ -7571,12 +7634,11 @@ const syncSelfTypingPreview = () => {
     removeSelfTypingPreview();
     return;
   }
-  const draft = textToSend.value;
+  const draft = activeIdentityVariantShortcutContext.value.draftContent;
   if (!isContentMeaningful(inputMode.value, draft)) {
     removeSelfTypingPreview();
     return;
   }
-  const identity = activeIdentityForPreview.value;
   const displayName = resolveSelfPreviewDisplayName();
   const avatar = resolveSelfPreviewAvatar();
   const normalizedColor = activeIdentityAppearanceForPreview.value?.color
@@ -7660,7 +7722,17 @@ const sendTypingUpdate = throttle(
 	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
 		const targetId = options?.whisperTo ?? resolveCurrentWhisperTargetId();
 		const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
-		const extra: { whisperTo?: string; icMode: 'ic' | 'ooc'; orderKey?: number } = { icMode };
+		const extra: {
+			whisperTo?: string;
+			icMode: 'ic' | 'ooc';
+			orderKey?: number;
+			identityId?: string;
+			identityVariantId?: string;
+		} = {
+			icMode,
+			identityId: activeIdentityForPreview.value?.id || undefined,
+			identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
+		};
 		if (targetId) {
 			extra.whisperTo = targetId;
 		}
@@ -7710,10 +7782,19 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
   }
   const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
   const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
-  const extra: { mode: 'editing'; messageId: string; whisperTo?: string; icMode: 'ic' | 'ooc' } = {
+  const extra: {
+    mode: 'editing';
+    messageId: string;
+    whisperTo?: string;
+    icMode: 'ic' | 'ooc';
+    identityId?: string;
+    identityVariantId?: string;
+  } = {
     mode: 'editing',
     messageId,
     icMode,
+    identityId: chat.editing?.identityId || undefined,
+    identityVariantId: chat.editing?.identityVariantId || undefined,
   };
   if (whisperTargetId) {
     extra.whisperTo = whisperTargetId;
@@ -7831,7 +7912,11 @@ const emitTypingPreview = () => {
     return;
   }
 
-  let raw = textToSend.value;
+  let raw = inputMode.value === 'plain'
+    ? activeIdentityVariantShortcutContext.value.draftContent
+    : textToSend.value;
+  const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
+    && activeIdentityVariantShortcutContext.value.matched;
 
   if (inputMode.value === 'rich') {
     try {
@@ -7846,8 +7931,11 @@ const emitTypingPreview = () => {
     }
   } else {
     if (raw.trim().length === 0) {
-      stopTypingPreviewNow();
-      return;
+      if (!canBroadcastIndicatorWithoutContent) {
+        stopTypingPreviewNow();
+        return;
+      }
+      raw = '';
     }
     raw = replaceEmojiRemarksForPreview(raw);
   }
@@ -10235,12 +10323,13 @@ const send = throttle(async () => {
       message.warning('匹配到多个同长度差分，请输入更长关键词');
       return;
     }
-    if (shortcutResult?.matched && activeIdentityId) {
-      chat.setActiveIdentityVariant(chat.curChannel.id, activeIdentityId, shortcutResult.matched.id);
+    if ((shortcutResult?.matched || shortcutResult?.resetToDefault) && activeIdentityId) {
+      const nextVariantId = shortcutResult?.matched?.id || '';
+      chat.setActiveIdentityVariant(chat.curChannel.id, activeIdentityId, nextVariantId);
       draft = shortcutResult.restContent;
       textToSend.value = shortcutResult.restContent;
       emitTypingPreview();
-      identityVariantIdOverride = shortcutResult.matched.id;
+      identityVariantIdOverride = nextVariantId;
       if (!shortcutResult.restContent.trim()) {
         stopTypingPreviewNow();
         return;
@@ -10550,6 +10639,7 @@ watch([
   inputIcMode,
   () => chat.curChannel?.id,
   () => activeIdentityForPreview.value?.id,
+  () => activeIdentityAppearancePreviewSignature.value,
 ], () => {
   syncSelfTypingPreview();
 });
@@ -10574,6 +10664,32 @@ watch(
   },
 );
 
+watch(
+  () => activeIdentityVariantForPreview.value?.id,
+  (identityVariantId, previous) => {
+    if (!chat.editing || chat.editing.channelId !== chat.curChannel?.id || identityVariantId === previous) {
+      return;
+    }
+    chat.updateEditingIdentityVariant(identityVariantId || null);
+    emitEditingPreview();
+  },
+);
+
+watch(
+  () => activeIdentityAppearancePreviewSignature.value,
+  (signature, previous) => {
+    if (signature === previous) {
+      return;
+    }
+    syncSelfTypingPreview();
+    if (isEditing.value) {
+      emitEditingPreview();
+      return;
+    }
+    emitTypingPreview();
+  },
+);
+
 watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds, prevIds) => {
   if (targetIds === prevIds) {
     return;
@@ -10593,15 +10709,23 @@ watch(typingPreviewMode, (mode) => {
     return;
   }
   if (typingPreviewActive.value && lastTypingChannelId) {
-    const raw = textToSend.value;
-    if (raw.trim().length > 0) {
+    const raw = inputMode.value === 'plain'
+      ? activeIdentityVariantShortcutContext.value.draftContent
+      : textToSend.value;
+    const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
+      && activeIdentityVariantShortcutContext.value.matched;
+    if (raw.trim().length > 0 || canBroadcastIndicatorWithoutContent) {
       // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
       const isRich = inputMode.value === 'rich' || isTipTapJson(raw);
       const truncated = isRich ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
       sendTypingUpdate.cancel();
       const content = mode === 'content' ? truncated : '';
       const whisperId = resolveCurrentWhisperTargetId();
-      const extra = whisperId ? { whisperTo: whisperId } : undefined;
+      const extra = {
+        whisperTo: whisperId || undefined,
+        identityId: activeIdentityForPreview.value?.id || undefined,
+        identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
+      };
       lastTypingWhisperTargetId = whisperId ?? null;
       chat.messageTyping(mode, content, lastTypingChannelId, extra);
     } else {
@@ -13304,6 +13428,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
@@ -13466,7 +13591,7 @@ onBeforeUnmount(() => {
                                   <button
                                     type="button"
                                     class="identity-variant-picker__item identity-variant-picker__item--default"
-                                    :class="{ 'is-active': !activeIdentityVariantForEmojiPanel }"
+                                    :class="{ 'is-active': !effectiveIdentityVariantForEmojiPanel }"
                                     @click="handleEmojiVariantSelect('')"
                                   >
                                     <div class="identity-variant-picker__badge">↺</div>
@@ -13490,7 +13615,7 @@ onBeforeUnmount(() => {
                                   <button
                                     type="button"
                                     class="identity-variant-picker__item"
-                                    :class="{ 'is-active': activeIdentityVariantForEmojiPanel?.id === variant.id }"
+                                    :class="{ 'is-active': effectiveIdentityVariantForEmojiPanel?.id === variant.id }"
                                     @click="handleEmojiVariantSelect(variant.id)"
                                   >
                                     <div class="identity-variant-picker__badge">
@@ -14236,7 +14361,7 @@ onBeforeUnmount(() => {
         <div class="identity-variant-section__header">
           <div>
             <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
-            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换</div>
+            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
           </div>
           <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
         </div>
