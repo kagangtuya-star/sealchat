@@ -14798,7 +14798,12 @@ onBeforeUnmount(() => {
               <div class="identity-list__meta">
                 <div class="identity-list__name">
                   <span v-if="identity.color" class="identity-list__color" :style="{ backgroundColor: identity.color }"></span>
-                  <span :style="identity.color ? { color: identity.color } : undefined">{{ identity.displayName }}</span>
+                  <span
+                    class="identity-list__display-name"
+                    :style="identity.color ? { color: identity.color } : undefined"
+                  >
+                    {{ identity.displayName }}
+                  </span>
                   <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
@@ -18192,21 +18197,20 @@ onBeforeUnmount(() => {
 }
 
 .identity-list--grid {
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   display: grid;
   gap: 0.75rem;
 }
 
 .identity-list__item {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 0.75rem;
-  padding: 0.6rem 0;
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   border-radius: 12px;
   padding: 0.7rem;
   width: 100%;
-  flex-wrap: wrap;
   box-sizing: border-box;
 }
 
@@ -18238,8 +18242,19 @@ onBeforeUnmount(() => {
 .identity-list__name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
   font-weight: 600;
+  min-width: 0;
+}
+
+.identity-list__display-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .identity-list__color {
@@ -18252,8 +18267,9 @@ onBeforeUnmount(() => {
 .identity-list__actions {
   display: flex;
   gap: 0.4rem;
-  margin-left: auto;
   flex-wrap: wrap;
+  grid-column: 2;
+  justify-self: end;
 }
 
 .identity-list__hint {
@@ -18536,6 +18552,10 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
+  .identity-list__item {
+    display: flex;
+  }
+
   .identity-variant-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
@@ -18559,6 +18579,11 @@ onBeforeUnmount(() => {
 
   .identity-list__item--selectable .identity-list__meta {
     margin-left: 0;
+  }
+
+  .identity-list__actions {
+    grid-column: auto;
+    justify-self: auto;
   }
 }
 
