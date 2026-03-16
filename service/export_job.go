@@ -340,24 +340,30 @@ func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageMod
 		if current == nil {
 			current = cloneMessage(msg)
 			current.Content = formatted
+			current.MergedMessages = 1
 			lastTime = msg.CreatedAt
 			currentIcMode = normalizeIcMode(msg.ICMode)
 			result = append(result, current)
 			continue
 		}
 		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow) {
-			nextContent := formatted
-			trimmed := strings.TrimRight(current.Content, " \n")
+			nextContent := strings.TrimLeft(formatted, "\r\n")
+			trimmed := strings.TrimRight(current.Content, " \r\n\t")
 			if trimmed == "" {
 				current.Content = nextContent
 			} else {
 				current.Content = trimmed + "\n" + nextContent
 			}
+			if current.MergedMessages <= 0 {
+				current.MergedMessages = 1
+			}
+			current.MergedMessages++
 			lastTime = msg.CreatedAt
 			continue
 		}
 		current = cloneMessage(msg)
 		current.Content = formatted
+		current.MergedMessages = 1
 		lastTime = msg.CreatedAt
 		currentIcMode = normalizeIcMode(msg.ICMode)
 		result = append(result, current)

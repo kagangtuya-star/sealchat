@@ -9,10 +9,22 @@
     return value === 'dossier' ? 'dossier' : 'tabletop'
   }
 
+  function resolveColorizeMode(value) {
+    switch (value) {
+      case 'off':
+      case 'body':
+      case 'name':
+        return value
+      default:
+        return 'name'
+    }
+  }
+
   function applyDisplayState(displayOptions) {
     document.body.dataset.scheme = resolveScheme(displayOptions.scheme)
     document.body.dataset.palette = resolvePalette(displayOptions.palette)
     document.body.dataset.layout = displayOptions.layout === 'bubble' ? 'bubble' : 'compact'
+    document.body.dataset.colorize = resolveColorizeMode(displayOptions.colorizeMode)
     document.body.dataset.hideAvatar = displayOptions.showAvatar ? 'false' : 'true'
     document.body.dataset.hideTimestamp = displayOptions.showTimestamp ? 'false' : 'true'
     document.body.dataset.hideIc = displayOptions.showIC === false ? 'true' : 'false'
@@ -44,6 +56,15 @@
           break
         case 'layout-compact':
           active = document.body.dataset.layout === 'compact'
+          break
+        case 'colorize-off':
+          active = document.body.dataset.colorize === 'off'
+          break
+        case 'colorize-name':
+          active = document.body.dataset.colorize === 'name'
+          break
+        case 'colorize-body':
+          active = document.body.dataset.colorize === 'body'
           break
         case 'toggle-avatar':
           active = document.body.dataset.hideAvatar !== 'true'
@@ -95,6 +116,14 @@
     return clean.slice(0, 2).toUpperCase()
   }
 
+  function normalizeColor(value) {
+    if (!value) return ''
+    const probe = document.createElement('span')
+    probe.style.color = ''
+    probe.style.color = String(value).trim()
+    return probe.style.color || ''
+  }
+
   function createChip(text) {
     const span = document.createElement('span')
     span.className = 'viewer-chip'
@@ -114,6 +143,7 @@
       scheme: manifest.display_options?.scheme || 'tabletop',
       palette: manifest.display_options?.palette || 'night',
       layout: manifest.display_options?.layout || 'compact',
+      colorizeMode: manifest.display_options?.colorizeMode || 'name',
       showAvatar: manifest.display_options?.showAvatar !== false,
       showTimestamp: true,
       showIC: true,
@@ -162,6 +192,7 @@
       scheme: payload.display_options?.scheme || 'tabletop',
       layout: payload.display_options?.layout || 'compact',
       palette: payload.display_options?.palette || 'night',
+      colorizeMode: payload.display_options?.colorizeMode || 'name',
       showAvatar: payload.display_options?.showAvatar !== false,
       showTimestamp: payload.without_timestamp !== true,
       showIC: true,
@@ -221,6 +252,11 @@
       <div>
         <button type="button" data-action="layout-bubble">气泡</button>
         <button type="button" data-action="layout-compact">紧凑</button>
+      </div>
+      <div>
+        <button type="button" data-action="colorize-off">染色关</button>
+        <button type="button" data-action="colorize-name">昵称染色</button>
+        <button type="button" data-action="colorize-body">内容染色</button>
       </div>
       <div>
         <button type="button" data-action="palette-day">日间</button>
@@ -295,6 +331,15 @@
             break
           case 'layout-compact':
             document.body.dataset.layout = 'compact'
+            break
+          case 'colorize-off':
+            document.body.dataset.colorize = 'off'
+            break
+          case 'colorize-name':
+            document.body.dataset.colorize = 'name'
+            break
+          case 'colorize-body':
+            document.body.dataset.colorize = 'body'
             break
           case 'palette-day':
             document.body.dataset.palette = 'day'
@@ -438,25 +483,37 @@
 
   function createMessageElement(msg) {
     const name = msg.sender_name || '匿名'
+    const roleColor = normalizeColor(msg.sender_color)
     const article = document.createElement('article')
     article.className = 'viewer-message'
     article.dataset.messageId = msg.id
     article.dataset.icMode = (msg.ic_mode || 'ic').toLowerCase()
+    article.dataset.hasRoleColor = roleColor ? 'true' : 'false'
+    if (msg.is_merged) {
+      article.classList.add('viewer-message--merged')
+    }
+    if (roleColor) {
+      article.style.setProperty('--role-color', roleColor)
+    }
     // 使用 content_html 进行渲染，fallback 到 content
     const displayContent = msg.content_html || msg.content || ''
     article.dataset.searchText = stripHTML(displayContent) + ' ' + name
 
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
+    avatar.dataset.hasImage = 'false'
     const hasAvatarImage = Boolean(msg.sender_avatar && msg.sender_avatar.startsWith('data:'))
-    avatar.style.background = hasAvatarImage ? 'transparent' : (msg.sender_color || 'rgba(148, 163, 184, 0.35)')
     if (hasAvatarImage) {
+      avatar.dataset.hasImage = 'true'
       const img = document.createElement('img')
       img.src = msg.sender_avatar
       img.alt = name
       avatar.appendChild(img)
     } else {
-      avatar.textContent = initials(name)
+      const fallback = document.createElement('span')
+      fallback.className = 'viewer-message__avatar-text'
+      fallback.textContent = initials(name)
+      avatar.appendChild(fallback)
     }
     article.appendChild(avatar)
 
@@ -465,12 +522,17 @@
 
     const header = document.createElement('div')
     header.className = 'viewer-message__header'
-    header.innerHTML = `
-      <div class="viewer-message__title">
-        <strong>${name}</strong>
-      </div>
-      <span class="viewer-message__time">${formatTime(msg.created_at)}</span>
-    `
+    const title = document.createElement('div')
+    title.className = 'viewer-message__title'
+    const sender = document.createElement('strong')
+    sender.className = 'viewer-message__sender'
+    sender.textContent = name
+    title.appendChild(sender)
+    const time = document.createElement('span')
+    time.className = 'viewer-message__time'
+    time.textContent = formatTime(msg.created_at)
+    header.appendChild(title)
+    header.appendChild(time)
     main.appendChild(header)
 
     const body = document.createElement('div')
@@ -481,7 +543,10 @@
     if (hasImage && !bodyText) {
       article.classList.add('viewer-message--image-only')
     }
-    main.appendChild(body)
+    const bubble = document.createElement('div')
+    bubble.className = 'viewer-message__bubble'
+    bubble.appendChild(body)
+    main.appendChild(bubble)
 
     article.appendChild(main)
     return article

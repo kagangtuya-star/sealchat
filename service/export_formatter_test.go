@@ -464,3 +464,32 @@ func TestIsSingleLineDiceCommandWithCustomPrefixes(t *testing.T) {
 		t.Fatalf("dot prefix should not match when only slash is configured")
 	}
 }
+
+func TestBuildExportPayloadMarksMergedMessages(t *testing.T) {
+	payload := buildExportPayload(
+		&model.MessageExportJobModel{ChannelID: "ch-1", IncludeOOC: true, IncludeArchived: true},
+		"测试频道",
+		[]*model.MessageModel{
+			{
+				StringPKBaseModel: model.StringPKBaseModel{
+					ID:        "msg-1",
+					CreatedAt: time.Unix(1700000000, 0),
+					UpdatedAt: time.Unix(1700000000, 0),
+				},
+				UserID:         "user-1",
+				Content:        "hello",
+				ICMode:         "ic",
+				MergedMessages: 2,
+			},
+		},
+		nil,
+		nil,
+	)
+
+	if payload == nil || len(payload.Messages) != 1 {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	if !payload.Messages[0].IsMerged {
+		t.Fatalf("expected merged export message flag, got %+v", payload.Messages[0])
+	}
+}

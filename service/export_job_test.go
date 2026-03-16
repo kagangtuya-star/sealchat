@@ -229,6 +229,37 @@ func TestLoadMessagesForExportFiltersDiceCommandBeforeMerge(t *testing.T) {
 	}
 }
 
+func TestMergeSequentialMessagesCollapsesBoundaryBlankLines(t *testing.T) {
+	t.Parallel()
+
+	baseTime := time.Now()
+	messages := []*model.MessageModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "msg-1", CreatedAt: baseTime, UpdatedAt: baseTime},
+			UserID:            "user-1",
+			Content:           "第一句\n",
+			ICMode:            "ic",
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "msg-2", CreatedAt: baseTime.Add(10 * time.Second), UpdatedAt: baseTime.Add(10 * time.Second)},
+			UserID:            "user-1",
+			Content:           "\n第二句",
+			ICMode:            "ic",
+		},
+	}
+
+	merged := mergeSequentialMessages(messages)
+	if len(merged) != 1 {
+		t.Fatalf("expected merged length 1, got %d", len(merged))
+	}
+	if merged[0].MergedMessages != 2 {
+		t.Fatalf("expected merged count 2, got %d", merged[0].MergedMessages)
+	}
+	if merged[0].Content != "第一句\n第二句" {
+		t.Fatalf("expected merged content without blank line, got %q", merged[0].Content)
+	}
+}
+
 func createExportTestUser(t *testing.T, id, username, nickname string) *model.UserModel {
 	t.Helper()
 	user := &model.UserModel{

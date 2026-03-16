@@ -43,6 +43,7 @@ type ExportMessage struct {
 	SenderName       string    `json:"sender_name"`
 	SenderColor      string    `json:"sender_color"`
 	SenderAvatar     string    `json:"sender_avatar,omitempty"`
+	IsMerged         bool      `json:"is_merged,omitempty"`
 	IcMode           string    `json:"ic_mode"`
 	IsWhisper        bool      `json:"is_whisper"`
 	IsArchived       bool      `json:"is_archived"`
@@ -150,6 +151,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			SenderName:       resolveSenderName(msg),
 			SenderColor:      msg.SenderIdentityColor,
 			SenderAvatar:     resolveSenderAvatar(msg),
+			IsMerged:         msg.MergedMessages > 1,
 			IcMode:           fallbackIcMode(msg.ICMode),
 			IsWhisper:        msg.IsWhisper,
 			IsArchived:       msg.IsArchived,
