@@ -141,6 +141,7 @@ type Message struct {
 
 type MessageIdentity struct {
 	ID               string `json:"id"`
+	VariantID        string `json:"variantId,omitempty"`
 	DisplayName      string `json:"displayName"`
 	Color            string `json:"color"`
 	AvatarAttachment string `json:"avatarAttachment"`

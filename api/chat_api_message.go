@@ -409,13 +409,14 @@ func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 	}
 
 	return map[string]any{
-		"message_id":  item.ID,
-		"channel_id":  item.ChannelID,
-		"content":     item.Content,
-		"is_whisper":  item.IsWhisper,
-		"whisper_to":  item.WhisperTo,
-		"ic_mode":     icMode,
-		"identity_id": item.SenderIdentityID,
+		"message_id":          item.ID,
+		"channel_id":          item.ChannelID,
+		"content":             item.Content,
+		"is_whisper":          item.IsWhisper,
+		"whisper_to":          item.WhisperTo,
+		"ic_mode":             icMode,
+		"identity_id":         item.SenderIdentityID,
+		"identity_variant_id": item.SenderIdentityVariantID,
 	}, nil
 }
 
@@ -1785,18 +1786,19 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
-	ChannelID        string   `json:"channel_id"`
-	QuoteID          string   `json:"quote_id"`
-	Content          string   `json:"content"`
-	WhisperTo        string   `json:"whisper_to"`
-	WhisperToIds     []string `json:"whisper_to_ids"`
-	ClientID         string   `json:"client_id"`
-	IdentityID       string   `json:"identity_id"`
-	ICMode           string   `json:"ic_mode"`
-	BeforeID         string   `json:"before_id"`
-	AfterID          string   `json:"after_id"`
-	DisplayOrder     *float64 `json:"display_order"`
-	TypingDurationMs *int64   `json:"typing_duration_ms"`
+	ChannelID         string   `json:"channel_id"`
+	QuoteID           string   `json:"quote_id"`
+	Content           string   `json:"content"`
+	WhisperTo         string   `json:"whisper_to"`
+	WhisperToIds      []string `json:"whisper_to_ids"`
+	ClientID          string   `json:"client_id"`
+	IdentityID        string   `json:"identity_id"`
+	IdentityVariantID string   `json:"identity_variant_id"`
+	ICMode            string   `json:"ic_mode"`
+	BeforeID          string   `json:"before_id"`
+	AfterID           string   `json:"after_id"`
+	DisplayOrder      *float64 `json:"display_order"`
+	TypingDurationMs  *int64   `json:"typing_duration_ms"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -1889,6 +1891,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity == nil && len(channelId) < 30 {
 		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
 	}
+	variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
+	if err != nil {
+		return nil, err
+	}
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {
@@ -2189,11 +2196,14 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
-		m.SenderIdentityName = identity.DisplayName
-		m.SenderIdentityColor = identity.Color
-		m.SenderIdentityAvatarID = identity.AvatarAttachmentID
-		if identity.DisplayName != "" {
-			m.SenderMemberName = identity.DisplayName
+		if appearance != nil {
+			m.SenderIdentityVariantID = appearance.VariantID
+			m.SenderIdentityName = appearance.DisplayName
+			m.SenderIdentityColor = appearance.Color
+			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			if appearance.DisplayName != "" {
+				m.SenderMemberName = appearance.DisplayName
+			}
 		}
 	}
 	if identity == nil && ctx.User.IsBot && ctx.User.NickColor != "" {
@@ -2575,7 +2585,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
@@ -2740,11 +2750,12 @@ func apiMessageList(ctx *ChatContext, data *struct {
 }
 
 func apiMessageUpdate(ctx *ChatContext, data *struct {
-	ChannelID  string  `json:"channel_id"`
-	MessageID  string  `json:"message_id"`
-	Content    string  `json:"content"`
-	ICMode     string  `json:"ic_mode"`
-	IdentityID *string `json:"identity_id"`
+	ChannelID         string  `json:"channel_id"`
+	MessageID         string  `json:"message_id"`
+	Content           string  `json:"content"`
+	ICMode            string  `json:"ic_mode"`
+	IdentityID        *string `json:"identity_id"`
+	IdentityVariantID *string `json:"identity_variant_id"`
 }) (any, error) {
 	if strings.TrimSpace(data.Content) == "" {
 		return nil, fmt.Errorf("消息内容不能为空")
@@ -2810,25 +2821,49 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 
 	identityChanged := false
 	var resolvedIdentityProto *protocol.ChannelIdentity
-	if data.IdentityID != nil && isAuthor {
+	if (data.IdentityID != nil || data.IdentityVariantID != nil) && isAuthor {
 		identityChanged = true
-		rawIdentityID := strings.TrimSpace(*data.IdentityID)
+		rawIdentityID := strings.TrimSpace(msg.SenderIdentityID)
+		if data.IdentityID != nil {
+			rawIdentityID = strings.TrimSpace(*data.IdentityID)
+		}
 		identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, rawIdentityID)
 		if err != nil {
 			return nil, err
 		}
+		rawVariantID := strings.TrimSpace(msg.SenderIdentityVariantID)
+		if data.IdentityID != nil && rawIdentityID == "" {
+			rawVariantID = ""
+		}
+		if data.IdentityVariantID != nil {
+			rawVariantID = strings.TrimSpace(*data.IdentityVariantID)
+		}
+		variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, rawVariantID)
+		if err != nil {
+			return nil, err
+		}
+		appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 		if identity != nil {
 			msg.SenderIdentityID = identity.ID
-			msg.SenderIdentityName = identity.DisplayName
-			msg.SenderIdentityColor = identity.Color
-			msg.SenderIdentityAvatarID = identity.AvatarAttachmentID
 			msg.SenderRoleID = identity.ID
+			if appearance != nil {
+				msg.SenderIdentityVariantID = appearance.VariantID
+				msg.SenderIdentityName = appearance.DisplayName
+				msg.SenderIdentityColor = appearance.Color
+				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			}
 			resolvedIdentityProto = identity.ToProtocolType()
-			if identity.DisplayName != "" {
-				msg.SenderMemberName = identity.DisplayName
+			if resolvedIdentityProto != nil && appearance != nil {
+				resolvedIdentityProto.DisplayName = appearance.DisplayName
+				resolvedIdentityProto.Color = appearance.Color
+				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+			}
+			if appearance != nil && appearance.DisplayName != "" {
+				msg.SenderMemberName = appearance.DisplayName
 			}
 		} else {
 			msg.SenderIdentityID = ""
+			msg.SenderIdentityVariantID = ""
 			msg.SenderIdentityName = ""
 			msg.SenderIdentityColor = ""
 			msg.SenderIdentityAvatarID = ""
@@ -2962,6 +2997,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if identityChanged {
 		updates["sender_identity_id"] = msg.SenderIdentityID
+		updates["sender_identity_variant_id"] = msg.SenderIdentityVariantID
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID

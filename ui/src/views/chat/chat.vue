@@ -4,7 +4,7 @@ import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
-import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
+import type { ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
@@ -1336,9 +1336,37 @@ const emojiPopoverY = ref<number | null>(null);
 const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
-const emojiPanelTab = ref<'gallery' | 'utf'>('gallery');
+const emojiPanelTab = ref<'gallery' | 'utf' | 'variant'>('gallery');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
+const activeIdentityForEmojiPanel = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const activeIdentityVariantOptions = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return [] as ChannelIdentityVariant[];
+  }
+  return chat.getIdentityVariants(channelId, identityId).filter(item => item.enabled !== false);
+});
+const activeIdentityVariantForEmojiPanel = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return null as ChannelIdentityVariant | null;
+  }
+  return chat.getActiveIdentityVariant(channelId, identityId);
+});
+const filteredIdentityVariantOptions = computed(() => {
+  const query = emojiSearchQuery.value.trim();
+  if (!query) {
+    return activeIdentityVariantOptions.value;
+  }
+  return activeIdentityVariantOptions.value.filter((item) => {
+    const haystack = `${item.keyword || ''} ${item.note || ''} ${item.displayName || ''}`;
+    return matchText(query, haystack);
+  });
+});
+const hasIdentityVariantOptions = computed(() => activeIdentityVariantOptions.value.length > 0);
 
 // 表情分类选项卡（使用 store 持久化）
 const activeEmojiTab = computed({
@@ -2093,6 +2121,12 @@ watch(emojiPopoverShow, (show, prevShow) => {
   }
 });
 
+watch(hasIdentityVariantOptions, (hasOptions) => {
+  if (!hasOptions && emojiPanelTab.value === 'variant') {
+    emojiPanelTab.value = 'gallery';
+  }
+});
+
 watch(isManagingEmoji, (val) => {
   if (val) {
     void ensureEmojiCollectionLoaded();
@@ -2148,7 +2182,7 @@ const handleEmojiTriggerClick = () => {
   emojiPopoverShow.value = true;
 };
 
-const switchEmojiPanelTab = (tab: 'gallery' | 'utf') => {
+const switchEmojiPanelTab = (tab: 'gallery' | 'utf' | 'variant') => {
   emojiPanelTab.value = tab;
   if (tab !== 'gallery') {
     isManagingEmoji.value = false;
@@ -2172,6 +2206,18 @@ const handleUtfEmojiSelect = (emoji: string) => {
   const cursor = selection.start + emoji.length;
   nextTick(() => setInputSelection(cursor, cursor));
   ensureInputFocus();
+};
+
+const handleEmojiVariantSelect = (variantId: string) => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return;
+  }
+  chat.setActiveIdentityVariant(channelId, identityId, variantId);
+  emojiSearchQuery.value = '';
+  emojiPopoverShow.value = false;
+  emitTypingPreview();
 };
 
 
@@ -2256,6 +2302,20 @@ type IdentityShortcutMatchResult = {
   ambiguous: boolean;
 };
 
+type IdentityVariantShortcutMatchResult = {
+  matched: ChannelIdentityVariant | null;
+  restContent: string;
+  ambiguous: boolean;
+};
+
+type IdentityAppearancePreview = {
+  identityId: string;
+  variantId: string;
+  displayName: string;
+  color: string;
+  avatarAttachmentId: string;
+};
+
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const resolveIdentityShortcutMatch = (
@@ -2336,6 +2396,84 @@ const shouldSuppressKeywordSuggestForIdentityShortcut = (rawDraft: string, trigg
   const shortcutResult = resolveIdentityShortcutMatch(rawDraft, identities, identityTrigger);
   return !!shortcutResult?.matched || !!shortcutResult?.ambiguous;
 };
+
+const resolveIdentityVariantShortcutMatch = (
+  rawDraft: string,
+  variants: ChannelIdentityVariant[],
+  trigger = '=',
+): IdentityVariantShortcutMatchResult | null => {
+  const shortcutMatch = new RegExp(`^${escapeRegExp(trigger)}(\\S+)(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
+  if (!shortcutMatch) {
+    return null;
+  }
+  const targetKeywordRaw = (shortcutMatch[1] || '').trim();
+  if (!targetKeywordRaw) {
+    return null;
+  }
+  const restContent = shortcutMatch[2] ?? '';
+  const targetKeyword = targetKeywordRaw.toLowerCase();
+  const normalizedCandidates = variants
+    .filter(item => item?.enabled !== false)
+    .map((item, index) => ({
+      item,
+      index,
+      normalizedKeyword: (item.keyword || '').trim().toLowerCase(),
+      length: (item.keyword || '').trim().length,
+    }))
+    .filter(item => !!item.normalizedKeyword);
+
+  const exact = normalizedCandidates.find(item => item.normalizedKeyword === targetKeyword);
+  if (exact) {
+    return { matched: exact.item, restContent, ambiguous: false };
+  }
+
+  const prefixCandidates = normalizedCandidates.filter(item => item.normalizedKeyword.startsWith(targetKeyword));
+  if (!prefixCandidates.length) {
+    return { matched: null, restContent, ambiguous: false };
+  }
+
+  const sortedCandidates = prefixCandidates.slice().sort((a, b) => {
+    if (a.length !== b.length) {
+      return a.length - b.length;
+    }
+    return a.index - b.index;
+  });
+  const best = sortedCandidates[0];
+  const hasAmbiguousShortest = sortedCandidates.some((item, index) => index > 0 && item.length === best.length && item.normalizedKeyword !== best.normalizedKeyword);
+  return {
+    matched: hasAmbiguousShortest ? null : best.item,
+    restContent,
+    ambiguous: hasAmbiguousShortest,
+  };
+};
+
+const resolveIdentityVariantIdFromMessage = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const directIdentity = msg.identity || msg.identity_info || msg.identityData;
+  if (directIdentity && typeof directIdentity === 'object' && directIdentity.variantId) {
+    return String(directIdentity.variantId).trim() || null;
+  }
+  const snake = msg?.sender_identity_variant_id;
+  if (typeof snake === 'string' && snake.trim().length > 0) {
+    return snake.trim();
+  }
+  return null;
+};
+
+const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, variant?: ChannelIdentityVariant | null): IdentityAppearancePreview | null => {
+  if (!identity) {
+    return null;
+  }
+  return {
+    identityId: identity.id,
+    variantId: variant?.id || '',
+    displayName: variant?.displayName || identity.displayName || '',
+    color: variant?.color || identity.color || '',
+    avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
+  };
+};
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
@@ -2354,7 +2492,33 @@ const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityAvatarEditorVisible = ref(false);
 const identityAvatarEditorFile = ref<File | null>(null);
 const editingIdentity = ref<ChannelIdentity | null>(null);
+const identityVariantDialogVisible = ref(false);
+const identityVariantDialogMode = ref<'create' | 'edit'>('create');
+const identityVariantSubmitting = ref(false);
+const editingIdentityVariant = ref<ChannelIdentityVariant | null>(null);
+const identityVariantEmojiPickerVisible = ref(false);
+const identityVariantForm = reactive({
+  selectorEmoji: '',
+  keyword: '',
+  note: '',
+  avatarAttachmentId: '',
+  displayName: '',
+  color: '',
+  enabled: true,
+});
+const identityVariantAvatarPreview = ref('');
+const identityVariantAvatarInputRef = ref<HTMLInputElement | null>(null);
+const identityVariantAvatarEditorVisible = ref(false);
+const identityVariantAvatarEditorFile = ref<File | null>(null);
 const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+const currentEditingIdentityVariants = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = editingIdentity.value?.id || '';
+  if (!channelId || !identityId) {
+    return [] as ChannelIdentityVariant[];
+  }
+  return chat.getIdentityVariants(channelId, identityId);
+});
 const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
 const identityFavoriteFolderIds = computed(() => chat.channelIdentityFavorites[chat.curChannel?.id || ''] || []);
 const identityFolderMembership = computed<Record<string, string[]>>(() => chat.channelIdentityMembership[chat.curChannel?.id || ''] || {});
@@ -2374,6 +2538,30 @@ const folderAssigning = ref(false);
 const isNightPalette = computed(() => display.palette === 'night');
 const identityDrawerWidth = computed(() => (windowWidth.value <= 640 ? '100%' : Math.min(windowWidth.value * 0.95, 800)));
 const isIdentityDrawerMobile = computed(() => windowWidth.value > 0 && windowWidth.value <= 640);
+let identityVariantAvatarObjectURL: string | null = null;
+let identityVariantAvatarFile: File | null = null;
+
+const resolveVariantSelectorEmojiSrc = (selectorEmoji?: string) => {
+  const raw = String(selectorEmoji || '').trim();
+  if (!raw.startsWith('id:')) {
+    return '';
+  }
+  return resolveAttachmentUrl(raw);
+};
+
+const isVariantSelectorEmojiAttachment = (selectorEmoji?: string) => !!resolveVariantSelectorEmojiSrc(selectorEmoji);
+
+const resolveVariantNote = (variant?: ChannelIdentityVariant | null) => {
+  const note = String(variant?.note || '').trim();
+  if (note) {
+    return note;
+  }
+  const keyword = String(variant?.keyword || '').trim();
+  if (keyword) {
+    return `=${keyword}`;
+  }
+  return '未备注';
+};
 
 const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
   const map: Record<string, ChannelIdentityFolder> = {};
@@ -2637,6 +2825,22 @@ watch(identityManageVisible, (visible) => {
   if (!visible) {
     identitySelection.value = [];
     folderActionTarget.value = [];
+  }
+});
+
+watch(identityDialogVisible, (visible) => {
+  if (!visible) {
+    identityVariantDialogVisible.value = false;
+    identityVariantEmojiPickerVisible.value = false;
+    editingIdentityVariant.value = null;
+    revokeIdentityVariantObjectURL();
+  }
+});
+
+watch(identityVariantDialogVisible, (visible) => {
+  if (!visible) {
+    identityVariantEmojiPickerVisible.value = false;
+    editingIdentityVariant.value = null;
   }
 });
 let identityAvatarObjectURL: string | null = null;
@@ -3508,6 +3712,7 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
+    await chat.loadChannelIdentityVariants(chat.curChannel.id, true);
     if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
@@ -3528,6 +3733,8 @@ const openIdentityManager = async () => {
 
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
+  identityVariantDialogVisible.value = false;
+  identityVariantEmojiPickerVisible.value = false;
 };
 
 const handleIdentityAvatarTrigger = () => {
@@ -3574,6 +3781,193 @@ const removeIdentityAvatar = () => {
   identityAvatarFile = null;
   revokeIdentityObjectURL();
   identityAvatarPreview.value = '';
+};
+
+const revokeIdentityVariantObjectURL = () => {
+  if (identityVariantAvatarObjectURL) {
+    URL.revokeObjectURL(identityVariantAvatarObjectURL);
+    identityVariantAvatarObjectURL = null;
+  }
+};
+
+const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarFile = null;
+  identityVariantForm.selectorEmoji = variant?.selectorEmoji || '';
+  identityVariantForm.keyword = variant?.keyword || '';
+  identityVariantForm.note = variant?.note || '';
+  identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
+  identityVariantForm.displayName = variant?.displayName || '';
+  identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantForm.enabled = variant?.enabled !== false;
+  identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
+};
+
+const closeIdentityVariantDialog = () => {
+  if (identityVariantSubmitting.value) {
+    return;
+  }
+  identityVariantDialogVisible.value = false;
+  identityVariantEmojiPickerVisible.value = false;
+};
+
+const openIdentityVariantCreate = () => {
+  if (!editingIdentity.value?.id) {
+    message.warning('请先保存频道角色后再添加差分');
+    return;
+  }
+  editingIdentityVariant.value = null;
+  identityVariantDialogMode.value = 'create';
+  resetIdentityVariantForm(null);
+  identityVariantDialogVisible.value = true;
+};
+
+const openIdentityVariantEdit = (variant: ChannelIdentityVariant) => {
+  editingIdentityVariant.value = variant;
+  identityVariantDialogMode.value = 'edit';
+  resetIdentityVariantForm(variant);
+  identityVariantDialogVisible.value = true;
+};
+
+const handleIdentityVariantAvatarTrigger = () => {
+  identityVariantAvatarInputRef.value?.click();
+};
+
+const handleIdentityVariantAvatarChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  if (!input || !input.files?.length) {
+    return;
+  }
+  const file = input.files[0];
+  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
+  identityVariantAvatarEditorFile.value = file;
+  identityVariantAvatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleIdentityVariantAvatarEditorSave = (file: File) => {
+  identityVariantForm.avatarAttachmentId = '';
+  identityVariantAvatarFile = file;
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarObjectURL = URL.createObjectURL(file);
+  identityVariantAvatarPreview.value = identityVariantAvatarObjectURL;
+  identityVariantAvatarEditorVisible.value = false;
+  identityVariantAvatarEditorFile.value = null;
+};
+
+const handleIdentityVariantAvatarEditorCancel = () => {
+  identityVariantAvatarEditorVisible.value = false;
+  identityVariantAvatarEditorFile.value = null;
+};
+
+const removeIdentityVariantAvatar = () => {
+  identityVariantForm.avatarAttachmentId = '';
+  identityVariantAvatarFile = null;
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarPreview.value = '';
+};
+
+const handleIdentityVariantSelectorEmoji = (emoji: string) => {
+  if (!emoji) {
+    return;
+  }
+  identityVariantForm.selectorEmoji = emoji;
+  identityVariantEmojiPickerVisible.value = false;
+};
+
+const submitIdentityVariantForm = async () => {
+  if (!chat.curChannel?.id || !editingIdentity.value?.id) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
+  const keyword = String(identityVariantForm.keyword || '').trim();
+  const note = String(identityVariantForm.note || '').trim();
+  const rawColor = String(identityVariantForm.color || '').trim();
+  const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
+  if (!selectorEmoji) {
+    message.warning('请选择差分表情');
+    return;
+  }
+  if (!keyword) {
+    message.warning('请输入切换关键词');
+    return;
+  }
+  if (rawColor && !normalizedColor) {
+    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    return;
+  }
+  identityVariantForm.color = normalizedColor;
+  identityVariantSubmitting.value = true;
+  try {
+    let avatarAttachmentId = identityVariantForm.avatarAttachmentId;
+    if (identityVariantAvatarFile) {
+      const uploadResult = await uploadImageAttachment(identityVariantAvatarFile, { channelId: chat.curChannel.id });
+      const fileToken = uploadResult.attachmentId;
+      if (!fileToken) {
+        throw new Error('上传失败：未返回附件ID');
+      }
+      avatarAttachmentId = normalizeAttachmentId(fileToken);
+      identityVariantForm.avatarAttachmentId = avatarAttachmentId;
+      identityVariantAvatarPreview.value = resolveAttachmentUrl(fileToken);
+      identityVariantAvatarFile = null;
+    }
+    const payload = {
+      channelId: chat.curChannel.id,
+      identityId: editingIdentity.value.id,
+      selectorEmoji,
+      keyword,
+      note,
+      avatarAttachmentId,
+      displayName: String(identityVariantForm.displayName || '').trim(),
+      color: normalizedColor,
+      appearance: {},
+      enabled: identityVariantForm.enabled,
+    };
+    if (identityVariantDialogMode.value === 'create') {
+      await chat.channelIdentityVariantCreate(payload);
+      message.success('头像差分已创建');
+    } else if (editingIdentityVariant.value?.id) {
+      await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
+      message.success('头像差分已更新');
+    }
+    identityVariantDialogVisible.value = false;
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || error?.message || '保存差分失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    identityVariantSubmitting.value = false;
+  }
+};
+
+const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
+  if (!chat.curChannel?.id || !editingIdentity.value?.id) {
+    return;
+  }
+  const confirmed = await dialogAskConfirm(dialog, {
+    title: '删除头像差分',
+    content: `确定删除差分「${resolveVariantNote(variant)}」吗？此操作无法撤销。`,
+  });
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id);
+    if (editingIdentityVariant.value?.id === variant.id) {
+      identityVariantDialogVisible.value = false;
+      editingIdentityVariant.value = null;
+    }
+    message.success('头像差分已删除');
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '删除差分失败，请稍后重试';
+    message.error(errMsg);
+  }
 };
 
 const submitIdentityForm = async () => {
@@ -6868,6 +7262,14 @@ const shouldObserveTypingPreview = computed(() => (
   && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
 ));
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const activeIdentityVariantForPreview = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForPreview.value?.id || '';
+  return chat.getActiveIdentityVariant(channelId, identityId);
+});
+const activeIdentityAppearanceForPreview = computed(() => (
+  resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value)
+));
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
   typingPreviewList.value
@@ -7082,16 +7484,16 @@ watch(
 );
 
 const resolveSelfPreviewDisplayName = () => {
-  const identity = activeIdentityForPreview.value;
-  if (identity?.displayName) {
-    return identity.displayName;
+  const appearance = activeIdentityAppearanceForPreview.value;
+  if (appearance?.displayName) {
+    return appearance.displayName;
   }
   return user.info?.nick || user.info?.name || '我';
 };
 const resolveSelfPreviewAvatar = () => {
-  const identity = activeIdentityForPreview.value;
-  if (identity?.avatarAttachmentId) {
-    return resolveAttachmentUrl(identity.avatarAttachmentId);
+  const appearance = activeIdentityAppearanceForPreview.value;
+  if (appearance?.avatarAttachmentId) {
+    return resolveAttachmentUrl(appearance.avatarAttachmentId);
   }
   return chat.curMember?.avatar || user.info?.avatar || '';
 };
@@ -7114,7 +7516,9 @@ const syncSelfTypingPreview = () => {
   const identity = activeIdentityForPreview.value;
   const displayName = resolveSelfPreviewDisplayName();
   const avatar = resolveSelfPreviewAvatar();
-  const normalizedColor = identity?.color ? normalizeHexColor(identity.color || '') || undefined : undefined;
+  const normalizedColor = activeIdentityAppearanceForPreview.value?.color
+    ? normalizeHexColor(activeIdentityAppearanceForPreview.value.color || '') || undefined
+    : undefined;
   const tone = inputIcMode.value || 'ic';
   let previewContent = draft;
   if (inputMode.value !== 'rich') {
@@ -8142,7 +8546,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(draft);
     let previewDisplayName = chat.curMember?.nick || user.info.nick || user.info.name || '我';
     let previewAvatar = chat.curMember?.avatar || user.info.avatar || '';
-    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId);
+    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId, chat.editing.identityVariantId);
     if (identityPreview) {
       if (identityPreview.displayName) {
         previewDisplayName = identityPreview.displayName;
@@ -8537,15 +8941,17 @@ const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
   return list.find((item) => item.id === identityId) || null;
 };
 
-const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null) => {
+const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null, identityVariantId?: string | null) => {
   const identity = findIdentityMeta(channelId, identityId);
   if (!identity) {
     return null;
   }
+  const variant = identityVariantId ? chat.getIdentityVariants(channelId, identityId).find(item => item.id === identityVariantId) || null : null;
+  const appearance = resolveIdentityAppearancePreview(identity, variant);
   return {
-    displayName: identity.displayName,
-    avatar: identity.avatarAttachmentId ? resolveAttachmentUrl(identity.avatarAttachmentId) : '',
-    color: identity.color,
+    displayName: appearance?.displayName || '',
+    avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
+    color: appearance?.color || '',
   };
 };
 
@@ -8620,6 +9026,7 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
   const mode = detectMessageContentMode(rawContent);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
+  const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const icMode = String(target.icMode ?? (target as any)?.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.cacheRevokedDraft({
     messageId: target.id,
@@ -8630,6 +9037,7 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
     whisperTargetId,
     icMode,
     identityId: identityId || null,
+    identityVariantId,
   });
 };
 
@@ -8639,7 +9047,9 @@ interface EditSaveSnapshot {
   messageId: string;
   icMode: 'ic' | 'ooc';
   identityId: string | null;
+  identityVariantId: string | null;
   initialIdentityId: string | null;
+  initialIdentityVariantId: string | null;
 }
 
 const isSavingEdit = ref(false);
@@ -8665,7 +9075,9 @@ const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
     messageId: editing.messageId,
     icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
     identityId: editing.identityId ?? null,
+    identityVariantId: editing.identityVariantId ?? null,
     initialIdentityId: editing.initialIdentityId ?? null,
+    initialIdentityVariantId: editing.initialIdentityVariantId ?? null,
   };
 };
 const isEditSaveSnapshotAlive = (snapshot: EditSaveSnapshot) => {
@@ -8695,6 +9107,7 @@ const beginEdit = (target?: Message) => {
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
+  const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
@@ -8706,6 +9119,7 @@ const beginEdit = (target?: Message) => {
     whisperTargetId,
     icMode,
     identityId: identityId || null,
+    identityVariantId,
   });
   inputMode.value = detectedMode;
 };
@@ -8828,10 +9242,13 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null } = {};
+    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null } = {};
     updateOptions.icMode = snapshot.icMode;
     if (snapshot.identityId !== snapshot.initialIdentityId) {
       updateOptions.identityId = snapshot.identityId;
+    }
+    if (snapshot.identityVariantId !== snapshot.initialIdentityVariantId) {
+      updateOptions.identityVariantId = snapshot.identityVariantId;
     }
     const hasOptions = Object.keys(updateOptions).length > 0;
     const updated = await chat.messageUpdate(
@@ -9648,6 +10065,11 @@ const retrySendMessage = async (target?: Message) => {
     || current.identity?.id
     || '',
   ).trim() || undefined;
+  const identityVariantId = String(
+    currentData.sender_identity_variant_id
+    || current.identity?.variantId
+    || '',
+  ).trim() || undefined;
   const displayOrder = Number(currentData.displayOrder);
   const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
     ? displayOrder
@@ -9665,6 +10087,9 @@ const retrySendMessage = async (target?: Message) => {
       identityId,
       validDisplayOrder,
       whisperTargetIds,
+      undefined,
+      undefined,
+      identityVariantId,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9700,6 +10125,7 @@ const send = throttle(async () => {
   const sendMode = inputMode.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
+  let identityVariantIdOverride: string | undefined;
   const activeReeditSource = (() => {
     const source = reeditRevokedSource.value;
     if (!source) {
@@ -9730,6 +10156,28 @@ const send = throttle(async () => {
       textToSend.value = shortcutResult.restContent;
       emitTypingPreview();
       identityIdOverride = shortcutResult.matched.id;
+      if (!shortcutResult.restContent.trim()) {
+        stopTypingPreviewNow();
+        return;
+      }
+    }
+  }
+
+  const identityVariantQuickSwitchTrigger = display.settings.identityVariantQuickSwitchTrigger || '=';
+  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
+    const activeIdentityId = identityIdOverride || chat.getActiveIdentityId(chat.curChannel.id);
+    const variants = chat.getIdentityVariants(chat.curChannel.id, activeIdentityId);
+    const shortcutResult = resolveIdentityVariantShortcutMatch(draft, variants, identityVariantQuickSwitchTrigger);
+    if (shortcutResult?.ambiguous) {
+      message.warning('匹配到多个同长度差分，请输入更长关键词');
+      return;
+    }
+    if (shortcutResult?.matched && activeIdentityId) {
+      chat.setActiveIdentityVariant(chat.curChannel.id, activeIdentityId, shortcutResult.matched.id);
+      draft = shortcutResult.restContent;
+      textToSend.value = shortcutResult.restContent;
+      emitTypingPreview();
+      identityVariantIdOverride = shortcutResult.matched.id;
       if (!shortcutResult.restContent.trim()) {
         stopTypingPreviewNow();
         return;
@@ -9806,25 +10254,35 @@ const send = throttle(async () => {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
-  const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
+  const activeIdentity = identityIdOverride
+    ? findIdentityMeta(chat.curChannel?.id, identityIdOverride)
+    : chat.getActiveIdentity(chat.curChannel?.id);
   const activeChannelId = String(chat.curChannel?.id || '').trim();
+  const activeIdentityVariant = activeIdentity
+    ? (identityVariantIdOverride
+      ? (chat.getIdentityVariants(activeChannelId, activeIdentity.id).find(item => item.id === identityVariantIdOverride) || null)
+      : chat.getActiveIdentityVariant(activeChannelId, activeIdentity.id))
+    : null;
+  const activeAppearance = resolveIdentityAppearancePreview(activeIdentity, activeIdentityVariant);
   if (activeIdentity) {
-    const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
+    const normalizedIdentityColor = normalizeHexColor(activeAppearance?.color || '') || undefined;
     (tmpMsg as any).senderRoleId = activeIdentity.id;
     (tmpMsg as any).sender_role_id = activeIdentity.id;
+    (tmpMsg as any).sender_identity_variant_id = activeAppearance?.variantId || '';
     if (activeChannelId) {
       chat.recordIdentitySpoken(activeChannelId, activeIdentity.id, now);
     }
     if (!tmpMsg.identity) {
       tmpMsg.identity = {
         id: activeIdentity.id,
-        displayName: activeIdentity.displayName,
+        variantId: activeAppearance?.variantId || '',
+        displayName: activeAppearance?.displayName || activeIdentity.displayName,
         color: normalizedIdentityColor,
-        avatarAttachment: activeIdentity.avatarAttachmentId,
+        avatarAttachment: activeAppearance?.avatarAttachmentId || activeIdentity.avatarAttachmentId,
       } as any;
     }
-    if (activeIdentity.displayName) {
-      (tmpMsg as any).sender_member_name = activeIdentity.displayName;
+    if (activeAppearance?.displayName) {
+      (tmpMsg as any).sender_member_name = activeAppearance.displayName;
     }
   }
   (tmpMsg as any).clientId = clientId;
@@ -9874,6 +10332,7 @@ const send = throttle(async () => {
       whisperTargetIds,
       typingDurationMs,
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
+      identityVariantIdOverride,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -12180,6 +12639,7 @@ onBeforeUnmount(() => {
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   revokeIdentityObjectURL();
+  revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
   sendStatusDelayTimers.forEach((timer) => window.clearTimeout(timer));
@@ -12884,13 +13344,23 @@ onBeforeUnmount(() => {
                             <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
                             <span class="emoji-panel__tab-text">UTF</span>
                           </button>
+                          <button
+                            class="emoji-panel__tab emoji-panel__tab--variant"
+                            :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'variant' }"
+                            :disabled="!hasIdentityVariantOptions"
+                            :title="hasIdentityVariantOptions ? '头像差分' : '当前频道角色暂无头像差分'"
+                            @click="switchEmojiPanelTab('variant')"
+                          >
+                            <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
+                            <span class="emoji-panel__tab-text">差分</span>
+                          </button>
                         </div>
 
-                        <div v-if="emojiPanelTab === 'gallery' && hasEmojiItems" class="emoji-panel__search">
+                        <div v-if="(emojiPanelTab === 'gallery' && hasEmojiItems) || emojiPanelTab === 'variant'" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
-                            placeholder="搜索表情..."
+                            :placeholder="emojiPanelTab === 'variant' ? '搜索差分关键词或备注...' : '搜索表情...'"
                             clearable
                           />
                         </div>
@@ -12911,6 +13381,65 @@ onBeforeUnmount(() => {
                                 initial-tab="emoji"
                                 @select="handleUtfEmojiSelect"
                               />
+                            </div>
+                          </template>
+                          <template v-else-if="emojiPanelTab === 'variant'">
+                            <div v-if="!activeIdentityForEmojiPanel" class="emoji-panel__empty">
+                              请先选择频道角色
+                            </div>
+                            <div v-else-if="!hasIdentityVariantOptions" class="emoji-panel__empty">
+                              当前频道角色没有可用的头像差分
+                            </div>
+                            <div v-else class="identity-variant-picker">
+                              <button
+                                type="button"
+                                class="identity-variant-picker__item identity-variant-picker__item--default"
+                                :class="{ 'is-active': !activeIdentityVariantForEmojiPanel }"
+                                @click="handleEmojiVariantSelect('')"
+                              >
+                                <div class="identity-variant-picker__selector">↺</div>
+                                <AvatarVue
+                                  :size="36"
+                                  :border="false"
+                                  :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                />
+                                <div class="identity-variant-picker__meta">
+                                  <div class="identity-variant-picker__name">恢复默认头像</div>
+                                  <div class="identity-variant-picker__sub">使用当前频道角色原始外观</div>
+                                </div>
+                              </button>
+                              <button
+                                v-for="variant in filteredIdentityVariantOptions"
+                                :key="variant.id"
+                                type="button"
+                                class="identity-variant-picker__item"
+                                :class="{ 'is-active': activeIdentityVariantForEmojiPanel?.id === variant.id }"
+                                @click="handleEmojiVariantSelect(variant.id)"
+                              >
+                                <div class="identity-variant-picker__selector">
+                                  <img
+                                    v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                                    :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                                    :alt="resolveVariantNote(variant)"
+                                  />
+                                  <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+                                </div>
+                                <AvatarVue
+                                  :size="36"
+                                  :border="false"
+                                  :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                />
+                                <div class="identity-variant-picker__meta">
+                                  <div class="identity-variant-picker__name">{{ resolveVariantNote(variant) }}</div>
+                                  <div class="identity-variant-picker__sub">
+                                    <span>={{ variant.keyword }}</span>
+                                    <span v-if="variant.displayName">昵称：{{ variant.displayName }}</span>
+                                  </div>
+                                </div>
+                              </button>
+                              <div v-if="emojiSearchQuery && !filteredIdentityVariantOptions.length" class="emoji-panel__empty">
+                                没有匹配的头像差分
+                              </div>
                             </div>
                           </template>
                           <template v-else>
@@ -13627,6 +14156,65 @@ onBeforeUnmount(() => {
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
+      <n-divider title-placement="left">头像差分</n-divider>
+      <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
+        <div class="identity-variant-section__header">
+          <div>
+            <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
+            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换</div>
+          </div>
+          <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
+        </div>
+        <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
+          <div
+            v-for="variant in currentEditingIdentityVariants"
+            :key="variant.id"
+            class="identity-variant-list__item"
+          >
+            <button
+              type="button"
+              class="identity-variant-list__selector"
+              @click="openIdentityVariantEdit(variant)"
+            >
+              <img
+                v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                :alt="resolveVariantNote(variant)"
+              />
+              <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+            </button>
+            <AvatarVue
+              :size="40"
+              :border="false"
+              :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || user.info.avatar"
+            />
+            <div class="identity-variant-list__meta">
+              <div class="identity-variant-list__name-row">
+                <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
+                <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
+                <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
+              </div>
+              <div class="identity-variant-list__sub">
+                <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
+                <span v-else>仅覆盖头像</span>
+                <span v-if="variant.color">颜色：{{ variant.color }}</span>
+              </div>
+            </div>
+            <div class="identity-variant-list__actions">
+              <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
+              <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
+            </div>
+          </div>
+        </div>
+        <n-empty v-else description="当前角色还没有头像差分">
+          <template #extra>
+            <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
+          </template>
+        </n-empty>
+      </div>
+      <n-alert v-else type="info" :show-icon="false">
+        请先保存频道角色，随后即可继续配置头像差分。
+      </n-alert>
     </n-form>
     <template #footer>
       <n-space justify="end">
@@ -13635,7 +14223,118 @@ onBeforeUnmount(() => {
       </n-space>
     </template>
   </n-modal>
+  <n-modal
+    v-model:show="identityVariantDialogVisible"
+    preset="card"
+    :title="identityVariantDialogMode === 'create' ? '新增头像差分' : '编辑头像差分'"
+    :auto-focus="false"
+    class="identity-variant-dialog"
+  >
+    <n-form label-width="90px" label-placement="left">
+      <n-form-item label="切换表情">
+        <div class="identity-variant-selector-field">
+          <button
+            type="button"
+            class="identity-variant-selector-field__preview"
+            @click="identityVariantEmojiPickerVisible = true"
+          >
+            <img
+              v-if="isVariantSelectorEmojiAttachment(identityVariantForm.selectorEmoji)"
+              :src="resolveVariantSelectorEmojiSrc(identityVariantForm.selectorEmoji)"
+              alt="差分表情"
+            />
+            <span v-else>{{ identityVariantForm.selectorEmoji || '🙂' }}</span>
+          </button>
+          <n-space>
+            <n-button size="small" type="primary" @click="identityVariantEmojiPickerVisible = true">选择表情</n-button>
+            <n-button
+              v-if="identityVariantForm.selectorEmoji"
+              size="small"
+              tertiary
+              @click="identityVariantForm.selectorEmoji = ''"
+            >
+              清除
+            </n-button>
+          </n-space>
+        </div>
+      </n-form-item>
+      <n-form-item label="切换关键词">
+        <n-input
+          v-model:value="identityVariantForm.keyword"
+          maxlength="64"
+          placeholder="例如 battle / calm / angry"
+        />
+      </n-form-item>
+      <n-form-item label="备注">
+        <n-input
+          v-model:value="identityVariantForm.note"
+          maxlength="255"
+          placeholder="例如 战斗中 / 严肃 / 开心"
+        />
+      </n-form-item>
+      <n-form-item label="差分头像">
+        <div class="identity-avatar-field">
+          <AvatarVue :size="48" :border="false" :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || user.info.avatar" />
+          <n-space>
+            <n-button size="small" type="primary" @click="handleIdentityVariantAvatarTrigger">上传头像</n-button>
+            <n-button
+              v-if="identityVariantForm.avatarAttachmentId || identityVariantAvatarPreview"
+              size="small"
+              tertiary
+              @click="removeIdentityVariantAvatar"
+            >
+              移除
+            </n-button>
+          </n-space>
+        </div>
+      </n-form-item>
+      <n-form-item label="覆盖昵称">
+        <n-input
+          v-model:value="identityVariantForm.displayName"
+          maxlength="32"
+          placeholder="留空则沿用频道角色昵称"
+        />
+      </n-form-item>
+      <n-form-item label="覆盖颜色">
+        <div class="identity-color-field">
+          <n-color-picker
+            v-model:value="identityVariantForm.color"
+            :modes="['hex']"
+            :show-alpha="false"
+            size="small"
+            class="identity-color-picker"
+          />
+          <n-input
+            v-model:value="identityVariantForm.color"
+            size="small"
+            placeholder="#RRGGBB"
+            class="identity-color-input"
+          />
+          <n-button tertiary size="small" @click="identityVariantForm.color = ''">清除</n-button>
+        </div>
+      </n-form-item>
+      <n-form-item>
+        <n-checkbox v-model:checked="identityVariantForm.enabled">
+          启用该差分
+        </n-checkbox>
+      </n-form-item>
+    </n-form>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="closeIdentityVariantDialog">取消</n-button>
+        <n-button type="primary" :loading="identityVariantSubmitting" @click="submitIdentityVariantForm">保存</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <EmojiPickerModal
+    v-if="identityVariantEmojiPickerVisible"
+    mode="all"
+    initial-tab="emoji"
+    @select="handleIdentityVariantSelectorEmoji"
+    @close="identityVariantEmojiPickerVisible = false"
+  />
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
+  <input ref="identityVariantAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityVariantAvatarChange">
   <n-modal
     v-model:show="identityAvatarEditorVisible"
     preset="card"
@@ -13647,6 +14346,19 @@ onBeforeUnmount(() => {
       :file="identityAvatarEditorFile"
       @save="handleIdentityAvatarEditorSave"
       @cancel="handleIdentityAvatarEditorCancel"
+    />
+  </n-modal>
+  <n-modal
+    v-model:show="identityVariantAvatarEditorVisible"
+    preset="card"
+    title="编辑差分头像"
+    style="max-width: 450px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="identityVariantAvatarEditorFile"
+      @save="handleIdentityVariantAvatarEditorSave"
+      @cancel="handleIdentityVariantAvatarEditorCancel"
     />
   </n-modal>
   <n-drawer
@@ -13813,6 +14525,7 @@ onBeforeUnmount(() => {
                   <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
+                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id).length }} 个</div>
                 <div class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
@@ -17275,9 +17988,145 @@ onBeforeUnmount(() => {
   margin-top: 0.35rem;
 }
 
+.identity-variant-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.identity-variant-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.identity-variant-section__title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.identity-variant-section__hint {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.identity-variant-list__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-layer, rgba(15, 23, 42, 0.02));
+}
+
+.identity-variant-list__selector,
+.identity-variant-selector-field__preview,
+.identity-variant-picker__selector {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-surface, #fff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  overflow: hidden;
+}
+
+.identity-variant-list__selector img,
+.identity-variant-selector-field__preview img,
+.identity-variant-picker__selector img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.identity-variant-list__meta,
+.identity-variant-picker__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-variant-list__name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.identity-variant-list__name,
+.identity-variant-picker__name {
+  font-weight: 600;
+}
+
+.identity-variant-list__sub,
+.identity-variant-picker__sub {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-variant-list__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.identity-variant-selector-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.identity-variant-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.identity-variant-picker__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: left;
+  padding: 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-surface, rgba(255, 255, 255, 0.92));
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+
+.identity-variant-picker__item:hover,
+.identity-variant-picker__item.is-active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.identity-variant-picker__item.is-active {
+  transform: translateY(-1px);
+}
+
 .identity-manage-drawer--night .identity-folder-item__count,
 .identity-manage-drawer--night .identity-manager__selection,
-.identity-manage-drawer--night .identity-list__hint {
+.identity-manage-drawer--night .identity-list__hint,
+.identity-manage-drawer--night .identity-variant-section__hint,
+.identity-manage-drawer--night .identity-variant-list__sub,
+.identity-manage-drawer--night .identity-variant-picker__sub {
   color: rgba(226, 232, 240, 0.7);
 }
 
@@ -17293,6 +18142,12 @@ onBeforeUnmount(() => {
 .identity-manage-drawer--night .identity-list__item {
   border-color: rgba(59, 130, 246, 0.25);
   background-color: rgba(15, 23, 42, 0.4);
+}
+
+.identity-manage-drawer--night .identity-variant-list__item,
+.identity-manage-drawer--night .identity-variant-picker__item {
+  border-color: rgba(59, 130, 246, 0.25);
+  background-color: rgba(15, 23, 42, 0.35);
 }
 
 .identity-manage-drawer--night .identity-list__actions :deep(.n-button) {
@@ -17341,7 +18196,11 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .identity-list__item {
+  .identity-list__item,
+  .identity-variant-list__item,
+  .identity-variant-picker__item,
+  .identity-variant-section__header,
+  .identity-variant-selector-field {
     flex-direction: column;
     align-items: flex-start;
     width: 100%;
@@ -17452,6 +18311,7 @@ onBeforeUnmount(() => {
   max-height: 45vh;
   overflow-y: auto;
 }
+.identity-variant-dialog :deep(.n-card),
 .identity-dialog :deep(.n-card) {
   background: var(--sc-bg-elevated, #ffffff);
   color: var(--sc-text-primary, #0f172a);
@@ -17465,6 +18325,16 @@ onBeforeUnmount(() => {
   color: var(--sc-text-primary, #0f172a);
 }
 
+.identity-variant-dialog :deep(.n-card__header),
+.identity-variant-dialog :deep(.n-card__content),
+.identity-variant-dialog :deep(.n-card__footer),
+.identity-dialog :deep(.n-card__header),
+.identity-dialog :deep(.n-card__content),
+.identity-dialog :deep(.n-card__footer) {
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.identity-variant-dialog :deep(.n-form-item-label__text),
 .identity-dialog :deep(.n-form-item-label__text) {
   color: var(--sc-text-secondary, #475569);
 }

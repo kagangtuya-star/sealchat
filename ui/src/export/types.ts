@@ -1,14 +1,18 @@
 export interface ExportMessage {
   id: string
   sender_id: string
+  sender_identity_id?: string
   sender_name: string
   sender_color?: string
+  sender_avatar?: string
+  is_merged?: boolean
   ic_mode: string
   is_whisper: boolean
   is_archived: boolean
   is_bot: boolean
   created_at: string | number | Date
   content: string
+  content_html?: string
   whisper_targets?: string[]
 }
 

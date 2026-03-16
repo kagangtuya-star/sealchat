@@ -226,6 +226,48 @@ func TestBuildBBCodeTextLineDoesNotRenderCodeFence(t *testing.T) {
 	}
 }
 
+func TestBuildExportPayloadUsesMessageIdentitySnapshotAvatar(t *testing.T) {
+	job := &model.MessageExportJobModel{
+		ChannelID: "channel-export-variant",
+	}
+	createdAt := time.Unix(1700000200, 0)
+	msg := &model.MessageModel{
+		StringPKBaseModel:       model.StringPKBaseModel{ID: "msg-variant", CreatedAt: createdAt},
+		UserID:                  "user-1",
+		Content:                 "测试消息",
+		ICMode:                  "ic",
+		SenderIdentityID:        "identity-1",
+		SenderIdentityVariantID: "variant-1",
+		SenderIdentityName:      "战斗形态",
+		SenderIdentityColor:     "#ff6600",
+		SenderIdentityAvatarID:  "avatar-variant-1",
+		User: &model.UserModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "user-1"},
+			Username:          "fallback_user",
+			Nickname:          "回退昵称",
+			Avatar:            "https://example.com/fallback.png",
+		},
+	}
+
+	payload := buildExportPayload(job, "测试频道", []*model.MessageModel{msg}, nil, nil)
+	if payload == nil || len(payload.Messages) != 1 {
+		t.Fatalf("expected 1 export message, got %+v", payload)
+	}
+	exported := payload.Messages[0]
+	if exported.SenderIdentityID != "identity-1" {
+		t.Fatalf("expected sender identity id snapshot, got %q", exported.SenderIdentityID)
+	}
+	if exported.SenderName != "战斗形态" {
+		t.Fatalf("expected sender name from snapshot, got %q", exported.SenderName)
+	}
+	if exported.SenderAvatar != "id:avatar-variant-1" {
+		t.Fatalf("expected variant avatar snapshot to be exported, got %q", exported.SenderAvatar)
+	}
+	if exported.SenderColor != "#ff6600" {
+		t.Fatalf("expected sender color snapshot, got %q", exported.SenderColor)
+	}
+}
+
 func TestExtractWhisperTargetsPreferRoleNameOverUserName(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()

@@ -177,6 +177,9 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 	if err != nil {
 		return err
 	}
+	if err := model.ChannelIdentityVariantDeleteByIdentityIDs([]string{identity.ID}); err != nil {
+		return err
+	}
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
 	}

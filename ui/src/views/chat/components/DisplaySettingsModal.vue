@@ -27,6 +27,7 @@ const avatarStylePanelVisible = ref(false)
 const fontSettingsPanelVisible = ref(false)
 const keywordQuickInputTriggerDraft = ref('/')
 const identityQuickSwitchTriggerDraft = ref('/')
+const identityVariantQuickSwitchTriggerDraft = ref('=')
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
@@ -49,17 +50,20 @@ const extractSingleTriggerChar = (value: string | null | undefined) => {
 const syncTriggerDrafts = (source?: DisplaySettings) => {
   keywordQuickInputTriggerDraft.value = source?.worldKeywordQuickInputTrigger || '/'
   identityQuickSwitchTriggerDraft.value = source?.identityQuickSwitchTrigger || '/'
+  identityVariantQuickSwitchTriggerDraft.value = source?.identityVariantQuickSwitchTrigger || '='
 }
 
 const updateTriggerDraft = (
-  key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger',
+  key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger' | 'identityVariantQuickSwitchTrigger',
   value: string,
 ) => {
   const normalized = extractSingleTriggerChar(value)
   if (key === 'worldKeywordQuickInputTrigger') {
     keywordQuickInputTriggerDraft.value = normalized
-  } else {
+  } else if (key === 'identityQuickSwitchTrigger') {
     identityQuickSwitchTriggerDraft.value = normalized
+  } else {
+    identityVariantQuickSwitchTriggerDraft.value = normalized
   }
   if (!normalized) {
     return
@@ -67,15 +71,20 @@ const updateTriggerDraft = (
   draft[key] = normalized
 }
 
-const finalizeTriggerDraft = (key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger') => {
+const finalizeTriggerDraft = (key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger' | 'identityVariantQuickSwitchTrigger') => {
   const current = key === 'worldKeywordQuickInputTrigger'
     ? keywordQuickInputTriggerDraft.value
-    : identityQuickSwitchTriggerDraft.value
-  const normalized = extractSingleTriggerChar(current) || '/'
+    : key === 'identityQuickSwitchTrigger'
+      ? identityQuickSwitchTriggerDraft.value
+      : identityVariantQuickSwitchTriggerDraft.value
+  const fallback = key === 'identityVariantQuickSwitchTrigger' ? '=' : '/'
+  const normalized = extractSingleTriggerChar(current) || fallback
   if (key === 'worldKeywordQuickInputTrigger') {
     keywordQuickInputTriggerDraft.value = normalized
-  } else {
+  } else if (key === 'identityQuickSwitchTrigger') {
     identityQuickSwitchTriggerDraft.value = normalized
+  } else {
+    identityVariantQuickSwitchTriggerDraft.value = normalized
   }
   draft[key] = normalized
 }
@@ -86,6 +95,14 @@ const handleIdentityQuickSwitchTriggerUpdate = (value: string) => {
 
 const handleIdentityQuickSwitchTriggerBlur = () => {
   finalizeTriggerDraft('identityQuickSwitchTrigger')
+}
+
+const handleIdentityVariantQuickSwitchTriggerUpdate = (value: string) => {
+  updateTriggerDraft('identityVariantQuickSwitchTrigger', value)
+}
+
+const handleIdentityVariantQuickSwitchTriggerBlur = () => {
+  finalizeTriggerDraft('identityVariantQuickSwitchTrigger')
 }
 
 const handleKeywordQuickInputTriggerUpdate = (value: string) => {
@@ -142,6 +159,7 @@ watch(
   draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
   draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
+  draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
@@ -578,6 +596,28 @@ const handleOpenTutorialHub = () => {
             @blur="handleIdentityQuickSwitchTriggerBlur"
           />
           <span class="quick-input-hint">示例：{{ identityQuickSwitchTriggerDraft || '/' }}角色名 正文</span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">身份差分快捷切换</p>
+            <p class="section-desc">在普通输入中使用“触发字符 + 差分关键词 + 空格 + 正文”时，发送前会先切换当前身份差分；仅输入关键词时只切换不发送</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <span class="quick-input-hint">触发字符</span>
+          <n-input
+            :value="identityVariantQuickSwitchTriggerDraft"
+            size="small"
+            :maxlength="1"
+            style="width: 50px; text-align: center"
+            placeholder="="
+            @update:value="handleIdentityVariantQuickSwitchTriggerUpdate"
+            @blur="handleIdentityVariantQuickSwitchTriggerBlur"
+          />
+          <span class="quick-input-hint">示例：{{ identityVariantQuickSwitchTriggerDraft || '=' }}差分 正文</span>
         </div>
       </section>
 

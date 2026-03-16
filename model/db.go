@@ -144,6 +144,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&BotTokenModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
+	db.AutoMigrate(&ChannelIdentityVariantModel{})
 	db.AutoMigrate(&ChannelIdentityModeConfigModel{})
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})

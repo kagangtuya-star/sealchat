@@ -113,6 +113,7 @@ export interface DisplaySettings {
   worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
+  identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -445,6 +446,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordQuickInputEnabled: true,
   worldKeywordQuickInputTrigger: '/',
   identityQuickSwitchTrigger: '/',
+  identityVariantQuickSwitchTrigger: '=',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -657,6 +659,7 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordQuickInputEnabled: coerceBoolean((parsed as any)?.worldKeywordQuickInputEnabled ?? true),
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
+      identityVariantQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityVariantQuickSwitchTrigger || '='),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -862,6 +865,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickSwitchTrigger')
       ? coerceQuickInputTrigger((patch as any).identityQuickSwitchTrigger)
       : base.identityQuickSwitchTrigger,
+  identityVariantQuickSwitchTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantQuickSwitchTrigger')
+      ? coerceQuickInputTrigger((patch as any).identityVariantQuickSwitchTrigger || '=')
+      : base.identityVariantQuickSwitchTrigger,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)

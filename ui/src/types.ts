@@ -75,6 +75,7 @@ export interface SatoriMessage {
 
   sender_member_name?: string;
   sender_role_id?: string;
+  sender_identity_variant_id?: string;
   isPinned?: boolean;
   pinnedAt?: number;
   pinnedBy?: string;
@@ -483,6 +484,24 @@ export interface ChannelIdentity {
   folderIds?: string[];
 }
 
+export interface ChannelIdentityVariant {
+  id: string;
+  identityId: string;
+  channelId: string;
+  userId: string;
+  selectorEmoji: string;
+  keyword: string;
+  note: string;
+  avatarAttachmentId: string;
+  displayName?: string;
+  color?: string;
+  appearance?: Record<string, any>;
+  sortOrder: number;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ChannelIcOocRoleConfig {
   icRoleId: string | null;
   oocRoleId: string | null;
@@ -512,6 +531,7 @@ export interface ChannelIdentityFolder {
 
 export interface MessageIdentity {
   id?: string;
+  variantId?: string;
   displayName?: string;
   color?: string;
   avatarAttachment?: string;
