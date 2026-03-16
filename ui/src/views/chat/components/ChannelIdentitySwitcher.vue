@@ -96,11 +96,32 @@ const sortedIdentities = computed(() => {
 const identityOptionCount = computed(() => Math.max(sortedIdentities.value.length, 1));
 
 const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.value));
+const activeIdentityVariant = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const identityId = activeIdentity.value?.id || '';
+  if (!channelId || !identityId) {
+    return null;
+  }
+  return chat.getActiveIdentityVariant(channelId, identityId);
+});
 
 const fallbackName = computed(() => chat.curMember?.nick || user.info.nick || user.info.username || '默认身份');
 const fallbackAvatar = computed(() => user.info.avatar || '');
 
 const buildAttachmentUrl = (token?: string) => resolveAttachmentUrl(token);
+
+const resolveIdentityAvatarToken = (identity?: { id?: string; avatarAttachmentId?: string } | null) => {
+  if (!identity) {
+    return '';
+  }
+  const channelId = resolvedChannelId.value;
+  const identityId = String(identity.id || '').trim();
+  if (!channelId || !identityId) {
+    return identity.avatarAttachmentId || '';
+  }
+  const variant = chat.getActiveIdentityVariant(channelId, identityId);
+  return variant?.avatarAttachmentId || identity.avatarAttachmentId || '';
+};
 
 const displayName = computed(() => activeIdentity.value?.displayName || fallbackName.value);
 const displayColor = computed(() => activeIdentity.value?.color || '');
@@ -129,7 +150,7 @@ const displayedButtonLabel = computed(() => {
 });
 
 const avatarSrc = computed(() => {
-  return buildAttachmentUrl(activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
+  return buildAttachmentUrl(activeIdentityVariant.value?.avatarAttachmentId || activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
 });
 const toggleActionLabel = computed(() => (
   filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
@@ -203,7 +224,7 @@ const options = computed<DropdownMixedOption[]>(() => {
       <AvatarVue
         size={24}
         border={false}
-        src={buildAttachmentUrl(item.avatarAttachmentId) || fallbackAvatar.value}
+        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || fallbackAvatar.value}
       />
     ),
     class: item.id === activeIdentity.value?.id ? 'identity-option identity-option--active' : 'identity-option',

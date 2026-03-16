@@ -1367,6 +1367,37 @@ const filteredIdentityVariantOptions = computed(() => {
   });
 });
 const hasIdentityVariantOptions = computed(() => activeIdentityVariantOptions.value.length > 0);
+const identityVariantTabTooltip = computed(() => {
+  if (!activeIdentityForEmojiPanel.value) {
+    return '请先选择频道角色，再切换头像差分';
+  }
+  if (!hasIdentityVariantOptions.value) {
+    return canManageIdentities()
+      ? '当前频道角色尚未配置头像差分，点击前往设置'
+      : '当前频道角色尚未配置头像差分';
+  }
+  return '切换当前频道角色的头像差分，可用 =关键词 快捷切换';
+});
+
+const describeIdentityVariantCard = (variant?: ChannelIdentityVariant | null) => {
+  if (!variant) {
+    return '恢复为当前频道角色的默认头像';
+  }
+  const summary = [
+    resolveVariantNote(variant),
+    variant.keyword ? `关键词：=${variant.keyword}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const details = [
+    variant.displayName ? `覆盖昵称：${variant.displayName}` : '仅覆盖头像',
+    variant.color ? `覆盖颜色：${variant.color}` : '',
+    variant.note && variant.note !== resolveVariantNote(variant) ? variant.note : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return [summary, details].filter(Boolean).join('\n');
+};
 
 // 表情分类选项卡（使用 store 持久化）
 const activeEmojiTab = computed({
@@ -2218,6 +2249,33 @@ const handleEmojiVariantSelect = (variantId: string) => {
   emojiSearchQuery.value = '';
   emojiPopoverShow.value = false;
   emitTypingPreview();
+};
+
+const openActiveIdentityVariantSetup = async () => {
+  const activeIdentity = activeIdentityForEmojiPanel.value;
+  if (!activeIdentity) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  if (!canManageIdentities()) {
+    message.warning('当前无权限配置头像差分');
+    return;
+  }
+  emojiPopoverShow.value = false;
+  message.info('请先为当前频道角色配置头像差分');
+  await openIdentityEdit(activeIdentity);
+};
+
+const handleEmojiVariantTabClick = async () => {
+  if (!activeIdentityForEmojiPanel.value) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  if (!hasIdentityVariantOptions.value) {
+    await openActiveIdentityVariantSetup();
+    return;
+  }
+  switchEmojiPanelTab('variant');
 };
 
 
@@ -4114,7 +4172,7 @@ const getMessageDisplayName = (message: any) => {
     || '未知';
 };
 
-const getMessageAvatar = (message: any) => {
+const resolveMessageAvatarSource = (message: any) => {
   // 仅在“编辑自己的消息”时使用本地编辑预览覆盖头像
   const editingPreview = editingPreviewMap.value[message?.id];
   const messageUserId = (
@@ -4138,11 +4196,15 @@ const getMessageAvatar = (message: any) => {
   ];
   for (const id of candidates) {
     if (id) {
-      return resolveAttachmentUrl(id);
+      return resolveAttachmentUrl(id) || String(id);
     }
   }
   return message?.member?.avatar || message?.user?.avatar || '';
 };
+
+const getMessageAvatar = (message: any) => resolveMessageAvatarSource(message);
+
+const getMessageAvatarMergeKey = (message: any) => resolveMessageAvatarSource(message) || '';
 
 const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
@@ -4944,7 +5006,8 @@ const shouldMergeMessages = (prev?: Message, current?: Message) => {
   if (prev.isWhisper !== current.isWhisper) return false;
   const roleSame = getMessageRoleKey(prev) && getMessageRoleKey(prev) === getMessageRoleKey(current);
   if (!roleSame) return false;
-  return getMessageSceneKey(prev) === getMessageSceneKey(current);
+  if (getMessageSceneKey(prev) !== getMessageSceneKey(current)) return false;
+  return getMessageAvatarMergeKey(prev) === getMessageAvatarMergeKey(current);
 };
 
 
@@ -13344,16 +13407,23 @@ onBeforeUnmount(() => {
                             <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
                             <span class="emoji-panel__tab-text">UTF</span>
                           </button>
-                          <button
-                            class="emoji-panel__tab emoji-panel__tab--variant"
-                            :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'variant' }"
-                            :disabled="!hasIdentityVariantOptions"
-                            :title="hasIdentityVariantOptions ? '头像差分' : '当前频道角色暂无头像差分'"
-                            @click="switchEmojiPanelTab('variant')"
-                          >
-                            <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
-                            <span class="emoji-panel__tab-text">差分</span>
-                          </button>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <button
+                                class="emoji-panel__tab emoji-panel__tab--variant"
+                                :class="{
+                                  'emoji-panel__tab--active': emojiPanelTab === 'variant',
+                                  'emoji-panel__tab--muted': !activeIdentityForEmojiPanel || !hasIdentityVariantOptions,
+                                }"
+                                :aria-disabled="!activeIdentityForEmojiPanel || !hasIdentityVariantOptions"
+                                @click="handleEmojiVariantTabClick"
+                              >
+                                <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
+                                <span class="emoji-panel__tab-text">差分</span>
+                              </button>
+                            </template>
+                            {{ identityVariantTabTooltip }}
+                          </n-tooltip>
                         </div>
 
                         <div v-if="(emojiPanelTab === 'gallery' && hasEmojiItems) || emojiPanelTab === 'variant'" class="emoji-panel__search">
@@ -13391,52 +13461,57 @@ onBeforeUnmount(() => {
                               当前频道角色没有可用的头像差分
                             </div>
                             <div v-else class="identity-variant-picker">
-                              <button
-                                type="button"
-                                class="identity-variant-picker__item identity-variant-picker__item--default"
-                                :class="{ 'is-active': !activeIdentityVariantForEmojiPanel }"
-                                @click="handleEmojiVariantSelect('')"
-                              >
-                                <div class="identity-variant-picker__selector">↺</div>
-                                <AvatarVue
-                                  :size="36"
-                                  :border="false"
-                                  :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
-                                />
-                                <div class="identity-variant-picker__meta">
-                                  <div class="identity-variant-picker__name">恢复默认头像</div>
-                                  <div class="identity-variant-picker__sub">使用当前频道角色原始外观</div>
-                                </div>
-                              </button>
-                              <button
+                              <n-tooltip trigger="hover">
+                                <template #trigger>
+                                  <button
+                                    type="button"
+                                    class="identity-variant-picker__item identity-variant-picker__item--default"
+                                    :class="{ 'is-active': !activeIdentityVariantForEmojiPanel }"
+                                    @click="handleEmojiVariantSelect('')"
+                                  >
+                                    <div class="identity-variant-picker__badge">↺</div>
+                                    <AvatarVue
+                                      :size="40"
+                                      :border="false"
+                                      :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                    />
+                                    <div class="identity-variant-picker__title">默认头像</div>
+                                    <div class="identity-variant-picker__hint">恢复</div>
+                                  </button>
+                                </template>
+                                {{ describeIdentityVariantCard(null) }}
+                              </n-tooltip>
+                              <n-tooltip
                                 v-for="variant in filteredIdentityVariantOptions"
                                 :key="variant.id"
-                                type="button"
-                                class="identity-variant-picker__item"
-                                :class="{ 'is-active': activeIdentityVariantForEmojiPanel?.id === variant.id }"
-                                @click="handleEmojiVariantSelect(variant.id)"
+                                trigger="hover"
                               >
-                                <div class="identity-variant-picker__selector">
-                                  <img
-                                    v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
-                                    :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
-                                    :alt="resolveVariantNote(variant)"
-                                  />
-                                  <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
-                                </div>
-                                <AvatarVue
-                                  :size="36"
-                                  :border="false"
-                                  :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
-                                />
-                                <div class="identity-variant-picker__meta">
-                                  <div class="identity-variant-picker__name">{{ resolveVariantNote(variant) }}</div>
-                                  <div class="identity-variant-picker__sub">
-                                    <span>={{ variant.keyword }}</span>
-                                    <span v-if="variant.displayName">昵称：{{ variant.displayName }}</span>
-                                  </div>
-                                </div>
-                              </button>
+                                <template #trigger>
+                                  <button
+                                    type="button"
+                                    class="identity-variant-picker__item"
+                                    :class="{ 'is-active': activeIdentityVariantForEmojiPanel?.id === variant.id }"
+                                    @click="handleEmojiVariantSelect(variant.id)"
+                                  >
+                                    <div class="identity-variant-picker__badge">
+                                      <img
+                                        v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                                        :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                                        :alt="resolveVariantNote(variant)"
+                                      />
+                                      <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+                                    </div>
+                                    <AvatarVue
+                                      :size="40"
+                                      :border="false"
+                                      :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                    />
+                                    <div class="identity-variant-picker__title">{{ resolveVariantNote(variant) }}</div>
+                                    <div class="identity-variant-picker__hint">={{ variant.keyword }}</div>
+                                  </button>
+                                </template>
+                                <span class="identity-variant-picker__tooltip">{{ describeIdentityVariantCard(variant) }}</span>
+                              </n-tooltip>
                               <div v-if="emojiSearchQuery && !filteredIdentityVariantOptions.length" class="emoji-panel__empty">
                                 没有匹配的头像差分
                               </div>
@@ -17621,6 +17696,10 @@ onBeforeUnmount(() => {
   border-color: var(--primary-color-hover, #16924e);
 }
 
+.emoji-panel__tab--muted {
+  opacity: 0.78;
+}
+
 .emoji-panel__tab-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -18093,22 +18172,26 @@ onBeforeUnmount(() => {
 }
 
 .identity-variant-picker {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
   gap: 0.6rem;
 }
 
 .identity-variant-picker__item {
   width: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.75rem;
-  text-align: left;
-  padding: 0.7rem;
+  justify-content: center;
+  gap: 0.45rem;
+  text-align: center;
+  padding: 0.8rem 0.65rem 0.7rem;
   border-radius: 12px;
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   background: var(--sc-bg-surface, rgba(255, 255, 255, 0.92));
   transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  position: relative;
+  min-height: 132px;
 }
 
 .identity-variant-picker__item:hover,
@@ -18121,12 +18204,58 @@ onBeforeUnmount(() => {
   transform: translateY(-1px);
 }
 
+.identity-variant-picker__badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--sc-bg-layer, rgba(15, 23, 42, 0.08));
+  color: var(--sc-text-primary, #1f2937);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.identity-variant-picker__badge img {
+  width: 1rem;
+  height: 1rem;
+  object-fit: contain;
+}
+
+.identity-variant-picker__title {
+  width: 100%;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--sc-text-primary, #1f2937);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-variant-picker__hint {
+  width: 100%;
+  font-size: 0.74rem;
+  color: var(--sc-text-secondary, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-variant-picker__tooltip {
+  white-space: pre-line;
+}
+
 .identity-manage-drawer--night .identity-folder-item__count,
 .identity-manage-drawer--night .identity-manager__selection,
 .identity-manage-drawer--night .identity-list__hint,
 .identity-manage-drawer--night .identity-variant-section__hint,
 .identity-manage-drawer--night .identity-variant-list__sub,
-.identity-manage-drawer--night .identity-variant-picker__sub {
+.identity-manage-drawer--night .identity-variant-picker__hint {
   color: rgba(226, 232, 240, 0.7);
 }
 
@@ -18198,12 +18327,26 @@ onBeforeUnmount(() => {
 
   .identity-list__item,
   .identity-variant-list__item,
-  .identity-variant-picker__item,
   .identity-variant-section__header,
   .identity-variant-selector-field {
     flex-direction: column;
     align-items: flex-start;
     width: 100%;
+  }
+
+  .identity-variant-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .identity-variant-picker__item {
+    min-height: 120px;
+    padding: 0.75rem 0.55rem 0.65rem;
+  }
+
+  .identity-variant-picker__badge {
+    top: 0.45rem;
+    right: 0.45rem;
   }
 
   .identity-list__item-check {
