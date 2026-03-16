@@ -483,6 +483,11 @@ export interface ChannelIdentity {
   folderIds?: string[];
 }
 
+export interface ChannelIcOocRoleConfig {
+  icRoleId: string | null;
+  oocRoleId: string | null;
+}
+
 export interface CharacterCard {
   id: string;
   userId: string;

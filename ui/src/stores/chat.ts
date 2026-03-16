@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIdentity, ChannelIdentityFolder, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIcOocRoleConfig, ChannelIdentity, ChannelIdentityFolder, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -187,7 +187,7 @@ interface ChatState {
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
-  channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
+  channelIcOocRoleConfig: Record<string, ChannelIcOocRoleConfig>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
   // 多选模式状态
@@ -258,6 +258,82 @@ const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const REVOKED_DRAFT_CACHE_MAX = 240;
 const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
 const CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY = 'sealchat_identity_recent_spoken_v1';
+const EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG: ChannelIcOocRoleConfig = Object.freeze({ icRoleId: null, oocRoleId: null });
+
+const normalizeChannelIcOocRoleConfigValue = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const normalizeChannelIcOocRoleConfig = (config?: Partial<ChannelIcOocRoleConfig> | null): ChannelIcOocRoleConfig => ({
+  icRoleId: normalizeChannelIcOocRoleConfigValue(config?.icRoleId),
+  oocRoleId: normalizeChannelIcOocRoleConfigValue(config?.oocRoleId),
+});
+
+const getChannelIcOocRoleStorageKeys = (channelId: string, userId?: string | null) => {
+  const trimmedChannelId = String(channelId || '').trim();
+  const trimmedUserId = String(userId || '').trim();
+  const keys: string[] = [];
+  if (trimmedChannelId && trimmedUserId) {
+    keys.push(`channelIcOocRole:${trimmedUserId}:${trimmedChannelId}`);
+  }
+  if (trimmedChannelId) {
+    keys.push(`channelIcOocRole:${trimmedChannelId}`);
+  }
+  return Array.from(new Set(keys));
+};
+
+const readChannelIcOocRoleConfigFromStorage = (channelId: string, userId?: string | null): ChannelIcOocRoleConfig | null => {
+  if (typeof window === 'undefined' || !channelId) {
+    return null;
+  }
+  for (const key of getChannelIcOocRoleStorageKeys(channelId, userId)) {
+    try {
+      const stored = localStorage.getItem(key);
+      if (!stored) {
+        continue;
+      }
+      const parsed = JSON.parse(stored) as Partial<ChannelIcOocRoleConfig>;
+      const normalized = normalizeChannelIcOocRoleConfig(parsed);
+      if (normalized.icRoleId || normalized.oocRoleId) {
+        return normalized;
+      }
+    } catch (err) {
+      console.warn('Failed to load IC/OOC role config from localStorage', err);
+    }
+  }
+  return null;
+};
+
+const writeChannelIcOocRoleConfigToStorage = (channelId: string, userId: string | null | undefined, config: ChannelIcOocRoleConfig) => {
+  if (typeof window === 'undefined' || !channelId) {
+    return;
+  }
+  const scopedKey = userId ? `channelIcOocRole:${userId}:${channelId}` : '';
+  const legacyKey = `channelIcOocRole:${channelId}`;
+  const isEmpty = !config.icRoleId && !config.oocRoleId;
+  try {
+    if (isEmpty) {
+      if (scopedKey) {
+        localStorage.removeItem(scopedKey);
+      }
+      localStorage.removeItem(legacyKey);
+      return;
+    }
+    const serialized = JSON.stringify(config);
+    if (scopedKey) {
+      localStorage.setItem(scopedKey, serialized);
+      localStorage.removeItem(legacyKey);
+      return;
+    }
+    localStorage.setItem(legacyKey, serialized);
+  } catch (err) {
+    console.warn('Failed to save IC/OOC role config to localStorage', err);
+  }
+};
 const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
 const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
   const trimmed = String(content || '').trim();
@@ -2305,6 +2381,11 @@ export const useChatStore = defineStore({
         [channelId]: list,
       };
       this.pruneIdentityRecentSpoken(channelId, list.map(item => item.id));
+      const currentConfig = this.channelIcOocRoleConfig[channelId];
+      if (currentConfig) {
+        const nextConfig = this.sanitizeChannelIcOocRoleConfig(channelId, currentConfig);
+        this.applyChannelIcOocRoleConfig(channelId, nextConfig);
+      }
       if (this.activeChannelIdentity[channelId] === identityId) {
         const fallback = list.find(item => item.isDefault) || list[0];
         this.setActiveIdentity(channelId, fallback?.id || '');
@@ -2340,7 +2421,13 @@ export const useChatStore = defineStore({
         return await existing;
       }
       const task = (async () => {
-        const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
+        const resp = await api.get<{
+          items: ChannelIdentity[];
+          folders: ChannelIdentityFolder[];
+          favorites: string[];
+          membership: Record<string, string[]>;
+          icOocConfig?: ChannelIcOocRoleConfig | null;
+        }>('api/v1/channel-identities', { params: { channelId } });
         const membership = resp.data.membership || {};
         const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
         items.forEach(item => {
@@ -2366,6 +2453,19 @@ export const useChatStore = defineStore({
           ...this.channelIdentityLoadedAt,
           [channelId]: Date.now(),
         };
+        let nextConfig = this.sanitizeChannelIcOocRoleConfig(channelId, resp.data.icOocConfig || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG);
+        this.applyChannelIcOocRoleConfig(channelId, nextConfig);
+        if (!nextConfig.icRoleId && !nextConfig.oocRoleId) {
+          const legacyConfig = this.sanitizeChannelIcOocRoleConfig(channelId, this.readChannelIcOocRoleConfigFromStorage(channelId));
+          if (legacyConfig.icRoleId || legacyConfig.oocRoleId) {
+            try {
+              nextConfig = await this.setChannelIcOocRoleConfig(channelId, legacyConfig);
+            } catch (error) {
+              console.warn('Failed to migrate legacy IC/OOC role config', error);
+              this.applyChannelIcOocRoleConfig(channelId, legacyConfig);
+            }
+          }
+        }
         const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
@@ -4824,54 +4924,75 @@ export const useChatStore = defineStore({
     },
 
     // IC/OOC 角色配置相关方法
-    getChannelIcOocRoleConfig(channelId: string): { icRoleId: string | null; oocRoleId: string | null } {
+    readChannelIcOocRoleConfigFromStorage(channelId: string): ChannelIcOocRoleConfig | null {
+      const user = useUserStore();
+      return readChannelIcOocRoleConfigFromStorage(channelId, user.info?.id);
+    },
+
+    sanitizeChannelIcOocRoleConfig(channelId: string, config?: Partial<ChannelIcOocRoleConfig> | null): ChannelIcOocRoleConfig {
+      const normalized = normalizeChannelIcOocRoleConfig(config);
+      const identities = this.channelIdentities[channelId] || [];
+      if (!identities.length) {
+        return normalized;
+      }
+      const validIds = new Set(identities.map(item => item.id));
+      return {
+        icRoleId: normalized.icRoleId && validIds.has(normalized.icRoleId) ? normalized.icRoleId : null,
+        oocRoleId: normalized.oocRoleId && validIds.has(normalized.oocRoleId) ? normalized.oocRoleId : null,
+      };
+    },
+
+    applyChannelIcOocRoleConfig(channelId: string, config?: Partial<ChannelIcOocRoleConfig> | null) {
       if (!channelId) {
-        return { icRoleId: null, oocRoleId: null };
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
+      }
+      const user = useUserStore();
+      const normalized = this.sanitizeChannelIcOocRoleConfig(channelId, config);
+      this.channelIcOocRoleConfig = {
+        ...this.channelIcOocRoleConfig,
+        [channelId]: normalized,
+      };
+      writeChannelIcOocRoleConfigToStorage(channelId, user.info?.id, normalized);
+      return normalized;
+    },
+
+    getChannelIcOocRoleConfig(channelId: string): ChannelIcOocRoleConfig {
+      if (!channelId) {
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
       }
       if (this.channelIcOocRoleConfig[channelId]) {
         return this.channelIcOocRoleConfig[channelId];
       }
-      // 尝试从 localStorage 加载
-      if (typeof window !== 'undefined') {
-        try {
-          const key = `channelIcOocRole:${channelId}`;
-          const stored = localStorage.getItem(key);
-          if (stored) {
-            const config = JSON.parse(stored);
-            this.channelIcOocRoleConfig[channelId] = config;
-            return config;
-          }
-        } catch (err) {
-          console.warn('Failed to load IC/OOC role config from localStorage', err);
-        }
+      const localConfig = this.readChannelIcOocRoleConfigFromStorage(channelId);
+      if (localConfig) {
+        return this.applyChannelIcOocRoleConfig(channelId, localConfig);
       }
-      return { icRoleId: null, oocRoleId: null };
+      return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
     },
 
-    setChannelIcOocRoleConfig(
+    async setChannelIcOocRoleConfig(
       channelId: string,
       config: { icRoleId?: string | null; oocRoleId?: string | null }
     ) {
       if (!channelId) {
-        return;
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
       }
       const current = this.getChannelIcOocRoleConfig(channelId);
-      const updated = {
+      const previous = normalizeChannelIcOocRoleConfig(current);
+      const updated = this.sanitizeChannelIcOocRoleConfig(channelId, {
         icRoleId: config.icRoleId !== undefined ? config.icRoleId : current.icRoleId,
         oocRoleId: config.oocRoleId !== undefined ? config.oocRoleId : current.oocRoleId,
-      };
-      this.channelIcOocRoleConfig = {
-        ...this.channelIcOocRoleConfig,
-        [channelId]: updated,
-      };
-      // 持久化到 localStorage
-      if (typeof window !== 'undefined') {
-        try {
-          const key = `channelIcOocRole:${channelId}`;
-          localStorage.setItem(key, JSON.stringify(updated));
-        } catch (err) {
-          console.warn('Failed to save IC/OOC role config to localStorage', err);
-        }
+      });
+      this.applyChannelIcOocRoleConfig(channelId, updated);
+      try {
+        const resp = await api.put<{ channelId: string; exists: boolean; config?: ChannelIcOocRoleConfig | null }>(
+          `api/v1/channels/${channelId}/identity-mode-config`,
+          updated,
+        );
+        return this.applyChannelIcOocRoleConfig(channelId, resp.data?.config || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG);
+      } catch (error) {
+        this.applyChannelIcOocRoleConfig(channelId, previous);
+        throw error;
       }
     },
 
@@ -4916,14 +5037,13 @@ export const useChatStore = defineStore({
       const tryCopyIcOocRoleConfig = () => {
         if (!hasIdentityMap) return;
         try {
-          const raw = localStorage.getItem(`channelIcOocRole:${sourceChannelId}`);
-          if (!raw) return;
-          const sourceConfig = JSON.parse(raw) as { icRoleId?: string | null; oocRoleId?: string | null };
+          const sourceConfig = readChannelIcOocRoleConfigFromStorage(sourceChannelId, userId);
+          if (!sourceConfig) return;
           const mappedConfig = {
             icRoleId: resolveMappedIdentityId(sourceConfig?.icRoleId) ?? null,
             oocRoleId: resolveMappedIdentityId(sourceConfig?.oocRoleId) ?? null,
           };
-          localStorage.setItem(`channelIcOocRole:${targetChannelId}`, JSON.stringify(mappedConfig));
+          writeChannelIcOocRoleConfigToStorage(targetChannelId, userId, normalizeChannelIcOocRoleConfig(mappedConfig));
         } catch (err) {
           console.warn('Failed to copy IC/OOC role config', err);
         }
@@ -5013,7 +5133,7 @@ export const useChatStore = defineStore({
           return config.oocRoleId;
         }
         // 配置的角色已不存在，清除无效配置
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
+        await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
       }
 
       // 检查是否有正在进行的创建任务（防止竞态条件）
@@ -5026,7 +5146,7 @@ export const useChatStore = defineStore({
       if (identities.length > 0) {
         // 优先使用第一个角色作为默认 OOC 角色
         const firstRole = identities[0];
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
+        await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
         return firstRole.id;
       }
 
@@ -5045,7 +5165,7 @@ export const useChatStore = defineStore({
           });
 
           // 设置为场外默认角色
-          this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
+          await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
 
           console.log(`Created default OOC role for channel ${channelId}`, identity);
           return identity.id;

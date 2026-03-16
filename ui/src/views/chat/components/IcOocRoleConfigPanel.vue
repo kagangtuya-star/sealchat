@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
-import { useUserStore } from '@/stores/user'
 
 interface Props {
   show: boolean
@@ -18,7 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const chat = useChatStore()
-const user = useUserStore()
+const message = useMessage()
 
 const localChannelId = ref('')
 const icRoleId = ref<string | null>(null)
@@ -55,16 +55,21 @@ watch(
   },
 )
 
-const handleSave = () => {
+const handleSave = async () => {
   if (!localChannelId.value) {
     emit('update:show', false)
     return
   }
-  chat.setChannelIcOocRoleConfig(localChannelId.value, {
-    icRoleId: icRoleId.value,
-    oocRoleId: oocRoleId.value,
-  })
-  emit('update:show', false)
+  try {
+    await chat.setChannelIcOocRoleConfig(localChannelId.value, {
+      icRoleId: icRoleId.value,
+      oocRoleId: oocRoleId.value,
+    })
+    emit('update:show', false)
+  } catch (error: any) {
+    console.error('保存场内场外角色映射失败', error)
+    message.error(error?.response?.data?.message || '保存失败，请稍后重试')
+  }
 }
 
 const handleClose = () => {

@@ -678,6 +678,35 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		}
 	}
 
+	configs, err := model.ChannelIdentityModeConfigListByChannelTx(tx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, cfg := range configs {
+		if cfg.UserID == "" {
+			continue
+		}
+		if allowedUserIDs != nil {
+			if _, ok := allowedUserIDs[cfg.UserID]; !ok {
+				continue
+			}
+		}
+		mappedICIdentityID := ""
+		mappedOOCIdentityID := ""
+		if cfg.ICIdentityID != "" {
+			mappedICIdentityID = identityMap[cfg.ICIdentityID]
+		}
+		if cfg.OOCIdentityID != "" {
+			mappedOOCIdentityID = identityMap[cfg.OOCIdentityID]
+		}
+		if mappedICIdentityID == "" && mappedOOCIdentityID == "" {
+			continue
+		}
+		if _, err := model.ChannelIdentityModeConfigUpsertTx(tx, cfg.UserID, targetID, mappedICIdentityID, mappedOOCIdentityID); err != nil {
+			return nil, err
+		}
+	}
+
 	summary.addCopied("identities")
 	return identityMap, nil
 }

@@ -2806,6 +2806,10 @@ interface IdentityExportFile {
   };
   items: IdentityExportItem[];
   folders?: IdentityExportFolder[];
+  icOocConfig?: {
+    icRoleId?: string | null;
+    oocRoleId?: string | null;
+  };
 }
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
@@ -2826,6 +2830,7 @@ const handleIdentityExport = async () => {
   const membershipMap = identityFolderMembership.value;
   const folderList = identityFolders.value;
   const favoriteSet = new Set(identityFavoriteFolderIds.value);
+  const icOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id);
   identityExporting.value = true;
   try {
     const items: IdentityExportItem[] = [];
@@ -2882,6 +2887,12 @@ const handleIdentityExport = async () => {
         sortOrder: folder.sortOrder,
         isFavorite: favoriteSet.has(folder.id),
       })),
+      icOocConfig: icOocConfig.icRoleId || icOocConfig.oocRoleId
+        ? {
+            icRoleId: icOocConfig.icRoleId,
+            oocRoleId: icOocConfig.oocRoleId,
+          }
+        : undefined,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -2988,6 +2999,7 @@ const handleIdentityImportChange = async (event: Event) => {
 
     identityImporting.value = true;
     const folderIdMap = new Map<string, string>();
+    const identityIdMap = new Map<string, string>();
     if (Array.isArray(payload.folders) && payload.folders.length && chat.curChannel?.id) {
       const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
       for (const folder of sortedFolders) {
@@ -3013,7 +3025,7 @@ const handleIdentityImportChange = async (event: Event) => {
         const mappedFolderIds = (item.folderIds || [])
           .map(id => folderIdMap.get(id) || '')
           .filter((id): id is string => !!id);
-        await chat.channelIdentityCreate({
+        const created = await chat.channelIdentityCreate({
           channelId: chat.curChannel.id,
           displayName: item.displayName || '',
           color: item.color || '',
@@ -3021,9 +3033,23 @@ const handleIdentityImportChange = async (event: Event) => {
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
+        if (item.sourceId && created?.id) {
+          identityIdMap.set(item.sourceId, created.id);
+        }
         successCount += 1;
       } catch (error) {
         console.warn('单个角色导入失败', error);
+      }
+    }
+
+    const importedConfig = payload.icOocConfig;
+    if (importedConfig && chat.curChannel?.id) {
+      const mappedConfig = {
+        icRoleId: importedConfig.icRoleId ? (identityIdMap.get(importedConfig.icRoleId) || null) : null,
+        oocRoleId: importedConfig.oocRoleId ? (identityIdMap.get(importedConfig.oocRoleId) || null) : null,
+      };
+      if (mappedConfig.icRoleId || mappedConfig.oocRoleId) {
+        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig);
       }
     }
 
@@ -3225,7 +3251,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       nextIcRoleId !== targetConfig.icRoleId ||
       nextOocRoleId !== targetConfig.oocRoleId;
     if (mappingChanged) {
-      chat.setChannelIcOocRoleConfig(targetChannelId, {
+      await chat.setChannelIcOocRoleConfig(targetChannelId, {
         icRoleId: nextIcRoleId,
         oocRoleId: nextOocRoleId,
       });

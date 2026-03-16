@@ -345,6 +345,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
+	v1Auth.Put("/channels/:channelId/identity-mode-config", ChannelIdentityModeConfigUpsert)
 	v1Auth.Post("/channel-identities/:id/bind-character-card", ChannelIdentityBindCharacterCard)
 	v1Auth.Post("/channel-identities/:id/unbind-character-card", ChannelIdentityUnbindCharacterCard)
 

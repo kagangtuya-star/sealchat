@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"sealchat/model"
 	"sealchat/service"
 )
 
@@ -31,12 +32,19 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	config, err := model.ChannelIdentityModeConfigGet(user.ID, channelID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
 
 	return c.JSON(fiber.Map{
-		"items":      result.Items,
-		"folders":    result.Folders,
-		"favorites":  result.Favorites,
-		"membership": result.Membership,
+		"items":       result.Items,
+		"folders":     result.Folders,
+		"favorites":   result.Favorites,
+		"membership":  result.Membership,
+		"icOocConfig": serializeChannelIdentityModeConfig(config),
 	})
 }
 

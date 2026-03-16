@@ -180,6 +180,9 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
 	}
+	if err := model.ChannelIdentityModeConfigClearIdentityReferences(userID, channelID, identity.ID); err != nil {
+		return err
+	}
 	_ = model.ChannelIdentityFolderMemberDeleteByIdentityIDs([]string{identity.ID})
 
 	if identity.IsDefault {
