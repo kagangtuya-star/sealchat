@@ -12,6 +12,64 @@ import (
 	"sealchat/model"
 )
 
+func privateBotIDsByChannel(channel *model.ChannelModel) []string {
+	if channel == nil {
+		return nil
+	}
+	if !channel.IsPrivate && !strings.EqualFold(strings.TrimSpace(channel.PermType), "private") {
+		return nil
+	}
+	ids := channel.GetPrivateUserIDs()
+	if len(ids) == 0 {
+		return nil
+	}
+	botIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		user := model.UserGet(id)
+		if user != nil && user.IsBot {
+			botIDs = append(botIDs, id)
+		}
+	}
+	if len(botIDs) == 0 {
+		return nil
+	}
+	botIDs = lo.Uniq(botIDs)
+	sort.Strings(botIDs)
+	return botIDs
+}
+
+func privateBotIDByChannel(channel *model.ChannelModel) string {
+	botIDs := privateBotIDsByChannel(channel)
+	if len(botIDs) == 0 {
+		return ""
+	}
+	return botIDs[0]
+}
+
+func IsBotFeatureEffectivelyEnabled(channel *model.ChannelModel) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.BotFeatureEnabled {
+		return true
+	}
+	return privateBotIDByChannel(channel) != ""
+}
+
+func IsBuiltInDiceEffectivelyEnabled(channel *model.ChannelModel) bool {
+	if channel == nil {
+		return false
+	}
+	if IsBotFeatureEffectivelyEnabled(channel) {
+		return false
+	}
+	return channel.BuiltInDiceEnabled
+}
+
 func SelectedBotIdByChannelId(channelId string) (string, error) {
 	channelId = strings.TrimSpace(channelId)
 	if channelId == "" {
@@ -19,26 +77,32 @@ func SelectedBotIdByChannelId(channelId string) (string, error) {
 	}
 	roleId := fmt.Sprintf("ch-%s-%s", channelId, "bot")
 	ids, _ := model.UserRoleMappingUserIdListByRoleId(roleId)
-	if len(ids) == 0 {
-		return "", errors.New("未选择频道机器人")
-	}
-	filtered := make([]string, 0, len(ids))
-	for _, id := range ids {
-		user := model.UserGet(id)
-		if user != nil && user.IsBot {
-			filtered = append(filtered, id)
+	if len(ids) > 0 {
+		filtered := make([]string, 0, len(ids))
+		for _, id := range ids {
+			user := model.UserGet(id)
+			if user != nil && user.IsBot {
+				filtered = append(filtered, id)
+			}
+		}
+		ids = lo.Uniq(filtered)
+		if len(ids) > 0 {
+			sort.Strings(ids)
+			selected := ids[0]
+			if len(ids) > 1 {
+				log.Printf("[bot] channel %s has multiple bot bindings: %v, selecting %s", channelId, ids, selected)
+			}
+			return selected, nil
 		}
 	}
-	ids = lo.Uniq(filtered)
-	if len(ids) == 0 {
-		return "", errors.New("未选择频道机器人")
+
+	channel, err := model.ChannelGet(channelId)
+	if err == nil {
+		if selected := privateBotIDByChannel(channel); selected != "" {
+			return selected, nil
+		}
 	}
-	sort.Strings(ids)
-	selected := ids[0]
-	if len(ids) > 1 {
-		log.Printf("[bot] channel %s has multiple bot bindings: %v, selecting %s", channelId, ids, selected)
-	}
-	return selected, nil
+	return "", errors.New("未选择频道机器人")
 }
 
 func BotListByChannelId(curUserId, channelId string) []string {
@@ -52,18 +116,12 @@ func BotListByChannelId(curUserId, channelId string) []string {
 		return []string{}
 	}
 	if ch.PermType == "private" {
-		// 私聊时获取授权
-		var otherId string
-		id2 := ch.GetPrivateUserIDs()
-		if id2[0] == curUserId {
-			otherId = id2[1]
-		}
-		if id2[1] == curUserId {
-			otherId = id2[0]
-		}
-		u := model.UserGet(otherId)
-		if u.IsBot {
-			ids = append(ids, otherId)
+		// 私聊时自动将对端 bot 视为频道机器人
+		for _, botID := range privateBotIDsByChannel(ch) {
+			if botID == curUserId {
+				continue
+			}
+			ids = append(ids, botID)
 		}
 	} else {
 		// 获取子频道的授权

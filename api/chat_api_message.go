@@ -1895,6 +1895,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
+	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
+	if effectiveBotFeatureEnabled {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 
 	findExistingByClientID := func(clientID string) (*protocol.Message, error) {
 		var existing model.MessageModel
@@ -1959,7 +1965,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	var renderResult *service.DiceRenderResult
 	var isHiddenDice bool
-	if channel.BuiltInDiceEnabled {
+	if effectiveBuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
 		if err != nil {
 			return nil, err
@@ -1998,7 +2004,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if ctx.User.IsBot && channel.BotFeatureEnabled {
+	if ctx.User.IsBot && effectiveBotFeatureEnabled {
 		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && hasBotHiddenDicePendingTargets(pending) {
 			if len(whisperRecipientIDs) > 0 || whisperTo != "" {
 				if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
@@ -2037,7 +2043,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !channel.BotFeatureEnabled {
+	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !effectiveBotFeatureEnabled {
 		hiddenWhisperToSelf = true
 		whisperTo = ctx.User.ID
 	}
@@ -2273,7 +2279,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 		// 构建消息上下文
 		var msgContext *protocol.MessageContext
-		if channel.BotFeatureEnabled || appConfig.BuiltInSealBotEnable {
+		if effectiveBotFeatureEnabled || appConfig.BuiltInSealBotEnable {
 			msgContext = &protocol.MessageContext{
 				ICMode:       icMode,
 				IsWhisper:    whisperUser != nil,
@@ -2321,7 +2327,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
-		if appConfig.BuiltInSealBotEnable && whisperUser == nil && channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
+		if appConfig.BuiltInSealBotEnable && whisperUser == nil && effectiveBuiltInDiceEnabled && !effectiveBotFeatureEnabled {
 			botReq := &struct {
 				ChannelID string `json:"channel_id"`
 				QuoteID   string `json:"quote_id"`
@@ -2786,6 +2792,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
+	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
+	if effectiveBotFeatureEnabled {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 
 	var authorUser *model.UserModel
 	if msg.UserID != "" && msg.UserID != ctx.User.ID {
@@ -2865,7 +2877,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		newContent = protocol.EscapeSatoriText(newContent)
 	}
 	var renderResult *service.DiceRenderResult
-	if channel.BuiltInDiceEnabled {
+	if effectiveBuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)
 		if err != nil {
 			return nil, err

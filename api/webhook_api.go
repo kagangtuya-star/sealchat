@@ -429,7 +429,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	}
 
 	var renderResult *service.DiceRenderResult
-	if channel.BuiltInDiceEnabled {
+	if service.IsBuiltInDiceEffectivelyEnabled(channel) {
 		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
 		if err != nil {
 			return wrapError(c, err, "渲染骰点失败")
@@ -486,6 +486,10 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 
 	// 广播（复用现有 WS 广播通道）
 	channelData := channel.ToProtocolType()
+	if service.IsBotFeatureEffectivelyEnabled(channel) {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 	msg.User = botUser
 	msg.Member = member
 	if msg.QuoteID != "" {

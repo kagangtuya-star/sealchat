@@ -425,7 +425,6 @@ const channelFeatures = reactive({
   builtInDiceEnabled: true,
   botFeatureEnabled: false,
 });
-const canUseBuiltInDice = computed(() => channelFeatures.builtInDiceEnabled);
 const defaultDiceExpr = computed(() => ensureDefaultDiceExpr(chat.curChannel?.defaultDiceExpr));
 const botRoleId = computed(() => {
   const channelId = chat.curChannel?.id;
@@ -442,9 +441,12 @@ const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   value: bot.id,
 })));
 const hasBotOptions = computed(() => botOptions.value.length > 0);
-const diceModeLabel = computed(() => channelFeatures.botFeatureEnabled ? 'BOT掷骰' : '内置掷骰');
+const diceModeLabel = computed(() => effectiveBotFeatureEnabled.value ? 'BOT掷骰' : '内置掷骰');
 const diceModeTooltip = computed(() => {
-  if (channelFeatures.botFeatureEnabled) {
+  if (isCurrentBotPrivateChatChannel.value) {
+    return '当前为机器人私聊，已固定使用 BOT 掷骰模式';
+  }
+  if (effectiveBotFeatureEnabled.value) {
     return '当前使用机器人处理掷骰指令，点击齿轮可切换内置掷骰模式';
   }
   return '当前使用内置掷骰功能，点击齿轮可切换机器人掷骰模式';
@@ -471,6 +473,22 @@ const isPrivateChatChannel = (channel?: SChannel | null) => {
   }
   return false;
 };
+const isBotPrivateChatChannel = (channel?: SChannel | null) => {
+  if (!isPrivateChatChannel(channel)) {
+    return false;
+  }
+  return channel?.friendInfo?.userInfo?.is_bot === true;
+};
+const isCurrentBotPrivateChatChannel = computed(() => isBotPrivateChatChannel(chat.curChannel as SChannel | null));
+const effectiveBuiltInDiceEnabled = computed(() => (
+  isCurrentBotPrivateChatChannel.value ? false : channelFeatures.builtInDiceEnabled
+));
+const effectiveBotFeatureEnabled = computed(() => (
+  isCurrentBotPrivateChatChannel.value ? true : channelFeatures.botFeatureEnabled
+));
+const canUseBuiltInDice = computed(() => effectiveBuiltInDiceEnabled.value);
+const showDiceModeStatus = computed(() => canManageChannelFeatures.value || isCurrentBotPrivateChatChannel.value);
+const showDiceModeSettings = computed(() => canManageChannelFeatures.value && !isCurrentBotPrivateChatChannel.value);
 watch(
   () => chat.curChannel?.id,
   async (channelId) => {
@@ -579,7 +597,7 @@ watch(
   { immediate: true },
 );
 const toggleDiceTray = () => {
-  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+  if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
     closeAllDiceTrays();
     return;
@@ -591,11 +609,16 @@ const toggleDiceTray = () => {
   }
 };
 watch(
-  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled] as const,
+  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled, chat.curChannel?.friendInfo?.userInfo?.is_bot] as const,
   ([, builtInDiceEnabled, botFeatureEnabled]) => {
-    channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
-    channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
-    if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+    if (isCurrentBotPrivateChatChannel.value) {
+      channelFeatures.builtInDiceEnabled = false;
+      channelFeatures.botFeatureEnabled = true;
+    } else {
+      channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
+      channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
+    }
+    if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
       closeAllDiceTrays();
     }
   },
@@ -612,12 +635,12 @@ watch(canManageChannelFeatures, (canManage) => {
   }
 });
 watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
-	if (!enabled && !channelFeatures.botFeatureEnabled && !diceSettingsVisible.value) {
+	if (!enabled && !effectiveBotFeatureEnabled.value && !diceSettingsVisible.value) {
 		closeAllDiceTrays();
 	}
 });
 watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
-	if (!enabled && !channelFeatures.builtInDiceEnabled && !diceSettingsVisible.value) {
+	if (!enabled && !effectiveBuiltInDiceEnabled.value && !diceSettingsVisible.value) {
 		closeAllDiceTrays();
 	}
 });
@@ -750,7 +773,7 @@ watch(diceSettingsVisible, (visible) => {
   if (visible) {
     ensureBotOptionsLoaded();
     refreshChannelBotSelection();
-  } else if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+  } else if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
     closeAllDiceTrays();
   }
 });
@@ -921,7 +944,7 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
 };
 
 const handleDiceFeatureToggle = async (value: boolean) => {
-  if (!canManageChannelFeatures.value) {
+  if (!canManageChannelFeatures.value || isCurrentBotPrivateChatChannel.value) {
     return;
   }
   try {
@@ -936,7 +959,7 @@ const handleDiceFeatureToggle = async (value: boolean) => {
 };
 
 const handleBotFeatureToggle = async (value: boolean) => {
-  if (!canManageChannelFeatures.value || !botRoleId.value) {
+  if (!canManageChannelFeatures.value || !botRoleId.value || isCurrentBotPrivateChatChannel.value) {
     return;
   }
   try {
@@ -13103,7 +13126,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
@@ -13118,20 +13141,21 @@ onBeforeUnmount(() => {
                     <DiceTray
                       :default-dice="defaultDiceExpr"
                       :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+                      :bot-feature-enabled="effectiveBotFeatureEnabled"
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
                       @close="diceTrayMobileVisible = false"
                     >
-                      <template v-if="canManageChannelFeatures" #header-actions>
+                      <template v-if="showDiceModeStatus" #header-actions>
                         <template v-if="isMobileUa">
                           <n-tooltip trigger="hover">
                             <template #trigger>
                               <div class="dice-mode-status">
                                 <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
                                 <n-button
+                                  v-if="showDiceModeSettings"
                                   quaternary
                                   size="tiny"
                                   circle
@@ -13146,6 +13170,7 @@ onBeforeUnmount(() => {
                             {{ diceModeTooltip }}
                           </n-tooltip>
                           <n-modal
+                            v-if="showDiceModeSettings"
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
@@ -13193,7 +13218,7 @@ onBeforeUnmount(() => {
                           </n-modal>
                         </template>
                         <template v-else>
-                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                          <n-popover v-if="showDiceModeSettings" trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
                             <template #trigger>
                               <n-tooltip trigger="hover">
                                 <template #trigger>
@@ -13253,6 +13278,14 @@ onBeforeUnmount(() => {
                               </div>
                             </div>
                           </n-popover>
+                          <n-tooltip v-else trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
                         </template>
                       </template>
                     </DiceTray>
@@ -13263,7 +13296,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
@@ -13278,20 +13311,21 @@ onBeforeUnmount(() => {
                     <DiceTray
                       :default-dice="defaultDiceExpr"
                       :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+                      :bot-feature-enabled="effectiveBotFeatureEnabled"
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
                       @close="diceTrayDesktopVisible = false"
                     >
-                      <template v-if="canManageChannelFeatures" #header-actions>
+                      <template v-if="showDiceModeStatus" #header-actions>
                         <template v-if="isMobileUa">
                           <n-tooltip trigger="hover">
                             <template #trigger>
                               <div class="dice-mode-status">
                                 <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
                                 <n-button
+                                  v-if="showDiceModeSettings"
                                   quaternary
                                   size="tiny"
                                   circle
@@ -13306,6 +13340,7 @@ onBeforeUnmount(() => {
                             {{ diceModeTooltip }}
                           </n-tooltip>
                           <n-modal
+                            v-if="showDiceModeSettings"
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
@@ -13355,7 +13390,7 @@ onBeforeUnmount(() => {
                           </n-modal>
                         </template>
                         <template v-else>
-                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                          <n-popover v-if="showDiceModeSettings" trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
                             <template #trigger>
                               <n-tooltip trigger="hover">
                                 <template #trigger>
@@ -13415,6 +13450,14 @@ onBeforeUnmount(() => {
                               </div>
                             </div>
                           </n-popover>
+                          <n-tooltip v-else trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
                         </template>
                       </template>
                     </DiceTray>
