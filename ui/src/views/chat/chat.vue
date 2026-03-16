@@ -4132,7 +4132,9 @@ watch(() => chat.curChannel?.id, () => {
 const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 30;
 const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
-const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
+const SEARCH_ANCHOR_WINDOW_LIMIT = 12;
+const SEARCH_ANCHOR_WINDOW_MAX = 24;
+const SEARCH_CONTEXT_ROW_ESTIMATE = 72;
 const SEARCH_JUMP_LIMIT_PRIMARY = 30;
 const SEARCH_JUMP_LIMIT_RETRY = 50;
 const HISTORY_PAGINATION_WINDOW_MS = 5 * 60 * 1000;
@@ -4146,6 +4148,15 @@ const pinnedCollapseStorageKey = 'sealchat.pinnedCollapsed';
 const resolvePinnedCollapsed = () => localStorage.getItem(pinnedCollapseStorageKey) === 'true';
 const pinnedCollapsed = ref(resolvePinnedCollapsed());
 const listRevision = ref(0);
+const searchBrowseSession = reactive({
+  active: false,
+  channelId: '',
+  anchorMessageId: '',
+  beforeCursor: '',
+  afterCursor: '',
+  hasMoreBefore: false,
+  hasMoreAfter: false,
+});
 const messageWindow = reactive({
   viewMode: 'live' as ViewMode,
   anchorMessageId: null as string | null,
@@ -4174,11 +4185,25 @@ watch(pinnedCollapsed, (collapsed) => {
 interface ResetWindowOptions {
   preserveRows?: boolean;
   preserveHistoryLock?: boolean;
+  preserveSearchSession?: boolean;
 }
+
+const resetSearchBrowseSession = () => {
+  searchBrowseSession.active = false;
+  searchBrowseSession.channelId = '';
+  searchBrowseSession.anchorMessageId = '';
+  searchBrowseSession.beforeCursor = '';
+  searchBrowseSession.afterCursor = '';
+  searchBrowseSession.hasMoreBefore = false;
+  searchBrowseSession.hasMoreAfter = false;
+};
 
 const resetWindowState = (mode: ViewMode = 'live', options: ResetWindowOptions = {}) => {
   if (!options.preserveRows) {
     rows.value = [];
+  }
+  if (!options.preserveSearchSession) {
+    resetSearchBrowseSession();
   }
   messageWindow.viewMode = mode;
   if (!options.preserveHistoryLock) {
@@ -4222,17 +4247,50 @@ const updateAnchorMessage = (id: string | null) => {
   messageWindow.anchorMessageId = id || null;
 };
 
+const isSearchBrowseActive = () => searchBrowseSession.active && searchBrowseSession.channelId === (chat.curChannel?.id || '');
+
+const activateSearchBrowseSession = (
+  payload: { messageId: string },
+  options: {
+    beforeCursor?: string | null;
+    afterCursor?: string | null;
+    hasMoreBefore?: boolean;
+    hasMoreAfter?: boolean;
+  } = {},
+) => {
+  searchBrowseSession.active = true;
+  searchBrowseSession.channelId = chat.curChannel?.id || '';
+  searchBrowseSession.anchorMessageId = payload.messageId;
+  searchBrowseSession.beforeCursor = options.beforeCursor ?? messageWindow.beforeCursor;
+  searchBrowseSession.afterCursor = options.afterCursor ?? messageWindow.afterCursor;
+  searchBrowseSession.hasMoreBefore =
+    typeof options.hasMoreBefore === 'boolean'
+      ? options.hasMoreBefore
+      : Boolean(searchBrowseSession.beforeCursor);
+  searchBrowseSession.hasMoreAfter =
+    typeof options.hasMoreAfter === 'boolean'
+      ? options.hasMoreAfter
+      : !messageWindow.hasReachedLatest;
+};
+
 const applyCursorUpdate = (cursor?: { before?: string | null; after?: string | null }) => {
   if (!cursor) return;
   if (cursor.before !== undefined) {
     messageWindow.beforeCursor = cursor.before || '';
     messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.beforeCursor = messageWindow.beforeCursor;
+      searchBrowseSession.hasMoreBefore = Boolean(messageWindow.beforeCursor);
+    }
     if (messageWindow.beforeCursor) {
       messageWindow.hasReachedStart = false;
     }
   }
   if (cursor.after !== undefined) {
     messageWindow.afterCursor = cursor.after || '';
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.afterCursor = messageWindow.afterCursor;
+    }
     if (messageWindow.afterCursor) {
       messageWindow.hasReachedLatest = false;
     }
@@ -4242,6 +4300,7 @@ const applyCursorUpdate = (cursor?: { before?: string | null; after?: string | n
 watch(viewMode, (mode) => {
   if (mode === 'live') {
     updateAnchorMessage(null);
+    resetSearchBrowseSession();
   }
 });
 
@@ -4266,6 +4325,17 @@ const updateWindowAnchorsFromRows = () => {
   } else {
     messageWindow.afterCursor = '';
   }
+};
+
+const resolveSearchAnchorWindowLimit = () => {
+  const containerHeight =
+    messagesListRef.value?.clientHeight ??
+    (typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.72) : 720);
+  const estimatedVisibleRows = Math.max(8, Math.ceil(containerHeight / SEARCH_CONTEXT_ROW_ESTIMATE));
+  return Math.max(
+    SEARCH_ANCHOR_WINDOW_LIMIT,
+    Math.min(SEARCH_ANCHOR_WINDOW_MAX, estimatedVisibleRows),
+  );
 };
 
 const sortPinnedRows = () => {
@@ -4783,17 +4853,32 @@ const localReorderOps = new Set<string>();
 const messageRowRefs = new Map<string, HTMLElement>();
 const SEARCH_JUMP_WINDOWS_MS = [30, 120, 360, 1440, 10080].map((minutes) => minutes * 60 * 1000);
 const searchJumping = ref(false);
+const searchJumpRequestSeq = ref(0);
 
 interface SearchJumpWindow {
   messages: Message[];
   cursorBefore?: string | null;
+  cursorAfter?: string | null;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
   fromTime?: number;
 }
 
 interface SearchJumpContextResult {
   messages: Message[];
+  beforeCursor?: string;
+  afterCursor?: string;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
   notFoundReason?: string;
 }
+
+const createSearchJumpToken = () => {
+  searchJumpRequestSeq.value += 1;
+  return searchJumpRequestSeq.value;
+};
+
+const isSearchJumpTokenActive = (token: number) => token === searchJumpRequestSeq.value;
 
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
@@ -5040,15 +5125,26 @@ const buildAnchorWindowMessages = (messages: Message[], targetId: string) => {
   if (targetIndex < 0) {
     return null;
   }
-  const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
-  const end = Math.min(sorted.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
+  const windowLimit = resolveSearchAnchorWindowLimit();
+  if (sorted.length <= windowLimit * 2 + 1) {
+    return sorted;
+  }
+  const start = Math.max(0, targetIndex - windowLimit);
+  const end = Math.min(sorted.length, targetIndex + windowLimit + 1);
   return sorted.slice(start, end);
 };
 
 const applyHistoricalWindowFromMessages = (
   messages: Message[],
   payload: { messageId: string },
-  options: { cursorBefore?: string | null; fromTime?: number } = {},
+  options: {
+    cursorBefore?: string | null;
+    cursorAfter?: string | null;
+    fromTime?: number;
+    hasMoreBefore?: boolean;
+    hasMoreAfter?: boolean;
+    activateSearchBrowse?: boolean;
+  } = {},
 ) => {
   const windowMessages = buildAnchorWindowMessages(messages, payload.messageId);
   if (!windowMessages) {
@@ -5057,15 +5153,24 @@ const applyHistoricalWindowFromMessages = (
   resetWindowState('history');
   rows.value = windowMessages;
   sortRowsByDisplayOrder();
-  if (options.cursorBefore !== undefined) {
-    applyCursorUpdate({ before: options.cursorBefore ?? '' });
-  }
+  applyCursorUpdate({
+    before: options.hasMoreBefore === false ? '' : options.cursorBefore,
+    after: options.cursorAfter,
+  });
   computeAfterCursorFromRows();
-  messageWindow.hasReachedStart = false;
+  messageWindow.hasReachedStart = options.hasMoreBefore === false;
   if (options.fromTime !== undefined) {
     messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && options.fromTime === 0;
   }
   messageWindow.hasReachedLatest = false;
+  if (options.activateSearchBrowse) {
+    activateSearchBrowseSession(payload, {
+      beforeCursor: options.hasMoreBefore === false ? '' : (options.cursorBefore ?? ''),
+      afterCursor: options.cursorAfter,
+      hasMoreBefore: options.hasMoreBefore,
+      hasMoreAfter: options.hasMoreAfter,
+    });
+  }
   updateAnchorMessage(payload.messageId);
   showButton.value = true;
   lockHistoryView();
@@ -5105,6 +5210,8 @@ const mountHistoricalWindowWithSpan = async (
     }
     return applyHistoricalWindowFromMessages(normalized, payload, {
       cursorBefore: resp?.next ?? '',
+      hasMoreBefore: Boolean(resp?.next),
+      activateSearchBrowse: true,
       fromTime: from,
     });
   } catch (error) {
@@ -5157,6 +5264,7 @@ const loadMessagesWithinWindow = async (
     return {
       messages: normalized,
       cursorBefore: resp?.next ?? '',
+      hasMoreBefore: Boolean(resp?.next),
       fromTime: from,
     };
   } catch (error) {
@@ -5209,6 +5317,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     return {
       messages: incoming,
       cursorBefore,
+      hasMoreBefore: Boolean(cursorBefore),
     };
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
@@ -5233,9 +5342,10 @@ const loadJumpContextByMessageId = async (
     return null;
   }
   try {
+    const contextWindow = resolveSearchAnchorWindowLimit();
     const resp = await chat.messageContext(chat.curChannel.id, payload.messageId, {
-      before: SEARCH_ANCHOR_WINDOW_LIMIT,
-      after: SEARCH_ANCHOR_WINDOW_LIMIT,
+      before: contextWindow,
+      after: contextWindow,
       includeArchived: true,
       includeOoc: true,
     });
@@ -5245,7 +5355,13 @@ const loadJumpContextByMessageId = async (
     const normalized = normalizeMessageList(Array.isArray(resp.data) ? resp.data : []);
     const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
     if (containsTarget) {
-      return { messages: normalized };
+      return {
+        messages: normalized,
+        beforeCursor: typeof resp.before_cursor === 'string' ? resp.before_cursor : '',
+        afterCursor: typeof resp.after_cursor === 'string' ? resp.after_cursor : '',
+        hasMoreBefore: resp.has_more_before === true,
+        hasMoreAfter: resp.has_more_after === true,
+      };
     }
     const notFoundReason = typeof resp.not_found_reason === 'string' ? resp.not_found_reason : '';
     if (notFoundReason) {
@@ -5261,20 +5377,32 @@ const loadJumpContextByMessageId = async (
   }
 };
 
-const ensureSearchTargetVisible = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+const ensureSearchTargetVisible = async (
+  payload: { messageId: string; displayOrder?: number; createdAt?: number },
+  requestToken: number,
+) => {
+  const isStale = () => !isSearchJumpTokenActive(requestToken);
   if (messageExistsLocally(payload.messageId)) {
     return true;
   }
-  if (searchJumping.value) {
-    message.info('正在定位消息，请稍候');
+  if (isStale()) {
     return false;
   }
   searchJumping.value = true;
   const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
   try {
     const contextResult = await loadJumpContextByMessageId(payload);
+    if (isStale()) {
+      return false;
+    }
     if (contextResult?.messages?.length) {
-      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload);
+      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload, {
+        cursorBefore: contextResult.hasMoreBefore ? contextResult.beforeCursor : '',
+        cursorAfter: contextResult.afterCursor,
+        hasMoreBefore: contextResult.hasMoreBefore,
+        hasMoreAfter: contextResult.hasMoreAfter,
+        activateSearchBrowse: true,
+      });
       if (applied) {
         return true;
       }
@@ -5297,16 +5425,26 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     }
 
     const mounted = await mountHistoricalWindow(payload);
+    if (isStale()) {
+      return false;
+    }
     if (mounted) {
       return true;
     }
     const located = await locateMessageForJump(payload);
+    if (isStale()) {
+      return false;
+    }
     if (!located) {
       message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
       return false;
     }
     const applied = applyHistoricalWindowFromMessages(located.messages, payload, {
       cursorBefore: located.cursorBefore,
+      cursorAfter: located.cursorAfter,
+      hasMoreBefore: located.hasMoreBefore,
+      hasMoreAfter: located.hasMoreAfter,
+      activateSearchBrowse: true,
       fromTime: located.fromTime,
     });
     if (!applied) {
@@ -5316,11 +5454,14 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     return true;
   } finally {
     loadingMsg?.destroy?.();
-    searchJumping.value = false;
+    if (isSearchJumpTokenActive(requestToken)) {
+      searchJumping.value = false;
+    }
   }
 };
 
 const handleSearchJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number; channelId?: string }) => {
+  const requestToken = createSearchJumpToken();
   const targetId = payload?.messageId;
   if (!targetId) {
     message.warning('未找到要跳转的消息');
@@ -5333,6 +5474,9 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       message.error('无法切换到目标频道，跳转已取消');
       return;
     }
+    if (!isSearchJumpTokenActive(requestToken)) {
+      return;
+    }
   }
 
   // 如果没有 createdAt，尝试通过 API 获取消息详情，失败时继续走上下文定位
@@ -5340,6 +5484,9 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
     try {
       const msgInfo = await chat.messageGetById(chat.curChannel.id, targetId);
+      if (!isSearchJumpTokenActive(requestToken)) {
+        return;
+      }
       if (msgInfo) {
         enrichedPayload.createdAt = msgInfo.created_at;
         enrichedPayload.displayOrder = msgInfo.display_order;
@@ -5350,18 +5497,27 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   }
 
   await nextTick();
+  if (!isSearchJumpTokenActive(requestToken)) {
+    return;
+  }
   let target = messageRowRefs.get(targetId);
   if (!target) {
-    const loaded = await ensureSearchTargetVisible(enrichedPayload);
+    const loaded = await ensureSearchTargetVisible(enrichedPayload, requestToken);
     if (!loaded) {
       return;
     }
     await nextTick();
+    if (!isSearchJumpTokenActive(requestToken)) {
+      return;
+    }
     // 等待 DOM 渲染完成，最多重试几次
     for (let i = 0; i < 5; i++) {
       target = messageRowRefs.get(targetId);
       if (target) break;
       await new Promise(r => setTimeout(r, 50));
+      if (!isSearchJumpTokenActive(requestToken)) {
+        return;
+      }
     }
     if (!target) {
       if (messageExistsLocally(targetId)) {
@@ -5373,6 +5529,15 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     }
   }
   if (messagesListRef.value) {
+    activateSearchBrowseSession(
+      { messageId: targetId },
+      {
+        beforeCursor: searchBrowseSession.active ? searchBrowseSession.beforeCursor : messageWindow.beforeCursor,
+        afterCursor: searchBrowseSession.active ? searchBrowseSession.afterCursor : messageWindow.afterCursor,
+        hasMoreBefore: searchBrowseSession.active ? searchBrowseSession.hasMoreBefore : Boolean(messageWindow.beforeCursor),
+        hasMoreAfter: searchBrowseSession.active ? searchBrowseSession.hasMoreAfter : !messageWindow.hasReachedLatest,
+      },
+    );
     lockHistoryView();
     updateAnchorMessage(targetId);
     computeAfterCursorFromRows();
@@ -5385,6 +5550,9 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     setMessageHighlight(targetId);
     showButton.value = true;
     void autoFillIfNeeded();
+  }
+  if (isSearchJumpTokenActive(requestToken)) {
+    searchJumping.value = false;
   }
 };
 
@@ -10923,6 +11091,11 @@ const loadOlderMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart) {
     return false;
   }
+  if (isSearchBrowseActive() && !searchBrowseSession.hasMoreBefore && !messageWindow.beforeCursor) {
+    messageWindow.hasReachedStart = true;
+    messageWindow.beforeCursorExhausted = true;
+    return false;
+  }
   messageWindow.loadingBefore = true;
   try {
     const container = messagesListRef.value;
@@ -10957,6 +11130,9 @@ const loadOlderMessages = async () => {
 
     if (nextCursor !== undefined) {
       applyCursorUpdate({ before: nextCursor ?? '' });
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreBefore = Boolean(nextCursor);
+      }
     }
 
     if (normalized.length) {
@@ -10969,6 +11145,10 @@ const loadOlderMessages = async () => {
       messageWindow.hasReachedStart = true;
       messageWindow.beforeCursor = '';
       messageWindow.beforeCursorExhausted = true;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.beforeCursor = '';
+        searchBrowseSession.hasMoreBefore = false;
+      }
     }
     await nextTick();
     if (container) {
@@ -11003,11 +11183,18 @@ const loadNewerMessages = async () => {
       mergeIncomingMessages(result.messages);
       updateWindowAnchorsFromRows();
       messageWindow.hasReachedLatest = false;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreAfter = true;
+      }
       return true;
     }
     if (result.reachedLatest) {
       messageWindow.hasReachedLatest = true;
       messageWindow.afterCursor = '';
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.afterCursor = '';
+        searchBrowseSession.hasMoreAfter = false;
+      }
       if (isNearBottom()) {
         updateViewMode('live');
       }

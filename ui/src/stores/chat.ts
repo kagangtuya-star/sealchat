@@ -3528,6 +3528,10 @@ export const useChatStore = defineStore({
     ): Promise<{
       data: any[];
       target_id?: string;
+      before_cursor?: string;
+      after_cursor?: string;
+      has_more_before?: boolean;
+      has_more_after?: boolean;
       not_found_reason?: 'deleted' | 'no_permission' | 'not_exists' | string;
     } | null> {
       const payload: Record<string, any> = {

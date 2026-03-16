@@ -471,6 +471,14 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}
 	beforeLimit := clampMessageContextWindow(data.Before, 12)
 	afterLimit := clampMessageContextWindow(data.After, 12)
+	buildContextCursor := func(msg *model.MessageModel) string {
+		if msg == nil || msg.ID == "" {
+			return ""
+		}
+		orderStr := strconv.FormatFloat(msg.DisplayOrder, 'f', 8, 64)
+		timeStr := strconv.FormatInt(msg.CreatedAt.UnixMilli(), 10)
+		return fmt.Sprintf("%s|%s|%s", orderStr, timeStr, msg.ID)
+	}
 
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
@@ -497,6 +505,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -508,6 +520,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -531,6 +547,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -563,6 +583,44 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			Find(&beforeItems)
 		beforeItems = lo.Reverse(beforeItems)
 	}
+	hasMoreBefore := false
+	if len(beforeItems) > 0 {
+		var older model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].CreatedAt,
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].CreatedAt,
+				beforeItems[0].ID,
+			).
+			Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc").
+			Limit(1).
+			Find(&older)
+		hasMoreBefore = older.ID != ""
+	} else if beforeLimit > 0 {
+		var older model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc").
+			Limit(1).
+			Find(&older)
+		hasMoreBefore = older.ID != ""
+	}
 
 	afterItems := make([]*model.MessageModel, 0, afterLimit)
 	if afterLimit > 0 {
@@ -586,6 +644,44 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			}).
 			Limit(afterLimit).
 			Find(&afterItems)
+	}
+	hasMoreAfter := false
+	if len(afterItems) > 0 {
+		var newer model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].CreatedAt,
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].CreatedAt,
+				afterItems[len(afterItems)-1].ID,
+			).
+			Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc").
+			Limit(1).
+			Find(&newer)
+		hasMoreAfter = newer.ID != ""
+	} else if afterLimit > 0 {
+		var newer model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc").
+			Limit(1).
+			Find(&newer)
+		hasMoreAfter = newer.ID != ""
 	}
 
 	items := make([]*model.MessageModel, 0, len(beforeItems)+1+len(afterItems))
@@ -623,13 +719,28 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		}
 	}
 
+	beforeCursor := ""
+	afterCursor := ""
+	if len(items) > 0 {
+		beforeCursor = buildContextCursor(items[0])
+		afterCursor = buildContextCursor(items[len(items)-1])
+	}
+
 	return &struct {
 		Data           []*model.MessageModel `json:"data"`
 		TargetID       string                `json:"target_id"`
+		BeforeCursor   string                `json:"before_cursor"`
+		AfterCursor    string                `json:"after_cursor"`
+		HasMoreBefore  bool                  `json:"has_more_before"`
+		HasMoreAfter   bool                  `json:"has_more_after"`
 		NotFoundReason string                `json:"not_found_reason,omitempty"`
 	}{
-		Data:     items,
-		TargetID: target.ID,
+		Data:          items,
+		TargetID:      target.ID,
+		BeforeCursor:  beforeCursor,
+		AfterCursor:   afterCursor,
+		HasMoreBefore: hasMoreBefore,
+		HasMoreAfter:  hasMoreAfter,
 	}, nil
 }
 
