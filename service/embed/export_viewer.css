@@ -1055,3 +1055,72 @@ body[data-colorize='body'] .viewer-message__body {
     max-height: 10rem;
   }
 }
+
+@page {
+  size: auto;
+  margin: 12mm;
+}
+
+@media print {
+  :root,
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    min-height: 0;
+    background: var(--page-background);
+  }
+
+  #app {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .viewer-shell {
+    border: 1px solid var(--border-strong);
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .viewer-display,
+  .viewer-controls,
+  .viewer-search-panel,
+  .viewer-nav {
+    display: none !important;
+  }
+
+  .viewer-message-list {
+    gap: 0.75rem;
+  }
+
+  .viewer-message,
+  .viewer-message__bubble,
+  .parts-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body[data-layout='bubble'] .viewer-message-list {
+    gap: 0.9rem;
+  }
+
+  body[data-layout='bubble'] .viewer-message__bubble {
+    box-shadow: none;
+  }
+
+  .viewer-message__body img {
+    max-width: min(120mm, 100%);
+    max-height: none;
+  }
+
+  .viewer-chip,
+  .viewer-message__body,
+  .viewer-message__header,
+  .viewer-message__sender,
+  .viewer-message__time {
+    color: inherit;
+  }
+}

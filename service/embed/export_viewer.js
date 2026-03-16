@@ -336,6 +336,9 @@
         <button type="button" data-action="toggle-search">搜索 关</button>
       </div>
       <div>
+        <button type="button" data-action="print-pdf">打印为 PDF</button>
+      </div>
+      <div>
         <button type="button" data-action="toggle-ic">IC 开</button>
         <button type="button" data-action="toggle-ooc">OOC 开</button>
       </div>
@@ -437,6 +440,11 @@
               if (searchInput && typeof searchInput.focus === 'function') {
                 searchInput.focus()
               }
+            }
+            break
+          case 'print-pdf':
+            if (typeof window.print === 'function') {
+              window.print()
             }
             break
         }
