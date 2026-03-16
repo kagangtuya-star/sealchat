@@ -466,6 +466,8 @@ func TestIsSingleLineDiceCommandWithCustomPrefixes(t *testing.T) {
 }
 
 func TestBuildExportPayloadMarksMergedMessages(t *testing.T) {
+	initTestDB(t)
+
 	payload := buildExportPayload(
 		&model.MessageExportJobModel{ChannelID: "ch-1", IncludeOOC: true, IncludeArchived: true},
 		"测试频道",

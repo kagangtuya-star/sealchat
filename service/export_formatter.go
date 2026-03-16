@@ -65,6 +65,7 @@ type ExportPayload struct {
 	PartIndex        int                    `json:"part_index,omitempty"`
 	PartTotal        int                    `json:"part_total,omitempty"`
 	DisplayOptions   map[string]any         `json:"display_options,omitempty"`
+	InlineAssets     map[string]string      `json:"inline_assets,omitempty"`
 	Messages         []ExportMessage        `json:"messages"`
 	Meta             map[string]bool        `json:"meta"`
 	Count            int                    `json:"count"`

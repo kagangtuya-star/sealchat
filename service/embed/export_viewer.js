@@ -1,5 +1,7 @@
 (function () {
   const app = document.getElementById('app')
+  let activeInlineAssets = Object.create(null)
+  let activeInlineAssetURLs = Object.create(null)
 
   function resolvePalette(value) {
     return value === 'day' ? 'day' : 'night'
@@ -124,6 +126,66 @@
     return probe.style.color || ''
   }
 
+  function parseDataURL(dataURL) {
+    const value = String(dataURL || '').trim()
+    if (!value.startsWith('data:')) return null
+    const comma = value.indexOf(',')
+    if (comma < 0) return null
+    const meta = value.slice(5, comma)
+    const body = value.slice(comma + 1)
+    if (!/;base64$/i.test(meta)) return null
+    const mimeType = meta.replace(/;base64$/i, '') || 'application/octet-stream'
+    try {
+      const binary = atob(body)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      return new Blob([bytes], { type: mimeType })
+    } catch (err) {
+      return null
+    }
+  }
+
+  function applyInlineAssets(assets) {
+    activeInlineAssets = assets && typeof assets === 'object' ? assets : Object.create(null)
+    activeInlineAssetURLs = Object.create(null)
+  }
+
+  function resolveInlineAssetURL(src) {
+    const value = String(src || '').trim()
+    if (!value.startsWith('scasset:')) {
+      return value
+    }
+    const assetID = value.slice('scasset:'.length)
+    if (!assetID) return ''
+    if (activeInlineAssetURLs[assetID]) {
+      return activeInlineAssetURLs[assetID]
+    }
+    const dataURL = activeInlineAssets[assetID]
+    if (!dataURL) {
+      return ''
+    }
+    const blob = parseDataURL(dataURL)
+    if (blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      const objectURL = URL.createObjectURL(blob)
+      activeInlineAssetURLs[assetID] = objectURL
+      return objectURL
+    }
+    activeInlineAssetURLs[assetID] = dataURL
+    return dataURL
+  }
+
+  function resolveInlineAssetImages(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return
+    root.querySelectorAll('img').forEach((img) => {
+      const resolved = resolveInlineAssetURL(img.getAttribute('src') || '')
+      if (resolved) {
+        img.setAttribute('src', resolved)
+      }
+    })
+  }
+
   function createChip(text) {
     const span = document.createElement('span')
     span.className = 'viewer-chip'
@@ -139,6 +201,7 @@
   }
 
   function renderIndex(manifest) {
+    applyInlineAssets(null)
     applyDisplayState({
       scheme: manifest.display_options?.scheme || 'tabletop',
       palette: manifest.display_options?.palette || 'night',
@@ -188,6 +251,7 @@
   }
 
   function renderPart(payload) {
+    applyInlineAssets(payload.inline_assets)
     const displayOptions = {
       scheme: payload.display_options?.scheme || 'tabletop',
       layout: payload.display_options?.layout || 'compact',
@@ -502,11 +566,12 @@
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
     avatar.dataset.hasImage = 'false'
-    const hasAvatarImage = Boolean(msg.sender_avatar && msg.sender_avatar.startsWith('data:'))
+    const avatarSrc = resolveInlineAssetURL(msg.sender_avatar)
+    const hasAvatarImage = Boolean(avatarSrc && !avatarSrc.startsWith('id:'))
     if (hasAvatarImage) {
       avatar.dataset.hasImage = 'true'
       const img = document.createElement('img')
-      img.src = msg.sender_avatar
+      img.src = avatarSrc
       img.alt = name
       avatar.appendChild(img)
     } else {
@@ -538,6 +603,7 @@
     const body = document.createElement('div')
     body.className = 'viewer-message__body'
     body.innerHTML = displayContent
+    resolveInlineAssetImages(body)
     const hasImage = body.querySelector('img') !== null
     const bodyText = stripHTML(displayContent).replace(/\s+/g, '').trim()
     if (hasImage && !bodyText) {
