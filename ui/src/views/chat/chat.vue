@@ -2,7 +2,7 @@
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
-import { chatEvent, useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
@@ -5954,17 +5954,17 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   const targetId = payload?.messageId;
   if (!targetId) {
     message.warning('未找到要跳转的消息');
-    return;
+    return false;
   }
   const targetChannelId = payload?.channelId;
   if (targetChannelId && targetChannelId !== chat.curChannel?.id) {
     const switched = await chat.channelSwitchTo(targetChannelId);
     if (!switched) {
       message.error('无法切换到目标频道，跳转已取消');
-      return;
+      return false;
     }
     if (!isSearchJumpTokenActive(requestToken)) {
-      return;
+      return false;
     }
   }
 
@@ -5974,7 +5974,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     try {
       const msgInfo = await chat.messageGetById(chat.curChannel.id, targetId);
       if (!isSearchJumpTokenActive(requestToken)) {
-        return;
+        return false;
       }
       if (msgInfo) {
         enrichedPayload.createdAt = msgInfo.created_at;
@@ -5987,17 +5987,17 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
 
   await nextTick();
   if (!isSearchJumpTokenActive(requestToken)) {
-    return;
+    return false;
   }
   let target = messageRowRefs.get(targetId);
   if (!target) {
     const loaded = await ensureSearchTargetVisible(enrichedPayload, requestToken);
     if (!loaded) {
-      return;
+      return false;
     }
     await nextTick();
     if (!isSearchJumpTokenActive(requestToken)) {
-      return;
+      return false;
     }
     // 等待 DOM 渲染完成，最多重试几次
     for (let i = 0; i < 5; i++) {
@@ -6005,7 +6005,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       if (target) break;
       await new Promise(r => setTimeout(r, 50));
       if (!isSearchJumpTokenActive(requestToken)) {
-        return;
+        return false;
       }
     }
     if (!target) {
@@ -6014,7 +6014,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       } else {
         message.warning('仍未定位到该消息，稍后再试');
       }
-      return;
+      return false;
     }
   }
   if (messagesListRef.value) {
@@ -6043,7 +6043,82 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   if (isSearchJumpTokenActive(requestToken)) {
     searchJumping.value = false;
   }
+  return true;
 };
+
+const initialMessageJumpReady = ref(false);
+const consumingPendingMessageJump = ref(false);
+
+const clearPendingMessageJumpQuery = async (pending: PendingMessageJump) => {
+  if (route.name !== 'world-channel') {
+    return;
+  }
+  const routeWorldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
+  const routeChannelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
+  const routeMessageId = typeof route.query.msg === 'string' ? route.query.msg.trim() : '';
+  if (
+    routeWorldId !== pending.worldId
+    || routeChannelId !== pending.channelId
+    || routeMessageId !== pending.messageId
+  ) {
+    return;
+  }
+  const nextQuery = { ...route.query };
+  delete nextQuery.msg;
+  try {
+    await router.replace({
+      name: route.name,
+      params: route.params,
+      query: nextQuery,
+    });
+  } catch (error) {
+    console.warn('[message-link] clear msg query failed', error);
+  }
+};
+
+const consumePendingMessageJump = async () => {
+  if (!initialMessageJumpReady.value || consumingPendingMessageJump.value) {
+    return;
+  }
+  const pending = chat.pendingMessageJump;
+  if (!pending) {
+    return;
+  }
+  const currentWorldId = String(chat.currentWorldId || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (pending.worldId !== currentWorldId || pending.channelId !== currentChannelId) {
+    return;
+  }
+  consumingPendingMessageJump.value = true;
+  try {
+    const jumped = await handleSearchJump({
+      messageId: pending.messageId,
+      channelId: pending.channelId,
+    });
+    if (chat.pendingMessageJump?.requestKey !== pending.requestKey) {
+      return;
+    }
+    chat.clearPendingMessageJump(pending.requestKey);
+    if (jumped && pending.source === 'route') {
+      await clearPendingMessageJumpQuery(pending);
+    }
+  } finally {
+    consumingPendingMessageJump.value = false;
+  }
+};
+
+watch(
+  () => [
+    initialMessageJumpReady.value,
+    chat.pendingMessageJump?.requestKey,
+    chat.currentWorldId,
+    chat.curChannel?.id,
+  ],
+  () => {
+    void consumePendingMessageJump();
+  },
+  { immediate: true },
+);
 
 const dragState = reactive({
   snapshot: [] as Message[],
@@ -11467,6 +11542,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
+  initialMessageJumpReady.value = true;
+  void consumePendingMessageJump();
   firstLoad = true;
   await maybePromptIdentitySync();
 

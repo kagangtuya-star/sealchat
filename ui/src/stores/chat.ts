@@ -209,9 +209,19 @@ interface ChatState {
     messageId: string;
     messageTime: number;
   } | null;
+  pendingMessageJump: PendingMessageJump | null;
   messageReactions: Record<string, MessageReaction[]>;
   messageReactionLoaded: Record<string, boolean>;
   messageReactionLoading: Record<string, boolean>;
+}
+
+export interface PendingMessageJump {
+  requestKey: string;
+  worldId: string;
+  channelId: string;
+  messageId: string;
+  requestedAt: number;
+  source: 'route';
 }
 
 interface RevokedDraftEntry {
@@ -1013,6 +1023,7 @@ export const useChatStore = defineStore({
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
+    pendingMessageJump: null,
     messageReactions: {},
     messageReactionLoaded: {},
     messageReactionLoading: {},
@@ -1089,6 +1100,40 @@ export const useChatStore = defineStore({
   },
 
   actions: {
+    queuePendingMessageJump(payload: {
+      worldId: string;
+      channelId: string;
+      messageId: string;
+      source?: PendingMessageJump['source'];
+    }) {
+      const worldId = String(payload?.worldId || '').trim();
+      const channelId = String(payload?.channelId || '').trim();
+      const messageId = String(payload?.messageId || '').trim();
+      if (!worldId || !channelId || !messageId) {
+        return '';
+      }
+      const pending: PendingMessageJump = {
+        requestKey: nanoid(),
+        worldId,
+        channelId,
+        messageId,
+        requestedAt: Date.now(),
+        source: payload?.source === 'route' ? payload.source : 'route',
+      };
+      this.pendingMessageJump = pending;
+      return pending.requestKey;
+    },
+
+    clearPendingMessageJump(requestKey?: string) {
+      if (!requestKey) {
+        this.pendingMessageJump = null;
+        return;
+      }
+      if (this.pendingMessageJump?.requestKey === requestKey) {
+        this.pendingMessageJump = null;
+      }
+    },
+
     enableObserverMode(worldId: string, channelId?: string, observerSlug?: string) {
       const normalizedWorldId = typeof worldId === 'string' ? worldId.trim() : '';
       const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
