@@ -2,14 +2,14 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
-import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
+import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
-import type { CharacterCard, ChannelIdentity } from '@/types';
+import type { ChannelIdentity } from '@/types';
 
 const props = defineProps<{
   visible: boolean;
@@ -509,161 +509,6 @@ const handleCreateCard = async () => {
   }
 };
 
-// Edit card modal
-const editModalVisible = ref(false);
-const editingCard = ref<CharacterCard | null>(null);
-const editCardName = ref('');
-const editCardSheetTypePreset = ref('coc7');
-const editCardSheetTypeCustom = ref('');
-const editCardOriginalName = ref('');
-const editCardOriginalSheetType = ref('');
-const editCardAttrsJson = ref('');
-const saving = ref(false);
-const pendingRestore = ref<{
-  channelId: string;
-  cardId?: string;
-  cardName?: string;
-  cardType?: string;
-  attrs?: Record<string, any>;
-} | null>(null);
-
-const setEditSheetType = (value: string) => {
-  const normalized = (value || '').trim();
-  let lower = normalized.toLowerCase();
-  if (lower === 'coc') {
-    lower = 'coc7';
-  } else if (lower === 'dnd' || lower === 'dnd5') {
-    lower = 'dnd5e';
-  }
-  if (lower === 'coc7' || lower === 'dnd5e') {
-    editCardSheetTypePreset.value = lower;
-    editCardSheetTypeCustom.value = '';
-  } else if (normalized) {
-    editCardSheetTypePreset.value = 'custom';
-    editCardSheetTypeCustom.value = normalized;
-  } else {
-    editCardSheetTypePreset.value = 'coc7';
-    editCardSheetTypeCustom.value = '';
-  }
-};
-
-const syncEditOriginals = () => {
-  editCardOriginalName.value = editCardName.value;
-  editCardOriginalSheetType.value = resolveSheetType(editCardSheetTypePreset.value, editCardSheetTypeCustom.value);
-};
-
-const rememberActiveCard = async (channelId: string) => {
-  if (cardStore.isBotCharacterDisabled(channelId)) {
-    pendingRestore.value = null;
-    return;
-  }
-  await cardStore.getActiveCard(channelId);
-  const active = cardStore.activeCards[channelId];
-  const activeId = cardStore.getActiveCardId(channelId);
-  if (activeId || active?.name) {
-    pendingRestore.value = {
-      channelId,
-      cardId: activeId || undefined,
-      cardName: active?.name || '',
-      cardType: active?.type || '',
-      attrs: active?.attrs || {},
-    };
-  } else {
-    pendingRestore.value = null;
-  }
-};
-
-const restoreActiveCard = async () => {
-  const pending = pendingRestore.value;
-  if (!pending) return;
-  pendingRestore.value = null;
-  if (cardStore.isBotCharacterDisabled(pending.channelId)) {
-    return;
-  }
-  try {
-    if (pending.cardId) {
-      await cardStore.tagCard(pending.channelId, undefined, pending.cardId);
-      return;
-    }
-    await cardStore.tagCard(pending.channelId);
-    if (pending.cardName || pending.attrs) {
-      await cardStore.updateCard(pending.channelId, pending.cardName || '', pending.attrs || {});
-    }
-  } catch (e) {
-    console.warn('Failed to restore active character card', e);
-  }
-};
-
-const openEditModal = async (card: CharacterCard) => {
-  if (!ensureCharacterApiEnabled()) return;
-  editingCard.value = card;
-  editCardName.value = card.name;
-  setEditSheetType(card.sheetType || 'coc7');
-  editCardAttrsJson.value = JSON.stringify(card.attrs || {}, null, 2);
-  editModalVisible.value = true;
-  syncEditOriginals();
-  if (!resolvedChannelId.value) {
-    pendingRestore.value = null;
-    return;
-  }
-  try {
-    await rememberActiveCard(resolvedChannelId.value);
-    if (pendingRestore.value?.cardId === card.id) {
-      pendingRestore.value = null;
-    } else {
-      await cardStore.tagCard(resolvedChannelId.value, card.name, card.id);
-    }
-    await cardStore.getActiveCard(resolvedChannelId.value);
-    const active = cardStore.activeCards[resolvedChannelId.value];
-    if (active) {
-      editCardName.value = active.name || editCardName.value;
-      setEditSheetType(active.type || resolveSheetType(editCardSheetTypePreset.value, editCardSheetTypeCustom.value));
-      editCardAttrsJson.value = JSON.stringify(active.attrs || {}, null, 2);
-      syncEditOriginals();
-    }
-  } catch (e) {
-    console.warn('Failed to load character card attrs', e);
-  }
-};
-
-watch(editModalVisible, async (val, oldVal) => {
-  if (!val && oldVal) {
-    await restoreActiveCard();
-  }
-});
-
-const handleSaveCard = async () => {
-  if (!ensureCharacterApiEnabled()) return;
-  if (!editingCard.value) return;
-  if (!resolvedChannelId.value) {
-    message.warning('请先选择频道');
-    return;
-  }
-  if (!editCardName.value.trim()) {
-    message.warning('请输入角色名称');
-    return;
-  }
-  let attrs: Record<string, any> = {};
-  try {
-    attrs = JSON.parse(editCardAttrsJson.value || '{}');
-  } catch {
-    message.error('属性 JSON 格式错误');
-    return;
-  }
-  saving.value = true;
-  try {
-    const nextName = editCardOriginalName.value || editCardName.value.trim();
-    await cardStore.updateCard(resolvedChannelId.value, nextName, attrs);
-    await cardStore.loadCards(resolvedChannelId.value);
-    message.success('保存成功');
-    editModalVisible.value = false;
-  } catch (e: any) {
-    message.error(e?.response?.data?.error || '保存失败');
-  } finally {
-    saving.value = false;
-  }
-};
-
 const handleDeleteCard = async (card: CharacterCard) => {
   if (!ensureCharacterApiEnabled()) return;
   try {
@@ -739,7 +584,7 @@ const formatAttrs = (attrs: Record<string, any> | undefined) => {
   return Object.entries(attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
 };
 
-const openPreview = async (card: CharacterCard) => {
+const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = 'view') => {
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
@@ -747,12 +592,15 @@ const openPreview = async (card: CharacterCard) => {
   }
   if (characterApiDisabled.value) {
     const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
+    const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
@@ -782,7 +630,7 @@ const openPreview = async (card: CharacterCard) => {
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
     const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
+    const windowId = sheetStore.openSheet(card, channelId, {
       name: cardData?.name || card.name,
       type: cardData?.type || card.sheetType,
       attrs: cardData?.attrs || card.attrs || {},
@@ -792,22 +640,37 @@ const openPreview = async (card: CharacterCard) => {
       templateId: binding?.templateId || undefined,
       templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
     });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
   } catch (e: any) {
     console.warn('Failed to open character preview', e);
     const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
+    const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
   }
+};
+
+const openPreview = async (card: CharacterCard) => {
+  await openCharacterSheet(card, 'view');
+};
+
+const openEditPanel = async (card: CharacterCard) => {
+  if (!ensureCharacterApiEnabled()) return;
+  await openCharacterSheet(card, 'edit');
 };
 </script>
 
@@ -914,7 +777,7 @@ const openPreview = async (card: CharacterCard) => {
             <n-button text size="small" title="预览" @click="openPreview(card)">
               <template #icon><n-icon :component="Eye" /></template>
             </n-button>
-            <n-button text size="small" :disabled="characterApiDisabled" @click="openEditModal(card)">
+            <n-button text size="small" :disabled="characterApiDisabled" @click="openEditPanel(card)">
               <template #icon><n-icon :component="Edit" /></template>
             </n-button>
             <n-button text size="small" :disabled="characterApiDisabled" @click="openBindModal(card)">
@@ -1071,43 +934,6 @@ const openPreview = async (card: CharacterCard) => {
           <n-checkbox v-model:checked="templateGlobalDefault" :disabled="characterApiDisabled">设为全局默认</n-checkbox>
           <n-checkbox v-model:checked="templateSheetDefault" :disabled="characterApiDisabled">设为规制默认</n-checkbox>
         </div>
-      </n-form-item>
-    </n-form>
-  </n-modal>
-
-  <!-- Edit Modal -->
-  <n-modal
-    v-model:show="editModalVisible"
-    preset="dialog"
-    :show-icon="false"
-    title="编辑人物卡"
-    :positive-text="saving ? '保存中…' : '保存'"
-    :positive-button-props="{ loading: saving, disabled: characterApiDisabled }"
-    negative-text="取消"
-    @positive-click="handleSaveCard"
-  >
-    <n-form label-width="80">
-      <n-form-item label="角色名称">
-        <n-input v-model:value="editCardName" maxlength="32" disabled />
-      </n-form-item>
-      <n-form-item label="卡片类型">
-        <n-select v-model:value="editCardSheetTypePreset" :options="sheetTypeOptions" disabled />
-        <n-input
-          v-if="editCardSheetTypePreset === 'custom'"
-          v-model:value="editCardSheetTypeCustom"
-          placeholder="输入自定义规制类型"
-          class="sheet-type-custom-input"
-          disabled
-        />
-      </n-form-item>
-      <n-form-item label="属性(JSON)">
-        <n-input
-          v-model:value="editCardAttrsJson"
-          type="textarea"
-          :autosize="{ minRows: 4, maxRows: 10 }"
-          placeholder='例如: {"hp": 10, "hpmax": 10, "san": 50}'
-          :disabled="characterApiDisabled"
-        />
       </n-form-item>
     </n-form>
   </n-modal>
