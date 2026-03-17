@@ -5,10 +5,14 @@ import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
+import { useCharacterCardAvatarStore } from '@/stores/characterCardAvatar';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useUtilsStore } from '@/stores/utils';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
+import AvatarVue from '@/components/avatar.vue';
+import AvatarEditor from '@/components/AvatarEditor.vue';
 import type { ChannelIdentity } from '@/types';
 
 const props = defineProps<{
@@ -24,8 +28,10 @@ const message = useMessage();
 const cardStore = useCharacterCardStore();
 const sheetStore = useCharacterSheetStore();
 const templateStore = useCharacterCardTemplateStore();
+const avatarStore = useCharacterCardAvatarStore();
 const chatStore = useChatStore();
 const displayStore = useDisplayStore();
+const utilsStore = useUtilsStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 const updateViewportWidth = () => {
@@ -139,6 +145,14 @@ const loadPanelData = async (channelId: string) => {
   await cardStore.loadCards(channelId);
   await templateStore.ensureTemplatesLoaded();
   await templateStore.loadBindings(channelId);
+  await avatarStore.loadBindings(channelId);
+  await avatarStore.migrateLegacyBindings(
+    channelId,
+    channelCards.value,
+    identities.value,
+    cardStore.identityBindings,
+  );
+  await avatarStore.loadBindings(channelId);
   await templateStore.migrateLocalTemplatesIfNeeded(
     channelId,
     channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
@@ -195,6 +209,13 @@ watch(
   async ([visible, cards]) => {
     const channelId = resolvedChannelId.value;
     if (!visible || !channelId || !cards.length || characterApiDisabled.value) return;
+    await avatarStore.migrateLegacyBindings(
+      channelId,
+      cards,
+      identities.value,
+      cardStore.identityBindings,
+    );
+    await avatarStore.loadBindings(channelId);
     await templateStore.migrateLocalTemplatesIfNeeded(
       channelId,
       cards.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
@@ -513,6 +534,13 @@ const handleDeleteCard = async (card: CharacterCard) => {
   if (!ensureCharacterApiEnabled()) return;
   try {
     await cardStore.deleteCard(card.id);
+    if (resolvedChannelId.value) {
+      try {
+        await avatarStore.removeBinding(resolvedChannelId.value, card.id);
+      } catch (avatarError) {
+        console.warn('Failed to remove character card avatar binding after delete', avatarError);
+      }
+    }
     message.success('已删除');
   } catch (e: any) {
     message.error(e?.response?.data?.error || e?.message || '删除失败');
@@ -561,11 +589,16 @@ const getBoundIdentities = (cardId: string) => {
   return result;
 };
 
-const resolveCardAvatarUrl = (cardId: string) => {
-  const bound = getBoundIdentities(cardId);
-  const identity = bound.find(item => item.avatarAttachmentId) || bound[0];
-  if (!identity?.avatarAttachmentId) return '';
-  return resolveAttachmentUrl(identity.avatarAttachmentId) || identity.avatarAttachmentId;
+const resolveCardAvatarToken = (card: CharacterCard, fallbackAvatarUrl = '') => {
+  return avatarStore.resolveCardAvatar(card.id, resolvedChannelId.value, fallbackAvatarUrl);
+};
+
+const getCardAvatarBinding = (card: CharacterCard) => {
+  return avatarStore.getBinding(resolvedChannelId.value, card.id);
+};
+
+const syncSheetAvatar = (card: CharacterCard, fallbackAvatarUrl = '') => {
+  sheetStore.updateCardAvatar(card.id, resolveCardAvatarToken(card, fallbackAvatarUrl) || undefined);
 };
 
 const handleUnbind = async (identityId: string) => {
@@ -584,6 +617,83 @@ const formatAttrs = (attrs: Record<string, any> | undefined) => {
   return Object.entries(attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
 };
 
+const avatarUploadInputRef = ref<HTMLInputElement | null>(null);
+const avatarEditingCard = ref<CharacterCard | null>(null);
+const avatarEditorVisible = ref(false);
+const avatarEditorFile = ref<File | null>(null);
+const avatarUploading = ref(false);
+
+const handleAvatarUploadTrigger = (card: CharacterCard) => {
+  avatarEditingCard.value = card;
+  avatarUploadInputRef.value?.click();
+};
+
+const handleAvatarFileChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  if (!input || !input.files?.length) {
+    return;
+  }
+  const file = input.files[0];
+  const sizeLimit = utilsStore.config?.imageSizeLimit ? utilsStore.config.imageSizeLimit * 1024 : utilsStore.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
+  avatarEditorFile.value = file;
+  avatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleAvatarEditorCancel = () => {
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+  avatarEditingCard.value = null;
+};
+
+const handleAvatarEditorSave = async (file: File) => {
+  const card = avatarEditingCard.value;
+  const channelId = resolvedChannelId.value;
+  if (!card || !channelId) {
+    handleAvatarEditorCancel();
+    return;
+  }
+  avatarUploading.value = true;
+  try {
+    const uploadResult = await uploadImageAttachment(file, { channelId, skipCompression: true });
+    await avatarStore.upsertBinding({
+      channelId,
+      externalCardId: card.id,
+      cardName: card.name,
+      sheetType: card.sheetType || '',
+      avatarAttachmentId: uploadResult.attachmentId,
+    });
+    syncSheetAvatar(card);
+    message.success('头像已更新');
+    handleAvatarEditorCancel();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '头像上传失败');
+  } finally {
+    avatarUploading.value = false;
+  }
+};
+
+const handleAvatarRemove = async (card: CharacterCard) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  try {
+    await avatarStore.removeBinding(channelId, card.id);
+    const activeFallback = cardStore.getActiveCardId(channelId) === card.id
+      ? (cardStore.activeCards[channelId]?.avatarUrl || '')
+      : '';
+    syncSheetAvatar(card, activeFallback);
+    message.success('头像已移除');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '头像移除失败');
+  }
+};
+
 const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = 'view') => {
   const channelId = resolvedChannelId.value;
   if (!channelId) {
@@ -591,7 +701,7 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
     return;
   }
   if (characterApiDisabled.value) {
-    const avatarUrl = resolveCardAvatarUrl(card.id);
+    const avatarUrl = resolveCardAvatarToken(card);
     const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
@@ -629,7 +739,7 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       card.templateId = binding.templateId || undefined;
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
-    const avatarUrl = resolveCardAvatarUrl(card.id);
+    const avatarUrl = resolveCardAvatarToken(card, cardData?.avatarUrl || '');
     const windowId = sheetStore.openSheet(card, channelId, {
       name: cardData?.name || card.name,
       type: cardData?.type || card.sheetType,
@@ -648,7 +758,7 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
     }
   } catch (e: any) {
     console.warn('Failed to open character preview', e);
-    const avatarUrl = resolveCardAvatarUrl(card.id);
+    const avatarUrl = resolveCardAvatarToken(card);
     const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
@@ -792,6 +902,22 @@ const openEditPanel = async (card: CharacterCard) => {
               删除前将从所有群解绑此人物卡，确定删除？
             </n-popconfirm>
           </template>
+          <div class="card-avatar-row">
+            <AvatarVue :size="44" :src="resolveCardAvatarToken(card)" />
+            <div class="card-avatar-actions">
+              <n-button text size="small" :disabled="characterApiDisabled || avatarUploading" @click="handleAvatarUploadTrigger(card)">上传头像</n-button>
+              <n-button
+                v-if="getCardAvatarBinding(card)"
+                text
+                size="small"
+                type="error"
+                :disabled="characterApiDisabled || avatarUploading"
+                @click="handleAvatarRemove(card)"
+              >
+                移除头像
+              </n-button>
+            </div>
+          </div>
           <div class="card-attrs">{{ formatAttrs(card.attrs) }}</div>
           <div v-if="getBoundIdentities(card.id).length > 0" class="card-bindings">
             <span class="bindings-label">已绑定：</span>
@@ -809,6 +935,14 @@ const openEditPanel = async (card: CharacterCard) => {
       </div>
     </n-drawer-content>
   </n-drawer>
+
+  <input
+    ref="avatarUploadInputRef"
+    type="file"
+    accept="image/*"
+    class="card-avatar-file-input"
+    @change="handleAvatarFileChange"
+  />
 
   <!-- Create Modal -->
   <n-modal
@@ -960,6 +1094,20 @@ const openEditPanel = async (card: CharacterCard) => {
       </n-form-item>
     </n-form>
   </n-modal>
+
+  <n-modal
+    v-model:show="avatarEditorVisible"
+    preset="card"
+    title="裁剪人物卡头像"
+    style="max-width: 560px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="avatarEditorFile"
+      @save="handleAvatarEditorSave"
+      @cancel="handleAvatarEditorCancel"
+    />
+  </n-modal>
 </template>
 
 <style lang="scss" scoped>
@@ -976,6 +1124,10 @@ const openEditPanel = async (card: CharacterCard) => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.card-avatar-file-input {
+  display: none;
 }
 
 .character-card-header__actions {
@@ -1112,6 +1264,19 @@ const openEditPanel = async (card: CharacterCard) => {
 }
 
 .character-card-item {
+  .card-avatar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .card-avatar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
   .card-name {
     font-weight: 500;
     margin-right: 0.5rem;

@@ -518,10 +518,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       });
       maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
+        const rawAvatar = [
+          (resp.data as any)?.avatarUrl,
+          (resp.data as any)?.avatar_url,
+          (resp.data as any)?.avatarAttachmentId,
+          (resp.data as any)?.avatar_attachment_id,
+          (resp.data as any)?.avatar,
+        ].find(value => typeof value === 'string' && value.trim());
         const cardData: CharacterCardData = {
           name: resp.data.name || '',
           type: resp.data.type || '',
           attrs: resp.data.data || {},
+          avatarUrl: typeof rawAvatar === 'string' ? rawAvatar.trim() : undefined,
         };
         activeCards.value[channelId] = cardData;
         void broadcastActiveBadge(channelId);

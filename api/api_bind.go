@@ -366,6 +366,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/character-card-templates/:id/set-default", CharacterCardTemplateSetDefault)
 	v1Auth.Get("/character-card-template-bindings", CharacterCardTemplateBindingList)
 	v1Auth.Post("/character-card-template-bindings/upsert", CharacterCardTemplateBindingUpsert)
+	v1Auth.Get("/character-card-avatar-bindings", CharacterCardAvatarBindingList)
+	v1Auth.Post("/character-card-avatar-bindings/upsert", CharacterCardAvatarBindingUpsert)
+	v1Auth.Delete("/character-card-avatar-bindings", CharacterCardAvatarBindingDelete)
+	v1Auth.Post("/character-card-avatar-bindings/migrate-legacy", CharacterCardAvatarBindingMigrateLegacy)
 
 	v1Auth.Get("/channel-identity-folders", ChannelIdentityFolderList)
 	v1Auth.Post("/channel-identity-folders", ChannelIdentityFolderCreate)

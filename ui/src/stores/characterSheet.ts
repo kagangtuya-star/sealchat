@@ -1311,6 +1311,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         if (resolvedSheetType && !existing.sheetType) {
           existing.sheetType = resolvedSheetType;
         }
+        if (cardData?.avatarUrl !== undefined) {
+          existing.avatarUrl = cardData.avatarUrl;
+        }
         const normalized = normalizeTemplate(existing.cardId, existing.template, existing.sheetType);
         if (normalized !== existing.template) {
           existing.template = normalized;
@@ -1497,6 +1500,21 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   };
 
+  const updateCardAvatar = (cardId: string, avatarUrl?: string) => {
+    if (!cardId) return;
+    let changed = false;
+    activeWindowIds.value.forEach((windowId) => {
+      const win = windows.value[windowId];
+      if (!win || win.cardId !== cardId) return;
+      if ((win.avatarUrl || '') === (avatarUrl || '')) return;
+      win.avatarUrl = avatarUrl;
+      changed = true;
+    });
+    if (changed) {
+      schedulePersistWindows();
+    }
+  };
+
   const toggleMode = (windowId: string) => {
     const win = windows.value[windowId];
     if (win) {
@@ -1578,6 +1596,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     syncWindowTemplateFromCloud,
     normalizeTemplate,
     setMode,
+    updateCardAvatar,
     toggleMode,
     getTemplate,
     getDefaultTemplate,
