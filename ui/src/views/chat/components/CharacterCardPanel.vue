@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye, Upload, X } from '@vicons/tabler';
+import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
@@ -259,6 +259,25 @@ watch(badgeEnabled, (enabled) => {
   void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
 });
 
+watch(
+  () => sheetStore.activeWindowIds.map(windowId => {
+    const window = sheetStore.windows[windowId];
+    return `${windowId}:${window?.channelId || ''}:${window?.cardId || ''}`;
+  }).join('|'),
+  () => {
+    Object.entries(channelSheetSwitchStates.value).forEach(([channelId, state]) => {
+      if (state.switching) return;
+      if (state.windowId && sheetStore.windows[state.windowId]) return;
+      if (state.restoreToCurrentBinding) {
+        upsertChannelSheetSwitchState(channelId, { switching: true });
+        void restoreBoundCardAfterSheetClose(channelId);
+        return;
+      }
+      clearChannelSheetSwitchState(channelId);
+    });
+  },
+);
+
 onMounted(() => {
   updateViewportWidth();
   window.addEventListener('resize', updateViewportWidth);
@@ -328,6 +347,50 @@ const filteredChannelCards = computed(() => {
     return name.includes(keyword) || sheetType.includes(keyword) || attrs.includes(keyword);
   });
 });
+
+const currentIdentityId = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return '';
+  return chatStore.getActiveIdentityId(channelId);
+});
+
+const currentBoundCardId = computed(() => {
+  const identityId = currentIdentityId.value;
+  if (!identityId) return '';
+  return cardStore.getBoundCardId(identityId) || '';
+});
+
+const currentActiveCardId = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return '';
+  return cardStore.getActiveCardId(channelId);
+});
+
+const sortedFilteredChannelCards = computed(() => {
+  const activeCardId = currentActiveCardId.value;
+  const boundCardId = currentBoundCardId.value;
+  return filteredChannelCards.value
+    .map((card, index) => ({
+      card,
+      index,
+      score: card.id === activeCardId ? 2 : (card.id === boundCardId ? 1 : 0),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map(item => item.card);
+});
+
+interface ChannelSheetSwitchState {
+  cardId: string;
+  windowId: string;
+  switching: boolean;
+  restoreToCurrentBinding: boolean;
+}
+
+const channelSheetSwitchStates = ref<Record<string, ChannelSheetSwitchState>>({});
+const cardSwitchingId = ref('');
 
 const setTemplateSheetType = (value: string) => {
   const normalized = (value || '').trim();
@@ -620,6 +683,67 @@ const getCardAttrEntries = (attrs: Record<string, any> | undefined) => {
   });
 };
 
+const isCurrentActiveCard = (card: CharacterCard) => card.id === currentActiveCardId.value;
+
+const isCurrentBoundCard = (card: CharacterCard) => {
+  const boundCardId = currentBoundCardId.value;
+  return !!boundCardId && card.id === boundCardId;
+};
+
+const upsertChannelSheetSwitchState = (channelId: string, patch: Partial<ChannelSheetSwitchState>) => {
+  if (!channelId) return;
+  const prev = channelSheetSwitchStates.value[channelId] || {
+    cardId: '',
+    windowId: '',
+    switching: false,
+    restoreToCurrentBinding: false,
+  };
+  channelSheetSwitchStates.value = {
+    ...channelSheetSwitchStates.value,
+    [channelId]: {
+      ...prev,
+      ...patch,
+    },
+  };
+};
+
+const clearChannelSheetSwitchState = (channelId: string) => {
+  if (!channelId || !channelSheetSwitchStates.value[channelId]) return;
+  const next = { ...channelSheetSwitchStates.value };
+  delete next[channelId];
+  channelSheetSwitchStates.value = next;
+};
+
+const getChannelSheetWindows = (channelId: string) =>
+  sheetStore.activeWindowIds
+    .map(windowId => sheetStore.windows[windowId])
+    .filter(window => window?.channelId === channelId);
+
+const closeChannelSheetWindows = (channelId: string, exceptCardId = '') => {
+  if (!channelId) return;
+  const windows = getChannelSheetWindows(channelId);
+  windows.forEach((window) => {
+    if (!window?.id) return;
+    if (exceptCardId && window.cardId === exceptCardId) return;
+    sheetStore.closeSheet(window.id);
+  });
+};
+
+const restoreBoundCardAfterSheetClose = async (channelId: string) => {
+  if (!channelId) return;
+  const identityId = chatStore.getActiveIdentityId(channelId);
+  const boundCardId = identityId ? (cardStore.getBoundCardId(identityId) || '') : '';
+  try {
+    if (boundCardId && cardStore.getActiveCardId(channelId) !== boundCardId) {
+      await cardStore.tagCard(channelId, undefined, boundCardId);
+    }
+  } catch (e) {
+    console.warn('Failed to restore bound character card after sheet close', e);
+  } finally {
+    clearChannelSheetSwitchState(channelId);
+  }
+};
+
 const avatarUploadInputRef = ref<HTMLInputElement | null>(null);
 const avatarEditingCard = ref<CharacterCard | null>(null);
 const avatarEditorVisible = ref(false);
@@ -697,12 +821,19 @@ const handleAvatarRemove = async (card: CharacterCard) => {
   }
 };
 
-const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = 'view') => {
+const openCharacterSheetWindow = async (
+  card: CharacterCard,
+  mode: 'view' | 'edit' = 'view',
+  options?: { restoreToCurrentBinding?: boolean },
+) => {
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
     return;
   }
+
+  closeChannelSheetWindows(channelId, card.id);
+
   if (characterApiDisabled.value) {
     const avatarUrl = resolveCardAvatarToken(card);
     const windowId = sheetStore.openSheet(card, channelId, {
@@ -710,6 +841,12 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
+    });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: false,
     });
     if (mode === 'edit') {
       sheetStore.setMode(windowId, 'edit');
@@ -719,15 +856,19 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
     }
     return;
   }
+
   try {
     let cardData = cardStore.activeCards[channelId];
-    if (!cardData || cardData.name !== card.name) {
+    const activeCardId = cardStore.getActiveCardId(channelId);
+    const shouldUseActiveCardData = activeCardId === card.id;
+    if (!cardData || shouldUseActiveCardData) {
       await cardStore.getActiveCard(channelId);
       cardData = cardStore.activeCards[channelId];
     }
+    const effectiveCardData = cardStore.getActiveCardId(channelId) === card.id ? cardData : undefined;
     await templateStore.ensureTemplatesLoaded();
     await templateStore.ensureBindingsLoaded(channelId);
-    const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
+    const resolvedSheetType = (effectiveCardData?.type || card.sheetType || '').trim();
     const fallbackTemplate = sheetStore.getTemplate(card.id, resolvedSheetType);
     const ensured = await templateStore.ensureCardBinding({
       channelId,
@@ -742,16 +883,22 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       card.templateId = binding.templateId || undefined;
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
-    const avatarUrl = resolveCardAvatarToken(card, cardData?.avatarUrl || '');
+    const avatarUrl = resolveCardAvatarToken(card, effectiveCardData?.avatarUrl || '');
     const windowId = sheetStore.openSheet(card, channelId, {
-      name: cardData?.name || card.name,
-      type: cardData?.type || card.sheetType,
-      attrs: cardData?.attrs || card.attrs || {},
+      name: effectiveCardData?.name || card.name,
+      type: effectiveCardData?.type || card.sheetType,
+      attrs: effectiveCardData?.attrs || card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     }, {
       templateMode: binding?.mode,
       templateId: binding?.templateId || undefined,
       templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
+    });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
     });
     if (mode === 'edit') {
       sheetStore.setMode(windowId, 'edit');
@@ -768,6 +915,12 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
+    });
     if (mode === 'edit') {
       sheetStore.setMode(windowId, 'edit');
     }
@@ -777,12 +930,50 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
   }
 };
 
+const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = 'view') => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+
+  const shouldSwitchCard = !characterApiDisabled.value && currentActiveCardId.value !== card.id;
+  const restoreToCurrentBinding = !characterApiDisabled.value
+    && !!currentBoundCardId.value
+    && currentBoundCardId.value !== card.id;
+
+  cardSwitchingId.value = card.id;
+  upsertChannelSheetSwitchState(channelId, {
+    cardId: card.id,
+    windowId: '',
+    switching: true,
+    restoreToCurrentBinding,
+  });
+
+  try {
+    closeChannelSheetWindows(channelId);
+    if (shouldSwitchCard) {
+      const switched = await cardStore.tagCard(channelId, undefined, card.id);
+      if (!switched) {
+        throw new Error('切换人物卡失败');
+      }
+    }
+    await openCharacterSheetWindow(card, mode, { restoreToCurrentBinding });
+  } catch (e: any) {
+    clearChannelSheetSwitchState(channelId);
+    message.error(e?.response?.data?.error || e?.message || '切换人物卡失败');
+  } finally {
+    if (cardSwitchingId.value === card.id) {
+      cardSwitchingId.value = '';
+    }
+  }
+};
+
 const openPreview = async (card: CharacterCard) => {
   await openCharacterSheet(card, 'view');
 };
 
 const openEditPanel = async (card: CharacterCard) => {
-  if (!ensureCharacterApiEnabled()) return;
   await openCharacterSheet(card, 'edit');
 };
 </script>
@@ -877,26 +1068,45 @@ const openEditPanel = async (card: CharacterCard) => {
         <n-empty v-if="allChannelCards.length === 0" description="暂无人物卡" />
         <n-empty v-else-if="filteredChannelCards.length === 0" description="未找到匹配人物卡" />
         <n-card
-          v-for="card in filteredChannelCards"
+          v-for="card in sortedFilteredChannelCards"
           :key="card.id"
           size="small"
-          class="character-card-item"
+          :class="[
+            'character-card-item',
+            {
+              'character-card-item--active': isCurrentActiveCard(card),
+              'character-card-item--bound': isCurrentBoundCard(card),
+            },
+          ]"
         >
           <template #header>
             <div class="card-header-main">
               <AvatarVue :size="34" :src="resolveCardAvatarToken(card)" />
               <span class="card-name">{{ card.name }}</span>
+              <span v-if="isCurrentActiveCard(card)" class="card-state-badge card-state-badge--active">使用中</span>
+              <span v-else-if="isCurrentBoundCard(card)" class="card-state-badge">当前角色</span>
               <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
             </div>
           </template>
           <template #header-extra>
+            <n-button
+              v-if="!isCurrentActiveCard(card)"
+              text
+              size="small"
+              title="切换并查看"
+              :loading="cardSwitchingId === card.id"
+              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+              @click="openPreview(card)"
+            >
+              <template #icon><n-icon :component="Refresh" /></template>
+            </n-button>
             <n-button
               quaternary
               circle
               size="small"
               title="上传头像"
               aria-label="上传头像"
-              :disabled="characterApiDisabled || avatarUploading"
+              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
               @click="handleAvatarUploadTrigger(card)"
             >
               <template #icon><n-icon :component="Upload" /></template>
@@ -909,23 +1119,41 @@ const openEditPanel = async (card: CharacterCard) => {
               type="error"
               title="移除头像"
               aria-label="移除头像"
-              :disabled="characterApiDisabled || avatarUploading"
+              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
               @click="handleAvatarRemove(card)"
             >
               <template #icon><n-icon :component="X" /></template>
             </n-button>
-            <n-button text size="small" title="预览" @click="openPreview(card)">
+            <n-button
+              text
+              size="small"
+              title="预览"
+              :loading="cardSwitchingId === card.id"
+              :disabled="cardSwitchingId.length > 0 && cardSwitchingId !== card.id"
+              @click="openPreview(card)"
+            >
               <template #icon><n-icon :component="Eye" /></template>
             </n-button>
-            <n-button text size="small" :disabled="characterApiDisabled" @click="openEditPanel(card)">
+            <n-button
+              text
+              size="small"
+              :disabled="characterApiDisabled || (cardSwitchingId.length > 0 && cardSwitchingId !== card.id)"
+              :loading="cardSwitchingId === card.id"
+              @click="openEditPanel(card)"
+            >
               <template #icon><n-icon :component="Edit" /></template>
             </n-button>
-            <n-button text size="small" :disabled="characterApiDisabled" @click="openBindModal(card)">
+            <n-button
+              text
+              size="small"
+              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+              @click="openBindModal(card)"
+            >
               <template #icon><n-icon :component="Link" /></template>
             </n-button>
             <n-popconfirm @positive-click="handleDeleteCard(card)">
               <template #trigger>
-                <n-button text size="small" type="error" :disabled="characterApiDisabled">
+                <n-button text size="small" type="error" :disabled="characterApiDisabled || cardSwitchingId.length > 0">
                   <template #icon><n-icon :component="Trash" /></template>
                 </n-button>
               </template>
@@ -1298,6 +1526,16 @@ const openEditPanel = async (card: CharacterCard) => {
     border-radius: 10px;
   }
 
+  &.character-card-item--active :deep(.n-card) {
+    border-color: rgba(59, 130, 246, 0.42);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.16);
+    background: rgba(59, 130, 246, 0.04);
+  }
+
+  &.character-card-item--bound:not(.character-card-item--active) :deep(.n-card) {
+    border-color: rgba(148, 163, 184, 0.3);
+  }
+
   :deep(.n-card-header) {
     align-items: flex-start;
     gap: 0.5rem;
@@ -1336,6 +1574,24 @@ const openEditPanel = async (card: CharacterCard) => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .card-state-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0.1rem 0.38rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--sc-text-secondary);
+    font-size: 0.68rem;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .card-state-badge--active {
+    background: rgba(59, 130, 246, 0.16);
+    color: #60a5fa;
   }
 
   .card-main-content {
