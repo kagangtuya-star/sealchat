@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
+import { Plus, Trash, Edit, Link, Eye, Upload, X } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
@@ -612,9 +612,12 @@ const handleUnbind = async (identityId: string) => {
   }
 };
 
-const formatAttrs = (attrs: Record<string, any> | undefined) => {
-  if (!attrs || Object.keys(attrs).length === 0) return '暂无属性';
-  return Object.entries(attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
+const getCardAttrEntries = (attrs: Record<string, any> | undefined) => {
+  if (!attrs || typeof attrs !== 'object') return [];
+  return Object.entries(attrs).filter(([, value]) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim() !== '';
+  });
 };
 
 const avatarUploadInputRef = ref<HTMLInputElement | null>(null);
@@ -880,10 +883,37 @@ const openEditPanel = async (card: CharacterCard) => {
           class="character-card-item"
         >
           <template #header>
-            <span class="card-name">{{ card.name }}</span>
-            <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
+            <div class="card-header-main">
+              <AvatarVue :size="34" :src="resolveCardAvatarToken(card)" />
+              <span class="card-name">{{ card.name }}</span>
+              <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
+            </div>
           </template>
           <template #header-extra>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              title="上传头像"
+              aria-label="上传头像"
+              :disabled="characterApiDisabled || avatarUploading"
+              @click="handleAvatarUploadTrigger(card)"
+            >
+              <template #icon><n-icon :component="Upload" /></template>
+            </n-button>
+            <n-button
+              v-if="getCardAvatarBinding(card)"
+              quaternary
+              circle
+              size="small"
+              type="error"
+              title="移除头像"
+              aria-label="移除头像"
+              :disabled="characterApiDisabled || avatarUploading"
+              @click="handleAvatarRemove(card)"
+            >
+              <template #icon><n-icon :component="X" /></template>
+            </n-button>
             <n-button text size="small" title="预览" @click="openPreview(card)">
               <template #icon><n-icon :component="Eye" /></template>
             </n-button>
@@ -902,34 +932,34 @@ const openEditPanel = async (card: CharacterCard) => {
               删除前将从所有群解绑此人物卡，确定删除？
             </n-popconfirm>
           </template>
-          <div class="card-avatar-row">
-            <AvatarVue :size="44" :src="resolveCardAvatarToken(card)" />
-            <div class="card-avatar-actions">
-              <n-button text size="small" :disabled="characterApiDisabled || avatarUploading" @click="handleAvatarUploadTrigger(card)">上传头像</n-button>
-              <n-button
-                v-if="getCardAvatarBinding(card)"
-                text
-                size="small"
-                type="error"
-                :disabled="characterApiDisabled || avatarUploading"
-                @click="handleAvatarRemove(card)"
-              >
-                移除头像
-              </n-button>
+          <div class="card-main-content">
+            <div v-if="getCardAttrEntries(card.attrs).length > 0" class="card-attrs">
+              <div class="card-attr-list">
+                <span
+                  v-for="[key, value] in getCardAttrEntries(card.attrs)"
+                  :key="`${card.id}-${key}`"
+                  class="card-attr-chip"
+                >
+                  <span class="card-attr-chip__key">{{ key }}</span>
+                  <span class="card-attr-chip__value">{{ value }}</span>
+                </span>
+              </div>
             </div>
-          </div>
-          <div class="card-attrs">{{ formatAttrs(card.attrs) }}</div>
-          <div v-if="getBoundIdentities(card.id).length > 0" class="card-bindings">
-            <span class="bindings-label">已绑定：</span>
-            <n-tag
-              v-for="identity in getBoundIdentities(card.id)"
-              :key="identity.id"
-              size="small"
-              :closable="!characterApiDisabled"
-              @close="handleUnbind(identity.id)"
-            >
-              {{ identity.displayName }}
-            </n-tag>
+
+            <div v-if="getBoundIdentities(card.id).length > 0" class="card-bindings">
+              <span class="bindings-label">绑定</span>
+              <div class="card-bindings__tags">
+                <n-tag
+                  v-for="identity in getBoundIdentities(card.id)"
+                  :key="identity.id"
+                  size="small"
+                  :closable="!characterApiDisabled"
+                  @close="handleUnbind(identity.id)"
+                >
+                  {{ identity.displayName }}
+                </n-tag>
+              </div>
+            </div>
           </div>
         </n-card>
       </div>
@@ -1264,37 +1294,126 @@ const openEditPanel = async (card: CharacterCard) => {
 }
 
 .character-card-item {
-  .card-avatar-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 0.75rem;
+  :deep(.n-card) {
+    border-radius: 10px;
   }
-  .card-avatar-actions {
-    display: flex;
-    align-items: center;
+
+  :deep(.n-card-header) {
+    align-items: flex-start;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    padding-bottom: 0.45rem;
   }
+
+  :deep(.n-card-header__main) {
+    min-width: 0;
+  }
+
+  :deep(.n-card-header__extra) {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-wrap: nowrap;
+  }
+
+  :deep(.n-card__content) {
+    padding-top: 0;
+    padding-bottom: 0.1rem;
+  }
+
+  .card-header-main {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+
   .card-name {
-    font-weight: 500;
-    margin-right: 0.5rem;
+    font-weight: 600;
+    font-size: 0.92rem;
+    min-width: 0;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+
+  .card-main-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
   .card-attrs {
-    color: var(--sc-text-secondary);
-    font-size: 0.85rem;
-    margin-bottom: 0.5rem;
+    min-width: 0;
   }
+
+  .card-attr-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .card-attr-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.22rem;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0.2rem 0.42rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--sc-text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.15;
+  }
+
+  .card-attr-chip__key {
+    color: var(--sc-text-tertiary);
+    white-space: nowrap;
+  }
+
+  .card-attr-chip__value {
+    color: var(--sc-text-primary);
+    overflow-wrap: anywhere;
+  }
+
   .card-bindings {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.35rem;
+    min-width: 0;
+    overflow: hidden;
+
     .bindings-label {
-      font-size: 0.8rem;
+      flex: 0 0 auto;
+      font-size: 0.7rem;
       color: var(--sc-text-tertiary);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
+  }
+
+  .card-bindings__tags {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .card-bindings__tags :deep(.n-tag) {
+    max-width: 9rem;
+    flex: 0 1 auto;
+    overflow: hidden;
+  }
+
+  .card-bindings__tags :deep(.n-tag__content) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
