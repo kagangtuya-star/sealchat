@@ -35,6 +35,13 @@ const (
 	AnnouncementPopupEveryEntry     AnnouncementPopupMode = "every_entry"
 )
 
+type AnnouncementReminderScope string
+
+const (
+	AnnouncementReminderScopeLobbyOnly AnnouncementReminderScope = "lobby_only"
+	AnnouncementReminderScopeSiteWide  AnnouncementReminderScope = "site_wide"
+)
+
 type AnnouncementModel struct {
 	StringPKBaseModel
 	ScopeType     AnnouncementScopeType     `json:"scopeType" gorm:"size:16;index:idx_ann_scope,priority:1"`
@@ -46,6 +53,7 @@ type AnnouncementModel struct {
 	IsPinned      bool                      `json:"isPinned" gorm:"default:false;index"`
 	PinOrder      int                       `json:"pinOrder" gorm:"default:0;index"`
 	PopupMode     AnnouncementPopupMode     `json:"popupMode" gorm:"size:24;default:'none'"`
+	ReminderScope AnnouncementReminderScope `json:"reminderScope" gorm:"size:24;default:'lobby_only'"`
 	RequireAck    bool                      `json:"requireAck" gorm:"default:false"`
 	Version       int                       `json:"version" gorm:"default:1"`
 	PublishedAt   *time.Time                `json:"publishedAt"`
@@ -69,6 +77,9 @@ func (m *AnnouncementModel) Normalize() {
 	}
 	if m.PopupMode == "" {
 		m.PopupMode = AnnouncementPopupNone
+	}
+	if m.ReminderScope == "" {
+		m.ReminderScope = AnnouncementReminderScopeLobbyOnly
 	}
 	if m.Version <= 0 {
 		m.Version = 1

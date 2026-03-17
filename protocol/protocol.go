@@ -337,6 +337,7 @@ const (
 	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
 	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
 	EventWorldUpdated              EventName = "world-updated"
+	EventLobbyAnnouncementUpdated  EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AnnouncementPayload } from '@/models/announcement'
+import type { AnnouncementPayload, AnnouncementReminderScope } from '@/models/announcement'
 import {
   ackWorldAnnouncement,
   createLobbyAnnouncement,
@@ -53,8 +53,8 @@ export const useAnnouncementStore = defineStore('announcement', () => {
     return fetchWorldPendingAnnouncement(worldId)
   }
 
-  async function fetchLobbyPending() {
-    return fetchLobbyPendingAnnouncement()
+  async function fetchLobbyPending(params?: { reminderScope?: AnnouncementReminderScope }) {
+    return fetchLobbyPendingAnnouncement(params)
   }
 
   async function markWorldPopup(worldId: string, announcementId: string) {

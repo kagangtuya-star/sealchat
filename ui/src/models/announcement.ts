@@ -4,6 +4,7 @@ export type AnnouncementScopeType = 'world' | 'lobby'
 export type AnnouncementStatus = 'draft' | 'published' | 'archived'
 export type AnnouncementPopupMode = 'none' | 'once_per_version' | 'every_entry'
 export type AnnouncementContentFormat = 'plain' | 'rich'
+export type AnnouncementReminderScope = 'lobby_only' | 'site_wide'
 
 export interface AnnouncementItem {
   id: string
@@ -18,6 +19,7 @@ export interface AnnouncementItem {
   isPinned: boolean
   pinOrder: number
   popupMode: AnnouncementPopupMode
+  reminderScope: AnnouncementReminderScope
   requireAck: boolean
   version: number
   publishedAt?: string | null
@@ -48,6 +50,7 @@ export interface AnnouncementPayload {
   isPinned: boolean
   pinOrder: number
   popupMode: AnnouncementPopupMode
+  reminderScope: AnnouncementReminderScope
   requireAck: boolean
 }
 
@@ -90,8 +93,8 @@ export async function fetchLobbyAnnouncements(params?: { page?: number; pageSize
   return data
 }
 
-export async function fetchLobbyPendingAnnouncement() {
-  const { data } = await api.get<{ item: AnnouncementItem | null }>('/api/v1/lobby-announcements/pending-popup')
+export async function fetchLobbyPendingAnnouncement(params?: { reminderScope?: AnnouncementReminderScope }) {
+  const { data } = await api.get<{ item: AnnouncementItem | null }>('/api/v1/lobby-announcements/pending-popup', { params })
   return data.item
 }
 

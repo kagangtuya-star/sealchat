@@ -218,6 +218,13 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
                     <n-tag v-if="item.isPinned" size="small" type="warning">置顶</n-tag>
                     <n-tag v-if="item.popupMode === 'every_entry'" size="small" type="info">每次弹出</n-tag>
                     <n-tag v-else-if="item.popupMode === 'once_per_version'" size="small" type="info">每版本弹一次</n-tag>
+                    <n-tag
+                      v-if="props.scopeType === 'lobby' && item.reminderScope === 'site_wide'"
+                      size="small"
+                      type="success"
+                    >
+                      全站在线提醒
+                    </n-tag>
                     <n-tag v-if="item.requireAck" size="small" type="error">需确认</n-tag>
                     <n-tag v-if="item.needsAck" size="small" type="warning">待确认</n-tag>
                   </n-space>

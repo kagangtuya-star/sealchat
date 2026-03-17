@@ -756,6 +756,7 @@ type myEventName =
   | 'bot-list-updated'
   | 'global-overlay-toggle'
   | 'open-display-settings'
+  | 'lobby-announcement-updated'
   | 'message-pinned'
   | 'message-unpinned'
   | 'message.reaction';

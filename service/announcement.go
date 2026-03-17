@@ -27,6 +27,7 @@ type AnnouncementInput struct {
 	IsPinned      bool   `json:"isPinned"`
 	PinOrder      int    `json:"pinOrder"`
 	PopupMode     string `json:"popupMode"`
+	ReminderScope string `json:"reminderScope"`
 	RequireAck    bool   `json:"requireAck"`
 }
 
@@ -35,6 +36,10 @@ type AnnouncementListOptions struct {
 	PageSize        int
 	IncludeAll      bool
 	IncludeArchived bool
+}
+
+type AnnouncementPendingOptions struct {
+	ReminderScope string
 }
 
 type AnnouncementView struct {
@@ -146,12 +151,20 @@ func normalizeAnnouncementInput(scopeType model.AnnouncementScopeType, input *An
 	default:
 		input.PopupMode = string(model.AnnouncementPopupNone)
 	}
+	switch model.AnnouncementReminderScope(strings.TrimSpace(input.ReminderScope)) {
+	case model.AnnouncementReminderScopeSiteWide:
+		input.ReminderScope = string(model.AnnouncementReminderScopeSiteWide)
+	default:
+		input.ReminderScope = string(model.AnnouncementReminderScopeLobbyOnly)
+	}
 	if input.PinOrder < 0 {
 		input.PinOrder = 0
 	}
-	if scopeType != model.AnnouncementScopeWorld {
-		input.RequireAck = false
+	if scopeType == model.AnnouncementScopeWorld {
+		input.ReminderScope = string(model.AnnouncementReminderScopeLobbyOnly)
+		return nil
 	}
+	input.RequireAck = false
 	return nil
 }
 
@@ -382,6 +395,7 @@ func AnnouncementCreate(scopeType, scopeID, actorID string, input AnnouncementIn
 		IsPinned:      input.IsPinned,
 		PinOrder:      input.PinOrder,
 		PopupMode:     model.AnnouncementPopupMode(input.PopupMode),
+		ReminderScope: model.AnnouncementReminderScope(input.ReminderScope),
 		RequireAck:    input.RequireAck,
 		Version:       1,
 		CreatedBy:     actorID,
@@ -436,6 +450,7 @@ func AnnouncementUpdate(scopeType, scopeID, announcementID, actorID string, inpu
 		"is_pinned":      input.IsPinned,
 		"pin_order":      input.PinOrder,
 		"popup_mode":     input.PopupMode,
+		"reminder_scope": input.ReminderScope,
 		"require_ack":    input.RequireAck,
 		"version":        version,
 		"updated_by":     actorID,
@@ -509,7 +524,7 @@ func resolvePendingPopupFromItems(items []model.AnnouncementModel, userID string
 	return nil
 }
 
-func AnnouncementPendingPopup(scopeType, scopeID, userID string) (*AnnouncementView, error) {
+func AnnouncementPendingPopup(scopeType, scopeID, userID string, opts *AnnouncementPendingOptions) (*AnnouncementView, error) {
 	normalizedScopeType, normalizedScopeID, err := normalizeAnnouncementScope(scopeType, scopeID)
 	if err != nil {
 		return nil, err
@@ -526,6 +541,12 @@ func AnnouncementPendingPopup(scopeType, scopeID, userID string) (*AnnouncementV
 		Order("pin_order ASC").
 		Order("COALESCE(published_at, created_at) DESC").
 		Limit(20)
+	if normalizedScopeType == model.AnnouncementScopeLobby && opts != nil {
+		switch model.AnnouncementReminderScope(strings.TrimSpace(opts.ReminderScope)) {
+		case model.AnnouncementReminderScopeSiteWide:
+			query = query.Where("reminder_scope = ?", model.AnnouncementReminderScopeSiteWide)
+		}
+	}
 	if err := query.Find(&items).Error; err != nil {
 		return nil, err
 	}

@@ -32,12 +32,14 @@ const form = ref<AnnouncementPayload>({
   isPinned: false,
   pinOrder: 0,
   popupMode: 'none',
+  reminderScope: 'lobby_only',
   requireAck: false,
 })
 
 const isEdit = computed(() => !!props.item?.id)
 const titleText = computed(() => isEdit.value ? '编辑公告' : '新建公告')
 const canRequireAck = computed(() => props.scopeType === 'world')
+const canChangeReminderScope = computed(() => props.scopeType === 'lobby')
 const handleVisibleUpdate = (value: boolean) => emit('update:visible', value)
 const modalStyle = computed(() => (
   viewportWidth.value <= 640
@@ -70,12 +72,21 @@ const popupLabel = computed(() => {
       return '不弹出'
   }
 })
+const reminderScopeLabel = computed(() => {
+  if (!canChangeReminderScope.value) {
+    return ''
+  }
+  return form.value.reminderScope === 'site_wide' ? '全站在线' : '仅大厅页'
+})
 const optionSummary = computed(() => {
   const parts = [
     `状态 ${statusLabel.value}`,
     `弹窗 ${popupLabel.value}`,
     form.value.isPinned ? `置顶 #${form.value.pinOrder}` : '未置顶',
   ]
+  if (canChangeReminderScope.value) {
+    parts.push(`提醒 ${reminderScopeLabel.value}`)
+  }
   if (canRequireAck.value) {
     parts.push(form.value.requireAck ? '需成员确认' : '无需确认')
   }
@@ -97,6 +108,7 @@ watch(
         isPinned: item.isPinned,
         pinOrder: item.pinOrder || 0,
         popupMode: item.popupMode || 'none',
+        reminderScope: item.reminderScope || 'lobby_only',
         requireAck: item.requireAck,
       }
       return
@@ -109,6 +121,7 @@ watch(
       isPinned: false,
       pinOrder: 0,
       popupMode: 'none',
+      reminderScope: 'lobby_only',
       requireAck: false,
     }
   },
@@ -130,6 +143,7 @@ const handleSave = async () => {
   try {
     const payload: AnnouncementPayload = {
       ...form.value,
+      reminderScope: canChangeReminderScope.value ? form.value.reminderScope : 'lobby_only',
       requireAck: canRequireAck.value ? form.value.requireAck : false,
     }
     if (props.scopeType === 'world') {
@@ -200,6 +214,13 @@ const handleSave = async () => {
               <n-radio-button value="none">不弹出</n-radio-button>
               <n-radio-button value="once_per_version">每次编辑</n-radio-button>
               <n-radio-button value="every_entry">每次进入</n-radio-button>
+            </n-radio-group>
+          </div>
+          <div v-if="canChangeReminderScope" class="announcement-editor__tool announcement-editor__tool--wide">
+            <span class="announcement-editor__tool-label">提醒范围</span>
+            <n-radio-group v-model:value="form.reminderScope" size="small">
+              <n-radio-button value="lobby_only">仅大厅页</n-radio-button>
+              <n-radio-button value="site_wide">全站在线</n-radio-button>
             </n-radio-group>
           </div>
           <div class="announcement-editor__tool announcement-editor__tool--switch">
