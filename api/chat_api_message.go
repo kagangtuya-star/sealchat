@@ -2133,6 +2133,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
+	messageSortBasis := utils.MessageSortBasisTypingStart
+	if cfg := utils.GetConfig(); cfg != nil {
+		messageSortBasis = utils.NormalizeMessageSortBasis(cfg.MessageSortBasis)
+	}
 	hasPlacement := strings.TrimSpace(data.BeforeID) != "" || strings.TrimSpace(data.AfterID) != ""
 	if !hasExplicitDisplayOrder && hasPlacement {
 		resolvedOrder, err := resolveMessageDisplayOrderForPlacement(db, channelId, messageOrderPlacement{
@@ -2145,7 +2149,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		displayOrder = resolvedOrder
 	}
 	hasTypingDuration := data.TypingDurationMs != nil && *data.TypingDurationMs > 0
-	if !hasExplicitDisplayOrder && !hasPlacement && hasTypingDuration {
+	useTypingStartOrder := messageSortBasis == utils.MessageSortBasisTypingStart && hasTypingDuration
+	if !hasExplicitDisplayOrder && !hasPlacement && useTypingStartOrder {
 		durationMs := *data.TypingDurationMs
 		maxDurationMs := int64(24 * 60 * 60 * 1000)
 		if durationMs > maxDurationMs {
@@ -2157,7 +2162,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 		displayOrder = float64(estimatedStart)
 	}
-	if !hasExplicitDisplayOrder && !hasPlacement && !hasTypingDuration && whisperTo == "" {
+	if !hasExplicitDisplayOrder && !hasPlacement && !useTypingStartOrder && whisperTo == "" {
 		windowMs := int64(0)
 		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
 			windowMs = cfg.TypingOrderWindowMs

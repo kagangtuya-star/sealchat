@@ -206,6 +206,7 @@ export interface ServerConfig {
   webUrl: string;
   pageTitle?: string;
   chatHistoryPersistentDays: number;
+  messageSortBasis?: 'typing_start' | 'send_time';
   imageSizeLimit: number;
   imageCompress: boolean;
   imageCompressQuality: number;

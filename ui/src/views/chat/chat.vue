@@ -8375,6 +8375,10 @@ const syncDraftStartedAt = (content: string) => {
     draftStartedAtMs.value = null;
     return;
   }
+  if (resolveConfiguredMessageSortBasis() !== 'typing_start') {
+    draftStartedAtMs.value = null;
+    return;
+  }
   if (!isContentMeaningful(inputMode.value, content)) {
     resetDraftOrderContext();
     return;
@@ -8393,6 +8397,13 @@ interface SendDisplayOrderResolution {
   explicitDisplayOrder?: number;
   typingDurationMs?: number;
 }
+
+type MessageSortBasis = 'typing_start' | 'send_time';
+
+const resolveConfiguredMessageSortBasis = (): MessageSortBasis => {
+  const raw = String((utils.config as any)?.messageSortBasis || '').trim().toLowerCase();
+  return raw === 'send_time' ? 'send_time' : 'typing_start';
+};
 
 const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
   if (!selfPreviewOrderModified.value) {
@@ -8427,10 +8438,8 @@ const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null 
 };
 
 const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): SendDisplayOrderResolution => {
+  const messageSortBasis = resolveConfiguredMessageSortBasis();
   const startedAt = Number(draftStartedAtMs.value);
-  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
-    ? startedAt
-    : localNowMs;
   const manualOrder = resolveManualPreviewDisplayOrder(fallbackNowMs);
   if (manualOrder !== null) {
     return {
@@ -8438,6 +8447,14 @@ const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): Sen
       explicitDisplayOrder: manualOrder,
     };
   }
+  if (messageSortBasis === 'send_time') {
+    return {
+      localDisplayOrder: fallbackNowMs > 0 ? fallbackNowMs : localNowMs,
+    };
+  }
+  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
+    ? startedAt
+    : localNowMs;
   let typingDurationMs: number | undefined;
   if (Number.isFinite(startedAt) && startedAt > 0) {
     const duration = Math.floor(localNowMs - startedAt);
