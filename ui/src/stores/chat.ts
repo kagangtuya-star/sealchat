@@ -1669,14 +1669,7 @@ export const useChatStore = defineStore({
         return;
       }
       try {
-        const resp = await api.get('/api/v1/worlds', { params: { joined: true } });
-        const items = resp.data.items || [];
-        this.joinedWorldIds = items.map((item: any) => item.world.id);
-        items.forEach((item: any) => {
-          if (item?.world?.id) {
-            this.worldMap[item.world.id] = item.world;
-          }
-        });
+        await this.refreshJoinedWorldState();
         const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
         if (current && this.joinedWorldIds.includes(current)) {
           this.currentWorldId = current;
@@ -1692,6 +1685,57 @@ export const useChatStore = defineStore({
       } catch (err) {
         console.warn('initWorlds failed', err);
       }
+    },
+
+    async refreshJoinedWorldState() {
+      const pageSize = 50;
+      let page = 1;
+      let total = 0;
+      const aggregatedItems: any[] = [];
+      const seenWorldIds = new Set<string>();
+
+      while (true) {
+        const resp = await api.get('/api/v1/worlds', {
+          params: { joined: true, page, pageSize },
+        });
+        const data = resp.data;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const nextTotal = typeof data?.total === 'number' && data.total >= 0 ? data.total : items.length;
+        const nextPageSize = typeof data?.pageSize === 'number' && data.pageSize > 0 ? data.pageSize : pageSize;
+        total = nextTotal;
+
+        if (Array.isArray(data?.favoriteWorldIds)) {
+          this.favoriteWorldIds = data.favoriteWorldIds;
+          this.persistFavoriteWorlds();
+        }
+
+        for (const item of items) {
+          const worldId = item?.world?.id;
+          if (!worldId || seenWorldIds.has(worldId)) {
+            continue;
+          }
+          seenWorldIds.add(worldId);
+          aggregatedItems.push(item);
+          this.worldMap[worldId] = item.world;
+        }
+
+        if (!items.length || aggregatedItems.length >= total || page * nextPageSize >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      this.joinedWorldIds = aggregatedItems.map((item: any) => item.world.id);
+      const owned = aggregatedItems.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
+      const joined = aggregatedItems.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
+      this.myWorldCache = { owned, joined };
+
+      return {
+        items: aggregatedItems,
+        total,
+        page: 1,
+        pageSize,
+      };
     },
 
     async ensureWorldReady() {
@@ -1721,13 +1765,6 @@ export const useChatStore = defineStore({
       if (Array.isArray(data?.favoriteWorldIds)) {
         this.favoriteWorldIds = data.favoriteWorldIds;
         this.persistFavoriteWorlds();
-      }
-      if (params?.joined) {
-        const items = data.items || [];
-        this.joinedWorldIds = items.map((item: any) => item.world.id);
-        const owned = items.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
-        const joined = items.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
-        this.myWorldCache = { owned, joined };
       }
       this.worldListCache = data;
       return data;
