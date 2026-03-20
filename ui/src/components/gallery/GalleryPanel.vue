@@ -65,7 +65,7 @@
                 @keyup.enter="loadActiveItems"
                 style="width: 140px"
               />
-              <n-button size="small" :loading="loading" @click="loadActiveItems">刷新</n-button>
+              <n-button size="small" :loading="refreshing" @click="loadActiveItems">刷新</n-button>
             </div>
           </div>
 
@@ -96,6 +96,9 @@
           <GalleryGrid
             :items="items"
             :loading="loading"
+            :loading-more="loadingMore"
+            :has-more="hasMore"
+            :total="pagination.total"
             :editable="true"
             :selectable="true"
             :selected-ids="selectedIds"
@@ -106,6 +109,7 @@
             @edit="handleItemEdit"
             @delete="handleItemDelete"
             @reorder="handleReorder"
+            @load-more="handleLoadMore"
           />
         </div>
       </div>
@@ -317,6 +321,11 @@ const activeCollection = computed(() =>
   collections.value.find((collection) => collection.id === gallery.activeCollectionId) ?? null
 );
 const rawItems = computed(() => (gallery.activeCollectionId ? gallery.getItemsByCollection(gallery.activeCollectionId) : []));
+const pagination = computed(() =>
+  gallery.activeCollectionId
+    ? gallery.getItemPagination(gallery.activeCollectionId)
+    : { page: 1, pageSize: 40, total: 0 }
+);
 const items = computed(() => {
   const list = [...rawItems.value];
   if (sortBy.value === 'name') {
@@ -327,14 +336,25 @@ const items = computed(() => {
   }
   return list;
 });
-const loading = computed(() => {
-  // Show loading during initialization
-  if (gallery.isInitializing) return true;
-  // No active collection means nothing to load (empty state, not loading)
+const collectionLoading = computed(() => {
   if (!gallery.activeCollectionId) return false;
-  // Show loading if active collection is loading
   return gallery.isCollectionLoading(gallery.activeCollectionId);
 });
+const loadingMore = computed(() => {
+  if (!gallery.activeCollectionId) return false;
+  return gallery.isCollectionLoadingMore(gallery.activeCollectionId);
+});
+const loading = computed(() => {
+  if (gallery.isInitializing) return true;
+  if (!gallery.activeCollectionId) return false;
+  return collectionLoading.value && rawItems.value.length === 0;
+});
+const refreshing = computed(() => {
+  if (gallery.isInitializing) return true;
+  if (!gallery.activeCollectionId) return false;
+  return collectionLoading.value;
+});
+const hasMore = computed(() => rawItems.value.length < pagination.value.total);
 const isEmojiLinked = computed(() => gallery.activeCollectionId ? gallery.emojiCollectionIds.includes(gallery.activeCollectionId) : false);
 const isFavorites = computed(() => gallery.activeCollectionId === gallery.favoritesCollectionId);
 const isSystemCollection = computed(() => !!activeCollection.value?.collectionType);
@@ -521,8 +541,25 @@ async function handleUploadSelect(files: UploadFileInfo[]) {
 
 function loadActiveItems() {
   if (gallery.activeCollectionId) {
-    void gallery.loadItems(gallery.activeCollectionId, { keyword: keyword.value || undefined });
+    void gallery.loadItems(gallery.activeCollectionId, {
+      page: 1,
+      pageSize: pagination.value.pageSize,
+      keyword: keyword.value || undefined
+    });
   }
+}
+
+async function handleLoadMore() {
+  const collectionId = gallery.activeCollectionId;
+  if (!collectionId || collectionLoading.value || loadingMore.value || !hasMore.value) {
+    return;
+  }
+  await gallery.loadItems(collectionId, {
+    page: pagination.value.page + 1,
+    pageSize: pagination.value.pageSize,
+    keyword: keyword.value || undefined,
+    append: true
+  });
 }
 
 function handleToggleSelect(item: GalleryItem, selected: boolean) {

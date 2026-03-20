@@ -5,7 +5,7 @@
     </div>
     <div v-if="loading" class="gallery-grid__placeholder">加载中...</div>
     <div v-else-if="!items.length" class="gallery-grid__placeholder">暂无图片资源</div>
-    <div v-else class="gallery-grid__content">
+    <div v-else ref="contentRef" class="gallery-grid__content">
       <div
         v-for="(item, index) in items"
         :key="item.id"
@@ -40,12 +40,18 @@
           <n-button quaternary size="tiny" type="error" @click.stop="emit('delete', item)">删除</n-button>
         </div>
       </div>
+      <div class="gallery-grid__footer">
+        <span v-if="loadingMore">加载更多中...</span>
+        <span v-else-if="hasMore">已加载 {{ items.length }}/{{ totalCount }} 张，向下滚动继续加载</span>
+        <span v-else>已加载全部 {{ totalCount }} 张</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
+import { useInfiniteScroll } from '@vueuse/core';
 import { NButton, NImage, NCheckbox } from 'naive-ui';
 import type { GalleryItem } from '@/types';
 import { fetchAttachmentMetaById, normalizeAttachmentId, resolveAttachmentUrl, type AttachmentMeta } from '@/composables/useAttachmentResolver';
@@ -58,6 +64,9 @@ const props = defineProps<{
   selectable?: boolean;
   selectedIds?: string[];
   thumbnailSize?: 'small' | 'medium' | 'large' | 'xlarge';
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  total?: number;
 }>();
 
 const emit = defineEmits<{
@@ -69,11 +78,14 @@ const emit = defineEmits<{
   (e: 'reorder', fromIndex: number, toIndex: number): void;
   (e: 'edit', item: GalleryItem): void;
   (e: 'delete', item: GalleryItem): void;
+  (e: 'load-more'): void;
 }>();
 
 const selectedSet = computed(() => new Set(props.selectedIds || []));
 const sizeClass = computed(() => `gallery-grid--${props.thumbnailSize ?? 'medium'}`);
+const totalCount = computed(() => Math.max(props.total ?? 0, props.items.length));
 const dragOverIndex = ref<number | null>(null);
+const contentRef = ref<HTMLElement | null>(null);
 let lastClickIndex = -1;
 let draggingIndex = -1;
 
@@ -140,6 +152,19 @@ watch(
     });
   },
   { immediate: true },
+);
+
+useInfiniteScroll(
+  contentRef,
+  () => {
+    if (!props.loading && !props.loadingMore && props.hasMore) {
+      emit('load-more');
+    }
+  },
+  {
+    distance: 120,
+    canLoadMore: () => Boolean(props.hasMore) && !props.loading && !props.loadingMore
+  }
 );
 
 function handleClick(item: GalleryItem, index: number, evt: MouseEvent) {
@@ -251,8 +276,11 @@ function handleDrop(toIndex: number, evt: DragEvent) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-size), 1fr));
   gap: var(--grid-gap);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
+  align-content: start;
 }
 
 /* Custom minimal scrollbar */
@@ -335,6 +363,17 @@ function handleDrop(toIndex: number, evt: DragEvent) {
   justify-content: center;
   color: var(--sc-text-tertiary, var(--text-color-3));
   min-height: 160px;
+}
+
+.gallery-grid__footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 0 4px;
+  font-size: 12px;
+  color: var(--sc-text-secondary, var(--text-color-2));
 }
 
 .gallery-grid__actions {
