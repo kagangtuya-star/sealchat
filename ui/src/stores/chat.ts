@@ -4380,9 +4380,62 @@ export const useChatStore = defineStore({
     },
 
     // 频道管理
-    async channelRoleList(id: string) {
-      const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', { params: { id } });
-      return resp;
+    async channelRoleList(id: string, params?: { page?: number; pageSize?: number; aggregate?: boolean }) {
+      const shouldAggregate = params?.aggregate ?? (params?.page == null && params?.pageSize == null);
+      if (!shouldAggregate) {
+        const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: {
+            id,
+            page: params?.page,
+            pageSize: params?.pageSize,
+          },
+        });
+        return resp;
+      }
+
+      const pageSize = 200;
+      let page = 1;
+      let total = 0;
+      let firstResp: Awaited<ReturnType<typeof api.get<PaginationListResponse<ChannelRoleModel>>>> | null = null;
+      const roleMap = new Map<string, ChannelRoleModel>();
+
+      while (true) {
+        const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: { id, page, pageSize },
+        });
+        if (!firstResp) {
+          firstResp = resp;
+        }
+        const items = resp.data?.items || [];
+        total = resp.data?.total ?? items.length;
+        for (const item of items) {
+          if (item?.id) {
+            roleMap.set(item.id, item);
+          }
+        }
+        if (!items.length || roleMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      if (!firstResp) {
+        return await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: { id, page: 1, pageSize },
+        });
+      }
+
+      const items = Array.from(roleMap.values());
+      return {
+        ...firstResp,
+        data: {
+          ...firstResp.data,
+          items,
+          page: 1,
+          pageSize: items.length || pageSize,
+          total: Math.max(total, items.length),
+        },
+      };
     },
 
     // 频道管理
