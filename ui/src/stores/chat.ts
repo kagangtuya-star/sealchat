@@ -4450,6 +4450,51 @@ export const useChatStore = defineStore({
       return resp;
     },
 
+    async channelMemberListAll(id: string, pageSize = 200) {
+      let page = 1;
+      let total = 0;
+      let firstResp: Awaited<ReturnType<typeof api.get<PaginationListResponse<UserRoleModel>>>> | null = null;
+      const itemMap = new Map<string, UserRoleModel>();
+
+      while (true) {
+        const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+          params: { id, page, pageSize },
+        });
+        if (!firstResp) {
+          firstResp = resp;
+        }
+        const items = resp.data?.items || [];
+        total = resp.data?.total ?? items.length;
+        for (const item of items) {
+          if (item?.id) {
+            itemMap.set(item.id, item);
+          }
+        }
+        if (!items.length || itemMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      if (!firstResp) {
+        return await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+          params: { id, page: 1, pageSize },
+        });
+      }
+
+      const items = Array.from(itemMap.values());
+      return {
+        ...firstResp,
+        data: {
+          ...firstResp.data,
+          items,
+          page: 1,
+          pageSize: items.length || pageSize,
+          total: Math.max(total, items.length),
+        },
+      };
+    },
+
     async channelMemberCandidates(channelId: string, params?: { page?: number; pageSize?: number; keyword?: string; roleKey?: string; includeSpectator?: boolean; excludeExisting?: boolean }) {
       const resp = await api.get<ChannelMemberCandidatesResponse>(`api/v1/channels/${channelId}/member-candidates`, {
         params: {

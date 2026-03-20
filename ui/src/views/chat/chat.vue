@@ -845,7 +845,7 @@ const refreshChannelBotSelection = async () => {
     ts: Date.now(),
   });
   try {
-    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
     const current = items.find((item: any) => item.roleId === roleId && item.user?.id);
     channelBotSelection.value = current?.user?.id || '';
@@ -874,7 +874,7 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     ts: Date.now(),
   });
   try {
-    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
     const existingIds = items
       .filter((item: any) => item.roleId === roleId && item.user?.id)
