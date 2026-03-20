@@ -207,9 +207,12 @@ const currentSeconds = computed(() => {
   return duration * props.track.progress;
 });
 
-const assetsAvailable = computed(() => audio.filteredAssets?.length > 0);
+const selectableAssets = computed(() => (
+  props.track.playlistFolderId ? props.track.playlistAssets : audio.trackSelectableAssets
+));
+const assetsAvailable = computed(() => selectableAssets.value.length > 0);
 const assetOptions = computed(() =>
-  audio.filteredAssets.slice(0, 50).map((asset) => ({
+  selectableAssets.value.map((asset) => ({
     label: `${asset.name}${asset.tags?.length ? ` · ${asset.tags.join(',')}` : ''}`,
     value: asset.id,
   })),
@@ -291,7 +294,10 @@ function setPlaybackRate(value: number) {
 
 function handleSelect(value: string | null) {
   if (!value) return;
-  const asset = audio.assets.find((item) => item.id === value) || audio.filteredAssets.find((item) => item.id === value);
+  const asset =
+    selectableAssets.value.find((item) => item.id === value)
+    || audio.assets.find((item) => item.id === value)
+    || audio.filteredAssets.find((item) => item.id === value);
   if (asset) {
     audio.assignAssetToTrack(props.track.type, asset as AudioAsset);
   }
