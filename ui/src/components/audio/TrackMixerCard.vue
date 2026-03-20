@@ -1,29 +1,37 @@
 <template>
   <div class="track-card" :class="[`track-card--${track.type}`, { 'track-card--muted': track.muted }]">
     <header class="track-card__header">
-      <div class="track-card__info">
-        <p class="track-card__type">{{ trackLabels[track.type] }}</p>
-        <p class="track-card__title">{{ track.asset?.name || '未选择' }}</p>
+      <div class="track-card__header-main">
+        <div class="track-card__info">
+          <p class="track-card__type">{{ trackLabels[track.type] }}</p>
+          <p class="track-card__title">{{ track.asset?.name || '未选择' }}</p>
+        </div>
+        <div class="track-card__actions">
+          <n-button
+            text
+            size="tiny"
+            @click="toggleSolo"
+            :type="track.solo ? 'info' : 'primary'"
+            :disabled="isReadOnly"
+          >
+            {{ track.solo ? '取消独奏' : '独奏' }}
+          </n-button>
+          <n-button text size="tiny" @click="toggleMute" :disabled="isReadOnly">
+            {{ track.muted ? '取消静音' : '静音' }}
+          </n-button>
+        </div>
       </div>
-      <div class="track-card__actions">
-        <n-select
-          class="track-card__selector"
-          size="small"
-          placeholder="选择音频"
-          :value="track.assetId"
-          :options="assetOptions"
-          filterable
-          clearable
-          :disabled="!assetsAvailable || isReadOnly"
-          @update:value="handleSelect"
-        />
-        <n-button text size="tiny" @click="toggleSolo" :type="track.solo ? 'info' : 'primary'" :disabled="isReadOnly">
-          {{ track.solo ? '取消独奏' : '独奏' }}
-        </n-button>
-        <n-button text size="tiny" @click="toggleMute" :disabled="isReadOnly">
-          {{ track.muted ? '取消静音' : '静音' }}
-        </n-button>
-      </div>
+      <n-select
+        class="track-card__selector"
+        size="small"
+        placeholder="选择音频"
+        :value="track.assetId"
+        :options="assetOptions"
+        filterable
+        clearable
+        :disabled="!assetsAvailable || isReadOnly"
+        @update:value="handleSelect"
+      />
     </header>
 
     <section class="track-card__body">
@@ -340,13 +348,26 @@ function handleNext() {
 
 .track-card__header {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.625rem;
+}
+
+.track-card__header-main {
+  display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.5rem;
 }
 
 .track-card__selector {
-  min-width: 140px;
+  width: 100%;
+  min-width: 0;
+}
+
+.track-card__info {
+  flex: 1;
+  min-width: 0;
 }
 
 .track-card__type {
@@ -360,6 +381,10 @@ function handleNext() {
   margin: 0;
   font-weight: 600;
   color: var(--sc-text-primary, #e2e8f0);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .track-card__actions {
@@ -367,6 +392,7 @@ function handleNext() {
   gap: 0.25rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .track-card__body {
