@@ -3,7 +3,7 @@
     <header class="track-card__header">
       <div class="track-card__info">
         <p class="track-card__type">{{ trackLabels[track.type] }}</p>
-        <p class="track-card__title">{{ track.asset?.name || '未选择音频' }}</p>
+        <p class="track-card__title">{{ track.asset?.name || '未选择' }}</p>
       </div>
       <div class="track-card__actions">
         <n-select
