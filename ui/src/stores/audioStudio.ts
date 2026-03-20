@@ -1578,6 +1578,48 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    async fetchAllAssetsByFolder(folderId: string, pageSize = 200) {
+      const normalizedFolderId = normalizeFolderId(folderId);
+      if (!normalizedFolderId) {
+        return [] as AudioAsset[];
+      }
+
+      const playlistFilters: AudioSearchFilters = {
+        query: '',
+        tags: [],
+        folderId: normalizedFolderId,
+        creatorIds: [],
+        durationRange: null,
+        hasSceneOnly: false,
+        scope: this.filters.scope,
+        worldId: this.filters.worldId ?? this.currentWorldId,
+        includeCommon: this.filters.includeCommon,
+      };
+
+      let page = 1;
+      let total = 0;
+      const assetMap = new Map<string, AudioAsset>();
+
+      while (true) {
+        const params = buildAssetQueryParams(playlistFilters, { page, pageSize, total: 0 });
+        const resp = await api.get('/api/v1/audio/assets', { params });
+        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
+        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
+        for (const item of items) {
+          if (item?.id) {
+            assetMap.set(item.id, item);
+          }
+        }
+        if (!items.length || assetMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      return Array.from(assetMap.values());
+    },
+
     async fetchFolders() {
       try {
         const params: Record<string, unknown> = {};
@@ -2584,11 +2626,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
       try {
-        const resp = await api.get('/api/v1/audio/assets', {
-          params: { folderId, pageSize: 200 },
-        });
-        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
-        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const items = await this.fetchAllAssetsByFolder(folderId, 200);
         track.playlistAssetIds = items.map((a) => a.id);
         track.playlistIndex = 0;
         if (items.length && !track.assetId) {
