@@ -222,7 +222,7 @@ func normalizeEventForBot(event *protocol.Event) *protocol.Event {
 	if event.Type != protocol.EventMessageCreated && event.Type != protocol.EventMessageUpdated {
 		return event
 	}
-	content := normalizeBotCommandContent(event.Message.Content)
+	content := protocol.EscapeSatoriText(normalizeBotCommandContent(event.Message.Content))
 	if content == event.Message.Content {
 		return event
 	}

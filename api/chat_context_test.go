@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"testing"
+
+	"sealchat/protocol"
+)
 
 func TestNormalizeBotCommandContentWithPrefixes_ConvertsTipTapCommand(t *testing.T) {
 	input := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":".ra "},{"type":"text","marks":[{"type":"italic"}],"text":"侦查"},{"type":"text","text":" "},{"type":"text","marks":[{"type":"code"}],"text":"1d100"}]}]}`
@@ -34,5 +38,26 @@ func TestNormalizeBotCommandContentWithPrefixes_ConvertsLegacyHTMLCommand(t *tes
 	want := `.st运动**3 特技*` + "`+1`"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeEventForBot_EscapesPlainTextAmpersandCommand(t *testing.T) {
+	event := &protocol.Event{
+		Type: protocol.EventMessageCreated,
+		Message: &protocol.Message{
+			Content: ".st &手枪伤害=1d6+1",
+		},
+	}
+
+	got := normalizeEventForBot(event)
+	if got == event {
+		t.Fatalf("expected cloned event when content changes")
+	}
+	if got.Message == nil {
+		t.Fatalf("expected message to be preserved")
+	}
+	want := ".st &amp;手枪伤害=1d6+1"
+	if got.Message.Content != want {
+		t.Fatalf("expected %q, got %q", want, got.Message.Content)
 	}
 }
