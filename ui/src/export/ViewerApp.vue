@@ -43,7 +43,7 @@ const hitEntries = computed(() => {
     const matcher = buildMatcher(keyword.value, regexMode.value, caseSensitive.value)
     const results: { id: string; index: number }[] = []
     payload.messages.forEach((msg, index) => {
-      if (matcher(msg.content) || matcher(msg.sender_name ?? '')) {
+      if (matcher(resolveMessageHtml(msg)) || matcher(msg.sender_name ?? '')) {
         results.push({ id: msg.id, index })
       }
     })
@@ -100,7 +100,7 @@ const highlightedMessages = computed(() => {
   const matcher = buildMatcher(keyword.value, regexMode.value, caseSensitive.value)
   return payload.messages.map((msg) => ({
     ...msg,
-    highlighted: matcher(msg.content),
+    highlighted: matcher(resolveMessageHtml(msg)),
   }))
 })
 
@@ -125,6 +125,24 @@ function messageClass(msg: ExportMessage) {
     hitIdSet.value.has(msg.id) ? 'search-hit' : '',
     display.layout === 'compact' ? 'viewer-message--compact' : '',
   ]
+}
+
+function resolveAvatarSrc(msg: ExportMessage) {
+  const value = String(msg.sender_avatar || '').trim()
+  if (!value || value.startsWith('id:')) {
+    return ''
+  }
+  return value
+}
+
+function resolveAvatarFallback(name?: string) {
+  const source = String(name || '').trim()
+  if (!source) return '匿'
+  return source.slice(0, 1).toUpperCase()
+}
+
+function resolveMessageHtml(msg: ExportMessage) {
+  return msg.content_html || msg.content || ''
 }
 
 const manifestParts = computed(() => manifest?.parts ?? [])
@@ -184,11 +202,17 @@ const manifestParts = computed(() => manifest?.parts ?? [])
           :data-message-id="msg.id"
           :class="messageClass(msg)"
         >
-          <div class="viewer-message__header">
-            <strong>{{ msg.sender_name || '匿名' }}</strong>
-            <span>{{ formatTime(msg.created_at as string) }}</span>
+          <div class="viewer-message__avatar">
+            <img v-if="resolveAvatarSrc(msg)" :src="resolveAvatarSrc(msg)" :alt="msg.sender_name || '匿名'" />
+            <span v-else>{{ resolveAvatarFallback(msg.sender_name) }}</span>
           </div>
-          <div class="viewer-message__body" v-html="msg.content"></div>
+          <div class="viewer-message__main">
+            <div class="viewer-message__header">
+              <strong :style="msg.sender_color ? { color: msg.sender_color } : undefined">{{ msg.sender_name || '匿名' }}</strong>
+              <span>{{ formatTime(msg.created_at as string) }}</span>
+            </div>
+            <div class="viewer-message__body" v-html="resolveMessageHtml(msg)"></div>
+          </div>
         </article>
       </div>
     </div>

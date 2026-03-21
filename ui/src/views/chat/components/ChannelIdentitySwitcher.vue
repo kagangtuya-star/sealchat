@@ -15,9 +15,17 @@ import { useI18n } from 'vue-i18n';
 const props = withDefaults(defineProps<{
   channelId?: string;
   disabled?: boolean;
+  previewAppearance?: {
+    identityId?: string;
+    displayName?: string;
+    color?: string;
+    avatarAttachmentId?: string;
+    variantId?: string;
+  } | null;
 }>(), {
   channelId: undefined,
   disabled: false,
+  previewAppearance: null,
 });
 
 const emit = defineEmits<{
@@ -96,14 +104,49 @@ const sortedIdentities = computed(() => {
 const identityOptionCount = computed(() => Math.max(sortedIdentities.value.length, 1));
 
 const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.value));
+const activeIdentityVariant = computed(() => {
+  const channelId = resolvedChannelId.value;
+  const identityId = activeIdentity.value?.id || '';
+  if (!channelId || !identityId) {
+    return null;
+  }
+  return chat.getActiveIdentityVariant(channelId, identityId);
+});
 
 const fallbackName = computed(() => chat.curMember?.nick || user.info.nick || user.info.username || '默认身份');
 const fallbackAvatar = computed(() => user.info.avatar || '');
 
 const buildAttachmentUrl = (token?: string) => resolveAttachmentUrl(token);
 
-const displayName = computed(() => activeIdentity.value?.displayName || fallbackName.value);
-const displayColor = computed(() => activeIdentity.value?.color || '');
+const resolveIdentityAvatarToken = (identity?: { id?: string; avatarAttachmentId?: string } | null) => {
+  if (!identity) {
+    return '';
+  }
+  const channelId = resolvedChannelId.value;
+  const identityId = String(identity.id || '').trim();
+  if (!channelId || !identityId) {
+    return identity.avatarAttachmentId || '';
+  }
+  const variant = chat.getActiveIdentityVariant(channelId, identityId);
+  return variant?.avatarAttachmentId || identity.avatarAttachmentId || '';
+};
+
+const displayIdentityId = computed(() => {
+  const previewIdentityId = String(props.previewAppearance?.identityId || '').trim();
+  return previewIdentityId || activeIdentity.value?.id || '';
+});
+const displayName = computed(() => (
+  props.previewAppearance?.displayName
+  || activeIdentityVariant.value?.displayName
+  || activeIdentity.value?.displayName
+  || fallbackName.value
+));
+const displayColor = computed(() => (
+  props.previewAppearance?.color
+  || activeIdentityVariant.value?.color
+  || activeIdentity.value?.color
+  || ''
+));
 
 // Mobile detection for responsive display
 const isMobile = ref(false);
@@ -129,7 +172,11 @@ const displayedButtonLabel = computed(() => {
 });
 
 const avatarSrc = computed(() => {
-  return buildAttachmentUrl(activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
+  return buildAttachmentUrl(
+    props.previewAppearance?.avatarAttachmentId
+    || activeIdentityVariant.value?.avatarAttachmentId
+    || activeIdentity.value?.avatarAttachmentId,
+  ) || fallbackAvatar.value;
 });
 const toggleActionLabel = computed(() => (
   filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
@@ -203,10 +250,10 @@ const options = computed<DropdownMixedOption[]>(() => {
       <AvatarVue
         size={24}
         border={false}
-        src={buildAttachmentUrl(item.avatarAttachmentId) || fallbackAvatar.value}
+        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || fallbackAvatar.value}
       />
     ),
-    class: item.id === activeIdentity.value?.id ? 'identity-option identity-option--active' : 'identity-option',
+    class: item.id === displayIdentityId.value ? 'identity-option identity-option--active' : 'identity-option',
     extra: item.color,
   }));
   if (!list.length) {
@@ -321,7 +368,7 @@ const renderOption: DropdownRenderOption = ({ node, option }) => {
     });
   }
   const color = (option as any).extra as string | undefined;
-  const isActive = activeIdentity.value?.id === option.key;
+  const isActive = displayIdentityId.value === option.key;
   return cloneVNode(
     node,
     {
@@ -409,9 +456,16 @@ const canManageIdentities = computed(() => {
   return role === 'owner' || role === 'admin' || role === 'member';
 });
 
+const hasCloudValidatedIdentityConfig = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return false;
+  return !!chat.channelIdentityLoadedAt[channelId];
+});
+
 const isMappingMissing = computed(() => {
   if (!canManageIdentities.value) return false;
   if (!isAutoSwitchEnabled.value) return false;
+  if (!hasCloudValidatedIdentityConfig.value) return false;
   // If only one role, can't configure IC/OOC mapping properly
   if (hasOnlyOneRole.value || hasNoRoles.value) return true;
   const config = icOocConfig.value;
@@ -421,6 +475,9 @@ const isMappingMissing = computed(() => {
 
 // Warning message based on what's missing
 const warningMessage = computed(() => {
+  if (!hasCloudValidatedIdentityConfig.value) {
+    return '';
+  }
   // If no roles, suggest creating roles
   if (hasNoRoles.value) {
     return '请先创建角色以使用场内/场外切换';

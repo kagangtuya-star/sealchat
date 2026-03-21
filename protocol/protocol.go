@@ -141,6 +141,7 @@ type Message struct {
 
 type MessageIdentity struct {
 	ID               string `json:"id"`
+	VariantID        string `json:"variantId,omitempty"`
 	DisplayName      string `json:"displayName"`
 	Color            string `json:"color"`
 	AvatarAttachment string `json:"avatarAttachment"`
@@ -336,6 +337,7 @@ const (
 	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
 	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
 	EventWorldUpdated              EventName = "world-updated"
+	EventLobbyAnnouncementUpdated  EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"

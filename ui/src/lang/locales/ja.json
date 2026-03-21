@@ -59,6 +59,7 @@
     "sessionAnalysis": "セッション分析",
     "sessionThreshold": "セッション間隔閾値（分）",
     "sessionNo": "セッション",
+    "sessionTime": "セッション時間",
     "startTime": "開始",
     "endTime": "終了",
     "duration": "時間",

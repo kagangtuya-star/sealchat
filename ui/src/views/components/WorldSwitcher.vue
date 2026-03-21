@@ -11,11 +11,15 @@ const worldForm = ref({ name: '', description: '', visibility: 'public' as strin
 const showCreate = ref(false);
 const worldJumpId = ref('');
 
-const worldOptions = computed(() => chat.joinedWorldOptions);
+const joinedWorldItems = computed(() =>
+  chat.joinedWorldIds
+    .map((id) => chat.worldMap[id])
+    .filter((world): world is { id: string; name?: string; description?: string } => Boolean(world?.id))
+);
 
 watch(drawerVisible, async (visible) => {
   if (visible) {
-    await chat.worldList({ page: 1, pageSize: 20, joined: true });
+    await chat.refreshJoinedWorldState();
   }
 });
 
@@ -68,20 +72,20 @@ const handleWorldJump = async () => {
         <div class="flex gap-2">
           <n-input v-model:value="worldJumpId" placeholder="输入世界ID" size="small" />
           <n-button size="small" type="primary" @click="handleWorldJump">进入</n-button>
-          <n-button size="small" quaternary @click="chat.worldList({ page: 1, pageSize: 20, joined: true })">刷新</n-button>
+          <n-button size="small" quaternary @click="chat.refreshJoinedWorldState()">刷新</n-button>
           <n-button size="small" type="primary" quaternary @click="showCreate = true">新建</n-button>
         </div>
         <n-list bordered>
-          <template v-if="chat.worldListCache?.items?.length">
-            <n-list-item v-for="item in chat.worldListCache?.items" :key="item.world.id">
+          <template v-if="joinedWorldItems.length">
+            <n-list-item v-for="world in joinedWorldItems" :key="world.id">
               <div class="flex items-center justify-between">
                 <div>
-                  <div class="font-bold text-sm">{{ item.world.name }}</div>
-                  <div class="text-xs text-gray-500">{{ item.world.description }}</div>
+                  <div class="font-bold text-sm">{{ world.name }}</div>
+                  <div class="text-xs text-gray-500">{{ world.description }}</div>
                 </div>
                 <div class="flex items-center gap-2">
-                  <n-tag v-if="item.isMember" size="small" type="success">已加入</n-tag>
-                  <n-button size="tiny" type="primary" @click="handleSwitch(item.world.id)">进入</n-button>
+                  <n-tag size="small" type="success">已加入</n-tag>
+                  <n-button size="tiny" type="primary" @click="handleSwitch(world.id)">进入</n-button>
                 </div>
               </div>
             </n-list-item>

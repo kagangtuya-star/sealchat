@@ -30,11 +30,14 @@ const { width: viewportWidth } = useWindowSize()
 const loading = ref(false)
 const items = ref<AnnouncementItem[]>([])
 const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
 const editorVisible = ref(false)
 const editingItem = ref<AnnouncementItem | null>(null)
 const previewVisible = ref(false)
 const previewItem = ref<AnnouncementItem | null>(null)
 const handleVisibleUpdate = (value: boolean) => emit('update:visible', value)
+const pageSizes = [20, 50, 100]
 
 const modalStyle = computed(() => (
   viewportWidth.value <= 640
@@ -63,14 +66,23 @@ const renderBodyHtml = (item: AnnouncementItem) => {
   return div.innerHTML.replace(/\n/g, '<br />')
 }
 
-const load = async () => {
+const load = async (options: { page?: number; pageSize?: number } = {}) => {
   loading.value = true
   try {
+    const nextPage = options.page ?? page.value
+    const nextPageSize = options.pageSize ?? pageSize.value
     const data = props.scopeType === 'world'
-      ? await announcementStore.fetchWorldList(String(props.scopeId || '').trim(), { page: 1, pageSize: 100, includeAll: !!props.canManage })
-      : await announcementStore.fetchLobbyList({ page: 1, pageSize: 100, includeAll: !!props.canManage })
+      ? await announcementStore.fetchWorldList(String(props.scopeId || '').trim(), { page: nextPage, pageSize: nextPageSize, includeAll: !!props.canManage })
+      : await announcementStore.fetchLobbyList({ page: nextPage, pageSize: nextPageSize, includeAll: !!props.canManage })
     items.value = data.items || []
     total.value = data.total || 0
+    page.value = data.page || nextPage
+    pageSize.value = data.pageSize || nextPageSize
+
+    const maxPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+    if (total.value > 0 && page.value > maxPage) {
+      await load({ page: maxPage, pageSize: pageSize.value })
+    }
   } catch (err: any) {
     message.error(err?.response?.data?.message || '加载公告失败')
   } finally {
@@ -82,10 +94,22 @@ watch(
   () => props.visible,
   (value) => {
     if (value) {
-      void load()
+      page.value = 1
+      void load({ page: 1 })
     }
   },
 )
+
+const handlePageChange = (value: number) => {
+  page.value = value
+  void load({ page: value })
+}
+
+const handlePageSizeChange = (value: number) => {
+  pageSize.value = value
+  page.value = 1
+  void load({ page: 1, pageSize: value })
+}
 
 const openCreate = () => {
   editingItem.value = null
@@ -218,6 +242,13 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
                     <n-tag v-if="item.isPinned" size="small" type="warning">置顶</n-tag>
                     <n-tag v-if="item.popupMode === 'every_entry'" size="small" type="info">每次弹出</n-tag>
                     <n-tag v-else-if="item.popupMode === 'once_per_version'" size="small" type="info">每版本弹一次</n-tag>
+                    <n-tag
+                      v-if="props.scopeType === 'lobby' && item.reminderScope === 'site_wide'"
+                      size="small"
+                      type="success"
+                    >
+                      全站在线提醒
+                    </n-tag>
                     <n-tag v-if="item.requireAck" size="small" type="error">需确认</n-tag>
                     <n-tag v-if="item.needsAck" size="small" type="warning">待确认</n-tag>
                   </n-space>
@@ -261,6 +292,18 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
           </n-card>
         </div>
       </n-spin>
+      <div v-if="total > pageSize" class="announcement-manager__pagination">
+        <n-pagination
+          size="small"
+          :page="page"
+          :page-size="pageSize"
+          :item-count="total"
+          show-size-picker
+          :page-sizes="pageSizes"
+          @update:page="handlePageChange"
+          @update:page-size="handlePageSizeChange"
+        />
+      </div>
     </div>
     <AnnouncementEditorModal
       v-model:visible="editorVisible"
@@ -304,6 +347,12 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
   flex-direction: column;
   gap: 10px;
   width: 100%;
+}
+
+.announcement-manager__pagination {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
 }
 
 .announcement-card {

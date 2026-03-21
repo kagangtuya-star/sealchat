@@ -20,6 +20,14 @@ export class MySubClassedDexie extends Dexie {
     this.version(1).stores({
       thumbs: '++id, recentUsed, filename, data, mimeType' // Primary key and indexed props
     });
+    this.version(2)
+      .stores({
+        thumbs: '++id, recentUsed, filename, data, mimeType'
+      })
+      .upgrade((tx) => {
+        // 历史版本会把上传原图长期写入 thumbs，这里主动清空旧数据回收磁盘空间。
+        return tx.table('thumbs').clear();
+      });
   }
 }
 

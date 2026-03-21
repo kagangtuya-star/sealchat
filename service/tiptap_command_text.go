@@ -3,11 +3,14 @@ package service
 import (
 	"encoding/json"
 	"html"
+	"regexp"
 	"strings"
 
 	htmlparser "golang.org/x/net/html"
 	htmlatom "golang.org/x/net/html/atom"
 )
+
+var htmlEntityLikePattern = regexp.MustCompile(`&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,8}|#x[0-9A-Fa-f]{1,8});`)
 
 func SerializeMessageContentToCommandText(input string) (string, bool) {
 	trimmed := strings.TrimSpace(input)
@@ -17,10 +20,20 @@ func SerializeMessageContentToCommandText(input string) (string, bool) {
 	if LooksLikeTipTapJSON(trimmed) {
 		return SerializeTipTapContentToCommandText(trimmed)
 	}
-	if strings.ContainsAny(trimmed, "<>&") {
+	if looksLikeHTMLCommandText(trimmed) {
 		return serializeHTMLContentToCommandText(trimmed)
 	}
 	return normalizePlainText(trimmed), true
+}
+
+func looksLikeHTMLCommandText(input string) bool {
+	if input == "" {
+		return false
+	}
+	if strings.ContainsAny(input, "<>") {
+		return true
+	}
+	return htmlEntityLikePattern.MatchString(input)
 }
 
 // SerializeTipTapContentToCommandText 将 TipTap JSON 序列化为适合 BOT 命令解析的纯文本。

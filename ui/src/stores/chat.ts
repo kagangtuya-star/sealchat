@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIcOocRoleConfig, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -20,6 +20,7 @@ import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
+const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
 const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
 const inFlightRolePermLoads = new Map<string, Promise<void>>();
 
@@ -152,7 +153,9 @@ interface ChatState {
     whisperTargetId?: string | null;
     icMode?: 'ic' | 'ooc';
     identityId?: string | null;
+    identityVariantId?: string | null;
     initialIdentityId?: string | null;
+    initialIdentityVariantId?: string | null;
     activeIdentityBackup?: string | null;
   } | null
   revokedDrafts: Record<string, RevokedDraftEntry>
@@ -160,11 +163,14 @@ interface ChatState {
 
   canReorderAllMessages: boolean;
   channelIdentities: Record<string, ChannelIdentity[]>;
+  channelIdentityVariants: Record<string, Record<string, ChannelIdentityVariant[]>>;
   activeChannelIdentity: Record<string, string>;
+  activeChannelIdentityVariant: Record<string, Record<string, string>>;
   channelIdentityFolders: Record<string, ChannelIdentityFolder[]>;
   channelIdentityFavorites: Record<string, string[]>;
   channelIdentityMembership: Record<string, Record<string, string[]>>;
   channelIdentityLoadedAt: Record<string, number>;
+  channelIdentityVariantLoadedAt: Record<string, number>;
   channelIdentityRecentSpokenAt: Record<string, Record<string, number>>;
 
   // 新增状态
@@ -187,7 +193,7 @@ interface ChatState {
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
-  channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
+  channelIcOocRoleConfig: Record<string, ChannelIcOocRoleConfig>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
   // 多选模式状态
@@ -203,9 +209,19 @@ interface ChatState {
     messageId: string;
     messageTime: number;
   } | null;
+  pendingMessageJump: PendingMessageJump | null;
   messageReactions: Record<string, MessageReaction[]>;
   messageReactionLoaded: Record<string, boolean>;
   messageReactionLoading: Record<string, boolean>;
+}
+
+export interface PendingMessageJump {
+  requestKey: string;
+  worldId: string;
+  channelId: string;
+  messageId: string;
+  requestedAt: number;
+  source: 'route';
 }
 
 interface RevokedDraftEntry {
@@ -217,6 +233,7 @@ interface RevokedDraftEntry {
   whisperTargetId: string | null;
   icMode: 'ic' | 'ooc';
   identityId: string | null;
+  identityVariantId: string | null;
   cachedAt: number;
 }
 
@@ -258,6 +275,75 @@ const REVOKED_DRAFT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const REVOKED_DRAFT_CACHE_MAX = 240;
 const REVOKED_DRAFT_SESSION_KEY = 'sealchat_revoked_drafts_v1';
 const CHANNEL_IDENTITY_RECENT_SPOKEN_STORAGE_KEY = 'sealchat_identity_recent_spoken_v1';
+const getChannelIdentityVariantStorageKey = (channelId: string, identityId: string) => `channelIdentityVariant:${channelId}:${identityId}`;
+const EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG: ChannelIcOocRoleConfig = Object.freeze({ icRoleId: null, oocRoleId: null });
+
+const readChannelIdentityVariantFromStorage = (channelId: string, identityId: string): string => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  try {
+    return localStorage.getItem(getChannelIdentityVariantStorageKey(channelId, identityId)) || '';
+  } catch {
+    return '';
+  }
+};
+
+const writeChannelIdentityVariantToStorage = (channelId: string, identityId: string, variantId: string) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const key = getChannelIdentityVariantStorageKey(channelId, identityId);
+    if (!variantId) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, variantId);
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const normalizeChannelIcOocRoleConfigValue = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const normalizeChannelIcOocRoleConfig = (config?: Partial<ChannelIcOocRoleConfig> | null): ChannelIcOocRoleConfig => ({
+  icRoleId: normalizeChannelIcOocRoleConfigValue(config?.icRoleId),
+  oocRoleId: normalizeChannelIcOocRoleConfigValue(config?.oocRoleId),
+});
+
+const writeChannelIcOocRoleConfigToStorage = (channelId: string, userId: string | null | undefined, config: ChannelIcOocRoleConfig) => {
+  if (typeof window === 'undefined' || !channelId) {
+    return;
+  }
+  const scopedKey = userId ? `channelIcOocRole:${userId}:${channelId}` : '';
+  const legacyKey = `channelIcOocRole:${channelId}`;
+  const isEmpty = !config.icRoleId && !config.oocRoleId;
+  try {
+    if (isEmpty) {
+      if (scopedKey) {
+        localStorage.removeItem(scopedKey);
+      }
+      localStorage.removeItem(legacyKey);
+      return;
+    }
+    const serialized = JSON.stringify(config);
+    if (scopedKey) {
+      localStorage.setItem(scopedKey, serialized);
+      localStorage.removeItem(legacyKey);
+      return;
+    }
+    localStorage.setItem(legacyKey, serialized);
+  } catch (err) {
+    console.warn('Failed to save IC/OOC role config to localStorage', err);
+  }
+};
 const buildRevokedDraftKey = (channelId: string, messageId: string) => `${channelId}:${messageId}`;
 const detectRevokedDraftMode = (content: string): 'plain' | 'rich' => {
   const trimmed = String(content || '').trim();
@@ -296,6 +382,7 @@ const normalizeRevokedDraftEntry = (raw: any): RevokedDraftEntry | null => {
     whisperTargetId: String(raw?.whisperTargetId || '').trim() || null,
     icMode: raw?.icMode === 'ooc' ? 'ooc' : 'ic',
     identityId: String(raw?.identityId || '').trim() || null,
+    identityVariantId: String(raw?.identityVariantId || '').trim() || null,
     cachedAt,
   };
 };
@@ -634,6 +721,7 @@ type myEventName =
   | 'bot-list-updated'
   | 'global-overlay-toggle'
   | 'open-display-settings'
+  | 'lobby-announcement-updated'
   | 'message-pinned'
   | 'message-unpinned'
   | 'message.reaction';
@@ -858,11 +946,14 @@ export const useChatStore = defineStore({
     guildMemberListMemoized: null,
     canReorderAllMessages: false,
     channelIdentities: {},
+    channelIdentityVariants: {},
     activeChannelIdentity: {},
+    activeChannelIdentityVariant: {},
     channelIdentityFolders: {},
     channelIdentityFavorites: {},
     channelIdentityMembership: {},
     channelIdentityLoadedAt: {},
+    channelIdentityVariantLoadedAt: {},
     channelIdentityRecentSpokenAt: loadIdentityRecentSpokenFromStorage(),
 
     // 新增状态初始值
@@ -898,6 +989,7 @@ export const useChatStore = defineStore({
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
+    pendingMessageJump: null,
     messageReactions: {},
     messageReactionLoaded: {},
     messageReactionLoading: {},
@@ -974,6 +1066,40 @@ export const useChatStore = defineStore({
   },
 
   actions: {
+    queuePendingMessageJump(payload: {
+      worldId: string;
+      channelId: string;
+      messageId: string;
+      source?: PendingMessageJump['source'];
+    }) {
+      const worldId = String(payload?.worldId || '').trim();
+      const channelId = String(payload?.channelId || '').trim();
+      const messageId = String(payload?.messageId || '').trim();
+      if (!worldId || !channelId || !messageId) {
+        return '';
+      }
+      const pending: PendingMessageJump = {
+        requestKey: nanoid(),
+        worldId,
+        channelId,
+        messageId,
+        requestedAt: Date.now(),
+        source: payload?.source === 'route' ? payload.source : 'route',
+      };
+      this.pendingMessageJump = pending;
+      return pending.requestKey;
+    },
+
+    clearPendingMessageJump(requestKey?: string) {
+      if (!requestKey) {
+        this.pendingMessageJump = null;
+        return;
+      }
+      if (this.pendingMessageJump?.requestKey === requestKey) {
+        this.pendingMessageJump = null;
+      }
+    },
+
     enableObserverMode(worldId: string, channelId?: string, observerSlug?: string) {
       const normalizedWorldId = typeof worldId === 'string' ? worldId.trim() : '';
       const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
@@ -1508,14 +1634,7 @@ export const useChatStore = defineStore({
         return;
       }
       try {
-        const resp = await api.get('/api/v1/worlds', { params: { joined: true } });
-        const items = resp.data.items || [];
-        this.joinedWorldIds = items.map((item: any) => item.world.id);
-        items.forEach((item: any) => {
-          if (item?.world?.id) {
-            this.worldMap[item.world.id] = item.world;
-          }
-        });
+        await this.refreshJoinedWorldState();
         const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
         if (current && this.joinedWorldIds.includes(current)) {
           this.currentWorldId = current;
@@ -1531,6 +1650,57 @@ export const useChatStore = defineStore({
       } catch (err) {
         console.warn('initWorlds failed', err);
       }
+    },
+
+    async refreshJoinedWorldState() {
+      const pageSize = 50;
+      let page = 1;
+      let total = 0;
+      const aggregatedItems: any[] = [];
+      const seenWorldIds = new Set<string>();
+
+      while (true) {
+        const resp = await api.get('/api/v1/worlds', {
+          params: { joined: true, page, pageSize },
+        });
+        const data = resp.data;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const nextTotal = typeof data?.total === 'number' && data.total >= 0 ? data.total : items.length;
+        const nextPageSize = typeof data?.pageSize === 'number' && data.pageSize > 0 ? data.pageSize : pageSize;
+        total = nextTotal;
+
+        if (Array.isArray(data?.favoriteWorldIds)) {
+          this.favoriteWorldIds = data.favoriteWorldIds;
+          this.persistFavoriteWorlds();
+        }
+
+        for (const item of items) {
+          const worldId = item?.world?.id;
+          if (!worldId || seenWorldIds.has(worldId)) {
+            continue;
+          }
+          seenWorldIds.add(worldId);
+          aggregatedItems.push(item);
+          this.worldMap[worldId] = item.world;
+        }
+
+        if (!items.length || aggregatedItems.length >= total || page * nextPageSize >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      this.joinedWorldIds = aggregatedItems.map((item: any) => item.world.id);
+      const owned = aggregatedItems.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
+      const joined = aggregatedItems.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
+      this.myWorldCache = { owned, joined };
+
+      return {
+        items: aggregatedItems,
+        total,
+        page: 1,
+        pageSize,
+      };
     },
 
     async ensureWorldReady() {
@@ -1560,13 +1730,6 @@ export const useChatStore = defineStore({
       if (Array.isArray(data?.favoriteWorldIds)) {
         this.favoriteWorldIds = data.favoriteWorldIds;
         this.persistFavoriteWorlds();
-      }
-      if (params?.joined) {
-        const items = data.items || [];
-        this.joinedWorldIds = items.map((item: any) => item.world.id);
-        const owned = items.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
-        const joined = items.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
-        this.myWorldCache = { owned, joined };
       }
       this.worldListCache = data;
       return data;
@@ -2156,6 +2319,38 @@ export const useChatStore = defineStore({
       return this.getActiveIdentity(channelId)?.id || '';
     },
 
+    getIdentityVariants(channelId?: string, identityId?: string) {
+      const targetChannelId = channelId || this.curChannel?.id || '';
+      const targetIdentityId = identityId || this.getActiveIdentityId(targetChannelId);
+      if (!targetChannelId || !targetIdentityId) {
+        return [] as ChannelIdentityVariant[];
+      }
+      return this.channelIdentityVariants[targetChannelId]?.[targetIdentityId] || [];
+    },
+
+    getActiveIdentityVariantId(channelId?: string, identityId?: string) {
+      const targetChannelId = channelId || this.curChannel?.id || '';
+      const targetIdentityId = identityId || this.getActiveIdentityId(targetChannelId);
+      if (!targetChannelId || !targetIdentityId) {
+        return '';
+      }
+      return this.activeChannelIdentityVariant[targetChannelId]?.[targetIdentityId] || '';
+    },
+
+    getActiveIdentityVariant(channelId?: string, identityId?: string) {
+      const targetChannelId = channelId || this.curChannel?.id || '';
+      const targetIdentityId = identityId || this.getActiveIdentityId(targetChannelId);
+      if (!targetChannelId || !targetIdentityId) {
+        return null as ChannelIdentityVariant | null;
+      }
+      const items = this.getIdentityVariants(targetChannelId, targetIdentityId);
+      const activeId = this.getActiveIdentityVariantId(targetChannelId, targetIdentityId);
+      if (!items.length || !activeId) {
+        return null;
+      }
+      return items.find(item => item.id === activeId) || null;
+    },
+
     getIdentityLastSpokenAt(channelId?: string, identityId?: string) {
       const normalizedChannelId = String(channelId || '').trim();
       const normalizedIdentityId = String(identityId || '').trim();
@@ -2235,6 +2430,21 @@ export const useChatStore = defineStore({
       this.autoSwitchIcOocOnRoleChange(channelId, identityId);
     },
 
+    setActiveIdentityVariant(channelId: string, identityId: string, variantId: string) {
+      if (!channelId || !identityId) {
+        return;
+      }
+      const perChannel = {
+        ...(this.activeChannelIdentityVariant[channelId] || {}),
+        [identityId]: variantId,
+      };
+      this.activeChannelIdentityVariant = {
+        ...this.activeChannelIdentityVariant,
+        [channelId]: perChannel,
+      };
+      writeChannelIdentityVariantToStorage(channelId, identityId, variantId || '');
+    },
+
     /**
      * 切换角色时的反向自动切换场内外
      * 如果角色存在唯一的场内外映射（仅映射到IC或仅映射到OOC），则自动切换模式
@@ -2305,6 +2515,11 @@ export const useChatStore = defineStore({
         [channelId]: list,
       };
       this.pruneIdentityRecentSpoken(channelId, list.map(item => item.id));
+      const currentConfig = this.channelIcOocRoleConfig[channelId];
+      if (currentConfig) {
+        const nextConfig = this.sanitizeChannelIcOocRoleConfig(channelId, currentConfig);
+        this.applyChannelIcOocRoleConfig(channelId, nextConfig);
+      }
       if (this.activeChannelIdentity[channelId] === identityId) {
         const fallback = list.find(item => item.isDefault) || list[0];
         this.setActiveIdentity(channelId, fallback?.id || '');
@@ -2317,6 +2532,23 @@ export const useChatStore = defineStore({
           [channelId]: membership,
         };
       }
+      if (this.channelIdentityVariants[channelId]?.[identityId]) {
+        const variants = { ...(this.channelIdentityVariants[channelId] || {}) };
+        delete variants[identityId];
+        this.channelIdentityVariants = {
+          ...this.channelIdentityVariants,
+          [channelId]: variants,
+        };
+      }
+      if (this.activeChannelIdentityVariant[channelId]?.[identityId] !== undefined) {
+        const activeVariants = { ...(this.activeChannelIdentityVariant[channelId] || {}) };
+        delete activeVariants[identityId];
+        this.activeChannelIdentityVariant = {
+          ...this.activeChannelIdentityVariant,
+          [channelId]: activeVariants,
+        };
+        writeChannelIdentityVariantToStorage(channelId, identityId, '');
+      }
     },
 
     async loadChannelIdentities(channelId: string, force = false) {
@@ -2326,6 +2558,9 @@ export const useChatStore = defineStore({
       if (!force && this.channelIdentities[channelId]) {
         const items = this.channelIdentities[channelId];
         this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
+        if (!this.channelIdentityVariants[channelId]) {
+          void this.loadChannelIdentityVariants(channelId);
+        }
         const cached = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
@@ -2340,7 +2575,13 @@ export const useChatStore = defineStore({
         return await existing;
       }
       const task = (async () => {
-        const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
+        const resp = await api.get<{
+          items: ChannelIdentity[];
+          folders: ChannelIdentityFolder[];
+          favorites: string[];
+          membership: Record<string, string[]>;
+          icOocConfig?: ChannelIcOocRoleConfig | null;
+        }>('api/v1/channel-identities', { params: { channelId } });
         const membership = resp.data.membership || {};
         const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
         items.forEach(item => {
@@ -2366,6 +2607,7 @@ export const useChatStore = defineStore({
           ...this.channelIdentityLoadedAt,
           [channelId]: Date.now(),
         };
+        this.applyChannelIcOocRoleConfig(channelId, resp.data.icOocConfig || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG);
         const savedActive = localStorage.getItem(`channelIdentity:${channelId}`) || '';
         const defaultItem = items.find(item => item.isDefault) || items[0];
         const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
@@ -2379,6 +2621,7 @@ export const useChatStore = defineStore({
           };
         }
         this.pruneIdentityRecentSpoken(channelId, items.map(item => item.id));
+        void this.loadChannelIdentityVariants(channelId, force);
         return items;
       })();
       inFlightChannelIdentityLoads.set(channelId, task);
@@ -2390,6 +2633,137 @@ export const useChatStore = defineStore({
           inFlightChannelIdentityLoads.delete(channelId);
         }
       }
+    },
+
+    applyChannelIdentityVariants(channelId: string, items: ChannelIdentityVariant[]) {
+      const grouped: Record<string, ChannelIdentityVariant[]> = {};
+      (items || []).forEach((item) => {
+        if (!item?.identityId) {
+          return;
+        }
+        const identityId = String(item.identityId);
+        if (!grouped[identityId]) {
+          grouped[identityId] = [];
+        }
+        grouped[identityId].push(item);
+      });
+      Object.keys(grouped).forEach((identityId) => {
+        grouped[identityId] = grouped[identityId].slice().sort((a, b) => a.sortOrder - b.sortOrder);
+      });
+      this.channelIdentityVariants = {
+        ...this.channelIdentityVariants,
+        [channelId]: grouped,
+      };
+      const nextActive = { ...(this.activeChannelIdentityVariant[channelId] || {}) };
+      const relatedIdentityIds = new Set<string>([
+        ...Object.keys(nextActive),
+        ...Object.keys(grouped),
+        ...(this.channelIdentities[channelId] || []).map((item) => String(item?.id || '')).filter(Boolean),
+      ]);
+      relatedIdentityIds.forEach((identityId) => {
+        const variants = grouped[identityId] || [];
+        const stored = readChannelIdentityVariantFromStorage(channelId, identityId);
+        const selected = variants.length > 0 && stored && variants.some(item => item.id === stored)
+          ? stored
+          : (
+            variants.length > 0 && nextActive[identityId] && variants.some(item => item.id === nextActive[identityId])
+              ? nextActive[identityId]
+              : ''
+          );
+        nextActive[identityId] = selected || '';
+        writeChannelIdentityVariantToStorage(channelId, identityId, nextActive[identityId] || '');
+      });
+      this.activeChannelIdentityVariant = {
+        ...this.activeChannelIdentityVariant,
+        [channelId]: nextActive,
+      };
+      this.channelIdentityVariantLoadedAt = {
+        ...this.channelIdentityVariantLoadedAt,
+        [channelId]: Date.now(),
+      };
+      return grouped;
+    },
+
+    async loadChannelIdentityVariants(channelId: string, force = false) {
+      if (!channelId) {
+        return {} as Record<string, ChannelIdentityVariant[]>;
+      }
+      if (!force && this.channelIdentityVariants[channelId]) {
+        return this.channelIdentityVariants[channelId];
+      }
+      const existing = inFlightChannelIdentityVariantLoads.get(channelId);
+      if (existing) {
+        return await existing;
+      }
+      const task = (async () => {
+        const resp = await api.get<{ items: ChannelIdentityVariant[] }>('api/v1/channel-identity-variants', {
+          params: { channelId },
+        });
+        return this.applyChannelIdentityVariants(channelId, resp.data?.items || []);
+      })();
+      inFlightChannelIdentityVariantLoads.set(channelId, task);
+      try {
+        return await task;
+      } finally {
+        const inflight = inFlightChannelIdentityVariantLoads.get(channelId);
+        if (inflight === task) {
+          inFlightChannelIdentityVariantLoads.delete(channelId);
+        }
+      }
+    },
+
+    async channelIdentityVariantCreate(payload: {
+      channelId: string;
+      identityId: string;
+      selectorEmoji: string;
+      keyword: string;
+      note: string;
+      avatarAttachmentId: string;
+      displayName?: string;
+      color?: string;
+      appearance?: Record<string, any>;
+      enabled: boolean;
+    }) {
+      const resp = await api.post<{ item: ChannelIdentityVariant }>('api/v1/channel-identity-variants', payload);
+      await this.loadChannelIdentityVariants(payload.channelId, true);
+      return resp.data.item;
+    },
+
+    async channelIdentityVariantUpdate(variantId: string, payload: {
+      channelId: string;
+      identityId: string;
+      selectorEmoji: string;
+      keyword: string;
+      note: string;
+      avatarAttachmentId: string;
+      displayName?: string;
+      color?: string;
+      appearance?: Record<string, any>;
+      enabled: boolean;
+    }) {
+      const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}`, payload);
+      await this.loadChannelIdentityVariants(payload.channelId, true);
+      return resp.data.item;
+    },
+
+    async channelIdentityVariantDelete(channelId: string, variantId: string) {
+      await api.delete(`api/v1/channel-identity-variants/${variantId}`, { params: { channelId } });
+      await this.loadChannelIdentityVariants(channelId, true);
+    },
+
+    async channelIdentityVariantReorder(channelId: string, identityId: string, ids: string[]) {
+      const resp = await api.post<{ items: ChannelIdentityVariant[] }>('api/v1/channel-identity-variants/reorder', {
+        channelId,
+        identityId,
+        ids,
+      });
+      const current = { ...(this.channelIdentityVariants[channelId] || {}) };
+      current[identityId] = (resp.data?.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentityVariants = {
+        ...this.channelIdentityVariants,
+        [channelId]: current,
+      };
+      return current[identityId];
     },
 
     async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
@@ -3300,6 +3674,7 @@ export const useChatStore = defineStore({
       whisperTargetId?: string | null;
       icMode?: 'ic' | 'ooc';
       identityId?: string | null;
+      identityVariantId?: string | null;
     }) {
       const messageId = String(payload?.messageId || '').trim();
       const channelId = String(payload?.channelId || '').trim();
@@ -3317,6 +3692,7 @@ export const useChatStore = defineStore({
         whisperTargetId: payload.whisperTargetId || null,
         icMode: payload.icMode === 'ooc' ? 'ooc' : 'ic',
         identityId: payload.identityId || null,
+        identityVariantId: payload.identityVariantId || null,
         cachedAt: Date.now(),
       };
       this.revokedDrafts[key] = next;
@@ -3387,6 +3763,8 @@ export const useChatStore = defineStore({
       const whisperTargetId = String(rawWhisperTargetId || '').trim() || null;
       const rawIdentityId = data?.identity_id ?? data?.identityId ?? data?.sender_identity_id;
       const identityId = String(rawIdentityId || '').trim() || null;
+      const rawIdentityVariantId = data?.identity_variant_id ?? data?.identityVariantId ?? data?.sender_identity_variant_id;
+      const identityVariantId = String(rawIdentityVariantId || '').trim() || null;
       const rawIcMode = String(data?.ic_mode ?? data?.icMode ?? 'ic').toLowerCase();
       this.cacheRevokedDraft({
         messageId: resultMessageId,
@@ -3397,6 +3775,7 @@ export const useChatStore = defineStore({
         whisperTargetId,
         icMode: rawIcMode === 'ooc' ? 'ooc' : 'ic',
         identityId,
+        identityVariantId,
       });
       return this.getRevokedDraft(resultChannelId, resultMessageId);
     },
@@ -3428,6 +3807,10 @@ export const useChatStore = defineStore({
     ): Promise<{
       data: any[];
       target_id?: string;
+      before_cursor?: string;
+      after_cursor?: string;
+      has_more_before?: boolean;
+      has_more_after?: boolean;
       not_found_reason?: 'deleted' | 'no_permission' | 'not_exists' | string;
     } | null> {
       const payload: Record<string, any> = {
@@ -3453,13 +3836,16 @@ export const useChatStore = defineStore({
       return (resp as any)?.data || null;
     },
 
-    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
+    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null }) {
       const payload: Record<string, any> = { channel_id, message_id, content };
       if (options?.icMode) {
         payload.ic_mode = options.icMode;
       }
       if (options && 'identityId' in options) {
         payload.identity_id = options.identityId ?? '';
+      }
+      if (options && 'identityVariantId' in options) {
+        payload.identity_variant_id = options.identityVariantId ?? '';
       }
       const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', payload);
       if ((resp as any)?.err) {
@@ -3639,6 +4025,7 @@ export const useChatStore = defineStore({
       whisperTargetIds?: string[],
       typingDurationMs?: number,
       position?: { beforeId?: string; afterId?: string },
+      identityVariantId?: string,
     ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
@@ -3667,6 +4054,10 @@ export const useChatStore = defineStore({
       if (resolvedIdentityId) {
         payload.identity_id = resolvedIdentityId;
       }
+      const resolvedIdentityVariantId = identityVariantId || this.getActiveIdentityVariantId(this.curChannel?.id, resolvedIdentityId);
+      if (resolvedIdentityVariantId) {
+        payload.identity_variant_id = resolvedIdentityVariantId;
+      }
       if (typeof displayOrder === 'number' && displayOrder > 0) {
         payload.display_order = displayOrder;
       }
@@ -3691,7 +4082,15 @@ export const useChatStore = defineStore({
       state: 'indicator' | 'content' | 'silent',
       content: string,
       channelId?: string,
-      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc'; orderKey?: number },
+      extra?: {
+        mode?: string;
+        messageId?: string;
+        whisperTo?: string;
+        icMode?: 'ic' | 'ooc';
+        orderKey?: number;
+        identityId?: string | null;
+        identityVariantId?: string | null;
+      },
     ) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
@@ -3726,9 +4125,14 @@ export const useChatStore = defineStore({
         if (whisperTargetId) {
           payload.whisper_to = whisperTargetId;
         }
-        const activeIdentity = this.getActiveIdentity(targetChannelId);
-        if (activeIdentity) {
-          payload.identity_id = activeIdentity.id;
+        const resolvedIdentityId = String(extra?.identityId || '').trim() || this.getActiveIdentityId(targetChannelId);
+        if (resolvedIdentityId) {
+          payload.identity_id = resolvedIdentityId;
+        }
+        const resolvedIdentityVariantId = String(extra?.identityVariantId || '').trim()
+          || this.getActiveIdentityVariantId(targetChannelId, resolvedIdentityId);
+        if (resolvedIdentityVariantId) {
+          payload.identity_variant_id = resolvedIdentityVariantId;
         }
         if (typeof extra?.orderKey === 'number' && Number.isFinite(extra.orderKey) && extra.orderKey > 0) {
           payload.order_key = extra.orderKey;
@@ -3744,6 +4148,7 @@ export const useChatStore = defineStore({
             'channel=', payload.channel_id,
             'messageId=', payload.message_id,
             'identityId=', payload.identity_id || '(none)',
+            'identityVariantId=', payload.identity_variant_id || '(none)',
             'contentSample=',
             typeof payload.content === 'string' ? payload.content.slice(0, 20) : payload.content,
           );
@@ -3775,17 +4180,23 @@ export const useChatStore = defineStore({
       // 保留已选目标，仅关闭面板
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null }) {
       const normalizedIdentityId = typeof payload.identityId === 'undefined' ? null : (payload.identityId || null);
+      const normalizedIdentityVariantId = typeof payload.identityVariantId === 'undefined' ? null : (payload.identityVariantId || null);
       const previousActiveIdentity = payload.channelId ? this.getActiveIdentityId(payload.channelId) : '';
       this.editing = {
         ...payload,
         identityId: normalizedIdentityId,
+        identityVariantId: normalizedIdentityVariantId,
         initialIdentityId: normalizedIdentityId,
+        initialIdentityVariantId: normalizedIdentityVariantId,
         activeIdentityBackup: previousActiveIdentity || null,
       };
       if (payload.channelId && normalizedIdentityId) {
         this.setActiveIdentity(payload.channelId, normalizedIdentityId);
+        if (normalizedIdentityVariantId) {
+          this.setActiveIdentityVariant(payload.channelId, normalizedIdentityId, normalizedIdentityVariantId);
+        }
       }
     },
 
@@ -3822,6 +4233,15 @@ export const useChatStore = defineStore({
     updateEditingIdentity(identityId?: string | null) {
       if (this.editing) {
         this.editing.identityId = identityId || null;
+        if (!identityId) {
+          this.editing.identityVariantId = null;
+        }
+      }
+    },
+
+    updateEditingIdentityVariant(identityVariantId?: string | null) {
+      if (this.editing) {
+        this.editing.identityVariantId = identityVariantId || null;
       }
     },
 
@@ -3913,9 +4333,62 @@ export const useChatStore = defineStore({
     },
 
     // 频道管理
-    async channelRoleList(id: string) {
-      const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', { params: { id } });
-      return resp;
+    async channelRoleList(id: string, params?: { page?: number; pageSize?: number; aggregate?: boolean }) {
+      const shouldAggregate = params?.aggregate ?? (params?.page == null && params?.pageSize == null);
+      if (!shouldAggregate) {
+        const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: {
+            id,
+            page: params?.page,
+            pageSize: params?.pageSize,
+          },
+        });
+        return resp;
+      }
+
+      const pageSize = 200;
+      let page = 1;
+      let total = 0;
+      let firstResp: Awaited<ReturnType<typeof api.get<PaginationListResponse<ChannelRoleModel>>>> | null = null;
+      const roleMap = new Map<string, ChannelRoleModel>();
+
+      while (true) {
+        const resp = await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: { id, page, pageSize },
+        });
+        if (!firstResp) {
+          firstResp = resp;
+        }
+        const items = resp.data?.items || [];
+        total = resp.data?.total ?? items.length;
+        for (const item of items) {
+          if (item?.id) {
+            roleMap.set(item.id, item);
+          }
+        }
+        if (!items.length || roleMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      if (!firstResp) {
+        return await api.get<PaginationListResponse<ChannelRoleModel>>('api/v1/channel-role-list', {
+          params: { id, page: 1, pageSize },
+        });
+      }
+
+      const items = Array.from(roleMap.values());
+      return {
+        ...firstResp,
+        data: {
+          ...firstResp.data,
+          items,
+          page: 1,
+          pageSize: items.length || pageSize,
+          total: Math.max(total, items.length),
+        },
+      };
     },
 
     // 频道管理
@@ -3928,6 +4401,65 @@ export const useChatStore = defineStore({
         },
       });
       return resp;
+    },
+
+    async channelMemberListAll(id: string, pageSize = 200) {
+      let page = 1;
+      let total = 0;
+      let firstResp: Awaited<ReturnType<typeof api.get<PaginationListResponse<UserRoleModel>>>> | null = null;
+      const itemMap = new Map<string, UserRoleModel>();
+
+      while (true) {
+        const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+          params: { id, page, pageSize },
+        });
+        if (!firstResp) {
+          firstResp = resp;
+        }
+        const items = resp.data?.items || [];
+        total = resp.data?.total ?? items.length;
+        for (const item of items) {
+          if (item?.id) {
+            itemMap.set(item.id, item);
+          }
+        }
+        if (!items.length || itemMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      if (!firstResp) {
+        return await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+          params: { id, page: 1, pageSize },
+        });
+      }
+
+      const items = Array.from(itemMap.values());
+      return {
+        ...firstResp,
+        data: {
+          ...firstResp.data,
+          items,
+          page: 1,
+          pageSize: items.length || pageSize,
+          total: Math.max(total, items.length),
+        },
+      };
+    },
+
+    async channelMemberCandidates(channelId: string, params?: { page?: number; pageSize?: number; keyword?: string; roleKey?: string; includeSpectator?: boolean; excludeExisting?: boolean }) {
+      const resp = await api.get<ChannelMemberCandidatesResponse>(`api/v1/channels/${channelId}/member-candidates`, {
+        params: {
+          page: params?.page,
+          pageSize: params?.pageSize,
+          keyword: params?.keyword,
+          roleKey: params?.roleKey,
+          includeSpectator: params?.includeSpectator,
+          excludeExisting: params?.excludeExisting,
+        },
+      });
+      return resp.data;
     },
 
     async channelMemberOptions(channelId: string) {
@@ -4019,6 +4551,11 @@ export const useChatStore = defineStore({
     async userRoleUnlink(roleId: string, userIds: string[]) {
       const resp = await api.post<{ data: boolean }>('api/v1/user-role-unlink', { roleId, userIds });
       return resp?.data;
+    },
+
+    async channelAddWorldMembers(channelId: string, payload?: { includeSpectator?: boolean }) {
+      const resp = await api.post<ChannelAddWorldMembersResponse>(`api/v1/channels/${channelId}/add-world-members`, payload || {});
+      return resp.data;
     },
 
     async friendList() {
@@ -4805,54 +5342,63 @@ export const useChatStore = defineStore({
     },
 
     // IC/OOC 角色配置相关方法
-    getChannelIcOocRoleConfig(channelId: string): { icRoleId: string | null; oocRoleId: string | null } {
-      if (!channelId) {
-        return { icRoleId: null, oocRoleId: null };
+    sanitizeChannelIcOocRoleConfig(channelId: string, config?: Partial<ChannelIcOocRoleConfig> | null): ChannelIcOocRoleConfig {
+      const normalized = normalizeChannelIcOocRoleConfig(config);
+      const identities = this.channelIdentities[channelId] || [];
+      if (!identities.length) {
+        return normalized;
       }
-      if (this.channelIcOocRoleConfig[channelId]) {
-        return this.channelIcOocRoleConfig[channelId];
-      }
-      // 尝试从 localStorage 加载
-      if (typeof window !== 'undefined') {
-        try {
-          const key = `channelIcOocRole:${channelId}`;
-          const stored = localStorage.getItem(key);
-          if (stored) {
-            const config = JSON.parse(stored);
-            this.channelIcOocRoleConfig[channelId] = config;
-            return config;
-          }
-        } catch (err) {
-          console.warn('Failed to load IC/OOC role config from localStorage', err);
-        }
-      }
-      return { icRoleId: null, oocRoleId: null };
+      const validIds = new Set(identities.map(item => item.id));
+      return {
+        icRoleId: normalized.icRoleId && validIds.has(normalized.icRoleId) ? normalized.icRoleId : null,
+        oocRoleId: normalized.oocRoleId && validIds.has(normalized.oocRoleId) ? normalized.oocRoleId : null,
+      };
     },
 
-    setChannelIcOocRoleConfig(
+    applyChannelIcOocRoleConfig(channelId: string, config?: Partial<ChannelIcOocRoleConfig> | null) {
+      if (!channelId) {
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
+      }
+      const user = useUserStore();
+      const normalized = this.sanitizeChannelIcOocRoleConfig(channelId, config);
+      this.channelIcOocRoleConfig = {
+        ...this.channelIcOocRoleConfig,
+        [channelId]: normalized,
+      };
+      writeChannelIcOocRoleConfigToStorage(channelId, user.info?.id, normalized);
+      return normalized;
+    },
+
+    getChannelIcOocRoleConfig(channelId: string): ChannelIcOocRoleConfig {
+      if (!channelId) {
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
+      }
+      return this.channelIcOocRoleConfig[channelId] || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
+    },
+
+    async setChannelIcOocRoleConfig(
       channelId: string,
       config: { icRoleId?: string | null; oocRoleId?: string | null }
     ) {
       if (!channelId) {
-        return;
+        return EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG;
       }
       const current = this.getChannelIcOocRoleConfig(channelId);
-      const updated = {
+      const previous = normalizeChannelIcOocRoleConfig(current);
+      const updated = this.sanitizeChannelIcOocRoleConfig(channelId, {
         icRoleId: config.icRoleId !== undefined ? config.icRoleId : current.icRoleId,
         oocRoleId: config.oocRoleId !== undefined ? config.oocRoleId : current.oocRoleId,
-      };
-      this.channelIcOocRoleConfig = {
-        ...this.channelIcOocRoleConfig,
-        [channelId]: updated,
-      };
-      // 持久化到 localStorage
-      if (typeof window !== 'undefined') {
-        try {
-          const key = `channelIcOocRole:${channelId}`;
-          localStorage.setItem(key, JSON.stringify(updated));
-        } catch (err) {
-          console.warn('Failed to save IC/OOC role config to localStorage', err);
-        }
+      });
+      this.applyChannelIcOocRoleConfig(channelId, updated);
+      try {
+        const resp = await api.put<{ channelId: string; exists: boolean; config?: ChannelIcOocRoleConfig | null }>(
+          `api/v1/channels/${channelId}/identity-mode-config`,
+          updated,
+        );
+        return this.applyChannelIcOocRoleConfig(channelId, resp.data?.config || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG);
+      } catch (error) {
+        this.applyChannelIcOocRoleConfig(channelId, previous);
+        throw error;
       }
     },
 
@@ -4894,24 +5440,7 @@ export const useChatStore = defineStore({
         }
       };
 
-      const tryCopyIcOocRoleConfig = () => {
-        if (!hasIdentityMap) return;
-        try {
-          const raw = localStorage.getItem(`channelIcOocRole:${sourceChannelId}`);
-          if (!raw) return;
-          const sourceConfig = JSON.parse(raw) as { icRoleId?: string | null; oocRoleId?: string | null };
-          const mappedConfig = {
-            icRoleId: resolveMappedIdentityId(sourceConfig?.icRoleId) ?? null,
-            oocRoleId: resolveMappedIdentityId(sourceConfig?.oocRoleId) ?? null,
-          };
-          localStorage.setItem(`channelIcOocRole:${targetChannelId}`, JSON.stringify(mappedConfig));
-        } catch (err) {
-          console.warn('Failed to copy IC/OOC role config', err);
-        }
-      };
-
       tryCopyActiveIdentity();
-      tryCopyIcOocRoleConfig();
       tryCopy(getBgStorageKey(sourceChannelId), getBgStorageKey(targetChannelId));
       tryCopy(getBgCategoriesKey(sourceChannelId), getBgCategoriesKey(targetChannelId));
 
@@ -4994,7 +5523,7 @@ export const useChatStore = defineStore({
           return config.oocRoleId;
         }
         // 配置的角色已不存在，清除无效配置
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
+        await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
       }
 
       // 检查是否有正在进行的创建任务（防止竞态条件）
@@ -5007,7 +5536,7 @@ export const useChatStore = defineStore({
       if (identities.length > 0) {
         // 优先使用第一个角色作为默认 OOC 角色
         const firstRole = identities[0];
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
+        await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
         return firstRole.id;
       }
 
@@ -5026,7 +5555,7 @@ export const useChatStore = defineStore({
           });
 
           // 设置为场外默认角色
-          this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
+          await this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
 
           console.log(`Created default OOC role for channel ${channelId}`, identity);
           return identity.id;

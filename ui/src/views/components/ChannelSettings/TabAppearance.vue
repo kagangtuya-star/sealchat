@@ -433,7 +433,7 @@ onUnmounted(() => {
     </div>
 
     <div class="section" v-if="backgroundUrl">
-      <h4 class="section-title">显示设置</h4>
+      <h4 class="section-title">常规设置</h4>
       <div class="settings-grid">
         <div class="setting-row">
           <span class="setting-label">显示模式</span>

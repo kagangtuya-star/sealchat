@@ -9,6 +9,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { useDisplayStore } from '@/stores/display'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
+import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
 
 const display = useDisplayStore()
 const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
@@ -79,6 +80,7 @@ onUnmounted(() => {
     <n-message-provider>
       <n-dialog-provider>
         <RouterView />
+        <GlobalLobbyAnnouncementHost />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>

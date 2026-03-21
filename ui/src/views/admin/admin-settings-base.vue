@@ -25,6 +25,7 @@ const model = ref<ServerConfig>({
   webUrl: '/',
   pageTitle: '海豹尬聊 SealChat',
   chatHistoryPersistentDays: 0,
+  messageSortBasis: 'typing_start',
   imageSizeLimit: 2 * 1024,
   imageCompress: true,
   imageCompressQuality: 85,
@@ -178,6 +179,9 @@ onMounted(async () => {
   }
   if (!model.value.audio) {
     model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
+  }
+  if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
+    model.value.messageSortBasis = 'typing_start';
   }
   if (!model.value.sqlite) {
     model.value.sqlite = { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 };
@@ -939,6 +943,14 @@ const clearLoginBg = () => {
         <n-input-number v-model:value="model.chatHistoryPersistentDays" type="number">
           <template #suffix>天</template>
         </n-input-number>
+      </n-form-item>
+      <n-form-item label="消息排序方式" feedback="仅影响新发送消息的默认排序依据；手动拖拽预览和插入定位优先级更高。">
+        <n-radio-group v-model:value="model.messageSortBasis">
+          <n-space>
+            <n-radio-button value="typing_start">开始输入时间戳</n-radio-button>
+            <n-radio-button value="send_time">发送时间戳</n-radio-button>
+          </n-space>
+        </n-radio-group>
       </n-form-item>
       <n-form-item label="图片大小上限">
         <n-input-number v-model:value="model.imageSizeLimit" type="number">

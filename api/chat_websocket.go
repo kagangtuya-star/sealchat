@@ -38,33 +38,34 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 type ConnInfo struct {
-	User                  *model.UserModel
-	Conn                  *WsSyncConn
-	ClientAddr            string
-	LastPingTime          int64
-	LastAliveTime         int64
-	LatencyMs             int64
-	ChannelId             string
-	WorldId               string
-	IsGuest               bool
-	IsObserver            bool
-	ObserverSlug          string
-	ObserverWorldID       string
-	TypingEnabled         bool
-	TypingState           protocol.TypingState
-	TypingContent         string
-	TypingWhisperTo       string
-	TypingUpdatedAt       int64
-	TypingIcMode          string
-	TypingIdentityID      string
-	TypingOrderKey        float64
-	Focused               bool
-	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
-	BotLastWhisperTargets *utils.SyncMap[string, []string]
-	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
-	BotCharacterSupport   BotCharacterSupportState
-	BotCharacterProbeOn   bool
-	BotCharacterProbeFail int
+	User                    *model.UserModel
+	Conn                    *WsSyncConn
+	ClientAddr              string
+	LastPingTime            int64
+	LastAliveTime           int64
+	LatencyMs               int64
+	ChannelId               string
+	WorldId                 string
+	IsGuest                 bool
+	IsObserver              bool
+	ObserverSlug            string
+	ObserverWorldID         string
+	TypingEnabled           bool
+	TypingState             protocol.TypingState
+	TypingContent           string
+	TypingWhisperTo         string
+	TypingUpdatedAt         int64
+	TypingIcMode            string
+	TypingIdentityID        string
+	TypingIdentityVariantID string
+	TypingOrderKey          float64
+	Focused                 bool
+	BotLastMessageContext   *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastWhisperTargets   *utils.SyncMap[string, []string]
+	BotHiddenDicePending    *utils.SyncMap[string, *BotHiddenDicePending]
+	BotCharacterSupport     BotCharacterSupportState
+	BotCharacterProbeOn     bool
+	BotCharacterProbeFail   int
 }
 
 type BotHiddenDicePending struct {
@@ -1077,6 +1078,7 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo.TypingUpdatedAt = 0
 			curConnInfo.TypingIcMode = "ic"
 			curConnInfo.TypingIdentityID = ""
+			curConnInfo.TypingIdentityVariantID = ""
 			curConnInfo.TypingOrderKey = 0
 		}
 

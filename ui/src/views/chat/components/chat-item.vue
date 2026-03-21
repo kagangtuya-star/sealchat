@@ -158,6 +158,45 @@ const resolveStickyNoteContentText = (note: any): string => {
   return rawContent;
 };
 
+const renderLegacyStickyNoteEmbedHtml = (content: string): string => {
+  const imgPlaceholders: string[] = [];
+  let processed = content.replace(/<img\s+[^>]*src=(['"]?)([^'">\s]+)\1[^>]*>/gi, (match, _quote, src) => {
+    const resolvedSrc = resolveAttachmentUrl(src || '');
+    imgPlaceholders.push(match.replace(src, resolvedSrc));
+    return `__STICKY_NOTE_IMG_PLACEHOLDER_${imgPlaceholders.length - 1}__`;
+  });
+
+  processed = processed
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+
+  imgPlaceholders.forEach((img, index) => {
+    processed = processed.replace(`__STICKY_NOTE_IMG_PLACEHOLDER_${index}__`, img);
+  });
+
+  return processed;
+};
+
+const resolveStickyNoteEmbedHtml = (note: StickyNote | null | undefined): string => {
+  const rawContent = String(note?.content || '');
+  if (!rawContent.trim()) {
+    return '';
+  }
+
+  if (isTipTapJson(rawContent)) {
+    return tiptapJsonToHtml(rawContent, {
+      baseUrl: urlBase,
+      imageClass: 'message-sticky-note-embed__image',
+      linkClass: 'message-sticky-note-embed__link',
+      attachmentResolver: resolveAttachmentUrl,
+    });
+  }
+
+  return renderLegacyStickyNoteEmbedHtml(rawContent);
+};
+
 const resolveStickyNoteEmbedComponent = (type: StickyNoteType) => {
   switch (type) {
     case 'counter':
@@ -268,6 +307,8 @@ const parseContent = (payload: any, overrideContent?: string) => {
       const isInteractiveType = Boolean(embedComponent && liveNote);
       const title = String(liveNote?.title || '').trim() || '未命名便签';
       const fullText = resolveStickyNoteContentText(liveNote);
+      const richContentHtml = liveNote ? resolveStickyNoteEmbedHtml(liveNote) : '';
+      const sanitizedRichContentHtml = richContentHtml ? String(DOMPurify.sanitize(richContentHtml)) : '';
       const accentColor = resolveStickyNoteAccent(liveNote?.color || 'blue');
       const previewTitle = fullText || '点击打开便签';
       const noteId = singleStickyNoteLink.noteId;
@@ -364,7 +405,12 @@ const parseContent = (payload: any, overrideContent?: string) => {
               [
                 isInteractiveType && liveNote && embedComponent
                   ? h(embedComponent, { note: liveNote as StickyNote, isEditing: false })
-                  : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
+                  : sanitizedRichContentHtml
+                    ? h('div', {
+                      class: 'message-sticky-note-embed__rich-content',
+                      innerHTML: sanitizedRichContentHtml,
+                    })
+                    : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
               ],
             ),
           ]),
@@ -4446,6 +4492,86 @@ const handleRetrySend = () => {
   word-break: break-word;
 }
 
+.message-sticky-note-embed__rich-content {
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--chat-text-secondary, #64748b);
+  word-break: break-word;
+}
+
+.message-sticky-note-embed__rich-content :deep(p),
+.message-sticky-note-embed__rich-content :deep(ul),
+.message-sticky-note-embed__rich-content :deep(ol),
+.message-sticky-note-embed__rich-content :deep(blockquote),
+.message-sticky-note-embed__rich-content :deep(pre),
+.message-sticky-note-embed__rich-content :deep(h1),
+.message-sticky-note-embed__rich-content :deep(h2),
+.message-sticky-note-embed__rich-content :deep(h3),
+.message-sticky-note-embed__rich-content :deep(h4),
+.message-sticky-note-embed__rich-content :deep(h5),
+.message-sticky-note-embed__rich-content :deep(h6) {
+  margin: 0 0 0.42rem;
+}
+
+.message-sticky-note-embed__rich-content :deep(p:last-child),
+.message-sticky-note-embed__rich-content :deep(ul:last-child),
+.message-sticky-note-embed__rich-content :deep(ol:last-child),
+.message-sticky-note-embed__rich-content :deep(blockquote:last-child),
+.message-sticky-note-embed__rich-content :deep(pre:last-child),
+.message-sticky-note-embed__rich-content :deep(h1:last-child),
+.message-sticky-note-embed__rich-content :deep(h2:last-child),
+.message-sticky-note-embed__rich-content :deep(h3:last-child),
+.message-sticky-note-embed__rich-content :deep(h4:last-child),
+.message-sticky-note-embed__rich-content :deep(h5:last-child),
+.message-sticky-note-embed__rich-content :deep(h6:last-child) {
+  margin-bottom: 0;
+}
+
+.message-sticky-note-embed__rich-content :deep(ul),
+.message-sticky-note-embed__rich-content :deep(ol) {
+  padding-left: 1.1rem;
+}
+
+.message-sticky-note-embed__rich-content :deep(blockquote) {
+  padding-left: 0.7rem;
+  border-left: 2px solid color-mix(in srgb, var(--sticky-note-accent) 55%, transparent);
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+
+.message-sticky-note-embed__rich-content :deep(code) {
+  padding: 0.08rem 0.28rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 92%, transparent);
+  font-size: 0.68rem;
+}
+
+.message-sticky-note-embed__rich-content :deep(pre) {
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 92%, transparent);
+  overflow: auto;
+}
+
+.message-sticky-note-embed__rich-content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.message-sticky-note-embed__rich-content :deep(.message-sticky-note-embed__image) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.3rem 0;
+  border-radius: 8px;
+}
+
+.message-sticky-note-embed__rich-content :deep(.message-sticky-note-embed__link) {
+  color: color-mix(in srgb, var(--sticky-note-accent) 72%, #2563eb);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .message-sticky-note-embed__panel {
   margin-left: 0.92rem;
   margin-top: 0.08rem;
@@ -4644,6 +4770,15 @@ const handleRetrySend = () => {
 
 :root[data-display-palette='night'] .message-sticky-note-embed__content {
   color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 95%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__rich-content {
+  color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 95%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__rich-content :deep(code),
+:root[data-display-palette='night'] .message-sticky-note-embed__rich-content :deep(pre) {
+  background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.42)) 82%, transparent);
 }
 
 :root[data-display-palette='night'] .message-sticky-note-embed__copy-btn {

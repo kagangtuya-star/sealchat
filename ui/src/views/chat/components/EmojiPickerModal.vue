@@ -376,102 +376,104 @@ watch(
 </script>
 
 <template>
-  <div
-    class="emoji-picker-modal"
-    :class="{ 'emoji-picker-modal--embedded': props.embedded }"
-    @click.self="!props.embedded && emit('close')"
-  >
+  <teleport to="body" :disabled="props.embedded">
     <div
-      ref="pickerRef"
-      class="emoji-picker-container"
-      :class="{ 'emoji-picker-container--embedded': props.embedded }"
+      class="emoji-picker-modal"
+      :class="{ 'emoji-picker-modal--embedded': props.embedded }"
+      @click.self="!props.embedded && emit('close')"
     >
-      <div v-if="!props.embedded" class="emoji-picker-tabs">
-        <button class="emoji-picker-close" type="button" @click="emit('close')">
-          返回
-        </button>
-        <button
-          class="emoji-picker-tab"
-          :class="{ 'emoji-picker-tab--active': activeTab === 'emoji' }"
-          type="button"
-          @click="activeTab = 'emoji'"
-        >
-          表情
-        </button>
-        <button
-          v-if="props.mode !== 'emoji-only'"
-          class="emoji-picker-tab"
-          :class="{ 'emoji-picker-tab--active': activeTab === 'reaction' }"
-          type="button"
-          @click="activeTab = 'reaction'"
-        >
-          表情反应
-        </button>
-      </div>
-      <div class="emoji-picker-body">
-        <div v-if="props.mode !== 'emoji-only'" v-show="activeTab === 'reaction'" class="custom-emoji-section">
-          <div class="custom-emoji-header">
-            <span>自定义表情反应</span>
-            <button class="custom-emoji-upload" type="button" :disabled="uploading" @click="triggerUpload">
-              {{ uploading ? '上传中…' : '上传表情' }}
-            </button>
-            <input
-              ref="fileInputRef"
-              class="custom-emoji-input"
-              type="file"
-              accept="image/*"
-              multiple
-              @change="handleFileInput"
-            />
-          </div>
-          <div class="custom-emoji-search">
-            <input
-              type="text"
-              class="custom-emoji-search__input"
-              placeholder="搜索表情"
-              :value="searchKeyword"
-              @input="handleCustomSearchInput"
-            />
-          </div>
-          <div v-if="customEmojiItems.length" class="custom-emoji-meta">
-            <span v-if="searchKeyword">匹配 {{ filteredCustomEmojiItems.length }} / {{ customEmojiItems.length }}</span>
-            <span v-else>共 {{ customEmojiItems.length }} 个</span>
-          </div>
-          <div
-            v-if="filteredCustomEmojiItems.length"
-            ref="customGridRef"
-            class="custom-emoji-grid"
-            @scroll="handleCustomGridScroll"
+      <div
+        ref="pickerRef"
+        class="emoji-picker-container"
+        :class="{ 'emoji-picker-container--embedded': props.embedded }"
+      >
+        <div v-if="!props.embedded" class="emoji-picker-tabs">
+          <button class="emoji-picker-close" type="button" @click="emit('close')">
+            返回
+          </button>
+          <button
+            class="emoji-picker-tab"
+            :class="{ 'emoji-picker-tab--active': activeTab === 'emoji' }"
+            type="button"
+            @click="activeTab = 'emoji'"
           >
-            <button
-              v-for="item in visibleCustomEmojiItems"
-              :key="item.id"
-              class="custom-emoji-item"
-              type="button"
-              :title="item.remark || '自定义表情'"
-              @click="handleCustomSelect(item.attachmentId)"
-            >
-              <img :src="resolveCustomEmojiSrc(item.attachmentId, item.thumbUrl)" :alt="item.remark || 'emoji'" />
-            </button>
-          </div>
-          <div v-else class="custom-emoji-empty">
-            {{ searchKeyword ? '没有匹配的表情' : '暂无自定义表情' }}
-          </div>
-          <div v-if="hasMoreCustomEmoji" class="custom-emoji-more">继续下拉加载更多</div>
+            表情
+          </button>
+          <button
+            v-if="props.mode !== 'emoji-only'"
+            class="emoji-picker-tab"
+            :class="{ 'emoji-picker-tab--active': activeTab === 'reaction' }"
+            type="button"
+            @click="activeTab = 'reaction'"
+          >
+            表情反应
+          </button>
         </div>
-        <div v-show="activeTab === 'emoji'" class="emoji-picker-pane">
-          <emoji-picker class="light"></emoji-picker>
+        <div class="emoji-picker-body">
+          <div v-if="props.mode !== 'emoji-only'" v-show="activeTab === 'reaction'" class="custom-emoji-section">
+            <div class="custom-emoji-header">
+              <span>自定义表情反应</span>
+              <button class="custom-emoji-upload" type="button" :disabled="uploading" @click="triggerUpload">
+                {{ uploading ? '上传中…' : '上传表情' }}
+              </button>
+              <input
+                ref="fileInputRef"
+                class="custom-emoji-input"
+                type="file"
+                accept="image/*"
+                multiple
+                @change="handleFileInput"
+              />
+            </div>
+            <div class="custom-emoji-search">
+              <input
+                type="text"
+                class="custom-emoji-search__input"
+                placeholder="搜索表情"
+                :value="searchKeyword"
+                @input="handleCustomSearchInput"
+              />
+            </div>
+            <div v-if="customEmojiItems.length" class="custom-emoji-meta">
+              <span v-if="searchKeyword">匹配 {{ filteredCustomEmojiItems.length }} / {{ customEmojiItems.length }}</span>
+              <span v-else>共 {{ customEmojiItems.length }} 个</span>
+            </div>
+            <div
+              v-if="filteredCustomEmojiItems.length"
+              ref="customGridRef"
+              class="custom-emoji-grid"
+              @scroll="handleCustomGridScroll"
+            >
+              <button
+                v-for="item in visibleCustomEmojiItems"
+                :key="item.id"
+                class="custom-emoji-item"
+                type="button"
+                :title="item.remark || '自定义表情'"
+                @click="handleCustomSelect(item.attachmentId)"
+              >
+                <img :src="resolveCustomEmojiSrc(item.attachmentId, item.thumbUrl)" :alt="item.remark || 'emoji'" />
+              </button>
+            </div>
+            <div v-else class="custom-emoji-empty">
+              {{ searchKeyword ? '没有匹配的表情' : '暂无自定义表情' }}
+            </div>
+            <div v-if="hasMoreCustomEmoji" class="custom-emoji-more">继续下拉加载更多</div>
+          </div>
+          <div v-show="activeTab === 'emoji'" class="emoji-picker-pane">
+            <emoji-picker class="light"></emoji-picker>
+          </div>
         </div>
       </div>
     </div>
-  </div>
+  </teleport>
 </template>
 
 <style scoped>
 .emoji-picker-modal {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: 4000;
   display: flex;
   align-items: center;
   justify-content: center;

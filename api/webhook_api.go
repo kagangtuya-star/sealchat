@@ -429,7 +429,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	}
 
 	var renderResult *service.DiceRenderResult
-	if channel.BuiltInDiceEnabled {
+	if service.IsBuiltInDiceEffectivelyEnabled(channel) {
 		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
 		if err != nil {
 			return wrapError(c, err, "渲染骰点失败")
@@ -486,6 +486,10 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 
 	// 广播（复用现有 WS 广播通道）
 	channelData := channel.ToProtocolType()
+	if service.IsBotFeatureEffectivelyEnabled(channel) {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 	msg.User = botUser
 	msg.Member = member
 	if msg.QuoteID != "" {
@@ -591,17 +595,19 @@ func webhookMessageUpdate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		UserId2ConnInfo: getUserConnInfoMap(),
 	}
 	data := &struct {
-		ChannelID  string  `json:"channel_id"`
-		MessageID  string  `json:"message_id"`
-		Content    string  `json:"content"`
-		ICMode     string  `json:"ic_mode"`
-		IdentityID *string `json:"identity_id"`
+		ChannelID         string  `json:"channel_id"`
+		MessageID         string  `json:"message_id"`
+		Content           string  `json:"content"`
+		ICMode            string  `json:"ic_mode"`
+		IdentityID        *string `json:"identity_id"`
+		IdentityVariantID *string `json:"identity_variant_id"`
 	}{
-		ChannelID:  channel.ID,
-		MessageID:  messageID,
-		Content:    req.Message.Content,
-		ICMode:     req.Message.ICMode,
-		IdentityID: identityID,
+		ChannelID:         channel.ID,
+		MessageID:         messageID,
+		Content:           req.Message.Content,
+		ICMode:            req.Message.ICMode,
+		IdentityID:        identityID,
+		IdentityVariantID: nil,
 	}
 	_, err := apiMessageUpdate(ctx, data)
 	if err != nil {

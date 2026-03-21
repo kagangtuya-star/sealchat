@@ -852,13 +852,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           <button
             type="button"
             class="sc-icon-button"
-            aria-label="显示设置"
+            aria-label="常规设置"
             @click="openDisplaySettings"
           >
             <n-icon :component="Palette" size="16" />
           </button>
         </template>
-        <span>显示设置</span>
+        <span>常规设置</span>
       </n-tooltip>
       <n-button size="small" type="primary" @click="goLogin">登录</n-button>
     </div>

@@ -13,7 +13,7 @@
       @pointerdown="handlePointerDown"
       @focusout="handleNoteFocusOut"
       @keydown.capture="markEditingActivity"
-      @pointerdown.capture="markEditingActivity"
+      @pointerdown.capture="handleInternalPointerDown"
     >
       <!-- 头部 -->
       <div
@@ -158,14 +158,28 @@
             class="sticky-note__editor"
           >
             <!-- 富文本模式 -->
-            <StickyNoteEditor
+            <ChatInputRich
               v-if="richMode"
               ref="editorRef"
               v-model="localContent"
-              :channel-id="note?.channelId"
+              :mention-options="stickyMentionOptions"
+              :input-class="['chat-input--fullscreen', 'sticky-note__rich-input']"
+              placeholder="在此输入内容..."
               @update:model-value="debouncedSaveContent"
               @focus="markEditingActivity"
               @blur="handleEditorBlur"
+              @paste-image="handleRichImageTransfer"
+              @drop-files="handleRichImageTransfer"
+              @upload-button-click="handleRichUploadButtonClick"
+            />
+            <input
+              v-if="richMode"
+              ref="inlineImageInputRef"
+              class="hidden"
+              type="file"
+              accept="image/*"
+              multiple
+              @change="handleInlineImageInputChange"
             />
             <!-- 简单模式 -->
             <div v-else class="sticky-note__simple-editor">
@@ -173,25 +187,14 @@
                 <button
                   class="sticky-note__toolbar-btn"
                   :class="{ 'is-active': richMode }"
-                  @click="richMode = true"
+                  @pointerdown.prevent.stop
+                  @click="activateRichMode"
                   title="切换到富文本模式"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
                   </svg>
                 </button>
-                <button
-                  class="sticky-note__toolbar-btn"
-                  :disabled="!defaultIFormEmbedLink"
-                  @click="copyIFormEmbedLink"
-                  :title="defaultIFormEmbedLink ? '复制首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
-                >⧉</button>
-                <button
-                  class="sticky-note__toolbar-btn"
-                  :disabled="!defaultIFormEmbedLink"
-                  @click="insertIFormEmbedLinkToSimple"
-                  :title="defaultIFormEmbedLink ? '插入首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
-                >↘</button>
               </div>
               <textarea
                 v-model="localContent"
@@ -250,16 +253,17 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
-import { useMessage } from 'naive-ui'
+import { useMessage, type MentionOption } from 'naive-ui'
+import { nanoid } from 'nanoid'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore, chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
-import { useIFormStore } from '@/stores/iform'
 import { useUtilsStore } from '@/stores/utils'
-import { generateIFormEmbedLink } from '@/utils/iformEmbedLink'
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
+import { normalizeAttachmentId } from '@/composables/useAttachmentResolver'
 import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
-import StickyNoteEditor from './StickyNoteEditor.vue'
+import ChatInputRich from './inputs/ChatInputRich.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 
 // 动态导入类型组件
@@ -290,14 +294,13 @@ const props = defineProps<{
 const stickyNoteStore = useStickyNoteStore()
 const chatStore = useChatStore()
 const userStore = useUserStore()
-const iFormStore = useIFormStore()
 const utilsStore = useUtilsStore()
 const message = useMessage()
-iFormStore.bootstrap()
 
 const noteEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement | null>(null)
-const editorRef = ref<InstanceType<typeof StickyNoteEditor> | null>(null)
+const editorRef = ref<InstanceType<typeof ChatInputRich> | null>(null)
+const inlineImageInputRef = ref<HTMLInputElement | null>(null)
 
 // 本地编辑状态
 const localTitle = ref('')
@@ -313,6 +316,15 @@ const autoSaveTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const AUTO_SAVE_IDLE_MS = 10_000
 const isHighlighted = ref(false)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
+const lastInternalPointerDownAt = ref(0)
+const filePickerPending = ref(false)
+const isReleasingEditing = ref(false)
+
+type StickyNoteRichImagePayload = {
+  files: File[]
+  selectionStart: number
+  selectionEnd: number
+}
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -410,6 +422,35 @@ const copyStickyNoteEmbedLink = async () => {
   }
 }
 
+const stickyMentionOptions = computed<MentionOption[]>(() => {
+  const options: MentionOption[] = []
+  const users = chatStore.curChannelUsers || []
+  if (users.length > 0) {
+    options.push({
+      label: '所有人',
+      value: '@all',
+      data: {
+        userId: 'all',
+        displayName: '所有人',
+      },
+    } as MentionOption)
+  }
+  users.forEach((user) => {
+    const userId = String(user?.id || '').trim()
+    if (!userId) return
+    const displayName = String(user?.nick || user?.name || userId).trim()
+    options.push({
+      label: displayName,
+      value: userId,
+      data: {
+        userId,
+        displayName,
+      },
+    } as MentionOption)
+  })
+  return options
+})
+
 const clearHighlightTimer = () => {
   if (!highlightTimer) {
     return
@@ -451,55 +492,6 @@ const resolveIFormEmbedLinkBase = () => {
     base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`
   }
   return base
-}
-
-const defaultIFormEmbedLink = computed(() => {
-  const channelId = (note.value?.channelId || '').trim()
-  const worldId = (chatStore.currentWorldId || '').trim()
-  if (!channelId || !worldId) {
-    return ''
-  }
-  const firstForm = iFormStore.formsByChannel[channelId]?.[0]
-  if (!firstForm?.id) {
-    return ''
-  }
-  return generateIFormEmbedLink(
-    {
-      worldId,
-      channelId,
-      formId: firstForm.id,
-      width: firstForm.defaultWidth,
-      height: firstForm.defaultHeight,
-    },
-    { base: resolveIFormEmbedLinkBase() },
-  )
-})
-
-const copyIFormEmbedLink = async () => {
-  const link = defaultIFormEmbedLink.value
-  if (!link) {
-    message.warning('当前频道暂无可复制 iForm')
-    return
-  }
-  const copied = await copyTextWithFallback(link)
-  if (copied) {
-    message.success('iForm 嵌入链接已复制')
-  } else {
-    message.error('复制失败')
-  }
-}
-
-const insertIFormEmbedLinkToSimple = () => {
-  const link = defaultIFormEmbedLink.value
-  if (!link) {
-    message.warning('当前频道暂无可插入 iForm')
-    return
-  }
-  localContent.value = localContent.value
-    ? `${localContent.value}
-${link}`
-    : link
-  debouncedSaveContent()
 }
 
 const creatorName = computed(() => {
@@ -551,6 +543,77 @@ function markEditingActivity() {
   scheduleAutoSaveAndRelease()
 }
 
+function handleInternalPointerDown() {
+  lastInternalPointerDownAt.value = Date.now()
+  markEditingActivity()
+}
+
+const insertUploadedImageToRichEditor = (src: string, alt: string) => {
+  const editor = editorRef.value?.getEditor?.()
+  if (!editor) return
+  editor.chain().focus().setImage({ src, alt }).run()
+}
+
+const handleRichImageInsert = async (files: File[]) => {
+  if (!files.length) return
+
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+  if (!imageFiles.length) {
+    message.warning('当前仅支持插入图片文件')
+    return
+  }
+
+  markEditingActivity()
+
+  for (const file of imageFiles) {
+    const markerId = nanoid()
+    try {
+      const result = await uploadImageAttachment(file, {
+        channelId: note.value?.channelId,
+      })
+      const normalizedId = normalizeAttachmentId(result.attachmentId)
+      const finalUrl = normalizedId ? `/api/v1/attachment/${normalizedId}` : String(result.attachmentId || '')
+      if (!finalUrl) {
+        throw new Error('图片上传成功但未获取到可用地址')
+      }
+      insertUploadedImageToRichEditor(finalUrl, file.name || `图片-${markerId}`)
+    } catch (error: any) {
+      message.error(error?.message || '图片上传失败')
+    }
+  }
+}
+
+const handleRichImageTransfer = (payload: StickyNoteRichImagePayload) => {
+  void handleRichImageInsert(payload.files)
+}
+
+const handleRichUploadButtonClick = () => {
+  filePickerPending.value = true
+  markEditingActivity()
+  inlineImageInputRef.value?.click()
+}
+
+const handleInlineImageInputChange = (event: Event) => {
+  filePickerPending.value = false
+  const input = event.target as HTMLInputElement | null
+  const files = Array.from(input?.files || [])
+  if (files.length > 0) {
+    void handleRichImageInsert(files)
+  }
+  if (input) {
+    input.value = ''
+  }
+}
+
+function activateRichMode() {
+  if (!isEditing.value || richMode.value) return
+  richMode.value = true
+  markEditingActivity()
+  nextTick(() => {
+    editorRef.value?.focus()
+  })
+}
+
 function getActiveSessionId() {
   return currentEditSessionId.value || stickyNoteStore.getEditingSessionId(props.noteId) || undefined
 }
@@ -586,17 +649,23 @@ async function saveContentNowWithSession() {
 
 async function saveAndReleaseEditing(options?: { autoReason?: 'idle' | 'blur' | 'close' }) {
   if (!isEditing.value) return
+  if (isReleasingEditing.value) return
+  isReleasingEditing.value = true
   clearAutoSaveTimer()
-  await saveTitleWithSession()
-  await saveContentNowWithSession()
-  const sessionId = getActiveSessionId()
-  if (sessionId) {
-    await stickyNoteStore.releaseEditLock(props.noteId, sessionId)
-  }
-  stickyNoteStore.stopEditing(props.noteId)
-  currentEditSessionId.value = null
-  if (options?.autoReason === 'idle') {
-    message.info('便签已自动保存并释放编辑锁')
+  try {
+    await saveTitleWithSession()
+    await saveContentNowWithSession()
+    const sessionId = getActiveSessionId()
+    if (sessionId) {
+      await stickyNoteStore.releaseEditLock(props.noteId, sessionId)
+    }
+    stickyNoteStore.stopEditing(props.noteId)
+    currentEditSessionId.value = null
+    if (options?.autoReason === 'idle') {
+      message.info('便签已自动保存并释放编辑锁')
+    }
+  } finally {
+    isReleasingEditing.value = false
   }
 }
 
@@ -629,10 +698,8 @@ async function beginEditing() {
 function handleEditorBlur() {
   if (!isEditing.value) return
   window.setTimeout(() => {
-    const root = noteEl.value
-    if (!root) return
     const activeEl = document.activeElement as Node | null
-    if (activeEl && root.contains(activeEl)) {
+    if (shouldKeepEditingOpen(activeEl)) {
       return
     }
     void saveAndReleaseEditing({ autoReason: 'blur' })
@@ -641,15 +708,13 @@ function handleEditorBlur() {
 
 function handleNoteFocusOut(event: FocusEvent) {
   if (!isEditing.value) return
-  const root = noteEl.value
-  if (!root) return
   const nextFocus = event.relatedTarget as Node | null
-  if (nextFocus && root.contains(nextFocus)) {
+  if (shouldKeepEditingOpen(nextFocus)) {
     return
   }
   window.setTimeout(() => {
     const activeEl = document.activeElement as Node | null
-    if (activeEl && root.contains(activeEl)) {
+    if (shouldKeepEditingOpen(activeEl)) {
       return
     }
     void saveAndReleaseEditing({ autoReason: 'blur' })
@@ -658,6 +723,58 @@ function handleNoteFocusOut(event: FocusEvent) {
 
 function handleWindowBlur() {
   if (!isEditing.value) return
+  if (filePickerPending.value) return
+  void saveAndReleaseEditing({ autoReason: 'blur' })
+}
+
+function handleWindowFocus() {
+  if (!filePickerPending.value) return
+  filePickerPending.value = false
+  if (isEditing.value) {
+    markEditingActivity()
+  }
+}
+
+function isEditingScopeTarget(target: Node | null) {
+  const root = noteEl.value
+  if (!root) return false
+  if (target && root.contains(target)) {
+    return true
+  }
+  const targetElement = target instanceof HTMLElement ? target : null
+  if (targetElement?.closest('.mention-dropdown, .tiptap-bubble-menu')) {
+    return true
+  }
+  if (editorRef.value?.hasOpenOverlay?.() && targetElement?.closest('.n-popover, .n-modal, [role="dialog"]')) {
+    return true
+  }
+  return false
+}
+
+function shouldKeepEditingOpen(target: Node | null) {
+  if (isEditingScopeTarget(target)) {
+    return true
+  }
+  if (Date.now() - lastInternalPointerDownAt.value <= 120) {
+    return true
+  }
+  if (editorRef.value?.hasOpenOverlay?.()) {
+    return true
+  }
+  if (editorRef.value?.hasRecentOverlayInteraction?.(300)) {
+    return true
+  }
+  return false
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (!isEditing.value) return
+  if (filePickerPending.value) return
+  if (isDragging.value || isResizing.value) return
+  const target = event.target as Node | null
+  if (isEditingScopeTarget(target)) {
+    return
+  }
   void saveAndReleaseEditing({ autoReason: 'blur' })
 }
 
@@ -975,7 +1092,7 @@ function stopDrag(e: PointerEvent) {
   stickyNoteStore.updateUserState(props.noteId, {
     positionX: Math.round(rect.left),
     positionY: Math.round(rect.top)
-  }, { persistRemote: false })
+  })
 }
 
 // 调整大小逻辑
@@ -1030,7 +1147,7 @@ function stopResize(e: PointerEvent) {
   stickyNoteStore.updateUserState(props.noteId, {
     width: Math.round(rect.width),
     height: Math.round(rect.height)
-  }, { persistRemote: false })
+  })
 }
 
 // 监听便签变化同步本地状态
@@ -1076,12 +1193,16 @@ onUnmounted(() => {
   document.removeEventListener('pointermove', onResize)
   document.removeEventListener('pointerup', stopResize)
   document.removeEventListener('pointercancel', stopResize)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
   window.removeEventListener('blur', handleWindowBlur)
+  window.removeEventListener('focus', handleWindowFocus)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 if (typeof window !== 'undefined') {
+  document.addEventListener('pointerdown', handleDocumentPointerDown, true)
   window.addEventListener('blur', handleWindowBlur)
+  window.addEventListener('focus', handleWindowFocus)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 }
 </script>
@@ -1229,7 +1350,93 @@ if (typeof window !== 'undefined') {
 }
 
 .sticky-note__editor {
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: none;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-wrapper) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-toolbar) {
+  gap: 2px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-toolbar__divider) {
+  background-color: rgba(0, 0, 0, 0.14);
+  margin: 0 4px;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-editor-wrapper) {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-content) {
+  min-height: 100%;
+  max-height: none;
+  padding: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.82);
+  caret-color: rgba(0, 0, 0, 0.82);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .n-button) {
+  color: rgba(0, 0, 0, 0.72);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .n-button:hover) {
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .n-button.n-button--primary-type) {
+  color: #2563eb;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-highlight-icon) {
+  color: rgba(0, 0, 0, 0.72);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-textcolor-icon) {
+  color: rgba(0, 0, 0, 0.72);
+  border-bottom-color: #2563eb;
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-bubble-menu) {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.82);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .tiptap-bubble-menu__divider) {
+  background-color: rgba(0, 0, 0, 0.12);
+}
+
+.sticky-note__editor :deep(.sticky-note__rich-input .mention-dropdown) {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.82);
 }
 
 .sticky-note__textarea {

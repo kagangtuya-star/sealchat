@@ -31,6 +31,8 @@ interface ItemStateEntry {
   pageSize: number;
   total: number;
   loading: boolean;
+  loadingMore: boolean;
+  keyword?: string;
 }
 
 interface GalleryState {
@@ -54,6 +56,7 @@ interface GalleryState {
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
 const DEFAULT_EMOJI_REMARK_VISIBLE = true;
+export const DEFAULT_GALLERY_PAGE_SIZE = 15;
 
 export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
 export const COLLECTION_TYPE_EMOJI_REACTION = 'emoji_reactions';
@@ -125,11 +128,12 @@ export const useGalleryStore = defineStore('gallery', {
     getItemsByCollection: (state) => (collectionId: string) => state.items[collectionId]?.items ?? [],
     getItemPagination: (state) => (collectionId: string) => {
       const entry = state.items[collectionId];
-      if (!entry) return { page: 1, pageSize: 40, total: 0 };
+      if (!entry) return { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: 0 };
       const { page, pageSize, total } = entry;
       return { page, pageSize, total };
     },
     isCollectionLoading: (state) => (collectionId: string) => state.items[collectionId]?.loading ?? false,
+    isCollectionLoadingMore: (state) => (collectionId: string) => state.items[collectionId]?.loadingMore ?? false,
     isPanelVisible: (state) => state.panelVisible,
     isInitializing: (state) => state.initializing,
     emojiItems(state): GalleryItem[] {
@@ -229,10 +233,14 @@ export const useGalleryStore = defineStore('gallery', {
       this.panelVisible = false;
     },
 
-    async setActiveCollection(collectionId: string | null) {
+    async setActiveCollection(collectionId: string | null, params: { pageSize?: number; keyword?: string } = {}) {
       this.activeCollectionId = collectionId;
       if (collectionId) {
-        await this.loadItems(collectionId);
+        await this.loadItems(collectionId, {
+          page: 1,
+          pageSize: params.pageSize,
+          keyword: params.keyword
+        });
       }
     },
 
@@ -367,26 +375,57 @@ export const useGalleryStore = defineStore('gallery', {
       this.persistEmojiPreference(ownerId);
     },
 
-    async loadItems(collectionId: string, params: { page?: number; pageSize?: number; keyword?: string } = {}) {
-      const entry = this.items[collectionId] ?? {
+    async loadItems(collectionId: string, params: { page?: number; pageSize?: number; keyword?: string; append?: boolean } = {}) {
+      const normalizedKeyword = params.keyword?.trim() || undefined;
+      const current = this.items[collectionId];
+      const requestedPageSize = params.pageSize ?? current?.pageSize ?? DEFAULT_GALLERY_PAGE_SIZE;
+      const requestedPage = params.page ?? (params.append ? (current?.page ?? 0) + 1 : 1);
+      const shouldAppend = Boolean(
+        params.append &&
+        current &&
+        requestedPage > 1 &&
+        current.keyword === normalizedKeyword
+      );
+
+      const entry = current ?? {
         items: [],
-        page: params.page ?? 1,
-        pageSize: params.pageSize ?? 40,
+        page: 1,
+        pageSize: requestedPageSize,
         total: 0,
-        loading: false
+        loading: false,
+        loadingMore: false,
+        keyword: normalizedKeyword
       };
-      entry.loading = true;
+      entry.pageSize = requestedPageSize;
+      entry.keyword = normalizedKeyword;
+      if (shouldAppend) {
+        entry.loadingMore = true;
+      } else {
+        entry.loading = true;
+      }
       this.items[collectionId] = entry;
 
       try {
-        const resp = await apiFetchItems(collectionId, params);
-        entry.items = resp.data.items;
+        const resp = await apiFetchItems(collectionId, {
+          page: requestedPage,
+          pageSize: requestedPageSize,
+          keyword: normalizedKeyword
+        });
+        if (shouldAppend) {
+          const existingIds = new Set(entry.items.map((item) => item.id));
+          const appended = resp.data.items.filter((item) => !existingIds.has(item.id));
+          entry.items = [...entry.items, ...appended];
+        } else {
+          entry.items = resp.data.items;
+        }
         entry.page = resp.data.page;
         entry.pageSize = resp.data.pageSize;
         entry.total = resp.data.total;
+        entry.keyword = normalizedKeyword;
         return resp.data.items;
       } finally {
         entry.loading = false;
+        entry.loadingMore = false;
       }
     },
 
@@ -394,9 +433,10 @@ export const useGalleryStore = defineStore('gallery', {
       const entry = this.items[collectionId] ?? {
         items: [],
         page: 1,
-        pageSize: 40,
+        pageSize: DEFAULT_GALLERY_PAGE_SIZE,
         total: 0,
-        loading: false
+        loading: false,
+        loadingMore: false
       };
       const map = new Map(entry.items.map((item) => [item.id, item] as const));
       for (const item of items) {

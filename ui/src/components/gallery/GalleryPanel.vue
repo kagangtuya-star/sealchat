@@ -65,7 +65,7 @@
                 @keyup.enter="loadActiveItems"
                 style="width: 140px"
               />
-              <n-button size="small" :loading="loading" @click="loadActiveItems">刷新</n-button>
+              <n-button size="small" :loading="refreshing" @click="loadActiveItems">刷新</n-button>
             </div>
           </div>
 
@@ -96,6 +96,9 @@
           <GalleryGrid
             :items="items"
             :loading="loading"
+            :loading-more="loadingMore"
+            :has-more="hasMore"
+            :total="pagination.total"
             :editable="true"
             :selectable="true"
             :selected-ids="selectedIds"
@@ -106,6 +109,7 @@
             @edit="handleItemEdit"
             @delete="handleItemDelete"
             @reorder="handleReorder"
+            @load-more="handleLoadMore"
           />
         </div>
       </div>
@@ -198,7 +202,8 @@ import { NDrawer, NDrawerContent, NButton, NInput, useMessage, useDialog, NModal
 import { ChevronBack } from '@vicons/ionicons5';
 import type { UploadFileInfo } from 'naive-ui';
 import type { GalleryItem } from '@/types';
-import { useGalleryStore } from '@/stores/gallery';
+import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
+import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import GalleryCollectionTree from './GalleryCollectionTree.vue';
 import GalleryGrid from './GalleryGrid.vue';
@@ -213,6 +218,7 @@ interface UploadTask {
 }
 
 const gallery = useGalleryStore();
+const display = useDisplayStore();
 const user = useUserStore();
 const message = useMessage();
 const dialog = useDialog();
@@ -270,18 +276,40 @@ const uploadProgress = ref({ current: 0, total: 0 });
 const contentRef = ref<HTMLElement | null>(null);
 
 const visible = computed(() => gallery.isPanelVisible);
+const galleryPageSize = computed(() => display.settings.quickGalleryPageSize || DEFAULT_GALLERY_PAGE_SIZE);
 
 // Auto-refresh 1 second after panel opens or collection switches to fix data fetch latency
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-watch([visible, () => gallery.activeCollectionId], ([isVisible, activeCollectionId]) => {
+watch([visible, () => gallery.activeCollectionId, galleryPageSize], ([isVisible, activeCollectionId, pageSize], previous) => {
+  const prevPageSize = previous?.[2];
   if (autoRefreshTimer) {
     clearTimeout(autoRefreshTimer);
     autoRefreshTimer = null;
   }
   if (isVisible && activeCollectionId) {
+    const currentPageSize = gallery.getItemPagination(activeCollectionId).pageSize;
+    if (currentPageSize !== pageSize || (prevPageSize && pageSize !== prevPageSize)) {
+      void gallery.loadItems(activeCollectionId, {
+        page: 1,
+        pageSize,
+        keyword: keyword.value || undefined
+      });
+      return;
+    }
     autoRefreshTimer = setTimeout(() => {
-      gallery.loadItems(activeCollectionId);
+      void gallery.loadItems(activeCollectionId, {
+        page: 1,
+        pageSize,
+        keyword: keyword.value || undefined
+      });
     }, 1000);
+  }
+});
+
+onUnmounted(() => {
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
   }
 });
 
@@ -317,6 +345,11 @@ const activeCollection = computed(() =>
   collections.value.find((collection) => collection.id === gallery.activeCollectionId) ?? null
 );
 const rawItems = computed(() => (gallery.activeCollectionId ? gallery.getItemsByCollection(gallery.activeCollectionId) : []));
+const pagination = computed(() =>
+  gallery.activeCollectionId
+    ? gallery.getItemPagination(gallery.activeCollectionId)
+    : { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: 0 }
+);
 const items = computed(() => {
   const list = [...rawItems.value];
   if (sortBy.value === 'name') {
@@ -327,14 +360,25 @@ const items = computed(() => {
   }
   return list;
 });
-const loading = computed(() => {
-  // Show loading during initialization
-  if (gallery.isInitializing) return true;
-  // No active collection means nothing to load (empty state, not loading)
+const collectionLoading = computed(() => {
   if (!gallery.activeCollectionId) return false;
-  // Show loading if active collection is loading
   return gallery.isCollectionLoading(gallery.activeCollectionId);
 });
+const loadingMore = computed(() => {
+  if (!gallery.activeCollectionId) return false;
+  return gallery.isCollectionLoadingMore(gallery.activeCollectionId);
+});
+const loading = computed(() => {
+  if (gallery.isInitializing) return true;
+  if (!gallery.activeCollectionId) return false;
+  return collectionLoading.value && rawItems.value.length === 0;
+});
+const refreshing = computed(() => {
+  if (gallery.isInitializing) return true;
+  if (!gallery.activeCollectionId) return false;
+  return collectionLoading.value;
+});
+const hasMore = computed(() => rawItems.value.length < pagination.value.total);
 const isEmojiLinked = computed(() => gallery.activeCollectionId ? gallery.emojiCollectionIds.includes(gallery.activeCollectionId) : false);
 const isFavorites = computed(() => gallery.activeCollectionId === gallery.favoritesCollectionId);
 const isSystemCollection = computed(() => !!activeCollection.value?.collectionType);
@@ -373,7 +417,10 @@ function handleShow(value: boolean) {
 
 async function handleCollectionSelect(collectionId: string) {
   if (!collectionId) return;
-  await gallery.setActiveCollection(collectionId);
+  await gallery.setActiveCollection(collectionId, {
+    pageSize: galleryPageSize.value,
+    keyword: keyword.value || undefined
+  });
 }
 
 async function handleCollectionAction(action: string, collection: any) {
@@ -521,8 +568,25 @@ async function handleUploadSelect(files: UploadFileInfo[]) {
 
 function loadActiveItems() {
   if (gallery.activeCollectionId) {
-    void gallery.loadItems(gallery.activeCollectionId, { keyword: keyword.value || undefined });
+    void gallery.loadItems(gallery.activeCollectionId, {
+      page: 1,
+      pageSize: galleryPageSize.value,
+      keyword: keyword.value || undefined
+    });
   }
+}
+
+async function handleLoadMore() {
+  const collectionId = gallery.activeCollectionId;
+  if (!collectionId || collectionLoading.value || loadingMore.value || !hasMore.value) {
+    return;
+  }
+  await gallery.loadItems(collectionId, {
+    page: pagination.value.page + 1,
+    pageSize: galleryPageSize.value,
+    keyword: keyword.value || undefined,
+    append: true
+  });
 }
 
 function handleToggleSelect(item: GalleryItem, selected: boolean) {
@@ -773,7 +837,9 @@ async function handleCreateSubmit() {
       name,
       order: newCollectionOrder.value ?? 0,
     });
-    await gallery.setActiveCollection(created.id);
+    await gallery.setActiveCollection(created.id, {
+      pageSize: galleryPageSize.value
+    });
     message.success('分类创建成功');
     createModalVisible.value = false;
     return true;

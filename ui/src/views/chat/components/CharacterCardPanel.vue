@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
-import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
+import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh } from '@vicons/tabler';
+import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
+import { useCharacterCardAvatarStore } from '@/stores/characterCardAvatar';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useUtilsStore } from '@/stores/utils';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
-import type { CharacterCard, ChannelIdentity } from '@/types';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
+import AvatarVue from '@/components/avatar.vue';
+import AvatarEditor from '@/components/AvatarEditor.vue';
+import type { ChannelIdentity } from '@/types';
 
 const props = defineProps<{
   visible: boolean;
@@ -24,8 +28,10 @@ const message = useMessage();
 const cardStore = useCharacterCardStore();
 const sheetStore = useCharacterSheetStore();
 const templateStore = useCharacterCardTemplateStore();
+const avatarStore = useCharacterCardAvatarStore();
 const chatStore = useChatStore();
 const displayStore = useDisplayStore();
+const utilsStore = useUtilsStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 const updateViewportWidth = () => {
@@ -139,6 +145,14 @@ const loadPanelData = async (channelId: string) => {
   await cardStore.loadCards(channelId);
   await templateStore.ensureTemplatesLoaded();
   await templateStore.loadBindings(channelId);
+  await avatarStore.loadBindings(channelId);
+  await avatarStore.migrateLegacyBindings(
+    channelId,
+    channelCards.value,
+    identities.value,
+    cardStore.identityBindings,
+  );
+  await avatarStore.loadBindings(channelId);
   await templateStore.migrateLocalTemplatesIfNeeded(
     channelId,
     channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
@@ -195,6 +209,13 @@ watch(
   async ([visible, cards]) => {
     const channelId = resolvedChannelId.value;
     if (!visible || !channelId || !cards.length || characterApiDisabled.value) return;
+    await avatarStore.migrateLegacyBindings(
+      channelId,
+      cards,
+      identities.value,
+      cardStore.identityBindings,
+    );
+    await avatarStore.loadBindings(channelId);
     await templateStore.migrateLocalTemplatesIfNeeded(
       channelId,
       cards.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
@@ -237,6 +258,25 @@ watch(badgeEnabled, (enabled) => {
   }
   void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
 });
+
+watch(
+  () => sheetStore.activeWindowIds.map(windowId => {
+    const window = sheetStore.windows[windowId];
+    return `${windowId}:${window?.channelId || ''}:${window?.cardId || ''}`;
+  }).join('|'),
+  () => {
+    Object.entries(channelSheetSwitchStates.value).forEach(([channelId, state]) => {
+      if (state.switching) return;
+      if (state.windowId && sheetStore.windows[state.windowId]) return;
+      if (state.restoreToCurrentBinding) {
+        upsertChannelSheetSwitchState(channelId, { switching: true });
+        void restoreBoundCardAfterSheetClose(channelId);
+        return;
+      }
+      clearChannelSheetSwitchState(channelId);
+    });
+  },
+);
 
 onMounted(() => {
   updateViewportWidth();
@@ -307,6 +347,50 @@ const filteredChannelCards = computed(() => {
     return name.includes(keyword) || sheetType.includes(keyword) || attrs.includes(keyword);
   });
 });
+
+const currentIdentityId = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return '';
+  return chatStore.getActiveIdentityId(channelId);
+});
+
+const currentBoundCardId = computed(() => {
+  const identityId = currentIdentityId.value;
+  if (!identityId) return '';
+  return cardStore.getBoundCardId(identityId) || '';
+});
+
+const currentActiveCardId = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return '';
+  return cardStore.getActiveCardId(channelId);
+});
+
+const sortedFilteredChannelCards = computed(() => {
+  const activeCardId = currentActiveCardId.value;
+  const boundCardId = currentBoundCardId.value;
+  return filteredChannelCards.value
+    .map((card, index) => ({
+      card,
+      index,
+      score: card.id === activeCardId ? 2 : (card.id === boundCardId ? 1 : 0),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map(item => item.card);
+});
+
+interface ChannelSheetSwitchState {
+  cardId: string;
+  windowId: string;
+  switching: boolean;
+  restoreToCurrentBinding: boolean;
+}
+
+const channelSheetSwitchStates = ref<Record<string, ChannelSheetSwitchState>>({});
+const cardSwitchingId = ref('');
 
 const setTemplateSheetType = (value: string) => {
   const normalized = (value || '').trim();
@@ -509,165 +593,17 @@ const handleCreateCard = async () => {
   }
 };
 
-// Edit card modal
-const editModalVisible = ref(false);
-const editingCard = ref<CharacterCard | null>(null);
-const editCardName = ref('');
-const editCardSheetTypePreset = ref('coc7');
-const editCardSheetTypeCustom = ref('');
-const editCardOriginalName = ref('');
-const editCardOriginalSheetType = ref('');
-const editCardAttrsJson = ref('');
-const saving = ref(false);
-const pendingRestore = ref<{
-  channelId: string;
-  cardId?: string;
-  cardName?: string;
-  cardType?: string;
-  attrs?: Record<string, any>;
-} | null>(null);
-
-const setEditSheetType = (value: string) => {
-  const normalized = (value || '').trim();
-  let lower = normalized.toLowerCase();
-  if (lower === 'coc') {
-    lower = 'coc7';
-  } else if (lower === 'dnd' || lower === 'dnd5') {
-    lower = 'dnd5e';
-  }
-  if (lower === 'coc7' || lower === 'dnd5e') {
-    editCardSheetTypePreset.value = lower;
-    editCardSheetTypeCustom.value = '';
-  } else if (normalized) {
-    editCardSheetTypePreset.value = 'custom';
-    editCardSheetTypeCustom.value = normalized;
-  } else {
-    editCardSheetTypePreset.value = 'coc7';
-    editCardSheetTypeCustom.value = '';
-  }
-};
-
-const syncEditOriginals = () => {
-  editCardOriginalName.value = editCardName.value;
-  editCardOriginalSheetType.value = resolveSheetType(editCardSheetTypePreset.value, editCardSheetTypeCustom.value);
-};
-
-const rememberActiveCard = async (channelId: string) => {
-  if (cardStore.isBotCharacterDisabled(channelId)) {
-    pendingRestore.value = null;
-    return;
-  }
-  await cardStore.getActiveCard(channelId);
-  const active = cardStore.activeCards[channelId];
-  const activeId = cardStore.getActiveCardId(channelId);
-  if (activeId || active?.name) {
-    pendingRestore.value = {
-      channelId,
-      cardId: activeId || undefined,
-      cardName: active?.name || '',
-      cardType: active?.type || '',
-      attrs: active?.attrs || {},
-    };
-  } else {
-    pendingRestore.value = null;
-  }
-};
-
-const restoreActiveCard = async () => {
-  const pending = pendingRestore.value;
-  if (!pending) return;
-  pendingRestore.value = null;
-  if (cardStore.isBotCharacterDisabled(pending.channelId)) {
-    return;
-  }
-  try {
-    if (pending.cardId) {
-      await cardStore.tagCard(pending.channelId, undefined, pending.cardId);
-      return;
-    }
-    await cardStore.tagCard(pending.channelId);
-    if (pending.cardName || pending.attrs) {
-      await cardStore.updateCard(pending.channelId, pending.cardName || '', pending.attrs || {});
-    }
-  } catch (e) {
-    console.warn('Failed to restore active character card', e);
-  }
-};
-
-const openEditModal = async (card: CharacterCard) => {
-  if (!ensureCharacterApiEnabled()) return;
-  editingCard.value = card;
-  editCardName.value = card.name;
-  setEditSheetType(card.sheetType || 'coc7');
-  editCardAttrsJson.value = JSON.stringify(card.attrs || {}, null, 2);
-  editModalVisible.value = true;
-  syncEditOriginals();
-  if (!resolvedChannelId.value) {
-    pendingRestore.value = null;
-    return;
-  }
-  try {
-    await rememberActiveCard(resolvedChannelId.value);
-    if (pendingRestore.value?.cardId === card.id) {
-      pendingRestore.value = null;
-    } else {
-      await cardStore.tagCard(resolvedChannelId.value, card.name, card.id);
-    }
-    await cardStore.getActiveCard(resolvedChannelId.value);
-    const active = cardStore.activeCards[resolvedChannelId.value];
-    if (active) {
-      editCardName.value = active.name || editCardName.value;
-      setEditSheetType(active.type || resolveSheetType(editCardSheetTypePreset.value, editCardSheetTypeCustom.value));
-      editCardAttrsJson.value = JSON.stringify(active.attrs || {}, null, 2);
-      syncEditOriginals();
-    }
-  } catch (e) {
-    console.warn('Failed to load character card attrs', e);
-  }
-};
-
-watch(editModalVisible, async (val, oldVal) => {
-  if (!val && oldVal) {
-    await restoreActiveCard();
-  }
-});
-
-const handleSaveCard = async () => {
-  if (!ensureCharacterApiEnabled()) return;
-  if (!editingCard.value) return;
-  if (!resolvedChannelId.value) {
-    message.warning('请先选择频道');
-    return;
-  }
-  if (!editCardName.value.trim()) {
-    message.warning('请输入角色名称');
-    return;
-  }
-  let attrs: Record<string, any> = {};
-  try {
-    attrs = JSON.parse(editCardAttrsJson.value || '{}');
-  } catch {
-    message.error('属性 JSON 格式错误');
-    return;
-  }
-  saving.value = true;
-  try {
-    const nextName = editCardOriginalName.value || editCardName.value.trim();
-    await cardStore.updateCard(resolvedChannelId.value, nextName, attrs);
-    await cardStore.loadCards(resolvedChannelId.value);
-    message.success('保存成功');
-    editModalVisible.value = false;
-  } catch (e: any) {
-    message.error(e?.response?.data?.error || '保存失败');
-  } finally {
-    saving.value = false;
-  }
-};
-
 const handleDeleteCard = async (card: CharacterCard) => {
   if (!ensureCharacterApiEnabled()) return;
   try {
     await cardStore.deleteCard(card.id);
+    if (resolvedChannelId.value) {
+      try {
+        await avatarStore.removeBinding(resolvedChannelId.value, card.id);
+      } catch (avatarError) {
+        console.warn('Failed to remove character card avatar binding after delete', avatarError);
+      }
+    }
     message.success('已删除');
   } catch (e: any) {
     message.error(e?.response?.data?.error || e?.message || '删除失败');
@@ -716,11 +652,16 @@ const getBoundIdentities = (cardId: string) => {
   return result;
 };
 
-const resolveCardAvatarUrl = (cardId: string) => {
-  const bound = getBoundIdentities(cardId);
-  const identity = bound.find(item => item.avatarAttachmentId) || bound[0];
-  if (!identity?.avatarAttachmentId) return '';
-  return resolveAttachmentUrl(identity.avatarAttachmentId) || identity.avatarAttachmentId;
+const resolveCardAvatarToken = (card: CharacterCard, fallbackAvatarUrl = '') => {
+  return avatarStore.resolveCardAvatar(card.id, resolvedChannelId.value, fallbackAvatarUrl);
+};
+
+const getCardAvatarBinding = (card: CharacterCard) => {
+  return avatarStore.getBinding(resolvedChannelId.value, card.id);
+};
+
+const syncSheetAvatar = (card: CharacterCard, fallbackAvatarUrl = '') => {
+  sheetStore.updateCardAvatar(card.id, resolveCardAvatarToken(card, fallbackAvatarUrl) || undefined);
 };
 
 const handleUnbind = async (identityId: string) => {
@@ -734,39 +675,200 @@ const handleUnbind = async (identityId: string) => {
   }
 };
 
-const formatAttrs = (attrs: Record<string, any> | undefined) => {
-  if (!attrs || Object.keys(attrs).length === 0) return '暂无属性';
-  return Object.entries(attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
+const getCardAttrEntries = (attrs: Record<string, any> | undefined) => {
+  if (!attrs || typeof attrs !== 'object') return [];
+  return Object.entries(attrs).filter(([, value]) => {
+    if (value === undefined || value === null) return false;
+    return String(value).trim() !== '';
+  });
 };
 
-const openPreview = async (card: CharacterCard) => {
+const isCurrentActiveCard = (card: CharacterCard) => card.id === currentActiveCardId.value;
+
+const isCurrentBoundCard = (card: CharacterCard) => {
+  const boundCardId = currentBoundCardId.value;
+  return !!boundCardId && card.id === boundCardId;
+};
+
+const upsertChannelSheetSwitchState = (channelId: string, patch: Partial<ChannelSheetSwitchState>) => {
+  if (!channelId) return;
+  const prev = channelSheetSwitchStates.value[channelId] || {
+    cardId: '',
+    windowId: '',
+    switching: false,
+    restoreToCurrentBinding: false,
+  };
+  channelSheetSwitchStates.value = {
+    ...channelSheetSwitchStates.value,
+    [channelId]: {
+      ...prev,
+      ...patch,
+    },
+  };
+};
+
+const clearChannelSheetSwitchState = (channelId: string) => {
+  if (!channelId || !channelSheetSwitchStates.value[channelId]) return;
+  const next = { ...channelSheetSwitchStates.value };
+  delete next[channelId];
+  channelSheetSwitchStates.value = next;
+};
+
+const getChannelSheetWindows = (channelId: string) =>
+  sheetStore.activeWindowIds
+    .map(windowId => sheetStore.windows[windowId])
+    .filter(window => window?.channelId === channelId);
+
+const closeChannelSheetWindows = (channelId: string, exceptCardId = '') => {
+  if (!channelId) return;
+  const windows = getChannelSheetWindows(channelId);
+  windows.forEach((window) => {
+    if (!window?.id) return;
+    if (exceptCardId && window.cardId === exceptCardId) return;
+    sheetStore.closeSheet(window.id);
+  });
+};
+
+const restoreBoundCardAfterSheetClose = async (channelId: string) => {
+  if (!channelId) return;
+  const identityId = chatStore.getActiveIdentityId(channelId);
+  const boundCardId = identityId ? (cardStore.getBoundCardId(identityId) || '') : '';
+  try {
+    if (boundCardId && cardStore.getActiveCardId(channelId) !== boundCardId) {
+      await cardStore.tagCard(channelId, undefined, boundCardId);
+    }
+  } catch (e) {
+    console.warn('Failed to restore bound character card after sheet close', e);
+  } finally {
+    clearChannelSheetSwitchState(channelId);
+  }
+};
+
+const avatarUploadInputRef = ref<HTMLInputElement | null>(null);
+const avatarEditingCard = ref<CharacterCard | null>(null);
+const avatarEditorVisible = ref(false);
+const avatarEditorFile = ref<File | null>(null);
+const avatarUploading = ref(false);
+
+const handleAvatarUploadTrigger = (card: CharacterCard) => {
+  avatarEditingCard.value = card;
+  avatarUploadInputRef.value?.click();
+};
+
+const handleAvatarFileChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  if (!input || !input.files?.length) {
+    return;
+  }
+  const file = input.files[0];
+  const sizeLimit = utilsStore.config?.imageSizeLimit ? utilsStore.config.imageSizeLimit * 1024 : utilsStore.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
+  avatarEditorFile.value = file;
+  avatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleAvatarEditorCancel = () => {
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+  avatarEditingCard.value = null;
+};
+
+const handleAvatarEditorSave = async (file: File) => {
+  const card = avatarEditingCard.value;
+  const channelId = resolvedChannelId.value;
+  if (!card || !channelId) {
+    handleAvatarEditorCancel();
+    return;
+  }
+  avatarUploading.value = true;
+  try {
+    const uploadResult = await uploadImageAttachment(file, { channelId, skipCompression: true });
+    await avatarStore.upsertBinding({
+      channelId,
+      externalCardId: card.id,
+      cardName: card.name,
+      sheetType: card.sheetType || '',
+      avatarAttachmentId: uploadResult.attachmentId,
+    });
+    syncSheetAvatar(card);
+    message.success('头像已更新');
+    handleAvatarEditorCancel();
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '头像上传失败');
+  } finally {
+    avatarUploading.value = false;
+  }
+};
+
+const handleAvatarRemove = async (card: CharacterCard) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  try {
+    await avatarStore.removeBinding(channelId, card.id);
+    const activeFallback = cardStore.getActiveCardId(channelId) === card.id
+      ? (cardStore.activeCards[channelId]?.avatarUrl || '')
+      : '';
+    syncSheetAvatar(card, activeFallback);
+    message.success('头像已移除');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '头像移除失败');
+  }
+};
+
+const openCharacterSheetWindow = async (
+  card: CharacterCard,
+  mode: 'view' | 'edit' = 'view',
+  options?: { restoreToCurrentBinding?: boolean },
+) => {
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
     return;
   }
+
+  closeChannelSheetWindows(channelId, card.id);
+
   if (characterApiDisabled.value) {
-    const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
+    const avatarUrl = resolveCardAvatarToken(card);
+    const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: false,
+    });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
     return;
   }
+
   try {
     let cardData = cardStore.activeCards[channelId];
-    if (!cardData || cardData.name !== card.name) {
+    const activeCardId = cardStore.getActiveCardId(channelId);
+    const shouldUseActiveCardData = activeCardId === card.id;
+    if (!cardData || shouldUseActiveCardData) {
       await cardStore.getActiveCard(channelId);
       cardData = cardStore.activeCards[channelId];
     }
+    const effectiveCardData = cardStore.getActiveCardId(channelId) === card.id ? cardData : undefined;
     await templateStore.ensureTemplatesLoaded();
     await templateStore.ensureBindingsLoaded(channelId);
-    const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
+    const resolvedSheetType = (effectiveCardData?.type || card.sheetType || '').trim();
     const fallbackTemplate = sheetStore.getTemplate(card.id, resolvedSheetType);
     const ensured = await templateStore.ensureCardBinding({
       channelId,
@@ -781,33 +883,98 @@ const openPreview = async (card: CharacterCard) => {
       card.templateId = binding.templateId || undefined;
       card.templateSnapshot = binding.templateSnapshot || undefined;
     }
-    const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
-      name: cardData?.name || card.name,
-      type: cardData?.type || card.sheetType,
-      attrs: cardData?.attrs || card.attrs || {},
+    const avatarUrl = resolveCardAvatarToken(card, effectiveCardData?.avatarUrl || '');
+    const windowId = sheetStore.openSheet(card, channelId, {
+      name: effectiveCardData?.name || card.name,
+      type: effectiveCardData?.type || card.sheetType,
+      attrs: effectiveCardData?.attrs || card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     }, {
       templateMode: binding?.mode,
       templateId: binding?.templateId || undefined,
       templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
     });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
+    });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
   } catch (e: any) {
     console.warn('Failed to open character preview', e);
-    const avatarUrl = resolveCardAvatarUrl(card.id);
-    sheetStore.openSheet(card, channelId, {
+    const avatarUrl = resolveCardAvatarToken(card);
+    const windowId = sheetStore.openSheet(card, channelId, {
       name: card.name,
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    upsertChannelSheetSwitchState(channelId, {
+      cardId: card.id,
+      windowId,
+      switching: false,
+      restoreToCurrentBinding: !!options?.restoreToCurrentBinding,
+    });
+    if (mode === 'edit') {
+      sheetStore.setMode(windowId, 'edit');
+    }
     if (isMobile.value) {
       handleClose();
     }
   }
+};
+
+const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = 'view') => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+
+  const shouldSwitchCard = !characterApiDisabled.value && currentActiveCardId.value !== card.id;
+  const restoreToCurrentBinding = !characterApiDisabled.value
+    && !!currentBoundCardId.value
+    && currentBoundCardId.value !== card.id;
+
+  cardSwitchingId.value = card.id;
+  upsertChannelSheetSwitchState(channelId, {
+    cardId: card.id,
+    windowId: '',
+    switching: true,
+    restoreToCurrentBinding,
+  });
+
+  try {
+    closeChannelSheetWindows(channelId);
+    if (shouldSwitchCard) {
+      const switched = await cardStore.tagCard(channelId, undefined, card.id);
+      if (!switched) {
+        throw new Error('切换人物卡失败');
+      }
+    }
+    await openCharacterSheetWindow(card, mode, { restoreToCurrentBinding });
+  } catch (e: any) {
+    clearChannelSheetSwitchState(channelId);
+    message.error(e?.response?.data?.error || e?.message || '切换人物卡失败');
+  } finally {
+    if (cardSwitchingId.value === card.id) {
+      cardSwitchingId.value = '';
+    }
+  }
+};
+
+const openPreview = async (card: CharacterCard) => {
+  await openCharacterSheet(card, 'view');
+};
+
+const openEditPanel = async (card: CharacterCard) => {
+  await openCharacterSheet(card, 'edit');
 };
 </script>
 
@@ -901,51 +1068,139 @@ const openPreview = async (card: CharacterCard) => {
         <n-empty v-if="allChannelCards.length === 0" description="暂无人物卡" />
         <n-empty v-else-if="filteredChannelCards.length === 0" description="未找到匹配人物卡" />
         <n-card
-          v-for="card in filteredChannelCards"
+          v-for="card in sortedFilteredChannelCards"
           :key="card.id"
           size="small"
-          class="character-card-item"
+          :class="[
+            'character-card-item',
+            {
+              'character-card-item--active': isCurrentActiveCard(card),
+              'character-card-item--bound': isCurrentBoundCard(card),
+            },
+          ]"
         >
           <template #header>
-            <span class="card-name">{{ card.name }}</span>
-            <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
+            <div class="card-header-main">
+              <AvatarVue :size="34" :src="resolveCardAvatarToken(card)" />
+              <span class="card-name">{{ card.name }}</span>
+              <span v-if="isCurrentActiveCard(card)" class="card-state-badge card-state-badge--active">使用中</span>
+              <span v-else-if="isCurrentBoundCard(card)" class="card-state-badge">当前角色</span>
+              <n-tag size="small" :bordered="false">{{ card.sheetType || 'custom' }}</n-tag>
+            </div>
           </template>
           <template #header-extra>
-            <n-button text size="small" title="预览" @click="openPreview(card)">
+            <n-button
+              v-if="!isCurrentActiveCard(card)"
+              text
+              size="small"
+              title="切换并查看"
+              :loading="cardSwitchingId === card.id"
+              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+              @click="openPreview(card)"
+            >
+              <template #icon><n-icon :component="Refresh" /></template>
+            </n-button>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              title="上传头像"
+              aria-label="上传头像"
+              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
+              @click="handleAvatarUploadTrigger(card)"
+            >
+              <template #icon><n-icon :component="Upload" /></template>
+            </n-button>
+            <n-button
+              v-if="getCardAvatarBinding(card)"
+              quaternary
+              circle
+              size="small"
+              type="error"
+              title="移除头像"
+              aria-label="移除头像"
+              :disabled="characterApiDisabled || avatarUploading || cardSwitchingId.length > 0"
+              @click="handleAvatarRemove(card)"
+            >
+              <template #icon><n-icon :component="X" /></template>
+            </n-button>
+            <n-button
+              text
+              size="small"
+              title="预览"
+              :loading="cardSwitchingId === card.id"
+              :disabled="cardSwitchingId.length > 0 && cardSwitchingId !== card.id"
+              @click="openPreview(card)"
+            >
               <template #icon><n-icon :component="Eye" /></template>
             </n-button>
-            <n-button text size="small" :disabled="characterApiDisabled" @click="openEditModal(card)">
+            <n-button
+              text
+              size="small"
+              :disabled="characterApiDisabled || (cardSwitchingId.length > 0 && cardSwitchingId !== card.id)"
+              :loading="cardSwitchingId === card.id"
+              @click="openEditPanel(card)"
+            >
               <template #icon><n-icon :component="Edit" /></template>
             </n-button>
-            <n-button text size="small" :disabled="characterApiDisabled" @click="openBindModal(card)">
+            <n-button
+              text
+              size="small"
+              :disabled="characterApiDisabled || cardSwitchingId.length > 0"
+              @click="openBindModal(card)"
+            >
               <template #icon><n-icon :component="Link" /></template>
             </n-button>
             <n-popconfirm @positive-click="handleDeleteCard(card)">
               <template #trigger>
-                <n-button text size="small" type="error" :disabled="characterApiDisabled">
+                <n-button text size="small" type="error" :disabled="characterApiDisabled || cardSwitchingId.length > 0">
                   <template #icon><n-icon :component="Trash" /></template>
                 </n-button>
               </template>
               删除前将从所有群解绑此人物卡，确定删除？
             </n-popconfirm>
           </template>
-          <div class="card-attrs">{{ formatAttrs(card.attrs) }}</div>
-          <div v-if="getBoundIdentities(card.id).length > 0" class="card-bindings">
-            <span class="bindings-label">已绑定：</span>
-            <n-tag
-              v-for="identity in getBoundIdentities(card.id)"
-              :key="identity.id"
-              size="small"
-              :closable="!characterApiDisabled"
-              @close="handleUnbind(identity.id)"
-            >
-              {{ identity.displayName }}
-            </n-tag>
+          <div class="card-main-content">
+            <div v-if="getCardAttrEntries(card.attrs).length > 0" class="card-attrs">
+              <div class="card-attr-list">
+                <span
+                  v-for="[key, value] in getCardAttrEntries(card.attrs)"
+                  :key="`${card.id}-${key}`"
+                  class="card-attr-chip"
+                >
+                  <span class="card-attr-chip__key">{{ key }}</span>
+                  <span class="card-attr-chip__value">{{ value }}</span>
+                </span>
+              </div>
+            </div>
+
+            <div v-if="getBoundIdentities(card.id).length > 0" class="card-bindings">
+              <span class="bindings-label">绑定</span>
+              <div class="card-bindings__tags">
+                <n-tag
+                  v-for="identity in getBoundIdentities(card.id)"
+                  :key="identity.id"
+                  size="small"
+                  :closable="!characterApiDisabled"
+                  @close="handleUnbind(identity.id)"
+                >
+                  {{ identity.displayName }}
+                </n-tag>
+              </div>
+            </div>
           </div>
         </n-card>
       </div>
     </n-drawer-content>
   </n-drawer>
+
+  <input
+    ref="avatarUploadInputRef"
+    type="file"
+    accept="image/*"
+    class="card-avatar-file-input"
+    @change="handleAvatarFileChange"
+  />
 
   <!-- Create Modal -->
   <n-modal
@@ -1075,43 +1330,6 @@ const openPreview = async (card: CharacterCard) => {
     </n-form>
   </n-modal>
 
-  <!-- Edit Modal -->
-  <n-modal
-    v-model:show="editModalVisible"
-    preset="dialog"
-    :show-icon="false"
-    title="编辑人物卡"
-    :positive-text="saving ? '保存中…' : '保存'"
-    :positive-button-props="{ loading: saving, disabled: characterApiDisabled }"
-    negative-text="取消"
-    @positive-click="handleSaveCard"
-  >
-    <n-form label-width="80">
-      <n-form-item label="角色名称">
-        <n-input v-model:value="editCardName" maxlength="32" disabled />
-      </n-form-item>
-      <n-form-item label="卡片类型">
-        <n-select v-model:value="editCardSheetTypePreset" :options="sheetTypeOptions" disabled />
-        <n-input
-          v-if="editCardSheetTypePreset === 'custom'"
-          v-model:value="editCardSheetTypeCustom"
-          placeholder="输入自定义规制类型"
-          class="sheet-type-custom-input"
-          disabled
-        />
-      </n-form-item>
-      <n-form-item label="属性(JSON)">
-        <n-input
-          v-model:value="editCardAttrsJson"
-          type="textarea"
-          :autosize="{ minRows: 4, maxRows: 10 }"
-          placeholder='例如: {"hp": 10, "hpmax": 10, "san": 50}'
-          :disabled="characterApiDisabled"
-        />
-      </n-form-item>
-    </n-form>
-  </n-modal>
-
   <!-- Bind Modal -->
   <n-modal
     v-model:show="bindModalVisible"
@@ -1134,6 +1352,20 @@ const openPreview = async (card: CharacterCard) => {
       </n-form-item>
     </n-form>
   </n-modal>
+
+  <n-modal
+    v-model:show="avatarEditorVisible"
+    preset="card"
+    title="裁剪人物卡头像"
+    style="max-width: 560px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="avatarEditorFile"
+      @save="handleAvatarEditorSave"
+      @cancel="handleAvatarEditorCancel"
+    />
+  </n-modal>
 </template>
 
 <style lang="scss" scoped>
@@ -1150,6 +1382,10 @@ const openPreview = async (card: CharacterCard) => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.card-avatar-file-input {
+  display: none;
 }
 
 .character-card-header__actions {
@@ -1286,24 +1522,154 @@ const openPreview = async (card: CharacterCard) => {
 }
 
 .character-card-item {
+  :deep(.n-card) {
+    border-radius: 10px;
+  }
+
+  &.character-card-item--active :deep(.n-card) {
+    border-color: rgba(59, 130, 246, 0.42);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.16);
+    background: rgba(59, 130, 246, 0.04);
+  }
+
+  &.character-card-item--bound:not(.character-card-item--active) :deep(.n-card) {
+    border-color: rgba(148, 163, 184, 0.3);
+  }
+
+  :deep(.n-card-header) {
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding-bottom: 0.45rem;
+  }
+
+  :deep(.n-card-header__main) {
+    min-width: 0;
+  }
+
+  :deep(.n-card-header__extra) {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-wrap: nowrap;
+  }
+
+  :deep(.n-card__content) {
+    padding-top: 0;
+    padding-bottom: 0.1rem;
+  }
+
+  .card-header-main {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+
   .card-name {
-    font-weight: 500;
-    margin-right: 0.5rem;
+    font-weight: 600;
+    font-size: 0.92rem;
+    min-width: 0;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .card-attrs {
+
+  .card-state-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0.1rem 0.38rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14);
     color: var(--sc-text-secondary);
-    font-size: 0.85rem;
-    margin-bottom: 0.5rem;
+    font-size: 0.68rem;
+    line-height: 1.1;
+    white-space: nowrap;
   }
-  .card-bindings {
+
+  .card-state-badge--active {
+    background: rgba(59, 130, 246, 0.16);
+    color: #60a5fa;
+  }
+
+  .card-main-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .card-attrs {
+    min-width: 0;
+  }
+
+  .card-attr-list {
     display: flex;
     flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .card-attr-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.22rem;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0.2rem 0.42rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--sc-text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.15;
+  }
+
+  .card-attr-chip__key {
+    color: var(--sc-text-tertiary);
+    white-space: nowrap;
+  }
+
+  .card-attr-chip__value {
+    color: var(--sc-text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .card-bindings {
+    display: flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.35rem;
+    min-width: 0;
+    overflow: hidden;
+
     .bindings-label {
-      font-size: 0.8rem;
+      flex: 0 0 auto;
+      font-size: 0.7rem;
       color: var(--sc-text-tertiary);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
+  }
+
+  .card-bindings__tags {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .card-bindings__tags :deep(.n-tag) {
+    max-width: 9rem;
+    flex: 0 1 auto;
+    overflow: hidden;
+  }
+
+  .card-bindings__tags :deep(.n-tag__content) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

@@ -34,7 +34,7 @@ type ChannelModel struct {
 	SortOrder int `json:"sortOrder" gorm:"index"` // 优先级序号，越大越靠前
 
 	BackgroundAttachmentId string `json:"backgroundAttachmentId" gorm:"size:100"` // 背景图附件ID
-	BackgroundSettings     string `json:"backgroundSettings" gorm:"type:text"`    // JSON: 背景显示设置
+	BackgroundSettings     string `json:"backgroundSettings" gorm:"type:text"`    // JSON: 背景常规设置
 
 	FriendInfo   *FriendModel `json:"friendInfo,omitempty" gorm:"-"`
 	MembersCount int          `json:"membersCount" gorm:"-"`

@@ -59,6 +59,7 @@
     "sessionAnalysis": "Session Analysis",
     "sessionThreshold": "Session gap threshold (min)",
     "sessionNo": "Session",
+    "sessionTime": "Session Time",
     "startTime": "Start",
     "endTime": "End",
     "duration": "Duration",

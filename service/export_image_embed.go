@@ -24,6 +24,7 @@ import (
 )
 
 const maxInlineImageSize = 5 * 1024 * 1024
+const inlineAssetRefPrefix = "scasset:"
 
 type inlineImageEmbedder struct {
 	mu       sync.RWMutex
@@ -65,6 +66,7 @@ func (e *inlineImageEmbedder) inlinePayload(payload *ExportPayload) {
 			}
 		}
 	}
+	dedupeInlineAssets(payload)
 }
 
 func (e *inlineImageEmbedder) inlineHTML(content string) (string, bool) {
@@ -227,6 +229,116 @@ func (e *inlineImageEmbedder) setCached(token, hashKey, value string) {
 	if hashKey != "" {
 		e.cache[hashKey] = value
 	}
+}
+
+type inlineAssetRegistry struct {
+	byData map[string]string
+	assets map[string]string
+}
+
+func newInlineAssetRegistry() *inlineAssetRegistry {
+	return &inlineAssetRegistry{
+		byData: make(map[string]string),
+		assets: make(map[string]string),
+	}
+}
+
+func (r *inlineAssetRegistry) register(dataURL string) string {
+	if strings.TrimSpace(dataURL) == "" {
+		return ""
+	}
+	if id, ok := r.byData[dataURL]; ok {
+		return inlineAssetRefPrefix + id
+	}
+	sum := sha256.Sum256([]byte(dataURL))
+	baseID := hex.EncodeToString(sum[:8])
+	assetID := baseID
+	for {
+		if existing, ok := r.assets[assetID]; ok {
+			if existing == dataURL {
+				r.byData[dataURL] = assetID
+				return inlineAssetRefPrefix + assetID
+			}
+			assetID = fmt.Sprintf("%s_%d", baseID, len(r.assets)+1)
+			continue
+		}
+		break
+	}
+	r.byData[dataURL] = assetID
+	r.assets[assetID] = dataURL
+	return inlineAssetRefPrefix + assetID
+}
+
+func dedupeInlineAssets(payload *ExportPayload) {
+	if payload == nil || len(payload.Messages) == 0 {
+		return
+	}
+	registry := newInlineAssetRegistry()
+	for i := range payload.Messages {
+		if src := strings.TrimSpace(payload.Messages[i].SenderAvatar); strings.HasPrefix(strings.ToLower(src), "data:") {
+			payload.Messages[i].SenderAvatar = registry.register(src)
+		}
+		if html := strings.TrimSpace(payload.Messages[i].ContentHTML); strings.Contains(strings.ToLower(html), "<img") {
+			if rewritten, changed := replaceInlineAssetRefsInHTML(html, registry); changed {
+				payload.Messages[i].ContentHTML = rewritten
+			}
+		}
+		if html := strings.TrimSpace(payload.Messages[i].Content); strings.Contains(strings.ToLower(html), "<img") {
+			if rewritten, changed := replaceInlineAssetRefsInHTML(html, registry); changed {
+				payload.Messages[i].Content = rewritten
+			}
+		}
+	}
+	if len(registry.assets) == 0 {
+		payload.InlineAssets = nil
+		return
+	}
+	payload.InlineAssets = registry.assets
+}
+
+func replaceInlineAssetRefsInHTML(content string, registry *inlineAssetRegistry) (string, bool) {
+	if strings.TrimSpace(content) == "" || registry == nil {
+		return "", false
+	}
+	nodes, err := htmlnode.ParseFragment(strings.NewReader(content), nil)
+	if err != nil {
+		return "", false
+	}
+	changed := false
+	for _, node := range nodes {
+		if rewriteInlineAssetNode(node, registry) {
+			changed = true
+		}
+	}
+	if !changed {
+		return "", false
+	}
+	var buf bytes.Buffer
+	for _, node := range nodes {
+		if err := htmlnode.Render(&buf, node); err != nil {
+			return "", false
+		}
+	}
+	return buf.String(), true
+}
+
+func rewriteInlineAssetNode(node *htmlnode.Node, registry *inlineAssetRegistry) bool {
+	changed := false
+	if node.Type == htmlnode.ElementNode && strings.EqualFold(node.Data, "img") {
+		for idx, attr := range node.Attr {
+			if strings.EqualFold(attr.Key, "src") && strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Val)), "data:") {
+				node.Attr[idx].Val = registry.register(attr.Val)
+				changed = true
+				break
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if rewriteInlineAssetNode(child, registry) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 func extractAttachmentToken(src string) string {

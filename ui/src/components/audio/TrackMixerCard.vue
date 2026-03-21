@@ -1,29 +1,37 @@
 <template>
   <div class="track-card" :class="[`track-card--${track.type}`, { 'track-card--muted': track.muted }]">
     <header class="track-card__header">
-      <div class="track-card__info">
-        <p class="track-card__type">{{ trackLabels[track.type] }}</p>
-        <p class="track-card__title">{{ track.asset?.name || '未选择音频' }}</p>
+      <div class="track-card__header-main">
+        <div class="track-card__info">
+          <p class="track-card__type">{{ trackLabels[track.type] }}</p>
+          <p class="track-card__title">{{ track.asset?.name || '未选择' }}</p>
+        </div>
+        <div class="track-card__actions">
+          <n-button
+            text
+            size="tiny"
+            @click="toggleSolo"
+            :type="track.solo ? 'info' : 'primary'"
+            :disabled="isReadOnly"
+          >
+            {{ track.solo ? '取消独奏' : '独奏' }}
+          </n-button>
+          <n-button text size="tiny" @click="toggleMute" :disabled="isReadOnly">
+            {{ track.muted ? '取消静音' : '静音' }}
+          </n-button>
+        </div>
       </div>
-      <div class="track-card__actions">
-        <n-select
-          class="track-card__selector"
-          size="small"
-          placeholder="选择音频"
-          :value="track.assetId"
-          :options="assetOptions"
-          filterable
-          clearable
-          :disabled="!assetsAvailable || isReadOnly"
-          @update:value="handleSelect"
-        />
-        <n-button text size="tiny" @click="toggleSolo" :type="track.solo ? 'info' : 'primary'" :disabled="isReadOnly">
-          {{ track.solo ? '取消独奏' : '独奏' }}
-        </n-button>
-        <n-button text size="tiny" @click="toggleMute" :disabled="isReadOnly">
-          {{ track.muted ? '取消静音' : '静音' }}
-        </n-button>
-      </div>
+      <n-select
+        class="track-card__selector"
+        size="small"
+        placeholder="选择音频"
+        :value="track.assetId"
+        :options="assetOptions"
+        filterable
+        clearable
+        :disabled="!assetsAvailable || isReadOnly"
+        @update:value="handleSelect"
+      />
     </header>
 
     <section class="track-card__body">
@@ -207,9 +215,12 @@ const currentSeconds = computed(() => {
   return duration * props.track.progress;
 });
 
-const assetsAvailable = computed(() => audio.filteredAssets?.length > 0);
+const selectableAssets = computed(() => (
+  props.track.playlistFolderId ? props.track.playlistAssets : audio.trackSelectableAssets
+));
+const assetsAvailable = computed(() => selectableAssets.value.length > 0);
 const assetOptions = computed(() =>
-  audio.filteredAssets.slice(0, 50).map((asset) => ({
+  selectableAssets.value.map((asset) => ({
     label: `${asset.name}${asset.tags?.length ? ` · ${asset.tags.join(',')}` : ''}`,
     value: asset.id,
   })),
@@ -291,7 +302,10 @@ function setPlaybackRate(value: number) {
 
 function handleSelect(value: string | null) {
   if (!value) return;
-  const asset = audio.assets.find((item) => item.id === value) || audio.filteredAssets.find((item) => item.id === value);
+  const asset =
+    selectableAssets.value.find((item) => item.id === value)
+    || audio.assets.find((item) => item.id === value)
+    || audio.filteredAssets.find((item) => item.id === value);
   if (asset) {
     audio.assignAssetToTrack(props.track.type, asset as AudioAsset);
   }
@@ -334,13 +348,26 @@ function handleNext() {
 
 .track-card__header {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.625rem;
+}
+
+.track-card__header-main {
+  display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.5rem;
 }
 
 .track-card__selector {
-  min-width: 140px;
+  width: 100%;
+  min-width: 0;
+}
+
+.track-card__info {
+  flex: 1;
+  min-width: 0;
 }
 
 .track-card__type {
@@ -354,6 +381,10 @@ function handleNext() {
   margin: 0;
   font-weight: 600;
   color: var(--sc-text-primary, #e2e8f0);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .track-card__actions {
@@ -361,6 +392,7 @@ function handleNext() {
   gap: 0.25rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .track-card__body {

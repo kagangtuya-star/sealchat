@@ -409,13 +409,14 @@ func apiMessageRevokedDraft(ctx *ChatContext, data *struct {
 	}
 
 	return map[string]any{
-		"message_id":  item.ID,
-		"channel_id":  item.ChannelID,
-		"content":     item.Content,
-		"is_whisper":  item.IsWhisper,
-		"whisper_to":  item.WhisperTo,
-		"ic_mode":     icMode,
-		"identity_id": item.SenderIdentityID,
+		"message_id":          item.ID,
+		"channel_id":          item.ChannelID,
+		"content":             item.Content,
+		"is_whisper":          item.IsWhisper,
+		"whisper_to":          item.WhisperTo,
+		"ic_mode":             icMode,
+		"identity_id":         item.SenderIdentityID,
+		"identity_variant_id": item.SenderIdentityVariantID,
 	}, nil
 }
 
@@ -471,6 +472,14 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}
 	beforeLimit := clampMessageContextWindow(data.Before, 12)
 	afterLimit := clampMessageContextWindow(data.After, 12)
+	buildContextCursor := func(msg *model.MessageModel) string {
+		if msg == nil || msg.ID == "" {
+			return ""
+		}
+		orderStr := strconv.FormatFloat(msg.DisplayOrder, 'f', 8, 64)
+		timeStr := strconv.FormatInt(msg.CreatedAt.UnixMilli(), 10)
+		return fmt.Sprintf("%s|%s|%s", orderStr, timeStr, msg.ID)
+	}
 
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
@@ -497,6 +506,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -508,6 +521,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -531,6 +548,10 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		return &struct {
 			Data           []*model.MessageModel `json:"data"`
 			TargetID       string                `json:"target_id"`
+			BeforeCursor   string                `json:"before_cursor"`
+			AfterCursor    string                `json:"after_cursor"`
+			HasMoreBefore  bool                  `json:"has_more_before"`
+			HasMoreAfter   bool                  `json:"has_more_after"`
 			NotFoundReason string                `json:"not_found_reason,omitempty"`
 		}{
 			Data:           []*model.MessageModel{},
@@ -563,6 +584,44 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			Find(&beforeItems)
 		beforeItems = lo.Reverse(beforeItems)
 	}
+	hasMoreBefore := false
+	if len(beforeItems) > 0 {
+		var older model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].CreatedAt,
+				beforeItems[0].DisplayOrder,
+				beforeItems[0].CreatedAt,
+				beforeItems[0].ID,
+			).
+			Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc").
+			Limit(1).
+			Find(&older)
+		hasMoreBefore = older.ID != ""
+	} else if beforeLimit > 0 {
+		var older model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc").
+			Limit(1).
+			Find(&older)
+		hasMoreBefore = older.ID != ""
+	}
 
 	afterItems := make([]*model.MessageModel, 0, afterLimit)
 	if afterLimit > 0 {
@@ -586,6 +645,44 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			}).
 			Limit(afterLimit).
 			Find(&afterItems)
+	}
+	hasMoreAfter := false
+	if len(afterItems) > 0 {
+		var newer model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].CreatedAt,
+				afterItems[len(afterItems)-1].DisplayOrder,
+				afterItems[len(afterItems)-1].CreatedAt,
+				afterItems[len(afterItems)-1].ID,
+			).
+			Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc").
+			Limit(1).
+			Find(&newer)
+		hasMoreAfter = newer.ID != ""
+	} else if afterLimit > 0 {
+		var newer model.MessageModel
+		baseQuery().
+			Select("id, display_order, created_at").
+			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
+				target.DisplayOrder,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.DisplayOrder,
+				target.CreatedAt,
+				target.ID,
+			).
+			Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc").
+			Limit(1).
+			Find(&newer)
+		hasMoreAfter = newer.ID != ""
 	}
 
 	items := make([]*model.MessageModel, 0, len(beforeItems)+1+len(afterItems))
@@ -623,13 +720,28 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 		}
 	}
 
+	beforeCursor := ""
+	afterCursor := ""
+	if len(items) > 0 {
+		beforeCursor = buildContextCursor(items[0])
+		afterCursor = buildContextCursor(items[len(items)-1])
+	}
+
 	return &struct {
 		Data           []*model.MessageModel `json:"data"`
 		TargetID       string                `json:"target_id"`
+		BeforeCursor   string                `json:"before_cursor"`
+		AfterCursor    string                `json:"after_cursor"`
+		HasMoreBefore  bool                  `json:"has_more_before"`
+		HasMoreAfter   bool                  `json:"has_more_after"`
 		NotFoundReason string                `json:"not_found_reason,omitempty"`
 	}{
-		Data:     items,
-		TargetID: target.ID,
+		Data:          items,
+		TargetID:      target.ID,
+		BeforeCursor:  beforeCursor,
+		AfterCursor:   afterCursor,
+		HasMoreBefore: hasMoreBefore,
+		HasMoreAfter:  hasMoreAfter,
 	}, nil
 }
 
@@ -1674,18 +1786,19 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
-	ChannelID        string   `json:"channel_id"`
-	QuoteID          string   `json:"quote_id"`
-	Content          string   `json:"content"`
-	WhisperTo        string   `json:"whisper_to"`
-	WhisperToIds     []string `json:"whisper_to_ids"`
-	ClientID         string   `json:"client_id"`
-	IdentityID       string   `json:"identity_id"`
-	ICMode           string   `json:"ic_mode"`
-	BeforeID         string   `json:"before_id"`
-	AfterID          string   `json:"after_id"`
-	DisplayOrder     *float64 `json:"display_order"`
-	TypingDurationMs *int64   `json:"typing_duration_ms"`
+	ChannelID         string   `json:"channel_id"`
+	QuoteID           string   `json:"quote_id"`
+	Content           string   `json:"content"`
+	WhisperTo         string   `json:"whisper_to"`
+	WhisperToIds      []string `json:"whisper_to_ids"`
+	ClientID          string   `json:"client_id"`
+	IdentityID        string   `json:"identity_id"`
+	IdentityVariantID string   `json:"identity_variant_id"`
+	ICMode            string   `json:"ic_mode"`
+	BeforeID          string   `json:"before_id"`
+	AfterID           string   `json:"after_id"`
+	DisplayOrder      *float64 `json:"display_order"`
+	TypingDurationMs  *int64   `json:"typing_duration_ms"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -1778,12 +1891,23 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity == nil && len(channelId) < 30 {
 		identity, _ = service.EnsureHiddenDefaultIdentity(ctx.User.ID, channelId)
 	}
+	variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, data.IdentityVariantID)
+	if err != nil {
+		return nil, err
+	}
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 
 	channel, _ := model.ChannelGet(channelId)
 	if channel.ID == "" {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
+	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
+	if effectiveBotFeatureEnabled {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 
 	findExistingByClientID := func(clientID string) (*protocol.Message, error) {
 		var existing model.MessageModel
@@ -1848,7 +1972,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	var renderResult *service.DiceRenderResult
 	var isHiddenDice bool
-	if channel.BuiltInDiceEnabled {
+	if effectiveBuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(content, channel.DefaultDiceExpr, nil)
 		if err != nil {
 			return nil, err
@@ -1887,7 +2011,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if ctx.User.IsBot && channel.BotFeatureEnabled {
+	if ctx.User.IsBot && effectiveBotFeatureEnabled {
 		if pending := resolveBotHiddenDicePending(ctx, channelId); pending != nil && hasBotHiddenDicePendingTargets(pending) {
 			if len(whisperRecipientIDs) > 0 || whisperTo != "" {
 				if ctx.ConnInfo != nil && ctx.ConnInfo.BotHiddenDicePending != nil {
@@ -1926,7 +2050,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 		}
 	}
-	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !channel.BotFeatureEnabled {
+	if isHiddenDice && len(channelId) < 30 && whisperTo == "" && len(whisperRecipientIDs) == 0 && !effectiveBotFeatureEnabled {
 		hiddenWhisperToSelf = true
 		whisperTo = ctx.User.ID
 	}
@@ -2009,6 +2133,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if hasExplicitDisplayOrder {
 		displayOrder = *data.DisplayOrder
 	}
+	messageSortBasis := utils.MessageSortBasisTypingStart
+	if cfg := utils.GetConfig(); cfg != nil {
+		messageSortBasis = utils.NormalizeMessageSortBasis(cfg.MessageSortBasis)
+	}
 	hasPlacement := strings.TrimSpace(data.BeforeID) != "" || strings.TrimSpace(data.AfterID) != ""
 	if !hasExplicitDisplayOrder && hasPlacement {
 		resolvedOrder, err := resolveMessageDisplayOrderForPlacement(db, channelId, messageOrderPlacement{
@@ -2021,7 +2149,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		displayOrder = resolvedOrder
 	}
 	hasTypingDuration := data.TypingDurationMs != nil && *data.TypingDurationMs > 0
-	if !hasExplicitDisplayOrder && !hasPlacement && hasTypingDuration {
+	useTypingStartOrder := messageSortBasis == utils.MessageSortBasisTypingStart && hasTypingDuration
+	if !hasExplicitDisplayOrder && !hasPlacement && useTypingStartOrder {
 		durationMs := *data.TypingDurationMs
 		maxDurationMs := int64(24 * 60 * 60 * 1000)
 		if durationMs > maxDurationMs {
@@ -2033,7 +2162,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 		displayOrder = float64(estimatedStart)
 	}
-	if !hasExplicitDisplayOrder && !hasPlacement && !hasTypingDuration && whisperTo == "" {
+	if !hasExplicitDisplayOrder && !hasPlacement && !useTypingStartOrder && whisperTo == "" {
 		windowMs := int64(0)
 		if cfg := utils.GetConfig(); cfg != nil && cfg.TypingOrderWindowMs > 0 {
 			windowMs = cfg.TypingOrderWindowMs
@@ -2072,11 +2201,14 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
-		m.SenderIdentityName = identity.DisplayName
-		m.SenderIdentityColor = identity.Color
-		m.SenderIdentityAvatarID = identity.AvatarAttachmentID
-		if identity.DisplayName != "" {
-			m.SenderMemberName = identity.DisplayName
+		if appearance != nil {
+			m.SenderIdentityVariantID = appearance.VariantID
+			m.SenderIdentityName = appearance.DisplayName
+			m.SenderIdentityColor = appearance.Color
+			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			if appearance.DisplayName != "" {
+				m.SenderMemberName = appearance.DisplayName
+			}
 		}
 	}
 	if identity == nil && ctx.User.IsBot && ctx.User.NickColor != "" {
@@ -2162,7 +2294,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 		// 构建消息上下文
 		var msgContext *protocol.MessageContext
-		if channel.BotFeatureEnabled || appConfig.BuiltInSealBotEnable {
+		if effectiveBotFeatureEnabled || appConfig.BuiltInSealBotEnable {
 			msgContext = &protocol.MessageContext{
 				ICMode:       icMode,
 				IsWhisper:    whisperUser != nil,
@@ -2210,7 +2342,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
-		if appConfig.BuiltInSealBotEnable && whisperUser == nil && channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
+		if appConfig.BuiltInSealBotEnable && whisperUser == nil && effectiveBuiltInDiceEnabled && !effectiveBotFeatureEnabled {
 			botReq := &struct {
 				ChannelID string `json:"channel_id"`
 				QuoteID   string `json:"quote_id"`
@@ -2458,7 +2590,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
@@ -2623,11 +2755,12 @@ func apiMessageList(ctx *ChatContext, data *struct {
 }
 
 func apiMessageUpdate(ctx *ChatContext, data *struct {
-	ChannelID  string  `json:"channel_id"`
-	MessageID  string  `json:"message_id"`
-	Content    string  `json:"content"`
-	ICMode     string  `json:"ic_mode"`
-	IdentityID *string `json:"identity_id"`
+	ChannelID         string  `json:"channel_id"`
+	MessageID         string  `json:"message_id"`
+	Content           string  `json:"content"`
+	ICMode            string  `json:"ic_mode"`
+	IdentityID        *string `json:"identity_id"`
+	IdentityVariantID *string `json:"identity_variant_id"`
 }) (any, error) {
 	if strings.TrimSpace(data.Content) == "" {
 		return nil, fmt.Errorf("消息内容不能为空")
@@ -2675,6 +2808,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
+	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
+	if effectiveBotFeatureEnabled {
+		channelData.BotFeatureEnabled = true
+		channelData.BuiltInDiceEnabled = false
+	}
 
 	var authorUser *model.UserModel
 	if msg.UserID != "" && msg.UserID != ctx.User.ID {
@@ -2687,25 +2826,49 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 
 	identityChanged := false
 	var resolvedIdentityProto *protocol.ChannelIdentity
-	if data.IdentityID != nil && isAuthor {
+	if (data.IdentityID != nil || data.IdentityVariantID != nil) && isAuthor {
 		identityChanged = true
-		rawIdentityID := strings.TrimSpace(*data.IdentityID)
+		rawIdentityID := strings.TrimSpace(msg.SenderIdentityID)
+		if data.IdentityID != nil {
+			rawIdentityID = strings.TrimSpace(*data.IdentityID)
+		}
 		identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, rawIdentityID)
 		if err != nil {
 			return nil, err
 		}
+		rawVariantID := strings.TrimSpace(msg.SenderIdentityVariantID)
+		if data.IdentityID != nil && rawIdentityID == "" {
+			rawVariantID = ""
+		}
+		if data.IdentityVariantID != nil {
+			rawVariantID = strings.TrimSpace(*data.IdentityVariantID)
+		}
+		variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, data.ChannelID, identity, rawVariantID)
+		if err != nil {
+			return nil, err
+		}
+		appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 		if identity != nil {
 			msg.SenderIdentityID = identity.ID
-			msg.SenderIdentityName = identity.DisplayName
-			msg.SenderIdentityColor = identity.Color
-			msg.SenderIdentityAvatarID = identity.AvatarAttachmentID
 			msg.SenderRoleID = identity.ID
+			if appearance != nil {
+				msg.SenderIdentityVariantID = appearance.VariantID
+				msg.SenderIdentityName = appearance.DisplayName
+				msg.SenderIdentityColor = appearance.Color
+				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			}
 			resolvedIdentityProto = identity.ToProtocolType()
-			if identity.DisplayName != "" {
-				msg.SenderMemberName = identity.DisplayName
+			if resolvedIdentityProto != nil && appearance != nil {
+				resolvedIdentityProto.DisplayName = appearance.DisplayName
+				resolvedIdentityProto.Color = appearance.Color
+				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+			}
+			if appearance != nil && appearance.DisplayName != "" {
+				msg.SenderMemberName = appearance.DisplayName
 			}
 		} else {
 			msg.SenderIdentityID = ""
+			msg.SenderIdentityVariantID = ""
 			msg.SenderIdentityName = ""
 			msg.SenderIdentityColor = ""
 			msg.SenderIdentityAvatarID = ""
@@ -2754,7 +2917,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		newContent = protocol.EscapeSatoriText(newContent)
 	}
 	var renderResult *service.DiceRenderResult
-	if channel.BuiltInDiceEnabled {
+	if effectiveBuiltInDiceEnabled {
 		renderResult, err = service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)
 		if err != nil {
 			return nil, err
@@ -2839,6 +3002,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if identityChanged {
 		updates["sender_identity_id"] = msg.SenderIdentityID
+		updates["sender_identity_variant_id"] = msg.SenderIdentityVariantID
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
@@ -3119,17 +3283,18 @@ func normalizeIcMode(raw string) string {
 }
 
 func apiMessageTyping(ctx *ChatContext, data *struct {
-	ChannelID   string   `json:"channel_id"`
-	State       string   `json:"state"`
-	Content     string   `json:"content"`
-	MessageID   string   `json:"message_id"`
-	Mode        string   `json:"mode"`
-	Enabled     *bool    `json:"enabled"`
-	IdentityID  string   `json:"identity_id"`
-	WhisperTo   string   `json:"whisper_to"`
-	ICModeSnake string   `json:"ic_mode"`
-	ICModeCamel string   `json:"icMode"`
-	OrderKey    *float64 `json:"order_key"`
+	ChannelID         string   `json:"channel_id"`
+	State             string   `json:"state"`
+	Content           string   `json:"content"`
+	MessageID         string   `json:"message_id"`
+	Mode              string   `json:"mode"`
+	Enabled           *bool    `json:"enabled"`
+	IdentityID        string   `json:"identity_id"`
+	IdentityVariantID string   `json:"identity_variant_id"`
+	WhisperTo         string   `json:"whisper_to"`
+	ICModeSnake       string   `json:"ic_mode"`
+	ICModeCamel       string   `json:"icMode"`
+	OrderKey          *float64 `json:"order_key"`
 }) (any, error) {
 	channelId := data.ChannelID
 	var privateOtherUser string
@@ -3186,6 +3351,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo &&
 			ctx.ConnInfo.TypingIcMode == typingTone &&
 			ctx.ConnInfo.TypingIdentityID == data.IdentityID &&
+			ctx.ConnInfo.TypingIdentityVariantID == data.IdentityVariantID &&
 			(broadcastOrderKey == 0 || ctx.ConnInfo.TypingOrderKey == broadcastOrderKey) {
 			return &struct {
 				Success bool `json:"success"`
@@ -3198,6 +3364,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = now
 		ctx.ConnInfo.TypingIcMode = typingTone
 		ctx.ConnInfo.TypingIdentityID = data.IdentityID
+		ctx.ConnInfo.TypingIdentityVariantID = data.IdentityVariantID
 		if broadcastOrderKey > 0 {
 			ctx.ConnInfo.TypingOrderKey = broadcastOrderKey
 		}
@@ -3209,6 +3376,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = 0
 		ctx.ConnInfo.TypingIcMode = "ic"
 		ctx.ConnInfo.TypingIdentityID = ""
+		ctx.ConnInfo.TypingIdentityVariantID = ""
 		ctx.ConnInfo.TypingOrderKey = 0
 	}
 
@@ -3269,7 +3437,18 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	if data.IdentityID != "" {
 		identity, _ := model.ChannelIdentityGetByID(data.IdentityID)
 		if identity != nil && identity.ChannelID == channelId && identity.UserID == ctx.User.ID {
-			event.Member.Identity = identity.ToProtocolType()
+			variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, channelId, identity, data.IdentityVariantID)
+			if err != nil {
+				return nil, err
+			}
+			appearance := service.ResolveChannelIdentityAppearance(identity, variant)
+			resolvedIdentityProto := identity.ToProtocolType()
+			if resolvedIdentityProto != nil && appearance != nil {
+				resolvedIdentityProto.DisplayName = appearance.DisplayName
+				resolvedIdentityProto.Color = appearance.Color
+				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+			}
+			event.Member.Identity = resolvedIdentityProto
 		}
 	}
 

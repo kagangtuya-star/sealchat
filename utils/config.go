@@ -50,6 +50,13 @@ const (
 	StorageModeS3    StorageMode = "s3"
 )
 
+type MessageSortBasis string
+
+const (
+	MessageSortBasisTypingStart MessageSortBasis = "typing_start"
+	MessageSortBasisSendTime    MessageSortBasis = "send_time"
+)
+
 const (
 	defaultPageTitle                = "海豹尬聊 SealChat"
 	defaultExportStorageDir         = "./data/exports"
@@ -219,6 +226,7 @@ type AppConfig struct {
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
 	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
+	MessageSortBasis          MessageSortBasis        `json:"messageSortBasis" yaml:"messageSortBasis"`
 	TypingOrderWindowMs       int64                   `json:"typingOrderWindowMs" yaml:"typingOrderWindowMs"`
 	ImageSizeLimit            int64                   `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
 	ImageCompress             bool                    `json:"imageCompress" yaml:"imageCompress"`
@@ -292,6 +300,7 @@ func ReadConfig() *AppConfig {
 		WebUrl:                    "/",
 		PageTitle:                 defaultPageTitle,
 		ChatHistoryPersistentDays: -1,
+		MessageSortBasis:          MessageSortBasisTypingStart,
 		TypingOrderWindowMs:       1000,
 		ImageSizeLimit:            8192,
 		ImageCompress:             true,
@@ -451,6 +460,7 @@ func ReadConfig() *AppConfig {
 	if strings.TrimSpace(config.PageTitle) == "" {
 		config.PageTitle = defaultPageTitle
 	}
+	config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 	normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
 	if serveAtChanged {
 		config.ServeAt = normalizedServeAt
@@ -509,6 +519,15 @@ func applySQLiteDefaults(cfg *SQLiteConfig) {
 	cfg.Synchronous = strings.ToUpper(cfg.Synchronous)
 	if cfg.Synchronous != "OFF" && cfg.Synchronous != "NORMAL" && cfg.Synchronous != "FULL" {
 		cfg.Synchronous = "NORMAL"
+	}
+}
+
+func NormalizeMessageSortBasis(value MessageSortBasis) MessageSortBasis {
+	switch MessageSortBasis(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case MessageSortBasisSendTime:
+		return MessageSortBasisSendTime
+	default:
+		return MessageSortBasisTypingStart
 	}
 }
 
@@ -776,6 +795,7 @@ func WriteConfig(config *AppConfig) {
 		config.Captcha.normalize()
 		config.Storage.normalize()
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
+		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
 		}
@@ -797,6 +817,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("webUrl", config.WebUrl)
 		_ = k.Set("pageTitle", config.PageTitle)
 		_ = k.Set("chatHistoryPersistentDays", config.ChatHistoryPersistentDays)
+		_ = k.Set("messageSortBasis", string(config.MessageSortBasis))
 		_ = k.Set("imageSizeLimit", config.ImageSizeLimit)
 		_ = k.Set("imageCompress", config.ImageCompress)
 		_ = k.Set("imageCompressQuality", config.ImageCompressQuality)

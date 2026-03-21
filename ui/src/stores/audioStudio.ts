@@ -42,6 +42,7 @@ export interface TrackRuntime extends AudioSceneTrack {
   pendingSeek?: number | null;
   playlistFolderId: string | null;
   playlistMode: PlaylistMode | null;
+  playlistAssets: AudioAsset[];
   playlistAssetIds: string[];
   playlistIndex: number;
 }
@@ -63,6 +64,7 @@ interface AudioStudioState {
   tracks: Record<AudioTrackType, TrackRuntime>;
   assets: AudioAsset[];
   filteredAssets: AudioAsset[];
+  trackSelectableAssets: AudioAsset[];
   assetsLoading: boolean;
   assetPagination: PaginationState;
   selectedAssetId: string | null;
@@ -192,9 +194,24 @@ function createEmptyTrack(type: AudioTrackType): TrackRuntime {
     pendingSeek: null,
     playlistFolderId: null,
     playlistMode: null,
+    playlistAssets: [],
     playlistAssetIds: [],
     playlistIndex: 0,
   };
+}
+
+function syncTrackPlaylistIndex(track: TrackRuntime, assetId: string | null | undefined) {
+  if (!track.playlistAssetIds?.length) {
+    track.playlistIndex = 0;
+    return;
+  }
+  if (!assetId) {
+    return;
+  }
+  const nextIndex = track.playlistAssetIds.indexOf(assetId);
+  if (nextIndex >= 0) {
+    track.playlistIndex = nextIndex;
+  }
 }
 
 function startProgressWatcher(store: ReturnType<typeof useAudioStudioStore>) {
@@ -346,6 +363,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     }, {} as Record<AudioTrackType, TrackRuntime>),
     assets: [],
     filteredAssets: [],
+    trackSelectableAssets: [],
     assetsLoading: false,
     assetPagination: { page: 1, pageSize: 20, total: 0 },
     selectedAssetId: null,
@@ -722,6 +740,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (changed && this.initialized) {
         void this.fetchScenes();
         void this.fetchFolders();
+        void this.fetchTrackSelectableAssets();
         void this.fetchAssets({ pagination: { page: 1 } });
       }
       if (this.hasPlaybackAuthority && this.worldPlaybackEnabled && this.currentChannelId) {
@@ -1291,7 +1310,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async ensureInitialized() {
       if (this.initialized) return;
-      await Promise.all([this.fetchScenes(), this.fetchFolders()]);
+      await Promise.all([this.fetchScenes(), this.fetchFolders(), this.fetchTrackSelectableAssets()]);
       await this.fetchAssets();
       this.initialized = true;
       if (this.canManage && !this.currentSceneId && this.scenes.length) {
@@ -1578,6 +1597,93 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    async fetchAllAssetsByFolder(folderId: string, pageSize = 200) {
+      const normalizedFolderId = normalizeFolderId(folderId);
+      if (!normalizedFolderId) {
+        return [] as AudioAsset[];
+      }
+
+      const playlistFilters: AudioSearchFilters = {
+        query: '',
+        tags: [],
+        folderId: normalizedFolderId,
+        creatorIds: [],
+        durationRange: null,
+        hasSceneOnly: false,
+        scope: this.filters.scope,
+        worldId: this.filters.worldId ?? this.currentWorldId,
+        includeCommon: this.filters.includeCommon,
+      };
+
+      let page = 1;
+      let total = 0;
+      const assetMap = new Map<string, AudioAsset>();
+
+      while (true) {
+        const params = buildAssetQueryParams(playlistFilters, { page, pageSize, total: 0 });
+        const resp = await api.get('/api/v1/audio/assets', { params });
+        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
+        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
+        for (const item of items) {
+          if (item?.id) {
+            assetMap.set(item.id, item);
+          }
+        }
+        if (!items.length || assetMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      return Array.from(assetMap.values());
+    },
+
+    async fetchTrackSelectableAssets(pageSize = 200) {
+      const worldId = this.currentWorldId ?? this.filters.worldId ?? null;
+      if (!this.isSystemAdmin && !worldId) {
+        this.trackSelectableAssets = [];
+        return [];
+      }
+
+      const playlistFilters: AudioSearchFilters = {
+        query: '',
+        tags: [],
+        folderId: null,
+        creatorIds: [],
+        durationRange: null,
+        hasSceneOnly: false,
+        scope: this.isSystemAdmin ? undefined : 'world',
+        worldId,
+        includeCommon: true,
+      };
+
+      let page = 1;
+      let total = 0;
+      const assetMap = new Map<string, AudioAsset>();
+
+      while (true) {
+        const params = buildAssetQueryParams(playlistFilters, { page, pageSize, total: 0 });
+        const resp = await api.get('/api/v1/audio/assets', { params });
+        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
+        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
+        for (const item of items) {
+          if (item?.id) {
+            assetMap.set(item.id, item);
+          }
+        }
+        if (!items.length || assetMap.size >= total) {
+          break;
+        }
+        page += 1;
+      }
+
+      const result = Array.from(assetMap.values());
+      this.trackSelectableAssets = result;
+      return result;
+    },
+
     async fetchFolders() {
       try {
         const params: Record<string, unknown> = {};
@@ -1722,6 +1828,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
       track.assetId = asset.id;
       track.asset = asset;
+      syncTrackPlaylistIndex(track, asset.id);
       track.status = 'loading';
       track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
       track.howl = this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
@@ -1746,6 +1853,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const asset = this.assets.find((item) => item.id === assetId) || (await this.fetchSingleAsset(assetId));
         track.asset = asset;
         track.assetId = asset.id;
+        syncTrackPlaylistIndex(track, asset.id);
         track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
         track.howl = this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
         track.status = 'ready';
@@ -2223,6 +2331,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       };
       updateList(this.assets);
       updateList(this.filteredAssets);
+      updateList(this.trackSelectableAssets);
       if (!this.selectedAssetId) {
         this.selectedAssetId = asset.id;
       }
@@ -2232,6 +2341,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const filterList = (list: AudioAsset[]) => list.filter((item) => item.id !== assetId);
       this.assets = filterList(this.assets);
       this.filteredAssets = filterList(this.filteredAssets);
+      this.trackSelectableAssets = filterList(this.trackSelectableAssets);
       if (this.selectedAssetId === assetId) {
         this.selectedAssetId = this.filteredAssets[0]?.id ?? null;
       }
@@ -2577,21 +2687,30 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async setTrackPlaylistFolder(type: AudioTrackType, folderId: string | null) {
       const track = this.tracks[type];
       if (!track) return;
-      track.playlistFolderId = folderId;
-      if (!folderId) {
-        track.playlistAssetIds = [];
-        track.playlistIndex = 0;
+      const normalizedFolderId = normalizeFolderId(folderId);
+      track.playlistFolderId = normalizedFolderId;
+      track.playlistAssets = [];
+      track.playlistAssetIds = [];
+      track.playlistIndex = 0;
+      if (!normalizedFolderId) {
+        if (!this.trackSelectableAssets.length) {
+          await this.fetchTrackSelectableAssets();
+        }
+        if (this.canManage) {
+          this.queuePlaybackSync();
+        }
         return;
       }
       try {
-        const resp = await api.get('/api/v1/audio/assets', {
-          params: { folderId, pageSize: 200 },
-        });
-        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
-        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const items = await this.fetchAllAssetsByFolder(normalizedFolderId, 200);
+        if (track.playlistFolderId !== normalizedFolderId) {
+          return;
+        }
+        track.playlistAssets = items;
         track.playlistAssetIds = items.map((a) => a.id);
-        track.playlistIndex = 0;
-        if (items.length && !track.assetId) {
+        const currentIndex = track.assetId ? items.findIndex((item) => item.id === track.assetId) : -1;
+        track.playlistIndex = currentIndex >= 0 ? currentIndex : 0;
+        if (items.length && currentIndex < 0) {
           await this.assignAssetToTrack(type, items[0]);
         }
       } catch (err) {

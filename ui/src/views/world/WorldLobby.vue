@@ -10,9 +10,6 @@ import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
-import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
-import { useAnnouncementStore } from '@/stores/announcement';
-import type { AnnouncementItem } from '@/models/announcement';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -69,7 +66,6 @@ const dialog = useDialog();
 const router = useRouter();
 const { t } = useI18n();
 const AdminSettings = defineAsyncComponent(() => import('@/views/admin/admin-settings.vue'));
-const announcementStore = useAnnouncementStore();
 
 const loading = ref(false);
 const inviteSlug = ref('');
@@ -83,8 +79,6 @@ const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
 const inputStatsComponent = shallowRef<Component | null>(null);
 const announcementVisible = ref(false);
-const popupVisible = ref(false);
-const popupItem = ref<AnnouncementItem | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -297,19 +291,6 @@ const openAnnouncementPanel = () => {
   announcementVisible.value = true;
 };
 
-const checkLobbyAnnouncementPopup = async () => {
-  if (!user.info.id) return;
-  try {
-    const item = await announcementStore.fetchLobbyPending();
-    if (!item) return;
-    popupItem.value = item;
-    popupVisible.value = true;
-    await announcementStore.markLobbyPopup(item.id);
-  } catch (error) {
-    console.warn('check lobby announcement popup failed', error);
-  }
-};
-
 const resetAndFetchCurrentMode = async () => {
   if (lobbyMode.value === 'mine') {
     minePagination.value.page = 1;
@@ -387,7 +368,6 @@ onMounted(async () => {
       mobileGridActionMediaQuery.addListener(syncMobileGridActionMode);
     }
   }
-  await checkLobbyAnnouncementPopup();
   await chat.fetchFavoriteWorlds().catch(() => {});
   await refreshCurrentMode();
 });
@@ -1137,10 +1117,6 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       scope-type="lobby"
       title="大厅公告"
       :can-manage="canManageLobbyAnnouncements"
-    />
-    <AnnouncementPopupModal
-      v-model:visible="popupVisible"
-      :item="popupItem"
     />
   </div>
 </template>

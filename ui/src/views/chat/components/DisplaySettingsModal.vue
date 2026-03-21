@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
-import { createDefaultDisplaySettings, useDisplayStore, type DisplaySettings } from '@/stores/display'
+import {
+  QUICK_GALLERY_PAGE_SIZE_LIMITS,
+  createDefaultDisplaySettings,
+  useDisplayStore,
+  type DisplaySettings
+} from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
@@ -25,6 +30,9 @@ const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
 const avatarStylePanelVisible = ref(false)
 const fontSettingsPanelVisible = ref(false)
+const keywordQuickInputTriggerDraft = ref('/')
+const identityQuickSwitchTriggerDraft = ref('/')
+const identityVariantQuickSwitchTriggerDraft = ref('=')
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
@@ -39,6 +47,77 @@ const syncFavoriteBar = (source?: DisplaySettings) => {
   draft.favoriteChannelBarEnabled = source.favoriteChannelBarEnabled
 }
 
+const extractSingleTriggerChar = (value: string | null | undefined) => {
+  const [firstChar = ''] = Array.from(value ?? '')
+  return firstChar
+}
+
+const syncTriggerDrafts = (source?: DisplaySettings) => {
+  keywordQuickInputTriggerDraft.value = source?.worldKeywordQuickInputTrigger || '/'
+  identityQuickSwitchTriggerDraft.value = source?.identityQuickSwitchTrigger || '/'
+  identityVariantQuickSwitchTriggerDraft.value = source?.identityVariantQuickSwitchTrigger || '='
+}
+
+const updateTriggerDraft = (
+  key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger' | 'identityVariantQuickSwitchTrigger',
+  value: string,
+) => {
+  const normalized = extractSingleTriggerChar(value)
+  if (key === 'worldKeywordQuickInputTrigger') {
+    keywordQuickInputTriggerDraft.value = normalized
+  } else if (key === 'identityQuickSwitchTrigger') {
+    identityQuickSwitchTriggerDraft.value = normalized
+  } else {
+    identityVariantQuickSwitchTriggerDraft.value = normalized
+  }
+  if (!normalized) {
+    return
+  }
+  draft[key] = normalized
+}
+
+const finalizeTriggerDraft = (key: 'worldKeywordQuickInputTrigger' | 'identityQuickSwitchTrigger' | 'identityVariantQuickSwitchTrigger') => {
+  const current = key === 'worldKeywordQuickInputTrigger'
+    ? keywordQuickInputTriggerDraft.value
+    : key === 'identityQuickSwitchTrigger'
+      ? identityQuickSwitchTriggerDraft.value
+      : identityVariantQuickSwitchTriggerDraft.value
+  const fallback = key === 'identityVariantQuickSwitchTrigger' ? '=' : '/'
+  const normalized = extractSingleTriggerChar(current) || fallback
+  if (key === 'worldKeywordQuickInputTrigger') {
+    keywordQuickInputTriggerDraft.value = normalized
+  } else if (key === 'identityQuickSwitchTrigger') {
+    identityQuickSwitchTriggerDraft.value = normalized
+  } else {
+    identityVariantQuickSwitchTriggerDraft.value = normalized
+  }
+  draft[key] = normalized
+}
+
+const handleIdentityQuickSwitchTriggerUpdate = (value: string) => {
+  updateTriggerDraft('identityQuickSwitchTrigger', value)
+}
+
+const handleIdentityQuickSwitchTriggerBlur = () => {
+  finalizeTriggerDraft('identityQuickSwitchTrigger')
+}
+
+const handleIdentityVariantQuickSwitchTriggerUpdate = (value: string) => {
+  updateTriggerDraft('identityVariantQuickSwitchTrigger', value)
+}
+
+const handleIdentityVariantQuickSwitchTriggerBlur = () => {
+  finalizeTriggerDraft('identityVariantQuickSwitchTrigger')
+}
+
+const handleKeywordQuickInputTriggerUpdate = (value: string) => {
+  updateTriggerDraft('worldKeywordQuickInputTrigger', value)
+}
+
+const handleKeywordQuickInputTriggerBlur = () => {
+  finalizeTriggerDraft('worldKeywordQuickInputTrigger')
+}
+
 // Sync avatar settings when AvatarStylePanel closes (it saves directly to store)
 watch(avatarStylePanelVisible, (visible) => {
   if (!visible) {
@@ -51,6 +130,7 @@ watch(
   () => props.settings,
   (value) => {
     if (!value) return
+    syncTriggerDrafts(value)
     draft.layout = value.layout
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
@@ -83,13 +163,17 @@ watch(
   draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
-  draft.toolbarHotkeys = value.toolbarHotkeys
-  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-  draft.showDragIndicator = value.showDragIndicator
-  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-  draft.disableContextMenu = value.disableContextMenu
-  draft.avatarSize = value.avatarSize
-  draft.avatarBorderRadius = value.avatarBorderRadius
+  draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
+  draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
+    draft.toolbarHotkeys = value.toolbarHotkeys
+    draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+    draft.showDragIndicator = value.showDragIndicator
+    draft.highlightNewlySentMessage = value.highlightNewlySentMessage
+    draft.disableContextMenu = value.disableContextMenu
+    draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
+    draft.quickGalleryPageSize = value.quickGalleryPageSize
+    draft.avatarSize = value.avatarSize
+    draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
@@ -125,6 +209,7 @@ type NumericSettingKey =
   | 'paragraphSpacing'
   | 'messagePaddingX'
   | 'messagePaddingY'
+  | 'quickGalleryPageSize'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
@@ -133,6 +218,7 @@ const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
   Object.assign(draft, defaults)
+  syncTriggerDrafts(defaults)
   syncFavoriteBar(props.settings)
 }
 
@@ -502,6 +588,50 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">角色快捷切换</p>
+            <p class="section-desc">在文本框中输入“触发字符 + 频道角色名 + 空格 + 正文”时，发送前会先切换到对应频道角色</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <span class="quick-input-hint">触发字符</span>
+          <n-input
+            :value="identityQuickSwitchTriggerDraft"
+            size="small"
+            :maxlength="1"
+            style="width: 50px; text-align: center"
+            placeholder="/"
+            @update:value="handleIdentityQuickSwitchTriggerUpdate"
+            @blur="handleIdentityQuickSwitchTriggerBlur"
+          />
+          <span class="quick-input-hint">示例：{{ identityQuickSwitchTriggerDraft || '/' }}角色名 正文</span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">身份差分快捷切换</p>
+            <p class="section-desc">在普通输入中使用“触发字符 + 差分关键词 + 空格 + 正文”时，发送前会先切换当前身份差分；仅输入关键词时只切换不发送</p>
+          </div>
+        </header>
+        <div class="keyword-quick-input-row">
+          <span class="quick-input-hint">触发字符</span>
+          <n-input
+            :value="identityVariantQuickSwitchTriggerDraft"
+            size="small"
+            :maxlength="1"
+            style="width: 50px; text-align: center"
+            placeholder="="
+            @update:value="handleIdentityVariantQuickSwitchTriggerUpdate"
+            @blur="handleIdentityVariantQuickSwitchTriggerBlur"
+          />
+          <span class="quick-input-hint">示例：{{ identityVariantQuickSwitchTriggerDraft || '=' }}差分 正文</span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">禁用浏览器右键菜单</p>
             <p class="section-desc">避免应用内右键功能菜单与浏览器默认右键菜单冲突</p>
           </div>
@@ -524,6 +654,42 @@ const handleOpenTutorialHub = () => {
           <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
         </n-radio-group>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快捷画廊点击动作</p>
+            <p class="section-desc">仅影响快捷画廊里非“表情收藏”文件夹的图片；表情收藏仍保持点击直接发送</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.quickGalleryLinkedEmojiSendDirectly">
+          <template #checked>点击直接发送原图</template>
+          <template #unchecked>点击插入到当前光标</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快捷画廊分页</p>
+            <p class="section-desc">控制快捷画廊每次下拉加载的缩略图数量，弱网建议适当调小</p>
+          </div>
+        </header>
+        <div class="gallery-page-size-settings">
+          <span class="gallery-page-size-settings__label">每次拉取</span>
+          <n-input-number
+            :value="draft.quickGalleryPageSize"
+            size="small"
+            :min="QUICK_GALLERY_PAGE_SIZE_LIMITS.MIN"
+            :max="QUICK_GALLERY_PAGE_SIZE_LIMITS.MAX"
+            :step="1"
+            @update:value="(value) => handleNumericInput('quickGalleryPageSize', value)"
+          >
+            <template #suffix>张</template>
+          </n-input-number>
+          <span class="quick-input-hint">默认 {{ QUICK_GALLERY_PAGE_SIZE_LIMITS.DEFAULT }} 张</span>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -606,12 +772,14 @@ const handleOpenTutorialHub = () => {
           </n-switch>
           <span class="quick-input-hint">触发字符</span>
           <n-input
-            v-model:value="draft.worldKeywordQuickInputTrigger"
+            :value="keywordQuickInputTriggerDraft"
             size="small"
             :maxlength="1"
             :disabled="!draft.worldKeywordQuickInputEnabled"
             style="width: 50px; text-align: center"
             placeholder="/"
+            @update:value="handleKeywordQuickInputTriggerUpdate"
+            @blur="handleKeywordQuickInputTriggerBlur"
           />
           <span class="quick-input-hint">输入该字符后可快速搜索并插入世界术语</span>
         </div>
@@ -1118,6 +1286,18 @@ const handleOpenTutorialHub = () => {
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.gallery-page-size-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.gallery-page-size-settings__label {
+  font-size: 0.85rem;
+  color: var(--sc-text-primary);
 }
 
 .quick-input-hint {

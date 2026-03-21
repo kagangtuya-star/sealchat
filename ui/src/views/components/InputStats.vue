@@ -52,8 +52,8 @@ const includeImported = ref(false)
 // Session threshold
 const sessionThreshold = ref(30)
 
-// Session chart metric toggle: 'chars' or 'speed'
-const sessionMetric = ref<'chars' | 'speed'>('chars')
+// Session chart metric toggle: 'chars', 'speed', or 'duration'
+const sessionMetric = ref<'chars' | 'speed' | 'duration'>('chars')
 
 // Session IC/OOC mode (independent of global activeTab)
 const sessionIcMode = ref<'all' | 'ic' | 'ooc'>('all')
@@ -81,7 +81,9 @@ function loadPrefs() {
     if (!raw) return
     const prefs = JSON.parse(raw)
     if (prefs.sessionThreshold != null) sessionThreshold.value = prefs.sessionThreshold
-    if (prefs.sessionMetric) sessionMetric.value = prefs.sessionMetric
+    if (['chars', 'speed', 'duration'].includes(prefs.sessionMetric)) {
+      sessionMetric.value = prefs.sessionMetric
+    }
     if (prefs.sessionIcMode) sessionIcMode.value = prefs.sessionIcMode
     if (prefs.filterChannelMode) filterChannelMode.value = prefs.filterChannelMode
     if (prefs.selectedChannelIds) selectedChannelIds.value = prefs.selectedChannelIds
@@ -513,38 +515,66 @@ function renderSessionChart() {
     return
   }
 
-  const isChars = sessionMetric.value === 'chars'
-  const seriesColor = isChars ? '#5b8ff9' : '#5dd4a6'
-  const gradientStart = isChars ? 'rgba(91,143,249,0.25)' : 'rgba(93,212,166,0.25)'
-  const gradientEnd = isChars ? 'rgba(91,143,249,0.02)' : 'rgba(93,212,166,0.02)'
+  const metricConfig = sessionMetric.value === 'chars'
+    ? {
+      color: '#5b8ff9',
+      gradientStart: 'rgba(91,143,249,0.25)',
+      gradientEnd: 'rgba(91,143,249,0.02)',
+      barStart: 'rgba(91,143,249,0.82)',
+      barEnd: 'rgba(91,143,249,0.24)',
+      yAxisName: t('inputStats.totalChars'),
+      getValue: (s: typeof data[number]) => s.totalChars,
+    }
+    : sessionMetric.value === 'speed'
+      ? {
+        color: '#5dd4a6',
+        gradientStart: 'rgba(93,212,166,0.25)',
+        gradientEnd: 'rgba(93,212,166,0.02)',
+        barStart: 'rgba(93,212,166,0.82)',
+        barEnd: 'rgba(93,212,166,0.24)',
+        yAxisName: `${t('inputStats.typingSpeed')} (${t('inputStats.charsPerMin')})`,
+        getValue: (s: typeof data[number]) => s.typingSpeed,
+      }
+      : {
+        color: '#f6ad55',
+        gradientStart: 'rgba(246,173,85,0.25)',
+        gradientEnd: 'rgba(246,173,85,0.02)',
+        barStart: 'rgba(246,173,85,0.82)',
+        barEnd: 'rgba(246,173,85,0.24)',
+        yAxisName: `${t('inputStats.sessionTime')} (${t('inputStats.minutes')})`,
+        getValue: (s: typeof data[number]) => s.duration,
+      }
 
   // X axis: session labels (团次 #1, #2, #3...)
   const xLabels = data.map(s => `#${s.index}`)
-  // Y axis: chars or typing speed
-  const yValues = data.map(s => isChars ? s.totalChars : s.typingSpeed)
+  // Y axis: chars, typing speed, or session duration
+  const yValues = data.map(s => metricConfig.getValue(s))
   // Store session data for tooltip
   const chartData = data.map((s, i) => ({
     value: yValues[i],
     session: s,
   }))
 
-  const yAxisName = isChars
-    ? t('inputStats.totalChars')
-    : `${t('inputStats.typingSpeed')} (${t('inputStats.charsPerMin')})`
-
   sessionChartInstance.setOption({
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'item',
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow',
+        shadowStyle: {
+          color: isDark.value ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+        },
+      },
       backgroundColor: isDark.value ? 'rgba(30,30,35,0.95)' : 'rgba(255,255,255,0.96)',
       borderColor: isDark.value ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
       textStyle: { color: isDark.value ? '#e0e0e6' : '#333', fontSize: 12 },
       padding: [10, 14],
       formatter: (params: any) => {
-        const s = params.data?.session
+        const list = Array.isArray(params) ? params : [params]
+        const s = list.find((item: any) => item?.data?.session)?.data?.session
         if (!s) return ''
         return [
-          `<div style="font-weight:700;color:${seriesColor};margin-bottom:4px">${t('inputStats.sessionNo')} #${s.index}</div>`,
+          `<div style="font-weight:700;color:${metricConfig.color};margin-bottom:4px">${t('inputStats.sessionNo')} #${s.index}</div>`,
           `<div style="font-size:11px;opacity:0.7;margin-bottom:6px">${s.startTime} ~ ${s.endTime}</div>`,
           `<div style="display:grid;grid-template-columns:auto auto;gap:2px 12px;font-size:12px">`,
           `<span style="opacity:0.6">⏱ ${t('inputStats.duration')}:</span><span>${formatDuration(s.duration)}</span>`,
@@ -556,8 +586,12 @@ function renderSessionChart() {
       },
     },
     grid: {
-      left: '3%', right: '4%', bottom: '6%', top: '12%', containLabel: true,
+      left: '3%', right: '4%', top: '12%', bottom: 78, containLabel: true,
     },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 18, bottom: 10, brushSelect: false },
+    ],
     xAxis: {
       type: 'category',
       data: xLabels,
@@ -566,42 +600,62 @@ function renderSessionChart() {
     },
     yAxis: {
       type: 'value',
-      name: yAxisName,
+      name: metricConfig.yAxisName,
       nameTextStyle: { color: colors.textColor, fontSize: 11 },
       axisLabel: { color: colors.textColor },
       splitLine: { lineStyle: { color: colors.splitLineColor } },
     },
     series: [
       {
-        name: yAxisName,
+        name: metricConfig.yAxisName,
+        type: 'bar',
+        data: chartData,
+        barMaxWidth: 20,
+        z: 1,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: metricConfig.barStart },
+            { offset: 1, color: metricConfig.barEnd },
+          ]),
+          borderRadius: [6, 6, 0, 0],
+        },
+        emphasis: {
+          itemStyle: {
+            color: metricConfig.color,
+          },
+        },
+      },
+      {
+        name: metricConfig.yAxisName,
         type: 'line',
         smooth: true,
         data: chartData,
         symbolSize: 10,
         symbol: 'circle',
+        z: 3,
         lineStyle: {
-          color: seriesColor,
+          color: metricConfig.color,
           width: 2.5,
         },
         itemStyle: {
-          color: seriesColor,
+          color: metricConfig.color,
           borderColor: isDark.value ? '#1e1e23' : '#fff',
           borderWidth: 2,
         },
         emphasis: {
           itemStyle: {
-            color: seriesColor,
+            color: metricConfig.color,
             borderColor: '#fff',
             borderWidth: 3,
             shadowBlur: 8,
-            shadowColor: seriesColor.replace(')', ',0.5)').replace('rgb', 'rgba'),
+            shadowColor: metricConfig.color.replace(')', ',0.5)').replace('rgb', 'rgba'),
           },
           scale: 1.6,
         },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: gradientStart },
-            { offset: 1, color: gradientEnd },
+            { offset: 0, color: metricConfig.gradientStart },
+            { offset: 1, color: metricConfig.gradientEnd },
           ]),
         },
       },
@@ -983,6 +1037,12 @@ const currentWorldName = computed(() => {
               @click="sessionMetric = 'speed'"
             >
               {{ t('inputStats.typingSpeed') }}
+            </n-button>
+            <n-button
+              :type="sessionMetric === 'duration' ? 'primary' : 'default'"
+              @click="sessionMetric = 'duration'"
+            >
+              {{ t('inputStats.sessionTime') }}
             </n-button>
           </n-button-group>
           <n-button-group size="small">

@@ -112,6 +112,8 @@ export interface DisplaySettings {
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
   worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
+  identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
+  identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -123,6 +125,8 @@ export interface DisplaySettings {
   activeCustomThemeId: string | null
   // 右键菜单
   disableContextMenu: boolean
+  quickGalleryLinkedEmojiSendDirectly: boolean
+  quickGalleryPageSize: number
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
@@ -173,6 +177,14 @@ export const SIDEBAR_WIDTH_LIMITS = {
   MIN: SIDEBAR_WIDTH_MIN,
   MAX: SIDEBAR_WIDTH_MAX,
 }
+const QUICK_GALLERY_PAGE_SIZE_DEFAULT = 15
+const QUICK_GALLERY_PAGE_SIZE_MIN = 5
+const QUICK_GALLERY_PAGE_SIZE_MAX = 60
+export const QUICK_GALLERY_PAGE_SIZE_LIMITS = {
+  DEFAULT: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+  MIN: QUICK_GALLERY_PAGE_SIZE_MIN,
+  MAX: QUICK_GALLERY_PAGE_SIZE_MAX,
+}
 const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
 const INPUT_AREA_HEIGHT_MIN = 80
 const INPUT_AREA_HEIGHT_MAX = 600
@@ -208,6 +220,13 @@ const normalizeInputAreaHeight = (value: unknown) => {
   if (raw <= 0) return 0
   return Math.max(raw, INPUT_AREA_HEIGHT_MIN)
 }
+const normalizeQuickGalleryPageSize = (value: unknown) =>
+  coerceNumberInRange(
+    value,
+    QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+    QUICK_GALLERY_PAGE_SIZE_MIN,
+    QUICK_GALLERY_PAGE_SIZE_MAX,
+  )
 const KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT = 1  // 1em - 中文标准首行缩进
 const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
@@ -443,6 +462,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   worldKeywordQuickInputEnabled: true,
   worldKeywordQuickInputTrigger: '/',
+  identityQuickSwitchTrigger: '/',
+  identityVariantQuickSwitchTrigger: '=',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -451,6 +472,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   customThemes: [],
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
+  quickGalleryLinkedEmojiSendDirectly: false,
+  quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeTemplateByWorld: {},
@@ -654,6 +677,8 @@ const loadSettings = (): DisplaySettings => {
       ),
       worldKeywordQuickInputEnabled: coerceBoolean((parsed as any)?.worldKeywordQuickInputEnabled ?? true),
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
+      identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
+      identityVariantQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityVariantQuickSwitchTrigger || '='),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -662,6 +687,8 @@ const loadSettings = (): DisplaySettings => {
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
+      quickGalleryLinkedEmojiSendDirectly: coerceBoolean((parsed as any)?.quickGalleryLinkedEmojiSendDirectly ?? false),
+      quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
@@ -855,6 +882,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputTrigger')
       ? coerceQuickInputTrigger((patch as any).worldKeywordQuickInputTrigger)
       : base.worldKeywordQuickInputTrigger,
+  identityQuickSwitchTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityQuickSwitchTrigger')
+      ? coerceQuickInputTrigger((patch as any).identityQuickSwitchTrigger)
+      : base.identityQuickSwitchTrigger,
+  identityVariantQuickSwitchTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantQuickSwitchTrigger')
+      ? coerceQuickInputTrigger((patch as any).identityVariantQuickSwitchTrigger || '=')
+      : base.identityVariantQuickSwitchTrigger,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
@@ -887,6 +922,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'disableContextMenu')
       ? coerceBoolean((patch as any).disableContextMenu)
       : base.disableContextMenu,
+  quickGalleryLinkedEmojiSendDirectly:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryLinkedEmojiSendDirectly')
+      ? coerceBoolean((patch as any).quickGalleryLinkedEmojiSendDirectly)
+      : base.quickGalleryLinkedEmojiSendDirectly,
+  quickGalleryPageSize:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryPageSize')
+      ? normalizeQuickGalleryPageSize((patch as any).quickGalleryPageSize)
+      : base.quickGalleryPageSize,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)

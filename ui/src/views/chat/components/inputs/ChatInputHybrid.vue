@@ -45,6 +45,7 @@ const emit = defineEmits<{
   (event: 'remove-image', markerId: string): void
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
 }>();
 
 const editorRef = ref<HTMLDivElement | null>(null);
@@ -100,6 +101,7 @@ const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
 const QUICK_ITALIC_PATTERN = /(^|[^*])\*([^*\n]+)\*/g;
 const ZERO_WIDTH_SPACE = '\u200B';
 const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;
+const GALLERY_ITEM_MIME_TYPE = 'application/x-sealchat-gallery-item';
 
 const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
@@ -202,6 +204,24 @@ const resolveTextOffsetByModelPosition = (text: string, modelPosition: number): 
     }
   }
   return text.length;
+};
+
+const extractGalleryAttachmentId = (event: DragEvent) => {
+  const dt = event.dataTransfer;
+  if (!dt || !Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    return '';
+  }
+  try {
+    const raw = dt.getData(GALLERY_ITEM_MIME_TYPE);
+    if (!raw) {
+      return '';
+    }
+    const payload = JSON.parse(raw) as { attachmentId?: string };
+    return typeof payload?.attachmentId === 'string' ? payload.attachmentId : '';
+  } catch (error) {
+    console.warn('解析表情拖拽数据失败', error);
+    return '';
+  }
 };
 
 const renderQuickFormatLine = (line: string): string => {
@@ -1317,6 +1337,13 @@ const handleDrop = (event: DragEvent) => {
   event.preventDefault();
   event.stopPropagation();
 
+  const attachmentId = extractGalleryAttachmentId(event);
+  if (attachmentId) {
+    const position = getCursorPosition();
+    emit('drop-gallery-item', { attachmentId, selectionStart: position, selectionEnd: position });
+    return;
+  }
+
   const files = Array.from(event.dataTransfer?.files || []).filter((file) =>
     file.type.startsWith('image/')
   );
@@ -1330,6 +1357,10 @@ const handleDrop = (event: DragEvent) => {
 const handleDragOver = (event: DragEvent) => {
   event.preventDefault();
   event.stopPropagation();
+  const dt = event.dataTransfer;
+  if (dt && Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    dt.dropEffect = 'copy';
+  }
 };
 
 const handleBeforeInput = (event: InputEvent) => {

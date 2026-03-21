@@ -48,6 +48,96 @@ func ChannelMembers(c *fiber.Ctx) error {
 	})
 }
 
+func ChannelMemberCandidates(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "未登录",
+		})
+	}
+
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		channelID = strings.TrimSpace(c.Query("id"))
+	}
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+
+	result, err := service.ListChannelMemberCandidates(service.ChannelMemberCandidateQuery{
+		ChannelID:        channelID,
+		ActorID:          user.ID,
+		Page:             parseQueryIntDefault(c, "page", 1),
+		PageSize:         parseQueryIntDefault(c, "pageSize", 20),
+		Keyword:          strings.TrimSpace(c.Query("keyword")),
+		RoleKey:          strings.TrimSpace(c.Query("roleKey", "member")),
+		IncludeSpectator: c.QueryBool("includeSpectator"),
+		ExcludeExisting:  c.QueryBool("excludeExisting"),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrChannelNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		case errors.Is(err, service.ErrChannelPermissionDenied):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权管理频道成员"})
+		case errors.Is(err, service.ErrChannelWorldRequired),
+			errors.Is(err, service.ErrChannelTargetRoleNotFound),
+			errors.Is(err, service.ErrChannelMemberRoleMissing),
+			errors.Is(err, service.ErrChannelMemberCandidateRoleInvalid):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "频道成员候选查询参数无效"})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "获取频道成员候选失败"})
+		}
+	}
+	return c.JSON(result)
+}
+
+func ChannelAddWorldMembers(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "未登录",
+		})
+	}
+
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+
+	var body struct {
+		IncludeSpectator bool `json:"includeSpectator"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+
+	result, err := service.AddWorldMembersToChannel(service.ChannelAddWorldMembersParams{
+		ChannelID:        channelID,
+		ActorID:          user.ID,
+		IncludeSpectator: body.IncludeSpectator,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrChannelNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		case errors.Is(err, service.ErrChannelPermissionDenied):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权管理频道成员"})
+		case errors.Is(err, service.ErrChannelWorldRequired),
+			errors.Is(err, service.ErrChannelTargetRoleNotFound),
+			errors.Is(err, service.ErrChannelMemberRoleMissing):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "频道成员角色不存在或配置无效"})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "批量添加频道成员失败"})
+		}
+	}
+	return c.JSON(result)
+}
+
 func ChannelMemberOptions(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {

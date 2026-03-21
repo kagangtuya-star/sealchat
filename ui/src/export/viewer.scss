@@ -78,6 +78,9 @@
 }
 
 .viewer-message {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 18px;
   padding: 0.9rem 1rem;
@@ -95,6 +98,31 @@
   font-size: 0.9rem;
   margin-bottom: 0.45rem;
   color: rgba(203, 213, 225, 0.9);
+}
+
+.viewer-message__avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.18);
+  color: #e2e8f0;
+  font-weight: 700;
+}
+
+.viewer-message__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.viewer-message__main {
+  min-width: 0;
+  flex: 1;
 }
 
 .viewer-message__body {

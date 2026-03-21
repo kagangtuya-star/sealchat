@@ -116,7 +116,7 @@ func ListGalleryItems(collectionID string, keyword string, page, pageSize int) (
 		if keyword != "" {
 			q = q.Where("remark LIKE ?", "%"+keyword+"%")
 		}
-		return q.Order("`order`, created_at DESC")
+		return q.Order("`order` DESC, created_at DESC, id DESC")
 	})
 }
 
@@ -131,7 +131,7 @@ func SearchGalleryItems(ownerType OwnerType, ownerID, keyword string, limit int)
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	err := query.Order("gallery_items.`order`, gallery_items.created_at DESC").Find(&items).Error
+	err := query.Order("gallery_items.`order` DESC, gallery_items.created_at DESC, gallery_items.id DESC").Find(&items).Error
 	return items, err
 }
 

@@ -96,15 +96,15 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
     },
     {
         id: 'display-settings',
-        title: '显示设置',
+        title: '常规设置',
         description: '主题切换、布局模式、字体大小等自定义',
         category: 'basic',
         estimatedTime: 40,
         steps: [
             {
                 id: 'display-1',
-                title: '打开显示设置',
-                content: '点击工具栏中的「显示设置」按钮可以打开设置面板。',
+                title: '打开常规设置',
+                content: '点击工具栏中的「常规设置」按钮可以打开设置面板。',
                 target: '[data-tour="display-settings"]',
                 placement: 'bottom',
                 highlight: true,
@@ -472,13 +472,13 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
             {
                 id: 'shortcuts-1',
                 title: '快捷键设置',
-                content: '在显示设置中可以自定义工具栏按钮的快捷键。',
+                content: '在常规设置中可以自定义工具栏按钮的快捷键。',
                 placement: 'center',
             },
             {
                 id: 'shortcuts-2',
                 title: '常用快捷键',
-                content: '可以为显示设置、表情面板、骰子托盘等功能设置快捷键。',
+                content: '可以为常规设置、表情面板、骰子托盘等功能设置快捷键。',
                 placement: 'center',
             },
         ],
@@ -493,7 +493,7 @@ export const TUTORIAL_MODULES: TutorialModule[] = [
             {
                 id: 'theme-1',
                 title: '启用自定义主题',
-                content: '在显示设置中开启「自定义主题」开关。',
+                content: '在常规设置中开启「自定义主题」开关。',
                 placement: 'center',
             },
             {

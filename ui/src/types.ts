@@ -75,6 +75,7 @@ export interface SatoriMessage {
 
   sender_member_name?: string;
   sender_role_id?: string;
+  sender_identity_variant_id?: string;
   isPinned?: boolean;
   pinnedAt?: number;
   pinnedBy?: string;
@@ -205,6 +206,7 @@ export interface ServerConfig {
   webUrl: string;
   pageTitle?: string;
   chatHistoryPersistentDays: number;
+  messageSortBasis?: 'typing_start' | 'send_time';
   imageSizeLimit: number;
   imageCompress: boolean;
   imageCompressQuality: number;
@@ -246,6 +248,30 @@ export interface UserInfo {
   emailVerifiedAt?: string;
 }
 
+export interface ChannelMemberCandidateItem {
+  userId: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  worldRole: string;
+  joinedAt?: string;
+  alreadyInChannel: boolean;
+}
+
+export interface ChannelMemberCandidatesResponse {
+  items: ChannelMemberCandidateItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ChannelAddWorldMembersResponse {
+  roleId: string;
+  candidateCount: number;
+  addedCount: number;
+  skippedExistingCount: number;
+}
+
 export interface TalkMessage {
   id: string;
   time: number;
@@ -283,6 +309,7 @@ export interface BackgroundPreset {
 
 export interface SChannel extends Channel {
   isPrivate?: boolean;
+  worldId?: string;
   createdAt?: string; // 频道创建时间
   updatedAt?: string; // 频道最后更新时间
   rootId?: string; // 根频道ID
@@ -458,6 +485,29 @@ export interface ChannelIdentity {
   folderIds?: string[];
 }
 
+export interface ChannelIdentityVariant {
+  id: string;
+  identityId: string;
+  channelId: string;
+  userId: string;
+  selectorEmoji: string;
+  keyword: string;
+  note: string;
+  avatarAttachmentId: string;
+  displayName?: string;
+  color?: string;
+  appearance?: Record<string, any>;
+  sortOrder: number;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ChannelIcOocRoleConfig {
+  icRoleId: string | null;
+  oocRoleId: string | null;
+}
+
 export interface CharacterCard {
   id: string;
   userId: string;
@@ -482,6 +532,7 @@ export interface ChannelIdentityFolder {
 
 export interface MessageIdentity {
   id?: string;
+  variantId?: string;
   displayName?: string;
   color?: string;
   avatarAttachment?: string;

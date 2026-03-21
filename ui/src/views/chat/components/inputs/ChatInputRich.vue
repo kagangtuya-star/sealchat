@@ -49,6 +49,7 @@ const emit = defineEmits<{
   (event: 'blur'): void
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
   (event: 'upload-button-click'): void
   (event: 'composition-start'): void
   (event: 'composition-end'): void
@@ -78,6 +79,7 @@ const rootRef = ref<HTMLElement | null>(null);
 let mentionPositionRaf: number | null = null;
 
 const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+const GALLERY_ITEM_MIME_TYPE = 'application/x-sealchat-gallery-item';
 
 const decodeMentionText = (value: string) => {
   return contentUnescape(value);
@@ -259,6 +261,24 @@ const updateMentionDropdownPosition = () => {
     bottom: `${bottom}px`,
     zIndex: '4200',
   };
+};
+
+const extractGalleryAttachmentId = (event: DragEvent) => {
+  const dt = event.dataTransfer;
+  if (!dt || !Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    return '';
+  }
+  try {
+    const raw = dt.getData(GALLERY_ITEM_MIME_TYPE);
+    if (!raw) {
+      return '';
+    }
+    const payload = JSON.parse(raw) as { attachmentId?: string };
+    return typeof payload?.attachmentId === 'string' ? payload.attachmentId : '';
+  } catch (error) {
+    console.warn('解析表情拖拽数据失败', error);
+    return '';
+  }
 };
 
 const scheduleMentionDropdownPosition = () => {
@@ -497,6 +517,7 @@ const linkOpenInNewTab = ref(false);
 
 const quickIFormModalShow = ref(false);
 const creatingIForm = ref(false);
+const overlayInteractionAt = ref(0);
 const quickIFormForm = reactive({
   name: '',
   url: '',
@@ -689,22 +710,18 @@ const initEditor = async () => {
       { Editor: EditorClass, Node: TiptapNodeClass, mergeAttributes },
       { EditorContent: EditorContentComp, BubbleMenu: BubbleMenuComp },
       { default: StarterKit },
-      { default: Link },
       { default: TextStyle },
       { default: Color },
       { default: Image },
-      { default: Underline },
       { default: Highlight },
       { default: TextAlign },
     ] = await Promise.all([
       import('@tiptap/core'),
       import('@tiptap/vue-3'),
       import('@tiptap/starter-kit'),
-      import('@tiptap/extension-link'),
       import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
       import('@tiptap/extension-color').then(m => ({ default: m.Color })),
       import('@tiptap/extension-image'),
-      import('@tiptap/extension-underline'),
       import('@tiptap/extension-highlight'),
       import('@tiptap/extension-text-align'),
     ]);
@@ -765,24 +782,24 @@ const initEditor = async () => {
               class: 'code-block',
             },
           },
+          underline: {},
+          link: {
+            openOnClick: false,
+            HTMLAttributes: {
+              class: 'text-blue-500 underline cursor-pointer',
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+          },
         }),
         TextStyle,
         Color,
-        Underline,
         Highlight.configure({
           multicolor: true,
         }),
         Spoiler,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
-        }),
-        Link.configure({
-          openOnClick: false,
-          HTMLAttributes: {
-            class: 'text-blue-500 underline cursor-pointer',
-            target: '_blank',
-            rel: 'noopener noreferrer',
-          },
         }),
         Image.configure({
           inline: true,
@@ -829,6 +846,14 @@ const initEditor = async () => {
         },
         handleDrop: (view, event, slice, moved) => {
           if (moved) return false;
+
+          const attachmentId = extractGalleryAttachmentId(event);
+          if (attachmentId) {
+            event.preventDefault();
+            const { from, to } = view.state.selection;
+            emit('drop-gallery-item', { attachmentId, selectionStart: from, selectionEnd: to });
+            return true;
+          }
 
           const files = Array.from(event.dataTransfer?.files || []).filter((file) =>
             file.type.startsWith('image/')
@@ -1111,6 +1136,22 @@ const isActive = (name: string, attrs?: Record<string, any>) => {
   return editor.value?.isActive(name, attrs) ?? false;
 };
 
+const markOverlayInteraction = () => {
+  overlayInteractionAt.value = Date.now();
+};
+
+const hasOpenOverlay = () => {
+  return mentionVisible.value
+    || highlightColorPopoverShow.value
+    || textColorPopoverShow.value
+    || linkModalShow.value
+    || quickIFormModalShow.value;
+};
+
+const hasRecentOverlayInteraction = (thresholdMs = 250) => {
+  return Date.now() - overlayInteractionAt.value <= thresholdMs;
+};
+
 const handleCompositionStart = () => {
   isComposing.value = true;
   emit('composition-start');
@@ -1147,6 +1188,8 @@ defineExpose({
   getEditor: () => editor.value,
   getJson: () => editor.value?.getJSON(),
   insertImagePlaceholder,
+  hasOpenOverlay,
+  hasRecentOverlayInteraction,
 });
 </script>
 
@@ -1273,7 +1316,7 @@ defineExpose({
                 <span class="tiptap-highlight-icon">H</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker">
+            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in highlightColors"
                 :key="color"
@@ -1315,7 +1358,7 @@ defineExpose({
                 <span class="tiptap-textcolor-icon">A</span>
               </n-button>
             </template>
-            <div class="tiptap-color-picker">
+            <div class="tiptap-color-picker" @pointerdown.stop="markOverlayInteraction">
               <div
                 v-for="color in textColors"
                 :key="color"
@@ -1499,7 +1542,7 @@ defineExpose({
               :style="mentionDropdownStyle"
               tabindex="-1"
               ref="mentionDropdownRef"
-              @pointerdown.stop
+              @pointerdown.stop="markOverlayInteraction"
             >
               <input
                 v-model="mentionSearchValue"
@@ -1540,7 +1583,7 @@ defineExpose({
           :editor="editor"
           :tippy-options="{ duration: 100, placement: 'top' }"
         >
-          <div class="tiptap-bubble-menu">
+          <div class="tiptap-bubble-menu" @pointerdown.stop="markOverlayInteraction">
             <n-button
               size="tiny"
               text
@@ -1618,6 +1661,7 @@ defineExpose({
       title="插入链接"
       style="width: 360px; max-width: 90vw;"
       :mask-closable="true"
+      @pointerdown.stop="markOverlayInteraction"
     >
       <n-form label-placement="top">
         <n-form-item label="链接文本">
@@ -1653,6 +1697,7 @@ defineExpose({
       title="创建消息嵌入 iForm"
       style="width: 460px; max-width: 92vw;"
       :mask-closable="!creatingIForm"
+      @pointerdown.stop="markOverlayInteraction"
     >
       <n-form label-placement="top">
         <n-form-item label="名称">

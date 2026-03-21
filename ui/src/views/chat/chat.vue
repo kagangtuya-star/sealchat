@@ -2,9 +2,9 @@
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
-import { chatEvent, useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
-import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
+import type { ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
@@ -425,7 +425,6 @@ const channelFeatures = reactive({
   builtInDiceEnabled: true,
   botFeatureEnabled: false,
 });
-const canUseBuiltInDice = computed(() => channelFeatures.builtInDiceEnabled);
 const defaultDiceExpr = computed(() => ensureDefaultDiceExpr(chat.curChannel?.defaultDiceExpr));
 const botRoleId = computed(() => {
   const channelId = chat.curChannel?.id;
@@ -442,9 +441,12 @@ const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   value: bot.id,
 })));
 const hasBotOptions = computed(() => botOptions.value.length > 0);
-const diceModeLabel = computed(() => channelFeatures.botFeatureEnabled ? 'BOT掷骰' : '内置掷骰');
+const diceModeLabel = computed(() => effectiveBotFeatureEnabled.value ? 'BOT掷骰' : '内置掷骰');
 const diceModeTooltip = computed(() => {
-  if (channelFeatures.botFeatureEnabled) {
+  if (isCurrentBotPrivateChatChannel.value) {
+    return '当前为机器人私聊，已固定使用 BOT 掷骰模式';
+  }
+  if (effectiveBotFeatureEnabled.value) {
     return '当前使用机器人处理掷骰指令，点击齿轮可切换内置掷骰模式';
   }
   return '当前使用内置掷骰功能，点击齿轮可切换机器人掷骰模式';
@@ -471,6 +473,22 @@ const isPrivateChatChannel = (channel?: SChannel | null) => {
   }
   return false;
 };
+const isBotPrivateChatChannel = (channel?: SChannel | null) => {
+  if (!isPrivateChatChannel(channel)) {
+    return false;
+  }
+  return channel?.friendInfo?.userInfo?.is_bot === true;
+};
+const isCurrentBotPrivateChatChannel = computed(() => isBotPrivateChatChannel(chat.curChannel as SChannel | null));
+const effectiveBuiltInDiceEnabled = computed(() => (
+  isCurrentBotPrivateChatChannel.value ? false : channelFeatures.builtInDiceEnabled
+));
+const effectiveBotFeatureEnabled = computed(() => (
+  isCurrentBotPrivateChatChannel.value ? true : channelFeatures.botFeatureEnabled
+));
+const canUseBuiltInDice = computed(() => effectiveBuiltInDiceEnabled.value);
+const showDiceModeStatus = computed(() => canManageChannelFeatures.value || isCurrentBotPrivateChatChannel.value);
+const showDiceModeSettings = computed(() => canManageChannelFeatures.value && !isCurrentBotPrivateChatChannel.value);
 watch(
   () => chat.curChannel?.id,
   async (channelId) => {
@@ -579,7 +597,7 @@ watch(
   { immediate: true },
 );
 const toggleDiceTray = () => {
-  if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+  if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
     closeAllDiceTrays();
     return;
@@ -591,11 +609,16 @@ const toggleDiceTray = () => {
   }
 };
 watch(
-  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled] as const,
+  () => [chat.curChannel?.id, chat.curChannel?.builtInDiceEnabled, chat.curChannel?.botFeatureEnabled, chat.curChannel?.friendInfo?.userInfo?.is_bot] as const,
   ([, builtInDiceEnabled, botFeatureEnabled]) => {
-    channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
-    channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
-    if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+    if (isCurrentBotPrivateChatChannel.value) {
+      channelFeatures.builtInDiceEnabled = false;
+      channelFeatures.botFeatureEnabled = true;
+    } else {
+      channelFeatures.builtInDiceEnabled = builtInDiceEnabled !== false;
+      channelFeatures.botFeatureEnabled = botFeatureEnabled === true;
+    }
+    if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
       closeAllDiceTrays();
     }
   },
@@ -612,12 +635,12 @@ watch(canManageChannelFeatures, (canManage) => {
   }
 });
 watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
-	if (!enabled && !channelFeatures.botFeatureEnabled && !diceSettingsVisible.value) {
+	if (!enabled && !effectiveBotFeatureEnabled.value && !diceSettingsVisible.value) {
 		closeAllDiceTrays();
 	}
 });
 watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
-	if (!enabled && !channelFeatures.builtInDiceEnabled && !diceSettingsVisible.value) {
+	if (!enabled && !effectiveBuiltInDiceEnabled.value && !diceSettingsVisible.value) {
 		closeAllDiceTrays();
 	}
 });
@@ -750,7 +773,7 @@ watch(diceSettingsVisible, (visible) => {
   if (visible) {
     ensureBotOptionsLoaded();
     refreshChannelBotSelection();
-  } else if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
+  } else if (!effectiveBuiltInDiceEnabled.value && !effectiveBotFeatureEnabled.value) {
     closeAllDiceTrays();
   }
 });
@@ -822,7 +845,7 @@ const refreshChannelBotSelection = async () => {
     ts: Date.now(),
   });
   try {
-    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
     const current = items.find((item: any) => item.roleId === roleId && item.user?.id);
     channelBotSelection.value = current?.user?.id || '';
@@ -851,7 +874,7 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     ts: Date.now(),
   });
   try {
-    const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
+    const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
     const existingIds = items
       .filter((item: any) => item.roleId === roleId && item.user?.id)
@@ -921,7 +944,7 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
 };
 
 const handleDiceFeatureToggle = async (value: boolean) => {
-  if (!canManageChannelFeatures.value) {
+  if (!canManageChannelFeatures.value || isCurrentBotPrivateChatChannel.value) {
     return;
   }
   try {
@@ -936,7 +959,7 @@ const handleDiceFeatureToggle = async (value: boolean) => {
 };
 
 const handleBotFeatureToggle = async (value: boolean) => {
-  if (!canManageChannelFeatures.value || !botRoleId.value) {
+  if (!canManageChannelFeatures.value || !botRoleId.value || isCurrentBotPrivateChatChannel.value) {
     return;
   }
   try {
@@ -1313,9 +1336,68 @@ const emojiPopoverY = ref<number | null>(null);
 const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
-const emojiPanelTab = ref<'gallery' | 'utf'>('gallery');
+const emojiPanelTab = ref<'gallery' | 'utf' | 'variant'>('gallery');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
+const activeIdentityForEmojiPanel = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const activeIdentityVariantOptions = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return [] as ChannelIdentityVariant[];
+  }
+  return chat.getIdentityVariants(channelId, identityId).filter(item => item.enabled !== false);
+});
+const activeIdentityVariantForEmojiPanel = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return null as ChannelIdentityVariant | null;
+  }
+  return chat.getActiveIdentityVariant(channelId, identityId);
+});
+const filteredIdentityVariantOptions = computed(() => {
+  const query = emojiSearchQuery.value.trim();
+  if (!query) {
+    return activeIdentityVariantOptions.value;
+  }
+  return activeIdentityVariantOptions.value.filter((item) => {
+    const haystack = `${item.keyword || ''} ${item.note || ''} ${item.displayName || ''}`;
+    return matchText(query, haystack);
+  });
+});
+const hasIdentityVariantOptions = computed(() => activeIdentityVariantOptions.value.length > 0);
+const identityVariantTabTooltip = computed(() => {
+  if (!activeIdentityForEmojiPanel.value) {
+    return '请先选择频道角色，再切换头像差分';
+  }
+  if (!hasIdentityVariantOptions.value) {
+    return canManageIdentities()
+      ? '当前频道角色尚未配置头像差分，点击前往设置'
+      : '当前频道角色尚未配置头像差分';
+  }
+  return '切换当前频道角色的头像差分，可用 =关键词 快捷切换 =还原 恢复';
+});
+
+const describeIdentityVariantCard = (variant?: ChannelIdentityVariant | null) => {
+  if (!variant) {
+    return '恢复为当前频道角色的默认头像';
+  }
+  const summary = [
+    resolveVariantNote(variant),
+    variant.keyword ? `关键词：=${variant.keyword}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const details = [
+    variant.displayName ? `覆盖昵称：${variant.displayName}` : '仅覆盖头像',
+    variant.color ? `覆盖颜色：${variant.color}` : '',
+    variant.note && variant.note !== resolveVariantNote(variant) ? variant.note : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return [summary, details].filter(Boolean).join('\n');
+};
 
 // 表情分类选项卡（使用 store 持久化）
 const activeEmojiTab = computed({
@@ -2070,6 +2152,12 @@ watch(emojiPopoverShow, (show, prevShow) => {
   }
 });
 
+watch(hasIdentityVariantOptions, (hasOptions) => {
+  if (!hasOptions && emojiPanelTab.value === 'variant') {
+    emojiPanelTab.value = 'gallery';
+  }
+});
+
 watch(isManagingEmoji, (val) => {
   if (val) {
     void ensureEmojiCollectionLoaded();
@@ -2125,7 +2213,7 @@ const handleEmojiTriggerClick = () => {
   emojiPopoverShow.value = true;
 };
 
-const switchEmojiPanelTab = (tab: 'gallery' | 'utf') => {
+const switchEmojiPanelTab = (tab: 'gallery' | 'utf' | 'variant') => {
   emojiPanelTab.value = tab;
   if (tab !== 'gallery') {
     isManagingEmoji.value = false;
@@ -2149,6 +2237,45 @@ const handleUtfEmojiSelect = (emoji: string) => {
   const cursor = selection.start + emoji.length;
   nextTick(() => setInputSelection(cursor, cursor));
   ensureInputFocus();
+};
+
+const handleEmojiVariantSelect = (variantId: string) => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = activeIdentityForEmojiPanel.value?.id || '';
+  if (!channelId || !identityId) {
+    return;
+  }
+  chat.setActiveIdentityVariant(channelId, identityId, variantId);
+  emojiSearchQuery.value = '';
+  emojiPopoverShow.value = false;
+  emitTypingPreview();
+};
+
+const openActiveIdentityVariantSetup = async () => {
+  const activeIdentity = activeIdentityForEmojiPanel.value;
+  if (!activeIdentity) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  if (!canManageIdentities()) {
+    message.warning('当前无权限配置头像差分');
+    return;
+  }
+  emojiPopoverShow.value = false;
+  message.info('请先为当前频道角色配置头像差分');
+  await openIdentityEdit(activeIdentity);
+};
+
+const handleEmojiVariantTabClick = async () => {
+  if (!activeIdentityForEmojiPanel.value) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  if (!hasIdentityVariantOptions.value) {
+    await openActiveIdentityVariantSetup();
+    return;
+  }
+  switchEmojiPanelTab('variant');
 };
 
 
@@ -2233,8 +2360,29 @@ type IdentityShortcutMatchResult = {
   ambiguous: boolean;
 };
 
-const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdentity[]): IdentityShortcutMatchResult | null => {
-  const shortcutMatch = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(rawDraft);
+type IdentityVariantShortcutMatchResult = {
+  matched: ChannelIdentityVariant | null;
+  restContent: string;
+  ambiguous: boolean;
+  resetToDefault?: boolean;
+};
+
+type IdentityAppearancePreview = {
+  identityId: string;
+  variantId: string;
+  displayName: string;
+  color: string;
+  avatarAttachmentId: string;
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const resolveIdentityShortcutMatch = (
+  rawDraft: string,
+  identities: ChannelIdentity[],
+  trigger = '/',
+): IdentityShortcutMatchResult | null => {
+  const shortcutMatch = new RegExp(`^${escapeRegExp(trigger)}(\\S+)(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
   if (!shortcutMatch) {
     return null;
   }
@@ -2296,6 +2444,103 @@ const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdent
     ambiguous: false,
   };
 };
+
+const shouldSuppressKeywordSuggestForIdentityShortcut = (rawDraft: string, trigger: string): boolean => {
+  const channelId = chat.curChannel?.id;
+  const identityTrigger = display.settings.identityQuickSwitchTrigger || '/';
+  if (!channelId || trigger !== identityTrigger) {
+    return false;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  const shortcutResult = resolveIdentityShortcutMatch(rawDraft, identities, identityTrigger);
+  return !!shortcutResult?.matched || !!shortcutResult?.ambiguous;
+};
+
+const resolveIdentityVariantShortcutMatch = (
+  rawDraft: string,
+  variants: ChannelIdentityVariant[],
+  trigger = '=',
+): IdentityVariantShortcutMatchResult | null => {
+  const shortcutMatch = new RegExp(`^${escapeRegExp(trigger)}(\\S+)(?:\\s+([\\s\\S]*))?$`).exec(rawDraft);
+  if (!shortcutMatch) {
+    return null;
+  }
+  const targetKeywordRaw = (shortcutMatch[1] || '').trim();
+  if (!targetKeywordRaw) {
+    return null;
+  }
+  const restContent = shortcutMatch[2] ?? '';
+  const targetKeyword = targetKeywordRaw.toLowerCase();
+  if (targetKeyword === '还原') {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: false,
+      resetToDefault: true,
+    };
+  }
+  const normalizedCandidates = variants
+    .filter(item => item?.enabled !== false)
+    .map((item, index) => ({
+      item,
+      index,
+      normalizedKeyword: (item.keyword || '').trim().toLowerCase(),
+      length: (item.keyword || '').trim().length,
+    }))
+    .filter(item => !!item.normalizedKeyword);
+
+  const exact = normalizedCandidates.find(item => item.normalizedKeyword === targetKeyword);
+  if (exact) {
+    return { matched: exact.item, restContent, ambiguous: false };
+  }
+
+  const prefixCandidates = normalizedCandidates.filter(item => item.normalizedKeyword.startsWith(targetKeyword));
+  if (!prefixCandidates.length) {
+    return { matched: null, restContent, ambiguous: false };
+  }
+
+  const sortedCandidates = prefixCandidates.slice().sort((a, b) => {
+    if (a.length !== b.length) {
+      return a.length - b.length;
+    }
+    return a.index - b.index;
+  });
+  const best = sortedCandidates[0];
+  const hasAmbiguousShortest = sortedCandidates.some((item, index) => index > 0 && item.length === best.length && item.normalizedKeyword !== best.normalizedKeyword);
+  return {
+    matched: hasAmbiguousShortest ? null : best.item,
+    restContent,
+    ambiguous: hasAmbiguousShortest,
+  };
+};
+
+const resolveIdentityVariantIdFromMessage = (msg?: any): string | null => {
+  if (!msg) {
+    return null;
+  }
+  const directIdentity = msg.identity || msg.identity_info || msg.identityData;
+  if (directIdentity && typeof directIdentity === 'object' && directIdentity.variantId) {
+    return String(directIdentity.variantId).trim() || null;
+  }
+  const snake = msg?.sender_identity_variant_id;
+  if (typeof snake === 'string' && snake.trim().length > 0) {
+    return snake.trim();
+  }
+  return null;
+};
+
+const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, variant?: ChannelIdentityVariant | null): IdentityAppearancePreview | null => {
+  if (!identity) {
+    return null;
+  }
+  return {
+    identityId: identity.id,
+    variantId: variant?.id || '',
+    displayName: variant?.displayName || identity.displayName || '',
+    color: variant?.color || identity.color || '',
+    avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
+  };
+};
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
@@ -2314,7 +2559,33 @@ const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityAvatarEditorVisible = ref(false);
 const identityAvatarEditorFile = ref<File | null>(null);
 const editingIdentity = ref<ChannelIdentity | null>(null);
+const identityVariantDialogVisible = ref(false);
+const identityVariantDialogMode = ref<'create' | 'edit'>('create');
+const identityVariantSubmitting = ref(false);
+const editingIdentityVariant = ref<ChannelIdentityVariant | null>(null);
+const identityVariantEmojiPickerVisible = ref(false);
+const identityVariantForm = reactive({
+  selectorEmoji: '',
+  keyword: '',
+  note: '',
+  avatarAttachmentId: '',
+  displayName: '',
+  color: '',
+  enabled: true,
+});
+const identityVariantAvatarPreview = ref('');
+const identityVariantAvatarInputRef = ref<HTMLInputElement | null>(null);
+const identityVariantAvatarEditorVisible = ref(false);
+const identityVariantAvatarEditorFile = ref<File | null>(null);
 const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+const currentEditingIdentityVariants = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const identityId = editingIdentity.value?.id || '';
+  if (!channelId || !identityId) {
+    return [] as ChannelIdentityVariant[];
+  }
+  return chat.getIdentityVariants(channelId, identityId);
+});
 const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
 const identityFavoriteFolderIds = computed(() => chat.channelIdentityFavorites[chat.curChannel?.id || ''] || []);
 const identityFolderMembership = computed<Record<string, string[]>>(() => chat.channelIdentityMembership[chat.curChannel?.id || ''] || {});
@@ -2334,6 +2605,30 @@ const folderAssigning = ref(false);
 const isNightPalette = computed(() => display.palette === 'night');
 const identityDrawerWidth = computed(() => (windowWidth.value <= 640 ? '100%' : Math.min(windowWidth.value * 0.95, 800)));
 const isIdentityDrawerMobile = computed(() => windowWidth.value > 0 && windowWidth.value <= 640);
+let identityVariantAvatarObjectURL: string | null = null;
+let identityVariantAvatarFile: File | null = null;
+
+const resolveVariantSelectorEmojiSrc = (selectorEmoji?: string) => {
+  const raw = String(selectorEmoji || '').trim();
+  if (!raw.startsWith('id:')) {
+    return '';
+  }
+  return resolveAttachmentUrl(raw);
+};
+
+const isVariantSelectorEmojiAttachment = (selectorEmoji?: string) => !!resolveVariantSelectorEmojiSrc(selectorEmoji);
+
+const resolveVariantNote = (variant?: ChannelIdentityVariant | null) => {
+  const note = String(variant?.note || '').trim();
+  if (note) {
+    return note;
+  }
+  const keyword = String(variant?.keyword || '').trim();
+  if (keyword) {
+    return `=${keyword}`;
+  }
+  return '未备注';
+};
 
 const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
   const map: Record<string, ChannelIdentityFolder> = {};
@@ -2599,6 +2894,22 @@ watch(identityManageVisible, (visible) => {
     folderActionTarget.value = [];
   }
 });
+
+watch(identityDialogVisible, (visible) => {
+  if (!visible) {
+    identityVariantDialogVisible.value = false;
+    identityVariantEmojiPickerVisible.value = false;
+    editingIdentityVariant.value = null;
+    revokeIdentityVariantObjectURL();
+  }
+});
+
+watch(identityVariantDialogVisible, (visible) => {
+  if (!visible) {
+    identityVariantEmojiPickerVisible.value = false;
+    editingIdentityVariant.value = null;
+  }
+});
 let identityAvatarObjectURL: string | null = null;
 let identityAvatarFile: File | null = null;
 const identityAvatarDisplay = computed(() => identityAvatarPreview.value || resolveAttachmentUrl(identityForm.avatarAttachmentId));
@@ -2789,6 +3100,10 @@ interface IdentityExportFile {
   };
   items: IdentityExportItem[];
   folders?: IdentityExportFolder[];
+  icOocConfig?: {
+    icRoleId?: string | null;
+    oocRoleId?: string | null;
+  };
 }
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
@@ -2809,6 +3124,7 @@ const handleIdentityExport = async () => {
   const membershipMap = identityFolderMembership.value;
   const folderList = identityFolders.value;
   const favoriteSet = new Set(identityFavoriteFolderIds.value);
+  const icOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id);
   identityExporting.value = true;
   try {
     const items: IdentityExportItem[] = [];
@@ -2865,6 +3181,12 @@ const handleIdentityExport = async () => {
         sortOrder: folder.sortOrder,
         isFavorite: favoriteSet.has(folder.id),
       })),
+      icOocConfig: icOocConfig.icRoleId || icOocConfig.oocRoleId
+        ? {
+            icRoleId: icOocConfig.icRoleId,
+            oocRoleId: icOocConfig.oocRoleId,
+          }
+        : undefined,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -2971,6 +3293,7 @@ const handleIdentityImportChange = async (event: Event) => {
 
     identityImporting.value = true;
     const folderIdMap = new Map<string, string>();
+    const identityIdMap = new Map<string, string>();
     if (Array.isArray(payload.folders) && payload.folders.length && chat.curChannel?.id) {
       const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
       for (const folder of sortedFolders) {
@@ -2996,7 +3319,7 @@ const handleIdentityImportChange = async (event: Event) => {
         const mappedFolderIds = (item.folderIds || [])
           .map(id => folderIdMap.get(id) || '')
           .filter((id): id is string => !!id);
-        await chat.channelIdentityCreate({
+        const created = await chat.channelIdentityCreate({
           channelId: chat.curChannel.id,
           displayName: item.displayName || '',
           color: item.color || '',
@@ -3004,9 +3327,23 @@ const handleIdentityImportChange = async (event: Event) => {
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
+        if (item.sourceId && created?.id) {
+          identityIdMap.set(item.sourceId, created.id);
+        }
         successCount += 1;
       } catch (error) {
         console.warn('单个角色导入失败', error);
+      }
+    }
+
+    const importedConfig = payload.icOocConfig;
+    if (importedConfig && chat.curChannel?.id) {
+      const mappedConfig = {
+        icRoleId: importedConfig.icRoleId ? (identityIdMap.get(importedConfig.icRoleId) || null) : null,
+        oocRoleId: importedConfig.oocRoleId ? (identityIdMap.get(importedConfig.oocRoleId) || null) : null,
+      };
+      if (mappedConfig.icRoleId || mappedConfig.oocRoleId) {
+        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig);
       }
     }
 
@@ -3208,7 +3545,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       nextIcRoleId !== targetConfig.icRoleId ||
       nextOocRoleId !== targetConfig.oocRoleId;
     if (mappingChanged) {
-      chat.setChannelIcOocRoleConfig(targetChannelId, {
+      await chat.setChannelIcOocRoleConfig(targetChannelId, {
         icRoleId: nextIcRoleId,
         oocRoleId: nextOocRoleId,
       });
@@ -3442,6 +3779,7 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
+    await chat.loadChannelIdentityVariants(chat.curChannel.id, true);
     if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
@@ -3462,6 +3800,8 @@ const openIdentityManager = async () => {
 
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
+  identityVariantDialogVisible.value = false;
+  identityVariantEmojiPickerVisible.value = false;
 };
 
 const handleIdentityAvatarTrigger = () => {
@@ -3508,6 +3848,193 @@ const removeIdentityAvatar = () => {
   identityAvatarFile = null;
   revokeIdentityObjectURL();
   identityAvatarPreview.value = '';
+};
+
+const revokeIdentityVariantObjectURL = () => {
+  if (identityVariantAvatarObjectURL) {
+    URL.revokeObjectURL(identityVariantAvatarObjectURL);
+    identityVariantAvatarObjectURL = null;
+  }
+};
+
+const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarFile = null;
+  identityVariantForm.selectorEmoji = variant?.selectorEmoji || '';
+  identityVariantForm.keyword = variant?.keyword || '';
+  identityVariantForm.note = variant?.note || '';
+  identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
+  identityVariantForm.displayName = variant?.displayName || '';
+  identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantForm.enabled = variant?.enabled !== false;
+  identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
+};
+
+const closeIdentityVariantDialog = () => {
+  if (identityVariantSubmitting.value) {
+    return;
+  }
+  identityVariantDialogVisible.value = false;
+  identityVariantEmojiPickerVisible.value = false;
+};
+
+const openIdentityVariantCreate = () => {
+  if (!editingIdentity.value?.id) {
+    message.warning('请先保存频道角色后再添加差分');
+    return;
+  }
+  editingIdentityVariant.value = null;
+  identityVariantDialogMode.value = 'create';
+  resetIdentityVariantForm(null);
+  identityVariantDialogVisible.value = true;
+};
+
+const openIdentityVariantEdit = (variant: ChannelIdentityVariant) => {
+  editingIdentityVariant.value = variant;
+  identityVariantDialogMode.value = 'edit';
+  resetIdentityVariantForm(variant);
+  identityVariantDialogVisible.value = true;
+};
+
+const handleIdentityVariantAvatarTrigger = () => {
+  identityVariantAvatarInputRef.value?.click();
+};
+
+const handleIdentityVariantAvatarChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  if (!input || !input.files?.length) {
+    return;
+  }
+  const file = input.files[0];
+  const sizeLimit = utils.config?.imageSizeLimit ? utils.config.imageSizeLimit * 1024 : utils.fileSizeLimit;
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
+  }
+  identityVariantAvatarEditorFile.value = file;
+  identityVariantAvatarEditorVisible.value = true;
+  input.value = '';
+};
+
+const handleIdentityVariantAvatarEditorSave = (file: File) => {
+  identityVariantForm.avatarAttachmentId = '';
+  identityVariantAvatarFile = file;
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarObjectURL = URL.createObjectURL(file);
+  identityVariantAvatarPreview.value = identityVariantAvatarObjectURL;
+  identityVariantAvatarEditorVisible.value = false;
+  identityVariantAvatarEditorFile.value = null;
+};
+
+const handleIdentityVariantAvatarEditorCancel = () => {
+  identityVariantAvatarEditorVisible.value = false;
+  identityVariantAvatarEditorFile.value = null;
+};
+
+const removeIdentityVariantAvatar = () => {
+  identityVariantForm.avatarAttachmentId = '';
+  identityVariantAvatarFile = null;
+  revokeIdentityVariantObjectURL();
+  identityVariantAvatarPreview.value = '';
+};
+
+const handleIdentityVariantSelectorEmoji = (emoji: string) => {
+  if (!emoji) {
+    return;
+  }
+  identityVariantForm.selectorEmoji = emoji;
+  identityVariantEmojiPickerVisible.value = false;
+};
+
+const submitIdentityVariantForm = async () => {
+  if (!chat.curChannel?.id || !editingIdentity.value?.id) {
+    message.warning('请先选择频道角色');
+    return;
+  }
+  const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
+  const keyword = String(identityVariantForm.keyword || '').trim();
+  const note = String(identityVariantForm.note || '').trim();
+  const rawColor = String(identityVariantForm.color || '').trim();
+  const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
+  if (!selectorEmoji) {
+    message.warning('请选择差分表情');
+    return;
+  }
+  if (!keyword) {
+    message.warning('请输入切换关键词');
+    return;
+  }
+  if (rawColor && !normalizedColor) {
+    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    return;
+  }
+  identityVariantForm.color = normalizedColor;
+  identityVariantSubmitting.value = true;
+  try {
+    let avatarAttachmentId = identityVariantForm.avatarAttachmentId;
+    if (identityVariantAvatarFile) {
+      const uploadResult = await uploadImageAttachment(identityVariantAvatarFile, { channelId: chat.curChannel.id });
+      const fileToken = uploadResult.attachmentId;
+      if (!fileToken) {
+        throw new Error('上传失败：未返回附件ID');
+      }
+      avatarAttachmentId = normalizeAttachmentId(fileToken);
+      identityVariantForm.avatarAttachmentId = avatarAttachmentId;
+      identityVariantAvatarPreview.value = resolveAttachmentUrl(fileToken);
+      identityVariantAvatarFile = null;
+    }
+    const payload = {
+      channelId: chat.curChannel.id,
+      identityId: editingIdentity.value.id,
+      selectorEmoji,
+      keyword,
+      note,
+      avatarAttachmentId,
+      displayName: String(identityVariantForm.displayName || '').trim(),
+      color: normalizedColor,
+      appearance: {},
+      enabled: identityVariantForm.enabled,
+    };
+    if (identityVariantDialogMode.value === 'create') {
+      await chat.channelIdentityVariantCreate(payload);
+      message.success('头像差分已创建');
+    } else if (editingIdentityVariant.value?.id) {
+      await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
+      message.success('头像差分已更新');
+    }
+    identityVariantDialogVisible.value = false;
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || error?.message || '保存差分失败，请稍后重试';
+    message.error(errMsg);
+  } finally {
+    identityVariantSubmitting.value = false;
+  }
+};
+
+const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
+  if (!chat.curChannel?.id || !editingIdentity.value?.id) {
+    return;
+  }
+  const confirmed = await dialogAskConfirm(dialog, {
+    title: '删除头像差分',
+    content: `确定删除差分「${resolveVariantNote(variant)}」吗？此操作无法撤销。`,
+  });
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id);
+    if (editingIdentityVariant.value?.id === variant.id) {
+      identityVariantDialogVisible.value = false;
+      editingIdentityVariant.value = null;
+    }
+    message.success('头像差分已删除');
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.error || '删除差分失败，请稍后重试';
+    message.error(errMsg);
+  }
 };
 
 const submitIdentityForm = async () => {
@@ -3654,7 +4181,7 @@ const getMessageDisplayName = (message: any) => {
     || '未知';
 };
 
-const getMessageAvatar = (message: any) => {
+const resolveMessageAvatarSource = (message: any) => {
   // 仅在“编辑自己的消息”时使用本地编辑预览覆盖头像
   const editingPreview = editingPreviewMap.value[message?.id];
   const messageUserId = (
@@ -3678,11 +4205,15 @@ const getMessageAvatar = (message: any) => {
   ];
   for (const id of candidates) {
     if (id) {
-      return resolveAttachmentUrl(id);
+      return resolveAttachmentUrl(id) || String(id);
     }
   }
   return message?.member?.avatar || message?.user?.avatar || '';
 };
+
+const getMessageAvatar = (message: any) => resolveMessageAvatarSource(message);
+
+const getMessageAvatarMergeKey = (message: any) => resolveMessageAvatarSource(message) || '';
 
 const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
@@ -4089,7 +4620,9 @@ watch(() => chat.curChannel?.id, () => {
 const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 30;
 const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
-const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
+const SEARCH_ANCHOR_WINDOW_LIMIT = 12;
+const SEARCH_ANCHOR_WINDOW_MAX = 24;
+const SEARCH_CONTEXT_ROW_ESTIMATE = 72;
 const SEARCH_JUMP_LIMIT_PRIMARY = 30;
 const SEARCH_JUMP_LIMIT_RETRY = 50;
 const HISTORY_PAGINATION_WINDOW_MS = 5 * 60 * 1000;
@@ -4103,6 +4636,15 @@ const pinnedCollapseStorageKey = 'sealchat.pinnedCollapsed';
 const resolvePinnedCollapsed = () => localStorage.getItem(pinnedCollapseStorageKey) === 'true';
 const pinnedCollapsed = ref(resolvePinnedCollapsed());
 const listRevision = ref(0);
+const searchBrowseSession = reactive({
+  active: false,
+  channelId: '',
+  anchorMessageId: '',
+  beforeCursor: '',
+  afterCursor: '',
+  hasMoreBefore: false,
+  hasMoreAfter: false,
+});
 const messageWindow = reactive({
   viewMode: 'live' as ViewMode,
   anchorMessageId: null as string | null,
@@ -4131,11 +4673,25 @@ watch(pinnedCollapsed, (collapsed) => {
 interface ResetWindowOptions {
   preserveRows?: boolean;
   preserveHistoryLock?: boolean;
+  preserveSearchSession?: boolean;
 }
+
+const resetSearchBrowseSession = () => {
+  searchBrowseSession.active = false;
+  searchBrowseSession.channelId = '';
+  searchBrowseSession.anchorMessageId = '';
+  searchBrowseSession.beforeCursor = '';
+  searchBrowseSession.afterCursor = '';
+  searchBrowseSession.hasMoreBefore = false;
+  searchBrowseSession.hasMoreAfter = false;
+};
 
 const resetWindowState = (mode: ViewMode = 'live', options: ResetWindowOptions = {}) => {
   if (!options.preserveRows) {
     rows.value = [];
+  }
+  if (!options.preserveSearchSession) {
+    resetSearchBrowseSession();
   }
   messageWindow.viewMode = mode;
   if (!options.preserveHistoryLock) {
@@ -4179,17 +4735,50 @@ const updateAnchorMessage = (id: string | null) => {
   messageWindow.anchorMessageId = id || null;
 };
 
+const isSearchBrowseActive = () => searchBrowseSession.active && searchBrowseSession.channelId === (chat.curChannel?.id || '');
+
+const activateSearchBrowseSession = (
+  payload: { messageId: string },
+  options: {
+    beforeCursor?: string | null;
+    afterCursor?: string | null;
+    hasMoreBefore?: boolean;
+    hasMoreAfter?: boolean;
+  } = {},
+) => {
+  searchBrowseSession.active = true;
+  searchBrowseSession.channelId = chat.curChannel?.id || '';
+  searchBrowseSession.anchorMessageId = payload.messageId;
+  searchBrowseSession.beforeCursor = options.beforeCursor ?? messageWindow.beforeCursor;
+  searchBrowseSession.afterCursor = options.afterCursor ?? messageWindow.afterCursor;
+  searchBrowseSession.hasMoreBefore =
+    typeof options.hasMoreBefore === 'boolean'
+      ? options.hasMoreBefore
+      : Boolean(searchBrowseSession.beforeCursor);
+  searchBrowseSession.hasMoreAfter =
+    typeof options.hasMoreAfter === 'boolean'
+      ? options.hasMoreAfter
+      : !messageWindow.hasReachedLatest;
+};
+
 const applyCursorUpdate = (cursor?: { before?: string | null; after?: string | null }) => {
   if (!cursor) return;
   if (cursor.before !== undefined) {
     messageWindow.beforeCursor = cursor.before || '';
     messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.beforeCursor = messageWindow.beforeCursor;
+      searchBrowseSession.hasMoreBefore = Boolean(messageWindow.beforeCursor);
+    }
     if (messageWindow.beforeCursor) {
       messageWindow.hasReachedStart = false;
     }
   }
   if (cursor.after !== undefined) {
     messageWindow.afterCursor = cursor.after || '';
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.afterCursor = messageWindow.afterCursor;
+    }
     if (messageWindow.afterCursor) {
       messageWindow.hasReachedLatest = false;
     }
@@ -4199,6 +4788,7 @@ const applyCursorUpdate = (cursor?: { before?: string | null; after?: string | n
 watch(viewMode, (mode) => {
   if (mode === 'live') {
     updateAnchorMessage(null);
+    resetSearchBrowseSession();
   }
 });
 
@@ -4223,6 +4813,17 @@ const updateWindowAnchorsFromRows = () => {
   } else {
     messageWindow.afterCursor = '';
   }
+};
+
+const resolveSearchAnchorWindowLimit = () => {
+  const containerHeight =
+    messagesListRef.value?.clientHeight ??
+    (typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.72) : 720);
+  const estimatedVisibleRows = Math.max(8, Math.ceil(containerHeight / SEARCH_CONTEXT_ROW_ESTIMATE));
+  return Math.max(
+    SEARCH_ANCHOR_WINDOW_LIMIT,
+    Math.min(SEARCH_ANCHOR_WINDOW_MAX, estimatedVisibleRows),
+  );
 };
 
 const sortPinnedRows = () => {
@@ -4414,7 +5015,8 @@ const shouldMergeMessages = (prev?: Message, current?: Message) => {
   if (prev.isWhisper !== current.isWhisper) return false;
   const roleSame = getMessageRoleKey(prev) && getMessageRoleKey(prev) === getMessageRoleKey(current);
   if (!roleSame) return false;
-  return getMessageSceneKey(prev) === getMessageSceneKey(current);
+  if (getMessageSceneKey(prev) !== getMessageSceneKey(current)) return false;
+  return getMessageAvatarMergeKey(prev) === getMessageAvatarMergeKey(current);
 };
 
 
@@ -4740,17 +5342,32 @@ const localReorderOps = new Set<string>();
 const messageRowRefs = new Map<string, HTMLElement>();
 const SEARCH_JUMP_WINDOWS_MS = [30, 120, 360, 1440, 10080].map((minutes) => minutes * 60 * 1000);
 const searchJumping = ref(false);
+const searchJumpRequestSeq = ref(0);
 
 interface SearchJumpWindow {
   messages: Message[];
   cursorBefore?: string | null;
+  cursorAfter?: string | null;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
   fromTime?: number;
 }
 
 interface SearchJumpContextResult {
   messages: Message[];
+  beforeCursor?: string;
+  afterCursor?: string;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
   notFoundReason?: string;
 }
+
+const createSearchJumpToken = () => {
+  searchJumpRequestSeq.value += 1;
+  return searchJumpRequestSeq.value;
+};
+
+const isSearchJumpTokenActive = (token: number) => token === searchJumpRequestSeq.value;
 
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
@@ -4997,15 +5614,26 @@ const buildAnchorWindowMessages = (messages: Message[], targetId: string) => {
   if (targetIndex < 0) {
     return null;
   }
-  const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
-  const end = Math.min(sorted.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
+  const windowLimit = resolveSearchAnchorWindowLimit();
+  if (sorted.length <= windowLimit * 2 + 1) {
+    return sorted;
+  }
+  const start = Math.max(0, targetIndex - windowLimit);
+  const end = Math.min(sorted.length, targetIndex + windowLimit + 1);
   return sorted.slice(start, end);
 };
 
 const applyHistoricalWindowFromMessages = (
   messages: Message[],
   payload: { messageId: string },
-  options: { cursorBefore?: string | null; fromTime?: number } = {},
+  options: {
+    cursorBefore?: string | null;
+    cursorAfter?: string | null;
+    fromTime?: number;
+    hasMoreBefore?: boolean;
+    hasMoreAfter?: boolean;
+    activateSearchBrowse?: boolean;
+  } = {},
 ) => {
   const windowMessages = buildAnchorWindowMessages(messages, payload.messageId);
   if (!windowMessages) {
@@ -5014,15 +5642,24 @@ const applyHistoricalWindowFromMessages = (
   resetWindowState('history');
   rows.value = windowMessages;
   sortRowsByDisplayOrder();
-  if (options.cursorBefore !== undefined) {
-    applyCursorUpdate({ before: options.cursorBefore ?? '' });
-  }
+  applyCursorUpdate({
+    before: options.hasMoreBefore === false ? '' : options.cursorBefore,
+    after: options.cursorAfter,
+  });
   computeAfterCursorFromRows();
-  messageWindow.hasReachedStart = false;
+  messageWindow.hasReachedStart = options.hasMoreBefore === false;
   if (options.fromTime !== undefined) {
     messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && options.fromTime === 0;
   }
   messageWindow.hasReachedLatest = false;
+  if (options.activateSearchBrowse) {
+    activateSearchBrowseSession(payload, {
+      beforeCursor: options.hasMoreBefore === false ? '' : (options.cursorBefore ?? ''),
+      afterCursor: options.cursorAfter,
+      hasMoreBefore: options.hasMoreBefore,
+      hasMoreAfter: options.hasMoreAfter,
+    });
+  }
   updateAnchorMessage(payload.messageId);
   showButton.value = true;
   lockHistoryView();
@@ -5062,6 +5699,8 @@ const mountHistoricalWindowWithSpan = async (
     }
     return applyHistoricalWindowFromMessages(normalized, payload, {
       cursorBefore: resp?.next ?? '',
+      hasMoreBefore: Boolean(resp?.next),
+      activateSearchBrowse: true,
       fromTime: from,
     });
   } catch (error) {
@@ -5114,6 +5753,7 @@ const loadMessagesWithinWindow = async (
     return {
       messages: normalized,
       cursorBefore: resp?.next ?? '',
+      hasMoreBefore: Boolean(resp?.next),
       fromTime: from,
     };
   } catch (error) {
@@ -5166,6 +5806,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     return {
       messages: incoming,
       cursorBefore,
+      hasMoreBefore: Boolean(cursorBefore),
     };
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
@@ -5190,9 +5831,10 @@ const loadJumpContextByMessageId = async (
     return null;
   }
   try {
+    const contextWindow = resolveSearchAnchorWindowLimit();
     const resp = await chat.messageContext(chat.curChannel.id, payload.messageId, {
-      before: SEARCH_ANCHOR_WINDOW_LIMIT,
-      after: SEARCH_ANCHOR_WINDOW_LIMIT,
+      before: contextWindow,
+      after: contextWindow,
       includeArchived: true,
       includeOoc: true,
     });
@@ -5202,7 +5844,13 @@ const loadJumpContextByMessageId = async (
     const normalized = normalizeMessageList(Array.isArray(resp.data) ? resp.data : []);
     const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
     if (containsTarget) {
-      return { messages: normalized };
+      return {
+        messages: normalized,
+        beforeCursor: typeof resp.before_cursor === 'string' ? resp.before_cursor : '',
+        afterCursor: typeof resp.after_cursor === 'string' ? resp.after_cursor : '',
+        hasMoreBefore: resp.has_more_before === true,
+        hasMoreAfter: resp.has_more_after === true,
+      };
     }
     const notFoundReason = typeof resp.not_found_reason === 'string' ? resp.not_found_reason : '';
     if (notFoundReason) {
@@ -5218,20 +5866,32 @@ const loadJumpContextByMessageId = async (
   }
 };
 
-const ensureSearchTargetVisible = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+const ensureSearchTargetVisible = async (
+  payload: { messageId: string; displayOrder?: number; createdAt?: number },
+  requestToken: number,
+) => {
+  const isStale = () => !isSearchJumpTokenActive(requestToken);
   if (messageExistsLocally(payload.messageId)) {
     return true;
   }
-  if (searchJumping.value) {
-    message.info('正在定位消息，请稍候');
+  if (isStale()) {
     return false;
   }
   searchJumping.value = true;
   const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
   try {
     const contextResult = await loadJumpContextByMessageId(payload);
+    if (isStale()) {
+      return false;
+    }
     if (contextResult?.messages?.length) {
-      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload);
+      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload, {
+        cursorBefore: contextResult.hasMoreBefore ? contextResult.beforeCursor : '',
+        cursorAfter: contextResult.afterCursor,
+        hasMoreBefore: contextResult.hasMoreBefore,
+        hasMoreAfter: contextResult.hasMoreAfter,
+        activateSearchBrowse: true,
+      });
       if (applied) {
         return true;
       }
@@ -5254,16 +5914,26 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     }
 
     const mounted = await mountHistoricalWindow(payload);
+    if (isStale()) {
+      return false;
+    }
     if (mounted) {
       return true;
     }
     const located = await locateMessageForJump(payload);
+    if (isStale()) {
+      return false;
+    }
     if (!located) {
       message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
       return false;
     }
     const applied = applyHistoricalWindowFromMessages(located.messages, payload, {
       cursorBefore: located.cursorBefore,
+      cursorAfter: located.cursorAfter,
+      hasMoreBefore: located.hasMoreBefore,
+      hasMoreAfter: located.hasMoreAfter,
+      activateSearchBrowse: true,
       fromTime: located.fromTime,
     });
     if (!applied) {
@@ -5273,22 +5943,28 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     return true;
   } finally {
     loadingMsg?.destroy?.();
-    searchJumping.value = false;
+    if (isSearchJumpTokenActive(requestToken)) {
+      searchJumping.value = false;
+    }
   }
 };
 
 const handleSearchJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number; channelId?: string }) => {
+  const requestToken = createSearchJumpToken();
   const targetId = payload?.messageId;
   if (!targetId) {
     message.warning('未找到要跳转的消息');
-    return;
+    return false;
   }
   const targetChannelId = payload?.channelId;
   if (targetChannelId && targetChannelId !== chat.curChannel?.id) {
     const switched = await chat.channelSwitchTo(targetChannelId);
     if (!switched) {
       message.error('无法切换到目标频道，跳转已取消');
-      return;
+      return false;
+    }
+    if (!isSearchJumpTokenActive(requestToken)) {
+      return false;
     }
   }
 
@@ -5297,6 +5973,9 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
     try {
       const msgInfo = await chat.messageGetById(chat.curChannel.id, targetId);
+      if (!isSearchJumpTokenActive(requestToken)) {
+        return false;
+      }
       if (msgInfo) {
         enrichedPayload.createdAt = msgInfo.created_at;
         enrichedPayload.displayOrder = msgInfo.display_order;
@@ -5307,18 +5986,27 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
   }
 
   await nextTick();
+  if (!isSearchJumpTokenActive(requestToken)) {
+    return false;
+  }
   let target = messageRowRefs.get(targetId);
   if (!target) {
-    const loaded = await ensureSearchTargetVisible(enrichedPayload);
+    const loaded = await ensureSearchTargetVisible(enrichedPayload, requestToken);
     if (!loaded) {
-      return;
+      return false;
     }
     await nextTick();
+    if (!isSearchJumpTokenActive(requestToken)) {
+      return false;
+    }
     // 等待 DOM 渲染完成，最多重试几次
     for (let i = 0; i < 5; i++) {
       target = messageRowRefs.get(targetId);
       if (target) break;
       await new Promise(r => setTimeout(r, 50));
+      if (!isSearchJumpTokenActive(requestToken)) {
+        return false;
+      }
     }
     if (!target) {
       if (messageExistsLocally(targetId)) {
@@ -5326,10 +6014,19 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       } else {
         message.warning('仍未定位到该消息，稍后再试');
       }
-      return;
+      return false;
     }
   }
   if (messagesListRef.value) {
+    activateSearchBrowseSession(
+      { messageId: targetId },
+      {
+        beforeCursor: searchBrowseSession.active ? searchBrowseSession.beforeCursor : messageWindow.beforeCursor,
+        afterCursor: searchBrowseSession.active ? searchBrowseSession.afterCursor : messageWindow.afterCursor,
+        hasMoreBefore: searchBrowseSession.active ? searchBrowseSession.hasMoreBefore : Boolean(messageWindow.beforeCursor),
+        hasMoreAfter: searchBrowseSession.active ? searchBrowseSession.hasMoreAfter : !messageWindow.hasReachedLatest,
+      },
+    );
     lockHistoryView();
     updateAnchorMessage(targetId);
     computeAfterCursorFromRows();
@@ -5343,7 +6040,85 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     showButton.value = true;
     void autoFillIfNeeded();
   }
+  if (isSearchJumpTokenActive(requestToken)) {
+    searchJumping.value = false;
+  }
+  return true;
 };
+
+const initialMessageJumpReady = ref(false);
+const consumingPendingMessageJump = ref(false);
+
+const clearPendingMessageJumpQuery = async (pending: PendingMessageJump) => {
+  if (route.name !== 'world-channel') {
+    return;
+  }
+  const routeWorldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
+  const routeChannelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
+  const routeMessageId = typeof route.query.msg === 'string' ? route.query.msg.trim() : '';
+  if (
+    routeWorldId !== pending.worldId
+    || routeChannelId !== pending.channelId
+    || routeMessageId !== pending.messageId
+  ) {
+    return;
+  }
+  const nextQuery = { ...route.query };
+  delete nextQuery.msg;
+  try {
+    await router.replace({
+      name: route.name,
+      params: route.params,
+      query: nextQuery,
+    });
+  } catch (error) {
+    console.warn('[message-link] clear msg query failed', error);
+  }
+};
+
+const consumePendingMessageJump = async () => {
+  if (!initialMessageJumpReady.value || consumingPendingMessageJump.value) {
+    return;
+  }
+  const pending = chat.pendingMessageJump;
+  if (!pending) {
+    return;
+  }
+  const currentWorldId = String(chat.currentWorldId || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (pending.worldId !== currentWorldId || pending.channelId !== currentChannelId) {
+    return;
+  }
+  consumingPendingMessageJump.value = true;
+  try {
+    const jumped = await handleSearchJump({
+      messageId: pending.messageId,
+      channelId: pending.channelId,
+    });
+    if (chat.pendingMessageJump?.requestKey !== pending.requestKey) {
+      return;
+    }
+    chat.clearPendingMessageJump(pending.requestKey);
+    if (jumped && pending.source === 'route') {
+      await clearPendingMessageJumpQuery(pending);
+    }
+  } finally {
+    consumingPendingMessageJump.value = false;
+  }
+};
+
+watch(
+  () => [
+    initialMessageJumpReady.value,
+    chat.pendingMessageJump?.requestKey,
+    chat.currentWorldId,
+    chat.curChannel?.id,
+  ],
+  () => {
+    void consumePendingMessageJump();
+  },
+  { immediate: true },
+);
 
 const dragState = reactive({
   snapshot: [] as Message[],
@@ -6634,6 +7409,68 @@ const shouldObserveTypingPreview = computed(() => (
   && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
 ));
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const activeIdentityVariantShortcutContext = computed(() => {
+  const rawDraft = textToSend.value;
+  const channelId = chat.curChannel?.id || '';
+  const identity = activeIdentityForPreview.value;
+  const fallbackVariant = identity ? chat.getActiveIdentityVariant(channelId, identity.id) : null;
+  if (isEditing.value || inputMode.value !== 'plain' || !channelId || !identity) {
+    return {
+      draftContent: rawDraft,
+      variant: fallbackVariant,
+      matched: false,
+    };
+  }
+  const trigger = display.settings.identityVariantQuickSwitchTrigger || '=';
+  if (!rawDraft.startsWith(trigger)) {
+    return {
+      draftContent: rawDraft,
+      variant: fallbackVariant,
+      matched: false,
+    };
+  }
+  const shortcutResult = resolveIdentityVariantShortcutMatch(
+    rawDraft,
+    chat.getIdentityVariants(channelId, identity.id),
+    trigger,
+  );
+  if (shortcutResult?.matched) {
+    return {
+      draftContent: shortcutResult.restContent,
+      variant: shortcutResult.matched,
+      matched: true,
+    };
+  }
+  if (shortcutResult?.resetToDefault) {
+    return {
+      draftContent: shortcutResult.restContent,
+      variant: null,
+      matched: true,
+    };
+  }
+  return {
+    draftContent: rawDraft,
+    variant: fallbackVariant,
+    matched: false,
+  };
+});
+const activeIdentityVariantForPreview = computed(() => {
+  return activeIdentityVariantShortcutContext.value.variant;
+});
+const activeIdentityAppearanceForPreview = computed(() => (
+  resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value)
+));
+const activeIdentityAppearancePreviewSignature = computed(() => {
+  const appearance = activeIdentityAppearanceForPreview.value;
+  return [
+    appearance?.identityId || '',
+    appearance?.variantId || '',
+    appearance?.displayName || '',
+    appearance?.color || '',
+    appearance?.avatarAttachmentId || '',
+  ].join('__');
+});
+const effectiveIdentityVariantForEmojiPanel = computed(() => activeIdentityVariantForPreview.value);
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
   typingPreviewList.value
@@ -6848,16 +7685,16 @@ watch(
 );
 
 const resolveSelfPreviewDisplayName = () => {
-  const identity = activeIdentityForPreview.value;
-  if (identity?.displayName) {
-    return identity.displayName;
+  const appearance = activeIdentityAppearanceForPreview.value;
+  if (appearance?.displayName) {
+    return appearance.displayName;
   }
   return user.info?.nick || user.info?.name || '我';
 };
 const resolveSelfPreviewAvatar = () => {
-  const identity = activeIdentityForPreview.value;
-  if (identity?.avatarAttachmentId) {
-    return resolveAttachmentUrl(identity.avatarAttachmentId);
+  const appearance = activeIdentityAppearanceForPreview.value;
+  if (appearance?.avatarAttachmentId) {
+    return resolveAttachmentUrl(appearance.avatarAttachmentId);
   }
   return chat.curMember?.avatar || user.info?.avatar || '';
 };
@@ -6872,15 +7709,16 @@ const syncSelfTypingPreview = () => {
     removeSelfTypingPreview();
     return;
   }
-  const draft = textToSend.value;
+  const draft = activeIdentityVariantShortcutContext.value.draftContent;
   if (!isContentMeaningful(inputMode.value, draft)) {
     removeSelfTypingPreview();
     return;
   }
-  const identity = activeIdentityForPreview.value;
   const displayName = resolveSelfPreviewDisplayName();
   const avatar = resolveSelfPreviewAvatar();
-  const normalizedColor = identity?.color ? normalizeHexColor(identity.color || '') || undefined : undefined;
+  const normalizedColor = activeIdentityAppearanceForPreview.value?.color
+    ? normalizeHexColor(activeIdentityAppearanceForPreview.value.color || '') || undefined
+    : undefined;
   const tone = inputIcMode.value || 'ic';
   let previewContent = draft;
   if (inputMode.value !== 'rich') {
@@ -6959,7 +7797,17 @@ const sendTypingUpdate = throttle(
 	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
 		const targetId = options?.whisperTo ?? resolveCurrentWhisperTargetId();
 		const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
-		const extra: { whisperTo?: string; icMode: 'ic' | 'ooc'; orderKey?: number } = { icMode };
+		const extra: {
+			whisperTo?: string;
+			icMode: 'ic' | 'ooc';
+			orderKey?: number;
+			identityId?: string;
+			identityVariantId?: string;
+		} = {
+			icMode,
+			identityId: activeIdentityForPreview.value?.id || undefined,
+			identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
+		};
 		if (targetId) {
 			extra.whisperTo = targetId;
 		}
@@ -7009,10 +7857,19 @@ const sendEditingPreview = throttle((channelId: string, messageId: string, conte
   }
   const whisperTargetId = chat.editing?.whisperTargetId || resolveCurrentWhisperTargetId();
   const icMode = chat.editing?.icMode === 'ooc' ? 'ooc' : 'ic';
-  const extra: { mode: 'editing'; messageId: string; whisperTo?: string; icMode: 'ic' | 'ooc' } = {
+  const extra: {
+    mode: 'editing';
+    messageId: string;
+    whisperTo?: string;
+    icMode: 'ic' | 'ooc';
+    identityId?: string;
+    identityVariantId?: string;
+  } = {
     mode: 'editing',
     messageId,
     icMode,
+    identityId: chat.editing?.identityId || undefined,
+    identityVariantId: chat.editing?.identityVariantId || undefined,
   };
   if (whisperTargetId) {
     extra.whisperTo = whisperTargetId;
@@ -7130,7 +7987,11 @@ const emitTypingPreview = () => {
     return;
   }
 
-  let raw = textToSend.value;
+  let raw = inputMode.value === 'plain'
+    ? activeIdentityVariantShortcutContext.value.draftContent
+    : textToSend.value;
+  const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
+    && activeIdentityVariantShortcutContext.value.matched;
 
   if (inputMode.value === 'rich') {
     try {
@@ -7145,8 +8006,11 @@ const emitTypingPreview = () => {
     }
   } else {
     if (raw.trim().length === 0) {
-      stopTypingPreviewNow();
-      return;
+      if (!canBroadcastIndicatorWithoutContent) {
+        stopTypingPreviewNow();
+        return;
+      }
+      raw = '';
     }
     raw = replaceEmojiRemarksForPreview(raw);
   }
@@ -7271,6 +8135,7 @@ const historyEntries = ref<InputHistoryEntry[]>([]);
 const historyPopoverVisible = ref(false);
 const hasHistoryEntries = computed(() => historyEntries.value.length > 0);
 const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curChannel.id) : HISTORY_CHANNEL_FALLBACK);
+const draftOwnerChannelKey = ref(HISTORY_CHANNEL_FALLBACK);
 const lastHistorySignature = ref<string | null>(null);
 
 const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
@@ -7510,6 +8375,10 @@ const syncDraftStartedAt = (content: string) => {
     draftStartedAtMs.value = null;
     return;
   }
+  if (resolveConfiguredMessageSortBasis() !== 'typing_start') {
+    draftStartedAtMs.value = null;
+    return;
+  }
   if (!isContentMeaningful(inputMode.value, content)) {
     resetDraftOrderContext();
     return;
@@ -7528,6 +8397,13 @@ interface SendDisplayOrderResolution {
   explicitDisplayOrder?: number;
   typingDurationMs?: number;
 }
+
+type MessageSortBasis = 'typing_start' | 'send_time';
+
+const resolveConfiguredMessageSortBasis = (): MessageSortBasis => {
+  const raw = String((utils.config as any)?.messageSortBasis || '').trim().toLowerCase();
+  return raw === 'send_time' ? 'send_time' : 'typing_start';
+};
 
 const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null => {
   if (!selfPreviewOrderModified.value) {
@@ -7562,10 +8438,8 @@ const resolveManualPreviewDisplayOrder = (fallbackNowMs: number): number | null 
 };
 
 const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): SendDisplayOrderResolution => {
+  const messageSortBasis = resolveConfiguredMessageSortBasis();
   const startedAt = Number(draftStartedAtMs.value);
-  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
-    ? startedAt
-    : localNowMs;
   const manualOrder = resolveManualPreviewDisplayOrder(fallbackNowMs);
   if (manualOrder !== null) {
     return {
@@ -7573,6 +8447,14 @@ const resolveSendDisplayOrder = (localNowMs: number, fallbackNowMs: number): Sen
       explicitDisplayOrder: manualOrder,
     };
   }
+  if (messageSortBasis === 'send_time') {
+    return {
+      localDisplayOrder: fallbackNowMs > 0 ? fallbackNowMs : localNowMs,
+    };
+  }
+  const timeBasedOrder = Number.isFinite(startedAt) && startedAt > 0
+    ? startedAt
+    : localNowMs;
   let typingDurationMs: number | undefined;
   if (Number.isFinite(startedAt) && startedAt > 0) {
     const duration = Math.floor(localNowMs - startedAt);
@@ -7723,6 +8605,7 @@ const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
 
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
+    draftOwnerChannelKey.value = entry.channelKey || currentChannelKey.value;
     clearInputModeCache();
     inputMode.value = entry.mode;
     suspendInlineSync = true;
@@ -7793,8 +8676,20 @@ const persistSessionDraftForChannel = (
   });
 };
 
+const resolveDraftOwnerChannelKey = () => {
+  const owner = String(draftOwnerChannelKey.value || '').trim();
+  if (owner && owner !== HISTORY_CHANNEL_FALLBACK) {
+    return owner;
+  }
+  return currentChannelKey.value;
+};
+
+const persistOwnedSessionDraft = (options: { clearWhenEmpty?: boolean } = {}) => {
+  persistSessionDraftForChannel(resolveDraftOwnerChannelKey(), options);
+};
+
 const syncSessionDraftSnapshot = () => {
-  persistSessionDraftForChannel(currentChannelKey.value, { clearWhenEmpty: true });
+  persistOwnedSessionDraft({ clearWhenEmpty: true });
 };
 
 const scheduleSessionDraftSnapshot = throttle(
@@ -7815,6 +8710,7 @@ const tryAutoRestoreSessionDraft = () => {
   }
   const draft = readSessionDraftForChannel(channelKey);
   if (!draft || !isContentMeaningful(draft.mode, draft.content)) {
+    draftOwnerChannelKey.value = channelKey;
     writeSessionDraftForChannel(channelKey, null);
     return;
   }
@@ -7844,9 +8740,6 @@ const scheduleHistorySnapshot = throttle(
 watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
-  nextTick(() => {
-    tryAutoRestoreSessionDraft();
-  });
 });
 
 const handleHistoryPopoverShow = (show: boolean) => {
@@ -7896,7 +8789,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(draft);
     let previewDisplayName = chat.curMember?.nick || user.info.nick || user.info.name || '我';
     let previewAvatar = chat.curMember?.avatar || user.info.avatar || '';
-    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId);
+    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId, chat.editing.identityVariantId);
     if (identityPreview) {
       if (identityPreview.displayName) {
         previewDisplayName = identityPreview.displayName;
@@ -8291,15 +9184,17 @@ const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
   return list.find((item) => item.id === identityId) || null;
 };
 
-const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null) => {
+const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null, identityVariantId?: string | null) => {
   const identity = findIdentityMeta(channelId, identityId);
   if (!identity) {
     return null;
   }
+  const variant = identityVariantId ? chat.getIdentityVariants(channelId, identityId).find(item => item.id === identityVariantId) || null : null;
+  const appearance = resolveIdentityAppearancePreview(identity, variant);
   return {
-    displayName: identity.displayName,
-    avatar: identity.avatarAttachmentId ? resolveAttachmentUrl(identity.avatarAttachmentId) : '',
-    color: identity.color,
+    displayName: appearance?.displayName || '',
+    avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
+    color: appearance?.color || '',
   };
 };
 
@@ -8374,6 +9269,7 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
   const mode = detectMessageContentMode(rawContent);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
+  const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const icMode = String(target.icMode ?? (target as any)?.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.cacheRevokedDraft({
     messageId: target.id,
@@ -8384,6 +9280,7 @@ const cacheRevokedDraftFromMessage = (target?: Message | null, overrideChannelId
     whisperTargetId,
     icMode,
     identityId: identityId || null,
+    identityVariantId,
   });
 };
 
@@ -8393,7 +9290,9 @@ interface EditSaveSnapshot {
   messageId: string;
   icMode: 'ic' | 'ooc';
   identityId: string | null;
+  identityVariantId: string | null;
   initialIdentityId: string | null;
+  initialIdentityVariantId: string | null;
 }
 
 const isSavingEdit = ref(false);
@@ -8419,7 +9318,9 @@ const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
     messageId: editing.messageId,
     icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
     identityId: editing.identityId ?? null,
+    identityVariantId: editing.identityVariantId ?? null,
     initialIdentityId: editing.initialIdentityId ?? null,
+    initialIdentityVariantId: editing.initialIdentityVariantId ?? null,
   };
 };
 const isEditSaveSnapshotAlive = (snapshot: EditSaveSnapshot) => {
@@ -8449,6 +9350,7 @@ const beginEdit = (target?: Message) => {
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
+  const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
@@ -8460,6 +9362,7 @@ const beginEdit = (target?: Message) => {
     whisperTargetId,
     icMode,
     identityId: identityId || null,
+    identityVariantId,
   });
   inputMode.value = detectedMode;
 };
@@ -8582,10 +9485,13 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null } = {};
+    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null } = {};
     updateOptions.icMode = snapshot.icMode;
     if (snapshot.identityId !== snapshot.initialIdentityId) {
       updateOptions.identityId = snapshot.identityId;
+    }
+    if (snapshot.identityVariantId !== snapshot.initialIdentityVariantId) {
+      updateOptions.identityVariantId = snapshot.identityVariantId;
     }
     const hasOptions = Object.keys(updateOptions).length > 0;
     const updated = await chat.messageUpdate(
@@ -8780,6 +9686,31 @@ const replaceAtTokensWithDisplayText = (value: string) => {
     const display = decodeAtTokenText(name || id || '用户');
     return `@${display}`;
   });
+};
+
+const extractPushNotificationPreview = (content: string) => {
+  if (!content) {
+    return '';
+  }
+
+  if (isTipTapJson(content)) {
+    try {
+      return tiptapJsonToPlainText(content).replace(/\s+/g, ' ').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  return contentUnescape(
+    replaceAtTokensWithDisplayText(content)
+      .replace(/\[\[(?:图片:[^\]]+|img:id:[^\]]+)\]\]/g, '[图片]')
+      .replace(/<img\s+[^>]*>/gi, '[图片]')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|h[1-6]|blockquote|pre)>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
 };
 
 const collectMentionIdsFromText = (value: string, output: Set<string>) => {
@@ -9212,6 +10143,13 @@ const handlePlainDropFiles = (payload: { files: File[]; selectionStart: number; 
   }
 };
 
+const handleDropGalleryItem = (payload: { attachmentId: string; selectionStart: number; selectionEnd: number }) => {
+  if (!payload.attachmentId) {
+    return;
+  }
+  insertGalleryInline(payload.attachmentId, { start: payload.selectionStart, end: payload.selectionEnd });
+};
+
 const handleRichImageInsert = async (files: File[]) => {
   if (!files.length) return;
 
@@ -9377,6 +10315,11 @@ const retrySendMessage = async (target?: Message) => {
     || current.identity?.id
     || '',
   ).trim() || undefined;
+  const identityVariantId = String(
+    currentData.sender_identity_variant_id
+    || current.identity?.variantId
+    || '',
+  ).trim() || undefined;
   const displayOrder = Number(currentData.displayOrder);
   const validDisplayOrder = Number.isFinite(displayOrder) && displayOrder > 0
     ? displayOrder
@@ -9394,6 +10337,9 @@ const retrySendMessage = async (target?: Message) => {
       identityId,
       validDisplayOrder,
       whisperTargetIds,
+      undefined,
+      undefined,
+      identityVariantId,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9429,6 +10375,7 @@ const send = throttle(async () => {
   const sendMode = inputMode.value;
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
+  let identityVariantIdOverride: string | undefined;
   const activeReeditSource = (() => {
     const source = reeditRevokedSource.value;
     if (!source) {
@@ -9440,10 +10387,12 @@ const send = throttle(async () => {
     return { ...source };
   })();
 
-  // 仅纯文本模式支持 `/角色名` 或 `/角色名 内容` 快捷切换
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
+  const identityQuickSwitchTrigger = display.settings.identityQuickSwitchTrigger || '/';
+
+  // 仅纯文本模式支持 `触发字符 + 角色名` 或 `触发字符 + 角色名 内容` 快捷切换
+  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityQuickSwitchTrigger)) {
     const identities = chat.channelIdentities[chat.curChannel.id] || [];
-    const shortcutResult = resolveIdentityShortcutMatch(draft, identities);
+    const shortcutResult = resolveIdentityShortcutMatch(draft, identities, identityQuickSwitchTrigger);
     if (shortcutResult?.ambiguous) {
       message.warning('匹配到多个同长度角色，请输入更长名称');
       return;
@@ -9457,6 +10406,29 @@ const send = throttle(async () => {
       textToSend.value = shortcutResult.restContent;
       emitTypingPreview();
       identityIdOverride = shortcutResult.matched.id;
+      if (!shortcutResult.restContent.trim()) {
+        stopTypingPreviewNow();
+        return;
+      }
+    }
+  }
+
+  const identityVariantQuickSwitchTrigger = display.settings.identityVariantQuickSwitchTrigger || '=';
+  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
+    const activeIdentityId = identityIdOverride || chat.getActiveIdentityId(chat.curChannel.id);
+    const variants = chat.getIdentityVariants(chat.curChannel.id, activeIdentityId);
+    const shortcutResult = resolveIdentityVariantShortcutMatch(draft, variants, identityVariantQuickSwitchTrigger);
+    if (shortcutResult?.ambiguous) {
+      message.warning('匹配到多个同长度差分，请输入更长关键词');
+      return;
+    }
+    if ((shortcutResult?.matched || shortcutResult?.resetToDefault) && activeIdentityId) {
+      const nextVariantId = shortcutResult?.matched?.id || '';
+      chat.setActiveIdentityVariant(chat.curChannel.id, activeIdentityId, nextVariantId);
+      draft = shortcutResult.restContent;
+      textToSend.value = shortcutResult.restContent;
+      emitTypingPreview();
+      identityVariantIdOverride = nextVariantId;
       if (!shortcutResult.restContent.trim()) {
         stopTypingPreviewNow();
         return;
@@ -9533,25 +10505,35 @@ const send = throttle(async () => {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
-  const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
+  const activeIdentity = identityIdOverride
+    ? findIdentityMeta(chat.curChannel?.id, identityIdOverride)
+    : chat.getActiveIdentity(chat.curChannel?.id);
   const activeChannelId = String(chat.curChannel?.id || '').trim();
+  const activeIdentityVariant = activeIdentity
+    ? (identityVariantIdOverride
+      ? (chat.getIdentityVariants(activeChannelId, activeIdentity.id).find(item => item.id === identityVariantIdOverride) || null)
+      : chat.getActiveIdentityVariant(activeChannelId, activeIdentity.id))
+    : null;
+  const activeAppearance = resolveIdentityAppearancePreview(activeIdentity, activeIdentityVariant);
   if (activeIdentity) {
-    const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
+    const normalizedIdentityColor = normalizeHexColor(activeAppearance?.color || '') || undefined;
     (tmpMsg as any).senderRoleId = activeIdentity.id;
     (tmpMsg as any).sender_role_id = activeIdentity.id;
+    (tmpMsg as any).sender_identity_variant_id = activeAppearance?.variantId || '';
     if (activeChannelId) {
       chat.recordIdentitySpoken(activeChannelId, activeIdentity.id, now);
     }
     if (!tmpMsg.identity) {
       tmpMsg.identity = {
         id: activeIdentity.id,
-        displayName: activeIdentity.displayName,
+        variantId: activeAppearance?.variantId || '',
+        displayName: activeAppearance?.displayName || activeIdentity.displayName,
         color: normalizedIdentityColor,
-        avatarAttachment: activeIdentity.avatarAttachmentId,
+        avatarAttachment: activeAppearance?.avatarAttachmentId || activeIdentity.avatarAttachmentId,
       } as any;
     }
-    if (activeIdentity.displayName) {
-      (tmpMsg as any).sender_member_name = activeIdentity.displayName;
+    if (activeAppearance?.displayName) {
+      (tmpMsg as any).sender_member_name = activeAppearance.displayName;
     }
   }
   (tmpMsg as any).clientId = clientId;
@@ -9601,6 +10583,7 @@ const send = throttle(async () => {
       whisperTargetIds,
       typingDurationMs,
       insertPlacement ? { beforeId: insertPlacement.beforeId, afterId: insertPlacement.afterId } : undefined,
+      identityVariantIdOverride,
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
@@ -9755,6 +10738,7 @@ watch([
   inputIcMode,
   () => chat.curChannel?.id,
   () => activeIdentityForPreview.value?.id,
+  () => activeIdentityAppearancePreviewSignature.value,
 ], () => {
   syncSelfTypingPreview();
 });
@@ -9779,6 +10763,32 @@ watch(
   },
 );
 
+watch(
+  () => activeIdentityVariantForPreview.value?.id,
+  (identityVariantId, previous) => {
+    if (!chat.editing || chat.editing.channelId !== chat.curChannel?.id || identityVariantId === previous) {
+      return;
+    }
+    chat.updateEditingIdentityVariant(identityVariantId || null);
+    emitEditingPreview();
+  },
+);
+
+watch(
+  () => activeIdentityAppearancePreviewSignature.value,
+  (signature, previous) => {
+    if (signature === previous) {
+      return;
+    }
+    syncSelfTypingPreview();
+    if (isEditing.value) {
+      emitEditingPreview();
+      return;
+    }
+    emitTypingPreview();
+  },
+);
+
 watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds, prevIds) => {
   if (targetIds === prevIds) {
     return;
@@ -9798,15 +10808,23 @@ watch(typingPreviewMode, (mode) => {
     return;
   }
   if (typingPreviewActive.value && lastTypingChannelId) {
-    const raw = textToSend.value;
-    if (raw.trim().length > 0) {
+    const raw = inputMode.value === 'plain'
+      ? activeIdentityVariantShortcutContext.value.draftContent
+      : textToSend.value;
+    const canBroadcastIndicatorWithoutContent = inputMode.value === 'plain'
+      && activeIdentityVariantShortcutContext.value.matched;
+    if (raw.trim().length > 0 || canBroadcastIndicatorWithoutContent) {
       // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
       const isRich = inputMode.value === 'rich' || isTipTapJson(raw);
       const truncated = isRich ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
       sendTypingUpdate.cancel();
       const content = mode === 'content' ? truncated : '';
       const whisperId = resolveCurrentWhisperTargetId();
-      const extra = whisperId ? { whisperTo: whisperId } : undefined;
+      const extra = {
+        whisperTo: whisperId || undefined,
+        identityId: activeIdentityForPreview.value?.id || undefined,
+        identityVariantId: activeIdentityVariantForPreview.value?.id || undefined,
+      };
       lastTypingWhisperTargetId = whisperId ?? null;
       chat.messageTyping(mode, content, lastTypingChannelId, extra);
     } else {
@@ -9940,8 +10958,42 @@ const scrollToBottom = () => {
 const emit = defineEmits(['drawer-show'])
 
 let firstLoad = false;
+const handleChannelSwitchEvent = (e: any) => {
+  if (!firstLoad) return;
+  const payload = (e as any)?.argv || {};
+  const isReenter = !!payload?.reenter;
+  persistOwnedSessionDraft();
+  stopTypingPreviewNow();
+  resetTypingPreview();
+  stopEditingPreviewNow();
+  cancelEditingSession();
+  if (!isReenter) {
+    textToSend.value = '';
+  }
+  draftOwnerChannelKey.value = currentChannelKey.value;
+  clearInputModeCache();
+  resetWindowState('live');
+  pinnedRows.value = [];
+  chat.clearMessageInsertTarget();
+  resetDragState();
+  localReorderOps.clear();
+  showButton.value = false;
+  // 具体不知道原因，但是必须在这个位置reset才行
+  // virtualListRef.value?.reset();
+  refreshHistoryEntries();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
+  const fetchTask = fetchLatestMessages();
+  fetchTask.finally(() => {
+    void fetchPinnedMessages();
+    void maybePromptIdentitySync();
+  });
+};
+
 onMounted(async () => {
   await chat.tryInit();
+  draftOwnerChannelKey.value = currentChannelKey.value;
   clearLegacyHistoryAutoRestoreStore();
   refreshHistoryEntries();
   if (typeof document !== 'undefined') {
@@ -10119,9 +11171,9 @@ chatEvent.on('message-created', (e?: Event) => {
             || incoming.user?.nick
             || '新消息';
           
-          // 提取消息内容预览（移除 HTML 标签）
+          // 提取消息内容预览，兼容富文本、旧 HTML 和实体编码
           const rawContent = incoming.content || '';
-          const plainText = rawContent.replace(/<[^>]*>/g, '').trim();
+          const plainText = extractPushNotificationPreview(rawContent);
           const preview = plainText.length > 50 ? plainText.slice(0, 50) + '...' : plainText;
           
           // 获取发送者头像（优先角色头像，其次用户/成员头像）
@@ -10510,41 +11562,12 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     });
   });
 
-  chatEvent.on('channel-switch-to', (e) => {
-    if (!firstLoad) return;
-    const payload = (e as any)?.argv || {};
-    const isReenter = !!payload?.reenter;
-    const previousChannelId = String(payload?.previousChannelId || '').trim();
-    persistSessionDraftForChannel(previousChannelId);
-    stopTypingPreviewNow();
-    resetTypingPreview();
-    stopEditingPreviewNow();
-    cancelEditingSession();
-    if (!isReenter) {
-      textToSend.value = '';
-    }
-    clearInputModeCache();
-    resetWindowState('live');
-    pinnedRows.value = [];
-    chat.clearMessageInsertTarget();
-    resetDragState();
-    localReorderOps.clear();
-    showButton.value = false;
-    // 具体不知道原因，但是必须在这个位置reset才行
-    // virtualListRef.value?.reset();
-    refreshHistoryEntries();
-    nextTick(() => {
-      tryAutoRestoreSessionDraft();
-    });
-    const fetchTask = fetchLatestMessages();
-    fetchTask.finally(() => {
-      void fetchPinnedMessages();
-      void maybePromptIdentitySync();
-    });
-  })
+  chatEvent.on('channel-switch-to', handleChannelSwitchEvent as any)
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
+  initialMessageJumpReady.value = true;
+  void consumePendingMessageJump();
   firstLoad = true;
   await maybePromptIdentitySync();
 
@@ -10838,6 +11861,11 @@ const loadOlderMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingBefore || messageWindow.hasReachedStart) {
     return false;
   }
+  if (isSearchBrowseActive() && !searchBrowseSession.hasMoreBefore && !messageWindow.beforeCursor) {
+    messageWindow.hasReachedStart = true;
+    messageWindow.beforeCursorExhausted = true;
+    return false;
+  }
   messageWindow.loadingBefore = true;
   try {
     const container = messagesListRef.value;
@@ -10872,6 +11900,9 @@ const loadOlderMessages = async () => {
 
     if (nextCursor !== undefined) {
       applyCursorUpdate({ before: nextCursor ?? '' });
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreBefore = Boolean(nextCursor);
+      }
     }
 
     if (normalized.length) {
@@ -10884,6 +11915,10 @@ const loadOlderMessages = async () => {
       messageWindow.hasReachedStart = true;
       messageWindow.beforeCursor = '';
       messageWindow.beforeCursorExhausted = true;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.beforeCursor = '';
+        searchBrowseSession.hasMoreBefore = false;
+      }
     }
     await nextTick();
     if (container) {
@@ -10918,11 +11953,18 @@ const loadNewerMessages = async () => {
       mergeIncomingMessages(result.messages);
       updateWindowAnchorsFromRows();
       messageWindow.hasReachedLatest = false;
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.hasMoreAfter = true;
+      }
       return true;
     }
     if (result.reachedLatest) {
       messageWindow.hasReachedLatest = true;
       messageWindow.afterCursor = '';
+      if (isSearchBrowseActive()) {
+        searchBrowseSession.afterCursor = '';
+        searchBrowseSession.hasMoreAfter = false;
+      }
       if (isNearBottom()) {
         updateViewMode('live');
       }
@@ -11018,9 +12060,15 @@ const checkKeywordSuggest = () => {
 
   // 提取查询内容
   const query = beforeCursor.slice(slashIndex + 1);
+  const shortcutDraft = beforeCursor.slice(slashIndex);
 
   // 检测是否是快捷命令模式 (/e 空格 或 /w 空格) - 仅当触发字符为 / 时检查
   if (trigger === '/' && /^[ew]\s/.test(query)) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  if (shouldSuppressKeywordSuggestForIdentityShortcut(shortcutDraft, trigger)) {
     keywordSuggestVisible.value = false;
     return;
   }
@@ -11784,7 +12832,7 @@ const emojiSelectedDelete = async () => {
   }
 };
 
-const insertGalleryInline = (attachmentId: string) => {
+const insertGalleryInline = (attachmentId: string, selection?: SelectionRange) => {
   const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
   if (inputMode.value === 'rich') {
     const editor = textInputRef.value?.getEditor?.();
@@ -11803,9 +12851,9 @@ const insertGalleryInline = (attachmentId: string) => {
   inlineImages.set(markerId, record);
 
   const draft = textToSend.value;
-  const selection = captureSelectionRange();
-  const start = Math.max(0, Math.min(selection.start, selection.end));
-  const end = Math.max(start, Math.max(selection.start, selection.end));
+  const range = selection ?? captureSelectionRange();
+  const start = Math.max(0, Math.min(range.start, range.end));
+  const end = Math.max(start, Math.max(range.start, range.end));
   textToSend.value = draft.slice(0, start) + token + draft.slice(end);
   const cursor = start + token.length;
   nextTick(() => setInputSelection(cursor, cursor));
@@ -11823,6 +12871,18 @@ const getGalleryItemThumb = (item: GalleryItem) => {
 const handleGalleryEmojiClick = (item: GalleryItem) => {
   recordEmojiUsage(item.id);
   insertGalleryInline(item.attachmentId);
+};
+
+const isFavoriteQuickGalleryEmoji = (item: GalleryItem) => {
+  return !!gallery.favoritesCollectionId && item.collectionId === gallery.favoritesCollectionId;
+};
+
+const handleQuickGalleryEmojiClick = (item: GalleryItem) => {
+  if (isFavoriteQuickGalleryEmoji(item) || display.settings.quickGalleryLinkedEmojiSendDirectly) {
+    void sendEmoji(item);
+    return;
+  }
+  handleGalleryEmojiClick(item);
 };
 
 const handleGalleryEmojiDragStart = (item: GalleryItem, evt: DragEvent) => {
@@ -11877,7 +12937,9 @@ onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
+  chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   revokeIdentityObjectURL();
+  revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
   sendStatusDelayTimers.forEach((timer) => window.clearTimeout(timer));
@@ -12479,6 +13541,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
@@ -12582,13 +13645,30 @@ onBeforeUnmount(() => {
                             <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
                             <span class="emoji-panel__tab-text">UTF</span>
                           </button>
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <button
+                                class="emoji-panel__tab emoji-panel__tab--variant"
+                                :class="{
+                                  'emoji-panel__tab--active': emojiPanelTab === 'variant',
+                                  'emoji-panel__tab--muted': !activeIdentityForEmojiPanel || !hasIdentityVariantOptions,
+                                }"
+                                :aria-disabled="!activeIdentityForEmojiPanel || !hasIdentityVariantOptions"
+                                @click="handleEmojiVariantTabClick"
+                              >
+                                <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
+                                <span class="emoji-panel__tab-text">差分</span>
+                              </button>
+                            </template>
+                            {{ identityVariantTabTooltip }}
+                          </n-tooltip>
                         </div>
 
-                        <div v-if="emojiPanelTab === 'gallery' && hasEmojiItems" class="emoji-panel__search">
+                        <div v-if="(emojiPanelTab === 'gallery' && hasEmojiItems) || emojiPanelTab === 'variant'" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
-                            placeholder="搜索表情..."
+                            :placeholder="emojiPanelTab === 'variant' ? '搜索差分关键词或备注...' : '搜索表情...'"
                             clearable
                           />
                         </div>
@@ -12609,6 +13689,70 @@ onBeforeUnmount(() => {
                                 initial-tab="emoji"
                                 @select="handleUtfEmojiSelect"
                               />
+                            </div>
+                          </template>
+                          <template v-else-if="emojiPanelTab === 'variant'">
+                            <div v-if="!activeIdentityForEmojiPanel" class="emoji-panel__empty">
+                              请先选择频道角色
+                            </div>
+                            <div v-else-if="!hasIdentityVariantOptions" class="emoji-panel__empty">
+                              当前频道角色没有可用的头像差分
+                            </div>
+                            <div v-else class="identity-variant-picker">
+                              <n-tooltip trigger="hover">
+                                <template #trigger>
+                                  <button
+                                    type="button"
+                                    class="identity-variant-picker__item identity-variant-picker__item--default"
+                                    :class="{ 'is-active': !effectiveIdentityVariantForEmojiPanel }"
+                                    @click="handleEmojiVariantSelect('')"
+                                  >
+                                    <div class="identity-variant-picker__badge">↺</div>
+                                    <AvatarVue
+                                      :size="40"
+                                      :border="false"
+                                      :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                    />
+                                    <div class="identity-variant-picker__title">默认头像</div>
+                                    <div class="identity-variant-picker__hint">恢复</div>
+                                  </button>
+                                </template>
+                                {{ describeIdentityVariantCard(null) }}
+                              </n-tooltip>
+                              <n-tooltip
+                                v-for="variant in filteredIdentityVariantOptions"
+                                :key="variant.id"
+                                trigger="hover"
+                              >
+                                <template #trigger>
+                                  <button
+                                    type="button"
+                                    class="identity-variant-picker__item"
+                                    :class="{ 'is-active': effectiveIdentityVariantForEmojiPanel?.id === variant.id }"
+                                    @click="handleEmojiVariantSelect(variant.id)"
+                                  >
+                                    <div class="identity-variant-picker__badge">
+                                      <img
+                                        v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                                        :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                                        :alt="resolveVariantNote(variant)"
+                                      />
+                                      <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+                                    </div>
+                                    <AvatarVue
+                                      :size="40"
+                                      :border="false"
+                                      :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                    />
+                                    <div class="identity-variant-picker__title">{{ resolveVariantNote(variant) }}</div>
+                                    <div class="identity-variant-picker__hint">={{ variant.keyword }}</div>
+                                  </button>
+                                </template>
+                                <span class="identity-variant-picker__tooltip">{{ describeIdentityVariantCard(variant) }}</span>
+                              </n-tooltip>
+                              <div v-if="emojiSearchQuery && !filteredIdentityVariantOptions.length" class="emoji-panel__empty">
+                                没有匹配的头像差分
+                              </div>
                             </div>
                           </template>
                           <template v-else>
@@ -12656,7 +13800,7 @@ onBeforeUnmount(() => {
                                 :key="item.id"
                                 draggable="true"
                                 @dragstart="handleGalleryEmojiDragStart(item, $event)"
-                                @click="sendEmoji(item)"
+                                @click="handleQuickGalleryEmojiClick(item)"
                               >
                                 <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
                                 <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
@@ -12824,7 +13968,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
@@ -12839,20 +13983,21 @@ onBeforeUnmount(() => {
                     <DiceTray
                       :default-dice="defaultDiceExpr"
                       :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+                      :bot-feature-enabled="effectiveBotFeatureEnabled"
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
                       @close="diceTrayMobileVisible = false"
                     >
-                      <template v-if="canManageChannelFeatures" #header-actions>
+                      <template v-if="showDiceModeStatus" #header-actions>
                         <template v-if="isMobileUa">
                           <n-tooltip trigger="hover">
                             <template #trigger>
                               <div class="dice-mode-status">
                                 <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
                                 <n-button
+                                  v-if="showDiceModeSettings"
                                   quaternary
                                   size="tiny"
                                   circle
@@ -12867,6 +14012,7 @@ onBeforeUnmount(() => {
                             {{ diceModeTooltip }}
                           </n-tooltip>
                           <n-modal
+                            v-if="showDiceModeSettings"
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
@@ -12914,7 +14060,7 @@ onBeforeUnmount(() => {
                           </n-modal>
                         </template>
                         <template v-else>
-                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                          <n-popover v-if="showDiceModeSettings" trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
                             <template #trigger>
                               <n-tooltip trigger="hover">
                                 <template #trigger>
@@ -12974,6 +14120,14 @@ onBeforeUnmount(() => {
                               </div>
                             </div>
                           </n-popover>
+                          <n-tooltip v-else trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
                         </template>
                       </template>
                     </DiceTray>
@@ -12984,7 +14138,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
@@ -12999,20 +14153,21 @@ onBeforeUnmount(() => {
                     <DiceTray
                       :default-dice="defaultDiceExpr"
                       :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+                      :bot-feature-enabled="effectiveBotFeatureEnabled"
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
                       @close="diceTrayDesktopVisible = false"
                     >
-                      <template v-if="canManageChannelFeatures" #header-actions>
+                      <template v-if="showDiceModeStatus" #header-actions>
                         <template v-if="isMobileUa">
                           <n-tooltip trigger="hover">
                             <template #trigger>
                               <div class="dice-mode-status">
                                 <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
                                 <n-button
+                                  v-if="showDiceModeSettings"
                                   quaternary
                                   size="tiny"
                                   circle
@@ -13027,6 +14182,7 @@ onBeforeUnmount(() => {
                             {{ diceModeTooltip }}
                           </n-tooltip>
                           <n-modal
+                            v-if="showDiceModeSettings"
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
@@ -13076,7 +14232,7 @@ onBeforeUnmount(() => {
                           </n-modal>
                         </template>
                         <template v-else>
-                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                          <n-popover v-if="showDiceModeSettings" trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
                             <template #trigger>
                               <n-tooltip trigger="hover">
                                 <template #trigger>
@@ -13136,6 +14292,14 @@ onBeforeUnmount(() => {
                               </div>
                             </div>
                           </n-popover>
+                          <n-tooltip v-else trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
                         </template>
                       </template>
                     </DiceTray>
@@ -13176,6 +14340,7 @@ onBeforeUnmount(() => {
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
+                  @drop-gallery-item="handleDropGalleryItem"
                   @upload-button-click="handleRichUploadButtonClick"
                   @remove-image="removeInlineImage"
                 />
@@ -13305,6 +14470,65 @@ onBeforeUnmount(() => {
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
+      <n-divider title-placement="left">头像差分</n-divider>
+      <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
+        <div class="identity-variant-section__header">
+          <div>
+            <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
+            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
+          </div>
+          <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
+        </div>
+        <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
+          <div
+            v-for="variant in currentEditingIdentityVariants"
+            :key="variant.id"
+            class="identity-variant-list__item"
+          >
+            <button
+              type="button"
+              class="identity-variant-list__selector"
+              @click="openIdentityVariantEdit(variant)"
+            >
+              <img
+                v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                :alt="resolveVariantNote(variant)"
+              />
+              <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+            </button>
+            <AvatarVue
+              :size="40"
+              :border="false"
+              :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || user.info.avatar"
+            />
+            <div class="identity-variant-list__meta">
+              <div class="identity-variant-list__name-row">
+                <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
+                <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
+                <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
+              </div>
+              <div class="identity-variant-list__sub">
+                <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
+                <span v-else>仅覆盖头像</span>
+                <span v-if="variant.color">颜色：{{ variant.color }}</span>
+              </div>
+            </div>
+            <div class="identity-variant-list__actions">
+              <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
+              <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
+            </div>
+          </div>
+        </div>
+        <n-empty v-else description="当前角色还没有头像差分">
+          <template #extra>
+            <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
+          </template>
+        </n-empty>
+      </div>
+      <n-alert v-else type="info" :show-icon="false">
+        请先保存频道角色，随后即可继续配置头像差分。
+      </n-alert>
     </n-form>
     <template #footer>
       <n-space justify="end">
@@ -13313,7 +14537,118 @@ onBeforeUnmount(() => {
       </n-space>
     </template>
   </n-modal>
+  <n-modal
+    v-model:show="identityVariantDialogVisible"
+    preset="card"
+    :title="identityVariantDialogMode === 'create' ? '新增头像差分' : '编辑头像差分'"
+    :auto-focus="false"
+    class="identity-variant-dialog"
+  >
+    <n-form label-width="90px" label-placement="left">
+      <n-form-item label="切换表情">
+        <div class="identity-variant-selector-field">
+          <button
+            type="button"
+            class="identity-variant-selector-field__preview"
+            @click="identityVariantEmojiPickerVisible = true"
+          >
+            <img
+              v-if="isVariantSelectorEmojiAttachment(identityVariantForm.selectorEmoji)"
+              :src="resolveVariantSelectorEmojiSrc(identityVariantForm.selectorEmoji)"
+              alt="差分表情"
+            />
+            <span v-else>{{ identityVariantForm.selectorEmoji || '🙂' }}</span>
+          </button>
+          <n-space>
+            <n-button size="small" type="primary" @click="identityVariantEmojiPickerVisible = true">选择表情</n-button>
+            <n-button
+              v-if="identityVariantForm.selectorEmoji"
+              size="small"
+              tertiary
+              @click="identityVariantForm.selectorEmoji = ''"
+            >
+              清除
+            </n-button>
+          </n-space>
+        </div>
+      </n-form-item>
+      <n-form-item label="切换关键词">
+        <n-input
+          v-model:value="identityVariantForm.keyword"
+          maxlength="64"
+          placeholder="例如 battle / calm / angry"
+        />
+      </n-form-item>
+      <n-form-item label="备注">
+        <n-input
+          v-model:value="identityVariantForm.note"
+          maxlength="255"
+          placeholder="例如 战斗中 / 严肃 / 开心"
+        />
+      </n-form-item>
+      <n-form-item label="差分头像">
+        <div class="identity-avatar-field">
+          <AvatarVue :size="48" :border="false" :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || user.info.avatar" />
+          <n-space>
+            <n-button size="small" type="primary" @click="handleIdentityVariantAvatarTrigger">上传头像</n-button>
+            <n-button
+              v-if="identityVariantForm.avatarAttachmentId || identityVariantAvatarPreview"
+              size="small"
+              tertiary
+              @click="removeIdentityVariantAvatar"
+            >
+              移除
+            </n-button>
+          </n-space>
+        </div>
+      </n-form-item>
+      <n-form-item label="覆盖昵称">
+        <n-input
+          v-model:value="identityVariantForm.displayName"
+          maxlength="32"
+          placeholder="留空则沿用频道角色昵称"
+        />
+      </n-form-item>
+      <n-form-item label="覆盖颜色">
+        <div class="identity-color-field">
+          <n-color-picker
+            v-model:value="identityVariantForm.color"
+            :modes="['hex']"
+            :show-alpha="false"
+            size="small"
+            class="identity-color-picker"
+          />
+          <n-input
+            v-model:value="identityVariantForm.color"
+            size="small"
+            placeholder="#RRGGBB"
+            class="identity-color-input"
+          />
+          <n-button tertiary size="small" @click="identityVariantForm.color = ''">清除</n-button>
+        </div>
+      </n-form-item>
+      <n-form-item>
+        <n-checkbox v-model:checked="identityVariantForm.enabled">
+          启用该差分
+        </n-checkbox>
+      </n-form-item>
+    </n-form>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="closeIdentityVariantDialog">取消</n-button>
+        <n-button type="primary" :loading="identityVariantSubmitting" @click="submitIdentityVariantForm">保存</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <EmojiPickerModal
+    v-if="identityVariantEmojiPickerVisible"
+    mode="all"
+    initial-tab="emoji"
+    @select="handleIdentityVariantSelectorEmoji"
+    @close="identityVariantEmojiPickerVisible = false"
+  />
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
+  <input ref="identityVariantAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityVariantAvatarChange">
   <n-modal
     v-model:show="identityAvatarEditorVisible"
     preset="card"
@@ -13325,6 +14660,19 @@ onBeforeUnmount(() => {
       :file="identityAvatarEditorFile"
       @save="handleIdentityAvatarEditorSave"
       @cancel="handleIdentityAvatarEditorCancel"
+    />
+  </n-modal>
+  <n-modal
+    v-model:show="identityVariantAvatarEditorVisible"
+    preset="card"
+    title="编辑差分头像"
+    style="max-width: 450px;"
+    :mask-closable="false"
+  >
+    <AvatarEditor
+      :file="identityVariantAvatarEditorFile"
+      @save="handleIdentityVariantAvatarEditorSave"
+      @cancel="handleIdentityVariantAvatarEditorCancel"
     />
   </n-modal>
   <n-drawer
@@ -13487,10 +14835,16 @@ onBeforeUnmount(() => {
               <div class="identity-list__meta">
                 <div class="identity-list__name">
                   <span v-if="identity.color" class="identity-list__color" :style="{ backgroundColor: identity.color }"></span>
-                  <span :style="identity.color ? { color: identity.color } : undefined">{{ identity.displayName }}</span>
+                  <span
+                    class="identity-list__display-name"
+                    :style="identity.color ? { color: identity.color } : undefined"
+                  >
+                    {{ identity.displayName }}
+                  </span>
                   <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
+                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id).length }} 个</div>
                 <div class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
@@ -16586,6 +17940,10 @@ onBeforeUnmount(() => {
   border-color: var(--primary-color-hover, #16924e);
 }
 
+.emoji-panel__tab--muted {
+  opacity: 0.78;
+}
+
 .emoji-panel__tab-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -16876,21 +18234,20 @@ onBeforeUnmount(() => {
 }
 
 .identity-list--grid {
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   display: grid;
   gap: 0.75rem;
 }
 
 .identity-list__item {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 0.75rem;
-  padding: 0.6rem 0;
   border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
   border-radius: 12px;
   padding: 0.7rem;
   width: 100%;
-  flex-wrap: wrap;
   box-sizing: border-box;
 }
 
@@ -16922,8 +18279,19 @@ onBeforeUnmount(() => {
 .identity-list__name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
   font-weight: 600;
+  min-width: 0;
+}
+
+.identity-list__display-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .identity-list__color {
@@ -16936,8 +18304,9 @@ onBeforeUnmount(() => {
 .identity-list__actions {
   display: flex;
   gap: 0.4rem;
-  margin-left: auto;
   flex-wrap: wrap;
+  grid-column: 2;
+  justify-self: end;
 }
 
 .identity-list__hint {
@@ -16953,9 +18322,195 @@ onBeforeUnmount(() => {
   margin-top: 0.35rem;
 }
 
+.identity-variant-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.identity-variant-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.identity-variant-section__title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.identity-variant-section__hint {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.identity-variant-list__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-layer, rgba(15, 23, 42, 0.02));
+}
+
+.identity-variant-list__selector,
+.identity-variant-selector-field__preview,
+.identity-variant-picker__selector {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-surface, #fff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  overflow: hidden;
+}
+
+.identity-variant-list__selector img,
+.identity-variant-selector-field__preview img,
+.identity-variant-picker__selector img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.identity-variant-list__meta,
+.identity-variant-picker__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-variant-list__name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.identity-variant-list__name,
+.identity-variant-picker__name {
+  font-weight: 600;
+}
+
+.identity-variant-list__sub,
+.identity-variant-picker__sub {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-variant-list__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.identity-variant-selector-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.identity-variant-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 0.6rem;
+}
+
+.identity-variant-picker__item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  text-align: center;
+  padding: 0.8rem 0.65rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.25));
+  background: var(--sc-bg-surface, rgba(255, 255, 255, 0.92));
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  position: relative;
+  min-height: 132px;
+}
+
+.identity-variant-picker__item:hover,
+.identity-variant-picker__item.is-active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.identity-variant-picker__item.is-active {
+  transform: translateY(-1px);
+}
+
+.identity-variant-picker__badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--sc-bg-layer, rgba(15, 23, 42, 0.08));
+  color: var(--sc-text-primary, #1f2937);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.identity-variant-picker__badge img {
+  width: 1rem;
+  height: 1rem;
+  object-fit: contain;
+}
+
+.identity-variant-picker__title {
+  width: 100%;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--sc-text-primary, #1f2937);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-variant-picker__hint {
+  width: 100%;
+  font-size: 0.74rem;
+  color: var(--sc-text-secondary, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-variant-picker__tooltip {
+  white-space: pre-line;
+}
+
 .identity-manage-drawer--night .identity-folder-item__count,
 .identity-manage-drawer--night .identity-manager__selection,
-.identity-manage-drawer--night .identity-list__hint {
+.identity-manage-drawer--night .identity-list__hint,
+.identity-manage-drawer--night .identity-variant-section__hint,
+.identity-manage-drawer--night .identity-variant-list__sub,
+.identity-manage-drawer--night .identity-variant-picker__hint {
   color: rgba(226, 232, 240, 0.7);
 }
 
@@ -16971,6 +18526,12 @@ onBeforeUnmount(() => {
 .identity-manage-drawer--night .identity-list__item {
   border-color: rgba(59, 130, 246, 0.25);
   background-color: rgba(15, 23, 42, 0.4);
+}
+
+.identity-manage-drawer--night .identity-variant-list__item,
+.identity-manage-drawer--night .identity-variant-picker__item {
+  border-color: rgba(59, 130, 246, 0.25);
+  background-color: rgba(15, 23, 42, 0.35);
 }
 
 .identity-manage-drawer--night .identity-list__actions :deep(.n-button) {
@@ -17019,10 +18580,32 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .identity-list__item {
+  .identity-list__item,
+  .identity-variant-list__item,
+  .identity-variant-section__header,
+  .identity-variant-selector-field {
     flex-direction: column;
     align-items: flex-start;
     width: 100%;
+  }
+
+  .identity-list__item {
+    display: flex;
+  }
+
+  .identity-variant-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .identity-variant-picker__item {
+    min-height: 120px;
+    padding: 0.75rem 0.55rem 0.65rem;
+  }
+
+  .identity-variant-picker__badge {
+    top: 0.45rem;
+    right: 0.45rem;
   }
 
   .identity-list__item-check {
@@ -17033,6 +18616,11 @@ onBeforeUnmount(() => {
 
   .identity-list__item--selectable .identity-list__meta {
     margin-left: 0;
+  }
+
+  .identity-list__actions {
+    grid-column: auto;
+    justify-self: auto;
   }
 }
 
@@ -17130,6 +18718,7 @@ onBeforeUnmount(() => {
   max-height: 45vh;
   overflow-y: auto;
 }
+.identity-variant-dialog :deep(.n-card),
 .identity-dialog :deep(.n-card) {
   background: var(--sc-bg-elevated, #ffffff);
   color: var(--sc-text-primary, #0f172a);
@@ -17143,6 +18732,16 @@ onBeforeUnmount(() => {
   color: var(--sc-text-primary, #0f172a);
 }
 
+.identity-variant-dialog :deep(.n-card__header),
+.identity-variant-dialog :deep(.n-card__content),
+.identity-variant-dialog :deep(.n-card__footer),
+.identity-dialog :deep(.n-card__header),
+.identity-dialog :deep(.n-card__content),
+.identity-dialog :deep(.n-card__footer) {
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.identity-variant-dialog :deep(.n-form-item-label__text),
 .identity-dialog :deep(.n-form-item-label__text) {
   color: var(--sc-text-secondary, #475569);
 }
