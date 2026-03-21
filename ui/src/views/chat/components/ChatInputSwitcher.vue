@@ -52,6 +52,7 @@ const emit = defineEmits<{
   (event: 'rich-needed'): void
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
   (event: 'upload-button-click'): void
   (event: 'remove-image', markerId: string): void
 }>();
@@ -115,6 +116,10 @@ const handlePasteImage = (payload: { files: File[]; selectionStart: number; sele
 
 const handleDropFiles = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
   emit('drop-files', payload);
+};
+
+const handleDropGalleryItem = (payload: { attachmentId: string; selectionStart: number; selectionEnd: number }) => {
+  emit('drop-gallery-item', payload);
 };
 
 const handleUploadButtonClick = () => {
@@ -228,6 +233,7 @@ defineExpose({
     @remove-image="handleRemoveImage"
     @paste-image="handlePasteImage"
     @drop-files="handleDropFiles"
+    @drop-gallery-item="handleDropGalleryItem"
   />
   <ChatInputRich
     v-else
@@ -254,6 +260,7 @@ defineExpose({
     @composition-end="handleCompositionEnd"
     @paste-image="handlePasteImage"
     @drop-files="handleDropFiles"
+    @drop-gallery-item="handleDropGalleryItem"
     @upload-button-click="handleUploadButtonClick"
   />
 </template>

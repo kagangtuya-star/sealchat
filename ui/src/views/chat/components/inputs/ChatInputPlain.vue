@@ -40,10 +40,12 @@ const emit = defineEmits<{
   (event: 'remove-image', markerId: string): void
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
 }>();
 
 const mentionRef = ref<any>(null);
 const wrapperRef = ref<HTMLElement | null>(null);
+const GALLERY_ITEM_MIME_TYPE = 'application/x-sealchat-gallery-item';
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -125,6 +127,24 @@ const moveCursorToEnd = () => {
   textarea.focus();
 };
 
+const extractGalleryAttachmentId = (event: DragEvent) => {
+  const dt = event.dataTransfer;
+  if (!dt || !Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    return '';
+  }
+  try {
+    const raw = dt.getData(GALLERY_ITEM_MIME_TYPE);
+    if (!raw) {
+      return '';
+    }
+    const payload = JSON.parse(raw) as { attachmentId?: string };
+    return typeof payload?.attachmentId === 'string' ? payload.attachmentId : '';
+  } catch (error) {
+    console.warn('解析表情拖拽数据失败', error);
+    return '';
+  }
+};
+
 // 处理粘贴事件
 const handlePaste = (event: ClipboardEvent) => {
   const items = event.clipboardData?.items;
@@ -155,6 +175,15 @@ const handleDrop = (event: DragEvent) => {
   event.preventDefault();
   event.stopPropagation();
 
+  const attachmentId = extractGalleryAttachmentId(event);
+  if (attachmentId) {
+    const textarea = getTextarea();
+    const start = textarea?.selectionStart || 0;
+    const end = textarea?.selectionEnd || 0;
+    emit('drop-gallery-item', { attachmentId, selectionStart: start, selectionEnd: end });
+    return;
+  }
+
   const files = Array.from(event.dataTransfer?.files || []).filter((file) =>
     file.type.startsWith('image/')
   );
@@ -170,6 +199,10 @@ const handleDrop = (event: DragEvent) => {
 const handleDragOver = (event: DragEvent) => {
   event.preventDefault();
   event.stopPropagation();
+  const dt = event.dataTransfer;
+  if (dt && Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    dt.dropEffect = 'copy';
+  }
 };
 
 // 挂载和卸载事件监听

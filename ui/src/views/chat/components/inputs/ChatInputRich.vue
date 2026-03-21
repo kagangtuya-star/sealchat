@@ -49,6 +49,7 @@ const emit = defineEmits<{
   (event: 'blur'): void
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
   (event: 'upload-button-click'): void
   (event: 'composition-start'): void
   (event: 'composition-end'): void
@@ -78,6 +79,7 @@ const rootRef = ref<HTMLElement | null>(null);
 let mentionPositionRaf: number | null = null;
 
 const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+const GALLERY_ITEM_MIME_TYPE = 'application/x-sealchat-gallery-item';
 
 const decodeMentionText = (value: string) => {
   return contentUnescape(value);
@@ -259,6 +261,24 @@ const updateMentionDropdownPosition = () => {
     bottom: `${bottom}px`,
     zIndex: '4200',
   };
+};
+
+const extractGalleryAttachmentId = (event: DragEvent) => {
+  const dt = event.dataTransfer;
+  if (!dt || !Array.from(dt.types || []).includes(GALLERY_ITEM_MIME_TYPE)) {
+    return '';
+  }
+  try {
+    const raw = dt.getData(GALLERY_ITEM_MIME_TYPE);
+    if (!raw) {
+      return '';
+    }
+    const payload = JSON.parse(raw) as { attachmentId?: string };
+    return typeof payload?.attachmentId === 'string' ? payload.attachmentId : '';
+  } catch (error) {
+    console.warn('解析表情拖拽数据失败', error);
+    return '';
+  }
 };
 
 const scheduleMentionDropdownPosition = () => {
@@ -826,6 +846,14 @@ const initEditor = async () => {
         },
         handleDrop: (view, event, slice, moved) => {
           if (moved) return false;
+
+          const attachmentId = extractGalleryAttachmentId(event);
+          if (attachmentId) {
+            event.preventDefault();
+            const { from, to } = view.state.selection;
+            emit('drop-gallery-item', { attachmentId, selectionStart: from, selectionEnd: to });
+            return true;
+          }
 
           const files = Array.from(event.dataTransfer?.files || []).filter((file) =>
             file.type.startsWith('image/')

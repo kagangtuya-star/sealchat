@@ -10143,6 +10143,13 @@ const handlePlainDropFiles = (payload: { files: File[]; selectionStart: number; 
   }
 };
 
+const handleDropGalleryItem = (payload: { attachmentId: string; selectionStart: number; selectionEnd: number }) => {
+  if (!payload.attachmentId) {
+    return;
+  }
+  insertGalleryInline(payload.attachmentId, { start: payload.selectionStart, end: payload.selectionEnd });
+};
+
 const handleRichImageInsert = async (files: File[]) => {
   if (!files.length) return;
 
@@ -12825,7 +12832,7 @@ const emojiSelectedDelete = async () => {
   }
 };
 
-const insertGalleryInline = (attachmentId: string) => {
+const insertGalleryInline = (attachmentId: string, selection?: SelectionRange) => {
   const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
   if (inputMode.value === 'rich') {
     const editor = textInputRef.value?.getEditor?.();
@@ -12844,9 +12851,9 @@ const insertGalleryInline = (attachmentId: string) => {
   inlineImages.set(markerId, record);
 
   const draft = textToSend.value;
-  const selection = captureSelectionRange();
-  const start = Math.max(0, Math.min(selection.start, selection.end));
-  const end = Math.max(start, Math.max(selection.start, selection.end));
+  const range = selection ?? captureSelectionRange();
+  const start = Math.max(0, Math.min(range.start, range.end));
+  const end = Math.max(start, Math.max(range.start, range.end));
   textToSend.value = draft.slice(0, start) + token + draft.slice(end);
   const cursor = start + token.length;
   nextTick(() => setInputSelection(cursor, cursor));
@@ -14321,6 +14328,7 @@ onBeforeUnmount(() => {
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
+                  @drop-gallery-item="handleDropGalleryItem"
                   @upload-button-click="handleRichUploadButtonClick"
                   @remove-image="removeInlineImage"
                 />
