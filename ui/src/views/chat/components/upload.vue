@@ -6,8 +6,6 @@ import { useUserStore } from '@/stores/user';
 import { filesize } from "filesize";
 import { useMessage } from 'naive-ui';
 import { useChatStore } from '@/stores/chat';
-import { blobToArrayBuffer } from '@/utils/tools';
-import { db } from '@/models/index';
 import { useUtilsStore } from '@/stores/utils';
 
 const user = useUserStore();
@@ -43,15 +41,6 @@ const inputFile = async (newFile: any, oldFile: any) => {
     }
 
     const attachmentId = newFile.response?.ids?.[0] as string | undefined;
-    if (fileType === 'image' && attachmentId) {
-      const x = db.thumbs.add({
-        id: attachmentId,
-        recentUsed: Number(Date.now()),
-        filename: newFile.file.name,
-        mimeType: newFile.file.type,
-        data: await blobToArrayBuffer(newFile.file),
-      });
-    }
 
     if (newFile.xhr) {
       if (newFile.xhr.status === 200) {
