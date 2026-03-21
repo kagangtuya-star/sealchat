@@ -42,14 +42,20 @@ const identityOptions = computed(() => {
 
 watch(
   () => props.show,
-  (visible) => {
+  async (visible) => {
     if (visible) {
       const channelId = props.channelId || chat.curChannel?.id || ''
       localChannelId.value = channelId
       if (channelId) {
-        const config = chat.getChannelIcOocRoleConfig(channelId)
-        icRoleId.value = config.icRoleId
-        oocRoleId.value = config.oocRoleId
+        try {
+          await chat.loadChannelIdentities(channelId, false)
+          const config = chat.getChannelIcOocRoleConfig(channelId)
+          icRoleId.value = config.icRoleId
+          oocRoleId.value = config.oocRoleId
+        } catch (error) {
+          console.error('加载场内场外角色映射失败', error)
+          message.error('加载配置失败，请稍后重试')
+        }
       }
     }
   },
