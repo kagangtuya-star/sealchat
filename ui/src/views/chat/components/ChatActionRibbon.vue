@@ -94,7 +94,7 @@ interface ActionButton {
 
 const allActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
-    { key: 'display', label: '显示设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
+    { key: 'display', label: '常规设置', icon: Palette, emitEvent: 'open-display-settings', activeKey: 'displayActive' },
     { key: 'identity', label: '角色管理', icon: UsersIcon, emitEvent: 'open-identity-manager', activeKey: 'identityActive' },
     {
       key: 'character-card',
