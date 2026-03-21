@@ -456,9 +456,16 @@ const canManageIdentities = computed(() => {
   return role === 'owner' || role === 'admin' || role === 'member';
 });
 
+const hasCloudValidatedIdentityConfig = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return false;
+  return !!chat.channelIdentityLoadedAt[channelId];
+});
+
 const isMappingMissing = computed(() => {
   if (!canManageIdentities.value) return false;
   if (!isAutoSwitchEnabled.value) return false;
+  if (!hasCloudValidatedIdentityConfig.value) return false;
   // If only one role, can't configure IC/OOC mapping properly
   if (hasOnlyOneRole.value || hasNoRoles.value) return true;
   const config = icOocConfig.value;
@@ -468,6 +475,9 @@ const isMappingMissing = computed(() => {
 
 // Warning message based on what's missing
 const warningMessage = computed(() => {
+  if (!hasCloudValidatedIdentityConfig.value) {
+    return '';
+  }
   // If no roles, suggest creating roles
   if (hasNoRoles.value) {
     return '请先创建角色以使用场内/场外切换';
