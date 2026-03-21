@@ -126,6 +126,7 @@ export interface DisplaySettings {
   // 右键菜单
   disableContextMenu: boolean
   quickGalleryLinkedEmojiSendDirectly: boolean
+  quickGalleryPageSize: number
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
@@ -176,6 +177,14 @@ export const SIDEBAR_WIDTH_LIMITS = {
   MIN: SIDEBAR_WIDTH_MIN,
   MAX: SIDEBAR_WIDTH_MAX,
 }
+const QUICK_GALLERY_PAGE_SIZE_DEFAULT = 15
+const QUICK_GALLERY_PAGE_SIZE_MIN = 5
+const QUICK_GALLERY_PAGE_SIZE_MAX = 60
+export const QUICK_GALLERY_PAGE_SIZE_LIMITS = {
+  DEFAULT: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+  MIN: QUICK_GALLERY_PAGE_SIZE_MIN,
+  MAX: QUICK_GALLERY_PAGE_SIZE_MAX,
+}
 const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
 const INPUT_AREA_HEIGHT_MIN = 80
 const INPUT_AREA_HEIGHT_MAX = 600
@@ -211,6 +220,13 @@ const normalizeInputAreaHeight = (value: unknown) => {
   if (raw <= 0) return 0
   return Math.max(raw, INPUT_AREA_HEIGHT_MIN)
 }
+const normalizeQuickGalleryPageSize = (value: unknown) =>
+  coerceNumberInRange(
+    value,
+    QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+    QUICK_GALLERY_PAGE_SIZE_MIN,
+    QUICK_GALLERY_PAGE_SIZE_MAX,
+  )
 const KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT = 1  // 1em - 中文标准首行缩进
 const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
@@ -457,6 +473,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
   quickGalleryLinkedEmojiSendDirectly: false,
+  quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeTemplateByWorld: {},
@@ -671,6 +688,7 @@ const loadSettings = (): DisplaySettings => {
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
       quickGalleryLinkedEmojiSendDirectly: coerceBoolean((parsed as any)?.quickGalleryLinkedEmojiSendDirectly ?? false),
+      quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
@@ -908,6 +926,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryLinkedEmojiSendDirectly')
       ? coerceBoolean((patch as any).quickGalleryLinkedEmojiSendDirectly)
       : base.quickGalleryLinkedEmojiSendDirectly,
+  quickGalleryPageSize:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryPageSize')
+      ? normalizeQuickGalleryPageSize((patch as any).quickGalleryPageSize)
+      : base.quickGalleryPageSize,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)

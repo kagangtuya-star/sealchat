@@ -56,6 +56,7 @@ interface GalleryState {
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
 const DEFAULT_EMOJI_REMARK_VISIBLE = true;
+export const DEFAULT_GALLERY_PAGE_SIZE = 15;
 
 export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
 export const COLLECTION_TYPE_EMOJI_REACTION = 'emoji_reactions';
@@ -127,7 +128,7 @@ export const useGalleryStore = defineStore('gallery', {
     getItemsByCollection: (state) => (collectionId: string) => state.items[collectionId]?.items ?? [],
     getItemPagination: (state) => (collectionId: string) => {
       const entry = state.items[collectionId];
-      if (!entry) return { page: 1, pageSize: 40, total: 0 };
+      if (!entry) return { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: 0 };
       const { page, pageSize, total } = entry;
       return { page, pageSize, total };
     },
@@ -232,10 +233,14 @@ export const useGalleryStore = defineStore('gallery', {
       this.panelVisible = false;
     },
 
-    async setActiveCollection(collectionId: string | null) {
+    async setActiveCollection(collectionId: string | null, params: { pageSize?: number; keyword?: string } = {}) {
       this.activeCollectionId = collectionId;
       if (collectionId) {
-        await this.loadItems(collectionId);
+        await this.loadItems(collectionId, {
+          page: 1,
+          pageSize: params.pageSize,
+          keyword: params.keyword
+        });
       }
     },
 
@@ -373,7 +378,7 @@ export const useGalleryStore = defineStore('gallery', {
     async loadItems(collectionId: string, params: { page?: number; pageSize?: number; keyword?: string; append?: boolean } = {}) {
       const normalizedKeyword = params.keyword?.trim() || undefined;
       const current = this.items[collectionId];
-      const requestedPageSize = params.pageSize ?? current?.pageSize ?? 40;
+      const requestedPageSize = params.pageSize ?? current?.pageSize ?? DEFAULT_GALLERY_PAGE_SIZE;
       const requestedPage = params.page ?? (params.append ? (current?.page ?? 0) + 1 : 1);
       const shouldAppend = Boolean(
         params.append &&
@@ -428,7 +433,7 @@ export const useGalleryStore = defineStore('gallery', {
       const entry = this.items[collectionId] ?? {
         items: [],
         page: 1,
-        pageSize: 40,
+        pageSize: DEFAULT_GALLERY_PAGE_SIZE,
         total: 0,
         loading: false,
         loadingMore: false

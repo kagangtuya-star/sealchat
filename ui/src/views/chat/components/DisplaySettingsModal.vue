@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
-import { createDefaultDisplaySettings, useDisplayStore, type DisplaySettings } from '@/stores/display'
+import {
+  QUICK_GALLERY_PAGE_SIZE_LIMITS,
+  createDefaultDisplaySettings,
+  useDisplayStore,
+  type DisplaySettings
+} from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
@@ -166,6 +171,7 @@ watch(
     draft.highlightNewlySentMessage = value.highlightNewlySentMessage
     draft.disableContextMenu = value.disableContextMenu
     draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
+    draft.quickGalleryPageSize = value.quickGalleryPageSize
     draft.avatarSize = value.avatarSize
     draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
@@ -203,6 +209,7 @@ type NumericSettingKey =
   | 'paragraphSpacing'
   | 'messagePaddingX'
   | 'messagePaddingY'
+  | 'quickGalleryPageSize'
 const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
@@ -660,6 +667,29 @@ const handleOpenTutorialHub = () => {
           <template #checked>点击直接发送原图</template>
           <template #unchecked>点击插入到当前光标</template>
         </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快捷画廊分页</p>
+            <p class="section-desc">控制快捷画廊每次下拉加载的缩略图数量，弱网建议适当调小</p>
+          </div>
+        </header>
+        <div class="gallery-page-size-settings">
+          <span class="gallery-page-size-settings__label">每次拉取</span>
+          <n-input-number
+            :value="draft.quickGalleryPageSize"
+            size="small"
+            :min="QUICK_GALLERY_PAGE_SIZE_LIMITS.MIN"
+            :max="QUICK_GALLERY_PAGE_SIZE_LIMITS.MAX"
+            :step="1"
+            @update:value="(value) => handleNumericInput('quickGalleryPageSize', value)"
+          >
+            <template #suffix>张</template>
+          </n-input-number>
+          <span class="quick-input-hint">默认 {{ QUICK_GALLERY_PAGE_SIZE_LIMITS.DEFAULT }} 张</span>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -1256,6 +1286,18 @@ const handleOpenTutorialHub = () => {
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.gallery-page-size-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.gallery-page-size-settings__label {
+  font-size: 0.85rem;
+  color: var(--sc-text-primary);
 }
 
 .quick-input-hint {
