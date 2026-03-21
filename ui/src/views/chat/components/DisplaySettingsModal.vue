@@ -160,13 +160,14 @@ watch(
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
   draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
   draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
-  draft.toolbarHotkeys = value.toolbarHotkeys
-  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-  draft.showDragIndicator = value.showDragIndicator
-  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-  draft.disableContextMenu = value.disableContextMenu
-  draft.avatarSize = value.avatarSize
-  draft.avatarBorderRadius = value.avatarBorderRadius
+    draft.toolbarHotkeys = value.toolbarHotkeys
+    draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+    draft.showDragIndicator = value.showDragIndicator
+    draft.highlightNewlySentMessage = value.highlightNewlySentMessage
+    draft.disableContextMenu = value.disableContextMenu
+    draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
+    draft.avatarSize = value.avatarSize
+    draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
@@ -646,6 +647,19 @@ const handleOpenTutorialHub = () => {
           <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
         </n-radio-group>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">快捷画廊点击动作</p>
+            <p class="section-desc">仅影响快捷画廊里非“表情收藏”文件夹的图片；表情收藏仍保持点击直接发送</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.quickGalleryLinkedEmojiSendDirectly">
+          <template #checked>点击直接发送原图</template>
+          <template #unchecked>点击插入到当前光标</template>
+        </n-switch>
       </section>
 
       <section class="display-settings__section">

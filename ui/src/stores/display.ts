@@ -125,6 +125,7 @@ export interface DisplaySettings {
   activeCustomThemeId: string | null
   // 右键菜单
   disableContextMenu: boolean
+  quickGalleryLinkedEmojiSendDirectly: boolean
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
@@ -455,6 +456,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   customThemes: [],
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
+  quickGalleryLinkedEmojiSendDirectly: false,
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeTemplateByWorld: {},
@@ -668,6 +670,7 @@ const loadSettings = (): DisplaySettings => {
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
+      quickGalleryLinkedEmojiSendDirectly: coerceBoolean((parsed as any)?.quickGalleryLinkedEmojiSendDirectly ?? false),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
@@ -901,6 +904,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'disableContextMenu')
       ? coerceBoolean((patch as any).disableContextMenu)
       : base.disableContextMenu,
+  quickGalleryLinkedEmojiSendDirectly:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryLinkedEmojiSendDirectly')
+      ? coerceBoolean((patch as any).quickGalleryLinkedEmojiSendDirectly)
+      : base.quickGalleryLinkedEmojiSendDirectly,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)

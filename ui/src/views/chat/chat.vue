@@ -12873,6 +12873,18 @@ const handleGalleryEmojiClick = (item: GalleryItem) => {
   insertGalleryInline(item.attachmentId);
 };
 
+const isFavoriteQuickGalleryEmoji = (item: GalleryItem) => {
+  return !!gallery.favoritesCollectionId && item.collectionId === gallery.favoritesCollectionId;
+};
+
+const handleQuickGalleryEmojiClick = (item: GalleryItem) => {
+  if (isFavoriteQuickGalleryEmoji(item) || display.settings.quickGalleryLinkedEmojiSendDirectly) {
+    void sendEmoji(item);
+    return;
+  }
+  handleGalleryEmojiClick(item);
+};
+
 const handleGalleryEmojiDragStart = (item: GalleryItem, evt: DragEvent) => {
   const dt = evt.dataTransfer;
   if (!dt) return;
@@ -13788,7 +13800,7 @@ onBeforeUnmount(() => {
                                 :key="item.id"
                                 draggable="true"
                                 @dragstart="handleGalleryEmojiDragStart(item, $event)"
-                                @click="sendEmoji(item)"
+                                @click="handleQuickGalleryEmojiClick(item)"
                               >
                                 <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
                                 <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
