@@ -135,6 +135,48 @@ interface RemotePlaybackApplyOptions {
 }
 
 export const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
+const MASTER_VOLUME_STORAGE_KEY = 'sealchat.audioStudio.masterVolume';
+const DEFAULT_MASTER_VOLUME = 1;
+
+function normalizeMasterVolume(volume: number) {
+  if (!Number.isFinite(volume)) {
+    return DEFAULT_MASTER_VOLUME;
+  }
+  return Math.max(0, Math.min(1, volume));
+}
+
+function readPersistedMasterVolume() {
+  if (typeof window === 'undefined') {
+    return DEFAULT_MASTER_VOLUME;
+  }
+  try {
+    const stored = window.localStorage.getItem(MASTER_VOLUME_STORAGE_KEY);
+    if (stored == null) {
+      return DEFAULT_MASTER_VOLUME;
+    }
+    return normalizeMasterVolume(Number(stored));
+  } catch {
+    return DEFAULT_MASTER_VOLUME;
+  }
+}
+
+function persistMasterVolume(volume: number) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(MASTER_VOLUME_STORAGE_KEY, String(normalizeMasterVolume(volume)));
+  } catch (error) {
+    console.warn('保存音频工作台总音量失败', error);
+  }
+}
+
+function applyMasterVolume(volume: number) {
+  const normalized = normalizeMasterVolume(volume);
+  Howler.volume(normalized);
+  return normalized;
+}
+
 if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
   // 增加音频池大小以支持更多并发播放
   const desiredPool = 30;
@@ -394,7 +436,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     isPlaying: false,
     loopEnabled: false,
     playbackRate: 1,
-    masterVolume: 1,
+    masterVolume: readPersistedMasterVolume(),
     worldPlaybackEnabled: DEFAULT_WORLD_PLAYBACK_ENABLED,
     error: null,
     currentChannelId: null,
@@ -1880,6 +1922,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     createHowlInstance(track: TrackRuntime, asset: AudioAsset, options?: { initialSeek?: number }) {
+      applyMasterVolume(this.masterVolume);
       const src = this.buildStreamUrl(asset.id);
       const howl = new Howl({
         src: [src],
@@ -2130,8 +2173,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     setMasterVolume(volume: number) {
-      this.masterVolume = Math.max(0, Math.min(1, volume));
-      Howler.volume(this.masterVolume);
+      this.masterVolume = applyMasterVolume(volume);
+      persistMasterVolume(this.masterVolume);
     },
 
     clearTrack(type: AudioTrackType) {
