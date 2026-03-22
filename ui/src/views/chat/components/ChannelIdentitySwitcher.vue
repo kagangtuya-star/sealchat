@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n';
 const props = withDefaults(defineProps<{
   channelId?: string;
   disabled?: boolean;
+  compact?: boolean;
   previewAppearance?: {
     identityId?: string;
     displayName?: string;
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   channelId: undefined,
   disabled: false,
+  compact: false,
   previewAppearance: null,
 });
 
@@ -32,6 +34,7 @@ const emit = defineEmits<{
   (event: 'create'): void;
   (event: 'manage'): void;
   (event: 'avatar-setup'): void;
+  (event: 'identity-changed'): void;
 }>();
 
 const { t } = useI18n();
@@ -164,12 +167,17 @@ const updateIsMobile = () => {
 
 // Displayed name: on mobile, if name exceeds 4 characters, show "切换" instead
 const displayedButtonLabel = computed(() => {
+  if (props.compact && isMobile.value) {
+    return '';
+  }
   const name = displayName.value;
   if (isMobile.value && name.length > MAX_NAME_LENGTH_MOBILE) {
     return '切换';
   }
   return name;
 });
+
+const avatarSize = computed(() => (props.compact && isMobile.value ? 22 : 28));
 
 const avatarSrc = computed(() => {
   return buildAttachmentUrl(
@@ -706,26 +714,33 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         tertiary
         size="small"
         class="identity-switcher"
+        :class="{ 'identity-switcher--compact': props.compact && isMobile }"
         :disabled="!resolvedChannelId || disabled"
       >
         <AvatarVue
-          :size="28"
+          :size="avatarSize"
           :border="false"
           :src="avatarSrc"
           class="identity-switcher__avatar"
         />
         <span
-          v-if="displayColor"
+          v-if="displayColor && (!props.compact || !isMobile)"
           class="identity-switcher__color"
           :style="{ backgroundColor: displayColor }"
         />
         <span
+          v-if="displayedButtonLabel"
           class="identity-switcher__label"
           :style="displayColor ? { color: displayColor } : undefined"
         >
           {{ displayedButtonLabel }}
         </span>
-        <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
+        <n-icon
+          v-if="showFavoriteBadge && (!props.compact || !isMobile)"
+          :component="Star"
+          size="12"
+          class="identity-switcher__favorite"
+        />
       </n-button>
     </n-dropdown>
 
@@ -749,6 +764,13 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   color: var(--sc-text-primary, #374151);
   transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+.identity-switcher--compact {
+  gap: 0.2rem;
+  min-width: 2.25rem;
+  padding: 0.2rem 0.32rem;
+  border-radius: 999px;
 }
 
 .identity-switcher__label {

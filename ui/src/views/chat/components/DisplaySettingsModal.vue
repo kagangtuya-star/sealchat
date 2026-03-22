@@ -153,8 +153,9 @@ watch(
     draft.compactBubbleGap = value.compactBubbleGap
     draft.paragraphSpacing = value.paragraphSpacing
   draft.messagePaddingX = value.messagePaddingX
-  draft.messagePaddingY = value.messagePaddingY
+    draft.messagePaddingY = value.messagePaddingY
   draft.sendShortcut = value.sendShortcut
+  draft.mobileMinimalInputEnabled = value.mobileMinimalInputEnabled
   draft.enableIcToggleHotkey = value.enableIcToggleHotkey
   syncFavoriteBar(value)
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
@@ -654,6 +655,19 @@ const handleOpenTutorialHub = () => {
           <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
         </n-radio-group>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">移动端简洁输入框</p>
+            <p class="section-desc">仅移动端生效，底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileMinimalInputEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
       </section>
 
       <section class="display-settings__section">

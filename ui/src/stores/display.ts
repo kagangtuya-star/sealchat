@@ -101,6 +101,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  mobileMinimalInputEnabled: boolean
   enableIcToggleHotkey: boolean
   favoriteChannelBarEnabled: boolean
   favoriteChannelIdsByWorld: Record<string, string[]>
@@ -451,6 +452,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
+  mobileMinimalInputEnabled: false,
   enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
   favoriteChannelIdsByWorld: {},
@@ -661,6 +663,7 @@ const loadSettings = (): DisplaySettings => {
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
       favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
       favoriteChannelIdsByWorld,
@@ -833,6 +836,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  mobileMinimalInputEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
+      ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)
+      : base.mobileMinimalInputEnabled,
   enableIcToggleHotkey:
     patch && Object.prototype.hasOwnProperty.call(patch, 'enableIcToggleHotkey')
       ? coerceBoolean((patch as any).enableIcToggleHotkey)

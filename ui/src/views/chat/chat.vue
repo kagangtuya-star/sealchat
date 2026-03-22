@@ -394,6 +394,9 @@ const botOptionsFetched = ref(false);
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
+const hasTouchPoints = typeof navigator !== 'undefined'
+  ? (navigator.maxTouchPoints || 0) > 0
+  : false;
 const chatRootContainerRef = ref<HTMLElement | null>(null);
 const DICE_TRAY_EDGE_OVERLAY_CLASS = 'dice-tray-popover-edge';
 const DICE_TRAY_RIGHT_OFFSET_TUNE_PX = -10;
@@ -1272,7 +1275,7 @@ const checkAvatarPromptOnMount = () => {
 
 watch(
   showActionRibbon,
-  () => {
+  (visible) => {
     syncActionRibbonState();
   },
   { immediate: true },
@@ -1705,11 +1708,32 @@ if (typeof window !== 'undefined') {
 const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
+const minimalInputActionsHostRef = ref<HTMLElement | null>(null);
+const minimalInputToolbarVisible = ref(false);
 const inputMode = ref<'plain' | 'rich'>('plain');
 const richContentCache = ref<string | null>(null);
 const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
-const isMobileWideInput = computed(() => wideInputMode.value && isMobileUa);
+const isMobileInteractionMode = computed(() => {
+  if (isMobileUa) {
+    return true;
+  }
+  const width = windowWidth.value;
+  return width > 0 && width <= 768 && isCoarsePointerDevice && hasTouchPoints;
+});
+const isMobileWideInput = computed(() => wideInputMode.value && isMobileInteractionMode.value);
+const isMobileMinimalInputActive = computed(() => (
+  display.settings.mobileMinimalInputEnabled
+  && isMobileInteractionMode.value
+  && !isMobileWideInput.value
+  && !isEmbedMode.value
+));
+const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
+  if (!isMobileMinimalInputActive.value || !minimalInputToolbarVisible.value) {
+    return null;
+  }
+  return minimalInputActionsHostRef.value;
+});
 const inputAreaHeightPreview = ref<number | null>(null);
 const customInputHeight = computed(() => (
   inputAreaHeightPreview.value !== null
@@ -8415,6 +8439,10 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   return !isRichContentEmpty(content);
 };
 
+const hasMeaningfulDraft = computed(() => (
+  isEditing.value || isContentMeaningful(inputMode.value, textToSend.value)
+));
+
 const getServerAlignedNowMs = () => {
   const localNow = Date.now();
   const offset = Number(chat.serverTimeOffsetMs);
@@ -8801,6 +8829,37 @@ const handleHistoryPopoverShow = (show: boolean) => {
   historyPopoverVisible.value = show;
   if (show) {
     refreshHistoryEntries();
+  }
+};
+
+const closeInputExtraOverlays = () => {
+  emojiPopoverShow.value = false;
+  historyPopoverVisible.value = false;
+  closeAllDiceTrays();
+  diceSettingsVisible.value = false;
+};
+
+watch(
+  () => isMobileMinimalInputActive.value,
+  (active) => {
+    if (!active) {
+      minimalInputToolbarVisible.value = false;
+      closeInputExtraOverlays();
+    }
+  },
+);
+
+watch(minimalInputToolbarVisible, (visible) => {
+  if (!visible) {
+    closeInputExtraOverlays();
+  }
+});
+
+const toggleMinimalInputToolbar = () => {
+  const next = !minimalInputToolbarVisible.value;
+  minimalInputToolbarVisible.value = next;
+  if (!next) {
+    closeInputExtraOverlays();
   }
 };
 
@@ -13009,46 +13068,452 @@ onBeforeUnmount(() => {
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <ChatActionRibbon
-        v-if="showActionRibbon && !isEmbedMode"
-        :filters="chat.filterState"
-        :roles="ribbonRoleOptions"
-        :archive-active="archiveDrawerVisible"
-        :export-active="exportManagerVisible"
-        :identity-active="identityDialogVisible"
-        :gallery-active="galleryPanelVisible"
-        :display-active="displaySettingsVisible"
-        :favorite-active="display.favoriteBarEnabled"
-        :channel-images-active="channelImagesPanelVisible"
-        :can-import="canManageWorldKeywords"
-        :import-active="importDialogVisible"
-        :split-enabled="splitEntryEnabled"
-        :split-active="false"
-        :sticky-note-enabled="true"
-        :sticky-note-active="stickyNoteStore.uiVisible"
-        :webhook-enabled="webhookManageAllowed"
-        :webhook-active="webhookDrawerVisible"
-        :email-notification-enabled="true"
-        :email-notification-active="emailNotificationDrawerVisible"
-        :character-card-enabled="!!chat.curChannel?.id"
-        :character-card-active="characterCardPanelVisible"
-        @update:filters="chat.setFilterState($event)"
-        @open-archive="archiveDrawerVisible = true"
-        @open-export="exportManagerVisible = true"
-        @open-import="importDialogVisible = true"
-        @open-identity-manager="openIdentityManager"
-        @open-gallery="openGalleryPanel"
-        @open-display-settings="displaySettingsVisible = true"
-        @open-favorites="channelFavoritesVisible = true"
-        @open-channel-images="openChannelImagesPanel"
-        @open-split="openSplitView"
-        @toggle-sticky-note="toggleStickyNotes"
-        @open-webhook="webhookDrawerVisible = true"
-        @open-email-notification="emailNotificationDrawerVisible = true"
-        @open-character-card="openCharacterCardPanel"
-        @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
-      />
+      <div v-if="showActionRibbon && !isEmbedMode" class="chat-top-toolbar-stack">
+        <ChatActionRibbon
+          :filters="chat.filterState"
+          :roles="ribbonRoleOptions"
+          :archive-active="archiveDrawerVisible"
+          :export-active="exportManagerVisible"
+          :identity-active="identityDialogVisible"
+          :gallery-active="galleryPanelVisible"
+          :display-active="displaySettingsVisible"
+          :favorite-active="display.favoriteBarEnabled"
+          :channel-images-active="channelImagesPanelVisible"
+          :can-import="canManageWorldKeywords"
+          :import-active="importDialogVisible"
+          :split-enabled="splitEntryEnabled"
+          :split-active="false"
+          :sticky-note-enabled="true"
+          :sticky-note-active="stickyNoteStore.uiVisible"
+          :webhook-enabled="webhookManageAllowed"
+          :webhook-active="webhookDrawerVisible"
+          :email-notification-enabled="true"
+          :email-notification-active="emailNotificationDrawerVisible"
+          :character-card-enabled="!!chat.curChannel?.id"
+          :character-card-active="characterCardPanelVisible"
+          @update:filters="chat.setFilterState($event)"
+          @open-archive="archiveDrawerVisible = true"
+          @open-export="exportManagerVisible = true"
+          @open-import="importDialogVisible = true"
+          @open-identity-manager="openIdentityManager"
+          @open-gallery="openGalleryPanel"
+          @open-display-settings="displaySettingsVisible = true"
+          @open-favorites="channelFavoritesVisible = true"
+          @open-channel-images="openChannelImagesPanel"
+          @open-split="openSplitView"
+          @toggle-sticky-note="toggleStickyNotes"
+          @open-webhook="webhookDrawerVisible = true"
+          @open-email-notification="emailNotificationDrawerVisible = true"
+          @open-character-card="openCharacterCardPanel"
+          @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
+        />
+      </div>
     </transition>
+
+    <Teleport v-if="inputExtraActionsTeleportTarget" :to="inputExtraActionsTeleportTarget">
+      <div
+        class="chat-input-actions__teleport-content"
+        :class="{ 'chat-input-actions__teleport-content--compact-toolbar': isMobileMinimalInputActive }"
+      >
+        <div class="chat-input-actions__group chat-input-actions__group--leading chat-input-actions__group--leading-extras">
+          <div class="chat-input-actions__cell">
+            <div class="emoji-trigger">
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    quaternary
+                    circle
+                    ref="emojiTriggerButtonRef"
+                    @click="handleEmojiTriggerClick"
+                  >
+                    <template #icon>
+                      <n-icon :component="Plus" size="18" />
+                    </template>
+                  </n-button>
+                </template>
+                添加表情
+              </n-tooltip>
+
+              <n-popover
+                v-model:show="emojiPopoverShow"
+                trigger="manual"
+                placement="bottom-start"
+                :x="emojiPopoverXCoord"
+                :y="emojiPopoverYCoord"
+                @clickoutside="emojiPopoverShow = false"
+              >
+                <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
+                  <div class="emoji-panel__header">
+                    <div class="emoji-panel__header-left">
+                      <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button text size="small" @click="handleEmojiManageClick">
+                            <template #icon>
+                              <n-icon :component="Settings" />
+                            </template>
+                          </n-button>
+                        </template>
+                        表情管理
+                      </n-tooltip>
+                    </div>
+                    <div class="emoji-panel__header-right">
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button
+                            text
+                            size="small"
+                            class="emoji-panel__toggle-remark"
+                            @click="toggleEmojiRemarkVisible"
+                          >
+                            <span>{{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}</span>
+                            <n-icon :component="emojiRemarkVisible ? EyeOffOutline : EyeOutline" />
+                          </n-button>
+                        </template>
+                        {{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}
+                      </n-tooltip>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button text size="small" @click="emojiPopoverShow = false">
+                            <template #icon>
+                              <n-icon :component="CloseIcon" />
+                            </template>
+                          </n-button>
+                        </template>
+                        关闭
+                      </n-tooltip>
+                    </div>
+                  </div>
+
+                  <div class="emoji-panel__tabs emoji-panel__tabs--with-utf">
+                    <template v-if="hasEmojiItems && hasMultipleTabs">
+                      <button
+                        class="emoji-panel__tab"
+                        :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === null }"
+                        @click="switchEmojiPanelTab('gallery'); activeEmojiTab = null"
+                      >
+                        全部
+                      </button>
+                      <button
+                        v-for="tab in emojiTabOptions"
+                        :key="tab.id"
+                        class="emoji-panel__tab"
+                        :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === tab.id }"
+                        :title="tab.name"
+                        @click="switchEmojiPanelTab('gallery'); activeEmojiTab = tab.id"
+                      >
+                        <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                      </button>
+                    </template>
+                    <button
+                      class="emoji-panel__tab emoji-panel__tab--utf"
+                      :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'utf' }"
+                      title="UTF 表情"
+                      @click="switchEmojiPanelTab('utf')"
+                    >
+                      <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
+                      <span class="emoji-panel__tab-text">UTF</span>
+                    </button>
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <button
+                          class="emoji-panel__tab emoji-panel__tab--variant"
+                          :class="{
+                            'emoji-panel__tab--active': emojiPanelTab === 'variant',
+                            'emoji-panel__tab--muted': !activeIdentityForEmojiPanel || !hasIdentityVariantOptions,
+                          }"
+                          :aria-disabled="!activeIdentityForEmojiPanel || !hasIdentityVariantOptions"
+                          @click="handleEmojiVariantTabClick"
+                        >
+                          <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
+                          <span class="emoji-panel__tab-text">差分</span>
+                        </button>
+                      </template>
+                      {{ identityVariantTabTooltip }}
+                    </n-tooltip>
+                  </div>
+
+                  <div v-if="(emojiPanelTab === 'gallery' && hasEmojiItems) || emojiPanelTab === 'variant'" class="emoji-panel__search">
+                    <n-input
+                      v-model:value="emojiSearchQuery"
+                      size="small"
+                      :placeholder="emojiPanelTab === 'variant' ? '搜索差分关键词或备注...' : '搜索表情...'"
+                      clearable
+                    />
+                  </div>
+
+                  <div v-if="emojiPanelTab === 'gallery' && !hasEmojiItems" class="emoji-panel__empty">
+                    当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
+                  </div>
+
+                  <div
+                    class="emoji-panel__content"
+                    :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
+                  >
+                    <template v-if="emojiPanelTab === 'utf'">
+                      <div class="emoji-panel__utf-host">
+                        <EmojiPickerModal
+                          embedded
+                          mode="emoji-only"
+                          initial-tab="emoji"
+                          @select="handleUtfEmojiSelect"
+                        />
+                      </div>
+                    </template>
+                    <template v-else-if="emojiPanelTab === 'variant'">
+                      <div v-if="!activeIdentityForEmojiPanel" class="emoji-panel__empty">
+                        请先选择频道角色
+                      </div>
+                      <div v-else-if="!hasIdentityVariantOptions" class="emoji-panel__empty">
+                        当前频道角色没有可用的头像差分
+                      </div>
+                      <div v-else class="identity-variant-picker">
+                        <n-tooltip trigger="hover">
+                          <template #trigger>
+                            <button
+                              type="button"
+                              class="identity-variant-picker__item identity-variant-picker__item--default"
+                              :class="{ 'is-active': !effectiveIdentityVariantForEmojiPanel }"
+                              @click="handleEmojiVariantSelect('')"
+                            >
+                              <div class="identity-variant-picker__badge">↺</div>
+                              <AvatarVue
+                                :size="40"
+                                :border="false"
+                                :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                              />
+                              <div class="identity-variant-picker__title">默认头像</div>
+                              <div class="identity-variant-picker__hint">恢复</div>
+                            </button>
+                          </template>
+                          {{ describeIdentityVariantCard(null) }}
+                        </n-tooltip>
+                        <n-tooltip
+                          v-for="variant in filteredIdentityVariantOptions"
+                          :key="variant.id"
+                          trigger="hover"
+                        >
+                          <template #trigger>
+                            <button
+                              type="button"
+                              class="identity-variant-picker__item"
+                              :class="{ 'is-active': effectiveIdentityVariantForEmojiPanel?.id === variant.id }"
+                              @click="handleEmojiVariantSelect(variant.id)"
+                            >
+                              <div class="identity-variant-picker__badge">
+                                <img
+                                  v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                                  :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                                  :alt="resolveVariantNote(variant)"
+                                />
+                                <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+                              </div>
+                              <AvatarVue
+                                :size="40"
+                                :border="false"
+                                :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                              />
+                              <div class="identity-variant-picker__title">{{ resolveVariantNote(variant) }}</div>
+                              <div class="identity-variant-picker__hint">={{ variant.keyword }}</div>
+                            </button>
+                          </template>
+                          <span class="identity-variant-picker__tooltip">{{ describeIdentityVariantCard(variant) }}</span>
+                        </n-tooltip>
+                        <div v-if="emojiSearchQuery && !filteredIdentityVariantOptions.length" class="emoji-panel__empty">
+                          没有匹配的头像差分
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else>
+                    <template v-if="isManagingEmoji">
+                      <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                        没有匹配的表情
+                      </div>
+                      <template v-else>
+                        <n-checkbox-group v-model:value="selectedEmojiIds">
+                          <div class="emoji-grid">
+                            <div class="emoji-manage-item" v-for="(item, idx) in filteredEmojiItems" :key="item.id">
+                              <div class="emoji-manage-item__content">
+                                <n-checkbox :value="item.id">
+                                  <div class="emoji-item">
+                                    <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                    <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">
+                                      {{ item.remark || `收藏${idx + 1}` }}
+                                    </div>
+                                  </div>
+                                </n-checkbox>
+                                <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">编辑备注</n-button>
+                              </div>
+                            </div>
+                          </div>
+                        </n-checkbox-group>
+                      </template>
+
+                      <div class="emoji-panel__actions">
+                        <n-button type="error" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
+                          删除选中
+                        </n-button>
+                        <n-button type="default" size="small" @click="exitEmojiManage">
+                          退出管理
+                        </n-button>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                        没有匹配的表情
+                      </div>
+                      <div v-else class="emoji-grid">
+                        <div
+                          class="emoji-item"
+                          v-for="(item, idx) in filteredEmojiItems"
+                          :key="item.id"
+                          draggable="true"
+                          @dragstart="handleGalleryEmojiDragStart(item, $event)"
+                          @click="handleQuickGalleryEmojiClick(item)"
+                        >
+                          <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                          <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
+                          <div class="emoji-item__actions">
+                            <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    </template>
+                  </div>
+                </div>
+              </n-popover>
+            </div>
+          </div>
+          <div class="chat-input-actions__cell">
+            <GalleryButton />
+          </div>
+        </div>
+
+        <div class="chat-input-actions__group chat-input-actions__group--addons">
+          <div class="chat-input-actions__cell">
+            <ChatIcOocToggle
+              v-model="inputIcMode"
+              compact
+            />
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperToggleActive }"
+                  @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
+                  <span class="chat-input-actions__icon">W</span>
+                </n-button>
+              </template>
+              {{ t('inputBox.whisperTooltip') }}
+            </n-tooltip>
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button quaternary circle @click="doUpload">
+                  <template #icon>
+                    <n-icon :component="Upload" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              上传图片
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  :type="inputMode === 'rich' ? 'primary' : 'default'"
+                  @click="toggleInputMode"
+                >
+                  <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
+                </n-button>
+              </template>
+              {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  :type="wideInputMode ? 'primary' : 'default'"
+                  @click="toggleWideInputMode"
+                >
+                  <template #icon>
+                    <n-icon :component="ArrowsVertical" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              {{ wideInputTooltip }}
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-popover
+              trigger="click"
+              placement="top"
+              :show="historyPopoverVisible"
+              :show-arrow="false"
+              class="history-popover"
+              @update:show="handleHistoryPopoverShow"
+            >
+              <template #trigger>
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button quaternary circle>
+                      <template #icon>
+                        <n-icon :component="ArrowBackUp" size="18" />
+                      </template>
+                    </n-button>
+                  </template>
+                  输入历史 / 保存当前
+                </n-tooltip>
+              </template>
+              <div class="history-panel" @click.stop>
+                <div class="history-panel__header">
+                  <span class="history-panel__title">输入回溯</span>
+                  <n-button
+                    size="tiny"
+                    tertiary
+                    round
+                    :disabled="!canManuallySaveHistory"
+                    @click.stop="handleManualHistoryRecord"
+                  >保存当前</n-button>
+                </div>
+                <div v-if="historyEntryViews.length" class="history-panel__body">
+                  <button
+                    v-for="entry in historyEntryViews"
+                    :key="entry.id"
+                    type="button"
+                    class="history-entry"
+                    @click="restoreHistoryEntry(entry.id)"
+                  >
+                    <div class="history-entry__meta">
+                      <span class="history-entry__tag" :class="{ 'history-entry__tag--rich': entry.mode === 'rich' }">
+                        {{ entry.mode === 'rich' ? '富文本' : '纯文本' }}
+                      </span>
+                      <span class="history-entry__time">{{ entry.timeLabel }}</span>
+                    </div>
+                    <div class="history-entry__preview" :title="entry.fullPreview">{{ entry.preview }}</div>
+                  </button>
+                </div>
+                <div v-else class="history-panel__empty">
+                  <p>暂无历史记录</p>
+                  <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
+                </div>
+              </div>
+            </n-popover>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="520">
       <n-drawer-content closable>
@@ -13581,6 +14046,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="chat-input-area relative flex-1">
             <div
+              v-if="isMobileMinimalInputActive && minimalInputToolbarVisible"
+              ref="minimalInputActionsHostRef"
+              class="chat-input-inline-toolbar-host"
+            />
+            <div
+              v-if="!isMobileMinimalInputActive"
               :class="[
                 'chat-input-actions',
                 'input-floating-toolbar',
@@ -13622,10 +14093,11 @@ onBeforeUnmount(() => {
 
                     <n-popover
                       v-model:show="emojiPopoverShow"
-                      trigger="click"
+                      trigger="manual"
                       placement="bottom-start"
                       :x="emojiPopoverXCoord"
                       :y="emojiPopoverYCoord"
+                      @clickoutside="emojiPopoverShow = false"
                     >
                       <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
                         <div class="emoji-panel__header">
@@ -14361,7 +14833,136 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <div class="chat-input-editor-row" :style="chatInputStyle">
+            <div
+              v-if="isMobileMinimalInputActive"
+              class="chat-input-editor-row chat-input-editor-row--minimal"
+              :style="chatInputStyle"
+            >
+              <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
+                <ChannelIdentitySwitcher
+                  v-if="chat.curChannel"
+                  compact
+                  :preview-appearance="activeIdentityAppearanceForPreview"
+                  @create="openIdentityCreate"
+                  @manage="openIdentityManager"
+                  @identity-changed="emitTypingPreview"
+                  @avatar-setup="handleOpenAvatarPrompt"
+                />
+              </div>
+              <div class="chat-input-editor-main">
+                <KeywordSuggestPanel
+                  :visible="keywordSuggestVisible"
+                  :options="keywordSuggestOptions"
+                  :active-index="keywordSuggestIndex"
+                  :loading="keywordSuggestLoading"
+                  @select="handleKeywordSuggestSelect"
+                  @hover="handleKeywordSuggestHover"
+                />
+                <ChatInputSwitcher
+                  ref="textInputRef"
+                  v-model="textToSend"
+                  v-model:mode="inputMode"
+                  :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
+                  :whisper-mode="whisperMode"
+                  :disabled="spectatorInputDisabled"
+                  :mention-options="atOptions"
+                  :mention-loading="atLoading"
+                  :mention-prefix="atPrefix"
+                  :mention-render-label="atRenderLabel"
+                  :rows="1"
+                  :input-class="chatInputClassList"
+                  :send-shortcut="display.settings.sendShortcut"
+                  :inline-images="inlineImagePreviewMap"
+                  :default-i-form-embed-link="defaultIFormEmbedLink"
+                  @mention-search="atHandleSearch"
+                  @mention-select="handleMentionSelect"
+                  @keydown="keyDown"
+                  @blur="handleChatInputBlur"
+                  @input="handleSlashInput"
+                  @paste-image="handlePlainPasteImage"
+                  @drop-files="handlePlainDropFiles"
+                  @drop-gallery-item="handleDropGalleryItem"
+                  @upload-button-click="handleRichUploadButtonClick"
+                  @remove-image="removeInlineImage"
+                />
+                <input
+                  ref="inlineImageInputRef"
+                  class="hidden"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  @change="handleInlineFileChange"
+                />
+              </div>
+              <div
+                v-if="!isEditing && !hasMeaningfulDraft"
+                class="chat-input-actions__cell"
+              >
+                <ChatIcOocToggle
+                  v-model="inputIcMode"
+                  compact
+                />
+              </div>
+              <div
+                v-if="!isEditing"
+                class="chat-input-actions__cell"
+              >
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-toggle"
+                      :class="{ 'chat-input-minimal-toggle--active': minimalInputToolbarVisible }"
+                      :type="minimalInputToolbarVisible ? 'primary' : 'default'"
+                      @click="toggleMinimalInputToolbar"
+                    >
+                      <template #icon>
+                        <n-icon :component="Plus" size="18" />
+                      </template>
+                    </n-button>
+                  </template>
+                  {{ minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏' }}
+                </n-tooltip>
+              </div>
+              <div
+                v-if="!isEditing && hasMeaningfulDraft"
+                class="chat-input-actions__cell"
+              >
+                <n-button
+                  size="medium"
+                  type="primary"
+                  @click="send"
+                  :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                  class="send-action-btn send-action-btn--compact"
+                >
+                  <template #icon>
+                    <n-icon :component="Send" size="18" />
+                  </template>
+                </n-button>
+              </div>
+              <div
+                v-if="isEditing"
+                class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline"
+              >
+                <div class="edit-actions-group">
+                  <n-button size="medium" @click="saveEdit"
+                    :disabled="isSavingEdit || spectatorInputDisabled || chat.connectState !== 'connected'"
+                    class="edit-action-btn edit-action-btn--save">
+                    <template #icon>
+                      <n-icon :component="Check" size="16" />
+                    </template>
+                  </n-button>
+                  <n-button size="medium" @click="cancelEditing"
+                    class="edit-action-btn edit-action-btn--cancel">
+                    <template #icon>
+                      <n-icon :component="X" size="16" />
+                    </template>
+                  </n-button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
                 <KeywordSuggestPanel
                   :visible="keywordSuggestVisible"
@@ -17112,6 +17713,44 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.chat-top-toolbar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.chat-input-inline-toolbar-host {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  margin-bottom: 0.55rem;
+  padding: 0 0.1rem 0.1rem;
+  scrollbar-width: none;
+}
+
+.chat-input-inline-toolbar-host::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-input-actions__teleport-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.chat-input-actions__teleport-content--compact-toolbar {
+  flex-wrap: wrap;
+  padding: 0.15rem 0;
+}
+
+.chat-input-actions__teleport-content--compact-toolbar .chat-input-actions__group {
+  flex-wrap: wrap;
+}
+
 .chat-input-actions {
   display: flex;
   align-items: center;
@@ -17131,11 +17770,23 @@ onBeforeUnmount(() => {
   flex-wrap: nowrap;
 }
 
+.chat-input-actions__group--minimal-trailing {
+  margin-left: auto;
+  flex: 0 0 auto;
+  gap: 0.45rem;
+}
+
 .chat-input-editor-row {
   display: flex;
   align-items: flex-end;
   gap: 0.75rem;
   margin-top: 0.75rem;
+}
+
+.chat-input-editor-row--minimal {
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0;
 }
 
 .chat-input-editor-main {
@@ -17149,6 +17800,18 @@ onBeforeUnmount(() => {
 
 .chat-input-editor-main :deep(.hybrid-input) {
   width: 100%;
+}
+
+.chat-input-editor-row:not(.chat-input-editor-row--minimal) .chat-input-editor-main :deep(.hybrid-input) {
+  min-height: 46px;
+}
+
+.chat-input-editor-row--minimal .chat-input-editor-main {
+  flex: 1 1 0;
+}
+
+.chat-input-editor-row--minimal .chat-input-send-inline {
+  align-self: center;
 }
 
 .chat-input-send-inline {
@@ -17194,10 +17857,36 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
+.send-action-btn--compact {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  background-color: var(--sc-primary-color, #2563eb) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: 0 8px 18px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.24);
+}
+
+.send-action-btn--compact:hover:not(:disabled) {
+  background-color: var(--sc-primary-color-hover, #1d4ed8) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  transform: translateY(-1px);
+}
+
 :root[data-display-palette='night'] .send-action-btn:hover:not(:disabled) {
   background-color: rgba(96, 165, 250, 0.2) !important;
   border-color: rgba(96, 165, 250, 0.45) !important;
   color: #60a5fa !important;
+}
+
+:root[data-display-palette='night'] .send-action-btn--compact {
+  background-color: #3b82f6 !important;
+  box-shadow: 0 10px 24px rgba(59, 130, 246, 0.28);
+}
+
+:root[data-display-palette='night'] .send-action-btn--compact:hover:not(:disabled) {
+  background-color: #60a5fa !important;
 }
 
 .edit-action-btn {
@@ -17270,7 +17959,31 @@ onBeforeUnmount(() => {
   height: clamp(24px, 2.8vw, 32px);
 }
 
+.chat-input-minimal-toggle {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.chat-input-minimal-toggle:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.chat-input-minimal-toggle--active {
+  box-shadow: 0 0 0 1px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2);
+}
+
 @media (max-width: 520px) {
+  .chat-top-toolbar-stack {
+    gap: 0.35rem;
+  }
+
+  .chat-input-inline-toolbar-host {
+    padding-left: 0.1rem;
+    padding-right: 0.1rem;
+  }
+
   .chat-input-actions {
     gap: 0.25rem;
   }
@@ -17301,6 +18014,12 @@ onBeforeUnmount(() => {
     width: 40px !important;
     height: 40px !important;
     border-radius: 8px !important;
+  }
+
+  .send-action-btn--compact,
+  .chat-input-minimal-toggle {
+    width: 34px !important;
+    height: 34px !important;
   }
 
   .edit-actions-group {
@@ -17631,6 +18350,31 @@ onBeforeUnmount(() => {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, padding-top 0.2s ease;
 }
 
+.chat-input-editor-row--minimal .chat-text :deep(textarea) {
+  min-height: 2.75rem;
+  border-radius: 1.1rem;
+  padding: 0.72rem 1rem;
+  background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.95));
+  border-color: color-mix(in srgb, var(--sc-border-mute, rgba(148, 163, 184, 0.28)) 82%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.chat-input-editor-row--minimal .chat-input-editor-main :deep(.hybrid-input),
+.chat-input-editor-row--minimal .chat-input-editor-main :deep(.tiptap-editor) {
+  min-height: 2.75rem;
+  border-radius: 1.1rem;
+  padding: 0.72rem 1rem;
+  background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.95));
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute, rgba(148, 163, 184, 0.28)) 82%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-text :deep(textarea),
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-input-editor-main :deep(.hybrid-input),
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-input-editor-main :deep(.tiptap-editor) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .chat-text.whisper-mode :deep(textarea) {
   border-color: #7c3aed;
   box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35);
@@ -17854,6 +18598,10 @@ onBeforeUnmount(() => {
 .identity-switcher-cell {
   display: flex;
   align-items: center;
+}
+
+.identity-switcher-cell--minimal {
+  flex: 0 0 auto;
 }
 
 .input-floating-toolbar {
