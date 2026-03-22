@@ -2553,6 +2553,7 @@ const identityForm = reactive({
   folderIds: [] as string[],
   characterCardId: '' as string,
 });
+const identityColorDraft = ref('');
 const identityOriginalCardId = ref('');
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
@@ -2573,6 +2574,7 @@ const identityVariantForm = reactive({
   color: '',
   enabled: true,
 });
+const identityVariantColorDraft = ref('');
 const identityVariantAvatarPreview = ref('');
 const identityVariantAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityVariantAvatarEditorVisible = ref(false);
@@ -3597,6 +3599,46 @@ const normalizeHexColor = (value: string) => {
   return color;
 };
 
+const normalizeColorDraftText = (value: string) => String(value || '').trim().toLowerCase();
+
+const commitIdentityColorDraft = (showWarning = true) => {
+  const draft = normalizeColorDraftText(identityColorDraft.value);
+  if (!draft) {
+    identityForm.color = '';
+    identityColorDraft.value = '';
+    return true;
+  }
+  const normalized = normalizeHexColor(draft);
+  if (!normalized) {
+    if (showWarning) {
+      message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    }
+    return false;
+  }
+  identityForm.color = normalized;
+  identityColorDraft.value = normalized;
+  return true;
+};
+
+const commitIdentityVariantColorDraft = (showWarning = true) => {
+  const draft = normalizeColorDraftText(identityVariantColorDraft.value);
+  if (!draft) {
+    identityVariantForm.color = '';
+    identityVariantColorDraft.value = '';
+    return true;
+  }
+  const normalized = normalizeHexColor(draft);
+  if (!normalized) {
+    if (showWarning) {
+      message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    }
+    return false;
+  }
+  identityVariantForm.color = normalized;
+  identityVariantColorDraft.value = normalized;
+  return true;
+};
+
 const applyIdentityAppearanceToMessages = (identity: ChannelIdentity) => {
   if (!identity || identity.channelId !== chat.curChannel?.id) {
     return;
@@ -3708,16 +3750,33 @@ const clearRemovedIdentityFromMessages = (identityId: string) => {
 };
 
 const handleIdentityColorBlur = () => {
-  if (!identityForm.color) {
-    return;
-  }
-  const normalized = normalizeHexColor(identityForm.color);
-  if (!normalized) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
-    identityForm.color = '';
-    return;
-  }
+  commitIdentityColorDraft(true);
+};
+
+const handleIdentityColorPickerUpdate = (value: string | null) => {
+  const normalized = normalizeHexColor(String(value || ''));
   identityForm.color = normalized;
+  identityColorDraft.value = normalized;
+};
+
+const clearIdentityColor = () => {
+  identityForm.color = '';
+  identityColorDraft.value = '';
+};
+
+const handleIdentityVariantColorBlur = () => {
+  commitIdentityVariantColorDraft(true);
+};
+
+const handleIdentityVariantColorPickerUpdate = (value: string | null) => {
+  const normalized = normalizeHexColor(String(value || ''));
+  identityVariantForm.color = normalized;
+  identityVariantColorDraft.value = normalized;
+};
+
+const clearIdentityVariantColor = () => {
+  identityVariantForm.color = '';
+  identityVariantColorDraft.value = '';
 };
 
 const handleIdentityUpdated = (payload?: any) => {
@@ -3745,6 +3804,7 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityAvatarFile = null;
   identityForm.displayName = identity?.displayName || '';
   identityForm.color = normalizeHexColor(identity?.color || '') || '';
+  identityColorDraft.value = identityForm.color;
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
@@ -3866,6 +3926,7 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
   identityVariantForm.displayName = variant?.displayName || '';
   identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantColorDraft.value = identityVariantForm.color;
   identityVariantForm.enabled = variant?.enabled !== false;
   identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
 };
@@ -3956,7 +4017,7 @@ const submitIdentityVariantForm = async () => {
   const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
   const keyword = String(identityVariantForm.keyword || '').trim();
   const note = String(identityVariantForm.note || '').trim();
-  const rawColor = String(identityVariantForm.color || '').trim();
+  const rawColor = normalizeColorDraftText(identityVariantColorDraft.value);
   const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
   if (!selectorEmoji) {
     message.warning('请选择差分表情');
@@ -3966,11 +4027,9 @@ const submitIdentityVariantForm = async () => {
     message.warning('请输入切换关键词');
     return;
   }
-  if (rawColor && !normalizedColor) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+  if (!commitIdentityVariantColorDraft(true)) {
     return;
   }
-  identityVariantForm.color = normalizedColor;
   identityVariantSubmitting.value = true;
   try {
     let avatarAttachmentId = identityVariantForm.avatarAttachmentId;
@@ -4046,14 +4105,10 @@ const submitIdentityForm = async () => {
     message.warning('频道昵称不能为空');
     return;
   }
-  const rawColor = identityForm.color || '';
-  const trimmedColor = rawColor.trim();
-  const normalizedColor = trimmedColor ? normalizeHexColor(trimmedColor) : '';
-  if (trimmedColor && !normalizedColor) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+  if (!commitIdentityColorDraft(true)) {
     return;
   }
-  identityForm.color = normalizedColor;
+  const normalizedColor = identityForm.color;
   identitySubmitting.value = true;
   const payload = {
     channelId: chat.curChannel.id,
@@ -10840,17 +10895,16 @@ watch(typingPreviewMode, (mode) => {
 });
 
 watch(() => identityForm.color, (value) => {
-  if (!value) {
-    return;
+  const normalized = normalizeColorDraftText(value);
+  if (identityColorDraft.value !== normalized) {
+    identityColorDraft.value = normalized;
   }
-  const trimmed = value.trim();
-  if (trimmed !== value) {
-    identityForm.color = trimmed;
-    return;
-  }
-  const lower = trimmed.toLowerCase();
-  if (lower !== trimmed) {
-    identityForm.color = lower;
+});
+
+watch(() => identityVariantForm.color, (value) => {
+  const normalized = normalizeColorDraftText(value);
+  if (identityVariantColorDraft.value !== normalized) {
+    identityVariantColorDraft.value = normalized;
   }
 });
 
@@ -14431,21 +14485,22 @@ onBeforeUnmount(() => {
       <n-form-item label="昵称颜色">
         <div class="identity-color-field">
           <n-color-picker
-            v-model:value="identityForm.color"
+            :value="identityForm.color"
             :modes="['hex']"
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            @update:value="handleIdentityColorPickerUpdate"
           />
           <n-input
-            v-model:value="identityForm.color"
+            v-model:value="identityColorDraft"
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
             @blur="handleIdentityColorBlur"
             @keyup.enter="handleIdentityColorBlur"
           />
-          <n-button tertiary size="small" @click="identityForm.color = ''">清除</n-button>
+          <n-button tertiary size="small" @click="clearIdentityColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item label="频道头像">
@@ -14612,19 +14667,22 @@ onBeforeUnmount(() => {
       <n-form-item label="覆盖颜色">
         <div class="identity-color-field">
           <n-color-picker
-            v-model:value="identityVariantForm.color"
+            :value="identityVariantForm.color"
             :modes="['hex']"
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            @update:value="handleIdentityVariantColorPickerUpdate"
           />
           <n-input
-            v-model:value="identityVariantForm.color"
+            v-model:value="identityVariantColorDraft"
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
+            @blur="handleIdentityVariantColorBlur"
+            @keyup.enter="handleIdentityVariantColorBlur"
           />
-          <n-button tertiary size="small" @click="identityVariantForm.color = ''">清除</n-button>
+          <n-button tertiary size="small" @click="clearIdentityVariantColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item>
