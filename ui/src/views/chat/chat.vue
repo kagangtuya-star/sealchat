@@ -1709,11 +1709,16 @@ const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 const minimalInputActionsHostRef = ref<HTMLElement | null>(null);
+const minimalInputMeasureRef = ref<HTMLElement | null>(null);
 const minimalInputToolbarVisible = ref(false);
+const minimalInputMeasuredHeight = ref(0);
+let minimalInputMeasureObserver: ResizeObserver | null = null;
 const inputMode = ref<'plain' | 'rich'>('plain');
 const richContentCache = ref<string | null>(null);
 const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
+const MINIMAL_INPUT_STACKED_THRESHOLD = 104;
+const MINIMAL_INPUT_WIDE_BUTTON_THRESHOLD = 128;
 const isMobileInteractionMode = computed(() => {
   if (isMobileUa) {
     return true;
@@ -1734,6 +1739,15 @@ const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
   }
   return minimalInputActionsHostRef.value;
 });
+const showMinimalStackedSideControls = computed(() => (
+  isMobileMinimalInputActive.value
+  && !isEditing.value
+  && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_STACKED_THRESHOLD
+));
+const showMinimalWideInputShortcut = computed(() => (
+  showMinimalStackedSideControls.value
+  && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_WIDE_BUTTON_THRESHOLD
+));
 const inputAreaHeightPreview = ref<number | null>(null);
 const customInputHeight = computed(() => (
   inputAreaHeightPreview.value !== null
@@ -1780,6 +1794,11 @@ const updateWideInputViewportHeight = () => {
   document.documentElement.style.setProperty('--wide-input-height', `${Math.round(height)}px`);
 };
 
+const measureMinimalInputHeight = () => {
+  const el = minimalInputMeasureRef.value;
+  minimalInputMeasuredHeight.value = el ? Math.round(el.getBoundingClientRect().height) : 0;
+};
+
 if (typeof window !== 'undefined') {
   useEventListener(window, 'resize', updateWideInputViewportHeight);
   useEventListener(window, 'orientationchange', updateWideInputViewportHeight);
@@ -1792,9 +1811,34 @@ watch(isMobileWideInput, () => {
   updateWideInputViewportHeight();
 }, { immediate: true });
 
+watch(minimalInputMeasureRef, (el, prevEl) => {
+  if (minimalInputMeasureObserver && prevEl) {
+    minimalInputMeasureObserver.unobserve(prevEl);
+  }
+  if (!el || typeof ResizeObserver === 'undefined') {
+    if (!el) {
+      minimalInputMeasuredHeight.value = 0;
+    }
+    return;
+  }
+  if (!minimalInputMeasureObserver) {
+    minimalInputMeasureObserver = new ResizeObserver(() => {
+      measureMinimalInputHeight();
+    });
+  }
+  minimalInputMeasureObserver.observe(el);
+  nextTick(() => {
+    measureMinimalInputHeight();
+  });
+}, { flush: 'post' });
+
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.documentElement.style.removeProperty('--wide-input-height');
+  }
+  if (minimalInputMeasureObserver) {
+    minimalInputMeasureObserver.disconnect();
+    minimalInputMeasureObserver = null;
   }
 });
 
@@ -14836,18 +14880,30 @@ onBeforeUnmount(() => {
             <div
               v-if="isMobileMinimalInputActive"
               class="chat-input-editor-row chat-input-editor-row--minimal"
+              :class="{ 'chat-input-editor-row--side-stacked': showMinimalStackedSideControls }"
               :style="chatInputStyle"
             >
-              <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
-                <ChannelIdentitySwitcher
-                  v-if="chat.curChannel"
-                  compact
-                  :preview-appearance="activeIdentityAppearanceForPreview"
-                  @create="openIdentityCreate"
-                  @manage="openIdentityManager"
-                  @identity-changed="emitTypingPreview"
-                  @avatar-setup="handleOpenAvatarPrompt"
-                />
+              <div class="chat-input-minimal-side">
+                <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
+                  <ChannelIdentitySwitcher
+                    v-if="chat.curChannel"
+                    compact
+                    :preview-appearance="activeIdentityAppearanceForPreview"
+                    @create="openIdentityCreate"
+                    @manage="openIdentityManager"
+                    @identity-changed="emitTypingPreview"
+                    @avatar-setup="handleOpenAvatarPrompt"
+                  />
+                </div>
+                <div
+                  v-if="showMinimalStackedSideControls"
+                  class="chat-input-minimal-side__aux"
+                >
+                  <ChatIcOocToggle
+                    v-model="inputIcMode"
+                    compact
+                  />
+                </div>
               </div>
               <div class="chat-input-editor-main">
                 <KeywordSuggestPanel
@@ -14858,33 +14914,38 @@ onBeforeUnmount(() => {
                   @select="handleKeywordSuggestSelect"
                   @hover="handleKeywordSuggestHover"
                 />
-                <ChatInputSwitcher
-                  ref="textInputRef"
-                  v-model="textToSend"
-                  v-model:mode="inputMode"
-                  :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
-                  :whisper-mode="whisperMode"
-                  :disabled="spectatorInputDisabled"
-                  :mention-options="atOptions"
-                  :mention-loading="atLoading"
-                  :mention-prefix="atPrefix"
-                  :mention-render-label="atRenderLabel"
-                  :rows="1"
-                  :input-class="chatInputClassList"
-                  :send-shortcut="display.settings.sendShortcut"
-                  :inline-images="inlineImagePreviewMap"
-                  :default-i-form-embed-link="defaultIFormEmbedLink"
-                  @mention-search="atHandleSearch"
-                  @mention-select="handleMentionSelect"
-                  @keydown="keyDown"
-                  @blur="handleChatInputBlur"
-                  @input="handleSlashInput"
-                  @paste-image="handlePlainPasteImage"
-                  @drop-files="handlePlainDropFiles"
-                  @drop-gallery-item="handleDropGalleryItem"
-                  @upload-button-click="handleRichUploadButtonClick"
-                  @remove-image="removeInlineImage"
-                />
+                <div
+                  ref="minimalInputMeasureRef"
+                  class="chat-input-measure-shell"
+                >
+                  <ChatInputSwitcher
+                    ref="textInputRef"
+                    v-model="textToSend"
+                    v-model:mode="inputMode"
+                    :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
+                    :whisper-mode="whisperMode"
+                    :disabled="spectatorInputDisabled"
+                    :mention-options="atOptions"
+                    :mention-loading="atLoading"
+                    :mention-prefix="atPrefix"
+                    :mention-render-label="atRenderLabel"
+                    :rows="1"
+                    :input-class="chatInputClassList"
+                    :send-shortcut="display.settings.sendShortcut"
+                    :inline-images="inlineImagePreviewMap"
+                    :default-i-form-embed-link="defaultIFormEmbedLink"
+                    @mention-search="atHandleSearch"
+                    @mention-select="handleMentionSelect"
+                    @keydown="keyDown"
+                    @blur="handleChatInputBlur"
+                    @input="handleSlashInput"
+                    @paste-image="handlePlainPasteImage"
+                    @drop-files="handlePlainDropFiles"
+                    @drop-gallery-item="handleDropGalleryItem"
+                    @upload-button-click="handleRichUploadButtonClick"
+                    @remove-image="removeInlineImage"
+                  />
+                </div>
                 <input
                   ref="inlineImageInputRef"
                   class="hidden"
@@ -14895,7 +14956,7 @@ onBeforeUnmount(() => {
                 />
               </div>
               <div
-                v-if="!isEditing && !hasMeaningfulDraft"
+                v-if="!isEditing && !hasMeaningfulDraft && !showMinimalStackedSideControls"
                 class="chat-input-actions__cell"
               >
                 <ChatIcOocToggle
@@ -14905,41 +14966,94 @@ onBeforeUnmount(() => {
               </div>
               <div
                 v-if="!isEditing"
-                class="chat-input-actions__cell"
+                class="chat-input-minimal-actions"
+                :class="{
+                  'chat-input-minimal-actions--stacked': showMinimalStackedSideControls,
+                  'chat-input-minimal-actions--draft': hasMeaningfulDraft,
+                }"
               >
-                <n-tooltip trigger="hover">
-                  <template #trigger>
+                <template v-if="showMinimalStackedSideControls">
+                  <div
+                    v-if="showMinimalWideInputShortcut"
+                    class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--top"
+                  >
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-tool-btn"
+                      :class="{ 'chat-input-minimal-tool-btn--active': wideInputMode }"
+                      :aria-label="wideInputTooltip"
+                      @click="toggleWideInputMode"
+                    >
+                      <template #icon>
+                        <n-icon :component="ArrowsVertical" size="16" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div
+                    v-if="hasMeaningfulDraft"
+                    class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--middle"
+                  >
+                    <n-button
+                      size="medium"
+                      @click="send"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="send-action-btn send-action-btn--compact"
+                    >
+                      <template #icon>
+                        <n-icon :component="Send" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--bottom">
                     <n-button
                       quaternary
                       circle
                       class="chat-input-minimal-toggle"
                       :class="{ 'chat-input-minimal-toggle--active': minimalInputToolbarVisible }"
-                      :type="minimalInputToolbarVisible ? 'primary' : 'default'"
+                      :aria-label="minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏'"
                       @click="toggleMinimalInputToolbar"
                     >
                       <template #icon>
                         <n-icon :component="Plus" size="18" />
                       </template>
                     </n-button>
-                  </template>
-                  {{ minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏' }}
-                </n-tooltip>
-              </div>
-              <div
-                v-if="!isEditing && hasMeaningfulDraft"
-                class="chat-input-actions__cell"
-              >
-                <n-button
-                  size="medium"
-                  type="primary"
-                  @click="send"
-                  :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
-                  class="send-action-btn send-action-btn--compact"
+                  </div>
+                </template>
+                <div
+                  v-else
+                  class="chat-input-minimal-actions__primary"
                 >
-                  <template #icon>
-                    <n-icon :component="Send" size="18" />
-                  </template>
-                </n-button>
+                  <div
+                    v-if="hasMeaningfulDraft"
+                    class="chat-input-actions__cell"
+                  >
+                    <n-button
+                      size="medium"
+                      @click="send"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="send-action-btn send-action-btn--compact"
+                    >
+                      <template #icon>
+                        <n-icon :component="Send" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div class="chat-input-actions__cell">
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-toggle"
+                      :class="{ 'chat-input-minimal-toggle--active': minimalInputToolbarVisible }"
+                      :aria-label="minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏'"
+                      @click="toggleMinimalInputToolbar"
+                    >
+                      <template #icon>
+                        <n-icon :component="Plus" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                </div>
               </div>
               <div
                 v-if="isEditing"
@@ -17789,6 +17903,10 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+.chat-input-editor-row--minimal.chat-input-editor-row--side-stacked {
+  align-items: stretch;
+}
+
 .chat-input-editor-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -17808,6 +17926,76 @@ onBeforeUnmount(() => {
 
 .chat-input-editor-row--minimal .chat-input-editor-main {
   flex: 1 1 0;
+}
+
+.chat-input-measure-shell {
+  min-width: 0;
+}
+
+.chat-input-minimal-side,
+.chat-input-minimal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.chat-input-minimal-actions {
+  align-self: center;
+}
+
+.chat-input-minimal-actions--draft,
+.chat-input-minimal-actions--stacked {
+  width: calc(72px + 0.4rem);
+  min-width: calc(72px + 0.4rem);
+}
+
+.chat-input-minimal-actions--draft {
+  justify-content: center;
+}
+
+.chat-input-editor-row--minimal.chat-input-editor-row--side-stacked .chat-input-minimal-side {
+  justify-content: space-between;
+  padding-block: 0.05rem;
+}
+
+.chat-input-minimal-actions--stacked {
+  align-self: stretch;
+  justify-content: space-between;
+  padding-block: 0.05rem;
+}
+
+.chat-input-minimal-side__aux {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__primary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__slot {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__slot--middle {
+  margin-block: auto;
+}
+
+.chat-input-minimal-actions > .chat-input-actions__cell,
+.chat-input-minimal-actions__primary > .chat-input-actions__cell {
+  display: flex;
+  justify-content: center;
 }
 
 .chat-input-editor-row--minimal .chat-input-send-inline {
@@ -17861,16 +18049,16 @@ onBeforeUnmount(() => {
   width: 36px !important;
   height: 36px !important;
   border-radius: 999px !important;
-  background-color: var(--sc-primary-color, #2563eb) !important;
-  border-color: transparent !important;
-  color: #fff !important;
-  box-shadow: 0 8px 18px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.24);
+  background-color: color-mix(in srgb, var(--sc-primary-color, #2563eb) 13%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.26) !important;
+  color: var(--sc-primary-color, #2563eb) !important;
+  box-shadow: 0 8px 18px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.18);
 }
 
 .send-action-btn--compact:hover:not(:disabled) {
-  background-color: var(--sc-primary-color-hover, #1d4ed8) !important;
-  border-color: transparent !important;
-  color: #fff !important;
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.4) !important;
+  color: var(--sc-primary-color, #2563eb) !important;
   transform: translateY(-1px);
 }
 
@@ -17881,12 +18069,16 @@ onBeforeUnmount(() => {
 }
 
 :root[data-display-palette='night'] .send-action-btn--compact {
-  background-color: #3b82f6 !important;
-  box-shadow: 0 10px 24px rgba(59, 130, 246, 0.28);
+  background-color: color-mix(in srgb, var(--sc-primary-color, #60a5fa) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35) !important;
+  color: color-mix(in srgb, white 82%, var(--sc-primary-color, #93c5fd)) !important;
+  box-shadow: 0 10px 24px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24);
 }
 
 :root[data-display-palette='night'] .send-action-btn--compact:hover:not(:disabled) {
-  background-color: #60a5fa !important;
+  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24) !important;
+  border-color: rgba(var(--sc-primary-rgb, 96, 165, 250), 0.45) !important;
+  color: color-mix(in srgb, white 88%, var(--sc-primary-color, #bfdbfe)) !important;
 }
 
 .edit-action-btn {
@@ -17959,19 +18151,53 @@ onBeforeUnmount(() => {
   height: clamp(24px, 2.8vw, 32px);
 }
 
-.chat-input-minimal-toggle {
+.chat-input-minimal-toggle,
+.chat-input-minimal-tool-btn {
   width: 36px !important;
   height: 36px !important;
   border-radius: 999px !important;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-secondary) !important;
+  box-shadow: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.chat-input-minimal-toggle:hover:not(:disabled) {
+.chat-input-minimal-toggle:hover:not(:disabled),
+.chat-input-minimal-tool-btn:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.14) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.28) !important;
+  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
   transform: translateY(-1px);
 }
 
-.chat-input-minimal-toggle--active {
+.chat-input-minimal-toggle--active,
+.chat-input-minimal-tool-btn--active {
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #2563eb)) 15%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.34) !important;
+  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
   box-shadow: 0 0 0 1px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2);
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle,
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn {
+  background-color: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 92%, transparent) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: rgba(226, 232, 240, 0.86) !important;
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle:hover:not(:disabled),
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.2) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.34) !important;
+  color: color-mix(in srgb, white 86%, var(--primary-color, var(--sc-primary-color, #93c5fd))) !important;
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle--active,
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn--active {
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #60a5fa)) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.4) !important;
+  color: color-mix(in srgb, white 90%, var(--primary-color, var(--sc-primary-color, #bfdbfe))) !important;
 }
 
 @media (max-width: 520px) {
@@ -18017,7 +18243,8 @@ onBeforeUnmount(() => {
   }
 
   .send-action-btn--compact,
-  .chat-input-minimal-toggle {
+  .chat-input-minimal-toggle,
+  .chat-input-minimal-tool-btn {
     width: 34px !important;
     height: 34px !important;
   }
