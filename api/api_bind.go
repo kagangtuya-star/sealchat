@@ -283,6 +283,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/webhook/channels/:channelId/changes", WebhookAuthMiddleware, WebhookChanges)
 	v1.Get("/webhook/channels/:channelId/digests", WebhookAuthMiddleware, WebhookDigestList)
 	v1.Get("/webhook/channels/:channelId/digests/latest", WebhookAuthMiddleware, WebhookDigestLatest)
+	v1.Get("/webhook/worlds/:worldId/digests", WebhookWorldDigestList)
+	v1.Get("/webhook/worlds/:worldId/digests/latest", WebhookWorldDigestLatest)
 	v1.Post("/webhook/channels/:channelId/messages", WebhookAuthMiddleware, WebhookMessages)
 
 	v1Auth := v1.Group("")
@@ -413,6 +415,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channels/:channelId/digest-push", DigestPushSettingsUpsert)
 	v1Auth.Delete("/channels/:channelId/digest-push", DigestPushSettingsDelete)
 	v1Auth.Post("/channels/:channelId/digest-push/test", DigestPushTest)
+	v1Auth.Get("/worlds/:worldId/digest-push", WorldDigestPushSettingsGet)
+	v1Auth.Post("/worlds/:worldId/digest-push", WorldDigestPushSettingsUpsert)
+	v1Auth.Delete("/worlds/:worldId/digest-push", WorldDigestPushSettingsDelete)
+	v1Auth.Post("/worlds/:worldId/digest-push/test", WorldDigestPushTest)
+	v1Auth.Get("/worlds/:worldId/digest-integrations", WorldDigestIntegrationList)
+	v1Auth.Post("/worlds/:worldId/digest-integrations", WorldDigestIntegrationCreate)
+	v1Auth.Post("/worlds/:worldId/digest-integrations/:id/rotate", WorldDigestIntegrationRotate)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}

@@ -37,6 +37,8 @@ var (
 
 const defaultDigestTextTemplate = "在 {{window_label}}，{{speaker_names}} 在 {{channel_name}} 频道发送了 {{message_count}} 条消息。"
 
+const defaultWorldDigestTextTemplate = "在 {{window_label}}，{{scope_name}} 有 {{channel_count}} 个频道出现新消息：\n{{channel_digest_lines}}"
+
 const defaultDigestJSONTemplate = `{
   "scopeType": {{scope_type}},
   "scopeId": {{scope_id}},
@@ -62,34 +64,81 @@ const defaultDigestJSONTemplate = `{
   "text": {{rendered_text}}
 }`
 
+const defaultWorldDigestJSONTemplate = `{
+  "scopeType": {{scope_type}},
+  "scopeId": {{scope_id}},
+  "window": {
+    "start": {{window_start_ts}},
+    "end": {{window_end_ts}},
+    "label": {{window_label}},
+    "seconds": {{window_seconds}}
+  },
+  "world": {
+    "id": {{world_id}},
+    "name": {{world_name}}
+  },
+  "channelCount": {{channel_count}},
+  "targetChannelIds": {{target_channel_ids}},
+  "targetChannelNames": {{target_channel_names_array}},
+  "channels": {{channels}},
+  "messageCount": {{message_count}},
+  "activeUserCount": {{active_user_count}},
+  "speakerNames": {{speaker_names_array}},
+  "speakerSummary": {{speaker_summary}},
+  "speakers": {{speakers}},
+  "text": {{rendered_text}}
+}`
+
 type DigestSpeaker struct {
 	Key          string `json:"key"`
 	Name         string `json:"name"`
 	MessageCount int    `json:"messageCount"`
 }
 
+type DigestChannelSummary struct {
+	ChannelID       string          `json:"channelId"`
+	ChannelName     string          `json:"channelName"`
+	MessageCount    int             `json:"messageCount"`
+	ActiveUserCount int             `json:"activeUserCount"`
+	SpeakerNames    []string        `json:"speakerNames"`
+	SpeakerSummary  string          `json:"speakerSummary"`
+	Speakers        []DigestSpeaker `json:"speakers"`
+	Text            string          `json:"text"`
+}
+
+type DigestScopeChannelOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type DigestPreview struct {
-	ScopeType          string          `json:"scopeType"`
-	ScopeID            string          `json:"scopeId"`
-	ChannelID          string          `json:"channelId"`
-	ChannelName        string          `json:"channelName"`
-	WorldID            string          `json:"worldId"`
-	WorldName          string          `json:"worldName"`
-	WindowSeconds      int             `json:"windowSeconds"`
-	WindowStart        int64           `json:"windowStart"`
-	WindowEnd          int64           `json:"windowEnd"`
-	WindowLabel        string          `json:"windowLabel"`
-	MessageCount       int             `json:"messageCount"`
-	ActiveUserCount    int             `json:"activeUserCount"`
-	ThresholdMode      string          `json:"thresholdMode"`
-	ThresholdValue     int             `json:"thresholdValue"`
-	ThresholdSatisfied bool            `json:"thresholdSatisfied"`
-	SpeakerNames       []string        `json:"speakerNames"`
-	SpeakerSummary     string          `json:"speakerSummary"`
-	Speakers           []DigestSpeaker `json:"speakers"`
-	RenderedText       string          `json:"renderedText"`
-	RenderedJSON       string          `json:"renderedJson"`
-	RenderedJSONObject any             `json:"renderedJsonObject,omitempty"`
+	ScopeType          string                 `json:"scopeType"`
+	ScopeID            string                 `json:"scopeId"`
+	ScopeName          string                 `json:"scopeName"`
+	ChannelID          string                 `json:"channelId"`
+	ChannelName        string                 `json:"channelName"`
+	WorldID            string                 `json:"worldId"`
+	WorldName          string                 `json:"worldName"`
+	WindowSeconds      int                    `json:"windowSeconds"`
+	WindowStart        int64                  `json:"windowStart"`
+	WindowEnd          int64                  `json:"windowEnd"`
+	WindowLabel        string                 `json:"windowLabel"`
+	MessageCount       int                    `json:"messageCount"`
+	ActiveUserCount    int                    `json:"activeUserCount"`
+	ThresholdMode      string                 `json:"thresholdMode"`
+	ThresholdValue     int                    `json:"thresholdValue"`
+	ThresholdSatisfied bool                   `json:"thresholdSatisfied"`
+	SpeakerNames       []string               `json:"speakerNames"`
+	SpeakerSummary     string                 `json:"speakerSummary"`
+	Speakers           []DigestSpeaker        `json:"speakers"`
+	ChannelCount       int                    `json:"channelCount"`
+	TargetChannelIDs   []string               `json:"targetChannelIds"`
+	TargetChannelNames []string               `json:"targetChannelNames"`
+	ChannelDigestLines string                 `json:"channelDigestLines"`
+	Channels           []DigestChannelSummary `json:"channels"`
+	RenderedText       string                 `json:"renderedText"`
+	RenderedJSON       string                 `json:"renderedJson"`
+	RenderedJSONObject any                    `json:"renderedJsonObject,omitempty"`
 }
 
 type DigestDeliveryResult struct {
@@ -131,6 +180,24 @@ func DefaultDigestJSONTemplate() string {
 	return defaultDigestJSONTemplate
 }
 
+func DefaultDigestTextTemplateForScope(scopeType string) string {
+	switch strings.TrimSpace(scopeType) {
+	case model.DigestScopeTypeWorld:
+		return defaultWorldDigestTextTemplate
+	default:
+		return defaultDigestTextTemplate
+	}
+}
+
+func DefaultDigestJSONTemplateForScope(scopeType string) string {
+	switch strings.TrimSpace(scopeType) {
+	case model.DigestScopeTypeWorld:
+		return defaultWorldDigestJSONTemplate
+	default:
+		return defaultDigestJSONTemplate
+	}
+}
+
 func NewDefaultDigestRule(scopeType, scopeID string) *model.DigestPushRuleModel {
 	return &model.DigestPushRuleModel{
 		ScopeType:                strings.TrimSpace(scopeType),
@@ -140,8 +207,8 @@ func NewDefaultDigestRule(scopeType, scopeID string) *model.DigestPushRuleModel 
 		ActiveUserThresholdMode:  model.DigestThresholdModeChannelMemberCount,
 		ActiveUserThresholdValue: 0,
 		PushMode:                 model.DigestPushModePassive,
-		TextTemplate:             DefaultDigestTextTemplate(),
-		JSONTemplate:             DefaultDigestJSONTemplate(),
+		TextTemplate:             DefaultDigestTextTemplateForScope(scopeType),
+		JSONTemplate:             DefaultDigestJSONTemplateForScope(scopeType),
 		ActiveWebhookMethod:      http.MethodPost,
 		ActiveWebhookHeaders:     "{}",
 	}
@@ -248,6 +315,11 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 	if rule.ScopeType == "" || rule.ScopeID == "" {
 		return fmt.Errorf("缺少作用域")
 	}
+	switch rule.ScopeType {
+	case model.DigestScopeTypeChannel, model.DigestScopeTypeWorld:
+	default:
+		return fmt.Errorf("暂不支持的摘要作用域: %s", rule.ScopeType)
+	}
 	if rule.WindowSeconds <= 0 {
 		rule.WindowSeconds = DigestDefaultWindowSeconds
 	} else if !IsDigestWindowSecondsSupported(rule.WindowSeconds) {
@@ -255,11 +327,11 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 	}
 	rule.TextTemplate = strings.TrimSpace(rule.TextTemplate)
 	if rule.TextTemplate == "" {
-		rule.TextTemplate = DefaultDigestTextTemplate()
+		rule.TextTemplate = DefaultDigestTextTemplateForScope(rule.ScopeType)
 	}
 	rule.JSONTemplate = strings.TrimSpace(rule.JSONTemplate)
 	if rule.JSONTemplate == "" {
-		rule.JSONTemplate = DefaultDigestJSONTemplate()
+		rule.JSONTemplate = DefaultDigestJSONTemplateForScope(rule.ScopeType)
 	}
 	rule.ActiveUserThresholdMode = strings.TrimSpace(rule.ActiveUserThresholdMode)
 	if rule.ActiveUserThresholdMode == "" {
@@ -275,6 +347,11 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 	default:
 		return fmt.Errorf("无效的访问阈值模式")
 	}
+	selectedChannelIDs, err := normalizeDigestSelectedChannelIDs(rule)
+	if err != nil {
+		return err
+	}
+	rule.SelectedChannelIDsJSON = mustMarshalJSON(selectedChannelIDs)
 	rule.PushMode = strings.TrimSpace(rule.PushMode)
 	if rule.PushMode == "" {
 		rule.PushMode = model.DigestPushModePassive
@@ -302,22 +379,28 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 		return fmt.Errorf("主动推送模式需要配置推送地址")
 	}
 	if _, err := renderDigestJSONTemplate(rule.JSONTemplate, digestJSONTemplateValues{
-		"scope_type":          mustMarshalJSON(rule.ScopeType),
-		"scope_id":            mustMarshalJSON(rule.ScopeID),
-		"window_start_ts":     "0",
-		"window_end_ts":       "0",
-		"window_label":        mustMarshalJSON("测试时间窗口"),
-		"window_seconds":      strconv.Itoa(rule.WindowSeconds),
-		"channel_id":          mustMarshalJSON(rule.ScopeID),
-		"channel_name":        mustMarshalJSON("测试频道"),
-		"world_id":            mustMarshalJSON(""),
-		"world_name":          mustMarshalJSON(""),
-		"message_count":       "0",
-		"active_user_count":   "0",
-		"speaker_names_array": "[]",
-		"speaker_summary":     mustMarshalJSON(""),
-		"speakers":            "[]",
-		"rendered_text":       mustMarshalJSON("测试摘要"),
+		"scope_type":                 mustMarshalJSON(rule.ScopeType),
+		"scope_id":                   mustMarshalJSON(rule.ScopeID),
+		"scope_name":                 mustMarshalJSON("测试作用域"),
+		"window_start_ts":            "0",
+		"window_end_ts":              "0",
+		"window_label":               mustMarshalJSON("测试时间窗口"),
+		"window_seconds":             strconv.Itoa(rule.WindowSeconds),
+		"channel_id":                 mustMarshalJSON(rule.ScopeID),
+		"channel_name":               mustMarshalJSON("测试频道"),
+		"world_id":                   mustMarshalJSON(""),
+		"world_name":                 mustMarshalJSON(""),
+		"channel_count":              "1",
+		"target_channel_ids":         mustMarshalJSON([]string{"test-channel"}),
+		"target_channel_names_array": mustMarshalJSON([]string{"测试频道"}),
+		"channels":                   mustMarshalJSON([]DigestChannelSummary{{ChannelID: "test-channel", ChannelName: "测试频道", MessageCount: 1, ActiveUserCount: 1, SpeakerNames: []string{"测试成员"}, SpeakerSummary: "测试成员(1)", Speakers: []DigestSpeaker{{Key: "speaker-1", Name: "测试成员", MessageCount: 1}}, Text: "测试频道：测试成员 发送了 1 条消息"}}),
+		"message_count":              "0",
+		"active_user_count":          "0",
+		"speaker_names_array":        "[]",
+		"speaker_summary":            mustMarshalJSON(""),
+		"speakers":                   "[]",
+		"channel_digest_lines":       mustMarshalJSON("测试频道：测试成员 发送了 1 条消息"),
+		"rendered_text":              mustMarshalJSON("测试摘要"),
 	}); err != nil {
 		return fmt.Errorf("JSON 模板无效: %w", err)
 	}
@@ -340,9 +423,64 @@ func BuildDigestPreviewForRule(rule *model.DigestPushRuleModel, windowStart int6
 	switch rule.ScopeType {
 	case model.DigestScopeTypeChannel:
 		return buildChannelDigestPreview(rule, windowStart, windowEnd)
+	case model.DigestScopeTypeWorld:
+		return buildWorldDigestPreview(rule, windowStart, windowEnd)
 	default:
 		return nil, fmt.Errorf("暂不支持的摘要作用域: %s", rule.ScopeType)
 	}
+}
+
+func DigestRuleSelectedChannelIDs(rule *model.DigestPushRuleModel) []string {
+	if rule == nil {
+		return []string{}
+	}
+	return parseDigestSelectedChannelIDs(rule.SelectedChannelIDsJSON)
+}
+
+func DigestScopeChannelOptions(scopeType, scopeID string) ([]DigestScopeChannelOption, error) {
+	scopeType = strings.TrimSpace(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	switch scopeType {
+	case model.DigestScopeTypeWorld:
+		channels, err := ChannelListByWorld(scopeID)
+		if err != nil {
+			return nil, err
+		}
+		options := make([]DigestScopeChannelOption, 0, len(channels))
+		for _, channel := range channels {
+			if channel == nil || strings.TrimSpace(channel.ID) == "" || strings.EqualFold(channel.PermType, "private") {
+				continue
+			}
+			name := strings.TrimSpace(channel.Name)
+			if name == "" {
+				name = channel.ID
+			}
+			options = append(options, DigestScopeChannelOption{
+				ID:   channel.ID,
+				Name: name,
+			})
+		}
+		return options, nil
+	case model.DigestScopeTypeChannel:
+		channel, err := model.ChannelGet(scopeID)
+		if err != nil {
+			return nil, err
+		}
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			return []DigestScopeChannelOption{}, nil
+		}
+		name := strings.TrimSpace(channel.Name)
+		if name == "" {
+			name = channel.ID
+		}
+		return []DigestScopeChannelOption{{ID: channel.ID, Name: name}}, nil
+	default:
+		return []DigestScopeChannelOption{}, nil
+	}
+}
+
+func DigestEffectiveThreshold(rule *model.DigestPushRuleModel) (int, error) {
+	return resolveDigestThresholdValue(rule, digestTargetChannelIDs(rule))
 }
 
 func StartDigestPushWorker() {
@@ -531,13 +669,26 @@ func buildChannelDigestPreview(rule *model.DigestPushRuleModel, windowStart, win
 		speakerNames = append(speakerNames, name)
 		messageCount += row.MessageCount
 	}
-	thresholdValue, err := resolveDigestThresholdValue(rule, channel.ID)
+	sortDigestSpeakers(speakers)
+	summaryText := buildDigestChannelSummaryText(strings.TrimSpace(channel.Name), speakerNames, messageCount)
+	channelSummary := DigestChannelSummary{
+		ChannelID:       channel.ID,
+		ChannelName:     strings.TrimSpace(channel.Name),
+		MessageCount:    messageCount,
+		ActiveUserCount: int(activeUserCount),
+		SpeakerNames:    speakerNames,
+		SpeakerSummary:  buildSpeakerSummary(speakers),
+		Speakers:        speakers,
+		Text:            summaryText,
+	}
+	thresholdValue, err := resolveDigestThresholdValue(rule, []string{channel.ID})
 	if err != nil {
 		return nil, err
 	}
 	preview := &DigestPreview{
 		ScopeType:          rule.ScopeType,
 		ScopeID:            rule.ScopeID,
+		ScopeName:          strings.TrimSpace(channel.Name),
 		ChannelID:          channel.ID,
 		ChannelName:        strings.TrimSpace(channel.Name),
 		WorldID:            strings.TrimSpace(channel.WorldID),
@@ -552,11 +703,26 @@ func buildChannelDigestPreview(rule *model.DigestPushRuleModel, windowStart, win
 		ThresholdValue:     thresholdValue,
 		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
 		SpeakerNames:       speakerNames,
-		SpeakerSummary:     buildSpeakerSummary(speakers),
+		SpeakerSummary:     channelSummary.SpeakerSummary,
 		Speakers:           speakers,
+		ChannelCount: func() int {
+			if messageCount > 0 {
+				return 1
+			}
+			return 0
+		}(),
+		TargetChannelIDs:   []string{channel.ID},
+		TargetChannelNames: []string{strings.TrimSpace(channel.Name)},
+		ChannelDigestLines: summaryText,
+		Channels:           []DigestChannelSummary{channelSummary},
 	}
 	if preview.ChannelName == "" {
 		preview.ChannelName = "未命名频道"
+		preview.ScopeName = preview.ChannelName
+		preview.TargetChannelNames = []string{preview.ChannelName}
+		preview.Channels[0].ChannelName = preview.ChannelName
+		preview.Channels[0].Text = buildDigestChannelSummaryText(preview.ChannelName, speakerNames, messageCount)
+		preview.ChannelDigestLines = preview.Channels[0].Text
 	}
 	if err := renderDigestPreview(rule, preview); err != nil {
 		return nil, err
@@ -564,7 +730,159 @@ func buildChannelDigestPreview(rule *model.DigestPushRuleModel, windowStart, win
 	return preview, nil
 }
 
-func resolveDigestThresholdValue(rule *model.DigestPushRuleModel, channelID string) (int, error) {
+func buildWorldDigestPreview(rule *model.DigestPushRuleModel, windowStart, windowEnd int64) (*DigestPreview, error) {
+	world, err := GetWorldByID(rule.ScopeID)
+	if err != nil {
+		return nil, err
+	}
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return nil, fmt.Errorf("世界不存在")
+	}
+	targetChannels, err := resolveDigestTargetChannels(rule)
+	if err != nil {
+		return nil, err
+	}
+	targetChannelIDs := make([]string, 0, len(targetChannels))
+	for _, channel := range targetChannels {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			continue
+		}
+		targetChannelIDs = append(targetChannelIDs, channel.ID)
+	}
+	if len(targetChannelIDs) == 0 {
+		return nil, fmt.Errorf("未找到可用于摘要聚合的频道")
+	}
+
+	activeUserCount, err := digestDistinctVisitorCountByChannels(targetChannelIDs, rule.WindowSeconds, windowStart)
+	if err != nil {
+		return nil, err
+	}
+
+	channelSummaries := make([]DigestChannelSummary, 0, len(targetChannels))
+	aggregateSpeakers := map[string]*DigestSpeaker{}
+	targetChannelNames := make([]string, 0, len(targetChannels))
+	messageCount := 0
+
+	for _, channel := range targetChannels {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			continue
+		}
+		channelName := strings.TrimSpace(channel.Name)
+		if channelName == "" {
+			channelName = channel.ID
+		}
+		targetChannelNames = append(targetChannelNames, channelName)
+
+		channelActiveUserCount, err := model.DigestWindowVisitorCount(model.DigestScopeTypeChannel, channel.ID, rule.WindowSeconds, windowStart)
+		if err != nil {
+			return nil, err
+		}
+		speakerRows, err := model.DigestWindowSpeakerList(model.DigestScopeTypeChannel, channel.ID, rule.WindowSeconds, windowStart)
+		if err != nil {
+			return nil, err
+		}
+
+		speakers := make([]DigestSpeaker, 0, len(speakerRows))
+		speakerNames := make([]string, 0, len(speakerRows))
+		channelMessageCount := 0
+		for _, row := range speakerRows {
+			if row == nil || row.MessageCount <= 0 {
+				continue
+			}
+			name := strings.TrimSpace(row.SpeakerDisplayName)
+			if name == "" {
+				name = row.SpeakerKey
+			}
+			speakers = append(speakers, DigestSpeaker{
+				Key:          row.SpeakerKey,
+				Name:         name,
+				MessageCount: row.MessageCount,
+			})
+			speakerNames = append(speakerNames, name)
+			channelMessageCount += row.MessageCount
+			if existing := aggregateSpeakers[row.SpeakerKey]; existing != nil {
+				existing.MessageCount += row.MessageCount
+				if existing.Name == "" {
+					existing.Name = name
+				}
+			} else {
+				copied := DigestSpeaker{
+					Key:          row.SpeakerKey,
+					Name:         name,
+					MessageCount: row.MessageCount,
+				}
+				aggregateSpeakers[row.SpeakerKey] = &copied
+			}
+		}
+		if channelMessageCount <= 0 {
+			continue
+		}
+		sortDigestSpeakers(speakers)
+		channelSummaries = append(channelSummaries, DigestChannelSummary{
+			ChannelID:       channel.ID,
+			ChannelName:     channelName,
+			MessageCount:    channelMessageCount,
+			ActiveUserCount: int(channelActiveUserCount),
+			SpeakerNames:    speakerNames,
+			SpeakerSummary:  buildSpeakerSummary(speakers),
+			Speakers:        speakers,
+			Text:            buildDigestChannelSummaryText(channelName, speakerNames, channelMessageCount),
+		})
+		messageCount += channelMessageCount
+	}
+
+	aggregateSpeakerList := make([]DigestSpeaker, 0, len(aggregateSpeakers))
+	for _, speaker := range aggregateSpeakers {
+		if speaker == nil || speaker.MessageCount <= 0 {
+			continue
+		}
+		aggregateSpeakerList = append(aggregateSpeakerList, *speaker)
+	}
+	sortDigestSpeakers(aggregateSpeakerList)
+	aggregateSpeakerNames := make([]string, 0, len(aggregateSpeakerList))
+	for _, speaker := range aggregateSpeakerList {
+		aggregateSpeakerNames = append(aggregateSpeakerNames, speaker.Name)
+	}
+
+	thresholdValue, err := resolveDigestThresholdValue(rule, targetChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	worldName := strings.TrimSpace(world.Name)
+	if worldName == "" {
+		worldName = "当前世界"
+	}
+	preview := &DigestPreview{
+		ScopeType:          rule.ScopeType,
+		ScopeID:            rule.ScopeID,
+		ScopeName:          worldName,
+		WorldID:            strings.TrimSpace(world.ID),
+		WorldName:          worldName,
+		WindowSeconds:      rule.WindowSeconds,
+		WindowStart:        windowStart,
+		WindowEnd:          windowEnd,
+		WindowLabel:        formatDigestWindowLabel(windowStart, windowEnd),
+		MessageCount:       messageCount,
+		ActiveUserCount:    int(activeUserCount),
+		ThresholdMode:      rule.ActiveUserThresholdMode,
+		ThresholdValue:     thresholdValue,
+		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
+		SpeakerNames:       aggregateSpeakerNames,
+		SpeakerSummary:     buildSpeakerSummary(aggregateSpeakerList),
+		Speakers:           aggregateSpeakerList,
+		ChannelCount:       len(channelSummaries),
+		TargetChannelIDs:   targetChannelIDs,
+		TargetChannelNames: targetChannelNames,
+		ChannelDigestLines: buildDigestChannelLines(channelSummaries),
+		Channels:           channelSummaries,
+	}
+	if err := renderDigestPreview(rule, preview); err != nil {
+		return nil, err
+	}
+	return preview, nil
+}
+
+func resolveDigestThresholdValue(rule *model.DigestPushRuleModel, channelIDs []string) (int, error) {
 	switch rule.ActiveUserThresholdMode {
 	case model.DigestThresholdModeFixed:
 		if rule.ActiveUserThresholdValue <= 0 {
@@ -572,7 +890,7 @@ func resolveDigestThresholdValue(rule *model.DigestPushRuleModel, channelID stri
 		}
 		return rule.ActiveUserThresholdValue, nil
 	case model.DigestThresholdModeChannelMemberCount:
-		count, err := ChannelMemberCount(channelID)
+		count, err := digestChannelMemberUnionCount(channelIDs)
 		if err != nil {
 			return 0, err
 		}
@@ -587,39 +905,48 @@ func resolveDigestThresholdValue(rule *model.DigestPushRuleModel, channelID stri
 
 func renderDigestPreview(rule *model.DigestPushRuleModel, preview *DigestPreview) error {
 	textValues := map[string]string{
-		"scope_type":        preview.ScopeType,
-		"scope_id":          preview.ScopeID,
-		"window_start":      formatDigestTime(preview.WindowStart),
-		"window_end":        formatDigestTime(preview.WindowEnd),
-		"window_label":      preview.WindowLabel,
-		"window_seconds":    strconv.Itoa(preview.WindowSeconds),
-		"channel_id":        preview.ChannelID,
-		"channel_name":      preview.ChannelName,
-		"world_id":          preview.WorldID,
-		"world_name":        preview.WorldName,
-		"message_count":     strconv.Itoa(preview.MessageCount),
-		"active_user_count": strconv.Itoa(preview.ActiveUserCount),
-		"speaker_names":     buildSpeakerNamesText(preview.SpeakerNames),
-		"speaker_summary":   preview.SpeakerSummary,
+		"scope_type":           preview.ScopeType,
+		"scope_id":             preview.ScopeID,
+		"scope_name":           preview.ScopeName,
+		"window_start":         formatDigestTime(preview.WindowStart),
+		"window_end":           formatDigestTime(preview.WindowEnd),
+		"window_label":         preview.WindowLabel,
+		"window_seconds":       strconv.Itoa(preview.WindowSeconds),
+		"channel_id":           preview.ChannelID,
+		"channel_name":         preview.ChannelName,
+		"world_id":             preview.WorldID,
+		"world_name":           preview.WorldName,
+		"channel_count":        strconv.Itoa(preview.ChannelCount),
+		"message_count":        strconv.Itoa(preview.MessageCount),
+		"active_user_count":    strconv.Itoa(preview.ActiveUserCount),
+		"speaker_names":        buildSpeakerNamesText(preview.SpeakerNames),
+		"speaker_summary":      preview.SpeakerSummary,
+		"channel_digest_lines": preview.ChannelDigestLines,
 	}
 	preview.RenderedText = renderDigestTextTemplate(rule.TextTemplate, textValues)
 	jsonValues := digestJSONTemplateValues{
-		"scope_type":          mustMarshalJSON(preview.ScopeType),
-		"scope_id":            mustMarshalJSON(preview.ScopeID),
-		"window_start_ts":     strconv.FormatInt(preview.WindowStart, 10),
-		"window_end_ts":       strconv.FormatInt(preview.WindowEnd, 10),
-		"window_label":        mustMarshalJSON(preview.WindowLabel),
-		"window_seconds":      strconv.Itoa(preview.WindowSeconds),
-		"channel_id":          mustMarshalJSON(preview.ChannelID),
-		"channel_name":        mustMarshalJSON(preview.ChannelName),
-		"world_id":            mustMarshalJSON(preview.WorldID),
-		"world_name":          mustMarshalJSON(preview.WorldName),
-		"message_count":       strconv.Itoa(preview.MessageCount),
-		"active_user_count":   strconv.Itoa(preview.ActiveUserCount),
-		"speaker_names_array": mustMarshalJSON(preview.SpeakerNames),
-		"speaker_summary":     mustMarshalJSON(preview.SpeakerSummary),
-		"speakers":            mustMarshalJSON(preview.Speakers),
-		"rendered_text":       mustMarshalJSON(preview.RenderedText),
+		"scope_type":                 mustMarshalJSON(preview.ScopeType),
+		"scope_id":                   mustMarshalJSON(preview.ScopeID),
+		"scope_name":                 mustMarshalJSON(preview.ScopeName),
+		"window_start_ts":            strconv.FormatInt(preview.WindowStart, 10),
+		"window_end_ts":              strconv.FormatInt(preview.WindowEnd, 10),
+		"window_label":               mustMarshalJSON(preview.WindowLabel),
+		"window_seconds":             strconv.Itoa(preview.WindowSeconds),
+		"channel_id":                 mustMarshalJSON(preview.ChannelID),
+		"channel_name":               mustMarshalJSON(preview.ChannelName),
+		"world_id":                   mustMarshalJSON(preview.WorldID),
+		"world_name":                 mustMarshalJSON(preview.WorldName),
+		"channel_count":              strconv.Itoa(preview.ChannelCount),
+		"target_channel_ids":         mustMarshalJSON(preview.TargetChannelIDs),
+		"target_channel_names_array": mustMarshalJSON(preview.TargetChannelNames),
+		"channels":                   mustMarshalJSON(preview.Channels),
+		"message_count":              strconv.Itoa(preview.MessageCount),
+		"active_user_count":          strconv.Itoa(preview.ActiveUserCount),
+		"speaker_names_array":        mustMarshalJSON(preview.SpeakerNames),
+		"speaker_summary":            mustMarshalJSON(preview.SpeakerSummary),
+		"speakers":                   mustMarshalJSON(preview.Speakers),
+		"channel_digest_lines":       mustMarshalJSON(preview.ChannelDigestLines),
+		"rendered_text":              mustMarshalJSON(preview.RenderedText),
 	}
 	renderedJSON, err := renderDigestJSONTemplate(rule.JSONTemplate, jsonValues)
 	if err != nil {
@@ -856,6 +1183,209 @@ func buildSpeakerSummary(speakers []DigestSpeaker) string {
 		summary = fmt.Sprintf("%s 等%d人", summary, len(speakers))
 	}
 	return summary
+}
+
+func buildDigestChannelSummaryText(channelName string, speakerNames []string, messageCount int) string {
+	channelName = strings.TrimSpace(channelName)
+	if channelName == "" {
+		channelName = "未命名频道"
+	}
+	return fmt.Sprintf("%s：%s 发送了 %d 条消息", channelName, buildSpeakerNamesText(speakerNames), messageCount)
+}
+
+func buildDigestChannelLines(channels []DigestChannelSummary) string {
+	if len(channels) == 0 {
+		return "暂无频道命中当前摘要窗口。"
+	}
+	lines := make([]string, 0, len(channels))
+	for _, channel := range channels {
+		text := strings.TrimSpace(channel.Text)
+		if text == "" {
+			text = buildDigestChannelSummaryText(channel.ChannelName, channel.SpeakerNames, channel.MessageCount)
+		}
+		lines = append(lines, "- "+text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sortDigestSpeakers(speakers []DigestSpeaker) {
+	sort.SliceStable(speakers, func(i, j int) bool {
+		if speakers[i].MessageCount != speakers[j].MessageCount {
+			return speakers[i].MessageCount > speakers[j].MessageCount
+		}
+		return strings.ToLower(strings.TrimSpace(speakers[i].Name)) < strings.ToLower(strings.TrimSpace(speakers[j].Name))
+	})
+}
+
+func parseDigestSelectedChannelIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return []string{}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeDigestSelectedChannelIDs(rule *model.DigestPushRuleModel) ([]string, error) {
+	if rule == nil {
+		return []string{}, nil
+	}
+	switch strings.TrimSpace(rule.ScopeType) {
+	case model.DigestScopeTypeChannel:
+		return []string{}, nil
+	case model.DigestScopeTypeWorld:
+		selected := parseDigestSelectedChannelIDs(rule.SelectedChannelIDsJSON)
+		if len(selected) == 0 {
+			return []string{}, nil
+		}
+		options, err := DigestScopeChannelOptions(rule.ScopeType, rule.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		allowed := make(map[string]struct{}, len(options))
+		for _, option := range options {
+			if trimmed := strings.TrimSpace(option.ID); trimmed != "" {
+				allowed[trimmed] = struct{}{}
+			}
+		}
+		for _, id := range selected {
+			if _, ok := allowed[id]; !ok {
+				return nil, fmt.Errorf("指定频道不属于当前世界或已不可用: %s", id)
+			}
+		}
+		return selected, nil
+	default:
+		return []string{}, nil
+	}
+}
+
+func resolveDigestTargetChannels(rule *model.DigestPushRuleModel) ([]*model.ChannelModel, error) {
+	if rule == nil {
+		return []*model.ChannelModel{}, nil
+	}
+	switch strings.TrimSpace(rule.ScopeType) {
+	case model.DigestScopeTypeChannel:
+		channel, err := model.ChannelGet(rule.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			return nil, fmt.Errorf("频道不存在")
+		}
+		return []*model.ChannelModel{channel}, nil
+	case model.DigestScopeTypeWorld:
+		channels, err := ChannelListByWorld(rule.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		selected := parseDigestSelectedChannelIDs(rule.SelectedChannelIDsJSON)
+		selectedSet := make(map[string]struct{}, len(selected))
+		for _, id := range selected {
+			selectedSet[id] = struct{}{}
+		}
+		out := make([]*model.ChannelModel, 0, len(channels))
+		for _, channel := range channels {
+			if channel == nil || strings.TrimSpace(channel.ID) == "" || strings.EqualFold(channel.PermType, "private") {
+				continue
+			}
+			if len(selectedSet) > 0 {
+				if _, ok := selectedSet[channel.ID]; !ok {
+					continue
+				}
+			}
+			out = append(out, channel)
+		}
+		if len(selectedSet) > 0 && len(out) == 0 {
+			return nil, fmt.Errorf("指定频道均不可用")
+		}
+		return out, nil
+	default:
+		return []*model.ChannelModel{}, nil
+	}
+}
+
+func digestTargetChannelIDs(rule *model.DigestPushRuleModel) []string {
+	channels, err := resolveDigestTargetChannels(rule)
+	if err != nil {
+		return []string{}
+	}
+	ids := make([]string, 0, len(channels))
+	for _, channel := range channels {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+			continue
+		}
+		ids = append(ids, channel.ID)
+	}
+	return ids
+}
+
+func digestDistinctVisitorCountByChannels(channelIDs []string, windowSeconds int, windowStart int64) (int64, error) {
+	cleaned := make([]string, 0, len(channelIDs))
+	seen := map[string]struct{}{}
+	for _, id := range channelIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	var count int64
+	err := model.GetDB().Model(&model.DigestWindowVisitorModel{}).
+		Where("scope_type = ? AND scope_id IN ? AND window_seconds = ? AND window_start = ?", model.DigestScopeTypeChannel, cleaned, windowSeconds, windowStart).
+		Distinct("user_id").
+		Count(&count).Error
+	return count, err
+}
+
+func digestChannelMemberUnionCount(channelIDs []string) (int, error) {
+	cleaned := make([]string, 0, len(channelIDs))
+	seen := map[string]struct{}{}
+	for _, id := range channelIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := model.GetDB().Model(&model.MemberModel{}).
+		Where("channel_id IN ?", cleaned).
+		Distinct("user_id").
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return int(count), nil
 }
 
 func requiresActiveDelivery(mode string) bool {

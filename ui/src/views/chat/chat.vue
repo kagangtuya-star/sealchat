@@ -13569,7 +13569,7 @@ onBeforeUnmount(() => {
     <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
       <n-drawer-content closable>
         <template #header>未读提醒</template>
-        <EmailNotificationManager :channel-id="chat.curChannel?.id || ''" />
+        <EmailNotificationManager scope-type="channel" :scope-id="chat.curChannel?.id || ''" />
       </n-drawer-content>
     </n-drawer>
 

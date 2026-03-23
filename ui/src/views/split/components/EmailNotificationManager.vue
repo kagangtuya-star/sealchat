@@ -18,8 +18,8 @@ import { api, urlBase } from '@/stores/_config'
 
 const WEBHOOK_TOKEN_STORAGE_KEY = 'sealchat_webhook_token_cache'
 const WEBHOOK_INTEGRATION_STORAGE_KEY = 'sealchat_webhook_integration_cache'
-const DEFAULT_DIGEST_TEXT_TEMPLATE = '在 {{window_label}}，{{speaker_names}} 在 {{channel_name}} 频道发送了 {{message_count}} 条消息。'
-const DEFAULT_DIGEST_JSON_TEMPLATE = `{
+const DEFAULT_CHANNEL_DIGEST_TEXT_TEMPLATE = '在 {{window_label}}，{{speaker_names}} 在 {{channel_name}} 频道发送了 {{message_count}} 条消息。'
+const DEFAULT_CHANNEL_DIGEST_JSON_TEMPLATE = `{
   "scopeType": {{scope_type}},
   "scopeId": {{scope_id}},
   "window": {
@@ -36,6 +36,31 @@ const DEFAULT_DIGEST_JSON_TEMPLATE = `{
     "id": {{world_id}},
     "name": {{world_name}}
   },
+  "messageCount": {{message_count}},
+  "activeUserCount": {{active_user_count}},
+  "speakerNames": {{speaker_names_array}},
+  "speakerSummary": {{speaker_summary}},
+  "speakers": {{speakers}},
+  "text": {{rendered_text}}
+}`
+const DEFAULT_WORLD_DIGEST_TEXT_TEMPLATE = '在 {{window_label}}，{{scope_name}} 有 {{channel_count}} 个频道出现新消息：\n{{channel_digest_lines}}'
+const DEFAULT_WORLD_DIGEST_JSON_TEMPLATE = `{
+  "scopeType": {{scope_type}},
+  "scopeId": {{scope_id}},
+  "window": {
+    "start": {{window_start_ts}},
+    "end": {{window_end_ts}},
+    "label": {{window_label}},
+    "seconds": {{window_seconds}}
+  },
+  "world": {
+    "id": {{world_id}},
+    "name": {{world_name}}
+  },
+  "channelCount": {{channel_count}},
+  "targetChannelIds": {{target_channel_ids}},
+  "targetChannelNames": {{target_channel_names_array}},
+  "channels": {{channels}},
   "messageCount": {{message_count}},
   "activeUserCount": {{active_user_count}},
   "speakerNames": {{speaker_names_array}},
@@ -68,6 +93,7 @@ interface DigestPushSettings {
   activeUserThresholdValue: number
   effectiveActiveUserThreshold: number
   pushMode: string
+  selectedChannelIds: string[]
   textTemplate: string
   jsonTemplate: string
   activeWebhookUrl: string
@@ -76,6 +102,7 @@ interface DigestPushSettings {
   hasSigningSecret: boolean
   passivePullPath: string
   passiveLatestPath: string
+  availableChannels: Array<{ id: string; name: string }>
 }
 
 interface DigestPreview {
@@ -84,6 +111,7 @@ interface DigestPreview {
   activeUserCount: number
   thresholdValue: number
   thresholdSatisfied: boolean
+  channelCount?: number
   renderedText: string
   renderedJson: string
 }
@@ -108,9 +136,12 @@ interface DigestRecordItem {
   deliveryAttempts: number
 }
 
-const props = defineProps<{
-  channelId: string
-}>()
+const props = withDefaults(defineProps<{
+  scopeId: string
+  scopeType?: 'channel' | 'world'
+}>(), {
+  scopeType: 'channel',
+})
 
 const message = useMessage()
 const loading = ref(false)
@@ -132,6 +163,12 @@ const testPreview = ref<DigestPreview | null>(null)
 const testRecord = ref<DigestRecordItem | null>(null)
 const testDelivery = ref<any>(null)
 
+const isWorldScope = computed(() => props.scopeType === 'world')
+const scopeLabel = computed(() => isWorldScope.value ? '世界' : '频道')
+const scopeKey = computed(() => `${props.scopeType}:${(props.scopeId || '').trim()}`)
+const defaultTextTemplate = computed(() => isWorldScope.value ? DEFAULT_WORLD_DIGEST_TEXT_TEMPLATE : DEFAULT_CHANNEL_DIGEST_TEXT_TEMPLATE)
+const defaultJsonTemplate = computed(() => isWorldScope.value ? DEFAULT_WORLD_DIGEST_JSON_TEMPLATE : DEFAULT_CHANNEL_DIGEST_JSON_TEMPLATE)
+
 const settings = ref<DigestPushSettings>({
   enabled: false,
   scopeType: 'channel',
@@ -142,17 +179,19 @@ const settings = ref<DigestPushSettings>({
   activeUserThresholdValue: 0,
   effectiveActiveUserThreshold: 1,
   pushMode: 'passive',
-  textTemplate: DEFAULT_DIGEST_TEXT_TEMPLATE,
-  jsonTemplate: DEFAULT_DIGEST_JSON_TEMPLATE,
+  selectedChannelIds: [],
+  textTemplate: DEFAULT_CHANNEL_DIGEST_TEXT_TEMPLATE,
+  jsonTemplate: DEFAULT_CHANNEL_DIGEST_JSON_TEMPLATE,
   activeWebhookUrl: '',
   activeWebhookMethod: 'POST',
   activeWebhookHeaders: '{}',
   hasSigningSecret: false,
   passivePullPath: '',
   passiveLatestPath: '',
+  availableChannels: [],
 })
 
-const hasChannel = computed(() => !!props.channelId && props.channelId.trim().length > 0)
+const hasScope = computed(() => !!props.scopeId && props.scopeId.trim().length > 0)
 const accessBaseUrl = computed(() => {
   if (/^https?:\/\//i.test(urlBase)) {
     return urlBase
@@ -167,7 +206,7 @@ const readWebhookTokenCache = () => {
     const raw = localStorage.getItem(WEBHOOK_TOKEN_STORAGE_KEY) || '{}'
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object') {
-      return String((parsed as Record<string, string>)[props.channelId] || '').trim()
+      return String((parsed as Record<string, string>)[scopeKey.value] || '').trim()
     }
   } catch {
     // ignore
@@ -179,7 +218,7 @@ const readWebhookIntegrationCache = () => {
     const raw = localStorage.getItem(WEBHOOK_INTEGRATION_STORAGE_KEY) || '{}'
     const parsed = JSON.parse(raw)
     if (parsed && typeof parsed === 'object') {
-      return String((parsed as Record<string, string>)[props.channelId] || '').trim()
+      return String((parsed as Record<string, string>)[scopeKey.value] || '').trim()
     }
   } catch {
     // ignore
@@ -187,16 +226,16 @@ const readWebhookIntegrationCache = () => {
   return ''
 }
 const writeWebhookTokenCache = (value: string) => {
-  const normalizedChannelId = props.channelId.trim()
-  if (!normalizedChannelId) return
+  const key = scopeKey.value
+  if (!key) return
   try {
     const raw = localStorage.getItem(WEBHOOK_TOKEN_STORAGE_KEY) || '{}'
     const parsed = JSON.parse(raw)
     const next = parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {}
     if ((value || '').trim()) {
-      next[normalizedChannelId] = value.trim()
+      next[key] = value.trim()
     } else {
-      delete next[normalizedChannelId]
+      delete next[key]
     }
     localStorage.setItem(WEBHOOK_TOKEN_STORAGE_KEY, JSON.stringify(next))
   } catch {
@@ -204,16 +243,16 @@ const writeWebhookTokenCache = (value: string) => {
   }
 }
 const writeWebhookIntegrationCache = (value: string) => {
-  const normalizedChannelId = props.channelId.trim()
-  if (!normalizedChannelId) return
+  const key = scopeKey.value
+  if (!key) return
   try {
     const raw = localStorage.getItem(WEBHOOK_INTEGRATION_STORAGE_KEY) || '{}'
     const parsed = JSON.parse(raw)
     const next = parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {}
     if ((value || '').trim()) {
-      next[normalizedChannelId] = value.trim()
+      next[key] = value.trim()
     } else {
-      delete next[normalizedChannelId]
+      delete next[key]
     }
     localStorage.setItem(WEBHOOK_INTEGRATION_STORAGE_KEY, JSON.stringify(next))
   } catch {
@@ -238,6 +277,7 @@ const passiveLatestUrl = computed(() => buildPassiveUrl(settings.value.passiveLa
 const passiveTokenReady = computed(() => !!passiveToken.value.trim())
 const showFixedThreshold = computed(() => settings.value.activeUserThresholdMode === 'fixed')
 const showActivePush = computed(() => settings.value.pushMode === 'active' || settings.value.pushMode === 'both')
+const showWorldChannelPicker = computed(() => isWorldScope.value && settings.value.availableChannels.length > 0)
 
 const windowOptions = computed(() => {
   const labels: Record<number, string> = {
@@ -261,10 +301,10 @@ const pushModeOptions = [
   { label: '主动 + 被动', value: 'both' },
 ]
 
-const thresholdModeOptions = [
-  { label: '频道成员数', value: 'channel_member_count' },
+const thresholdModeOptions = computed(() => [
+  { label: isWorldScope.value ? '覆盖频道成员数' : '频道成员数', value: 'channel_member_count' },
   { label: '固定阈值', value: 'fixed' },
-]
+])
 
 const methodOptions = [
   { label: 'POST', value: 'POST' },
@@ -276,8 +316,16 @@ const normalizeSettingsValue = (input?: Partial<DigestPushSettings>) => {
   return {
     ...settings.value,
     ...(input || {}),
-    textTemplate: String(input?.textTemplate ?? settings.value.textTemplate ?? '').trim() || DEFAULT_DIGEST_TEXT_TEMPLATE,
-    jsonTemplate: String(input?.jsonTemplate ?? settings.value.jsonTemplate ?? '').trim() || DEFAULT_DIGEST_JSON_TEMPLATE,
+    scopeType: props.scopeType,
+    scopeId: props.scopeId,
+    selectedChannelIds: Array.isArray(input?.selectedChannelIds ?? settings.value.selectedChannelIds)
+      ? [...(input?.selectedChannelIds ?? settings.value.selectedChannelIds ?? [])]
+      : [],
+    availableChannels: Array.isArray(input?.availableChannels ?? settings.value.availableChannels)
+      ? [...(input?.availableChannels ?? settings.value.availableChannels ?? [])]
+      : [],
+    textTemplate: String(input?.textTemplate ?? settings.value.textTemplate ?? '').trim() || defaultTextTemplate.value,
+    jsonTemplate: String(input?.jsonTemplate ?? settings.value.jsonTemplate ?? '').trim() || defaultJsonTemplate.value,
     activeWebhookHeaders: '{}',
   }
 }
@@ -290,12 +338,12 @@ const resetTestResult = () => {
 }
 
 const loadLatestRecord = async () => {
-  if (!hasChannel.value || !passiveToken.value.trim()) {
+  if (!hasScope.value || !passiveToken.value.trim() || !settings.value.passiveLatestPath.trim()) {
     testRecord.value = null
     return
   }
   try {
-    const resp = await api.get<{ item?: DigestRecordItem | null }>(`/api/v1/webhook/channels/${props.channelId}/digests/latest`, {
+    const resp = await api.get<{ item?: DigestRecordItem | null }>(settings.value.passiveLatestPath, {
       params: {
         token: passiveToken.value.trim(),
       },
@@ -317,16 +365,21 @@ const persistPassivePullCache = () => {
 }
 
 const listWebhookIntegrations = async () => {
-  const resp = await api.get<{ items: WebhookIntegrationItem[] }>(`/api/v1/channels/${props.channelId}/webhook-integrations`)
+  const path = isWorldScope.value
+    ? `/api/v1/worlds/${props.scopeId}/digest-integrations`
+    : `/api/v1/channels/${props.scopeId}/webhook-integrations`
+  const resp = await api.get<{ items: WebhookIntegrationItem[] }>(path)
   return resp.data?.items || []
 }
 
 const createPassivePullToken = async () => {
-  const resp = await api.post<{ item: WebhookIntegrationItem, token: string }>(`/api/v1/channels/${props.channelId}/webhook-integrations`, {
-    name: '摘要拉取',
-    source: 'digest-pull',
-    capabilities: ['read_digest'],
-  })
+  const path = isWorldScope.value
+    ? `/api/v1/worlds/${props.scopeId}/digest-integrations`
+    : `/api/v1/channels/${props.scopeId}/webhook-integrations`
+  const payload = isWorldScope.value
+    ? { name: '世界摘要拉取' }
+    : { name: '摘要拉取', source: 'digest-pull', capabilities: ['read_digest'] }
+  const resp = await api.post<{ item: WebhookIntegrationItem, token: string }>(path, payload)
   passiveIntegrationId.value = resp.data?.item?.id || ''
   passiveToken.value = resp.data?.token || ''
   persistPassivePullCache()
@@ -337,13 +390,16 @@ const rotatePassivePullToken = async () => {
     await createPassivePullToken()
     return
   }
-  const resp = await api.post<{ token: string }>(`/api/v1/channels/${props.channelId}/webhook-integrations/${passiveIntegrationId.value}/rotate`, {})
+  const path = isWorldScope.value
+    ? `/api/v1/worlds/${props.scopeId}/digest-integrations/${passiveIntegrationId.value}/rotate`
+    : `/api/v1/channels/${props.scopeId}/webhook-integrations/${passiveIntegrationId.value}/rotate`
+  const resp = await api.post<{ token: string }>(path, {})
   passiveToken.value = resp.data?.token || ''
   persistPassivePullCache()
 }
 
 const ensurePassivePullToken = async (forceRotate = false) => {
-  if (!hasChannel.value) return
+  if (!hasScope.value) return
   if (!forceRotate && passiveTokenReady.value) return
   passiveTokenLoading.value = true
   passiveTokenError.value = ''
@@ -352,7 +408,7 @@ const ensurePassivePullToken = async (forceRotate = false) => {
     const dedicated = items.find(item =>
       item.status === 'active'
       && item.source === 'digest-pull'
-      && (item.capabilities || []).includes('read_digest'),
+      && (isWorldScope.value || (item.capabilities || []).includes('read_digest')),
     )
     if (dedicated) {
       passiveIntegrationId.value = dedicated.id
@@ -372,7 +428,7 @@ const ensurePassivePullToken = async (forceRotate = false) => {
 }
 
 const refresh = async () => {
-  if (!hasChannel.value) return
+  if (!hasScope.value) return
   loading.value = true
   errorText.value = ''
   saveErrorText.value = ''
@@ -382,7 +438,10 @@ const refresh = async () => {
   loadPassivePullCache()
   resetTestResult()
   try {
-    const resp = await api.get<DigestPushSettings>(`/api/v1/channels/${props.channelId}/digest-push`)
+    const path = isWorldScope.value
+      ? `/api/v1/worlds/${props.scopeId}/digest-push`
+      : `/api/v1/channels/${props.scopeId}/digest-push`
+    const resp = await api.get<DigestPushSettings>(path)
     settings.value = normalizeSettingsValue(resp.data)
     testWindowSeconds.value = settings.value.windowSeconds || 3600
   } catch (e: any) {
@@ -423,17 +482,21 @@ const validateBeforeTest = () => {
 }
 
 const saveSettings = async () => {
-  if (!hasChannel.value || !validateBeforeSave()) return
+  if (!hasScope.value || !validateBeforeSave()) return
   loading.value = true
   errorText.value = ''
   saveErrorText.value = ''
   try {
-    const resp = await api.post<DigestPushSettings>(`/api/v1/channels/${props.channelId}/digest-push`, {
+    const path = isWorldScope.value
+      ? `/api/v1/worlds/${props.scopeId}/digest-push`
+      : `/api/v1/channels/${props.scopeId}/digest-push`
+    const resp = await api.post<DigestPushSettings>(path, {
       enabled: settings.value.enabled,
       windowSeconds: settings.value.windowSeconds,
       activeUserThresholdMode: settings.value.activeUserThresholdMode,
       activeUserThresholdValue: showFixedThreshold.value ? settings.value.activeUserThresholdValue : 0,
       pushMode: settings.value.pushMode,
+      selectedChannelIds: isWorldScope.value ? settings.value.selectedChannelIds : [],
       textTemplate: settings.value.textTemplate,
       jsonTemplate: settings.value.jsonTemplate,
       activeWebhookUrl: settings.value.activeWebhookUrl,
@@ -445,7 +508,7 @@ const saveSettings = async () => {
     settings.value = normalizeSettingsValue(resp.data)
     signingSecret.value = ''
     clearSigningSecret.value = false
-    message.success('未读提醒配置已保存')
+    message.success(`${scopeLabel.value}未读提醒配置已保存`)
   } catch (e: any) {
     saveErrorText.value = e?.response?.data?.message || e?.message || '保存失败'
   } finally {
@@ -454,14 +517,17 @@ const saveSettings = async () => {
 }
 
 const removeSettings = async () => {
-  if (!hasChannel.value) return
+  if (!hasScope.value) return
   loading.value = true
   errorText.value = ''
   saveErrorText.value = ''
   try {
-    await api.delete(`/api/v1/channels/${props.channelId}/digest-push`)
+    const path = isWorldScope.value
+      ? `/api/v1/worlds/${props.scopeId}/digest-push`
+      : `/api/v1/channels/${props.scopeId}/digest-push`
+    await api.delete(path)
     await refresh()
-    message.success('未读提醒配置已删除')
+    message.success(`${scopeLabel.value}未读提醒配置已删除`)
   } catch (e: any) {
     saveErrorText.value = e?.response?.data?.message || e?.message || '删除失败'
   } finally {
@@ -476,7 +542,7 @@ const toTimestamp = (value: string) => {
 }
 
 const runTest = async () => {
-  if (!hasChannel.value || !validateBeforeTest()) return
+  if (!hasScope.value || !validateBeforeTest()) return
   testing.value = true
   errorText.value = ''
   testErrorText.value = ''
@@ -488,6 +554,7 @@ const runTest = async () => {
       activeUserThresholdMode: settings.value.activeUserThresholdMode,
       activeUserThresholdValue: showFixedThreshold.value ? settings.value.activeUserThresholdValue : 0,
       pushMode: settings.value.pushMode,
+      selectedChannelIds: isWorldScope.value ? settings.value.selectedChannelIds : [],
       textTemplate: settings.value.textTemplate,
       jsonTemplate: settings.value.jsonTemplate,
       activeWebhookUrl: settings.value.activeWebhookUrl,
@@ -503,7 +570,10 @@ const runTest = async () => {
       payload.fromTime = fromTs
       payload.toTime = toTs
     }
-    const resp = await api.post(`/api/v1/channels/${props.channelId}/digest-push/test`, payload)
+    const path = isWorldScope.value
+      ? `/api/v1/worlds/${props.scopeId}/digest-push/test`
+      : `/api/v1/channels/${props.scopeId}/digest-push/test`
+    const resp = await api.post(path, payload)
     testPreview.value = resp.data?.preview || null
     testRecord.value = resp.data?.item || null
     testDelivery.value = resp.data?.delivery || null
@@ -529,7 +599,7 @@ const formatRecordTime = (value?: number) => {
   }
 }
 
-watch(() => props.channelId, refresh, { immediate: true })
+watch(() => [props.scopeId, props.scopeType], refresh, { immediate: true })
 watch(() => settings.value.pushMode, () => {
   if (!showActivePush.value) {
     testDeliverActive.value = false
@@ -551,7 +621,7 @@ onMounted(refresh)
       {{ saveErrorText }}
     </n-alert>
 
-    <n-card title="频道未读提醒" size="small" class="mb-3">
+    <n-card :title="`${scopeLabel}未读提醒`" size="small" class="mb-3">
       <n-space vertical size="large">
         <div class="flex items-center justify-between">
           <div>
@@ -595,6 +665,22 @@ onMounted(refresh)
           />
         </div>
 
+        <div v-if="showWorldChannelPicker">
+          <div class="text-sm mb-2">合并频道范围</div>
+          <n-select
+            v-model:value="settings.selectedChannelIds"
+            multiple
+            clearable
+            filterable
+            :options="settings.availableChannels.map(item => ({ label: item.name, value: item.id }))"
+            :disabled="loading"
+            placeholder="留空表示当前世界全部可用频道；选择后只合并这些频道"
+          />
+          <div class="text-xs text-gray-500 mt-2">
+            选中的频道会合并为一条世界级摘要，并写入 webhook JSON 的 <n-code>text</n-code> 字段。
+          </div>
+        </div>
+
         <div>
           <div class="text-sm mb-2">推送方式</div>
           <n-radio-group v-model:value="settings.pushMode" name="push-mode">
@@ -620,11 +706,14 @@ onMounted(refresh)
           />
           <div class="text-xs text-gray-500 mt-2">
             可用占位符：<n-code v-pre>{{window_label}}</n-code>、
+            <n-code v-pre>{{scope_name}}</n-code>、
             <n-code v-pre>{{channel_name}}</n-code>、
+            <n-code v-pre>{{channel_count}}</n-code>、
             <n-code v-pre>{{message_count}}</n-code>、
             <n-code v-pre>{{active_user_count}}</n-code>、
             <n-code v-pre>{{speaker_names}}</n-code>、
-            <n-code v-pre>{{speaker_summary}}</n-code>
+            <n-code v-pre>{{speaker_summary}}</n-code>、
+            <n-code v-pre>{{channel_digest_lines}}</n-code>
           </div>
         </div>
 
@@ -675,7 +764,7 @@ onMounted(refresh)
 
     <n-card title="被动拉取" size="small" class="mb-3">
       <n-space vertical size="small">
-        <div class="text-sm">系统会自动创建带 <n-code>read_digest</n-code> capability 的 token，并拼成可直接访问的完整链接：</div>
+        <div class="text-sm">系统会自动创建摘要拉取 token，并拼成可直接访问的完整链接：</div>
         <n-alert v-if="passiveTokenError" type="warning" :bordered="false">
           {{ passiveTokenError }}
         </n-alert>
@@ -756,6 +845,9 @@ onMounted(refresh)
           <div class="text-sm leading-6">
             时间窗口：{{ testPreview.windowLabel }}<br />
             消息数：{{ testPreview.messageCount }}<br />
+            <template v-if="isWorldScope && testPreview.channelCount">
+              命中频道数：{{ testPreview.channelCount }}<br />
+            </template>
             访问人数：{{ testPreview.activeUserCount }} / 阈值 {{ testPreview.thresholdValue }}<br />
             规则命中：{{ testPreview.thresholdSatisfied ? '是' : '否' }}
           </div>

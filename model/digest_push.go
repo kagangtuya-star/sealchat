@@ -36,6 +36,7 @@ type DigestPushRuleModel struct {
 	ActiveUserThresholdMode  string `json:"activeUserThresholdMode" gorm:"size:64"`
 	ActiveUserThresholdValue int    `json:"activeUserThresholdValue"`
 	PushMode                 string `json:"pushMode" gorm:"size:32"`
+	SelectedChannelIDsJSON   string `json:"selectedChannelIdsJson" gorm:"type:text"`
 	TextTemplate             string `json:"textTemplate" gorm:"type:text"`
 	JSONTemplate             string `json:"jsonTemplate" gorm:"type:text"`
 	ActiveWebhookURL         string `json:"activeWebhookUrl" gorm:"size:1024"`
@@ -57,6 +58,7 @@ type DigestPushRuleUpsertParams struct {
 	ActiveUserThresholdMode  string
 	ActiveUserThresholdValue int
 	PushMode                 string
+	SelectedChannelIDsJSON   string
 	TextTemplate             string
 	JSONTemplate             string
 	ActiveWebhookURL         string
@@ -98,6 +100,7 @@ func DigestPushRuleUpsert(scopeType, scopeID string, params DigestPushRuleUpsert
 		ActiveUserThresholdMode:  params.ActiveUserThresholdMode,
 		ActiveUserThresholdValue: params.ActiveUserThresholdValue,
 		PushMode:                 params.PushMode,
+		SelectedChannelIDsJSON:   params.SelectedChannelIDsJSON,
 		TextTemplate:             params.TextTemplate,
 		JSONTemplate:             params.JSONTemplate,
 		ActiveWebhookURL:         params.ActiveWebhookURL,
@@ -113,6 +116,7 @@ func DigestPushRuleUpsert(scopeType, scopeID string, params DigestPushRuleUpsert
 		"active_user_threshold_mode",
 		"active_user_threshold_value",
 		"push_mode",
+		"selected_channel_ids_json",
 		"text_template",
 		"json_template",
 		"active_webhook_url",
