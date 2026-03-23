@@ -133,9 +133,9 @@ const allActionButtons = computed<ActionButton[]>(() => {
     buttons.push({ key: 'webhook', label: 'Webhook', icon: LinkIcon, emitEvent: 'open-webhook', activeKey: 'webhookActive' })
   }
 
-  // 邮件提醒入口（Webhook 下方）
+  // 未读提醒入口（复用原邮件提醒位置）
   if (props.emailNotificationEnabled !== false) {
-    buttons.push({ key: 'email-notification', label: '邮件提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
+    buttons.push({ key: 'email-notification', label: '未读提醒', icon: MailOutline, emitEvent: 'open-email-notification', activeKey: 'emailNotificationActive' })
   }
   
   return buttons

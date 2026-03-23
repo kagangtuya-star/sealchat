@@ -1,329 +1,781 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NInput, NInputNumber, NSlider, NSpace, NSwitch, useMessage } from 'naive-ui';
-import { api } from '@/stores/_config';
+import { computed, onMounted, ref, watch } from 'vue'
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NCode,
+  NInput,
+  NInputNumber,
+  NRadioButton,
+  NRadioGroup,
+  NSelect,
+  NSpace,
+  NSwitch,
+  useMessage,
+} from 'naive-ui'
+import { api, urlBase } from '@/stores/_config'
 
-const SMTP_STORAGE_KEY = 'sealchat_email_smtp_config';
+const WEBHOOK_TOKEN_STORAGE_KEY = 'sealchat_webhook_token_cache'
+const WEBHOOK_INTEGRATION_STORAGE_KEY = 'sealchat_webhook_integration_cache'
+const DEFAULT_DIGEST_TEXT_TEMPLATE = '在 {{window_label}}，{{speaker_names}} 在 {{channel_name}} 频道发送了 {{message_count}} 条消息。'
+const DEFAULT_DIGEST_JSON_TEMPLATE = `{
+  "scopeType": {{scope_type}},
+  "scopeId": {{scope_id}},
+  "window": {
+    "start": {{window_start_ts}},
+    "end": {{window_end_ts}},
+    "label": {{window_label}},
+    "seconds": {{window_seconds}}
+  },
+  "channel": {
+    "id": {{channel_id}},
+    "name": {{channel_name}}
+  },
+  "world": {
+    "id": {{world_id}},
+    "name": {{world_name}}
+  },
+  "messageCount": {{message_count}},
+  "activeUserCount": {{active_user_count}},
+  "speakerNames": {{speaker_names_array}},
+  "speakerSummary": {{speaker_summary}},
+  "speakers": {{speakers}},
+  "text": {{rendered_text}}
+}`
 
-interface SmtpConfig {
-  smtpHost: string;
-  smtpPort: number;
-  smtpUsername: string;
-  smtpFromAddress: string;
-  smtpFromName: string;
-  smtpUseTls: boolean;
+interface WebhookIntegrationItem {
+  id: string
+  channelId: string
+  name: string
+  source: string
+  botUserId: string
+  status: 'active' | 'revoked' | string
+  createdAt: number
+  createdBy: string
+  lastUsedAt: number
+  tokenTailFragment: string
+  capabilities: string[]
 }
 
-interface EmailNotificationSettings {
-  enabled: boolean;
-  email: string;
-  delayMinutes: number;
-  minDelay?: number;
-  maxDelay?: number;
-  featureDisabled?: boolean;
-  message?: string;
-  useCustomSmtp?: boolean;
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpUsername?: string;
-  smtpFromAddress?: string;
-  smtpFromName?: string;
-  smtpUseTls?: boolean;
-  hasPassword?: boolean;
+interface DigestPushSettings {
+  enabled: boolean
+  scopeType: string
+  scopeId: string
+  windowSeconds: number
+  supportedWindowSeconds: number[]
+  activeUserThresholdMode: string
+  activeUserThresholdValue: number
+  effectiveActiveUserThreshold: number
+  pushMode: string
+  textTemplate: string
+  jsonTemplate: string
+  activeWebhookUrl: string
+  activeWebhookMethod: string
+  activeWebhookHeaders: string
+  hasSigningSecret: boolean
+  passivePullPath: string
+  passiveLatestPath: string
+}
+
+interface DigestPreview {
+  windowLabel: string
+  messageCount: number
+  activeUserCount: number
+  thresholdValue: number
+  thresholdSatisfied: boolean
+  renderedText: string
+  renderedJson: string
+}
+
+interface DigestRecordItem {
+  id: string
+  ruleId: string
+  scopeType: string
+  scopeId: string
+  windowSeconds: number
+  windowStart: number
+  windowEnd: number
+  messageCount: number
+  activeUserCount: number
+  speakerNames: string[]
+  speakerSummary: string
+  renderedText: string
+  renderedJson: string
+  status: string
+  generatedAt: number
+  triggeredBy: string
+  deliveryAttempts: number
 }
 
 const props = defineProps<{
-  channelId: string;
-}>();
+  channelId: string
+}>()
 
-const message = useMessage();
-const loading = ref(false);
-const errorText = ref('');
-const featureDisabled = ref(false);
-const smtpPassword = ref('');
+const message = useMessage()
+const loading = ref(false)
+const testing = ref(false)
+const errorText = ref('')
+const saveErrorText = ref('')
+const testErrorText = ref('')
+const signingSecret = ref('')
+const clearSigningSecret = ref(false)
+const passiveToken = ref('')
+const passiveIntegrationId = ref('')
+const passiveTokenLoading = ref(false)
+const passiveTokenError = ref('')
+const testWindowSeconds = ref(3600)
+const testFromTime = ref('')
+const testToTime = ref('')
+const testDeliverActive = ref(false)
+const testPreview = ref<DigestPreview | null>(null)
+const testRecord = ref<DigestRecordItem | null>(null)
+const testDelivery = ref<any>(null)
 
-const settings = ref<EmailNotificationSettings>({
+const settings = ref<DigestPushSettings>({
   enabled: false,
-  email: '',
-  delayMinutes: 10,
-  minDelay: 10,
-  maxDelay: 30,
-  useCustomSmtp: false,
-  smtpHost: '',
-  smtpPort: 587,
-  smtpUsername: '',
-  smtpFromAddress: '',
-  smtpFromName: '',
-  smtpUseTls: true,
-  hasPassword: false,
-});
+  scopeType: 'channel',
+  scopeId: '',
+  windowSeconds: 3600,
+  supportedWindowSeconds: [300, 900, 1800, 3600, 7200, 21600, 86400],
+  activeUserThresholdMode: 'channel_member_count',
+  activeUserThresholdValue: 0,
+  effectiveActiveUserThreshold: 1,
+  pushMode: 'passive',
+  textTemplate: DEFAULT_DIGEST_TEXT_TEMPLATE,
+  jsonTemplate: DEFAULT_DIGEST_JSON_TEMPLATE,
+  activeWebhookUrl: '',
+  activeWebhookMethod: 'POST',
+  activeWebhookHeaders: '{}',
+  hasSigningSecret: false,
+  passivePullPath: '',
+  passiveLatestPath: '',
+})
 
-const hasChannel = computed(() => !!props.channelId && props.channelId.trim().length > 0);
-
-// localStorage 保存/读取 SMTP 配置（跨频道共享）
-const saveSmtpToLocalStorage = () => {
-  try {
-    const smtpConfig: SmtpConfig = {
-      smtpHost: settings.value.smtpHost || '',
-      smtpPort: settings.value.smtpPort || 587,
-      smtpUsername: settings.value.smtpUsername || '',
-      smtpFromAddress: settings.value.smtpFromAddress || '',
-      smtpFromName: settings.value.smtpFromName || '',
-      smtpUseTls: settings.value.smtpUseTls ?? true,
-    };
-    localStorage.setItem(SMTP_STORAGE_KEY, JSON.stringify(smtpConfig));
-  } catch (e) {
-    // ignore storage errors
+const hasChannel = computed(() => !!props.channelId && props.channelId.trim().length > 0)
+const accessBaseUrl = computed(() => {
+  if (/^https?:\/\//i.test(urlBase)) {
+    return urlBase
   }
-};
-
-const loadSmtpFromLocalStorage = (): SmtpConfig | null => {
+  if (urlBase.startsWith('//')) {
+    return `${window.location.protocol}${urlBase}`
+  }
+  return `${window.location.origin}${urlBase.startsWith('/') ? '' : '/'}${urlBase}`
+})
+const readWebhookTokenCache = () => {
   try {
-    const stored = localStorage.getItem(SMTP_STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored) as SmtpConfig;
+    const raw = localStorage.getItem(WEBHOOK_TOKEN_STORAGE_KEY) || '{}'
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return String((parsed as Record<string, string>)[props.channelId] || '').trim()
     }
-  } catch (e) {
-    // ignore parse errors
+  } catch {
+    // ignore
   }
-  return null;
-};
+  return ''
+}
+const readWebhookIntegrationCache = () => {
+  try {
+    const raw = localStorage.getItem(WEBHOOK_INTEGRATION_STORAGE_KEY) || '{}'
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return String((parsed as Record<string, string>)[props.channelId] || '').trim()
+    }
+  } catch {
+    // ignore
+  }
+  return ''
+}
+const writeWebhookTokenCache = (value: string) => {
+  const normalizedChannelId = props.channelId.trim()
+  if (!normalizedChannelId) return
+  try {
+    const raw = localStorage.getItem(WEBHOOK_TOKEN_STORAGE_KEY) || '{}'
+    const parsed = JSON.parse(raw)
+    const next = parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {}
+    if ((value || '').trim()) {
+      next[normalizedChannelId] = value.trim()
+    } else {
+      delete next[normalizedChannelId]
+    }
+    localStorage.setItem(WEBHOOK_TOKEN_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // ignore
+  }
+}
+const writeWebhookIntegrationCache = (value: string) => {
+  const normalizedChannelId = props.channelId.trim()
+  if (!normalizedChannelId) return
+  try {
+    const raw = localStorage.getItem(WEBHOOK_INTEGRATION_STORAGE_KEY) || '{}'
+    const parsed = JSON.parse(raw)
+    const next = parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {}
+    if ((value || '').trim()) {
+      next[normalizedChannelId] = value.trim()
+    } else {
+      delete next[normalizedChannelId]
+    }
+    localStorage.setItem(WEBHOOK_INTEGRATION_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // ignore
+  }
+}
+const buildPassiveUrl = (path: string, extraQuery = '') => {
+  const normalizedPath = (path || '').trim()
+  if (!normalizedPath) return ''
+  const queryParts: string[] = []
+  if (passiveToken.value) {
+    queryParts.push(`token=${encodeURIComponent(passiveToken.value)}`)
+  }
+  if (extraQuery) {
+    queryParts.push(extraQuery)
+  }
+  const query = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
+  return `${accessBaseUrl.value}${normalizedPath}${query}`
+}
+const passivePullUrl = computed(() => buildPassiveUrl(settings.value.passivePullPath, 'limit=30'))
+const passiveLatestUrl = computed(() => buildPassiveUrl(settings.value.passiveLatestPath))
+const passiveTokenReady = computed(() => !!passiveToken.value.trim())
+const showFixedThreshold = computed(() => settings.value.activeUserThresholdMode === 'fixed')
+const showActivePush = computed(() => settings.value.pushMode === 'active' || settings.value.pushMode === 'both')
 
-const applyLocalStorageSmtp = () => {
-  const cached = loadSmtpFromLocalStorage();
-  if (cached) {
-    settings.value.smtpHost = cached.smtpHost || settings.value.smtpHost;
-    settings.value.smtpPort = cached.smtpPort || settings.value.smtpPort;
-    settings.value.smtpUsername = cached.smtpUsername || settings.value.smtpUsername;
-    settings.value.smtpFromAddress = cached.smtpFromAddress || settings.value.smtpFromAddress;
-    settings.value.smtpFromName = cached.smtpFromName || settings.value.smtpFromName;
-    settings.value.smtpUseTls = cached.smtpUseTls ?? settings.value.smtpUseTls;
+const windowOptions = computed(() => {
+  const labels: Record<number, string> = {
+    300: '5 分钟',
+    900: '15 分钟',
+    1800: '30 分钟',
+    3600: '1 小时',
+    7200: '2 小时',
+    21600: '6 小时',
+    86400: '24 小时',
   }
-};
+  return (settings.value.supportedWindowSeconds || [300, 900, 1800, 3600, 7200, 21600, 86400]).map((value) => ({
+    label: labels[value] || `${Math.round(value / 60)} 分钟`,
+    value,
+  }))
+})
+
+const pushModeOptions = [
+  { label: '被动拉取', value: 'passive' },
+  { label: '主动推送', value: 'active' },
+  { label: '主动 + 被动', value: 'both' },
+]
+
+const thresholdModeOptions = [
+  { label: '频道成员数', value: 'channel_member_count' },
+  { label: '固定阈值', value: 'fixed' },
+]
+
+const methodOptions = [
+  { label: 'POST', value: 'POST' },
+  { label: 'PUT', value: 'PUT' },
+  { label: 'PATCH', value: 'PATCH' },
+]
+
+const normalizeSettingsValue = (input?: Partial<DigestPushSettings>) => {
+  return {
+    ...settings.value,
+    ...(input || {}),
+    textTemplate: String(input?.textTemplate ?? settings.value.textTemplate ?? '').trim() || DEFAULT_DIGEST_TEXT_TEMPLATE,
+    jsonTemplate: String(input?.jsonTemplate ?? settings.value.jsonTemplate ?? '').trim() || DEFAULT_DIGEST_JSON_TEMPLATE,
+    activeWebhookHeaders: '{}',
+  }
+}
+
+const resetTestResult = () => {
+  testErrorText.value = ''
+  testPreview.value = null
+  testRecord.value = null
+  testDelivery.value = null
+}
+
+const loadLatestRecord = async () => {
+  if (!hasChannel.value || !passiveToken.value.trim()) {
+    testRecord.value = null
+    return
+  }
+  try {
+    const resp = await api.get<{ item?: DigestRecordItem | null }>(`/api/v1/webhook/channels/${props.channelId}/digests/latest`, {
+      params: {
+        token: passiveToken.value.trim(),
+      },
+    })
+    testRecord.value = resp.data?.item || null
+  } catch {
+    // 忽略读取失败，避免覆盖当前测试流程中的其他提示
+  }
+}
+
+const loadPassivePullCache = () => {
+  passiveToken.value = readWebhookTokenCache()
+  passiveIntegrationId.value = readWebhookIntegrationCache()
+}
+
+const persistPassivePullCache = () => {
+  writeWebhookTokenCache(passiveToken.value)
+  writeWebhookIntegrationCache(passiveIntegrationId.value)
+}
+
+const listWebhookIntegrations = async () => {
+  const resp = await api.get<{ items: WebhookIntegrationItem[] }>(`/api/v1/channels/${props.channelId}/webhook-integrations`)
+  return resp.data?.items || []
+}
+
+const createPassivePullToken = async () => {
+  const resp = await api.post<{ item: WebhookIntegrationItem, token: string }>(`/api/v1/channels/${props.channelId}/webhook-integrations`, {
+    name: '摘要拉取',
+    source: 'digest-pull',
+    capabilities: ['read_digest'],
+  })
+  passiveIntegrationId.value = resp.data?.item?.id || ''
+  passiveToken.value = resp.data?.token || ''
+  persistPassivePullCache()
+}
+
+const rotatePassivePullToken = async () => {
+  if (!passiveIntegrationId.value) {
+    await createPassivePullToken()
+    return
+  }
+  const resp = await api.post<{ token: string }>(`/api/v1/channels/${props.channelId}/webhook-integrations/${passiveIntegrationId.value}/rotate`, {})
+  passiveToken.value = resp.data?.token || ''
+  persistPassivePullCache()
+}
+
+const ensurePassivePullToken = async (forceRotate = false) => {
+  if (!hasChannel.value) return
+  if (!forceRotate && passiveTokenReady.value) return
+  passiveTokenLoading.value = true
+  passiveTokenError.value = ''
+  try {
+    const items = await listWebhookIntegrations()
+    const dedicated = items.find(item =>
+      item.status === 'active'
+      && item.source === 'digest-pull'
+      && (item.capabilities || []).includes('read_digest'),
+    )
+    if (dedicated) {
+      passiveIntegrationId.value = dedicated.id
+      if (!passiveTokenReady.value || forceRotate) {
+        await rotatePassivePullToken()
+      } else {
+        persistPassivePullCache()
+      }
+      return
+    }
+    await createPassivePullToken()
+  } catch (e: any) {
+    passiveTokenError.value = e?.response?.data?.message || e?.message || '自动生成 token 失败'
+  } finally {
+    passiveTokenLoading.value = false
+  }
+}
 
 const refresh = async () => {
-  if (!hasChannel.value) return;
-  loading.value = true;
-  errorText.value = '';
-  smtpPassword.value = '';
+  if (!hasChannel.value) return
+  loading.value = true
+  errorText.value = ''
+  saveErrorText.value = ''
+  passiveTokenError.value = ''
+  signingSecret.value = ''
+  clearSigningSecret.value = false
+  loadPassivePullCache()
+  resetTestResult()
   try {
-    const resp = await api.get<EmailNotificationSettings>(`/api/v1/channels/${props.channelId}/email-notification`);
-    const data = resp.data;
-    if (data.featureDisabled) {
-      featureDisabled.value = true;
-      settings.value.enabled = false;
-      errorText.value = data.message || '邮件通知功能未启用';
-    } else {
-      featureDisabled.value = false;
-      settings.value = { ...settings.value, ...data };
-      // 如果服务端没有 SMTP 配置，从 localStorage 加载
-      if (!data.smtpHost) {
-        applyLocalStorageSmtp();
-      }
-    }
+    const resp = await api.get<DigestPushSettings>(`/api/v1/channels/${props.channelId}/digest-push`)
+    settings.value = normalizeSettingsValue(resp.data)
+    testWindowSeconds.value = settings.value.windowSeconds || 3600
   } catch (e: any) {
-    errorText.value = e?.response?.data?.message || e?.message || '加载失败';
+    errorText.value = e?.response?.data?.message || e?.message || '加载失败'
   } finally {
-    loading.value = false;
+    loading.value = false
   }
-};
+  await ensurePassivePullToken()
+  await loadLatestRecord()
+}
+
+const validateBeforeSave = () => {
+  saveErrorText.value = ''
+  settings.value = normalizeSettingsValue()
+  if (showFixedThreshold.value && (!settings.value.activeUserThresholdValue || settings.value.activeUserThresholdValue <= 0)) {
+    saveErrorText.value = '固定阈值必须大于 0'
+    return false
+  }
+  if (showActivePush.value && !settings.value.activeWebhookUrl.trim()) {
+    saveErrorText.value = '主动推送模式需要填写推送地址'
+    return false
+  }
+  return true
+}
+
+const validateBeforeTest = () => {
+  testErrorText.value = ''
+  settings.value = normalizeSettingsValue()
+  if (showFixedThreshold.value && (!settings.value.activeUserThresholdValue || settings.value.activeUserThresholdValue <= 0)) {
+    testErrorText.value = '固定阈值必须大于 0'
+    return false
+  }
+  if (showActivePush.value && testDeliverActive.value && !settings.value.activeWebhookUrl.trim()) {
+    testErrorText.value = '勾选主动推送测试时，必须先填写主动推送地址'
+    return false
+  }
+  return true
+}
 
 const saveSettings = async () => {
-  if (!hasChannel.value) return;
-  if (settings.value.enabled && !settings.value.email.includes('@')) {
-    errorText.value = '请填写有效的邮箱地址';
-    return;
-  }
-  if (settings.value.useCustomSmtp && !settings.value.smtpHost) {
-    errorText.value = '使用自定义 SMTP 时请填写服务器地址';
-    return;
-  }
-  loading.value = true;
-  errorText.value = '';
+  if (!hasChannel.value || !validateBeforeSave()) return
+  loading.value = true
+  errorText.value = ''
+  saveErrorText.value = ''
   try {
-    const resp = await api.post<EmailNotificationSettings>(`/api/v1/channels/${props.channelId}/email-notification`, {
+    const resp = await api.post<DigestPushSettings>(`/api/v1/channels/${props.channelId}/digest-push`, {
       enabled: settings.value.enabled,
-      email: settings.value.email,
-      delayMinutes: settings.value.delayMinutes,
-      useCustomSmtp: settings.value.useCustomSmtp,
-      smtpHost: settings.value.smtpHost,
-      smtpPort: settings.value.smtpPort || 587,
-      smtpUsername: settings.value.smtpUsername,
-      smtpPassword: smtpPassword.value,
-      smtpFromAddress: settings.value.smtpFromAddress,
-      smtpFromName: settings.value.smtpFromName,
-      smtpUseTls: settings.value.smtpUseTls,
-    });
-    settings.value = { ...settings.value, ...resp.data };
-    smtpPassword.value = '';
-    // 保存 SMTP 配置到 localStorage（跨频道共享）
-    if (settings.value.useCustomSmtp && settings.value.smtpHost) {
-      saveSmtpToLocalStorage();
-    }
-    message.success('保存成功');
+      windowSeconds: settings.value.windowSeconds,
+      activeUserThresholdMode: settings.value.activeUserThresholdMode,
+      activeUserThresholdValue: showFixedThreshold.value ? settings.value.activeUserThresholdValue : 0,
+      pushMode: settings.value.pushMode,
+      textTemplate: settings.value.textTemplate,
+      jsonTemplate: settings.value.jsonTemplate,
+      activeWebhookUrl: settings.value.activeWebhookUrl,
+      activeWebhookMethod: settings.value.activeWebhookMethod,
+      activeWebhookHeaders: settings.value.activeWebhookHeaders,
+      signingSecret: signingSecret.value,
+      clearSigningSecret: clearSigningSecret.value,
+    })
+    settings.value = normalizeSettingsValue(resp.data)
+    signingSecret.value = ''
+    clearSigningSecret.value = false
+    message.success('未读提醒配置已保存')
   } catch (e: any) {
-    errorText.value = e?.response?.data?.message || e?.message || '保存失败';
+    saveErrorText.value = e?.response?.data?.message || e?.message || '保存失败'
   } finally {
-    loading.value = false;
+    loading.value = false
   }
-};
+}
 
-const testEmail = async () => {
-  if (!hasChannel.value) {
-    errorText.value = '缺少频道ID';
-    return;
-  }
-  if (!settings.value.email.includes('@')) {
-    errorText.value = '请先填写有效的邮箱地址';
-    return;
-  }
-  if (settings.value.useCustomSmtp && !settings.value.smtpHost) {
-    errorText.value = '使用自定义 SMTP 时请填写服务器地址';
-    return;
-  }
-  loading.value = true;
-  errorText.value = '';
+const removeSettings = async () => {
+  if (!hasChannel.value) return
+  loading.value = true
+  errorText.value = ''
+  saveErrorText.value = ''
   try {
-    const payload: any = {
-      channelId: props.channelId,
-    };
-    // 如果使用自定义 SMTP，传递配置
-    if (settings.value.useCustomSmtp) {
-      payload.useCustomSmtp = true;
-      payload.smtpHost = settings.value.smtpHost;
-      payload.smtpPort = settings.value.smtpPort || 587;
-      payload.smtpUsername = settings.value.smtpUsername;
-      payload.smtpPassword = smtpPassword.value; // 使用当前输入的密码
-      payload.smtpFromAddress = settings.value.smtpFromAddress;
-      payload.smtpFromName = settings.value.smtpFromName;
-      payload.smtpUseTls = settings.value.smtpUseTls;
-    }
-    await api.post('/api/v1/email-notification/test', payload);
-    message.success('测试邮件已发送，请检查收件箱');
+    await api.delete(`/api/v1/channels/${props.channelId}/digest-push`)
+    await refresh()
+    message.success('未读提醒配置已删除')
   } catch (e: any) {
-    errorText.value = e?.response?.data?.message || e?.message || '发送失败';
+    saveErrorText.value = e?.response?.data?.message || e?.message || '删除失败'
   } finally {
-    loading.value = false;
+    loading.value = false
   }
-};
+}
 
-watch(() => props.channelId, refresh, { immediate: true });
-onMounted(refresh);
+const toTimestamp = (value: string) => {
+  if (!value) return 0
+  const ts = new Date(value).getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
+
+const runTest = async () => {
+  if (!hasChannel.value || !validateBeforeTest()) return
+  testing.value = true
+  errorText.value = ''
+  testErrorText.value = ''
+  resetTestResult()
+  try {
+    const payload: Record<string, any> = {
+      enabled: settings.value.enabled,
+      windowSeconds: testWindowSeconds.value || settings.value.windowSeconds,
+      activeUserThresholdMode: settings.value.activeUserThresholdMode,
+      activeUserThresholdValue: showFixedThreshold.value ? settings.value.activeUserThresholdValue : 0,
+      pushMode: settings.value.pushMode,
+      textTemplate: settings.value.textTemplate,
+      jsonTemplate: settings.value.jsonTemplate,
+      activeWebhookUrl: settings.value.activeWebhookUrl,
+      activeWebhookMethod: settings.value.activeWebhookMethod,
+      activeWebhookHeaders: settings.value.activeWebhookHeaders,
+      signingSecret: signingSecret.value,
+      clearSigningSecret: clearSigningSecret.value,
+      deliverActive: testDeliverActive.value,
+    }
+    const fromTs = toTimestamp(testFromTime.value)
+    const toTs = toTimestamp(testToTime.value)
+    if (fromTs > 0 || toTs > 0) {
+      payload.fromTime = fromTs
+      payload.toTime = toTs
+    }
+    const resp = await api.post(`/api/v1/channels/${props.channelId}/digest-push/test`, payload)
+    testPreview.value = resp.data?.preview || null
+    testRecord.value = resp.data?.item || null
+    testDelivery.value = resp.data?.delivery || null
+    await loadLatestRecord()
+    message.success(testDeliverActive.value ? '测试推送已执行并落库' : '测试摘要已生成并落库')
+  } catch (e: any) {
+    testPreview.value = e?.response?.data?.preview || null
+    testRecord.value = e?.response?.data?.item || null
+    testDelivery.value = e?.response?.data?.delivery || null
+    testErrorText.value = e?.response?.data?.message || e?.message || '测试失败'
+    await loadLatestRecord()
+  } finally {
+    testing.value = false
+  }
+}
+
+const formatRecordTime = (value?: number) => {
+  if (!value || value <= 0) return '-'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return String(value)
+  }
+}
+
+watch(() => props.channelId, refresh, { immediate: true })
+watch(() => settings.value.pushMode, () => {
+  if (!showActivePush.value) {
+    testDeliverActive.value = false
+  }
+})
+watch(passiveToken, () => {
+  persistPassivePullCache()
+})
+onMounted(refresh)
 </script>
 
 <template>
   <div class="p-3">
-    <n-alert v-if="featureDisabled" type="warning" :bordered="false" class="mb-3">
-      邮件通知功能未由管理员启用。请联系管理员在服务器配置中启用此功能。
-    </n-alert>
-
-    <n-alert v-else-if="errorText" type="error" :bordered="false" class="mb-3">
+    <n-alert v-if="errorText" type="error" :bordered="false" class="mb-3">
       {{ errorText }}
     </n-alert>
 
-    <n-card v-if="!featureDisabled" title="邮件提醒设置" size="small">
-      <n-space vertical size="medium">
-        <!-- 启用开关 -->
+    <n-alert v-if="saveErrorText" type="error" :bordered="false" class="mb-3">
+      {{ saveErrorText }}
+    </n-alert>
+
+    <n-card title="频道未读提醒" size="small" class="mb-3">
+      <n-space vertical size="large">
         <div class="flex items-center justify-between">
-          <span class="text-sm">启用邮件提醒</span>
+          <div>
+            <div class="font-medium">启用规则</div>
+            <div class="text-xs text-gray-500">窗口结束后按访问人数阈值判断是否生成摘要</div>
+          </div>
           <n-switch v-model:value="settings.enabled" :disabled="loading" />
         </div>
 
-        <!-- 邮箱地址 -->
         <div>
-          <div class="text-sm mb-1">接收邮箱</div>
-          <n-input
-            v-model:value="settings.email"
-            placeholder="your@email.com"
+          <div class="text-sm mb-2">事件周期</div>
+          <n-select
+            v-model:value="settings.windowSeconds"
+            :options="windowOptions"
             :disabled="loading"
           />
         </div>
 
-        <!-- 延迟时间 -->
         <div>
-          <div class="text-sm mb-1">
-            延迟推送时间：{{ settings.delayMinutes }} 分钟
-          </div>
-          <div class="text-xs text-gray-500 mb-2">
-            消息在该时间内未被阅读时，将发送邮件提醒
-          </div>
-          <n-slider
-            v-model:value="settings.delayMinutes"
-            :min="settings.minDelay || 10"
-            :max="settings.maxDelay || 30"
-            :step="1"
-            :disabled="loading"
-            :marks="{ [settings.minDelay || 10]: `${settings.minDelay || 10}分钟`, [settings.maxDelay || 30]: `${settings.maxDelay || 30}分钟` }"
-          />
-        </div>
-
-        <!-- 自定义 SMTP 配置 -->
-        <n-collapse>
-          <n-collapse-item title="自定义 SMTP 服务器（可选）" name="smtp">
-            <n-space vertical size="small">
-              <div class="flex items-center justify-between">
-                <span class="text-sm">使用自定义 SMTP</span>
-                <n-switch v-model:value="settings.useCustomSmtp" :disabled="loading" />
-              </div>
-
-              <template v-if="settings.useCustomSmtp">
-                <div>
-                  <div class="text-xs mb-1">SMTP 服务器地址</div>
-                  <n-input v-model:value="settings.smtpHost" placeholder="smtp.example.com" :disabled="loading" />
-                </div>
-                <div>
-                  <div class="text-xs mb-1">端口</div>
-                  <n-input-number v-model:value="settings.smtpPort" :min="1" :max="65535" placeholder="587" :disabled="loading" style="width: 100%;" />
-                </div>
-                <div>
-                  <div class="text-xs mb-1">用户名</div>
-                  <n-input v-model:value="settings.smtpUsername" placeholder="your@email.com" :disabled="loading" />
-                </div>
-                <div>
-                  <div class="text-xs mb-1">密码 {{ settings.hasPassword ? '（已设置，留空保持不变）' : '' }}</div>
-                  <n-input v-model:value="smtpPassword" type="password" placeholder="SMTP 密码" :disabled="loading" />
-                </div>
-                <div>
-                  <div class="text-xs mb-1">发件人地址</div>
-                  <n-input v-model:value="settings.smtpFromAddress" placeholder="noreply@example.com" :disabled="loading" />
-                </div>
-                <div>
-                  <div class="text-xs mb-1">发件人名称</div>
-                  <n-input v-model:value="settings.smtpFromName" placeholder="SealChat" :disabled="loading" />
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-xs">使用 TLS 加密</span>
-                  <n-switch v-model:value="settings.smtpUseTls" :disabled="loading" size="small" />
-                </div>
-              </template>
-
-              <n-alert v-if="!settings.useCustomSmtp" type="info" :bordered="false">
-                <div class="text-xs">不填写自定义 SMTP 时，将使用系统管理员配置的默认邮件服务器。</div>
-              </n-alert>
+          <div class="text-sm mb-2">登录用户阈值</div>
+          <n-radio-group v-model:value="settings.activeUserThresholdMode" name="threshold-mode">
+            <n-space>
+              <n-radio-button
+                v-for="item in thresholdModeOptions"
+                :key="item.value"
+                :value="item.value"
+              >
+                {{ item.label }}
+              </n-radio-button>
             </n-space>
-          </n-collapse-item>
-        </n-collapse>
+          </n-radio-group>
+          <div class="text-xs text-gray-500 mt-2">
+            当前生效阈值：{{ settings.effectiveActiveUserThreshold }}
+          </div>
+          <n-input-number
+            v-if="showFixedThreshold"
+            v-model:value="settings.activeUserThresholdValue"
+            class="mt-2 w-full"
+            :min="1"
+            :disabled="loading"
+          />
+        </div>
 
-        <!-- 操作按钮 -->
-        <n-space justify="end" class="mt-3">
-          <n-button :loading="loading" :disabled="!settings.email" @click="testEmail">
-            发送测试邮件
-          </n-button>
-          <n-button type="primary" :loading="loading" @click="saveSettings">
-            保存设置
-          </n-button>
+        <div>
+          <div class="text-sm mb-2">推送方式</div>
+          <n-radio-group v-model:value="settings.pushMode" name="push-mode">
+            <n-space>
+              <n-radio-button
+                v-for="item in pushModeOptions"
+                :key="item.value"
+                :value="item.value"
+              >
+                {{ item.label }}
+              </n-radio-button>
+            </n-space>
+          </n-radio-group>
+        </div>
+
+        <div>
+          <div class="text-sm mb-2">文本模板</div>
+          <n-input
+            v-model:value="settings.textTemplate"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 6 }"
+            :disabled="loading"
+          />
+          <div class="text-xs text-gray-500 mt-2">
+            可用占位符：<n-code v-pre>{{window_label}}</n-code>、
+            <n-code v-pre>{{channel_name}}</n-code>、
+            <n-code v-pre>{{message_count}}</n-code>、
+            <n-code v-pre>{{active_user_count}}</n-code>、
+            <n-code v-pre>{{speaker_names}}</n-code>、
+            <n-code v-pre>{{speaker_summary}}</n-code>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-sm mb-2">JSON 模板</div>
+          <n-input
+            v-model:value="settings.jsonTemplate"
+            type="textarea"
+            :autosize="{ minRows: 8, maxRows: 16 }"
+            :disabled="loading"
+          />
+          <div class="text-xs text-gray-500 mt-2">
+            JSON 模板中的字符串占位符不要手动加引号，例如 <n-code v-pre>"text": {{rendered_text}}</n-code>
+          </div>
+        </div>
+
+        <div v-if="showActivePush">
+          <div class="text-sm mb-2">主动推送配置</div>
+          <n-space vertical size="small">
+            <n-input v-model:value="settings.activeWebhookUrl" placeholder="https://example.com/webhook" :disabled="loading" />
+            <n-select v-model:value="settings.activeWebhookMethod" :options="methodOptions" :disabled="loading" />
+            <div class="text-xs text-gray-500">
+              额外请求头默认使用空对象 <n-code>{}</n-code>，当前界面不再单独编辑；如需扩展，请直接在代码或接口层配置。
+            </div>
+            <n-input
+              v-model:value="signingSecret"
+              type="password"
+              show-password-on="click"
+              :disabled="loading || clearSigningSecret"
+              placeholder="留空则保持现有签名密钥"
+            />
+            <div class="flex items-center justify-between text-xs text-gray-500">
+              <span>当前签名密钥：{{ settings.hasSigningSecret ? '已配置' : '未配置' }}</span>
+              <label class="flex items-center gap-2">
+                <input v-model="clearSigningSecret" type="checkbox" />
+                清空签名密钥
+              </label>
+            </div>
+          </n-space>
+        </div>
+
+        <n-space justify="end">
+          <n-button :disabled="loading" @click="removeSettings">删除规则</n-button>
+          <n-button type="primary" :loading="loading" @click="saveSettings">保存配置</n-button>
+        </n-space>
+      </n-space>
+    </n-card>
+
+    <n-card title="被动拉取" size="small" class="mb-3">
+      <n-space vertical size="small">
+        <div class="text-sm">系统会自动创建带 <n-code>read_digest</n-code> capability 的 token，并拼成可直接访问的完整链接：</div>
+        <n-alert v-if="passiveTokenError" type="warning" :bordered="false">
+          {{ passiveTokenError }}
+        </n-alert>
+        <div>
+          <div class="text-sm mb-2">被动拉取 Token</div>
+          <n-input
+            v-model:value="passiveToken"
+            type="password"
+            show-password-on="click"
+            placeholder="可在此直接修改 token"
+            :disabled="passiveTokenLoading"
+          />
+          <n-space class="mt-2" justify="end">
+            <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken()">自动生成</n-button>
+            <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken(true)">重新生成</n-button>
+          </n-space>
+        </div>
+        <div class="text-xs break-all">
+          列表：<n-code>{{ passivePullUrl }}</n-code>
+        </div>
+        <div class="text-xs break-all">
+          最新：<n-code>{{ passiveLatestUrl }}</n-code>
+        </div>
+      </n-space>
+    </n-card>
+
+    <n-card title="测试推送" size="small">
+      <n-space vertical size="large">
+        <div>
+          <div class="text-sm mb-2">测试周期</div>
+          <n-select v-model:value="testWindowSeconds" :options="windowOptions" :disabled="testing" />
+        </div>
+
+        <div>
+          <div class="text-sm mb-2">指定时间范围（可选）</div>
+          <div class="grid grid-cols-1 gap-2">
+            <n-input v-model:value="testFromTime" type="datetime-local" :disabled="testing" placeholder="开始时间" />
+            <n-input v-model:value="testToTime" type="datetime-local" :disabled="testing" placeholder="结束时间" />
+          </div>
+          <div class="text-xs text-gray-500 mt-2">
+            若不填写，则默认测试最近一个已结束的周期窗口。
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm">同时触发主动推送</div>
+            <div class="text-xs text-gray-500">仅在已配置主动推送地址时有效</div>
+          </div>
+          <n-switch v-model:value="testDeliverActive" :disabled="testing || !showActivePush" />
+        </div>
+
+        <n-space justify="end">
+          <n-button type="primary" :loading="testing" @click="runTest">执行测试</n-button>
         </n-space>
 
-        <!-- 说明 -->
-        <n-alert type="info" :bordered="false" class="mt-3">
-          <div class="text-xs">
-            <strong>工作原理：</strong>
-            <ul class="list-disc ml-4 mt-1">
-              <li>当有新消息且您未在线阅读时，系统会在设定的延迟时间后发送邮件提醒</li>
-              <li>邮件中包含未读消息的摘要信息</li>
-              <li>每小时最多发送一定数量的提醒邮件，避免打扰</li>
-            </ul>
+        <n-alert v-if="testErrorText" type="error" :bordered="false">
+          {{ testErrorText }}
+        </n-alert>
+
+        <n-alert v-if="testRecord" type="success" :bordered="false">
+          最近落库摘要：
+          <div class="text-sm leading-6 mt-1">
+            记录 ID：{{ testRecord.id }}<br />
+            状态：{{ testRecord.status }}<br />
+            时间窗口：{{ formatRecordTime(testRecord.windowStart) }} ~ {{ formatRecordTime(testRecord.windowEnd) }}<br />
+            写入时间：{{ formatRecordTime(testRecord.generatedAt) }}<br />
+            消息数：{{ testRecord.messageCount }}<br />
+            访问人数：{{ testRecord.activeUserCount }}
           </div>
+        </n-alert>
+
+        <n-alert v-else type="warning" :bordered="false">
+          最近落库摘要为空。请先执行测试，或等待周期任务生成摘要记录。
+        </n-alert>
+
+        <n-alert v-if="testPreview" type="info" :bordered="false">
+          <div class="text-sm leading-6">
+            时间窗口：{{ testPreview.windowLabel }}<br />
+            消息数：{{ testPreview.messageCount }}<br />
+            访问人数：{{ testPreview.activeUserCount }} / 阈值 {{ testPreview.thresholdValue }}<br />
+            规则命中：{{ testPreview.thresholdSatisfied ? '是' : '否' }}
+          </div>
+        </n-alert>
+
+        <div v-if="testRecord">
+          <div class="text-sm mb-2">最近落库文本</div>
+          <n-input :value="testRecord.renderedText" type="textarea" readonly :autosize="{ minRows: 3, maxRows: 6 }" />
+        </div>
+
+        <div v-if="testRecord">
+          <div class="text-sm mb-2">最近落库 JSON</div>
+          <n-input :value="testRecord.renderedJson" type="textarea" readonly :autosize="{ minRows: 8, maxRows: 16 }" />
+        </div>
+
+        <n-alert v-if="testDelivery" :type="testDelivery.success ? 'success' : 'warning'" :bordered="false">
+          主动推送结果：{{ testDelivery.success ? '成功' : '失败' }}，
+          状态码 {{ testDelivery.statusCode || 0 }}，
+          耗时 {{ testDelivery.responseTimeMs || 0 }} ms
+          <div v-if="testDelivery.errorText" class="mt-1 text-xs">{{ testDelivery.errorText }}</div>
         </n-alert>
       </n-space>
     </n-card>

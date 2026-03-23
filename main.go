@@ -212,14 +212,8 @@ func main() {
 		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
 
-	// 启动未读消息邮件通知 Worker
-	if config.EmailNotification.Enabled {
-		service.StartUnreadNotificationWorker(service.UnreadNotificationWorkerConfig{
-			CheckIntervalSec: config.EmailNotification.CheckIntervalSec,
-			MaxPerHour:       config.EmailNotification.MaxPerHour,
-			SiteURL:          config.Domain,
-		}, config.EmailNotification.SMTP)
-	}
+	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
+	service.StartDigestPushWorker()
 
 	// 启动更新检测 Worker
 	if config.UpdateCheck.Enabled {

@@ -13131,7 +13131,7 @@ onBeforeUnmount(() => {
           :sticky-note-active="stickyNoteStore.uiVisible"
           :webhook-enabled="webhookManageAllowed"
           :webhook-active="webhookDrawerVisible"
-          :email-notification-enabled="true"
+          :email-notification-enabled="webhookManageAllowed"
           :email-notification-active="emailNotificationDrawerVisible"
           :character-card-enabled="!!chat.curChannel?.id"
           :character-card-active="characterCardPanelVisible"
@@ -13568,7 +13568,7 @@ onBeforeUnmount(() => {
 
     <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
       <n-drawer-content closable>
-        <template #header>邮件提醒</template>
+        <template #header>未读提醒</template>
         <EmailNotificationManager :channel-id="chat.curChannel?.id || ''" />
       </n-drawer-content>
     </n-drawer>

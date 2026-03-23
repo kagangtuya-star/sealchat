@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -329,6 +330,11 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		Member: memberPT,
 	})
 	ctx.BroadcastChannelPresence(channelId)
+	go func(channelID, userID string) {
+		if err := service.RecordDigestWindowVisit(channelID, userID); err != nil {
+			log.Printf("digest-push: 记录频道访问失败 channel=%s user=%s err=%v", channelID, userID, err)
+		}
+	}(channelId, ctx.User.ID)
 
 	// 获取第一条未读消息信息
 	firstUnreadMsgId, firstUnreadMsgTime, _ := model.ChannelGetFirstUnreadInfo(channelId, ctx.User.ID, &model.FirstUnreadFilterOptions{

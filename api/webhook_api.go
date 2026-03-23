@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -483,6 +484,11 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		_, _ = model.MessageExternalRefUpsert(channel.ID, source, externalID, msg.ID, integration.ID, externalActorID)
 	}
 	_ = model.WebhookEventLogAppendForMessage(channel.ID, "message-created", msg.ID)
+	go func(channelID string, message model.MessageModel) {
+		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
+			log.Printf("digest-push: 记录 webhook 消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
+		}
+	}(channel.ID, *msg)
 
 	// 广播（复用现有 WS 广播通道）
 	channelData := channel.ToProtocolType()

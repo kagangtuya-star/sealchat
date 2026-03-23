@@ -30,6 +30,7 @@ const createName = ref('Foundry');
 const createSource = ref('foundry');
 const createCapabilities = ref<string[]>([
   'read_changes',
+  'read_digest',
   'write_create',
   'write_update_own',
   'write_delete_own',
@@ -38,9 +39,65 @@ const createCapabilities = ref<string[]>([
 
 const lastIssuedToken = ref<string>('');
 const lastIssuedHint = ref<string>('');
+const WEBHOOK_TOKEN_STORAGE_KEY = 'sealchat_webhook_token_cache';
+const WEBHOOK_INTEGRATION_STORAGE_KEY = 'sealchat_webhook_integration_cache';
 
 const hasChannel = computed(() => !!props.channelId && props.channelId.trim().length > 0);
-const baseWebhookUrl = computed(() => `${urlBase}/api/v1/webhook/channels/${props.channelId}`);
+const accessBaseUrl = computed(() => {
+  if (/^https?:\/\//i.test(urlBase)) {
+    return urlBase;
+  }
+  if (urlBase.startsWith('//')) {
+    return `${window.location.protocol}${urlBase}`;
+  }
+  return `${window.location.origin}${urlBase.startsWith('/') ? '' : '/'}${urlBase}`;
+});
+const baseWebhookUrl = computed(() => `${accessBaseUrl.value}/api/v1/webhook/channels/${props.channelId}`);
+
+const readTokenCache = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem(WEBHOOK_TOKEN_STORAGE_KEY) || '{}';
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, string>;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+};
+
+const writeChannelTokenCache = (channelId: string, token: string) => {
+  const normalizedChannelId = (channelId || '').trim();
+  const normalizedToken = (token || '').trim();
+  if (!normalizedChannelId || !normalizedToken) {
+    return;
+  }
+  const next = readTokenCache();
+  next[normalizedChannelId] = normalizedToken;
+  try {
+    localStorage.setItem(WEBHOOK_TOKEN_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+};
+
+const writeChannelIntegrationCache = (channelId: string, integrationId: string) => {
+  const normalizedChannelId = (channelId || '').trim();
+  const normalizedIntegrationId = (integrationId || '').trim();
+  if (!normalizedChannelId || !normalizedIntegrationId) {
+    return;
+  }
+  try {
+    const raw = localStorage.getItem(WEBHOOK_INTEGRATION_STORAGE_KEY) || '{}';
+    const parsed = JSON.parse(raw);
+    const next = parsed && typeof parsed === 'object' ? parsed as Record<string, string> : {};
+    next[normalizedChannelId] = normalizedIntegrationId;
+    localStorage.setItem(WEBHOOK_INTEGRATION_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+};
 
 const formatTime = (ms?: number) => {
   if (!ms || ms <= 0) return '-';
@@ -89,6 +146,8 @@ const createIntegration = async () => {
     });
     lastIssuedToken.value = resp.data?.token || '';
     lastIssuedHint.value = resp.data?.item?.tokenTailFragment || '';
+    writeChannelIntegrationCache(props.channelId, resp.data?.item?.id || '');
+    writeChannelTokenCache(props.channelId, lastIssuedToken.value);
     await refresh();
     if (lastIssuedToken.value) await copyText(lastIssuedToken.value);
   } catch (e: any) {
@@ -114,6 +173,8 @@ const rotateToken = async (item: WebhookIntegrationItem) => {
         const resp = await api.post<{ token: string }>(`/api/v1/channels/${props.channelId}/webhook-integrations/${item.id}/rotate`, {});
         lastIssuedToken.value = resp.data?.token || '';
         lastIssuedHint.value = item.tokenTailFragment || '';
+        writeChannelIntegrationCache(props.channelId, item.id);
+        writeChannelTokenCache(props.channelId, lastIssuedToken.value);
         await refresh();
         if (lastIssuedToken.value) await copyText(lastIssuedToken.value);
       } catch (e: any) {
@@ -158,6 +219,8 @@ onMounted(refresh);
       <div class="mt-1 text-xs">
         GET：<code>{{ baseWebhookUrl }}/changes</code>
         <br />
+        GET：<code>{{ baseWebhookUrl }}/digests</code>
+        <br />
         POST：<code>{{ baseWebhookUrl }}/messages</code>
       </div>
     </n-alert>
@@ -174,6 +237,7 @@ onMounted(refresh);
         <n-checkbox-group v-model:value="createCapabilities">
           <n-space wrap>
             <n-checkbox value="read_changes">read_changes</n-checkbox>
+            <n-checkbox value="read_digest">read_digest</n-checkbox>
             <n-checkbox value="write_create">write_create</n-checkbox>
             <n-checkbox value="write_update_own">write_update_own</n-checkbox>
             <n-checkbox value="write_delete_own">write_delete_own</n-checkbox>

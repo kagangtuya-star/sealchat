@@ -281,6 +281,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	// External webhook API (channelId + token auth) - 必须在 v1Auth 之前定义
 	v1.Get("/webhook/channels/:channelId/changes", WebhookAuthMiddleware, WebhookChanges)
+	v1.Get("/webhook/channels/:channelId/digests", WebhookAuthMiddleware, WebhookDigestList)
+	v1.Get("/webhook/channels/:channelId/digests/latest", WebhookAuthMiddleware, WebhookDigestLatest)
 	v1.Post("/webhook/channels/:channelId/messages", WebhookAuthMiddleware, WebhookMessages)
 
 	v1Auth := v1.Group("")
@@ -406,11 +408,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	webhookIntegrations.Post("/:id/rotate", WebhookIntegrationRotate)
 	webhookIntegrations.Post("/:id/revoke", WebhookIntegrationRevoke)
 
-	// Email notification settings
-	v1Auth.Get("/channels/:channelId/email-notification", EmailNotificationSettingsGet)
-	v1Auth.Post("/channels/:channelId/email-notification", EmailNotificationSettingsUpsert)
-	v1Auth.Delete("/channels/:channelId/email-notification", EmailNotificationSettingsDelete)
-	v1Auth.Post("/email-notification/test", EmailNotificationTestSend)
+	// Digest push settings (reuse original UI entry position, replace capability semantics)
+	v1Auth.Get("/channels/:channelId/digest-push", DigestPushSettingsGet)
+	v1Auth.Post("/channels/:channelId/digest-push", DigestPushSettingsUpsert)
+	v1Auth.Delete("/channels/:channelId/digest-push", DigestPushSettingsDelete)
+	v1Auth.Post("/channels/:channelId/digest-push/test", DigestPushTest)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}
