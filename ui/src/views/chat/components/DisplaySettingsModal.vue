@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
+import { useMessage } from 'naive-ui'
 import {
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
@@ -7,6 +8,11 @@ import {
   type DisplaySettings
 } from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
+import {
+  downloadDisplaySettingsTransfer,
+  exportDisplaySettingsPackage,
+  importDisplaySettingsPackage,
+} from '@/services/displaySettingsTransfer'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
@@ -33,13 +39,20 @@ const fontSettingsPanelVisible = ref(false)
 const keywordQuickInputTriggerDraft = ref('/')
 const identityQuickSwitchTriggerDraft = ref('/')
 const identityVariantQuickSwitchTriggerDraft = ref('=')
+const transferProcessing = ref(false)
+const importFileInputRef = ref<HTMLInputElement | null>(null)
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
+const message = useMessage()
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
   { label: '日期 + 时间（2024-05-30 14:35）', value: 'datetime' },
   { label: '日期 + 时间（含秒）', value: 'datetimeSeconds' },
+]
+const transferMenuOptions = [
+  { label: '导出当前配置', key: 'export' },
+  { label: '导入 JSON / ZIP', key: 'import' },
 ]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
@@ -260,13 +273,17 @@ const deepEqual = (a: any, b: any): boolean => {
 
 const AUTO_SAVE_DEBOUNCE_MS = 150
 let autoSaveTimer: number | undefined
+const clearAutoSaveTimer = () => {
+  if (typeof window === 'undefined') return
+  if (autoSaveTimer === undefined) return
+  window.clearTimeout(autoSaveTimer)
+  autoSaveTimer = undefined
+}
 const scheduleAutoSave = () => {
   if (typeof window === 'undefined') return
   if (!props.visible) return
 
-  if (autoSaveTimer !== undefined) {
-    window.clearTimeout(autoSaveTimer)
-  }
+  clearAutoSaveTimer()
 
   autoSaveTimer = window.setTimeout(() => {
     const next = stripCustomThemeFields(draft as any)
@@ -283,6 +300,61 @@ const flushAutoSave = () => {
   emit('save', next as any)
 }
 
+const handleExportSettings = async () => {
+  if (transferProcessing.value) return
+  transferProcessing.value = true
+  try {
+    clearAutoSaveTimer()
+    flushAutoSave()
+    const result = await exportDisplaySettingsPackage(display.settings)
+    downloadDisplaySettingsTransfer(result.blob, result.filename)
+    if (result.warnings.length > 0) {
+      message.warning(result.warnings.join('\n'))
+    }
+    message.success(result.format === 'zip' ? '配置已导出为 ZIP（含字体文件）' : '配置已导出为 JSON')
+  } catch (error: any) {
+    message.error(error?.message || '导出配置失败')
+  } finally {
+    transferProcessing.value = false
+  }
+}
+
+const handleTriggerImport = () => {
+  if (transferProcessing.value) return
+  clearAutoSaveTimer()
+  importFileInputRef.value?.click()
+}
+
+const handleImportFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  transferProcessing.value = true
+  try {
+    const result = await importDisplaySettingsPackage(file)
+    await display.replaceSettings(result.settings, { restoreFontAsset: result.importedFont })
+    if (result.warnings.length > 0) {
+      message.warning(result.warnings.join('\n'))
+    }
+    message.success(result.importedFont ? '配置导入成功，字体文件已恢复' : '配置导入成功')
+  } catch (error: any) {
+    message.error(error?.message || '导入配置失败')
+  } finally {
+    input.value = ''
+    transferProcessing.value = false
+  }
+}
+
+const handleTransferAction = async (key: string | number) => {
+  if (key === 'export') {
+    await handleExportSettings()
+    return
+  }
+  if (key === 'import') {
+    handleTriggerImport()
+  }
+}
+
 watch(
   draft,
   () => {
@@ -296,19 +368,12 @@ watch(
   (visible, prevVisible) => {
     // If user closes the modal right after editing, flush pending changes once.
     if (!visible && prevVisible) {
-      if (typeof window !== 'undefined' && autoSaveTimer !== undefined) {
-        window.clearTimeout(autoSaveTimer)
-        autoSaveTimer = undefined
-      }
+      clearAutoSaveTimer()
       flushAutoSave()
       return
     }
     if (visible) return
-    if (typeof window === 'undefined') return
-    if (autoSaveTimer !== undefined) {
-      window.clearTimeout(autoSaveTimer)
-      autoSaveTimer = undefined
-    }
+    clearAutoSaveTimer()
   },
 )
 
@@ -1071,7 +1136,26 @@ const handleOpenTutorialHub = () => {
         </div>
       </section>
 
-      <n-space justify="end" align="center" class="display-settings__footer">
+      <input
+        ref="importFileInputRef"
+        class="display-settings__hidden-file-input"
+        type="file"
+        accept=".json,.zip,application/json,application/zip"
+        @change="handleImportFile"
+      >
+
+      <n-space justify="space-between" align="center" class="display-settings__footer">
+        <n-dropdown trigger="click" :options="transferMenuOptions" @select="handleTransferAction">
+          <n-button
+            quaternary
+            size="small"
+            text-color="#fff"
+            :disabled="transferProcessing"
+            :loading="transferProcessing"
+          >
+            导入 / 导出
+          </n-button>
+        </n-dropdown>
         <n-space size="small">
           <n-button quaternary size="small" text-color="#fff" @click="handleClose">关闭</n-button>
           <n-button tertiary size="small" text-color="#fff" @click="handleRestoreDefaults">恢复默认</n-button>
@@ -1397,6 +1481,11 @@ const handleOpenTutorialHub = () => {
 
 .display-settings__footer {
   margin-top: 0.5rem;
+  width: 100%;
+}
+
+.display-settings__hidden-file-input {
+  display: none;
 }
 
 @media (max-width: 720px) {

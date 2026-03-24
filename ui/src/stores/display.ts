@@ -1160,6 +1160,14 @@ export const useDisplayStore = defineStore('display', {
       this.persist()
       this.applyTheme()
     },
+    async replaceSettings(snapshot: Partial<DisplaySettings>, options?: { restoreFontAsset?: boolean }) {
+      this.settings = normalizeWith(defaultSettings(), snapshot)
+      this.persist()
+      this.applyTheme()
+      if (options?.restoreFontAsset) {
+        await this.restoreGlobalFontAsset()
+      }
+    },
     reset() {
       this.settings = defaultSettings()
       this.persist()

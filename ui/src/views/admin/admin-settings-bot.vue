@@ -86,6 +86,28 @@ const resolveBotAvatarValue = (token?: any) => {
   return token.avatar || token.avatarAttachmentId || token.avatar_id || token.avatarId || token.avatar_attachment_id || '';
 };
 
+const emitUpdatedChannelIdentities = (items?: any[]) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return;
+  }
+  items.forEach((item) => {
+    const identity = {
+      id: String(item?.id || '').trim(),
+      channelId: String(item?.channelId || item?.channel_id || '').trim(),
+      userId: String(item?.userId || item?.user_id || '').trim(),
+      displayName: String(item?.displayName || item?.display_name || '').trim(),
+      color: String(item?.color || '').trim(),
+      avatarAttachmentId: String(item?.avatarAttachmentId || item?.avatar_attachment_id || '').trim(),
+      isDefault: Boolean(item?.isDefault ?? item?.is_default),
+      sortOrder: Number(item?.sortOrder ?? item?.sort_order ?? 0) || 0,
+    };
+    if (!identity.id || !identity.channelId) {
+      return;
+    }
+    chatEvent.emit('channel-identity-updated' as any, { identity, channelId: identity.channelId } as any);
+  });
+};
+
 const openEditModal = (token: any) => {
   editingToken.value = token;
   newTokenName.value = token.name || 'bot';
@@ -104,14 +126,17 @@ const submitToken = async () => {
     nickColor: newTokenColor.value,
   };
   try {
+    let resp: any;
     if (editingToken.value) {
-      await utils.botTokenUpdate({
+      resp = await utils.botTokenUpdate({
         id: editingToken.value.id,
         ...payload,
       });
+      emitUpdatedChannelIdentities(resp?.data?.updatedIdentities);
       message.success('更新成功');
     } else {
-      await utils.botTokenAdd(payload);
+      resp = await utils.botTokenAdd(payload);
+      emitUpdatedChannelIdentities(resp?.data?.updatedIdentities);
       message.success('添加成功');
     }
     refresh();
