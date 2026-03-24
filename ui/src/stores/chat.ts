@@ -4332,7 +4332,7 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
-    // 频道管理
+    // 频道设置
     async channelRoleList(id: string, params?: { page?: number; pageSize?: number; aggregate?: boolean }) {
       const shouldAggregate = params?.aggregate ?? (params?.page == null && params?.pageSize == null);
       if (!shouldAggregate) {
@@ -4391,7 +4391,7 @@ export const useChatStore = defineStore({
       };
     },
 
-    // 频道管理
+    // 频道设置
     async channelMemberList(id: string, params?: { page?: number; pageSize?: number }) {
       const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
         params: {

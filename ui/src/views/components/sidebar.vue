@@ -617,7 +617,7 @@ const handleAckWorldAnnouncement = async () => {
                 <div class="flex justify-center space-x-1">
                   <n-dropdown trigger="click" :options="[
                     { label: '进入', key: 'enter', item: chat.temporaryArchivedChannel },
-                    { label: '频道管理', key: 'manage', item: chat.temporaryArchivedChannel },
+                    { label: '频道设置', key: 'manage', item: chat.temporaryArchivedChannel },
                     { label: '复制频道', key: 'copy', item: chat.temporaryArchivedChannel },
                     { label: '恢复归档', key: 'unarchive', item: chat.temporaryArchivedChannel, show: canShowArchive(chat.temporaryArchivedChannel as SChannel) }
                   ]" @select="handleSelect">
@@ -668,7 +668,7 @@ const handleAckWorldAnnouncement = async () => {
                     <n-dropdown trigger="click" :options="[
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
-                      { label: '频道管理', key: 'manage', item: i },
+                      { label: '频道设置', key: 'manage', item: i },
                       { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
                       { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
@@ -724,7 +724,7 @@ const handleAckWorldAnnouncement = async () => {
                       <div class="flex justify-center space-x-1">
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
-                          { label: '频道管理', key: 'manage', item: child },
+                          { label: '频道设置', key: 'manage', item: child },
                           { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },
                           { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },

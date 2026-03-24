@@ -12,8 +12,8 @@ var (
 	PermFuncChannelInvite           = gorbac.NewStdPermission("func_channel_invite")             // 频道 - 常规 - 邀请加入频道
 	PermFuncChannelSubChannelCreate = gorbac.NewStdPermission("func_channel_sub_channel_create") // 频道 - 常规 - 创建子频道
 
-	PermFuncChannelMemberRemove = gorbac.NewStdPermission("func_channel_member_remove") // 频道 - 频道管理 - 踢人
-	PermFuncChannelManageMute   = gorbac.NewStdPermission("func_channel_manage_mute")   // 频道 - 频道管理 - 禁言
+	PermFuncChannelMemberRemove = gorbac.NewStdPermission("func_channel_member_remove") // 频道 - 频道设置 - 踢人
+	PermFuncChannelManageMute   = gorbac.NewStdPermission("func_channel_manage_mute")   // 频道 - 频道设置 - 禁言
 
 	// 成员管理
 

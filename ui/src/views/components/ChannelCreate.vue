@@ -90,7 +90,7 @@ const newChannel = async () => {
     if (await isWorldManager()) {
       dialog.info({
         title: '频道已创建',
-        content: '建议为新频道添加成员并设置权限，是否现在打开频道管理？',
+        content: '建议为新频道添加成员并设置权限，是否现在打开频道设置？',
         positiveText: '打开管理',
         negativeText: '稍后',
         onPositiveClick: async () => {

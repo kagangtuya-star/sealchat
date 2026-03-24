@@ -10,8 +10,8 @@ export interface ChannelRolePermSheet {
   func_channel_audio_send: PermResult; // 频道 - 消息 - 音频发送
   func_channel_invite: PermResult; // 频道 - 常规 - 邀请加入频道
   func_channel_sub_channel_create: PermResult; // 频道 - 常规 - 创建子频道
-  func_channel_member_remove: PermResult; // 频道 - 频道管理 - 踢人
-  func_channel_manage_mute: PermResult; // 频道 - 频道管理 - 禁言
+  func_channel_member_remove: PermResult; // 频道 - 频道设置 - 踢人
+  func_channel_manage_mute: PermResult; // 频道 - 频道设置 - 禁言
   func_channel_role_link: PermResult; // 频道 - 成员管理 - 添加角色
   func_channel_role_unlink: PermResult; // 频道 - 成员管理 - 移除角色
   func_channel_role_link_root: PermResult; // 频道 - 成员管理 - 添加角色 (Root管理员)
