@@ -399,6 +399,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channels/:channelId/messages/:messageId/image-layouts", ChannelMessageImageLayoutsSave)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 	v1Auth.Get("/channels/:channelId/mentionable-members-all", ChannelMentionableMembersAll)
+	v1Auth.Get("/channels/:channelId/whisper-candidates", ChannelWhisperCandidates)
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)

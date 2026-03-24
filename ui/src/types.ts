@@ -12,6 +12,7 @@ export interface WhisperMeta {
   targetUserNick?: string;
   targetUserName?: string;
   targetUserIds?: string[];
+  targetDisplayNames?: string[];
 }
 
 declare module '@satorijs/protocol' {

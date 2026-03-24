@@ -130,6 +130,33 @@ func ChannelIdentityModeConfigClearIdentityReferencesTx(conn *gorm.DB, userID, c
 		}).Error
 }
 
+func ResolveChannelMappedIdentityDisplayName(channelID, userID, icMode string) string {
+	channelID = strings.TrimSpace(channelID)
+	userID = strings.TrimSpace(userID)
+	if channelID == "" || userID == "" {
+		return ""
+	}
+	config, err := ChannelIdentityModeConfigGet(userID, channelID)
+	if err != nil || config == nil {
+		return ""
+	}
+	identityID := strings.TrimSpace(config.ICIdentityID)
+	if strings.EqualFold(strings.TrimSpace(icMode), "ooc") {
+		identityID = strings.TrimSpace(config.OOCIdentityID)
+	}
+	if identityID == "" {
+		return ""
+	}
+	identity, err := ChannelIdentityGetByID(identityID)
+	if err != nil || identity == nil {
+		return ""
+	}
+	if identity.ChannelID != channelID || identity.UserID != userID {
+		return ""
+	}
+	return strings.TrimSpace(identity.DisplayName)
+}
+
 func modelID() StringPKBaseModel {
 	return StringPKBaseModel{ID: utils.NewID()}
 }

@@ -635,6 +635,9 @@ func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *
 	if msg == nil || !msg.IsWhisper {
 		return nil
 	}
+	if names := msg.ResolveWhisperTargetDisplayNames(); len(names) > 0 {
+		return names
+	}
 	primaryTargetID := strings.TrimSpace(msg.WhisperTo)
 	if primaryTargetID == "" && msg.WhisperTarget != nil {
 		primaryTargetID = strings.TrimSpace(msg.WhisperTarget.ID)

@@ -9012,8 +9012,20 @@ const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
-const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
-const whisperMentionableCandidates = ref<WhisperCandidate[]>([]);
+const whisperCandidateUsers = ref<Array<{
+  userId: string;
+  userDisplayName: string;
+  userColor?: string;
+  avatar: string;
+  icIdentityId?: string;
+  icDisplayName?: string;
+  icColor?: string;
+  icAvatar?: string;
+  oocIdentityId?: string;
+  oocDisplayName?: string;
+  oocColor?: string;
+  oocAvatar?: string;
+}>>([]);
 
 type WhisperIdentityType = 'ic' | 'ooc' | 'user';
 
@@ -9025,20 +9037,13 @@ interface WhisperCandidate {
   secondaryName: string;
   color: string;
   identityTypes: WhisperIdentityType[];
+  userDisplayName: string;
+  icDisplayName: string;
+  oocDisplayName: string;
+  userColor: string;
+  icColor: string;
+  oocColor: string;
 }
-
-const whisperIdentityTypeOrder: Record<WhisperIdentityType, number> = {
-  ic: 0,
-  ooc: 1,
-  user: 2,
-};
-
-const normalizeWhisperIdentityType = (value?: string): WhisperIdentityType => {
-  if (value === 'ic' || value === 'ooc') {
-    return value;
-  }
-  return 'user';
-};
 
 const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
   switch (type) {
@@ -9051,64 +9056,85 @@ const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
   }
 };
 
-const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string; identityType?: string }>) => {
-  const deduped = new Map<string, { candidate: WhisperCandidate; primaryWeight: number; types: Set<WhisperIdentityType> }>();
+const resolveWhisperCandidatePreferredName = (
+  item: { userDisplayName?: string; icDisplayName?: string; oocDisplayName?: string },
+  mode: 'ic' | 'ooc',
+) => {
+  if (mode === 'ooc') {
+    return item.oocDisplayName || item.icDisplayName || item.userDisplayName || '未知成员';
+  }
+  return item.icDisplayName || item.oocDisplayName || item.userDisplayName || '未知成员';
+};
+
+const buildWhisperCandidateSummary = (item: { userDisplayName?: string; icDisplayName?: string; oocDisplayName?: string }) => {
+  const ic = item.icDisplayName || '未配置';
+  const ooc = item.oocDisplayName || '未配置';
+  const userName = item.userDisplayName || '未知成员';
+  return `场内：${ic} | 场外：${ooc} | 用户：${userName}`;
+};
+
+const resolveWhisperMetaNameStyle = (color?: string) => {
+  const normalized = normalizeHexColor(color || '');
+  return normalized ? { color: normalized } : undefined;
+};
+
+const buildWhisperCandidates = (items: Array<{
+  userId?: string;
+  userDisplayName?: string;
+  userColor?: string;
+  avatar?: string;
+  icIdentityId?: string;
+  icDisplayName?: string;
+  icColor?: string;
+  icAvatar?: string;
+  oocIdentityId?: string;
+  oocDisplayName?: string;
+  oocColor?: string;
+  oocAvatar?: string;
+}>, mode: 'ic' | 'ooc') => {
+  const candidates: WhisperCandidate[] = [];
   for (const item of items) {
     const userId = String(item?.userId || '').trim();
     if (!userId || userId === user.info.id) {
       continue;
     }
-    const identityType = normalizeWhisperIdentityType(item?.identityType);
-    const displayName = item?.displayName || '未知成员';
-    const avatar = item?.avatar || '';
-    const color = normalizeHexColor(item?.color || '') || '';
-    const weight = whisperIdentityTypeOrder[identityType];
+    const icDisplayName = String(item?.icDisplayName || '').trim();
+    const oocDisplayName = String(item?.oocDisplayName || '').trim();
+    const userDisplayName = String(item?.userDisplayName || '').trim() || '未知成员';
+    const userColor = normalizeHexColor(item?.userColor || '') || '';
+    const icColor = normalizeHexColor(item?.icColor || '') || '';
+    const oocColor = normalizeHexColor(item?.oocColor || '') || '';
+    const identityTypes: WhisperIdentityType[] = [];
+    if (icDisplayName) identityTypes.push('ic');
+    if (oocDisplayName) identityTypes.push('ooc');
+    if (!identityTypes.length) identityTypes.push('user');
 
-    const existing = deduped.get(userId);
-    if (!existing) {
-      deduped.set(userId, {
-        primaryWeight: weight,
-        types: new Set<WhisperIdentityType>([identityType]),
-        candidate: {
-          raw: {
-            id: userId,
-            name: displayName,
-            nick: displayName,
-            avatar,
-            color,
-          },
-          id: userId,
-          avatar,
-          displayName,
-          secondaryName: '',
-          color,
-          identityTypes: [identityType],
-        },
-      });
-      continue;
-    }
+    const displayName = resolveWhisperCandidatePreferredName({ userDisplayName, icDisplayName, oocDisplayName }, mode);
+    const avatar = mode === 'ooc'
+      ? (item?.oocAvatar || item?.icAvatar || item?.avatar || '')
+      : (item?.icAvatar || item?.oocAvatar || item?.avatar || '');
+    const color = normalizeHexColor(
+      mode === 'ooc'
+        ? (item?.oocColor || item?.icColor || item?.userColor || '')
+        : (item?.icColor || item?.oocColor || item?.userColor || ''),
+    ) || '';
 
-    existing.types.add(identityType);
-    if (weight < existing.primaryWeight) {
-      existing.primaryWeight = weight;
-      existing.candidate.avatar = avatar;
-      existing.candidate.displayName = displayName;
-      existing.candidate.color = color;
-      existing.candidate.raw = {
-        id: userId,
-        name: displayName,
-        nick: displayName,
-        avatar,
-        color,
-      };
-    }
+    candidates.push({
+      raw: item,
+      id: userId,
+      avatar,
+      displayName,
+      secondaryName: buildWhisperCandidateSummary({ userDisplayName, icDisplayName, oocDisplayName }),
+      color,
+      identityTypes,
+      userDisplayName,
+      icDisplayName,
+      oocDisplayName,
+      userColor,
+      icColor,
+      oocColor,
+    });
   }
-
-  const candidates = Array.from(deduped.values()).map((entry) => {
-    const types = Array.from(entry.types).sort((a, b) => whisperIdentityTypeOrder[a] - whisperIdentityTypeOrder[b]);
-    entry.candidate.identityTypes = types;
-    return entry.candidate;
-  });
 
   candidates.sort((a, b) => {
     const aHasIc = a.identityTypes.includes('ic');
@@ -9122,15 +9148,17 @@ const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: st
   return candidates;
 };
 
-const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
-  const id = target?.id;
-  if (id) {
-    const mapped = whisperCandidateColorMap.value.get(String(id));
-    if (mapped) {
-      return mapped;
-    }
-  }
-  const fallback = target?.color || target?.nick_color || target?.nickColor || '';
+const resolveWhisperTargetColor = (target: {
+  id?: string;
+  color?: string;
+  nick_color?: string;
+  nickColor?: string;
+  whisperIcColor?: string;
+  whisperOocColor?: string;
+} | null | undefined) => {
+  const fallback = chat.icMode === 'ooc'
+    ? (target?.whisperOocColor || target?.whisperIcColor || target?.color || target?.nick_color || target?.nickColor || '')
+    : (target?.whisperIcColor || target?.whisperOocColor || target?.color || target?.nick_color || target?.nickColor || '');
   return normalizeHexColor(fallback) || '';
 };
 
@@ -9139,7 +9167,7 @@ const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color
   return color ? { color } : undefined;
 };
 
-const whisperCandidates = computed<WhisperCandidate[]>(() => whisperMentionableCandidates.value);
+const whisperCandidates = computed<WhisperCandidate[]>(() => buildWhisperCandidates(whisperCandidateUsers.value, chat.icMode as 'ic' | 'ooc'));
 
 const filteredWhisperCandidates = computed(() => {
   const keyword = whisperQuery.value.trim();
@@ -9150,6 +9178,9 @@ const filteredWhisperCandidates = computed(() => {
     const candidates = [
       candidate.displayName,
       candidate.secondaryName,
+      candidate.icDisplayName,
+      candidate.oocDisplayName,
+      candidate.userDisplayName,
       candidate.id,
     ].filter(Boolean).map((str) => String(str));
     return candidates.some((name) => matchText(keyword, name));
@@ -9172,11 +9203,21 @@ const whisperPlaceholderText = computed(() => {
   }
   if (whisperTargets.value.length === 1) {
     const target = whisperTargets.value[0];
-    const name = target?.nick || target?.name || '未知成员';
+    const name = resolveSelectedWhisperTargetName(target);
     return t('inputBox.whisperPlaceholder', { target: `@${name}` });
   }
   return t('inputBox.whisperPlaceholderMultiple', { count: whisperTargets.value.length });
 });
+
+const resolveSelectedWhisperTargetName = (target: any) => {
+  if (!target) {
+    return '未知成员';
+  }
+  if (chat.icMode === 'ooc') {
+    return target?.whisperOocDisplayName || target?.whisperIcDisplayName || target?.nick || target?.name || target?.whisperUserDisplayName || '未知成员';
+  }
+  return target?.whisperIcDisplayName || target?.whisperOocDisplayName || target?.nick || target?.name || target?.whisperUserDisplayName || '未知成员';
+};
 
 const ensureInputFocus = () => {
   nextTick(() => {
@@ -9688,7 +9729,7 @@ function openWhisperPanel(source: 'slash' | 'manual') {
   whisperPickerSource.value = source;
   whisperPanelVisible.value = true;
   whisperSelectionIndex.value = 0;
-  void loadWhisperCandidateColors();
+  void loadWhisperCandidates();
   if (source === 'manual') {
     whisperQuery.value = '';
     nextTick(() => {
@@ -9704,28 +9745,18 @@ function closeWhisperPanel() {
   whisperPickerSource.value = null;
 }
 
-const loadWhisperCandidateColors = async () => {
+const loadWhisperCandidates = async () => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId || channelId.length >= 30) {
-    whisperCandidateColorMap.value = new Map();
-    whisperMentionableCandidates.value = [];
+    whisperCandidateUsers.value = [];
     return;
   }
   try {
-    const resp = await chat.fetchMentionableMembers(channelId);
-    const items = resp?.items || [];
-    const candidates = buildWhisperCandidates(items);
-    const nextMap = new Map<string, string>();
-    for (const candidate of candidates) {
-      if (candidate.color) {
-        nextMap.set(candidate.id, candidate.color);
-      }
-    }
-    whisperCandidateColorMap.value = nextMap;
-    whisperMentionableCandidates.value = candidates;
+    const resp = await chat.fetchWhisperCandidates(channelId);
+    whisperCandidateUsers.value = resp?.items || [];
   } catch (error) {
-    console.warn('获取悄悄话候选成员颜色失败', error);
-    whisperMentionableCandidates.value = [];
+    console.warn('获取悄悄话候选成员失败', error);
+    whisperCandidateUsers.value = [];
   }
 };
 
@@ -9736,14 +9767,27 @@ const onWhisperTargetToggle = (candidate: WhisperCandidate) => {
   const raw = candidate.raw || {};
   const targetUser: User = {
     id: candidate.id,
-    name: raw.name || raw.username || raw.nick || candidate.displayName,
+    name: raw.userDisplayName || raw.name || raw.username || raw.nick || candidate.displayName,
     nick: candidate.displayName,
     avatar: candidate.avatar,
     discriminator: raw.discriminator || '',
     is_bot: !!raw.is_bot,
   };
   (targetUser as any).color = candidate.color || '';
+  (targetUser as any).whisperIcDisplayName = candidate.icDisplayName || '';
+  (targetUser as any).whisperOocDisplayName = candidate.oocDisplayName || '';
+  (targetUser as any).whisperUserDisplayName = candidate.userDisplayName || '';
+  (targetUser as any).whisperUserColor = candidate.userColor || '';
+  (targetUser as any).whisperIcColor = candidate.icColor || '';
+  (targetUser as any).whisperOocColor = candidate.oocColor || '';
   chat.toggleWhisperTarget(targetUser);
+};
+
+const handleWhisperCandidateChecked = (candidate: WhisperCandidate, checked: boolean) => {
+  if (checked === isWhisperTarget(candidate)) {
+    return;
+  }
+  onWhisperTargetToggle(candidate);
 };
 
 const confirmWhisperSelection = () => {
@@ -10878,10 +10922,9 @@ watch(
       return;
     }
     resetDraftOrderContext();
-    whisperCandidateColorMap.value = new Map();
-    whisperMentionableCandidates.value = [];
+    whisperCandidateUsers.value = [];
     if (whisperPanelVisible.value) {
-      void loadWhisperCandidateColors();
+      void loadWhisperCandidates();
     }
   },
 );
@@ -10951,8 +10994,8 @@ watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds
   if (targetIds === prevIds) {
     return;
   }
-  if (targetIds && whisperCandidateColorMap.value.size === 0) {
-    void loadWhisperCandidateColors();
+  if (targetIds && whisperCandidateUsers.value.length === 0) {
+    void loadWhisperCandidates();
   }
   stopTypingPreviewNow();
   emitTypingPreview();
@@ -14016,7 +14059,7 @@ onBeforeUnmount(() => {
             <div class="whisper-panel__list" @keydown="handleWhisperKeydown">
               <div v-for="(candidate, idx) in filteredWhisperCandidates" :key="candidate.id"
                 class="whisper-panel__item"
-                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate.raw) }"
+                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate) }"
                 @mousedown.prevent @mouseenter="whisperSelectionIndex = idx"
                 @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
@@ -14034,12 +14077,21 @@ onBeforeUnmount(() => {
                       </span>
                     </div>
                   </div>
-                  <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
+                  <div v-if="candidate.secondaryName" class="whisper-panel__sub">
+                    <span class="whisper-panel__sub-label">场内：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.icColor)">{{ candidate.icDisplayName || '未配置' }}</span>
+                    <span class="whisper-panel__sub-sep"> | </span>
+                    <span class="whisper-panel__sub-label">场外：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.oocColor)">{{ candidate.oocDisplayName || '未配置' }}</span>
+                    <span class="whisper-panel__sub-sep"> | </span>
+                    <span class="whisper-panel__sub-label">用户：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.userColor)">{{ candidate.userDisplayName }}</span>
+                  </div>
                 </div>
                 <n-checkbox
                   class="whisper-panel__checkbox"
-                  :checked="isWhisperTarget(candidate.raw)"
-                  @update:checked="() => onWhisperTargetToggle(candidate)"
+                  :checked="isWhisperTarget(candidate)"
+                  @update:checked="(checked) => handleWhisperCandidateChecked(candidate, checked)"
                   @click.stop
                 />
               </div>
@@ -14085,7 +14137,7 @@ onBeforeUnmount(() => {
               :style="getWhisperTargetStyle(target)"
               @close.stop="chat.removeWhisperTarget(target)"
             >
-              {{ target.nick || target.name }}
+              {{ resolveSelectedWhisperTargetName(target) }}
             </n-tag>
           </div>
           <div class="chat-input-area relative flex-1">
@@ -18656,7 +18708,7 @@ onBeforeUnmount(() => {
 .whisper-panel__title {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #5b21b6;
+  color: var(--sc-text-primary);
   margin-bottom: 0.4rem;
 }
 
@@ -18700,7 +18752,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #4338ca;
+  color: var(--sc-text-primary);
 }
 
 .whisper-panel__tags {
@@ -18737,7 +18789,21 @@ onBeforeUnmount(() => {
 
 .whisper-panel__sub {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.whisper-panel__sub-label {
+  color: var(--sc-text-secondary);
+}
+
+.whisper-panel__sub-name {
+  font-weight: 600;
+}
+
+.whisper-panel__sub-sep {
+  color: var(--sc-text-secondary);
 }
 
 .whisper-panel__empty {
@@ -18749,6 +18815,7 @@ onBeforeUnmount(() => {
 
 .whisper-panel__checkbox {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .whisper-panel__footer {

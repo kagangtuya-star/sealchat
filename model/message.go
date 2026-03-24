@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"sealchat/protocol"
@@ -64,10 +65,11 @@ type MessageModel struct {
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
 	Quote  *MessageModel `json:"quote" gorm:"-"` // 嵌套 Message 结构体
 	// WhisperTarget 为前端展示提供冗余
-	WhisperTarget  *UserModel                `json:"whisper_target" gorm:"-"`
-	WhisperTargets []*UserModel              `json:"whisper_targets" gorm:"-"`
-	WhisperMeta    *protocol.WhisperMeta     `json:"whisper_meta,omitempty" gorm:"-"`
-	Reactions      []MessageReactionListItem `json:"reactions" gorm:"-"`
+	WhisperTarget             *UserModel                `json:"whisper_target" gorm:"-"`
+	WhisperTargets            []*UserModel              `json:"whisper_targets" gorm:"-"`
+	WhisperTargetDisplayNames []string                  `json:"whisper_target_display_names,omitempty" gorm:"-"`
+	WhisperMeta               *protocol.WhisperMeta     `json:"whisper_meta,omitempty" gorm:"-"`
+	Reactions                 []MessageReactionListItem `json:"reactions" gorm:"-"`
 }
 
 func (*MessageModel) TableName() string {
@@ -189,6 +191,9 @@ func (m *MessageModel) buildWhisperMeta() *protocol.WhisperMeta {
 			meta.TargetUserIds = targetIDs
 		}
 	}
+	if displayNames := m.ResolveWhisperTargetDisplayNames(); len(displayNames) > 0 {
+		meta.TargetDisplayNames = append([]string{}, displayNames...)
+	}
 	if meta.SenderMemberID == "" {
 		meta.SenderMemberID = m.MemberID
 	}
@@ -214,6 +219,9 @@ func (m *MessageModel) buildWhisperMeta() *protocol.WhisperMeta {
 	if meta.TargetUserName == "" && m.WhisperTarget != nil {
 		meta.TargetUserName = m.WhisperTarget.Username
 	}
+	if meta.TargetMemberName == "" && len(meta.TargetDisplayNames) > 0 {
+		meta.TargetMemberName = meta.TargetDisplayNames[0]
+	}
 	// 如果目标 meta 仍全部为空，并且没有 WhisperTo，视为无效
 	if meta.TargetUserID == "" {
 		meta.TargetUserID = m.WhisperTo
@@ -224,6 +232,138 @@ func (m *MessageModel) buildWhisperMeta() *protocol.WhisperMeta {
 	return meta
 }
 
+func (m *MessageModel) ResolveWhisperTargetDisplayNames() []string {
+	if m == nil || !m.IsWhisper {
+		return nil
+	}
+	if len(m.WhisperTargetDisplayNames) > 0 {
+		return append([]string{}, normalizeWhisperDisplayNames(m.WhisperTargetDisplayNames)...)
+	}
+
+	userMap := make(map[string]*UserModel, len(m.WhisperTargets)+1)
+	orderedIDs := make([]string, 0, len(m.WhisperTargets)+1)
+	seenIDs := map[string]struct{}{}
+	addID := func(id string, user *UserModel) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if user != nil {
+			userMap[id] = user
+		}
+		if _, ok := seenIDs[id]; ok {
+			return
+		}
+		seenIDs[id] = struct{}{}
+		orderedIDs = append(orderedIDs, id)
+	}
+
+	for _, target := range m.WhisperTargets {
+		if target == nil {
+			continue
+		}
+		addID(target.ID, target)
+	}
+	if m.WhisperTarget != nil {
+		addID(m.WhisperTarget.ID, m.WhisperTarget)
+	}
+	for _, id := range splitWhisperTargetIDs(m.WhisperTo) {
+		addID(id, nil)
+	}
+
+	displayNames := make([]string, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		name := ResolveChannelMappedIdentityDisplayName(m.ChannelID, id, m.ICMode)
+		if name == "" && id == strings.TrimSpace(m.WhisperTo) {
+			name = strings.TrimSpace(m.WhisperTargetMemberName)
+		}
+		if name == "" {
+			if user := userMap[id]; user != nil {
+				name = resolveMessageUserDisplayName(user)
+			}
+		}
+		if name == "" {
+			if member, _ := MemberGetByUserIDAndChannelIDBase(id, m.ChannelID, "", false); member != nil {
+				name = strings.TrimSpace(member.Nickname)
+			}
+		}
+		if name == "" {
+			if user := UserGet(id); user != nil {
+				name = resolveMessageUserDisplayName(user)
+			}
+		}
+		if name == "" {
+			name = id
+		}
+		if name != "" {
+			displayNames = append(displayNames, name)
+		}
+	}
+
+	if len(displayNames) == 0 {
+		fallback := strings.TrimSpace(m.WhisperTargetMemberName)
+		if fallback == "" && m.WhisperTarget != nil {
+			fallback = resolveMessageUserDisplayName(m.WhisperTarget)
+		}
+		if fallback != "" {
+			displayNames = append(displayNames, fallback)
+		}
+	}
+
+	m.WhisperTargetDisplayNames = normalizeWhisperDisplayNames(displayNames)
+	return append([]string{}, m.WhisperTargetDisplayNames...)
+}
+
+func splitWhisperTargetIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func normalizeWhisperDisplayNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func resolveMessageUserDisplayName(user *UserModel) string {
+	if user == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(user.Nickname); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(user.Username); name != "" {
+		return name
+	}
+	return strings.TrimSpace(user.ID)
+}
+
 func (m *MessageModel) EnsureWhisperMeta() {
 	if !m.IsWhisper {
 		m.WhisperMeta = nil
@@ -231,6 +371,28 @@ func (m *MessageModel) EnsureWhisperMeta() {
 	}
 	if m.WhisperMeta == nil {
 		m.WhisperMeta = m.buildWhisperMeta()
+		return
+	}
+	if len(m.WhisperMeta.TargetDisplayNames) == 0 {
+		m.WhisperMeta.TargetDisplayNames = append([]string{}, m.ResolveWhisperTargetDisplayNames()...)
+	}
+	if m.WhisperMeta.TargetMemberName == "" && len(m.WhisperMeta.TargetDisplayNames) > 0 {
+		m.WhisperMeta.TargetMemberName = m.WhisperMeta.TargetDisplayNames[0]
+	}
+	if len(m.WhisperMeta.TargetUserIds) == 0 && len(m.WhisperTargets) > 0 {
+		targetIDs := make([]string, 0, len(m.WhisperTargets))
+		seen := map[string]struct{}{}
+		for _, target := range m.WhisperTargets {
+			if target == nil || strings.TrimSpace(target.ID) == "" {
+				continue
+			}
+			if _, ok := seen[target.ID]; ok {
+				continue
+			}
+			seen[target.ID] = struct{}{}
+			targetIDs = append(targetIDs, target.ID)
+		}
+		m.WhisperMeta.TargetUserIds = targetIDs
 	}
 }
 

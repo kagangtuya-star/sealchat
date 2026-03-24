@@ -4760,6 +4760,30 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async fetchWhisperCandidates(channelId: string) {
+      if (!channelId || channelId.length > 30) {
+        return { items: [], total: 0 };
+      }
+      const resp = await api.get<{
+        items: Array<{
+          userId: string;
+          userDisplayName: string;
+          userColor?: string;
+          avatar: string;
+          icIdentityId?: string;
+          icDisplayName?: string;
+          icColor?: string;
+          icAvatar?: string;
+          oocIdentityId?: string;
+          oocDisplayName?: string;
+          oocColor?: string;
+          oocAvatar?: string;
+        }>;
+        total: number;
+      }>(`api/v1/channels/${channelId}/whisper-candidates`);
+      return resp.data;
+    },
+
     async eventDispatch(e: Event) {
       if (e.type === 'audio-state-updated') {
         const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;

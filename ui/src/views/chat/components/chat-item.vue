@@ -1004,7 +1004,14 @@ const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
   || item?.whisperMeta?.senderUserNick
   || item?.whisperMeta?.senderUserName
   || '未知成员';
-const getTargetDisplayName = (item: any) => item?.whisperMeta?.targetMemberName
+const getWhisperMetaTargetDisplayNames = (item: any) => {
+  const names = item?.whisperMeta?.targetDisplayNames;
+  if (!Array.isArray(names)) return [];
+  return names.map((name: any) => String(name || '').trim()).filter(Boolean);
+};
+
+const getTargetDisplayName = (item: any) => getWhisperMetaTargetDisplayNames(item)[0]
+  || item?.whisperMeta?.targetMemberName
   || item?.whisperTo?.nick
   || item?.whisperTo?.name
   || item?.whisperMeta?.targetUserNick
@@ -1051,6 +1058,14 @@ const resolveChannelIdentityColor = (identityId?: string) => {
 };
 
 const resolveWhisperTargets = (item: any) => {
+  const metaNames = getWhisperMetaTargetDisplayNames(item);
+  const metaIds = Array.isArray(item?.whisperMeta?.targetUserIds) ? item.whisperMeta.targetUserIds : [];
+  if (metaNames.length > 0) {
+    return metaNames.map((name: string, index: number) => ({
+      id: metaIds[index] || '',
+      name,
+    }));
+  }
   const list = item?.whisperToIds || item?.whisper_to_ids || item?.whisperTargets || item?.whisper_targets;
   if (Array.isArray(list) && list.length > 0) {
     return list.map((entry: any) => {
@@ -1063,7 +1078,6 @@ const resolveWhisperTargets = (item: any) => {
       return { id, name };
     });
   }
-  const metaIds = item?.whisperMeta?.targetUserIds;
   if (Array.isArray(metaIds) && metaIds.length > 0) {
     return metaIds.map((id: string) => ({
       id,

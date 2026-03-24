@@ -255,17 +255,18 @@ type ChannelImageLayoutEventPayload struct {
 }
 
 type WhisperMeta struct {
-	SenderMemberID   string   `json:"senderMemberId,omitempty"`
-	SenderMemberName string   `json:"senderMemberName,omitempty"`
-	SenderUserID     string   `json:"senderUserId,omitempty"`
-	SenderUserNick   string   `json:"senderUserNick,omitempty"`
-	SenderUserName   string   `json:"senderUserName,omitempty"`
-	TargetMemberID   string   `json:"targetMemberId,omitempty"`
-	TargetMemberName string   `json:"targetMemberName,omitempty"`
-	TargetUserID     string   `json:"targetUserId,omitempty"`
-	TargetUserNick   string   `json:"targetUserNick,omitempty"`
-	TargetUserName   string   `json:"targetUserName,omitempty"`
-	TargetUserIds    []string `json:"targetUserIds,omitempty"`
+	SenderMemberID     string   `json:"senderMemberId,omitempty"`
+	SenderMemberName   string   `json:"senderMemberName,omitempty"`
+	SenderUserID       string   `json:"senderUserId,omitempty"`
+	SenderUserNick     string   `json:"senderUserNick,omitempty"`
+	SenderUserName     string   `json:"senderUserName,omitempty"`
+	TargetMemberID     string   `json:"targetMemberId,omitempty"`
+	TargetMemberName   string   `json:"targetMemberName,omitempty"`
+	TargetUserID       string   `json:"targetUserId,omitempty"`
+	TargetUserNick     string   `json:"targetUserNick,omitempty"`
+	TargetUserName     string   `json:"targetUserName,omitempty"`
+	TargetUserIds      []string `json:"targetUserIds,omitempty"`
+	TargetDisplayNames []string `json:"targetDisplayNames,omitempty"`
 }
 
 type MessageReorder struct {

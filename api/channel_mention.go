@@ -21,6 +21,21 @@ type MentionableMemberItem struct {
 	IdentityType string `json:"identityType"` // "ic" | "ooc" | "user"
 }
 
+type WhisperCandidateUserItem struct {
+	UserID          string `json:"userId"`
+	UserDisplayName string `json:"userDisplayName"`
+	UserColor       string `json:"userColor,omitempty"`
+	Avatar          string `json:"avatar"`
+	ICIdentityID    string `json:"icIdentityId,omitempty"`
+	ICDisplayName   string `json:"icDisplayName,omitempty"`
+	ICColor         string `json:"icColor,omitempty"`
+	ICAvatar        string `json:"icAvatar,omitempty"`
+	OOCIdentityID   string `json:"oocIdentityId,omitempty"`
+	OOCDisplayName  string `json:"oocDisplayName,omitempty"`
+	OOCColor        string `json:"oocColor,omitempty"`
+	OOCAvatar       string `json:"oocAvatar,omitempty"`
+}
+
 // ChannelMentionableMembers 获取可 @ 的成员列表
 // GET /api/v1/channels/:channelId/mentionable-members?icMode=ic|ooc
 func ChannelMentionableMembers(c *fiber.Ctx) error {
@@ -343,6 +358,163 @@ func ChannelMentionableMembersAll(c *fiber.Ctx) error {
 	})
 }
 
+// ChannelWhisperCandidates 获取悄悄话候选用户（按用户聚合，返回场内/场外身份摘要）
+func ChannelWhisperCandidates(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error":   "unauthorized",
+			"message": "未登录",
+		})
+	}
+
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "bad_request",
+			"message": "缺少频道ID",
+		})
+	}
+	if len(channelID) > 30 {
+		return c.JSON(fiber.Map{
+			"items": []WhisperCandidateUserItem{},
+			"total": 0,
+		})
+	}
+
+	if _, err := resolveChannelAccess(user.ID, channelID); err != nil {
+		switch {
+		case errors.Is(err, fiber.ErrForbidden):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error":   "forbidden",
+				"message": "没有访问该频道的权限",
+			})
+		case errors.Is(err, fiber.ErrNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error":   "not_found",
+				"message": "频道不存在",
+			})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "internal_error",
+				"message": "校验频道权限失败",
+			})
+		}
+	}
+
+	mappings, err := model.UserRoleMappingListByChannelIDAll(channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取频道成员失败",
+		})
+	}
+
+	allowedUserIDs := make(map[string]bool)
+	for _, mapping := range mappings {
+		if mapping == nil || mapping.UserID == "" || mapping.UserID == user.ID {
+			continue
+		}
+		if isExcludedMentionRoleID(mapping.RoleID) {
+			continue
+		}
+		allowedUserIDs[mapping.UserID] = true
+	}
+	if len(allowedUserIDs) == 0 {
+		return c.JSON(fiber.Map{
+			"items": []WhisperCandidateUserItem{},
+			"total": 0,
+		})
+	}
+
+	allowedIDs := make([]string, 0, len(allowedUserIDs))
+	for userID := range allowedUserIDs {
+		allowedIDs = append(allowedIDs, userID)
+	}
+
+	var users []*model.UserModel
+	if err := model.GetDB().Where("id IN ?", allowedIDs).Find(&users).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取用户信息失败",
+		})
+	}
+	userMap := make(map[string]*model.UserModel, len(users))
+	for _, userInfo := range users {
+		if userInfo == nil || userInfo.ID == "" {
+			continue
+		}
+		userMap[userInfo.ID] = userInfo
+	}
+
+	identities, err := model.ChannelIdentityListAll(channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取频道身份失败",
+		})
+	}
+	identityMap := make(map[string]*model.ChannelIdentityModel, len(identities))
+	userIdentities := make(map[string][]*model.ChannelIdentityModel)
+	for _, identity := range identities {
+		if identity == nil || identity.UserID == "" || !allowedUserIDs[identity.UserID] {
+			continue
+		}
+		identityMap[identity.ID] = identity
+		userIdentities[identity.UserID] = append(userIdentities[identity.UserID], identity)
+	}
+
+	modeConfigs, err := model.ChannelIdentityModeConfigListByChannelTx(model.GetDB(), channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取身份映射失败",
+		})
+	}
+	configMap := make(map[string]model.ChannelIdentityModeConfigModel, len(modeConfigs))
+	for _, config := range modeConfigs {
+		if config.UserID == "" || !allowedUserIDs[config.UserID] {
+			continue
+		}
+		configMap[config.UserID] = config
+	}
+
+	items := make([]WhisperCandidateUserItem, 0, len(allowedIDs))
+	for _, userID := range allowedIDs {
+		userInfo := userMap[userID]
+		if userInfo == nil {
+			continue
+		}
+		pair := resolveWhisperIdentityPair(userIdentities[userID], identityMap, configMap[userID])
+		item := WhisperCandidateUserItem{
+			UserID:          userID,
+			UserDisplayName: getUserDisplayName(userInfo),
+			UserColor:       userInfo.NickColor,
+			Avatar:          userInfo.Avatar,
+		}
+		if pair.IC != nil {
+			item.ICIdentityID = pair.IC.ID
+			item.ICDisplayName = pair.IC.DisplayName
+			item.ICColor = pair.IC.Color
+			item.ICAvatar = pair.IC.AvatarAttachmentID
+		}
+		if pair.OOC != nil {
+			item.OOCIdentityID = pair.OOC.ID
+			item.OOCDisplayName = pair.OOC.DisplayName
+			item.OOCColor = pair.OOC.Color
+			item.OOCAvatar = pair.OOC.AvatarAttachmentID
+		}
+		items = append(items, item)
+	}
+
+	sortWhisperCandidateUsers(items)
+
+	return c.JSON(fiber.Map{
+		"items": items,
+		"total": len(items),
+	})
+}
+
 // getOnlineUserIDsInChannel 获取频道内在线用户 ID 集合
 func getOnlineUserIDsInChannel(channelID string) map[string]bool {
 	result := make(map[string]bool)
@@ -395,6 +567,91 @@ func sortMentionableItems(items []MentionableMemberItem) {
 		}
 		return strings.ToLower(left.DisplayName) < strings.ToLower(right.DisplayName)
 	})
+}
+
+type whisperIdentityPair struct {
+	IC  *model.ChannelIdentityModel
+	OOC *model.ChannelIdentityModel
+}
+
+func resolveWhisperIdentityPair(
+	identities []*model.ChannelIdentityModel,
+	identityMap map[string]*model.ChannelIdentityModel,
+	config model.ChannelIdentityModeConfigModel,
+) whisperIdentityPair {
+	var pair whisperIdentityPair
+	if identity := identityMap[strings.TrimSpace(config.ICIdentityID)]; identity != nil {
+		pair.IC = identity
+	}
+	if identity := identityMap[strings.TrimSpace(config.OOCIdentityID)]; identity != nil {
+		pair.OOC = identity
+	}
+
+	var defaultIdentity *model.ChannelIdentityModel
+	var firstIdentity *model.ChannelIdentityModel
+	for _, identity := range identities {
+		if identity == nil {
+			continue
+		}
+		if firstIdentity == nil {
+			firstIdentity = identity
+		}
+		if identity.IsDefault && defaultIdentity == nil {
+			defaultIdentity = identity
+		}
+	}
+	if pair.IC == nil {
+		if defaultIdentity != nil {
+			pair.IC = defaultIdentity
+		} else {
+			pair.IC = firstIdentity
+		}
+	}
+	if pair.OOC == nil {
+		if defaultIdentity != nil && (pair.IC == nil || defaultIdentity.ID != pair.IC.ID) {
+			pair.OOC = defaultIdentity
+		}
+	}
+	if pair.OOC == nil {
+		for _, identity := range identities {
+			if identity == nil || pair.IC == nil || identity.ID == pair.IC.ID {
+				continue
+			}
+			pair.OOC = identity
+			break
+		}
+	}
+	return pair
+}
+
+func sortWhisperCandidateUsers(items []WhisperCandidateUserItem) {
+	if len(items) <= 1 {
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		leftHasIC := strings.TrimSpace(left.ICDisplayName) != ""
+		rightHasIC := strings.TrimSpace(right.ICDisplayName) != ""
+		if leftHasIC != rightHasIC {
+			return leftHasIC
+		}
+		leftName := strings.ToLower(firstNonEmptyMentionName(left.ICDisplayName, left.OOCDisplayName, left.UserDisplayName))
+		rightName := strings.ToLower(firstNonEmptyMentionName(right.ICDisplayName, right.OOCDisplayName, right.UserDisplayName))
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return left.UserID < right.UserID
+	})
+}
+
+func firstNonEmptyMentionName(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func mentionIdentityTypeWeight(identityType string) int {
