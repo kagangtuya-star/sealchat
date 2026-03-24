@@ -139,8 +139,25 @@ func BotTokenUpdate(c *fiber.Ctx) error {
 	if err := service.SyncBotUserProfile(&token); err != nil {
 		return err
 	}
+	syncConnectedUserProfile(token.ID, token.Name, token.Avatar, token.NickColor)
 	_ = service.SyncBotMembers(&token)
-	return c.JSON(token)
+	syncResult, err := service.SyncBotChannelAppearance(&token)
+	if err != nil {
+		return err
+	}
+
+	updatedIdentities := make([]map[string]any, 0, len(syncResult.UpdatedIdentities))
+	for _, identity := range syncResult.UpdatedIdentities {
+		updatedIdentities = append(updatedIdentities, service.ChannelIdentitySerialize(identity))
+	}
+
+	return c.JSON(struct {
+		model.BotTokenModel
+		UpdatedIdentities []map[string]any `json:"updatedIdentities"`
+	}{
+		BotTokenModel:     token,
+		UpdatedIdentities: updatedIdentities,
+	})
 }
 
 func BotTokenDelete(c *fiber.Ctx) error {
