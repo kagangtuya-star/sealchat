@@ -4151,7 +4151,7 @@ const submitIdentityForm = async () => {
       payload.avatarAttachmentId = identityForm.avatarAttachmentId;
       identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
       identityAvatarFile = null;
-    } else if (payload.isTemporary && !payload.avatarAttachmentId) {
+    } else if (payload.isTemporary) {
       const generatedAvatarFile = await buildGeneratedAvatarFile({
         displayName: payload.displayName,
         accentColor: payload.color,
