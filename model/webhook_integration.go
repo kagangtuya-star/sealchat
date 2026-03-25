@@ -121,6 +121,150 @@ func ChannelWebhookIntegrationList(channelID string) ([]*ChannelWebhookIntegrati
 	return items, nil
 }
 
+func normalizeBotUserIDFilter(botUserIDs []string) []string {
+	if len(botUserIDs) == 0 {
+		return nil
+	}
+	dedup := map[string]struct{}{}
+	cleaned := make([]string, 0, len(botUserIDs))
+	for _, id := range botUserIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := dedup[id]; ok {
+			continue
+		}
+		dedup[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	return cleaned
+}
+
+func loadBotUserIDsFromModel(model any, botUserIDs []string) ([]string, error) {
+	q := db.Model(model).
+		Select("DISTINCT bot_user_id").
+		Where("bot_user_id <> ''")
+	if len(botUserIDs) > 0 {
+		q = q.Where("bot_user_id IN ?", botUserIDs)
+	}
+	var ids []string
+	if err := q.Pluck("bot_user_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func loadDigestBotUserIDSet(botUserIDs []string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	cleaned := normalizeBotUserIDFilter(botUserIDs)
+	if len(botUserIDs) > 0 && len(cleaned) == 0 {
+		return out, nil
+	}
+	ids, err := loadBotUserIDsFromModel(&DigestWebhookIntegrationModel{}, cleaned)
+	if err != nil {
+		return nil, err
+	}
+	appendBotUserIDs(out, ids)
+	return out, nil
+}
+
+func appendBotUserIDs(out map[string]struct{}, ids []string) {
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+}
+
+func setToSortedIDs(source map[string]struct{}) []string {
+	if len(source) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(source))
+	for id := range source {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func differenceSortedIDs(source, exclude map[string]struct{}) []string {
+	if len(source) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(source))
+	for id := range source {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := exclude[id]; ok {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func loadBotUserIDsFromUsers(botUserIDs []string) ([]string, error) {
+	q := db.Model(&UserModel{}).
+		Select("id").
+		Where("is_bot = ?", true).
+		Where("bot_kind IN ?", []string{BotKindChannelWebhook, BotKindDigestPull})
+	if len(botUserIDs) > 0 {
+		q = q.Where("id IN ?", botUserIDs)
+	}
+	var ids []string
+	if err := q.Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// InternalBotUserIDSet returns system-managed bot user ids from integration records.
+// When botUserIDs is empty, it returns all system-managed bot ids.
+func InternalBotUserIDSet(botUserIDs []string) (map[string]struct{}, error) {
+	cleaned := normalizeBotUserIDFilter(botUserIDs)
+	if len(botUserIDs) > 0 && len(cleaned) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	out := map[string]struct{}{}
+	userIDs, err := loadBotUserIDsFromUsers(cleaned)
+	if err != nil {
+		return nil, err
+	}
+	appendBotUserIDs(out, userIDs)
+
+	for _, sourceModel := range []any{&ChannelWebhookIntegrationModel{}, &DigestWebhookIntegrationModel{}} {
+		ids, err := loadBotUserIDsFromModel(sourceModel, cleaned)
+		if err != nil {
+			return nil, err
+		}
+		appendBotUserIDs(out, ids)
+	}
+	return out, nil
+}
+
+func IsInternalBotUser(userID string) (bool, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false, nil
+	}
+	set, err := InternalBotUserIDSet([]string{userID})
+	if err != nil {
+		return false, err
+	}
+	_, ok := set[userID]
+	return ok, nil
+}
+
 // WebhookBotUserIDSet returns webhook-bot user ids from integration records.
 // When botUserIDs is empty, it returns all webhook bot ids.
 func WebhookBotUserIDSet(botUserIDs []string) (map[string]struct{}, error) {
@@ -164,16 +308,7 @@ func WebhookBotUserIDSet(botUserIDs []string) (map[string]struct{}, error) {
 }
 
 func IsWebhookBotUser(userID string) (bool, error) {
-	userID = strings.TrimSpace(userID)
-	if userID == "" {
-		return false, nil
-	}
-	set, err := WebhookBotUserIDSet([]string{userID})
-	if err != nil {
-		return false, err
-	}
-	_, ok := set[userID]
-	return ok, nil
+	return IsInternalBotUser(userID)
 }
 
 func ChannelWebhookIntegrationCreate(channelID, name, source, botUserID, createdBy string, capabilities []string) (*ChannelWebhookIntegrationModel, error) {

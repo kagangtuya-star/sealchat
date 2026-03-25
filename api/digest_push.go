@@ -855,6 +855,7 @@ func WorldDigestIntegrationCreate(c *fiber.Ctx) error {
 		Password:          "",
 		Salt:              "BOT_SALT",
 		IsBot:             true,
+		BotKind:           model.BotKindDigestPull,
 	}
 	db := model.GetDB()
 	if err := db.Create(user).Error; err != nil {
@@ -921,4 +922,50 @@ func WorldDigestIntegrationRotate(c *fiber.Ctx) error {
 			Update("token_tail_fragment", newToken[len(newToken)-6:]).Error
 	}
 	return c.JSON(fiber.Map{"token": newToken})
+}
+
+func WorldDigestIntegrationRevoke(c *fiber.Ctx) error {
+	world, err := requireDigestPushManageWorld(c)
+	if err != nil || world == nil {
+		return err
+	}
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "缺少授权ID"})
+	}
+	integration, err := model.DigestWebhookIntegrationGetByID(model.DigestScopeTypeWorld, world.ID, id)
+	if err != nil {
+		return wrapError(c, err, "读取世界摘要拉取授权失败")
+	}
+	if integration == nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "授权不存在"})
+	}
+
+	tx := model.GetDB().Begin()
+	if tx.Error != nil {
+		return wrapError(c, tx.Error, "撤销世界摘要拉取授权失败")
+	}
+	rollback := func(err error) error {
+		tx.Rollback()
+		return wrapError(c, err, "撤销世界摘要拉取授权失败")
+	}
+
+	if err := tx.Model(&model.DigestWebhookIntegrationModel{}).
+		Where("id = ?", integration.ID).
+		Update("status", model.WebhookIntegrationStatusRevoked).Error; err != nil {
+		return rollback(err)
+	}
+	if err := tx.Model(&model.BotTokenModel{}).
+		Where("id = ?", integration.BotUserID).
+		Update("expires_at", int64(0)).Error; err != nil {
+		return rollback(err)
+	}
+	if _, err := model.CleanupOrphanSystemBotByUserIDTx(tx, integration.BotUserID); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		return wrapError(c, err, "撤销世界摘要拉取授权失败")
+	}
+
+	return c.JSON(fiber.Map{"success": true})
 }

@@ -12,6 +12,7 @@ import {
   NSelect,
   NSpace,
   NSwitch,
+  useDialog,
   useMessage,
 } from 'naive-ui'
 import { api, urlBase } from '@/stores/_config'
@@ -143,6 +144,7 @@ const props = withDefaults(defineProps<{
   scopeType: 'channel',
 })
 
+const dialog = useDialog()
 const message = useMessage()
 const loading = ref(false)
 const testing = ref(false)
@@ -396,6 +398,34 @@ const rotatePassivePullToken = async () => {
   const resp = await api.post<{ token: string }>(path, {})
   passiveToken.value = resp.data?.token || ''
   persistPassivePullCache()
+}
+
+const revokePassivePullToken = async () => {
+  if (!passiveIntegrationId.value) return
+  dialog.warning({
+    title: '撤销被动拉取 Token',
+    content: '撤销后当前 token 将立即失效，且无 active 引用的系统 BOT 会自动清理，确认继续？',
+    positiveText: '确认撤销',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      passiveTokenLoading.value = true
+      passiveTokenError.value = ''
+      try {
+        const path = isWorldScope.value
+          ? `/api/v1/worlds/${props.scopeId}/digest-integrations/${passiveIntegrationId.value}/revoke`
+          : `/api/v1/channels/${props.scopeId}/webhook-integrations/${passiveIntegrationId.value}/revoke`
+        await api.post(path, {})
+        passiveIntegrationId.value = ''
+        passiveToken.value = ''
+        persistPassivePullCache()
+        message.success('被动拉取 Token 已撤销')
+      } catch (e: any) {
+        passiveTokenError.value = e?.response?.data?.message || e?.message || '撤销失败'
+      } finally {
+        passiveTokenLoading.value = false
+      }
+    },
+  })
 }
 
 const ensurePassivePullToken = async (forceRotate = false) => {
@@ -780,6 +810,7 @@ onMounted(refresh)
           <n-space class="mt-2" justify="end">
             <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken()">自动生成</n-button>
             <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken(true)">重新生成</n-button>
+            <n-button size="small" type="error" :disabled="passiveTokenLoading || !passiveIntegrationId" @click="revokePassivePullToken()">撤销</n-button>
           </n-space>
         </div>
         <div class="text-xs break-all">

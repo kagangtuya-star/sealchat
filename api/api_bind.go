@@ -423,6 +423,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/worlds/:worldId/digest-integrations", WorldDigestIntegrationList)
 	v1Auth.Post("/worlds/:worldId/digest-integrations", WorldDigestIntegrationCreate)
 	v1Auth.Post("/worlds/:worldId/digest-integrations/:id/rotate", WorldDigestIntegrationRotate)
+	v1Auth.Post("/worlds/:worldId/digest-integrations/:id/revoke", WorldDigestIntegrationRevoke)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}

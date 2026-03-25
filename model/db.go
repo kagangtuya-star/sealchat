@@ -194,6 +194,9 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := BackfillWorldData(); err != nil {
 		log.Printf("初始化世界数据失败: %v", err)
 	}
+	if err := BackfillBotKinds(); err != nil {
+		log.Printf("回填 bot_kind 失败: %v", err)
+	}
 
 	if IsSQLite() {
 		go func() {

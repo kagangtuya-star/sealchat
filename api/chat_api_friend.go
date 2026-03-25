@@ -141,7 +141,7 @@ func autoFriendRequestApproveIfReceiverBot(invite *model.FriendRequestModel) boo
 	if receiver == nil || receiver.ID == "" || !receiver.IsBot {
 		return false
 	}
-	if isWebhookBot, err := model.IsWebhookBotUser(receiver.ID); err != nil || isWebhookBot {
+	if isInternalBot, err := model.IsInternalBotUser(receiver.ID); err != nil || isInternalBot {
 		return false
 	}
 	if !model.FriendRequestSetApprove(invite.ID, true) {

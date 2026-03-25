@@ -67,6 +67,7 @@ func BotTokenAdd(c *fiber.Ctx) error {
 		Password:  "",
 		Salt:      "BOT_SALT",
 		IsBot:     true,
+		BotKind:   model.BotKindManual,
 		Avatar:    data.Avatar,
 		NickColor: nickColor,
 	}
@@ -173,6 +174,29 @@ func BotTokenDelete(c *fiber.Ctx) error {
 	}
 	if token.ID == "" {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "机器人令牌不存在"})
+	}
+	isInternalBot := false
+	if user := model.UserGet(token.ID); user != nil && model.IsInternalBotKind(user.BotKind) {
+		isInternalBot = true
+	} else if ok, err := model.IsInternalBotUser(token.ID); err != nil {
+		return err
+	} else {
+		isInternalBot = ok
+	}
+	if isInternalBot {
+		refCount, err := model.ActiveSystemBotReferenceCount(token.ID)
+		if err != nil {
+			return err
+		}
+		if refCount > 0 {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "系统 BOT 仍被 active integration 引用，请先撤销对应授权"})
+		}
+		if _, err := model.CleanupOrphanSystemBotByUserID(token.ID); err != nil {
+			return err
+		}
+		return c.JSON(fiber.Map{
+			"message": "删除成功",
+		})
 	}
 
 	tx := db.Begin()

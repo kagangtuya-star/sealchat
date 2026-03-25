@@ -192,7 +192,7 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	webhookBotSet, err := webhookBotUserSetByRelations(friends, userID)
+	internalBotSet, err := internalBotUserSetByRelations(friends, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 			continue
 		}
 		targetUserID := item.getAnotherUserId(userID)
-		if _, blocked := webhookBotSet[targetUserID]; blocked {
+		if _, blocked := internalBotSet[targetUserID]; blocked {
 			continue
 		}
 		chId := fmt.Sprintf("%s:%s", item.UserID1, item.UserID2)
@@ -333,7 +333,7 @@ func (fr *FriendModel) getAnotherUserId(userID string) string {
 	}
 }
 
-func webhookBotUserSetByRelations(friends []*FriendModel, curUserID string) (map[string]struct{}, error) {
+func internalBotUserSetByRelations(friends []*FriendModel, curUserID string) (map[string]struct{}, error) {
 	targetIDs := make([]string, 0, len(friends))
 	for _, item := range friends {
 		if item == nil {
@@ -345,7 +345,7 @@ func webhookBotUserSetByRelations(friends []*FriendModel, curUserID string) (map
 		}
 		targetIDs = append(targetIDs, otherID)
 	}
-	return WebhookBotUserIDSet(targetIDs)
+	return InternalBotUserIDSet(targetIDs)
 }
 
 // FriendList 获取用户的好友列表
@@ -363,17 +363,17 @@ func FriendList(userID string, friendOnly bool) ([]*FriendModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	webhookBotSet, err := webhookBotUserSetByRelations(friends, userID)
+	internalBotSet, err := internalBotUserSetByRelations(friends, userID)
 	if err != nil {
 		return nil, err
 	}
-	if len(webhookBotSet) > 0 {
+	if len(internalBotSet) > 0 {
 		filtered := make([]*FriendModel, 0, len(friends))
 		for _, item := range friends {
 			if item == nil {
 				continue
 			}
-			if _, blocked := webhookBotSet[item.getAnotherUserId(userID)]; blocked {
+			if _, blocked := internalBotSet[item.getAnotherUserId(userID)]; blocked {
 				continue
 			}
 			filtered = append(filtered, item)

@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+const (
+	BotKindManual         = "manual"
+	BotKindChannelWebhook = "channel_webhook"
+	BotKindDigestPull     = "digest_pull"
+)
+
 type BotTokenModel struct {
 	StringPKBaseModel
 	Name         string `json:"name"`
@@ -19,6 +25,53 @@ type BotTokenModel struct {
 
 func (*BotTokenModel) TableName() string {
 	return "bot_tokens"
+}
+
+func IsInternalBotKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case BotKindChannelWebhook, BotKindDigestPull:
+		return true
+	default:
+		return false
+	}
+}
+
+func BackfillBotKinds() error {
+	if db == nil {
+		return nil
+	}
+
+	webhookSet, err := WebhookBotUserIDSet(nil)
+	if err != nil {
+		return err
+	}
+	digestSet, err := loadDigestBotUserIDSet(nil)
+	if err != nil {
+		return err
+	}
+
+	webhookIDs := setToSortedIDs(webhookSet)
+	digestOnlyIDs := differenceSortedIDs(digestSet, webhookSet)
+
+	if len(webhookIDs) > 0 {
+		if err := db.Model(&UserModel{}).
+			Where("id IN ? AND is_bot = ?", webhookIDs, true).
+			Update("bot_kind", BotKindChannelWebhook).Error; err != nil {
+			return err
+		}
+	}
+	if len(digestOnlyIDs) > 0 {
+		if err := db.Model(&UserModel{}).
+			Where("id IN ? AND is_bot = ?", digestOnlyIDs, true).
+			Update("bot_kind", BotKindDigestPull).Error; err != nil {
+			return err
+		}
+	}
+
+	return db.Model(&UserModel{}).
+		Where("is_bot = ?", true).
+		Where("bot_kind = '' OR bot_kind IS NULL").
+		Update("bot_kind", BotKindManual).Error
 }
 
 func BotTokenGet(id string) (*BotTokenModel, error) {

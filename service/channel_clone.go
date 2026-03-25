@@ -945,6 +945,7 @@ func copyChannelWebhooks(tx *gorm.DB, sourceID, targetID, actorID string, summar
 			Password:          "",
 			Salt:              "BOT_SALT",
 			IsBot:             true,
+			BotKind:           model.BotKindChannelWebhook,
 			Avatar:            "",
 			NickColor:         "",
 		}
