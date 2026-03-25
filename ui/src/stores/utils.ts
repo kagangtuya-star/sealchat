@@ -120,10 +120,11 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenList() {
+    async botTokenList(params?: { keyword?: string; scope?: 'manual' | 'system' | 'all' }) {
       const user = useUserStore();
       const resp = await api.get('api/v1/admin/bot-token-list', {
-        headers: { 'Authorization': user.token }
+        headers: { 'Authorization': user.token },
+        params,
       })
       return resp
     },
@@ -150,6 +151,14 @@ export const useUtilsStore = defineStore({
       const resp = await api.post(`api/v1/admin/bot-token-delete`, {}, {
         headers: { 'Authorization': user.token },
         params: { id },
+      })
+      return resp
+    },
+
+    async botTokenBatchDelete(ids: string[]) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/bot-token-batch-delete', { ids }, {
+        headers: { 'Authorization': user.token },
       })
       return resp
     },

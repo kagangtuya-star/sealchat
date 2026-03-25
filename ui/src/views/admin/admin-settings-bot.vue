@@ -3,74 +3,221 @@ import AvatarEditor from '@/components/AvatarEditor.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
+import AdminBotActiveReferencePopover from './components/AdminBotActiveReferencePopover.vue';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { useDialog, useMessage } from 'naive-ui';
+import { Refresh, Search, Trash } from '@vicons/tabler';
+import type { DataTableColumns } from 'naive-ui';
+import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-const { t } = useI18n()
-
-const emit = defineEmits(['close']);
-
-const cancel = () => {
-  emit('close');
+interface BotListItem {
+  id: string
+  name: string
+  token: string
+  avatar?: string
+  nickColor?: string
+  expiresAt?: number
+  updatedAt?: string | number
+  createdAt?: string | number
+  botKind?: string
+  isSystemManaged?: boolean
+  activeReferenceCount?: number
+  activeReferences?: Array<{
+    kind?: string
+    integrationId?: string
+    name?: string
+    source?: string
+    scopeType?: string
+    worldId?: string
+    worldName?: string
+    channelId?: string
+    channelName?: string
+  }>
+  userNickname?: string
 }
 
+const emit = defineEmits(['close']);
+const { t } = useI18n();
+
+const utils = useUtilsStore();
+const chat = useChatStore();
+const message = useMessage();
+const dialog = useDialog();
+
+const cancel = () => emit('close');
+
+const BOT_CONFIG_MODAL_Z_INDEX = 3200;
+const BOT_AVATAR_MODAL_Z_INDEX = 3210;
+
 const showModal = ref(false);
-const editingToken = ref<any | null>(null);
-const newTokenName = ref('bot')
-const newTokenAvatar = ref('')
-const newTokenColor = ref('#2563eb')
-const avatarFileInputRef = ref<HTMLInputElement | null>(null)
-const avatarEditorVisible = ref(false)
-const avatarEditorFile = ref<File | null>(null)
-const avatarPreview = ref('')
-let avatarPreviewObjectUrl: string | null = null
-const uploadingAvatar = ref(false)
-const avatarVersion = ref(0)
-const BOT_CONFIG_MODAL_Z_INDEX = 3200
-const BOT_AVATAR_MODAL_Z_INDEX = 3210
+const editingToken = ref<BotListItem | null>(null);
+const newTokenName = ref('bot');
+const newTokenAvatar = ref('');
+const newTokenColor = ref('#2563eb');
+const avatarFileInputRef = ref<HTMLInputElement | null>(null);
+const avatarEditorVisible = ref(false);
+const avatarEditorFile = ref<File | null>(null);
+const avatarPreview = ref('');
+let avatarPreviewObjectUrl: string | null = null;
+const uploadingAvatar = ref(false);
+const avatarVersion = ref(0);
+
+const activeTab = ref<'manual' | 'system'>('manual');
+const showSystemBots = ref(false);
+const keyword = ref('');
+const loading = ref(false);
+const rows = ref<BotListItem[]>([]);
+const total = ref(0);
+const checkedRowKeys = ref<string[]>([]);
+const page = ref(1);
+const pageSize = ref(20);
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const appendAvatarVersion = (url: string, version?: number | string) => {
   if (!url || !version) {
-    return url
+    return url;
   }
-  const mark = url.includes('?') ? '&' : '?'
-  return `${url}${mark}v=${encodeURIComponent(String(version))}`
-}
+  const mark = url.includes('?') ? '&' : '?';
+  return `${url}${mark}v=${encodeURIComponent(String(version))}`;
+};
+
+const resolveBotAvatarValue = (token?: Partial<BotListItem> | null) => {
+  if (!token) return '';
+  return token.avatar || '';
+};
 
 const botAvatarDisplay = computed(() => {
-  const base = avatarPreview.value || resolveAttachmentUrl(newTokenAvatar.value)
-  return appendAvatarVersion(base, avatarPreview.value ? undefined : avatarVersion.value)
-})
+  const base = avatarPreview.value || resolveAttachmentUrl(newTokenAvatar.value);
+  return appendAvatarVersion(base, avatarPreview.value ? undefined : avatarVersion.value);
+});
+
+const currentScope = computed<'manual' | 'system'>(() => activeTab.value === 'system' ? 'system' : 'manual');
+const hasRows = computed(() => rows.value.length > 0);
+const systemTabVisible = computed(() => showSystemBots.value);
+const pageCount = computed(() => Math.max(1, Math.ceil(Math.max(total.value, 1) / pageSize.value)));
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize.value;
+  return rows.value.slice(start, start + pageSize.value);
+});
+const selectedRows = computed(() => {
+  const keySet = new Set(checkedRowKeys.value);
+  return rows.value.filter((item) => keySet.has(item.id));
+});
+const selectedProtectedCount = computed(() => selectedRows.value.filter((item) => isDeleteBlocked(item)).length);
+const batchDeleteDisabled = computed(() => selectedRows.value.length === 0 || selectedProtectedCount.value > 0);
+const currentStatsText = computed(() => {
+  if (currentScope.value === 'system') {
+    return `系统 BOT ${total.value} 个`;
+  }
+  return `标准 BOT ${total.value} 个`;
+});
+
+const kindLabel = (row: BotListItem) => {
+  switch ((row.botKind || '').trim()) {
+  case 'channel_webhook':
+    return '频道 Webhook';
+  case 'digest_pull':
+    return '摘要拉取';
+  case 'manual':
+    return '标准 BOT';
+  default:
+    return row.isSystemManaged ? '系统 BOT' : '标准 BOT';
+  }
+};
 
 const clearAvatarPreview = () => {
   if (avatarPreviewObjectUrl) {
-    URL.revokeObjectURL(avatarPreviewObjectUrl)
-    avatarPreviewObjectUrl = null
+    URL.revokeObjectURL(avatarPreviewObjectUrl);
+    avatarPreviewObjectUrl = null;
   }
-  avatarPreview.value = ''
-}
+  avatarPreview.value = '';
+};
 
 const setAvatarPreview = (file: File) => {
-  clearAvatarPreview()
-  avatarPreviewObjectUrl = URL.createObjectURL(file)
-  avatarPreview.value = avatarPreviewObjectUrl
-}
-// const newChannel = async () => {
-//   if (!newChannelName.value.trim()) {
-//     message.error(t('dialoChannelgNew.channelNameHint'));
-//     return;
-//   }
-//   await chat.channelCreate(newChannelName.value);
-//   await chat.channelList();
-// }
+  clearAvatarPreview();
+  avatarPreviewObjectUrl = URL.createObjectURL(file);
+  avatarPreview.value = avatarPreviewObjectUrl;
+};
 
 const resetForm = () => {
   newTokenName.value = 'bot';
   newTokenAvatar.value = '';
   newTokenColor.value = '#2563eb';
   clearAvatarPreview();
+};
+
+const resetSelection = () => {
+  checkedRowKeys.value = [];
+};
+
+const normalizeRows = (items: any[]) => {
+  return (items || []).map((item) => ({
+    ...item,
+    avatar: item.avatar || item.avatarAttachmentId || item.avatar_id || item.avatarId || item.avatar_attachment_id || '',
+    isSystemManaged: Boolean(item.isSystemManaged),
+    activeReferenceCount: Number(item.activeReferenceCount || 0) || 0,
+    activeReferences: Array.isArray(item.activeReferences) ? item.activeReferences : [],
+  })) as BotListItem[];
+};
+
+const refresh = async () => {
+  loading.value = true;
+  try {
+    const resp = await utils.botTokenList({
+      keyword: keyword.value.trim(),
+      scope: currentScope.value,
+    });
+    rows.value = normalizeRows(resp.data?.items || []);
+    total.value = Number(resp.data?.total || 0) || rows.value.length;
+    if (page.value > pageCount.value) {
+      page.value = pageCount.value;
+    }
+    resetSelection();
+  } catch (error: any) {
+    message.error(`BOT 列表加载失败: ${error?.response?.data?.message || error?.message || '未知错误'}`);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const queueRefresh = () => {
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(() => {
+    page.value = 1;
+    void refresh();
+  }, 250);
+};
+
+const isDeleteBlocked = (row: BotListItem) => Boolean(row.isSystemManaged && (row.activeReferenceCount || 0) > 0);
+
+const formatExpireAt = (value?: number) => {
+  if (!value || value <= 0) {
+    return '已失效';
+  }
+  try {
+    return new Date(value).toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  } catch {
+    return String(value);
+  }
+};
+
+const formatToken = (token?: string) => {
+  const value = String(token || '').trim();
+  if (!value) return '-';
+  if (value.length <= 12) return value;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+};
+
+const syncBotListSideEffects = () => {
+  chat.invalidateBotListCache();
+  chatEvent.emit('bot-list-updated');
 };
 
 const openCreateModal = () => {
@@ -81,9 +228,15 @@ const openCreateModal = () => {
   showModal.value = true;
 };
 
-const resolveBotAvatarValue = (token?: any) => {
-  if (!token) return '';
-  return token.avatar || token.avatarAttachmentId || token.avatar_id || token.avatarId || token.avatar_attachment_id || '';
+const openEditModal = (token: BotListItem) => {
+  editingToken.value = token;
+  newTokenName.value = token.name || 'bot';
+  newTokenAvatar.value = resolveBotAvatarValue(token);
+  newTokenColor.value = token.nickColor || '#2563eb';
+  clearAvatarPreview();
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+  showModal.value = true;
 };
 
 const emitUpdatedChannelIdentities = (items?: any[]) => {
@@ -108,17 +261,6 @@ const emitUpdatedChannelIdentities = (items?: any[]) => {
   });
 };
 
-const openEditModal = (token: any) => {
-  editingToken.value = token;
-  newTokenName.value = token.name || 'bot';
-  newTokenAvatar.value = resolveBotAvatarValue(token);
-  newTokenColor.value = token.nickColor || '#2563eb';
-  clearAvatarPreview();
-  avatarEditorVisible.value = false;
-  avatarEditorFile.value = null;
-  showModal.value = true;
-};
-
 const submitToken = async () => {
   const payload = {
     name: newTokenName.value.trim() || 'bot',
@@ -139,205 +281,409 @@ const submitToken = async () => {
       emitUpdatedChannelIdentities(resp?.data?.updatedIdentities);
       message.success('添加成功');
     }
-    refresh();
-    chat.invalidateBotListCache();
-    chatEvent.emit('bot-list-updated');
+    await refresh();
+    syncBotListSideEffects();
     showModal.value = false;
     if (!editingToken.value) {
       resetForm();
     }
-  } catch (error) {
-    message.error((editingToken.value ? '更新失败: ' : '添加失败: ') + ((error as any).response?.data?.message || '未知错误'));
+  } catch (error: any) {
+    message.error((editingToken.value ? '更新失败: ' : '添加失败: ') + (error?.response?.data?.message || '未知错误'));
   }
 };
 
-// const tokens = ref([
-//   { name: '海豹', value: 'KHhD0rCfVnXVQEBybZIBm5FND10s0EQE', expireAt: 123 }
-// ])
-const tokens = ref({
-  total: 0,
-  items: [] as any[]
-})
-
-const utils = useUtilsStore();
-const chat = useChatStore();
-const message = useMessage()
-const dialog = useDialog()
-
-const refresh = async () => {
-  const resp = await utils.botTokenList();
-  tokens.value = resp.data;
-}
-
-const deleteItem = async (i: any) => {
+const deleteItem = async (item: BotListItem) => {
+  if (isDeleteBlocked(item)) {
+    message.warning('该系统 BOT 仍被 active integration 引用，无法直接删除。');
+    return;
+  }
   dialog.warning({
-    title: t('dialogLogOut.title'),
-    content: '确定要删除吗？',
-    positiveText: t('dialogLogOut.positiveText'),
-    negativeText: t('dialogLogOut.negativeText'),
+    title: '删除机器人',
+    content: `确定删除 ${item.name || item.id} 吗？此操作不可撤销。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await utils.botTokenDelete(i.id);
+        await utils.botTokenDelete(item.id);
         message.success('删除成功');
-        refresh();
-        chat.invalidateBotListCache();
-        chatEvent.emit('bot-list-updated');
-      } catch (error) {
-        message.error('删除失败: ' + (error as any).response?.data?.message || '未知错误');
+        await refresh();
+        syncBotListSideEffects();
+      } catch (error: any) {
+        message.error(`删除失败: ${error?.response?.data?.message || '未知错误'}`);
       }
     },
-    onNegativeClick: () => {
-    }
-  })
-}
+  });
+};
+
+const batchDelete = async () => {
+  if (batchDeleteDisabled.value) {
+    return;
+  }
+  const count = selectedRows.value.length;
+  dialog.warning({
+    title: '批量删除机器人',
+    content: `确定批量删除已选中的 ${count} 个机器人吗？此操作不可撤销。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const resp = await utils.botTokenBatchDelete(checkedRowKeys.value);
+        const deletedCount = Number(resp?.data?.deletedCount || 0) || 0;
+        const failedCount = Number(resp?.data?.failedCount || 0) || 0;
+        if (deletedCount > 0) {
+          message.success(`已删除 ${deletedCount} 个机器人`);
+        }
+        if (failedCount > 0) {
+          const firstFailed = resp?.data?.failedItems?.[0];
+          message.warning(`有 ${failedCount} 个机器人删除失败${firstFailed?.message ? `：${firstFailed.message}` : ''}`);
+        }
+        await refresh();
+        syncBotListSideEffects();
+      } catch (error: any) {
+        message.error(`批量删除失败: ${error?.response?.data?.message || '未知错误'}`);
+      }
+    },
+  });
+};
+
+const copyToken = async (value?: string) => {
+  const token = String(value || '').trim();
+  if (!token) return;
+  try {
+    await navigator.clipboard.writeText(token);
+    message.success('Token 已复制');
+  } catch {
+    message.warning('复制失败，请手动复制');
+  }
+};
 
 const resolveAvatar = (value?: string, version?: number | string) => {
   if (!value) {
-    return ''
+    return '';
   }
-  const resolved = resolveAttachmentUrl(value)
-  return appendAvatarVersion(resolved, version)
-}
+  const resolved = resolveAttachmentUrl(value);
+  return appendAvatarVersion(resolved, version);
+};
 
 const triggerAvatarUpload = () => {
-  avatarFileInputRef.value?.click()
-}
+  avatarFileInputRef.value?.click();
+};
 
 const handleAvatarFileChange = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input?.files?.[0]
+  const input = event.target as HTMLInputElement;
+  const file = input?.files?.[0];
   if (!file) {
-    return
+    return;
   }
-  // Check file size before uploading
-  const sizeLimit = utils.fileSizeLimit
+  const sizeLimit = utils.fileSizeLimit;
   if (file.size > sizeLimit) {
-    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1)
-    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
-    if (input) {
-      input.value = ''
-    }
-    return
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
+    input.value = '';
+    return;
   }
-  avatarEditorFile.value = file
-  avatarEditorVisible.value = true
-  if (input) {
-    input.value = ''
-  }
-}
+  avatarEditorFile.value = file;
+  avatarEditorVisible.value = true;
+  input.value = '';
+};
 
 const handleAvatarEditorSave = async (file: File) => {
-  uploadingAvatar.value = true
-  avatarEditorVisible.value = false
-  avatarEditorFile.value = null
-  setAvatarPreview(file)
+  uploadingAvatar.value = true;
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+  setAvatarPreview(file);
   try {
-    const result = await uploadImageAttachment(file, { channelId: 'bot-avatar', skipCompression: true })
+    const result = await uploadImageAttachment(file, { channelId: 'bot-avatar', skipCompression: true });
     if (!result.attachmentId) {
-      throw new Error('上传失败')
+      throw new Error('上传失败');
     }
-    newTokenAvatar.value = result.attachmentId
-    avatarVersion.value = Date.now()
-    message.success('头像上传成功')
+    newTokenAvatar.value = result.attachmentId;
+    avatarVersion.value = Date.now();
+    message.success('头像上传成功');
   } catch (error: any) {
-    message.error(error?.message || '头像上传失败')
+    message.error(error?.message || '头像上传失败');
   } finally {
-    uploadingAvatar.value = false
+    uploadingAvatar.value = false;
   }
-}
+};
 
 const handleAvatarEditorCancel = () => {
-  avatarEditorVisible.value = false
-  avatarEditorFile.value = null
-}
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+};
 
 const clearBotAvatar = () => {
-  newTokenAvatar.value = ''
-  clearAvatarPreview()
-}
+  newTokenAvatar.value = '';
+  clearAvatarPreview();
+};
 
-onUnmounted(() => {
-  clearAvatarPreview()
-})
+const rowKey = (row: BotListItem) => row.id;
+
+const handleCheckedRowKeysChange = (keys: Array<string | number>) => {
+  checkedRowKeys.value = keys.map((item) => String(item));
+};
+
+const columns = computed<DataTableColumns<BotListItem>>(() => [
+  {
+    type: 'selection',
+    disabled: (row: BotListItem) => isDeleteBlocked(row),
+  },
+  {
+    title: '机器人',
+    key: 'name',
+    minWidth: 240,
+    render: (row: BotListItem) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+        {resolveBotAvatarValue(row) ? (
+          <img
+            src={resolveAvatar(resolveBotAvatarValue(row), row.updatedAt)}
+            style={{
+              width: '36px',
+              height: '36px',
+              minWidth: '36px',
+              minHeight: '36px',
+              borderRadius: '8px',
+              objectFit: 'cover',
+              display: 'block',
+              backgroundColor: 'rgba(148, 163, 184, 0.12)',
+            }}
+          />
+        ) : (
+          <n-avatar size="medium">{row.name?.slice(0, 1) || 'B'}</n-avatar>
+        )}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <span style={{ fontWeight: 600, color: 'var(--n-text-color-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {row.name || 'Bot'}
+            </span>
+            <span
+              style={{
+                width: '0.85rem',
+                height: '0.85rem',
+                minWidth: '0.85rem',
+                borderRadius: '999px',
+                border: '1px solid rgba(148, 163, 184, 0.4)',
+                display: 'inline-block',
+                backgroundColor: row.nickColor || 'transparent',
+              }}
+            ></span>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--n-text-color-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {row.userNickname || row.id}
+          </div>
+        </div>
+      </div>
+    ),
+  },
+  {
+    title: '分类',
+    key: 'botKind',
+    width: 160,
+    render: (row: BotListItem) => (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
+        <n-tag size="small" type={row.isSystemManaged ? 'warning' : 'success'}>
+          {kindLabel(row)}
+        </n-tag>
+        {row.isSystemManaged ? (
+          <AdminBotActiveReferencePopover
+            count={row.activeReferenceCount || 0}
+            references={row.activeReferences || []}
+          />
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    title: 'Token',
+    key: 'token',
+    minWidth: 220,
+    render: (row: BotListItem) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+        <code style={{
+          fontSize: '12px',
+          padding: '2px 6px',
+          borderRadius: '6px',
+          background: 'rgba(15, 23, 42, 0.06)',
+          whiteSpace: 'nowrap',
+        }}
+        >
+          {formatToken(row.token)}
+        </code>
+        <n-button text size="small" onClick={() => copyToken(row.token)}>复制</n-button>
+      </div>
+    ),
+  },
+  {
+    title: '到期时间',
+    key: 'expiresAt',
+    width: 120,
+    render: (row: BotListItem) => (
+      <span>{formatExpireAt(row.expiresAt)}</span>
+    ),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 170,
+    render: (row: BotListItem) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <n-button size="small" onClick={() => openEditModal(row)}>编辑</n-button>
+        <n-button size="small" type="error" disabled={isDeleteBlocked(row)} onClick={() => deleteItem(row)}>删除</n-button>
+      </div>
+    ),
+  },
+]);
 
 watch(showModal, (visible) => {
   if (visible) {
-    return
+    return;
   }
-  avatarEditorVisible.value = false
-  avatarEditorFile.value = null
-  clearAvatarPreview()
-})
-
-onMounted(async () => {
-  refresh()
-})
+  avatarEditorVisible.value = false;
+  avatarEditorFile.value = null;
+  clearAvatarPreview();
+});
 
 watch(newTokenAvatar, (value, oldValue) => {
   if (!value || value === oldValue) {
-    return
+    return;
   }
-  avatarVersion.value = Date.now()
-})
+  avatarVersion.value = Date.now();
+});
+
+watch(showSystemBots, (visible) => {
+  if (!visible && activeTab.value === 'system') {
+    activeTab.value = 'manual';
+  }
+});
+
+watch(currentScope, () => {
+  page.value = 1;
+  void refresh();
+});
+
+watch(pageSize, () => {
+  page.value = 1;
+});
+
+onMounted(async () => {
+  await refresh();
+});
+
+onUnmounted(() => {
+  clearAvatarPreview();
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+});
 </script>
 
 <template>
-  <div class="overflow-y-auto pr-2" style="max-height: 61vh;  margin-top: 0;">
-    <n-list>
-      <template #header>
-        <div>当前token列表</div>
-        <p class="bot-list-hint">创建机器人后，可在频道的掷骰面板点击设置齿轮，启用"机器人骰点"并选择对应机器人。</p>
-      </template>
+  <div class="bot-management">
+    <div class="bot-management__body">
+      <div class="bot-management__toolbar">
+        <div class="bot-management__controls">
+          <n-input
+            v-model:value="keyword"
+            placeholder="搜索名称、ID、昵称或类型"
+            clearable
+            style="width: 240px"
+            @input="queueRefresh"
+            @clear="queueRefresh"
+          >
+            <template #prefix>
+              <n-icon :component="Search" />
+            </template>
+          </n-input>
+          <label class="bot-management__switch">
+            <span>显示系统 BOT</span>
+            <n-switch v-model:value="showSystemBots" />
+          </label>
+          <n-button :loading="loading" @click="refresh">
+            <template #icon>
+              <n-icon :component="Refresh" />
+            </template>
+            刷新
+          </n-button>
+          <n-button type="primary" @click="openCreateModal">新增 BOT</n-button>
+        </div>
+        <div class="bot-management__stats">
+          <span class="bot-management__stats-main">{{ currentStatsText }}</span>
+          <span class="bot-management__stats-sub">当前选中 {{ checkedRowKeys.length }} 项</span>
+        </div>
+      </div>
 
-      <n-list-item v-for="i in tokens.items" :key="i.id">
-        <template #suffix>
-          <div class="flex items-center space-x-2">
-            <div style="width: 9rem;">
-              <span>到期时间</span>
-              <n-date-picker v-model:value="i.expiresAt" type="date" />
-              <!-- <div v-else>无期限</div> -->
-            </div>
-            <div class="flex flex-col space-y-1">
-              <span>操作</span>
-              <div class="space-x-2">
-                <n-button size="small" @click="openEditModal(i)">编辑</n-button>
-                <n-button size="small" @click="deleteItem(i)">删除</n-button>
-              </div>
-            </div>
-          </div>
+      <div class="bot-management__hint">
+        <span>标准 BOT 用于频道骰点与角色绑定。系统 BOT 仅供 webhook / digest 集成使用，默认隐藏。</span>
+      </div>
+
+      <div v-if="showSystemBots && activeTab === 'system'" class="bot-management__system-note">
+        系统 BOT 存在 active 引用时不可删除，请先撤销对应的 webhook 或 digest integration。
+      </div>
+
+      <n-tabs v-model:value="activeTab" type="segment" animated class="bot-management__tabs">
+        <n-tab-pane name="manual" tab="标准 BOT" />
+        <n-tab-pane v-if="systemTabVisible" name="system" tab="系统 BOT" />
+      </n-tabs>
+
+      <div v-if="checkedRowKeys.length > 0" class="bot-management__batch-bar">
+        <span>已选中 {{ checkedRowKeys.length }} 项</span>
+        <div class="bot-management__batch-actions">
+          <n-button type="error" :disabled="batchDeleteDisabled" @click="batchDelete">
+            <template #icon>
+              <n-icon :component="Trash" />
+            </template>
+            批量删除
+          </n-button>
+          <span v-if="selectedProtectedCount > 0" class="bot-management__batch-warning">
+            有 {{ selectedProtectedCount }} 项仍被 active integration 引用，无法删除
+          </span>
+        </div>
+      </div>
+
+      <div class="bot-management__table">
+        <n-data-table
+          :columns="columns"
+          :data="pagedRows"
+          :loading="loading"
+          :pagination="false"
+          :bordered="false"
+          :max-height="360"
+          :row-key="rowKey"
+          :checked-row-keys="checkedRowKeys"
+          :scroll-x="960"
+          size="small"
+          @update:checked-row-keys="handleCheckedRowKeysChange"
+        />
+        <n-empty v-if="!loading && !hasRows" description="当前筛选条件下没有 BOT" class="bot-management__empty" />
+      </div>
+    </div>
+
+    <div class="bot-management__footer">
+      <n-pagination
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :item-count="total"
+        :page-sizes="[10, 20, 50, 100]"
+        show-size-picker
+        :disabled="loading || total === 0"
+      >
+        <template #prefix="{ itemCount }">
+          共 {{ itemCount }} 条
         </template>
-        <n-thing :title="i.name" :description="i.token">
-          <template #avatar>
-            <img
-              v-if="resolveBotAvatarValue(i)"
-              :src="resolveAvatar(resolveBotAvatarValue(i), i.updatedAt)"
-              style="width: 28px; height: 28px; min-width: 28px; min-height: 28px; border-radius: 3px; object-fit: cover;"
-            />
-            <n-avatar v-else size="small">
-              {{ i.name?.slice(0, 1) || 'B' }}
-            </n-avatar>
-          </template>
-          <template #header-extra>
-            <div class="flex items-center space-x-1 text-xs text-gray-500">
-              <span>昵称色彩</span>
-              <span class="bot-color-chip" :style="i.nickColor ? { backgroundColor: i.nickColor } : undefined"></span>
-              <span>{{ i.nickColor || '默认' }}</span>
-            </div>
-          </template>
-        </n-thing>
-      </n-list-item>
+      </n-pagination>
+      <n-button @click="cancel">关闭</n-button>
+    </div>
+  </div>
 
-      <template #footer>
-        <n-button @click="openCreateModal">添加</n-button>
-      </template>
-    </n-list>
-  </div>
-  <div class="space-x-2 float-right">
-    <n-button @click="cancel">关闭</n-button>
-    <!-- <n-button type="primary" :disabled="!modified" @click="save">保存</n-button> -->
-  </div>
-  <n-modal v-model:show="showModal" :z-index="BOT_CONFIG_MODAL_Z_INDEX" preset="dialog" :title="editingToken ? '编辑机器人' : '配置机器人外观'" :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
-    :negative-text="$t('dialoChannelgNew.negativeText')" @positive-click="submitToken">
+  <n-modal
+    v-model:show="showModal"
+    :z-index="BOT_CONFIG_MODAL_Z_INDEX"
+    preset="dialog"
+    :title="editingToken ? '编辑机器人' : '配置机器人外观'"
+    :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
+    :negative-text="$t('dialoChannelgNew.negativeText')"
+    @positive-click="submitToken"
+  >
     <n-form label-placement="top">
       <n-form-item label="机器人名称">
         <n-input v-model:value="newTokenName" placeholder="机器人名称" />
@@ -371,6 +717,7 @@ watch(newTokenAvatar, (value, oldValue) => {
       </n-form-item>
     </n-form>
   </n-modal>
+
   <n-modal
     v-model:show="avatarEditorVisible"
     :z-index="BOT_AVATAR_MODAL_Z_INDEX"
@@ -388,12 +735,161 @@ watch(newTokenAvatar, (value, oldValue) => {
 </template>
 
 <style scoped>
-.bot-color-chip {
-  width: 0.85rem;
-  height: 0.85rem;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  display: inline-block;
+.bot-management {
+  display: flex;
+  flex-direction: column;
+  height: 61vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bot-management__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bot-management__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bot-management__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bot-management__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--n-text-color-2);
+  padding: 0 4px;
+}
+
+.bot-management__stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.bot-management__stats-main {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-1);
+}
+
+.bot-management__stats-sub {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.bot-management__hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  padding: 10px 12px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+}
+
+.bot-management__system-note {
+  font-size: 12px;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.bot-management__tabs {
+  margin-top: -2px;
+}
+
+.bot-management__batch-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(37, 99, 235, 0.06);
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  font-size: 13px;
+}
+
+.bot-management__batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bot-management__batch-warning {
+  color: #b45309;
+  font-size: 12px;
+}
+
+.bot-management__table {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 260px;
+  margin-bottom: 4px;
+}
+
+.bot-management__table :deep(.n-data-table-wrapper) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+}
+
+.bot-management__table :deep(.n-data-table-wrapper)::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.bot-management__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bot-management__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 3px;
+}
+
+.bot-management__table :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.5);
+}
+
+.bot-management__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.bot-management__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--n-border-color);
+  flex-shrink: 0;
+  background: var(--n-color);
 }
 
 .bot-avatar-uploader {
@@ -424,9 +920,20 @@ watch(newTokenAvatar, (value, oldValue) => {
   margin: 0;
 }
 
-.bot-list-hint {
-  font-size: 12px;
-  color: #94a3b8;
-  margin: 0.25rem 0 0;
+@media (max-width: 960px) {
+  .bot-management {
+    height: 68vh;
+  }
+
+  .bot-management__toolbar,
+  .bot-management__batch-bar,
+  .bot-management__footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bot-management__stats {
+    align-items: flex-start;
+  }
 }
 </style>

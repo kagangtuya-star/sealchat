@@ -7,6 +7,18 @@ import (
 	"gorm.io/gorm"
 )
 
+type SystemBotActiveReference struct {
+	Kind          string `json:"kind"`
+	IntegrationID string `json:"integrationId"`
+	Name          string `json:"name,omitempty"`
+	Source        string `json:"source,omitempty"`
+	ScopeType     string `json:"scopeType,omitempty"`
+	WorldID       string `json:"worldId,omitempty"`
+	WorldName     string `json:"worldName,omitempty"`
+	ChannelID     string `json:"channelId,omitempty"`
+	ChannelName   string `json:"channelName,omitempty"`
+}
+
 type WebhookBotFriendCleanupStats struct {
 	WebhookBotCount             int64 `json:"webhookBotCount"`
 	ActiveReferenceSkippedCount int64 `json:"activeReferenceSkippedCount"`
@@ -62,6 +74,123 @@ func ActiveSystemBotReferenceCount(botUserID string) (int64, error) {
 		return 0, nil
 	}
 	return activeSystemBotReferenceCountTx(db, botUserID)
+}
+
+func activeSystemBotReferencesTx(tx *gorm.DB, botUserID string) ([]SystemBotActiveReference, error) {
+	botUserID = strings.TrimSpace(botUserID)
+	if botUserID == "" {
+		return []SystemBotActiveReference{}, nil
+	}
+
+	type channelWebhookRow struct {
+		IntegrationID string `gorm:"column:integration_id"`
+		Name          string `gorm:"column:name"`
+		Source        string `gorm:"column:source"`
+		ChannelID     string `gorm:"column:channel_id"`
+		ChannelName   string `gorm:"column:channel_name"`
+		WorldID       string `gorm:"column:world_id"`
+		WorldName     string `gorm:"column:world_name"`
+	}
+	var webhookRows []channelWebhookRow
+	if err := tx.Table("channel_webhook_integrations AS i").
+		Select("i.id AS integration_id, i.name AS name, i.source AS source, c.id AS channel_id, c.name AS channel_name, c.world_id AS world_id, w.name AS world_name").
+		Joins("LEFT JOIN channels c ON c.id = i.channel_id").
+		Joins("LEFT JOIN worlds w ON w.id = c.world_id").
+		Where("i.bot_user_id = ? AND i.status = ?", botUserID, WebhookIntegrationStatusActive).
+		Order("w.name ASC, c.name ASC, i.created_at ASC").
+		Scan(&webhookRows).Error; err != nil {
+		return nil, err
+	}
+
+	type digestWorldRow struct {
+		IntegrationID string `gorm:"column:integration_id"`
+		Name          string `gorm:"column:name"`
+		Source        string `gorm:"column:source"`
+		WorldID       string `gorm:"column:world_id"`
+		WorldName     string `gorm:"column:world_name"`
+	}
+	var digestWorldRows []digestWorldRow
+	if err := tx.Table("digest_webhook_integrations AS i").
+		Select("i.id AS integration_id, i.name AS name, i.source AS source, w.id AS world_id, w.name AS world_name").
+		Joins("LEFT JOIN worlds w ON w.id = i.scope_id").
+		Where("i.bot_user_id = ? AND i.status = ? AND i.scope_type = ?", botUserID, WebhookIntegrationStatusActive, DigestScopeTypeWorld).
+		Order("w.name ASC, i.created_at ASC").
+		Scan(&digestWorldRows).Error; err != nil {
+		return nil, err
+	}
+
+	type digestChannelRow struct {
+		IntegrationID string `gorm:"column:integration_id"`
+		Name          string `gorm:"column:name"`
+		Source        string `gorm:"column:source"`
+		ChannelID     string `gorm:"column:channel_id"`
+		ChannelName   string `gorm:"column:channel_name"`
+		WorldID       string `gorm:"column:world_id"`
+		WorldName     string `gorm:"column:world_name"`
+	}
+	var digestChannelRows []digestChannelRow
+	if err := tx.Table("digest_webhook_integrations AS i").
+		Select("i.id AS integration_id, i.name AS name, i.source AS source, c.id AS channel_id, c.name AS channel_name, c.world_id AS world_id, w.name AS world_name").
+		Joins("LEFT JOIN channels c ON c.id = i.scope_id").
+		Joins("LEFT JOIN worlds w ON w.id = c.world_id").
+		Where("i.bot_user_id = ? AND i.status = ? AND i.scope_type = ?", botUserID, WebhookIntegrationStatusActive, DigestScopeTypeChannel).
+		Order("w.name ASC, c.name ASC, i.created_at ASC").
+		Scan(&digestChannelRows).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]SystemBotActiveReference, 0, len(webhookRows)+len(digestWorldRows)+len(digestChannelRows))
+	for _, row := range webhookRows {
+		out = append(out, SystemBotActiveReference{
+			Kind:          BotKindChannelWebhook,
+			IntegrationID: strings.TrimSpace(row.IntegrationID),
+			Name:          strings.TrimSpace(row.Name),
+			Source:        strings.TrimSpace(row.Source),
+			ScopeType:     DigestScopeTypeChannel,
+			WorldID:       strings.TrimSpace(row.WorldID),
+			WorldName:     strings.TrimSpace(row.WorldName),
+			ChannelID:     strings.TrimSpace(row.ChannelID),
+			ChannelName:   strings.TrimSpace(row.ChannelName),
+		})
+	}
+	for _, row := range digestWorldRows {
+		out = append(out, SystemBotActiveReference{
+			Kind:          BotKindDigestPull,
+			IntegrationID: strings.TrimSpace(row.IntegrationID),
+			Name:          strings.TrimSpace(row.Name),
+			Source:        strings.TrimSpace(row.Source),
+			ScopeType:     DigestScopeTypeWorld,
+			WorldID:       strings.TrimSpace(row.WorldID),
+			WorldName:     strings.TrimSpace(row.WorldName),
+		})
+	}
+	for _, row := range digestChannelRows {
+		out = append(out, SystemBotActiveReference{
+			Kind:          BotKindDigestPull,
+			IntegrationID: strings.TrimSpace(row.IntegrationID),
+			Name:          strings.TrimSpace(row.Name),
+			Source:        strings.TrimSpace(row.Source),
+			ScopeType:     DigestScopeTypeChannel,
+			WorldID:       strings.TrimSpace(row.WorldID),
+			WorldName:     strings.TrimSpace(row.WorldName),
+			ChannelID:     strings.TrimSpace(row.ChannelID),
+			ChannelName:   strings.TrimSpace(row.ChannelName),
+		})
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		left := strings.Join([]string{out[i].WorldName, out[i].ChannelName, out[i].Kind, out[i].Name, out[i].IntegrationID}, "\x00")
+		right := strings.Join([]string{out[j].WorldName, out[j].ChannelName, out[j].Kind, out[j].Name, out[j].IntegrationID}, "\x00")
+		return left < right
+	})
+	return out, nil
+}
+
+func ActiveSystemBotReferences(botUserID string) ([]SystemBotActiveReference, error) {
+	if db == nil {
+		return []SystemBotActiveReference{}, nil
+	}
+	return activeSystemBotReferencesTx(db, botUserID)
 }
 
 func cleanupSystemBotFriendDataTx(tx *gorm.DB, botUserID string, stats *WebhookBotFriendCleanupStats) error {
