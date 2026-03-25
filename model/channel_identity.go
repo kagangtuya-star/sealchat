@@ -18,6 +18,7 @@ type ChannelIdentityModel struct {
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
 	CharacterCardID    string   `json:"characterCardId,omitempty" gorm:"size:100;index"`
 	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
+	IsTemporary        bool     `json:"isTemporary" gorm:"default:false"`
 	IsHidden           bool     `json:"isHidden" gorm:"default:false"`
 	SortOrder          int      `json:"sortOrder" gorm:"index"`
 	FolderIDs          []string `json:"folderIds,omitempty" gorm:"-"`
@@ -34,6 +35,7 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 		Color:              m.Color,
 		AvatarAttachmentID: m.AvatarAttachmentID,
 		IsDefault:          m.IsDefault,
+		IsTemporary:        m.IsTemporary,
 	}
 }
 

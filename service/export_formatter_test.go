@@ -268,6 +268,35 @@ func TestBuildExportPayloadUsesMessageIdentitySnapshotAvatar(t *testing.T) {
 	}
 }
 
+func TestBuildExportPayloadDoesNotFallbackToUserAvatarForTemporaryIdentity(t *testing.T) {
+	job := &model.MessageExportJobModel{
+		ChannelID: "channel-export-temp",
+	}
+	createdAt := time.Unix(1700000300, 0)
+	msg := &model.MessageModel{
+		StringPKBaseModel:         model.StringPKBaseModel{ID: "msg-temp", CreatedAt: createdAt},
+		UserID:                    "user-temp",
+		Content:                   "临时角色消息",
+		ICMode:                    "ic",
+		SenderIdentityID:          "identity-temp",
+		SenderIdentityName:        "路人甲",
+		SenderIdentityIsTemporary: true,
+		User: &model.UserModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "user-temp"},
+			Username:          "temp_user",
+			Avatar:            "https://example.com/user-avatar.png",
+		},
+	}
+
+	payload := buildExportPayload(job, "测试频道", []*model.MessageModel{msg}, nil, nil)
+	if payload == nil || len(payload.Messages) != 1 {
+		t.Fatalf("expected 1 export message, got %+v", payload)
+	}
+	if payload.Messages[0].SenderAvatar != "" {
+		t.Fatalf("temporary identity should not fallback to user avatar, got %q", payload.Messages[0].SenderAvatar)
+	}
+}
+
 func TestExtractWhisperTargetsPreferRoleNameOverUserName(t *testing.T) {
 	initTestDB(t)
 	db := model.GetDB()

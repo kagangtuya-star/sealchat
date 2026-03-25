@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
-import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
+import type { User, Opcode, GatewayPayloadStructure, Channel, Event, GuildMember } from '@satorijs/protocol'
 import type { APIChannelCreateResp, APIChannelListResp, APIMessage, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIcOocRoleConfig, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
@@ -156,6 +156,7 @@ interface ChatState {
     identityVariantId?: string | null;
     initialIdentityId?: string | null;
     initialIdentityVariantId?: string | null;
+    identitySnapshot?: EditingIdentitySnapshot | null;
     activeIdentityBackup?: string | null;
   } | null
   revokedDrafts: Record<string, RevokedDraftEntry>
@@ -235,6 +236,14 @@ interface RevokedDraftEntry {
   identityId: string | null;
   identityVariantId: string | null;
   cachedAt: number;
+}
+
+interface EditingIdentitySnapshot {
+  identityId?: string | null;
+  displayName?: string;
+  color?: string;
+  avatarAttachmentId?: string;
+  isTemporary?: boolean;
 }
 
 interface ChannelCopyOptions {
@@ -708,27 +717,27 @@ const writeObserverSessionChannel = (observerSlug: string, worldId: string, chan
   persistObserverSessionMap(normalizeObserverSessionMap(map));
 };
 
-type myEventName =
-  | EventName
-  | 'message-created'
-  | 'channel-switch-to'
-  | 'connected'
-  | 'channel-member-updated'
-  | 'message-created-notice'
-  | 'channel-identity-open'
-  | 'channel-identity-updated'
-  | 'channel-member-settings-open'
-  | 'bot-list-updated'
-  | 'global-overlay-toggle'
-  | 'open-display-settings'
-  | 'lobby-announcement-updated'
-  | 'message-pinned'
-  | 'message-unpinned'
-  | 'message.reaction';
-export const chatEvent = new Emitter<{
-  [key in myEventName]: (msg?: Event) => void;
-  // 'message-created': (msg: Event) => void;
-}>();
+interface ChannelIdentityUpdatedEvent {
+  identity?: ChannelIdentity;
+  channelId?: string;
+  removedId?: string;
+  replacedId?: string;
+}
+
+interface SearchJumpEvent {
+  messageId: string;
+  channelId?: string;
+  displayOrder?: number;
+  createdAt?: string | number | Date;
+}
+
+interface ChatEventMap {
+  [event: string]: (...args: any[]) => void;
+  'channel-identity-updated': (payload?: ChannelIdentityUpdatedEvent) => void;
+  'search-jump': (payload?: SearchJumpEvent) => void;
+}
+
+export const chatEvent = new Emitter<ChatEventMap>();
 
 let worldGatewayBound = false;
 const ensureWorldGateway = () => {
@@ -2778,7 +2787,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
@@ -2786,10 +2795,66 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
+      return identity;
+    },
+
+    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
+      const resp = await api.post<{ item: ChannelIdentity; removedId?: string; oldIdentityId?: string }>(`api/v1/channel-identities/${identityId}/replace-temporary`, payload);
+      const identity = resp.data.item;
+      const removedId = resp.data.removedId || resp.data.oldIdentityId || identityId;
+      const channelId = payload.channelId;
+
+      const list = (this.channelIdentities[channelId] || [])
+        .filter(item => item.id !== removedId && item.id !== identity.id);
+      list.push(identity);
+      list.sort((a, b) => a.sortOrder - b.sortOrder);
+      this.channelIdentities = {
+        ...this.channelIdentities,
+        [channelId]: list,
+      };
+      this.pruneIdentityRecentSpoken(channelId, list.map(item => item.id));
+
+      const currentConfig = this.channelIcOocRoleConfig[channelId];
+      if (currentConfig) {
+        this.applyChannelIcOocRoleConfig(channelId, {
+          icRoleId: currentConfig.icRoleId === removedId ? identity.id : currentConfig.icRoleId,
+          oocRoleId: currentConfig.oocRoleId === removedId ? identity.id : currentConfig.oocRoleId,
+        });
+      }
+
+      const membership = { ...(this.channelIdentityMembership[channelId] || {}) };
+      delete membership[removedId];
+      membership[identity.id] = identity.folderIds ? [...identity.folderIds] : [];
+      this.channelIdentityMembership = {
+        ...this.channelIdentityMembership,
+        [channelId]: membership,
+      };
+
+      if (this.channelIdentityVariants[channelId]?.[removedId]) {
+        const variants = { ...(this.channelIdentityVariants[channelId] || {}) };
+        delete variants[removedId];
+        this.channelIdentityVariants = {
+          ...this.channelIdentityVariants,
+          [channelId]: variants,
+        };
+      }
+
+      if (this.activeChannelIdentityVariant[channelId]?.[removedId] !== undefined) {
+        const activeVariants = { ...(this.activeChannelIdentityVariant[channelId] || {}) };
+        delete activeVariants[removedId];
+        this.activeChannelIdentityVariant = {
+          ...this.activeChannelIdentityVariant,
+          [channelId]: activeVariants,
+        };
+        writeChannelIdentityVariantToStorage(channelId, removedId, '');
+      }
+
+      this.setActiveIdentity(channelId, identity.id);
+      chatEvent.emit('channel-identity-updated', { identity, channelId, removedId, replacedId: removedId });
       return identity;
     },
 
@@ -4192,7 +4257,7 @@ export const useChatStore = defineStore({
       // 保留已选目标，仅关闭面板
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; identitySnapshot?: EditingIdentitySnapshot | null }) {
       const normalizedIdentityId = typeof payload.identityId === 'undefined' ? null : (payload.identityId || null);
       const normalizedIdentityVariantId = typeof payload.identityVariantId === 'undefined' ? null : (payload.identityVariantId || null);
       const previousActiveIdentity = payload.channelId ? this.getActiveIdentityId(payload.channelId) : '';
@@ -4202,6 +4267,7 @@ export const useChatStore = defineStore({
         identityVariantId: normalizedIdentityVariantId,
         initialIdentityId: normalizedIdentityId,
         initialIdentityVariantId: normalizedIdentityVariantId,
+        identitySnapshot: payload.identitySnapshot ? { ...payload.identitySnapshot } : null,
         activeIdentityBackup: previousActiveIdentity || null,
       };
       if (payload.channelId && normalizedIdentityId) {

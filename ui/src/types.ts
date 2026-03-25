@@ -77,6 +77,7 @@ export interface SatoriMessage {
   sender_member_name?: string;
   sender_role_id?: string;
   sender_identity_variant_id?: string;
+  sender_identity_is_temporary?: boolean;
   isPinned?: boolean;
   pinnedAt?: number;
   pinnedBy?: string;
@@ -482,6 +483,7 @@ export interface ChannelIdentity {
   avatarAttachmentId: string;
   characterCardId?: string;
   isDefault: boolean;
+  isTemporary: boolean;
   sortOrder: number;
   folderIds?: string[];
 }
@@ -537,4 +539,5 @@ export interface MessageIdentity {
   displayName?: string;
   color?: string;
   avatarAttachment?: string;
+  isTemporary?: boolean;
 }

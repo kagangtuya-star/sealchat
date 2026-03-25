@@ -9,6 +9,7 @@ export interface ChannelImageItem {
     senderId: string
     senderName: string
     senderAvatar: string
+    senderIdentityIsTemporary: boolean
     createdAt: number
     displayOrder: number
 }
@@ -36,6 +37,7 @@ interface ChannelImagesApiResponse {
         sender_id: string
         sender_name: string
         sender_avatar: string
+        sender_identity_is_temporary: boolean
         created_at: number
         display_order: number
     }>
@@ -158,6 +160,7 @@ export const useChannelImagesStore = defineStore('channelImages', {
                     senderId: item.sender_id,
                     senderName: item.sender_name,
                     senderAvatar: item.sender_avatar,
+                    senderIdentityIsTemporary: Boolean(item.sender_identity_is_temporary),
                     createdAt: item.created_at,
                     displayOrder: item.display_order,
                 }))

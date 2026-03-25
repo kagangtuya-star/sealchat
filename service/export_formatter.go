@@ -247,6 +247,9 @@ func resolveSenderAvatar(msg *model.MessageModel) string {
 	if id := strings.TrimSpace(msg.SenderIdentityAvatarID); id != "" {
 		return "id:" + id
 	}
+	if msg.SenderIdentityIsTemporary {
+		return ""
+	}
 	if msg.User != nil {
 		avatar := strings.TrimSpace(msg.User.Avatar)
 		if avatar != "" {
@@ -732,6 +735,9 @@ type identityResolver struct {
 func newIdentityResolver(channelID string) *identityResolver {
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
+		return nil
+	}
+	if model.GetDB() == nil {
 		return nil
 	}
 	items, err := model.ChannelIdentityList(channelID, "")

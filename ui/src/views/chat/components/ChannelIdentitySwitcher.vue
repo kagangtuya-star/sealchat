@@ -1,16 +1,19 @@
 <script setup lang="tsx">
-import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useUserStore } from '@/stores/user';
 import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import type { DropdownOption, DropdownMixedOption, DropdownRenderOption } from 'naive-ui';
-import { NDropdown, NButton, NIcon, NTooltip, NPopover } from 'naive-ui';
-import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings } from '@vicons/tabler';
+import type { DropdownOption, DropdownGroupOption, DropdownDividerOption, DropdownRenderOption, DropdownProps } from 'naive-ui';
+import { NDropdown, NButton, NIcon, NTooltip } from 'naive-ui';
+import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 import { useI18n } from 'vue-i18n';
+
+type DropdownMixedOption = DropdownOption | DropdownGroupOption | DropdownDividerOption | DropdownRenderOption;
+type DropdownRenderLabelFn = NonNullable<DropdownProps['renderLabel']>;
 
 const props = withDefaults(defineProps<{
   channelId?: string;
@@ -22,6 +25,7 @@ const props = withDefaults(defineProps<{
     color?: string;
     avatarAttachmentId?: string;
     variantId?: string;
+    isTemporary?: boolean;
   } | null;
 }>(), {
   channelId: undefined,
@@ -35,6 +39,7 @@ const emit = defineEmits<{
   (event: 'manage'): void;
   (event: 'avatar-setup'): void;
   (event: 'identity-changed'): void;
+  (event: 'edit-temporary'): void;
 }>();
 
 const { t } = useI18n();
@@ -150,6 +155,15 @@ const displayColor = computed(() => (
   || activeIdentity.value?.color
   || ''
 ));
+const displayIsTemporary = computed(() => (
+  Boolean(props.previewAppearance?.isTemporary ?? activeIdentity.value?.isTemporary)
+));
+const displayAvatarText = computed(() => (
+  props.previewAppearance?.displayName
+  || activeIdentityVariant.value?.displayName
+  || activeIdentity.value?.displayName
+  || fallbackName.value
+));
 
 // Mobile detection for responsive display
 const isMobile = ref(false);
@@ -180,12 +194,30 @@ const displayedButtonLabel = computed(() => {
 const avatarSize = computed(() => (props.compact && isMobile.value ? 22 : 28));
 
 const avatarSrc = computed(() => {
-  return buildAttachmentUrl(
+  const resolved = buildAttachmentUrl(
     props.previewAppearance?.avatarAttachmentId
     || activeIdentityVariant.value?.avatarAttachmentId
     || activeIdentity.value?.avatarAttachmentId,
-  ) || fallbackAvatar.value;
+  );
+  if (resolved) {
+    return resolved;
+  }
+  if (displayIsTemporary.value) {
+    return '';
+  }
+  return fallbackAvatar.value;
 });
+const primaryActionKey = computed(() => (
+  activeIdentity.value?.isTemporary ? '__edit_temporary' : '__create'
+));
+const primaryActionLabel = computed(() => (
+  primaryActionKey.value === '__edit_temporary' ? '编辑临时角色' : '创建新角色'
+));
+const primaryActionHint = computed(() => (
+  primaryActionKey.value === '__edit_temporary'
+    ? '改名会生成新 ID，历史消息保留旧身份'
+    : ''
+));
 const toggleActionLabel = computed(() => (
   filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
 ));
@@ -201,6 +233,13 @@ const renderActionIconByKey = (key: string) => {
     return (
       <NIcon size={18}>
         <Plus />
+      </NIcon>
+    );
+  }
+  if (key === '__edit_temporary') {
+    return (
+      <NIcon size={18}>
+        <Edit />
       </NIcon>
     );
   }
@@ -228,12 +267,12 @@ const renderMobileActionRow = () => (
         <button
           type="button"
           class="identity-action-bar-inline__btn"
-          title="创建新角色"
-          aria-label="创建新角色"
+          title={primaryActionHint.value || primaryActionLabel.value}
+          aria-label={primaryActionLabel.value}
           onMousedown={consumeDropdownActionPointer}
-          onClick={handleMobileCreateAction}
+          onClick={handleMobilePrimaryAction}
         >
-          {renderActionIconByKey('__create')}
+          {renderActionIconByKey(primaryActionKey.value)}
         </button>
         <button
           type="button"
@@ -258,7 +297,9 @@ const options = computed<DropdownMixedOption[]>(() => {
       <AvatarVue
         size={24}
         border={false}
-        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || fallbackAvatar.value}
+        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || (item.isTemporary ? '' : fallbackAvatar.value)}
+        useTextFallback={Boolean(item.isTemporary)}
+        fallbackText={item.displayName || fallbackName.value}
       />
     ),
     class: item.id === displayIdentityId.value ? 'identity-option identity-option--active' : 'identity-option',
@@ -295,11 +336,12 @@ const options = computed<DropdownMixedOption[]>(() => {
   if (canManageIdentities.value) {
     result.push(
       {
-        key: '__create',
-        label: '创建新角色',
+        key: primaryActionKey.value,
+        label: primaryActionLabel.value,
         class: 'identity-option identity-option--action identity-action identity-action--create',
-        icon: () => renderActionIconByKey('__create'),
-      },
+        icon: () => renderActionIconByKey(primaryActionKey.value),
+        hint: primaryActionHint.value,
+      } as DropdownOption,
       {
         key: '__manage',
         label: '管理角色',
@@ -331,9 +373,13 @@ const handleMobileToggleAction = (event: MouseEvent) => {
   consumeDropdownActionPointer(event);
   applyToggleFilterMode(false);
 };
-const handleMobileCreateAction = (event: MouseEvent) => {
+const handleMobilePrimaryAction = (event: MouseEvent) => {
   consumeDropdownActionPointer(event);
   dropdownVisible.value = false;
+  if (primaryActionKey.value === '__edit_temporary') {
+    emit('edit-temporary');
+    return;
+  }
   emit('create');
 };
 const handleMobileManageAction = (event: MouseEvent) => {
@@ -342,64 +388,47 @@ const handleMobileManageAction = (event: MouseEvent) => {
   emit('manage');
 };
 
-const renderOption: DropdownRenderOption = ({ node, option }) => {
-  if (option.key === '__divider') {
-    return node;
-  }
-  if (option.key === '__create' || option.key === '__manage' || option.key === '__toggle') {
+const renderLabel: DropdownRenderLabelFn = (option) => {
+  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle') {
     const label = String(option.label || '');
-    const actionKey = String(option.key || '');
-    return cloneVNode(
-      node,
-      {
-        class: [node.props?.class, 'identity-option-node', 'identity-option-node--action'],
-      },
-      {
-        default: () => (
-          <div
-            class="identity-action-option"
-            title={label}
-            aria-label={label}
-          >
-            <span class="identity-action-option__icon">
-              {renderActionIconByKey(actionKey)}
-            </span>
-            <span class="identity-action-option__text">{label}</span>
-          </div>
-        ),
-      },
+    const hint = String((option as any).hint || '');
+    return (
+      <div
+        class="identity-action-option identity-option-node identity-option-node--action"
+        title={label}
+        aria-label={label}
+      >
+        <span class="identity-action-option__body">
+          <span class="identity-action-option__text">{label}</span>
+          {hint ? <span class="identity-action-option__hint">{hint}</span> : null}
+        </span>
+      </div>
     );
   }
   if (option.key === '__placeholder') {
-    return cloneVNode(node, {
-      class: [node.props?.class, 'identity-option-node', 'identity-option-node--placeholder'],
-    });
+    return (
+      <div class="identity-option-node identity-option-node--placeholder">
+        {String(option.label || '')}
+      </div>
+    );
   }
   const color = (option as any).extra as string | undefined;
   const isActive = displayIdentityId.value === option.key;
-  return cloneVNode(
-    node,
-    {
-      class: [node.props?.class, 'identity-option-node', isActive ? 'identity-option-node--active' : ''],
-    },
-    {
-      default: () => (
-        <div class="identity-option">
-          {option.icon?.()}
-          <span class="identity-option__label">
-            {color ? <span class="identity-option__dot" style={{ backgroundColor: color }}></span> : null}
-            <span class="identity-option__name" style={color ? { color } : undefined}>{option.label as string}</span>
-            {isActive ? <span class="identity-option__tag">当前</span> : null}
-          </span>
-        </div>
-      ),
-    },
+  return (
+    <span class={['identity-option__label', isActive ? 'identity-option__label--active' : '']}>
+      {color ? <span class="identity-option__dot" style={{ backgroundColor: color }}></span> : null}
+      <span class="identity-option__name" style={color ? { color } : undefined}>{option.label as string}</span>
+    </span>
   );
 };
 
 const handleSelect = async (key: string | number) => {
   if (key === '__create') {
     emit('create');
+    return;
+  }
+  if (key === '__edit_temporary') {
+    emit('edit-temporary');
     return;
   }
   if (key === '__manage') {
@@ -537,6 +566,7 @@ const showAvatarSetupBadge = computed(() => {
   if (!canManageIdentities.value) return false;
   // Show badge when user has no avatar AND there's no active channel identity avatar
   if (!user.hasDefaultAvatar) return false;
+  if (activeIdentity.value?.isTemporary) return false;
   // If using a channel identity with a custom avatar, don't show
   if (activeIdentity.value?.avatarAttachmentId) return false;
   return true;
@@ -704,7 +734,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
       :show-arrow="false"
       placement="top-start"
       :disabled="!resolvedChannelId || disabled"
-      :render-option="renderOption"
+      :render-label="renderLabel"
       :menu-props="dropdownMenuProps"
       :content-class="dropdownOverlayClass"
       @update:show="handleDropdownShowUpdate"
@@ -721,6 +751,8 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
           :size="avatarSize"
           :border="false"
           :src="avatarSrc"
+          :use-text-fallback="displayIsTemporary"
+          :fallback-text="displayAvatarText"
           class="identity-switcher__avatar"
         />
         <span
@@ -891,7 +923,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 .identity-action-option {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   min-width: 11rem;
 }
@@ -906,9 +938,22 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   flex: 0 0 auto;
 }
 
+.identity-action-option__body {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  line-height: 1.2;
+}
+
 .identity-action-option__text {
   display: inline-flex;
   align-items: center;
+}
+
+.identity-action-option__hint {
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary, #64748b);
+  white-space: normal;
 }
 
 .identity-option-node--placeholder {

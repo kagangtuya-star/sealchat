@@ -59,6 +59,7 @@ type ChannelIdentity struct {
 	Color              string `json:"color"`
 	AvatarAttachmentID string `json:"avatarAttachmentId"`
 	IsDefault          bool   `json:"isDefault"`
+	IsTemporary        bool   `json:"isTemporary"`
 }
 
 type CharacterCard struct {
@@ -145,6 +146,7 @@ type MessageIdentity struct {
 	DisplayName      string `json:"displayName"`
 	Color            string `json:"color"`
 	AvatarAttachment string `json:"avatarAttachment"`
+	IsTemporary      bool   `json:"isTemporary"`
 }
 
 type ChannelPresence struct {

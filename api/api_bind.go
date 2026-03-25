@@ -348,6 +348,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-identities", ChannelIdentityList)
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
+	v1Auth.Post("/channel-identities/:id/replace-temporary", ChannelIdentityReplaceTemporary)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 	v1Auth.Get("/channel-identity-variants", ChannelIdentityVariantList)
 	v1Auth.Post("/channel-identity-variants", ChannelIdentityVariantCreate)

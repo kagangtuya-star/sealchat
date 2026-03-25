@@ -41,10 +41,12 @@ import type { ChannelIForm } from '@/types/iform';
 type EditingPreviewInfo = {
   userId: string;
   displayName: string;
+  color?: string;
   avatar?: string;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
+  isTemporary?: boolean;
   summary: string;
   previewHtml: string;
   tone: 'ic' | 'ooc';
@@ -2960,14 +2962,36 @@ const nick = computed(() => {
 
 // 仅编辑自己的消息时，才使用本地编辑预览覆盖头像
 const displayAvatar = computed(() => {
-  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.avatar) {
-    return selfEditingPreview.value.avatar;
+  if (shouldUseSelfPreviewIdentity.value) {
+    return selfEditingPreview.value?.avatar || '';
   }
   if (otherEditingPreview.value?.avatar) {
     return otherEditingPreview.value.avatar;
   }
   return props.avatar;
 });
+
+const useTextAvatarFallback = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value) {
+    return Boolean(selfEditingPreview.value?.isTemporary);
+  }
+  return Boolean(
+    (props.item as any)?.identity?.isTemporary
+    ?? (props.item as any)?.sender_identity_is_temporary,
+  );
+});
+
+const avatarFallbackText = computed(() => (
+  selfEditingPreview.value?.displayName
+  || props.username
+  || (props.item as any)?.identity?.displayName
+  || (props.item as any)?.sender_identity_name
+  || props.item?.sender_member_name
+  || props.item?.member?.nick
+  || props.item?.user?.nick
+  || props.item?.user?.name
+  || '匿'
+));
 
 const messageReactions = computed(() => {
   if (!props.item?.id) {
@@ -2986,7 +3010,12 @@ const handleReactionToggle = async (emoji: string) => {
   }
 };
 
-const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
+const nameColor = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.color) {
+    return selfEditingPreview.value.color;
+  }
+  return props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '';
+});
 
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
 
@@ -3089,7 +3118,15 @@ const handleRetrySend = () => {
       :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
       @contextmenu="preventAvatarNativeMenu"
     >
-      <Avatar :src="displayAvatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" @dblclick="doAvatarDblClick" />
+      <Avatar
+        :src="displayAvatar"
+        :border="false"
+        :use-text-fallback="useTextAvatarFallback"
+        :fallback-text="avatarFallbackText"
+        @longpress="handleAvatarLongpress"
+        @click="doAvatarClick"
+        @dblclick="doAvatarDblClick"
+      />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->

@@ -16,7 +16,14 @@ type ChannelIdentityInput struct {
 	Color              string
 	AvatarAttachmentID string
 	IsDefault          bool
+	IsTemporary        bool
 	FolderIDs          []string
+}
+
+type ChannelIdentityReplaceResult struct {
+	Item          *model.ChannelIdentityModel
+	OldIdentityID string
+	RemovedID     string
 }
 
 func validateIdentityInput(input *ChannelIdentityInput) error {
@@ -83,6 +90,7 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 		AvatarAttachmentID: input.AvatarAttachmentID,
 		SortOrder:          sortMax + 1,
 		IsDefault:          input.IsDefault,
+		IsTemporary:        input.IsTemporary,
 	}
 	if item.IsDefault {
 		if err := model.ChannelIdentityEnsureSingleDefault(item.ChannelID, item.UserID, ""); err != nil {
@@ -172,6 +180,146 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	return updated, nil
 }
 
+func ChannelIdentityReplaceTemporary(userID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityReplaceResult, error) {
+	if err := validateIdentityInput(input); err != nil {
+		return nil, err
+	}
+	identity, err := model.ChannelIdentityValidateOwnership(identityID, userID, input.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if !identity.IsTemporary {
+		return nil, errors.New("仅临时身份支持替换式编辑")
+	}
+	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
+		return nil, err
+	}
+
+	folderIDs := sanitizeFolderIDs(input.FolderIDs)
+	if input.FolderIDs == nil {
+		membership, err := loadIdentityFolderMembership([]string{identity.ID})
+		if err != nil {
+			return nil, err
+		}
+		folderIDs = sanitizeFolderIDs(membership[identity.ID])
+	}
+	if _, err := ChannelIdentityFoldersValidateOwnership(input.ChannelID, userID, folderIDs); err != nil {
+		return nil, err
+	}
+
+	result := &ChannelIdentityReplaceResult{
+		OldIdentityID: identity.ID,
+		RemovedID:     identity.ID,
+	}
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		item := &model.ChannelIdentityModel{
+			ChannelID:          identity.ChannelID,
+			UserID:             identity.UserID,
+			DisplayName:        strings.TrimSpace(input.DisplayName),
+			Color:              input.Color,
+			AvatarAttachmentID: input.AvatarAttachmentID,
+			IsDefault:          input.IsDefault,
+			IsTemporary:        true,
+			SortOrder:          identity.SortOrder,
+		}
+		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		if item.IsDefault {
+			if err := tx.Model(&model.ChannelIdentityModel{}).
+				Where("channel_id = ? AND user_id = ? AND id <> ?", item.ChannelID, item.UserID, item.ID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		if len(folderIDs) > 0 {
+			records := make([]*model.ChannelIdentityFolderMemberModel, 0, len(folderIDs))
+			for idx, folderID := range folderIDs {
+				records = append(records, &model.ChannelIdentityFolderMemberModel{
+					ChannelID:  item.ChannelID,
+					UserID:     item.UserID,
+					FolderID:   folderID,
+					IdentityID: item.ID,
+					SortOrder:  idx,
+				})
+			}
+			if err := tx.Create(&records).Error; err != nil {
+				return err
+			}
+		}
+
+		var config model.ChannelIdentityModeConfigModel
+		if err := tx.Where("user_id = ? AND channel_id = ?", identity.UserID, identity.ChannelID).
+			Limit(1).
+			Find(&config).Error; err != nil {
+			return err
+		}
+		configExists := config.ID != ""
+		if configExists {
+			nextICIdentityID := config.ICIdentityID
+			nextOOCIdentityID := config.OOCIdentityID
+			changed := false
+			if nextICIdentityID == identity.ID {
+				nextICIdentityID = item.ID
+				changed = true
+			}
+			if nextOOCIdentityID == identity.ID {
+				nextOOCIdentityID = item.ID
+				changed = true
+			}
+			if changed {
+				if _, err := model.ChannelIdentityModeConfigUpsertTx(tx, identity.UserID, identity.ChannelID, nextICIdentityID, nextOOCIdentityID); err != nil {
+					return err
+				}
+			}
+		}
+
+		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityVariantModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityFolderMemberModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", identity.ID).Delete(&model.ChannelIdentityModel{}).Error; err != nil {
+			return err
+		}
+		if !item.IsDefault {
+			var hasDefault int64
+			if err := tx.Model(&model.ChannelIdentityModel{}).
+				Where("channel_id = ? AND user_id = ? AND is_default = ?", item.ChannelID, item.UserID, true).
+				Count(&hasDefault).Error; err != nil {
+				return err
+			}
+			if hasDefault == 0 {
+				var fallback model.ChannelIdentityModel
+				if err := tx.Where("channel_id = ? AND user_id = ?", item.ChannelID, item.UserID).
+					Order("sort_order ASC, created_at ASC").
+					Limit(1).
+					Find(&fallback).Error; err != nil {
+					return err
+				}
+				if fallback.ID != "" {
+					if err := tx.Model(&model.ChannelIdentityModel{}).
+						Where("id = ?", fallback.ID).
+						Update("is_default", true).Error; err != nil {
+						return err
+					}
+					if fallback.ID == item.ID {
+						item.IsDefault = true
+					}
+				}
+			}
+		}
+		item.FolderIDs = append([]string{}, folderIDs...)
+		result.Item = item
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func ChannelIdentityDelete(userID string, channelID string, identityID string) error {
 	identity, err := model.ChannelIdentityValidateOwnership(identityID, userID, channelID)
 	if err != nil {
@@ -248,6 +396,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"color":              item.Color,
 		"avatarAttachmentId": item.AvatarAttachmentID,
 		"isDefault":          item.IsDefault,
+		"isTemporary":        item.IsTemporary,
 		"sortOrder":          item.SortOrder,
 		"folderIds":          item.FolderIDs,
 	}

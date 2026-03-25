@@ -14,15 +14,16 @@ import (
 
 // channelImageItem represents a single image from channel messages
 type channelImageItem struct {
-	ID           string `json:"id"`
-	MessageID    string `json:"message_id"`
-	AttachmentID string `json:"attachment_id"`
-	ThumbURL     string `json:"thumb_url"`
-	SenderID     string `json:"sender_id"`
-	SenderName   string `json:"sender_name"`
-	SenderAvatar string `json:"sender_avatar"`
-	CreatedAt    int64  `json:"created_at"`
-	DisplayOrder float64 `json:"display_order"`
+	ID                        string  `json:"id"`
+	MessageID                 string  `json:"message_id"`
+	AttachmentID              string  `json:"attachment_id"`
+	ThumbURL                  string  `json:"thumb_url"`
+	SenderID                  string  `json:"sender_id"`
+	SenderName                string  `json:"sender_name"`
+	SenderAvatar              string  `json:"sender_avatar"`
+	SenderIdentityIsTemporary bool    `json:"sender_identity_is_temporary"`
+	CreatedAt                 int64   `json:"created_at"`
+	DisplayOrder              float64 `json:"display_order"`
 }
 
 type channelImagesResponse struct {
@@ -112,7 +113,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		Order("display_order DESC").
 		Order("created_at DESC").
 		Offset(offset).
-		Limit(pageSize * 3). // Fetch more since not all messages will have images
+		Limit(pageSize*3). // Fetch more since not all messages will have images
 		Preload("User", func(tx *gorm.DB) *gorm.DB {
 			return tx.Select("id, username, nickname, avatar, is_bot")
 		}).
@@ -140,9 +141,15 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		senderName := resolveSenderName(msg)
 		senderAvatar := ""
 		senderID := ""
+		senderIdentityIsTemporary := msg.SenderIdentityIsTemporary
+		if msg.SenderIdentityAvatarID != "" {
+			senderAvatar = msg.SenderIdentityAvatarID
+		}
 		if msg.User != nil {
 			senderID = msg.User.ID
-			senderAvatar = msg.User.Avatar
+			if senderAvatar == "" && !senderIdentityIsTemporary {
+				senderAvatar = msg.User.Avatar
+			}
 		}
 
 		for _, attID := range attachmentIDs {
@@ -156,15 +163,16 @@ func ChannelImagesList(c *fiber.Ctx) error {
 			}
 
 			items = append(items, channelImageItem{
-				ID:           msg.ID + "_" + attID,
-				MessageID:    msg.ID,
-				AttachmentID: attID,
-				ThumbURL:     "/api/v1/attachment/" + attID + "/thumb?size=150",
-				SenderID:     senderID,
-				SenderName:   senderName,
-				SenderAvatar: senderAvatar,
-				CreatedAt:    msg.CreatedAt.UnixMilli(),
-				DisplayOrder: msg.DisplayOrder,
+				ID:                        msg.ID + "_" + attID,
+				MessageID:                 msg.ID,
+				AttachmentID:              attID,
+				ThumbURL:                  "/api/v1/attachment/" + attID + "/thumb?size=150",
+				SenderID:                  senderID,
+				SenderName:                senderName,
+				SenderAvatar:              senderAvatar,
+				SenderIdentityIsTemporary: senderIdentityIsTemporary,
+				CreatedAt:                 msg.CreatedAt.UnixMilli(),
+				DisplayOrder:              msg.DisplayOrder,
 			})
 		}
 	}

@@ -15,6 +15,7 @@ type channelIdentityPayload struct {
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
 	IsDefault          bool     `json:"isDefault"`
+	IsTemporary        bool     `json:"isTemporary"`
 	FolderIDs          []string `json:"folderIds"`
 }
 
@@ -67,6 +68,7 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
+		IsTemporary:        payload.IsTemporary,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -105,6 +107,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
+		IsTemporary:        payload.IsTemporary,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -138,5 +141,44 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{
 		"success": true,
+	})
+}
+
+func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
+	identityID := c.Params("id")
+	if identityID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "无效的身份ID",
+		})
+	}
+	payload := channelIdentityPayload{}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+	if payload.ChannelID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "缺少频道ID",
+		})
+	}
+	user := getCurUser(c)
+	result, err := service.ChannelIdentityReplaceTemporary(user.ID, identityID, &service.ChannelIdentityInput{
+		ChannelID:          payload.ChannelID,
+		DisplayName:        payload.DisplayName,
+		Color:              payload.Color,
+		AvatarAttachmentID: payload.AvatarAttachmentID,
+		IsDefault:          payload.IsDefault,
+		FolderIDs:          payload.FolderIDs,
+	})
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+	return c.JSON(fiber.Map{
+		"item":          result.Item,
+		"oldIdentityId": result.OldIdentityID,
+		"removedId":     result.RemovedID,
 	})
 }

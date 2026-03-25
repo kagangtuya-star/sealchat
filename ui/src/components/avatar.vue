@@ -1,36 +1,39 @@
 <script setup lang="tsx">
 import imgAvatar from '@/assets/head3.png'
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { onLongPress } from '@vueuse/core'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 
-const props = defineProps({
-  src: String,
-  size: {
-    type: Number,
-    default: 0, // 0 means inherit from CSS variable
-  },
-  border: {
-    type: Boolean,
-    default: true,
-  },
-})
-
-const opacity = ref(0)
-const onload = function () {
-  opacity.value = 0;
-}
-
-onMounted(() => {
-})
+const props = withDefaults(defineProps<{
+  src?: string;
+  size?: number;
+  border?: boolean;
+  fallbackText?: string;
+  useTextFallback?: boolean;
+}>(), {
+  src: '',
+  size: 0,
+  border: true,
+  fallbackText: '',
+  useTextFallback: false,
+});
 
 const resolvedSrc = computed(() => {
-  const url = resolveAttachmentUrl(props.src);
-  if (!url) {
-    opacity.value = 1;
+  return resolveAttachmentUrl(props.src);
+});
+const imageLoadFailed = ref(false);
+watch(() => props.src, () => {
+  imageLoadFailed.value = false;
+});
+const showImage = computed(() => Boolean(resolvedSrc.value) && !imageLoadFailed.value);
+const normalizedFallbackText = computed(() => {
+  const collapsed = String(props.fallbackText || '').replace(/\s+/g, '').trim();
+  if (!collapsed) {
+    return '匿';
   }
-  return url;
-})
+  return Array.from(collapsed).slice(0, 2).join('');
+});
+const showTextFallback = computed(() => !showImage.value && props.useTextFallback);
 
 // Size style: use props.size if specified, otherwise inherit from CSS variable
 const sizeStyle = computed(() => {
@@ -50,6 +53,9 @@ const sizeStyle = computed(() => {
     minHeight: 'var(--chat-avatar-size, 48px)',
   }
 })
+const handleImageError = () => {
+  imageLoadFailed.value = true;
+};
 
 const emit = defineEmits(['longpress']);
 
@@ -74,8 +80,9 @@ onLongPress(
     @contextmenu.prevent
     @dragstart.prevent
   >
-    <img class="avatar-img" :src="resolvedSrc" v-if="resolvedSrc" :onload="onload" draggable="false" />
-    <img class="avatar-img avatar-img--fallback" :src="imgAvatar" :style="{ opacity: opacity }" draggable="false" />
+    <img v-if="showImage" class="avatar-img" :src="resolvedSrc" draggable="false" @error="handleImageError" />
+    <div v-else-if="showTextFallback" class="avatar-text-fallback">{{ normalizedFallbackText }}</div>
+    <img v-else class="avatar-img avatar-img--fallback" :src="imgAvatar" draggable="false" />
   </div>
 </template>
 
@@ -100,9 +107,7 @@ onLongPress(
 }
 
 .avatar-img--fallback {
-  position: absolute;
-  top: 0;
-  left: 0;
+  display: block;
 }
 
 .avatar-shell--bordered {
@@ -118,5 +123,26 @@ onLongPress(
 .avatar-shell--plain {
   border: none;
   background: transparent;
+}
+
+.avatar-text-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.75), transparent 58%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(71, 85, 105, 0.92));
+  color: #f8fafc;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: clamp(0.72rem, 0.38rem + 0.8vw, 1rem);
+}
+
+:root[data-display-palette='night'] .avatar-text-fallback {
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.12), transparent 58%),
+    linear-gradient(135deg, rgba(148, 163, 184, 0.28), rgba(30, 41, 59, 0.96));
 }
 </style>

@@ -52,14 +52,15 @@ type MessageModel struct {
 	IsImported    bool       `json:"isImported" gorm:"default:false;index:idx_msg_imported"`
 	ImportJobID   string     `json:"importJobId" gorm:"size:100;index:idx_msg_import_job_id"`
 
-	SenderMemberName        string `json:"sender_member_name"` // 用户在当时的名字
-	SenderIdentityID        string `json:"sender_identity_id" gorm:"size:100"`
-	SenderIdentityVariantID string `json:"sender_identity_variant_id" gorm:"size:100"`
-	SenderIdentityName      string `json:"sender_identity_name"`
-	SenderIdentityColor     string `json:"sender_identity_color"`
-	SenderIdentityAvatarID  string `json:"sender_identity_avatar_id"`
-	SenderRoleID            string `json:"sender_role_id" gorm:"size:100"`
-	MergedMessages          int    `json:"-" gorm:"-"`
+	SenderMemberName          string `json:"sender_member_name"` // 用户在当时的名字
+	SenderIdentityID          string `json:"sender_identity_id" gorm:"size:100"`
+	SenderIdentityVariantID   string `json:"sender_identity_variant_id" gorm:"size:100"`
+	SenderIdentityName        string `json:"sender_identity_name"`
+	SenderIdentityColor       string `json:"sender_identity_color"`
+	SenderIdentityAvatarID    string `json:"sender_identity_avatar_id"`
+	SenderIdentityIsTemporary bool   `json:"sender_identity_is_temporary" gorm:"default:false"`
+	SenderRoleID              string `json:"sender_role_id" gorm:"size:100"`
+	MergedMessages            int    `json:"-" gorm:"-"`
 
 	User   *UserModel    `json:"user"`           // 嵌套 User 结构体
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
@@ -140,13 +141,14 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			msg.WhisperToIds = append(msg.WhisperToIds, target.ToProtocolType())
 		}
 	}
-	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" {
+	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary {
 		msg.Identity = &protocol.MessageIdentity{
 			ID:               m.SenderIdentityID,
 			VariantID:        m.SenderIdentityVariantID,
 			DisplayName:      m.SenderIdentityName,
 			Color:            m.SenderIdentityColor,
 			AvatarAttachment: m.SenderIdentityAvatarID,
+			IsTemporary:      m.SenderIdentityIsTemporary,
 		}
 	}
 	if meta := m.buildWhisperMeta(); meta != nil {
