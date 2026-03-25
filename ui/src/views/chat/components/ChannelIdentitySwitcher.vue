@@ -215,7 +215,7 @@ const primaryActionLabel = computed(() => (
 ));
 const primaryActionHint = computed(() => (
   primaryActionKey.value === '__edit_temporary'
-    ? '改名会生成新 ID，历史消息保留旧身份'
+    ? ''
     : ''
 ));
 const toggleActionLabel = computed(() => (
