@@ -14,6 +14,9 @@ import { useI18n } from 'vue-i18n';
 
 type DropdownMixedOption = DropdownOption | DropdownGroupOption | DropdownDividerOption | DropdownRenderOption;
 type DropdownRenderLabelFn = NonNullable<DropdownProps['renderLabel']>;
+type IdentityDropdownOption = DropdownOption & {
+  rawLabel?: string;
+};
 
 const props = withDefaults(defineProps<{
   channelId?: string;
@@ -170,6 +173,36 @@ const isMobile = ref(false);
 const MOBILE_BREAKPOINT = 768;
 const MAX_NAME_LENGTH_MOBILE = 4;
 const MOBILE_DROPDOWN_VIEWPORT_RATIO = 0.62;
+const MAX_ROLE_LABEL_UNITS = 12;
+
+const getRoleLabelDisplayUnits = (value: string) => {
+  let units = 0;
+  for (const char of Array.from(value)) {
+    units += /[\u0000-\u00ff]/.test(char) ? 0.5 : 1;
+  }
+  return units;
+};
+
+const truncateRoleLabel = (value?: string, maxUnits = MAX_ROLE_LABEL_UNITS) => {
+  const normalized = String(value || '');
+  if (!normalized) {
+    return '';
+  }
+  if (getRoleLabelDisplayUnits(normalized) <= maxUnits) {
+    return normalized;
+  }
+  let units = 0;
+  let result = '';
+  for (const char of Array.from(normalized)) {
+    const nextUnits = units + (/[\u0000-\u00ff]/.test(char) ? 0.5 : 1);
+    if (nextUnits > maxUnits) {
+      break;
+    }
+    result += char;
+    units = nextUnits;
+  }
+  return `${result}…`;
+};
 
 const updateIsMobile = () => {
   const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
@@ -290,9 +323,10 @@ const renderMobileActionRow = () => (
 );
 
 const options = computed<DropdownMixedOption[]>(() => {
-  const list = sortedIdentities.value.map<DropdownOption>((item) => ({
+  const list = sortedIdentities.value.map<IdentityDropdownOption>((item) => ({
     key: item.id,
     label: item.displayName,
+    rawLabel: item.displayName,
     icon: () => (
       <AvatarVue
         size={24}
@@ -413,10 +447,16 @@ const renderLabel: DropdownRenderLabelFn = (option) => {
   }
   const color = (option as any).extra as string | undefined;
   const isActive = displayIdentityId.value === option.key;
+  const rawLabel = String((option as IdentityDropdownOption).rawLabel || option.label || '');
+  const truncatedLabel = truncateRoleLabel(rawLabel);
   return (
-    <span class={['identity-option__label', isActive ? 'identity-option__label--active' : '']}>
+    <span
+      class={['identity-option__label', isActive ? 'identity-option__label--active' : '']}
+      title={rawLabel}
+      aria-label={rawLabel}
+    >
       {color ? <span class="identity-option__dot" style={{ backgroundColor: color }}></span> : null}
-      <span class="identity-option__name" style={color ? { color } : undefined}>{option.label as string}</span>
+      <span class="identity-option__name" style={color ? { color } : undefined}>{truncatedLabel}</span>
     </span>
   );
 };
@@ -745,6 +785,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         class="identity-switcher"
         :class="{ 'identity-switcher--compact': props.compact && isMobile }"
         :disabled="!resolvedChannelId || disabled"
+        :title="displayName"
       >
         <AvatarVue
           :size="avatarSize"
@@ -846,6 +887,8 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .identity-option__dot {
@@ -857,6 +900,10 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 .identity-option__name {
   font-size: 0.95rem;
+  max-width: 12em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .identity-option__tag {
