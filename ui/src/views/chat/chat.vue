@@ -15375,7 +15375,7 @@ onBeforeUnmount(() => {
         </n-tooltip>
       </div>
     </template>
-    <n-form label-width="90px" label-placement="left">
+    <n-form label-width="90px" label-placement="left" class="identity-dialog__form">
       <n-form-item label="频道昵称">
         <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
       </n-form-item>
@@ -15423,7 +15423,7 @@ onBeforeUnmount(() => {
           clearable
         />
       </n-form-item>
-      <n-form-item v-if="!isEditingTemporaryIdentity">
+      <n-form-item v-if="!isEditingTemporaryIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
@@ -15447,13 +15447,13 @@ onBeforeUnmount(() => {
           <span class="identity-mini-mode-switch__hint">切换到这个临时角色时，自动切到{{ temporaryIdentityActivateModeLabel }}</span>
         </div>
       </n-form-item>
-      <n-form-item v-if="identityDialogMode === 'create'">
+      <n-form-item v-if="identityDialogMode === 'create'" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isTemporary">
           创建为临时 NPC 角色
         </n-checkbox>
       </n-form-item>
       <template v-if="!isEditingTemporaryIdentity">
-        <n-divider title-placement="left">头像差分</n-divider>
+        <n-divider title-placement="left" class="identity-dialog__variant-divider">头像差分</n-divider>
         <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
           <div class="identity-variant-section__header">
             <div>
@@ -19435,6 +19435,22 @@ onBeforeUnmount(() => {
   border-color: rgba(59, 130, 246, 0.35);
 }
 
+.identity-dialog__form {
+  :deep(.n-form-item) {
+    margin-bottom: 0.75rem;
+  }
+}
+
+.identity-dialog__check-item {
+  :deep(.n-form-item-blank) {
+    min-height: auto;
+  }
+}
+
+.identity-dialog__variant-divider {
+  margin: 0.15rem 0 0;
+}
+
 .identity-manager {
   display: grid;
   grid-template-columns: minmax(140px, 160px) minmax(0, 1fr);
@@ -19641,7 +19657,7 @@ onBeforeUnmount(() => {
 .identity-variant-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .identity-variant-section__header {
