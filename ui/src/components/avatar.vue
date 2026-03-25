@@ -3,6 +3,8 @@ import imgAvatar from '@/assets/head3.png'
 import { computed, ref, watch } from 'vue';
 import { onLongPress } from '@vueuse/core'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useDisplayStore } from '@/stores/display';
+import { buildGeneratedAvatarDataUrl } from '@/utils/generatedAvatarImage';
 
 const props = withDefaults(defineProps<{
   src?: string;
@@ -21,6 +23,7 @@ const props = withDefaults(defineProps<{
 const resolvedSrc = computed(() => {
   return resolveAttachmentUrl(props.src);
 });
+const display = useDisplayStore();
 const imageLoadFailed = ref(false);
 watch(() => props.src, () => {
   imageLoadFailed.value = false;
@@ -34,6 +37,24 @@ const normalizedFallbackText = computed(() => {
   return Array.from(collapsed).slice(0, 2).join('');
 });
 const showTextFallback = computed(() => !showImage.value && props.useTextFallback);
+const generatedFallbackSrc = computed(() => {
+  const themePalette = display.settings.palette;
+  const customThemeEnabled = display.settings.customThemeEnabled;
+  const activeCustomThemeId = display.settings.activeCustomThemeId;
+  if (!props.useTextFallback || showImage.value) {
+    return '';
+  }
+  return buildGeneratedAvatarDataUrl({
+    displayName: props.fallbackText,
+    size: props.size > 0 ? Math.max(props.size * 2, 96) : 128,
+    themeSeed: {
+      palette: themePalette,
+      customThemeEnabled,
+      activeCustomThemeId,
+    },
+  });
+});
+const showGeneratedFallback = computed(() => !showImage.value && Boolean(generatedFallbackSrc.value));
 
 // Size style: use props.size if specified, otherwise inherit from CSS variable
 const sizeStyle = computed(() => {
@@ -81,6 +102,7 @@ onLongPress(
     @dragstart.prevent
   >
     <img v-if="showImage" class="avatar-img" :src="resolvedSrc" draggable="false" @error="handleImageError" />
+    <img v-else-if="showGeneratedFallback" class="avatar-img avatar-img--generated" :src="generatedFallbackSrc" draggable="false" />
     <div v-else-if="showTextFallback" class="avatar-text-fallback">{{ normalizedFallbackText }}</div>
     <img v-else class="avatar-img avatar-img--fallback" :src="imgAvatar" draggable="false" />
   </div>

@@ -69,6 +69,7 @@ import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -4150,6 +4151,29 @@ const submitIdentityForm = async () => {
       payload.avatarAttachmentId = identityForm.avatarAttachmentId;
       identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
       identityAvatarFile = null;
+    } else if (payload.isTemporary && !payload.avatarAttachmentId) {
+      const generatedAvatarFile = await buildGeneratedAvatarFile({
+        displayName: payload.displayName,
+        accentColor: payload.color,
+        size: 256,
+        themeSeed: {
+          palette: display.settings.palette,
+          customThemeEnabled: display.settings.customThemeEnabled,
+          activeCustomThemeId: display.settings.activeCustomThemeId,
+        },
+      }, `identity-${Date.now()}.png`);
+      const uploadResult = await uploadImageAttachment(generatedAvatarFile, {
+        channelId: chat.curChannel.id,
+        skipCompression: true,
+      });
+      const fileToken = uploadResult.attachmentId;
+      if (!fileToken) {
+        throw new Error('上传失败：未返回附件ID');
+      }
+      const normalizedToken = normalizeAttachmentId(fileToken);
+      identityForm.avatarAttachmentId = normalizedToken;
+      payload.avatarAttachmentId = identityForm.avatarAttachmentId;
+      identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
     }
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);

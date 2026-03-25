@@ -302,7 +302,6 @@ const options = computed<DropdownMixedOption[]>(() => {
         fallbackText={item.displayName || fallbackName.value}
       />
     ),
-    class: item.id === displayIdentityId.value ? 'identity-option identity-option--active' : 'identity-option',
     extra: item.color,
   }));
   if (!list.length) {
@@ -839,7 +838,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   min-width: 11rem;
 }
 
-.identity-option--active .identity-option__name {
+.identity-option__label--active .identity-option__name {
   font-weight: 600;
 }
 
