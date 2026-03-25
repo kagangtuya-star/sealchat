@@ -15331,10 +15331,26 @@ onBeforeUnmount(() => {
   <n-modal
     v-model:show="identityDialogVisible"
     preset="card"
-    :title="identityDialogTitle"
     :auto-focus="false"
     class="identity-dialog"
   >
+    <template #header>
+      <div class="identity-dialog__header">
+        <span class="identity-dialog__header-title">{{ identityDialogTitle }}</span>
+        <n-tooltip v-if="identityTemporaryHint" trigger="hover">
+          <template #trigger>
+            <button
+              type="button"
+              class="identity-dialog__header-help"
+              aria-label="查看临时身份说明"
+            >
+              ？
+            </button>
+          </template>
+          {{ identityTemporaryHint }}
+        </n-tooltip>
+      </div>
+    </template>
     <n-form label-width="90px" label-placement="left">
       <n-form-item label="频道昵称">
         <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
@@ -15375,7 +15391,7 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </n-form-item>
-      <n-form-item label="绑定人物卡">
+      <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
           :options="characterCardSelectOptions"
@@ -15383,7 +15399,7 @@ onBeforeUnmount(() => {
           clearable
         />
       </n-form-item>
-      <n-form-item>
+      <n-form-item v-if="!isEditingTemporaryIdentity">
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
@@ -15393,70 +15409,69 @@ onBeforeUnmount(() => {
           创建为临时 NPC 角色
         </n-checkbox>
       </n-form-item>
-      <n-alert v-if="identityTemporaryHint" type="warning" :show-icon="false" class="identity-dialog__hint">
-        {{ identityTemporaryHint }}
-      </n-alert>
-      <n-divider title-placement="left">头像差分</n-divider>
-      <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
-        <div class="identity-variant-section__header">
-          <div>
-            <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
-            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
+      <template v-if="!isEditingTemporaryIdentity">
+        <n-divider title-placement="left">头像差分</n-divider>
+        <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
+          <div class="identity-variant-section__header">
+            <div>
+              <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
+              <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
+            </div>
+            <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
           </div>
-          <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
-        </div>
-        <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
-          <div
-            v-for="variant in currentEditingIdentityVariants"
-            :key="variant.id"
-            class="identity-variant-list__item"
-          >
-            <button
-              type="button"
-              class="identity-variant-list__selector"
-              @click="openIdentityVariantEdit(variant)"
+          <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
+            <div
+              v-for="variant in currentEditingIdentityVariants"
+              :key="variant.id"
+              class="identity-variant-list__item"
             >
-              <img
-                v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
-                :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
-                :alt="resolveVariantNote(variant)"
+              <button
+                type="button"
+                class="identity-variant-list__selector"
+                @click="openIdentityVariantEdit(variant)"
+              >
+                <img
+                  v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                  :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                  :alt="resolveVariantNote(variant)"
+                />
+                <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+              </button>
+              <AvatarVue
+                :size="40"
+                :border="false"
+                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : user.info.avatar)"
+                :use-text-fallback="identityForm.isTemporary"
+                :fallback-text="variant.displayName || identityForm.displayName"
               />
-              <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
-            </button>
-            <AvatarVue
-              :size="40"
-              :border="false"
-              :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : user.info.avatar)"
-              :use-text-fallback="identityForm.isTemporary"
-              :fallback-text="variant.displayName || identityForm.displayName"
-            />
-            <div class="identity-variant-list__meta">
-              <div class="identity-variant-list__name-row">
-                <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
-                <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
-                <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
+              <div class="identity-variant-list__meta">
+                <div class="identity-variant-list__name-row">
+                  <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
+                  <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
+                  <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
+                </div>
+                <div class="identity-variant-list__sub">
+                  <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
+                  <span v-else>仅覆盖头像</span>
+                  <span v-if="variant.color">颜色：{{ variant.color }}</span>
+                </div>
               </div>
-              <div class="identity-variant-list__sub">
-                <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
-                <span v-else>仅覆盖头像</span>
-                <span v-if="variant.color">颜色：{{ variant.color }}</span>
+              <div class="identity-variant-list__actions">
+                <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
+                <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
               </div>
-            </div>
-            <div class="identity-variant-list__actions">
-              <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
-              <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
             </div>
           </div>
+          <n-empty v-else description="当前角色还没有头像差分">
+            <template #extra>
+              <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
+            </template>
+          </n-empty>
         </div>
-        <n-empty v-else description="当前角色还没有头像差分">
-          <template #extra>
-            <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
-          </template>
-        </n-empty>
-      </div>
-      <n-alert v-else type="info" :show-icon="false">
-        请先保存频道角色，随后即可继续配置头像差分。
-      </n-alert>
+        <n-alert v-else type="info" :show-icon="false">
+          请先保存频道角色，随后即可继续配置头像差分。
+        </n-alert>
+      </template>
     </n-form>
     <template #footer>
       <n-space justify="end">
@@ -19334,8 +19349,35 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
-.identity-dialog__hint {
-  margin-bottom: 0.75rem;
+.identity-dialog__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.identity-dialog__header-title {
+  font-weight: 600;
+}
+
+.identity-dialog__header-help {
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.28));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 0.78rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.identity-dialog__header-help:hover {
+  color: var(--sc-text-primary, #0f172a);
+  border-color: rgba(59, 130, 246, 0.35);
 }
 
 .identity-manager {
