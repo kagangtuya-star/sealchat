@@ -17,6 +17,7 @@ type ChannelIdentityInput struct {
 	AvatarAttachmentID string
 	IsDefault          bool
 	IsTemporary        bool
+	ICOOCOnActivate    string
 	FolderIDs          []string
 }
 
@@ -24,6 +25,85 @@ type ChannelIdentityReplaceResult struct {
 	Item          *model.ChannelIdentityModel
 	OldIdentityID string
 	RemovedID     string
+}
+
+const temporaryIdentityActivateModePrefPrefix = "tmpMode:"
+
+func normalizeTemporaryIdentityActivateMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ic":
+		return "ic"
+	case "ooc":
+		return "ooc"
+	default:
+		return ""
+	}
+}
+
+func temporaryIdentityActivateModePrefKey(identityID string) string {
+	identityID = strings.TrimSpace(identityID)
+	if identityID == "" {
+		return ""
+	}
+	return temporaryIdentityActivateModePrefPrefix + identityID
+}
+
+func syncTemporaryIdentityActivateMode(userID, identityID, mode string) error {
+	return syncTemporaryIdentityActivateModeTx(model.GetDB(), userID, identityID, mode)
+}
+
+func syncTemporaryIdentityActivateModeTx(conn *gorm.DB, userID, identityID, mode string) error {
+	key := temporaryIdentityActivateModePrefKey(identityID)
+	if key == "" {
+		return nil
+	}
+	normalizedMode := normalizeTemporaryIdentityActivateMode(mode)
+	if normalizedMode == "" {
+		return model.UserPreferenceDeleteTx(conn, userID, key)
+	}
+	_, err := model.UserPreferenceUpsertTx(conn, userID, key, normalizedMode)
+	return err
+}
+
+func loadTemporaryIdentityActivateModeMap(userID string) (map[string]string, error) {
+	items, err := model.UserPreferenceListByPrefix(userID, temporaryIdentityActivateModePrefPrefix)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(items))
+	for _, item := range items {
+		key := strings.TrimSpace(item.PrefKey)
+		if !strings.HasPrefix(key, temporaryIdentityActivateModePrefPrefix) {
+			continue
+		}
+		identityID := strings.TrimSpace(strings.TrimPrefix(key, temporaryIdentityActivateModePrefPrefix))
+		if identityID == "" {
+			continue
+		}
+		mode := normalizeTemporaryIdentityActivateMode(item.PrefValue)
+		if mode == "" {
+			continue
+		}
+		result[identityID] = mode
+	}
+	return result, nil
+}
+
+func ApplyTemporaryIdentityActivateModes(userID string, identities []*model.ChannelIdentityModel) error {
+	if len(identities) == 0 {
+		return nil
+	}
+	modeMap, err := loadTemporaryIdentityActivateModeMap(userID)
+	if err != nil {
+		return err
+	}
+	for _, identity := range identities {
+		if identity == nil || !identity.IsTemporary {
+			continue
+		}
+		identity.ICOOCOnActivate = modeMap[identity.ID]
+	}
+	return nil
 }
 
 func validateIdentityInput(input *ChannelIdentityInput) error {
@@ -43,6 +123,7 @@ func validateIdentityInput(input *ChannelIdentityInput) error {
 	if len(input.FolderIDs) > 20 {
 		return errors.New("文件夹数量过多")
 	}
+	input.ICOOCOnActivate = normalizeTemporaryIdentityActivateMode(input.ICOOCOnActivate)
 	return nil
 }
 
@@ -110,6 +191,12 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 		return nil, err
 	}
 	item.FolderIDs = membership[item.ID]
+	item.ICOOCOnActivate = input.ICOOCOnActivate
+	if item.IsTemporary {
+		if err := syncTemporaryIdentityActivateMode(userID, item.ID, input.ICOOCOnActivate); err != nil {
+			return nil, err
+		}
+	}
 
 	// 如果当前无默认身份，则自动设置为默认
 	if !item.IsDefault {
@@ -165,6 +252,7 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	if err != nil {
 		return nil, err
 	}
+	updated.ICOOCOnActivate = ""
 	if input.FolderIDs != nil {
 		membership, err := ChannelIdentityFolderAssign(userID, input.ChannelID, []string{identity.ID}, input.FolderIDs, "replace")
 		if err != nil {
@@ -175,6 +263,16 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 		membership, err := loadIdentityFolderMembership([]string{identity.ID})
 		if err == nil {
 			updated.FolderIDs = membership[identity.ID]
+		}
+	}
+	if updated.IsTemporary {
+		updated.ICOOCOnActivate = input.ICOOCOnActivate
+		if err := syncTemporaryIdentityActivateMode(userID, updated.ID, input.ICOOCOnActivate); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := syncTemporaryIdentityActivateMode(userID, updated.ID, ""); err != nil {
+			return nil, err
 		}
 	}
 	return updated, nil
@@ -274,6 +372,13 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 			}
 		}
 
+		if err := syncTemporaryIdentityActivateModeTx(tx, identity.UserID, item.ID, input.ICOOCOnActivate); err != nil {
+			return err
+		}
+		if err := syncTemporaryIdentityActivateModeTx(tx, identity.UserID, identity.ID, ""); err != nil {
+			return err
+		}
+
 		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityVariantModel{}).Error; err != nil {
 			return err
 		}
@@ -311,6 +416,7 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 			}
 		}
 		item.FolderIDs = append([]string{}, folderIDs...)
+		item.ICOOCOnActivate = input.ICOOCOnActivate
 		result.Item = item
 		return nil
 	})
@@ -332,6 +438,9 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 		return err
 	}
 	if err := model.ChannelIdentityModeConfigClearIdentityReferences(userID, channelID, identity.ID); err != nil {
+		return err
+	}
+	if err := syncTemporaryIdentityActivateMode(userID, identity.ID, ""); err != nil {
 		return err
 	}
 	_ = model.ChannelIdentityFolderMemberDeleteByIdentityIDs([]string{identity.ID})
@@ -397,6 +506,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"avatarAttachmentId": item.AvatarAttachmentID,
 		"isDefault":          item.IsDefault,
 		"isTemporary":        item.IsTemporary,
+		"icOocOnActivate":    item.ICOOCOnActivate,
 		"sortOrder":          item.SortOrder,
 		"folderIds":          item.FolderIDs,
 	}

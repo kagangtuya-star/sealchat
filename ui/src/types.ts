@@ -484,6 +484,7 @@ export interface ChannelIdentity {
   characterCardId?: string;
   isDefault: boolean;
   isTemporary: boolean;
+  icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];
 }

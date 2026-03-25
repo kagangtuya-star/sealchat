@@ -16,6 +16,7 @@ type channelIdentityPayload struct {
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
 	IsDefault          bool     `json:"isDefault"`
 	IsTemporary        bool     `json:"isTemporary"`
+	ICOOCOnActivate    string   `json:"icOocOnActivate"`
 	FolderIDs          []string `json:"folderIds"`
 }
 
@@ -29,6 +30,11 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	result, err := service.ChannelIdentityListByUser(channelID, user.ID)
 	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+	if err := service.ApplyTemporaryIdentityActivateModes(user.ID, result.Items); err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
 		})
@@ -69,6 +75,7 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -108,6 +115,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -169,6 +177,7 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
 		IsDefault:          payload.IsDefault,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {

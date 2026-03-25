@@ -2622,6 +2622,7 @@ const identityForm = reactive({
   avatarAttachmentId: '',
   isDefault: false,
   isTemporary: false,
+  icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
 });
@@ -2677,6 +2678,9 @@ const identityTemporaryHint = computed(() => (
   isEditingTemporaryIdentity.value
     ? '改名会生成新的频道角色 ID，历史消息保留旧身份；头像差分与已绑人物卡不会自动迁移。'
     : ''
+));
+const temporaryIdentityActivateModeLabel = computed(() => (
+  identityForm.icOocOnActivate === 'ooc' ? '场外' : '场内'
 ));
 const activeIdentityFolderId = ref<'all' | 'favorites' | 'ungrouped' | string>('all');
 const identitySelection = ref<string[]>([]);
@@ -3812,11 +3816,30 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.isTemporary = Boolean(identity?.isTemporary);
+  identityForm.icOocOnActivate = identity?.isTemporary
+    ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
+    : '';
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
   identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
+
+const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
+  identityForm.icOocOnActivate = mode;
+};
+
+watch(() => identityForm.isTemporary, (isTemporary) => {
+  if (!isTemporary) {
+    if (identityDialogMode.value === 'create') {
+      identityForm.icOocOnActivate = '';
+    }
+    return;
+  }
+  if (!identityForm.icOocOnActivate) {
+    identityForm.icOocOnActivate = chat.icMode === 'ooc' ? 'ooc' : 'ic';
+  }
+});
 
 const openIdentityCreate = async () => {
   if (!chat.curChannel?.id) {
@@ -4136,6 +4159,7 @@ const submitIdentityForm = async () => {
     avatarAttachmentId: identityForm.avatarAttachmentId,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
+    icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
   };
   const wasCreating = identityDialogMode.value === 'create';
@@ -15404,6 +15428,25 @@ onBeforeUnmount(() => {
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
+      <n-form-item v-if="identityForm.isTemporary || isEditingTemporaryIdentity" label="切换到此角色时">
+        <div class="identity-mini-mode-switch">
+          <n-button-group size="small">
+            <n-button
+              :type="identityForm.icOocOnActivate !== 'ooc' ? 'primary' : 'default'"
+              @click="setTemporaryIdentityActivateMode('ic')"
+            >
+              场内
+            </n-button>
+            <n-button
+              :type="identityForm.icOocOnActivate === 'ooc' ? 'primary' : 'default'"
+              @click="setTemporaryIdentityActivateMode('ooc')"
+            >
+              场外
+            </n-button>
+          </n-button-group>
+          <span class="identity-mini-mode-switch__hint">切换到这个临时角色时，自动切到{{ temporaryIdentityActivateModeLabel }}</span>
+        </div>
+      </n-form-item>
       <n-form-item v-if="identityDialogMode === 'create'">
         <n-checkbox v-model:checked="identityForm.isTemporary">
           创建为临时 NPC 角色
@@ -19347,6 +19390,18 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+.identity-mini-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.identity-mini-mode-switch__hint {
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
 }
 
 .identity-dialog__header {

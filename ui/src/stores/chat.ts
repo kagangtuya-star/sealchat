@@ -2480,6 +2480,18 @@ export const useChatStore = defineStore({
         return;
       }
 
+      const identities = this.channelIdentities[channelId] || [];
+      const targetIdentity = identities.find((identity) => identity.id === newRoleId);
+      const temporaryMode = targetIdentity?.isTemporary
+        ? String(targetIdentity.icOocOnActivate || '').trim().toLowerCase()
+        : '';
+      if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
+        if (this.icMode !== temporaryMode) {
+          this.icMode = temporaryMode;
+        }
+        return;
+      }
+
       const config = this.getChannelIcOocRoleConfig(channelId);
       const isIcRole = config.icRoleId === newRoleId;
       const isOocRole = config.oocRoleId === newRoleId;
@@ -2787,7 +2799,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
@@ -2795,14 +2807,14 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
       return identity;
     },
 
-    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; folderIds?: string[]; }) {
+    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity; removedId?: string; oldIdentityId?: string }>(`api/v1/channel-identities/${identityId}/replace-temporary`, payload);
       const identity = resp.data.item;
       const removedId = resp.data.removedId || resp.data.oldIdentityId || identityId;
