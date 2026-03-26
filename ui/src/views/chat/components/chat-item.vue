@@ -3226,7 +3226,7 @@ const handleRetrySend = () => {
         <span v-if="isBotMessageItem(props.item)"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
+      <div class="content relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
         <div v-if="hasEditAction" class="message-action-bar"
           :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible }">
@@ -3900,6 +3900,9 @@ const handleRetrySend = () => {
 
 .content img {
   max-width: min(36vw, 200px);
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 0.25rem;
 }
 
 .content .inline-image {
@@ -3907,7 +3910,6 @@ const handleRetrySend = () => {
   width: auto;
   border-radius: 0.375rem;
   vertical-align: middle;
-  margin: 0 0.25rem;
 }
 
 .content .message-image-adjustable {
@@ -3966,7 +3968,7 @@ const handleRetrySend = () => {
   height: auto;
   border-radius: 0.5rem;
   vertical-align: middle;
-  margin: 0.5rem 0.25rem;
+  margin: 0.35rem 0.25rem;
   display: inline-block;
   object-fit: contain;
 }
@@ -3976,6 +3978,12 @@ const handleRetrySend = () => {
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
+  text-align: justify;
+  text-align-last: left;
+  text-justify: inter-ideograph;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .content h1,
@@ -4014,6 +4022,12 @@ const handleRetrySend = () => {
 
 .content li {
   margin: 0.25rem 0;
+  text-align: justify;
+  text-align-last: left;
+  text-justify: inter-ideograph;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .content blockquote {
@@ -4021,6 +4035,12 @@ const handleRetrySend = () => {
   padding-left: 1rem;
   margin: 0.5rem 0;
   color: #6b7280;
+  text-align: justify;
+  text-align-last: left;
+  text-justify: inter-ideograph;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .content code {
@@ -4031,6 +4051,11 @@ const handleRetrySend = () => {
   padding: 0.125rem 0.375rem;
   font-family: 'Courier New', monospace;
   font-size: 0.9em;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  text-align: left;
+  text-align-last: auto;
+  text-justify: auto;
 }
 
 .content pre {
@@ -4040,6 +4065,11 @@ const handleRetrySend = () => {
   padding: 1rem;
   margin: 0.75rem 0;
   overflow-x: auto;
+  word-break: normal;
+  overflow-wrap: normal;
+  text-align: left;
+  text-align-last: auto;
+  text-justify: auto;
 }
 
 .content pre code {
@@ -4129,7 +4159,13 @@ const handleRetrySend = () => {
 
 .content p {
   margin: 0;
-  line-height: 1.5;
+  line-height: inherit;
+  text-align: justify;
+  text-align-last: left;
+  text-justify: inter-ideograph;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .content p + p {
