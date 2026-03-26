@@ -3901,16 +3901,16 @@ const handleRetrySend = () => {
 
 .content img {
   max-width: min(36vw, 200px);
-  display: inline-block;
-  vertical-align: middle;
-  margin: 0 0.25rem;
+  display: block;
+  vertical-align: top;
+  margin: 0.35rem 0;
 }
 
 .content .inline-image {
   max-height: 6rem;
   width: auto;
   border-radius: 0.375rem;
-  vertical-align: middle;
+  vertical-align: top;
 }
 
 .content .message-image-adjustable {
@@ -3968,9 +3968,9 @@ const handleRetrySend = () => {
   max-height: 12rem;
   height: auto;
   border-radius: 0.5rem;
-  vertical-align: middle;
-  margin: 0.35rem 0.25rem;
-  display: inline-block;
+  vertical-align: top;
+  margin: 0.35rem 0;
+  display: block;
   object-fit: contain;
 }
 
