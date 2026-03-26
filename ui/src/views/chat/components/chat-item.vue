@@ -1207,17 +1207,6 @@ const shouldUseSelfPreviewIdentity = computed(() => (
   Boolean(selfEditingPreview.value && targetUserId.value && targetUserId.value === user.info.id)
 ));
 
-const contentClassList = computed(() => {
-  const classes: Record<string, boolean> = {
-    'whisper-content': Boolean(props.item?.isWhisper),
-    'content--editing-preview': Boolean(otherEditingPreview.value),
-  };
-  if (otherEditingPreview.value && props.layout === 'bubble') {
-    classes['content--editing-preview--bubble'] = true;
-  }
-  return classes;
-});
-
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const resolveMessageUserId = (item: any) => (
   item?.user?.id
@@ -1252,6 +1241,20 @@ const canEdit = computed(() => {
   }
   return false;
 });
+const hasEditAction = computed(() => !selfEditingPreview.value);
+const canShowEditAction = computed(() => canEdit.value && hasEditAction.value);
+
+const contentClassList = computed(() => {
+  const classes: Record<string, boolean> = {
+    'whisper-content': Boolean(props.item?.isWhisper),
+    'content--editing-preview': Boolean(otherEditingPreview.value),
+    'content--has-edit-action': hasEditAction.value,
+  };
+  if (otherEditingPreview.value && props.layout === 'bubble') {
+    classes['content--editing-preview--bubble'] = true;
+  }
+  return classes;
+});
 
 const canReeditRevoked = computed(() => {
   return Boolean(props.item?.is_revoked && props.isSelf);
@@ -1271,10 +1274,14 @@ const effectiveIsSelected = computed(() => {
 });
 
 const hoverTimestampVisible = ref(false);
+const mobileActionBarVisible = ref(false);
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 let timestampInterval: ReturnType<typeof setInterval> | null = null;
 
 const shouldForceTimestampVisible = computed(() => displayStore.settings.alwaysShowTimestamp);
+const isActionBarVisible = computed(() => (
+  isEditing.value || (isMobileUa && mobileActionBarVisible.value)
+));
 const timestampShouldRender = computed(() => {
   if (!props.showHeader || props.bodyOnly) {
     return false;
@@ -1317,7 +1324,7 @@ const handleMobileTimestampTap = (e: MouseEvent) => {
     return;
   }
   
-  if (!isMobileUa || shouldForceTimestampVisible.value) {
+  if (!isMobileUa) {
     return;
   }
   // Ignore if target is an interactive element
@@ -1326,7 +1333,11 @@ const handleMobileTimestampTap = (e: MouseEvent) => {
     return;
   }
   e.stopPropagation(); // Prevent global click handler from immediately hiding
-  hoverTimestampVisible.value = !hoverTimestampVisible.value;
+  const nextVisible = !mobileActionBarVisible.value;
+  mobileActionBarVisible.value = nextVisible;
+  if (!shouldForceTimestampVisible.value) {
+    hoverTimestampVisible.value = nextVisible;
+  }
 };
 
 const chatItemRef = ref<HTMLElement | null>(null);
@@ -1343,6 +1354,11 @@ const handleGlobalClickForTimestamp = (e: MouseEvent) => {
       hoverTimestampVisible.value = false;
     }
   }
+  if (mobileActionBarVisible.value) {
+    if (chatItemRef.value && !chatItemRef.value.contains(target)) {
+      mobileActionBarVisible.value = false;
+    }
+  }
   if (revokedReeditExpanded.value) {
     if (revokedTriggerRef.value && !revokedTriggerRef.value.contains(target)) {
       revokedReeditExpanded.value = false;
@@ -1355,9 +1371,12 @@ watch(shouldForceTimestampVisible, (value) => {
     clearHoverTimer();
   }
   hoverTimestampVisible.value = false;
+  mobileActionBarVisible.value = false;
 });
 watch(() => props.item?.id, () => {
   revokedReeditExpanded.value = false;
+  hoverTimestampVisible.value = false;
+  mobileActionBarVisible.value = false;
 });
 watch(() => props.item?.is_revoked, (value) => {
   if (!value) {
@@ -3209,9 +3228,9 @@ const handleRetrySend = () => {
       </span>
       <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
-        <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
-          :class="{ 'message-action-bar--active': isEditing }">
-          <n-tooltip trigger="hover">
+        <div v-if="hasEditAction" class="message-action-bar"
+          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible }">
+          <n-tooltip v-if="canShowEditAction" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="message-action-bar__btn" @click="handleEditClick">
                 <n-icon :component="Edit" size="18" />
@@ -3219,6 +3238,17 @@ const handleRetrySend = () => {
             </template>
             编辑消息
           </n-tooltip>
+          <n-button
+            v-else
+            text
+            size="small"
+            disabled
+            tabindex="-1"
+            aria-hidden="true"
+            class="message-action-bar__btn message-action-bar__btn--placeholder"
+          >
+            <n-icon :component="Edit" size="18" />
+          </n-button>
         </div>
         <template v-if="!otherEditingPreview">
           <div>
@@ -3664,6 +3694,11 @@ const handleRetrySend = () => {
   letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
+.chat-item > .right > .content.content--has-edit-action {
+  --message-edit-slot-width: clamp(0.42rem, 1.1vw, 0.72rem);
+  padding-right: calc(var(--chat-message-padding-x, 1.1rem) + var(--message-edit-slot-width));
+}
+
 .chat-item > .right > .content.whisper-content {
   background: var(--chat-whisper-bg, #eef2ff);
   border: 1px solid var(--chat-whisper-border, rgba(99, 102, 241, 0.35));
@@ -3749,6 +3784,7 @@ const handleRetrySend = () => {
   display: block;
   width: 100%;
   max-width: none;
+  box-sizing: border-box;
   padding: 0.18rem 0;
   background: transparent;
   box-shadow: none;
@@ -4108,17 +4144,23 @@ const handleRetrySend = () => {
 .message-action-bar {
   position: absolute;
   top: -1.6rem;
-  right: -0.4rem;
+  right: clamp(-0.25rem, 0.8vw, 0.25rem);
   display: flex;
   gap: 0.25rem;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .message-action-bar__btn {
   pointer-events: auto;
   color: rgba(15, 23, 42, 0.75);
+  padding: 0;
+}
+
+.message-action-bar__btn--placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 :root[data-display-palette='night'] .message-action-bar__btn {
@@ -4133,9 +4175,51 @@ const handleRetrySend = () => {
 }
 
 .chat-item--layout-compact .message-action-bar {
-  top: 50%;
-  right: 0.35rem;
-  transform: translateY(-50%);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  justify-content: center;
+  align-items: center;
+  transform: none;
+}
+
+.chat-item--layout-compact .message-action-bar__btn {
+  width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  min-width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  height: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  min-height: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-item > .right > .content.content--has-edit-action {
+    --message-edit-slot-width: clamp(0.72rem, 2.8vw, 1.05rem);
+    padding-right: calc(var(--chat-message-padding-x, 1.1rem) + var(--message-edit-slot-width));
+  }
+
+  .message-action-bar {
+    right: clamp(0.15rem, 2vw, 0.8rem);
+  }
+
+  .message-action-bar__btn {
+    min-width: 1.72rem;
+    min-height: 1.72rem;
+    border-radius: 999px;
+  }
+
+  .chat-item--layout-compact .message-action-bar {
+    width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+  }
+
+  .chat-item--layout-compact .message-action-bar__btn {
+    width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    min-width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    height: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    min-height: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+  }
 }
 
 .chat-item > .right > .content.content--editing-preview {
@@ -4367,6 +4451,20 @@ const handleRetrySend = () => {
   padding: 0;
   background: transparent;
   color: var(--chat-text-secondary);
+}
+
+.chat--layout-compact .chat-item > .right > .content.content--has-edit-action,
+.chat--layout-compact .chat-item--ooc > .right > .content.content--has-edit-action {
+  --message-edit-slot-width: clamp(1.4rem, 3.6vw, 1.95rem);
+  padding-right: var(--message-edit-slot-width);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat--layout-compact .chat-item > .right > .content.content--has-edit-action,
+  .chat--layout-compact .chat-item--ooc > .right > .content.content--has-edit-action {
+    --message-edit-slot-width: clamp(1.2rem, 4.6vw, 1.65rem);
+    padding-right: var(--message-edit-slot-width);
+  }
 }
 
 .chat--has-background .chat-item--ooc .right .content {
