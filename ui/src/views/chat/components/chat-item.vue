@@ -1249,6 +1249,7 @@ const contentClassList = computed(() => {
     'whisper-content': Boolean(props.item?.isWhisper),
     'content--editing-preview': Boolean(otherEditingPreview.value),
     'content--has-edit-action': hasEditAction.value,
+    'content--image-resize-mode': imageResizeMode.value,
   };
   if (otherEditingPreview.value && props.layout === 'bubble') {
     classes['content--editing-preview--bubble'] = true;
@@ -3226,7 +3227,7 @@ const handleRetrySend = () => {
         <span v-if="isBotMessageItem(props.item)"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
+      <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
         <div v-if="hasEditAction" class="message-action-bar"
           :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible }">
@@ -3973,131 +3974,66 @@ const handleRetrySend = () => {
   object-fit: contain;
 }
 
+.content.content--image-resize-mode,
+.content.content--image-resize-mode p,
+.content.content--image-resize-mode li,
+.content.content--image-resize-mode blockquote {
+  text-align: left;
+  text-align-last: auto;
+  text-justify: auto;
+}
+
+.content.content--image-resize-mode img,
+.content.content--image-resize-mode .inline-image,
+.content.content--image-resize-mode .rich-inline-image {
+  display: block;
+  margin: 0.35rem 0;
+  vertical-align: top;
+}
+
 /* 富文本内容样式 */
 .content {
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
-  text-align: justify;
-  text-align-last: left;
-  text-justify: inter-ideograph;
-  word-wrap: break-word;
+  word-break: break-word;
   overflow-wrap: break-word;
-  word-break: normal;
 }
 
-.content h1,
-.content h2,
-.content h3 {
-  margin: 0.75rem 0 0.5rem;
-  font-weight: 600;
-  line-height: 1.3;
+.content.typo blockquote {
+  border-left-color: color-mix(in srgb, var(--primary-color, #3b82f6) 68%, transparent);
+  color: var(--chat-text-secondary, #64748b);
 }
 
-.content h1 {
-  font-size: 1.5rem;
-}
-
-.content h2 {
-  font-size: 1.25rem;
-}
-
-.content h3 {
-  font-size: 1.1rem;
-}
-
-.content ul,
-.content ol {
-  padding-left: 1.5rem;
-  margin: 0.5rem 0;
-}
-
-.content ul {
-  list-style-type: disc;
-}
-
-.content ol {
-  list-style-type: decimal;
-}
-
-.content li {
-  margin: 0.25rem 0;
-  text-align: justify;
-  text-align-last: left;
-  text-justify: inter-ideograph;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-
-.content blockquote {
-  border-left: 3px solid #3b82f6;
-  padding-left: 1rem;
-  margin: 0.5rem 0;
-  color: #6b7280;
-  text-align: justify;
-  text-align-last: left;
-  text-justify: inter-ideograph;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-
-.content code {
+.content.typo code {
   background-color: var(--chat-inline-code-bg, #f3f4f6);
   color: var(--chat-inline-code-fg, inherit);
   border: 1px solid var(--chat-inline-code-border, transparent);
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
-  font-family: 'Courier New', monospace;
   font-size: 0.9em;
-  word-break: break-all;
-  overflow-wrap: anywhere;
-  text-align: left;
-  text-align-last: auto;
-  text-justify: auto;
 }
 
-.content pre {
+.content.typo pre {
   background-color: #1f2937;
   color: #f9fafb;
+  border-color: color-mix(in srgb, #1f2937 78%, white 22%);
   border-radius: 0.5rem;
-  padding: 1rem;
-  margin: 0.75rem 0;
   overflow-x: auto;
-  word-break: normal;
-  overflow-wrap: normal;
-  text-align: left;
-  text-align-last: auto;
-  text-justify: auto;
 }
 
-.content pre code {
+.content.typo pre code {
   background-color: transparent;
   color: inherit;
+  border: none;
   padding: 0;
 }
 
-.content strong {
-  font-weight: 600;
-}
-
-.content em {
-  font-style: italic;
-}
-
-.content u {
-  text-decoration: underline;
-}
-
-.content s {
-  text-decoration: line-through;
-}
-
-.content mark {
+.content.typo mark {
   background-color: #fef08a;
-  padding: 0.1rem 0.2rem;
+  border-bottom-color: color-mix(in srgb, #f59e0b 28%, transparent);
   border-radius: 0.125rem;
+  margin: 0;
 }
 
 .chat-item > .right > .content {
@@ -4121,17 +4057,17 @@ const handleRetrySend = () => {
   --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 84%, var(--chat-text-secondary, #64748b));
 }
 
-.content a {
+.content.typo a {
   color: var(--message-link-color);
-  text-decoration: underline;
-  text-decoration-color: var(--message-link-underline-color);
-  text-underline-offset: 2px;
-  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+  border-bottom-color: var(--message-link-underline-color);
+  text-decoration: none;
+  transition: color 0.16s ease, border-bottom-color 0.16s ease;
 }
 
-.content a:hover {
+.content.typo a:hover {
   color: var(--message-link-hover-color);
-  text-decoration-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+  text-decoration: none;
 }
 
 .content a.message-external-link {
@@ -4151,25 +4087,14 @@ const handleRetrySend = () => {
   transform: translateY(-0.06em);
 }
 
-.content hr {
+.content.typo hr {
   border: none;
   border-top: 2px solid #e5e7eb;
   margin: 1rem 0;
 }
 
-.content p {
-  margin: 0;
+.content.typo p {
   line-height: inherit;
-  text-align: justify;
-  text-align-last: left;
-  text-justify: inter-ideograph;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-
-.content p + p {
-  margin-top: var(--chat-paragraph-spacing, 0.5rem);
 }
 .edited-label {
   @apply text-xs font-medium;
