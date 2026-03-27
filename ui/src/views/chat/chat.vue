@@ -80,6 +80,7 @@ import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
+import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
@@ -216,6 +217,8 @@ type ExternalPanelKey =
   | 'display'
   | 'favorites'
   | 'channel-images'
+  | 'world-glossary'
+  | 'world-announcement'
   | 'character-card'
   | 'sticky-note';
 
@@ -247,6 +250,15 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       return;
     case 'channel-images':
       openChannelImagesPanel();
+      return;
+    case 'world-glossary':
+      if (!chat.currentWorldId) return;
+      worldGlossary.ensureKeywords(chat.currentWorldId, { force: true });
+      worldGlossary.setManagerVisible(true);
+      return;
+    case 'world-announcement':
+      if (!chat.currentWorldId) return;
+      showWorldAnnouncementModal.value = true;
       return;
     case 'character-card':
       openCharacterCardPanel();
@@ -330,9 +342,16 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
+const canManageWorldAnnouncements = computed(() => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const role = chat.worldDetailMap[worldId]?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
 
 const channelBackgroundStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
@@ -16154,6 +16173,13 @@ onBeforeUnmount(() => {
 
   <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
   <WorldKeywordManager />
+  <AnnouncementManagerModal
+    v-model:visible="showWorldAnnouncementModal"
+    scope-type="world"
+    :scope-id="chat.currentWorldId"
+    title="世界公告"
+    :can-manage="canManageWorldAnnouncements"
+  />
 
   <!-- 新用户引导系统 -->
   <OnboardingRoot v-if="!chat.isObserver" />

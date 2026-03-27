@@ -593,6 +593,64 @@ const openPanel = (panel: string) => {
   postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel });
 };
 
+const getSidebarWorldActionPaneId = (): PaneId | null => {
+  const targetPaneId = effectiveTargetPaneId.value;
+  if (canOperateChatPane(targetPaneId)) {
+    return targetPaneId;
+  }
+  if (canOperateChatPane(activePaneId.value)) {
+    return activePaneId.value;
+  }
+  return null;
+};
+
+const requireSidebarWorldActionPane = () => {
+  const paneId = getSidebarWorldActionPaneId();
+  if (!paneId) {
+    message.warning('当前没有可用的聊天窗格');
+    return null;
+  }
+  const pane = getPaneById(paneId);
+  if (!pane.worldId) {
+    message.warning('请选择一个世界');
+    return null;
+  }
+  return { paneId, pane };
+};
+
+const goWorldLobby = async () => {
+  await router.push({ name: 'world-lobby' });
+};
+
+const goWorldManage = async () => {
+  const action = requireSidebarWorldActionPane();
+  if (!action) {
+    await router.push({ name: 'world-lobby' });
+    return;
+  }
+  await router.push({ name: 'world-detail', params: { worldId: action.pane.worldId } });
+};
+
+const openWorldGlossary = () => {
+  const action = requireSidebarWorldActionPane();
+  if (!action) return;
+  postToPane(action.paneId, {
+    type: 'sealchat.embed.openPanel',
+    paneId: action.paneId,
+    panel: 'world-glossary',
+  });
+};
+
+const openWorldAnnouncements = () => {
+  const action = requireSidebarWorldActionPane();
+  if (!action) return;
+  postToPane(action.paneId, {
+    type: 'sealchat.embed.openPanel',
+    paneId: action.paneId,
+    panel: 'world-announcement',
+  });
+};
+
 const exitSplit = async () => {
   await router.push({ name: 'home' });
 };
@@ -708,6 +766,10 @@ const collapsedWidth = computed(() => 0);
           @set-operation-target="operationTarget = $event"
           @set-audio-playback-target="audioPlaybackTarget = $event"
           @set-world="setWorldForTargetPane"
+          @go-world-lobby="goWorldLobby"
+          @go-world-manage="goWorldManage"
+          @open-world-glossary="openWorldGlossary"
+          @open-world-announcements="openWorldAnnouncements"
           @toggle-lock-same-world="toggleLockSameWorld"
           @set-notify-owner="setNotifyOwner"
           @open-channel="openChannelInTargetPane"
@@ -832,6 +894,10 @@ const collapsedWidth = computed(() => 0);
               @set-operation-target="operationTarget = $event"
               @set-audio-playback-target="audioPlaybackTarget = $event"
               @set-world="setWorldForTargetPane"
+              @go-world-lobby="() => { void goWorldLobby(); drawerVisible = false; }"
+              @go-world-manage="() => { void goWorldManage(); drawerVisible = false; }"
+              @open-world-glossary="() => { openWorldGlossary(); drawerVisible = false; }"
+              @open-world-announcements="() => { openWorldAnnouncements(); drawerVisible = false; }"
               @toggle-lock-same-world="toggleLockSameWorld"
               @set-notify-owner="setNotifyOwner"
               @open-channel="(id) => { openChannelInTargetPane(id); drawerVisible = false; }"

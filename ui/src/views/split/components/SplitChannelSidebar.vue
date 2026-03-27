@@ -45,6 +45,10 @@ const emit = defineEmits<{
   (e: 'set-active-pane', paneId: PaneId): void;
   (e: 'set-operation-target', target: OperationTarget): void;
   (e: 'set-world', worldId: string): void;
+  (e: 'go-world-lobby'): void;
+  (e: 'go-world-manage'): void;
+  (e: 'open-world-glossary'): void;
+  (e: 'open-world-announcements'): void;
   (e: 'toggle-lock-same-world', enabled: boolean): void;
   (e: 'set-notify-owner', paneId: PaneId | null): void;
   (e: 'set-audio-playback-target', target: OperationTarget): void;
@@ -166,6 +170,21 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
       <div class="sc-split-sidebar__meta">
         <div class="sc-split-sidebar__meta-label">当前世界</div>
         <div class="sc-split-sidebar__meta-value">{{ worldName || '未选择世界' }}</div>
+      </div>
+
+      <div class="sc-split-sidebar__world-actions">
+        <n-button quaternary size="tiny" @click="emit('go-world-lobby')">
+          世界大厅
+        </n-button>
+        <n-button quaternary size="tiny" @click="emit('go-world-manage')">
+          世界管理
+        </n-button>
+        <n-button quaternary size="tiny" @click="emit('open-world-glossary')">
+          术语管理
+        </n-button>
+        <n-button quaternary size="tiny" @click="emit('open-world-announcements')">
+          公告
+        </n-button>
       </div>
     </div>
 
@@ -471,6 +490,13 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
   white-space: nowrap;
   max-width: 190px;
   text-align: right;
+}
+
+.sc-split-sidebar__world-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .sc-split-channel-tree {
