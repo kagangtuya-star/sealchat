@@ -119,6 +119,7 @@ export interface DisplaySettings {
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
   showDragIndicator: boolean  // 拖拽时显示蓝色指示线
+  mobileMessageDragLongPressEnabled: boolean  // 移动端长按左侧拖动控件后才开始拖动消息
   highlightNewlySentMessage: boolean  // 新到达消息短暂弱高亮（兼容旧键名）
   // 自定义主题
   customThemeEnabled: boolean
@@ -469,6 +470,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
+  mobileMessageDragLongPressEnabled: false,
   highlightNewlySentMessage: true,
   customThemeEnabled: false,
   customThemes: [],
@@ -685,6 +687,7 @@ const loadSettings = (): DisplaySettings => {
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
+      mobileMessageDragLongPressEnabled: coerceBoolean((parsed as any)?.mobileMessageDragLongPressEnabled ?? false),
       highlightNewlySentMessage: coerceBoolean((parsed as any)?.highlightNewlySentMessage ?? true),
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
@@ -909,6 +912,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showDragIndicator')
       ? coerceBoolean((patch as any).showDragIndicator)
       : base.showDragIndicator,
+  mobileMessageDragLongPressEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMessageDragLongPressEnabled')
+      ? coerceBoolean((patch as any).mobileMessageDragLongPressEnabled)
+      : base.mobileMessageDragLongPressEnabled,
   highlightNewlySentMessage:
     patch && Object.prototype.hasOwnProperty.call(patch, 'highlightNewlySentMessage')
       ? coerceBoolean((patch as any).highlightNewlySentMessage)

@@ -166,7 +166,7 @@ watch(
     draft.compactBubbleGap = value.compactBubbleGap
     draft.paragraphSpacing = value.paragraphSpacing
   draft.messagePaddingX = value.messagePaddingX
-    draft.messagePaddingY = value.messagePaddingY
+  draft.messagePaddingY = value.messagePaddingY
   draft.sendShortcut = value.sendShortcut
   draft.mobileMinimalInputEnabled = value.mobileMinimalInputEnabled
   draft.enableIcToggleHotkey = value.enableIcToggleHotkey
@@ -179,15 +179,16 @@ watch(
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
   draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
   draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
-    draft.toolbarHotkeys = value.toolbarHotkeys
-    draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-    draft.showDragIndicator = value.showDragIndicator
-    draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-    draft.disableContextMenu = value.disableContextMenu
-    draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
-    draft.quickGalleryPageSize = value.quickGalleryPageSize
-    draft.avatarSize = value.avatarSize
-    draft.avatarBorderRadius = value.avatarBorderRadius
+  draft.toolbarHotkeys = value.toolbarHotkeys
+  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+  draft.showDragIndicator = value.showDragIndicator
+  draft.mobileMessageDragLongPressEnabled = value.mobileMessageDragLongPressEnabled
+  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
+  draft.disableContextMenu = value.disableContextMenu
+  draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
+  draft.quickGalleryPageSize = value.quickGalleryPageSize
+  draft.avatarSize = value.avatarSize
+  draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
@@ -561,6 +562,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showDragIndicator">
           <template #checked>显示指示线</template>
           <template #unchecked>隐藏指示线</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">移动端拖动需长按</p>
+            <p class="section-desc">仅移动端生效，长按左侧拖动控件后才会开始拖动消息，减少误触发</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileMessageDragLongPressEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
         </n-switch>
       </section>
 

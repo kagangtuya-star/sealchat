@@ -6287,9 +6287,25 @@ const dragState = reactive({
   ghostOffsetY: 0,
 });
 
+const mobileMessageDragLongPressEnabled = computed(() => (
+  isMobileUa && display.settings.mobileMessageDragLongPressEnabled === true
+));
+
+const pendingDragHoldState = reactive({
+  item: null as Message | null,
+  pointerId: null as number | null,
+  startX: 0,
+  startY: 0,
+  lastClientY: 0,
+  handleEl: null as HTMLElement | null,
+  timerId: null as number | null,
+});
+
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
 const AUTO_SCROLL_MIN_SPEED = 2;
 const AUTO_SCROLL_MAX_SPEED = 18;
+const MOBILE_MESSAGE_DRAG_LONG_PRESS_MS = 350;
+const MOBILE_MESSAGE_DRAG_CANCEL_DISTANCE_PX = 10;
 
 const stopAutoScroll = () => {
   if (dragState.autoScrollRafId !== null) {
@@ -6370,6 +6386,39 @@ const releaseHandlePointerCapture = () => {
     }
   }
   dragState.handleEl = null;
+};
+
+const clearPendingDragHoldTimer = () => {
+  if (pendingDragHoldState.timerId === null || typeof window === 'undefined') {
+    return;
+  }
+  window.clearTimeout(pendingDragHoldState.timerId);
+  pendingDragHoldState.timerId = null;
+};
+
+const detachPendingDragHoldListeners = () => {
+  window.removeEventListener('pointermove', onPendingDragHoldPointerMove);
+  window.removeEventListener('pointerup', onPendingDragHoldPointerUp);
+  window.removeEventListener('pointercancel', onPendingDragHoldPointerCancel);
+  window.removeEventListener('blur', onPendingDragHoldWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onPendingDragHoldVisibilityChange);
+  }
+};
+
+const resetPendingDragHoldState = () => {
+  clearPendingDragHoldTimer();
+  pendingDragHoldState.item = null;
+  pendingDragHoldState.pointerId = null;
+  pendingDragHoldState.startX = 0;
+  pendingDragHoldState.startY = 0;
+  pendingDragHoldState.lastClientY = 0;
+  pendingDragHoldState.handleEl = null;
+};
+
+const cancelPendingDragHold = () => {
+  detachPendingDragHoldListeners();
+  resetPendingDragHoldState();
 };
 
 const resetDragState = () => {
@@ -6862,6 +6911,7 @@ const restoreMessageOrderFromSnapshot = (messageId: string, snapshot: Message[])
 };
 
 const cancelDrag = () => {
+  cancelPendingDragHold();
   detachDragListeners();
   stopAutoScroll();
   resetDragState();
@@ -6990,14 +7040,20 @@ const onDragKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
+const startMessageDrag = ({
+  item,
+  pointerId,
+  clientY,
+  handleEl,
+}: {
+  item: Message;
+  pointerId: number;
+  clientY: number;
+  handleEl: HTMLElement | null;
+}) => {
   if (!canDragMessage(item) || !item.id) {
     return;
   }
-  if (event.pointerType === 'mouse' && event.button !== 0) {
-    return;
-  }
-  const handleEl = event.currentTarget as HTMLElement | null;
   const rowEl = messageRowRefs.get(item.id);
   if (!rowEl) {
     return;
@@ -7005,7 +7061,7 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   if (handleEl) {
     dragState.handleEl = handleEl;
     try {
-      handleEl.setPointerCapture?.(event.pointerId);
+      handleEl.setPointerCapture?.(pointerId);
     } catch {
       // ignore capture failure
     }
@@ -7013,8 +7069,8 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   dragState.snapshot = rows.value.slice();
   dragState.clientOpId = nanoid();
   dragState.activeId = item.id;
-  dragState.pointerId = event.pointerId;
-  dragState.startY = event.clientY;
+  dragState.pointerId = pointerId;
+  dragState.startY = clientY;
   dragState.overId = item.id;
   dragState.position = 'after';
   dragState.originEl = rowEl;
@@ -7026,8 +7082,8 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   // Now add the collapse class
   rowEl.classList.add('message-row--drag-source');
   
-  updateOverTarget(event.clientY);
-  updateAutoScroll(event.clientY);
+  updateOverTarget(clientY);
+  updateAutoScroll(clientY);
 
   window.addEventListener('pointermove', onDragPointerMove);
   window.addEventListener('pointerup', onDragPointerUp);
@@ -7038,6 +7094,101 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
     document.addEventListener('visibilitychange', onDragVisibilityChange);
   }
   handleEl?.addEventListener('lostpointercapture', onDragHandleLostPointerCapture);
+};
+
+const onPendingDragHoldPointerMove = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  pendingDragHoldState.lastClientY = event.clientY;
+  const deltaX = event.clientX - pendingDragHoldState.startX;
+  const deltaY = event.clientY - pendingDragHoldState.startY;
+  if (Math.hypot(deltaX, deltaY) > MOBILE_MESSAGE_DRAG_CANCEL_DISTANCE_PX) {
+    cancelPendingDragHold();
+  }
+};
+
+const onPendingDragHoldPointerUp = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldPointerCancel = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldWindowBlur = () => {
+  if (pendingDragHoldState.pointerId === null) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldVisibilityChange = () => {
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const schedulePendingDragHold = (event: PointerEvent, item: Message) => {
+  cancelPendingDragHold();
+  pendingDragHoldState.item = item;
+  pendingDragHoldState.pointerId = event.pointerId;
+  pendingDragHoldState.startX = event.clientX;
+  pendingDragHoldState.startY = event.clientY;
+  pendingDragHoldState.lastClientY = event.clientY;
+  pendingDragHoldState.handleEl = event.currentTarget as HTMLElement | null;
+  window.addEventListener('pointermove', onPendingDragHoldPointerMove);
+  window.addEventListener('pointerup', onPendingDragHoldPointerUp);
+  window.addEventListener('pointercancel', onPendingDragHoldPointerCancel);
+  window.addEventListener('blur', onPendingDragHoldWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onPendingDragHoldVisibilityChange);
+  }
+  if (typeof window !== 'undefined') {
+    pendingDragHoldState.timerId = window.setTimeout(() => {
+      const itemToDrag = pendingDragHoldState.item;
+      const pointerId = pendingDragHoldState.pointerId;
+      const handleEl = pendingDragHoldState.handleEl;
+      const clientY = pendingDragHoldState.lastClientY || pendingDragHoldState.startY;
+      detachPendingDragHoldListeners();
+      resetPendingDragHoldState();
+      if (!itemToDrag || pointerId === null) {
+        return;
+      }
+      startMessageDrag({
+        item: itemToDrag,
+        pointerId,
+        clientY,
+        handleEl,
+      });
+    }, MOBILE_MESSAGE_DRAG_LONG_PRESS_MS);
+  }
+};
+
+const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
+  if (!canDragMessage(item) || !item.id) {
+    return;
+  }
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  if (mobileMessageDragLongPressEnabled.value && event.pointerType !== 'mouse') {
+    schedulePendingDragHold(event, item);
+    return;
+  }
+  startMessageDrag({
+    item,
+    pointerId: event.pointerId,
+    clientY: event.clientY,
+    handleEl: event.currentTarget as HTMLElement | null,
+  });
 
   event.preventDefault();
 };
