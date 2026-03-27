@@ -198,6 +198,9 @@ func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.
 		if originSessionID != "" && session.ID == originSessionID {
 			continue
 		}
+		if session.ConnInfo != nil && event.Channel != nil {
+			cacheBotEventContext(session.ConnInfo, strings.TrimSpace(event.Channel.ID), event)
+		}
 		payload, ok := projectProtocolEventToOneBot(session, event)
 		if !ok {
 			continue
@@ -372,6 +375,9 @@ func (rt *oneBotRuntime) applyHTTPPostQuickOperation(botUserID string, event *pr
 	session.ID = oneBotHTTPQuickOperationSessionPrefix + utils.NewID()
 	if selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUserID); err == nil {
 		session.SelfID = selfID
+	}
+	if session.ConnInfo != nil {
+		cacheBotEventContext(session.ConnInfo, strings.TrimSpace(event.Channel.ID), event)
 	}
 
 	replyMessage := op.Reply

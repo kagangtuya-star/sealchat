@@ -23,6 +23,19 @@ import (
 
 var oneBotAPITestDBOnce sync.Once
 
+type oneBotTestJSONConn struct {
+	payloads []any
+}
+
+func (c *oneBotTestJSONConn) WriteJSON(v interface{}) error {
+	c.payloads = append(c.payloads, v)
+	return nil
+}
+
+func (c *oneBotTestJSONConn) Close() error {
+	return nil
+}
+
 func initOneBotAPITestEnv(t *testing.T) {
 	t.Helper()
 	initOneBotAPITestDB(t)
@@ -245,6 +258,91 @@ func TestOneBotActionSendPrivateMessage(t *testing.T) {
 	}
 	if msg.ID == "" || msg.UserID != botUser.ID {
 		t.Fatalf("unexpected private message record: %#v", msg)
+	}
+}
+
+func TestOneBotPublishProtocolEventCachesMessageContext(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "cachebot", model.BotKindManual)
+	sender := createOneBotTestUser(t, "cache-sender", false, "")
+	_, channel := createOneBotTestWorldAndChannel(t, botUser.ID)
+	session := createOneBotTestSession(t, botUser)
+	session.Conn = &oneBotTestJSONConn{}
+
+	rt := getOneBotRuntime()
+	rt.registerSession(session)
+	defer rt.unregisterSession(session.ID)
+
+	event := &protocol.Event{
+		Type:      protocol.EventMessageCreated,
+		Timestamp: time.Now().Unix(),
+		Channel: &protocol.Channel{
+			ID:   channel.ID,
+			Name: channel.Name,
+			Type: protocol.TextChannelType,
+		},
+		User: &protocol.User{
+			ID:   sender.ID,
+			Nick: sender.Nickname,
+		},
+		Message: &protocol.Message{
+			ID:      "msg-" + utils.NewIDWithLength(8),
+			Content: "场外提问",
+		},
+		MessageContext: &protocol.MessageContext{
+			ICMode:       "ooc",
+			SenderUserID: sender.ID,
+		},
+	}
+
+	rt.publishProtocolEvent(botUser.ID, event, "")
+
+	msgContext, ok := session.ConnInfo.BotLastMessageContext.Load(channel.ID)
+	if !ok || msgContext == nil {
+		t.Fatal("expected onebot session to cache message context")
+	}
+	if msgContext.ICMode != "ooc" {
+		t.Fatalf("cached ic_mode = %q, want %q", msgContext.ICMode, "ooc")
+	}
+}
+
+func TestOneBotActionSendGroupMessageInheritsCachedICMode(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "group-icmode", model.BotKindManual)
+	_, channel := createOneBotTestWorldAndChannel(t, botUser.ID)
+	session := createOneBotTestSession(t, botUser)
+
+	groupID, err := service.GetOrCreateOneBotID(service.OneBotEntityChannel, channel.ID)
+	if err != nil {
+		t.Fatalf("create group mapping failed: %v", err)
+	}
+
+	session.ConnInfo.BotLastMessageContext.Store(channel.ID, &protocol.MessageContext{
+		ICMode:       "ooc",
+		SenderUserID: "sender-" + utils.NewIDWithLength(8),
+	})
+
+	resp := dispatchOneBotAction(session, &oneBotActionRequest{
+		Action: "send_group_msg",
+		Params: json.RawMessage(fmt.Sprintf(`{"group_id":%d,"message":"场外回复"}`, groupID)),
+	})
+	if resp.Status != "ok" || resp.RetCode != 0 {
+		t.Fatalf("send_group_msg response = %#v, want ok", resp)
+	}
+
+	messageID := mustOneBotMessageID(t, resp)
+	internalID, err := service.ResolveInternalID(service.OneBotEntityMessage, messageID)
+	if err != nil {
+		t.Fatalf("resolve message id failed: %v", err)
+	}
+	var msg model.MessageModel
+	if err := model.GetDB().Where("id = ?", internalID).Limit(1).Find(&msg).Error; err != nil {
+		t.Fatalf("load group message failed: %v", err)
+	}
+	if msg.ICMode != "ooc" {
+		t.Fatalf("message ic_mode = %q, want %q", msg.ICMode, "ooc")
 	}
 }
 

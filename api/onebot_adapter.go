@@ -423,7 +423,6 @@ func oneBotActionSendIntoChannel(session *oneBotSession, channel *model.ChannelM
 		ChannelID: channel.ID,
 		QuoteID:   decoded.QuoteID,
 		Content:   decoded.Content,
-		ICMode:    "ic",
 	})
 	if err != nil {
 		return nil, err

@@ -562,6 +562,10 @@ func TestOneBotHTTPPostAppliesQuickReplyOperation(t *testing.T) {
 			ID:      "msg-" + utils.NewIDWithLength(8),
 			Content: "hello quick operation",
 		},
+		MessageContext: &protocol.MessageContext{
+			ICMode:       "ooc",
+			SenderUserID: sender.ID,
+		},
 	}
 
 	getOneBotRuntime().publishProtocolEvent(botUser.ID, event, "")
@@ -576,6 +580,9 @@ func TestOneBotHTTPPostAppliesQuickReplyOperation(t *testing.T) {
 	}
 	if msg.ID == "" {
 		t.Fatal("expected quick reply message to be created")
+	}
+	if msg.ICMode != "ooc" {
+		t.Fatalf("quick reply ic_mode = %q, want %q", msg.ICMode, "ooc")
 	}
 }
 
