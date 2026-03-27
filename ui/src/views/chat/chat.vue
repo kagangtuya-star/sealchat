@@ -1750,6 +1750,7 @@ const showMinimalWideInputShortcut = computed(() => (
   && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_WIDE_BUTTON_THRESHOLD
 ));
 const inputAreaHeightPreview = ref<number | null>(null);
+const inputAreaHeightBeforeWideMode = ref<number | null>(null);
 const customInputHeight = computed(() => (
   inputAreaHeightPreview.value !== null
     ? inputAreaHeightPreview.value
@@ -1770,12 +1771,22 @@ const chatInputStyle = computed(() => {
 });
 const wideInputTooltip = computed(() => (wideInputMode.value ? '退出广域输入模式' : '进入广域输入模式'));
 const toggleWideInputMode = () => {
-  wideInputMode.value = !wideInputMode.value;
-  // 切换广域模式时清除自定义高度，回到默认的两种高度
-  if (customInputHeight.value > 0) {
-    display.updateSettings({ inputAreaHeight: 0 });
-    inputAreaHeightPreview.value = null;
+  const nextWideInputMode = !wideInputMode.value;
+  if (nextWideInputMode) {
+    inputAreaHeightBeforeWideMode.value = customInputHeight.value > 0 ? customInputHeight.value : null;
+    // 进入广域模式时隐藏用户自定义高度，回到广域预设高度
+    if (customInputHeight.value > 0) {
+      display.updateSettings({ inputAreaHeight: 0 });
+      inputAreaHeightPreview.value = null;
+    }
+  } else {
+    const savedHeight = inputAreaHeightBeforeWideMode.value;
+    if (customInputHeight.value <= 0 && savedHeight && savedHeight > 0) {
+      display.updateSettings({ inputAreaHeight: savedHeight });
+    }
+    inputAreaHeightBeforeWideMode.value = null;
   }
+  wideInputMode.value = nextWideInputMode;
   nextTick(() => {
     textInputRef.value?.focus?.();
     updateWideInputViewportHeight();
@@ -1930,6 +1941,7 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
   if (exitWideInput) {
+    inputAreaHeightBeforeWideMode.value = null;
     if (finalHeight !== display.settings.inputAreaHeight) {
       display.updateSettings({ inputAreaHeight: finalHeight });
     }
@@ -1942,6 +1954,9 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
     });
     return;
   }
+  if (wideInputMode.value && finalHeight !== display.settings.inputAreaHeight) {
+    inputAreaHeightBeforeWideMode.value = null;
+  }
   if (finalHeight !== display.settings.inputAreaHeight) {
     display.updateSettings({ inputAreaHeight: finalHeight });
   }
@@ -1949,6 +1964,9 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
 
 const handleInputResizeReset = () => {
   inputAreaHeightPreview.value = null;
+  if (wideInputMode.value) {
+    inputAreaHeightBeforeWideMode.value = null;
+  }
   display.updateSettings({ inputAreaHeight: 0 });
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
