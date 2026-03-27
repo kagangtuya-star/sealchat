@@ -1678,6 +1678,7 @@ defineExpose({
 }
 
 .hybrid-input.chat-input--expanded {
+  height: calc(100vh / 3);
   min-height: calc(100vh / 3);
   max-height: calc(100vh / 3);
 }
@@ -1693,6 +1694,7 @@ defineExpose({
 }
 
 .hybrid-input.chat-input--custom-height {
+  height: var(--custom-input-height, 2.5rem);
   min-height: var(--custom-input-height, 2.5rem);
   max-height: var(--custom-input-height, 12rem);
 }
