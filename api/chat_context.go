@@ -17,11 +17,12 @@ var (
 )
 
 type ChatContext struct {
-	Conn     *WsSyncConn
-	User     *model.UserModel
-	Members  []*model.MemberModel
-	Echo     string
-	ConnInfo *ConnInfo
+	Conn            *WsSyncConn
+	User            *model.UserModel
+	Members         []*model.MemberModel
+	Echo            string
+	ConnInfo        *ConnInfo
+	OneBotSessionID string
 
 	ChannelUsersMap *utils.SyncMap[string, *utils.SyncSet[string]]
 	UserId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
@@ -213,6 +214,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 		}
 	}
+	getOneBotRuntime().publishProtocolEvent(botID, data, ctx.OneBotSessionID)
 }
 
 func normalizeEventForBot(event *protocol.Event) *protocol.Event {

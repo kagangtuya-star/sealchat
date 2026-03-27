@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import type { ServerConfig, UserInfo } from "@/types";
+import type { BotOneBotConfig, ServerConfig, UserInfo } from "@/types";
 import { Howl, Howler } from 'howler';
 
 import axiosFactory from "axios"
@@ -129,7 +129,7 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenAdd(input: string | { name: string; avatar?: string; nickColor?: string }) {
+    async botTokenAdd(input: string | { name: string; avatar?: string; nickColor?: string; onebotConfig?: BotOneBotConfig }) {
       const user = useUserStore();
       const payload = typeof input === 'string' ? { name: input } : input;
       const resp = await api.post('api/v1/admin/bot-token-add', payload, {
@@ -138,7 +138,7 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenUpdate(payload: { id: string; name?: string; avatar?: string; nickColor?: string }) {
+    async botTokenUpdate(payload: { id: string; name?: string; avatar?: string; nickColor?: string; onebotConfig?: BotOneBotConfig }) {
       const user = useUserStore();
       const resp = await api.post('api/v1/admin/bot-token-update', payload, {
         headers: { 'Authorization': user.token }

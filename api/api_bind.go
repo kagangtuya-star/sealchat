@@ -654,6 +654,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	}))
 
 	websocketWorks(app)
+	oneBotWSWorks(app)
+	startOneBotReverseRuntime()
 
 	// Check port availability and find fallback if needed
 	listenAddr := config.ServeAt

@@ -3,6 +3,7 @@ import AvatarEditor from '@/components/AvatarEditor.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
+import type { BotOneBotConfig } from '@/types';
 import AdminBotActiveReferencePopover from './components/AdminBotActiveReferencePopover.vue';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { Refresh, Search, Trash } from '@vicons/tabler';
@@ -35,6 +36,7 @@ interface BotListItem {
     channelName?: string
   }>
   userNickname?: string
+  onebotConfig?: BotOneBotConfig | null
 }
 
 const emit = defineEmits(['close']);
@@ -55,6 +57,15 @@ const editingToken = ref<BotListItem | null>(null);
 const newTokenName = ref('bot');
 const newTokenAvatar = ref('');
 const newTokenColor = ref('#2563eb');
+const defaultOneBotConfig = (): BotOneBotConfig => ({
+  enabled: false,
+  url: '',
+  apiUrl: '',
+  eventUrl: '',
+  useUniversalClient: true,
+  reconnectIntervalMs: 3000,
+});
+const onebotConfig = ref<BotOneBotConfig>(defaultOneBotConfig());
 const avatarFileInputRef = ref<HTMLInputElement | null>(null);
 const avatarEditorVisible = ref(false);
 const avatarEditorFile = ref<File | null>(null);
@@ -93,6 +104,7 @@ const botAvatarDisplay = computed(() => {
 });
 
 const currentScope = computed<'manual' | 'system'>(() => activeTab.value === 'system' ? 'system' : 'manual');
+const onebotConfigVisible = computed(() => !editingToken.value?.isSystemManaged);
 const hasRows = computed(() => rows.value.length > 0);
 const systemTabVisible = computed(() => showSystemBots.value);
 const pageCount = computed(() => Math.max(1, Math.ceil(Math.max(total.value, 1) / pageSize.value)));
@@ -144,6 +156,7 @@ const resetForm = () => {
   newTokenName.value = 'bot';
   newTokenAvatar.value = '';
   newTokenColor.value = '#2563eb';
+  onebotConfig.value = defaultOneBotConfig();
   clearAvatarPreview();
 };
 
@@ -158,6 +171,11 @@ const normalizeRows = (items: any[]) => {
     isSystemManaged: Boolean(item.isSystemManaged),
     activeReferenceCount: Number(item.activeReferenceCount || 0) || 0,
     activeReferences: Array.isArray(item.activeReferences) ? item.activeReferences : [],
+    onebotConfig: item.onebotConfig ? {
+      ...defaultOneBotConfig(),
+      ...item.onebotConfig,
+      reconnectIntervalMs: Number(item.onebotConfig?.reconnectIntervalMs || 3000) || 3000,
+    } : null,
   })) as BotListItem[];
 };
 
@@ -233,6 +251,10 @@ const openEditModal = (token: BotListItem) => {
   newTokenName.value = token.name || 'bot';
   newTokenAvatar.value = resolveBotAvatarValue(token);
   newTokenColor.value = token.nickColor || '#2563eb';
+  onebotConfig.value = token.onebotConfig ? {
+    ...defaultOneBotConfig(),
+    ...token.onebotConfig,
+  } : defaultOneBotConfig();
   clearAvatarPreview();
   avatarEditorVisible.value = false;
   avatarEditorFile.value = null;
@@ -262,10 +284,19 @@ const emitUpdatedChannelIdentities = (items?: any[]) => {
 };
 
 const submitToken = async () => {
+  const payloadOneBotConfig = onebotConfigVisible.value ? {
+    enabled: Boolean(onebotConfig.value.enabled),
+    url: onebotConfig.value.url?.trim() || '',
+    apiUrl: onebotConfig.value.apiUrl?.trim() || '',
+    eventUrl: onebotConfig.value.eventUrl?.trim() || '',
+    useUniversalClient: Boolean(onebotConfig.value.useUniversalClient),
+    reconnectIntervalMs: Number(onebotConfig.value.reconnectIntervalMs || 3000) || 3000,
+  } : undefined;
   const payload = {
     name: newTokenName.value.trim() || 'bot',
     avatar: newTokenAvatar.value.trim(),
     nickColor: newTokenColor.value,
+    onebotConfig: payloadOneBotConfig,
   };
   try {
     let resp: any;
@@ -680,8 +711,8 @@ onUnmounted(() => {
     :z-index="BOT_CONFIG_MODAL_Z_INDEX"
     preset="dialog"
     :title="editingToken ? '编辑机器人' : '配置机器人外观'"
-    :positive-text="editingToken ? '保存' : $t('dialoChannelgNew.positiveText')"
-    :negative-text="$t('dialoChannelgNew.negativeText')"
+    :positive-text="editingToken ? '保存' : t('dialoChannelgNew.positiveText')"
+    :negative-text="t('dialoChannelgNew.negativeText')"
     @positive-click="submitToken"
   >
     <n-form label-placement="top">
@@ -715,6 +746,30 @@ onUnmounted(() => {
           <span class="text-xs text-gray-500">用于频道中展示机器人昵称颜色</span>
         </div>
       </n-form-item>
+      <template v-if="onebotConfigVisible">
+        <div class="bot-management__onebot-title">OneBot v11 反向 WS</div>
+        <div class="bot-management__onebot-hint">
+          首版支持 Universal 单连接或 API/Event 双连接。未填写 URL 时不会建立反向连接。
+        </div>
+        <n-form-item label="启用反向 WS">
+          <n-switch v-model:value="onebotConfig.enabled" />
+        </n-form-item>
+        <n-form-item label="Universal URL">
+          <n-input v-model:value="onebotConfig.url" placeholder="ws://127.0.0.1:8080/onebot/ws" />
+        </n-form-item>
+        <n-form-item label="使用 Universal 单连接">
+          <n-switch v-model:value="onebotConfig.useUniversalClient" />
+        </n-form-item>
+        <n-form-item v-if="!onebotConfig.useUniversalClient" label="API URL">
+          <n-input v-model:value="onebotConfig.apiUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/api" />
+        </n-form-item>
+        <n-form-item v-if="!onebotConfig.useUniversalClient" label="Event URL">
+          <n-input v-model:value="onebotConfig.eventUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/event" />
+        </n-form-item>
+        <n-form-item label="重连间隔（毫秒）">
+          <n-input-number v-model:value="onebotConfig.reconnectIntervalMs" :min="500" :step="500" style="width: 180px" />
+        </n-form-item>
+      </template>
     </n-form>
   </n-modal>
 
@@ -918,6 +973,19 @@ onUnmounted(() => {
   font-size: 12px;
   color: #94a3b8;
   margin: 0;
+}
+
+.bot-management__onebot-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-1);
+  margin-top: 4px;
+}
+
+.bot-management__onebot-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  margin-top: -4px;
 }
 
 @media (max-width: 960px) {

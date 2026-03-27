@@ -59,6 +59,15 @@ export interface BotWhisperForwardConfig {
   rules: BotWhisperForwardRule[];
 }
 
+export interface BotOneBotConfig {
+  enabled: boolean;
+  url?: string;
+  apiUrl?: string;
+  eventUrl?: string;
+  useUniversalClient: boolean;
+  reconnectIntervalMs: number;
+}
+
 export interface SatoriMessage {
   id?: string;
   channel?: Channel;

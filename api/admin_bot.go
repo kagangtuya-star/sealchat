@@ -19,6 +19,31 @@ type adminBotTokenDTO struct {
 	ActiveReferenceCount int64                            `json:"activeReferenceCount"`
 	ActiveReferences     []model.SystemBotActiveReference `json:"activeReferences,omitempty"`
 	UserNickname         string                           `json:"userNickname,omitempty"`
+	OneBotConfig         *model.BotOneBotConfigModel      `json:"onebotConfig,omitempty"`
+}
+
+type adminBotOneBotConfigInput struct {
+	Enabled             bool   `json:"enabled"`
+	URL                 string `json:"url"`
+	APIURL              string `json:"apiUrl"`
+	EventURL            string `json:"eventUrl"`
+	UseUniversalClient  bool   `json:"useUniversalClient"`
+	ReconnectIntervalMs int64  `json:"reconnectIntervalMs"`
+}
+
+func buildAdminBotOneBotConfig(botUserID string, input *adminBotOneBotConfigInput) *model.BotOneBotConfigModel {
+	if input == nil {
+		return nil
+	}
+	return model.NormalizeBotOneBotConfig(&model.BotOneBotConfigModel{
+		BotUserID:           botUserID,
+		Enabled:             input.Enabled,
+		URL:                 input.URL,
+		APIURL:              input.APIURL,
+		EventURL:            input.EventURL,
+		UseUniversalClient:  input.UseUniversalClient,
+		ReconnectIntervalMs: input.ReconnectIntervalMs,
+	})
 }
 
 func normalizeBotTokenScope(scope string) string {
@@ -99,6 +124,17 @@ func buildAdminBotTokenList(keyword, scope string) ([]adminBotTokenDTO, error) {
 	if err != nil {
 		return nil, err
 	}
+	configByBotID := map[string]*model.BotOneBotConfigModel{}
+	if len(ids) > 0 {
+		var configs []model.BotOneBotConfigModel
+		if err := db.Where("bot_user_id IN ?", ids).Find(&configs).Error; err != nil {
+			return nil, err
+		}
+		for i := range configs {
+			item := configs[i]
+			configByBotID[item.BotUserID] = model.NormalizeBotOneBotConfig(&item)
+		}
+	}
 
 	items := make([]adminBotTokenDTO, 0, len(tokens))
 	for _, token := range tokens {
@@ -131,6 +167,7 @@ func buildAdminBotTokenList(keyword, scope string) ([]adminBotTokenDTO, error) {
 			ActiveReferenceCount: activeReferenceCount,
 			ActiveReferences:     activeReferences,
 			UserNickname:         "",
+			OneBotConfig:         configByBotID[token.ID],
 		}
 		if user != nil {
 			item.UserNickname = user.Nickname
@@ -192,6 +229,9 @@ func deleteBotTokenByID(tokenID string) error {
 	if err := tx.Where("user_id = ?", token.ID).Delete(&model.WorldMemberModel{}).Error; err != nil {
 		return rollback(err)
 	}
+	if err := tx.Where("bot_user_id = ?", token.ID).Delete(&model.BotOneBotConfigModel{}).Error; err != nil {
+		return rollback(err)
+	}
 
 	var friendChannelIDs []string
 	tx.Model(&model.FriendModel{}).
@@ -215,6 +255,7 @@ func deleteBotTokenByID(tokenID string) error {
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
+	reloadOneBotReverseRuntimeForBot(token.ID)
 	return nil
 }
 
@@ -231,9 +272,10 @@ func BotTokenList(c *fiber.Ctx) error {
 
 func BotTokenAdd(c *fiber.Ctx) error {
 	type RequestBody struct {
-		Name      string `json:"name"`
-		Avatar    string `json:"avatar"`
-		NickColor string `json:"nickColor"`
+		Name         string                     `json:"name"`
+		Avatar       string                     `json:"avatar"`
+		NickColor    string                     `json:"nickColor"`
+		OneBotConfig *adminBotOneBotConfigInput `json:"onebotConfig"`
 	}
 	var data RequestBody
 	if err := c.BodyParser(&data); err != nil {
@@ -286,16 +328,23 @@ func BotTokenAdd(c *fiber.Ctx) error {
 		return err
 	}
 	_ = service.SyncBotMembers(item)
+	if cfg := buildAdminBotOneBotConfig(uid, data.OneBotConfig); cfg != nil {
+		if _, err := model.BotOneBotConfigUpsert(cfg); err != nil {
+			return err
+		}
+		reloadOneBotReverseRuntimeForBot(uid)
+	}
 
 	return c.JSON(item)
 }
 
 func BotTokenUpdate(c *fiber.Ctx) error {
 	type RequestBody struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		Avatar    string `json:"avatar"`
-		NickColor string `json:"nickColor"`
+		ID           string                     `json:"id"`
+		Name         string                     `json:"name"`
+		Avatar       string                     `json:"avatar"`
+		NickColor    string                     `json:"nickColor"`
+		OneBotConfig *adminBotOneBotConfigInput `json:"onebotConfig"`
 	}
 	var data RequestBody
 	if err := c.BodyParser(&data); err != nil {
@@ -327,6 +376,17 @@ func BotTokenUpdate(c *fiber.Ctx) error {
 	if err := db.Model(&model.BotTokenModel{}).Where("id = ?", data.ID).Updates(update).Error; err != nil {
 		return err
 	}
+	if data.OneBotConfig != nil {
+		user := model.UserGet(token.ID)
+		if user == nil || strings.TrimSpace(user.BotKind) != model.BotKindManual {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "仅手工 BOT 支持 OneBot 配置"})
+		}
+		cfg := buildAdminBotOneBotConfig(token.ID, data.OneBotConfig)
+		if _, err := model.BotOneBotConfigUpsert(cfg); err != nil {
+			return err
+		}
+		reloadOneBotReverseRuntimeForBot(token.ID)
+	}
 	if err := service.SyncBotUserProfile(&token); err != nil {
 		return err
 	}
@@ -344,10 +404,15 @@ func BotTokenUpdate(c *fiber.Ctx) error {
 
 	return c.JSON(struct {
 		model.BotTokenModel
-		UpdatedIdentities []map[string]any `json:"updatedIdentities"`
+		UpdatedIdentities []map[string]any            `json:"updatedIdentities"`
+		OneBotConfig      *model.BotOneBotConfigModel `json:"onebotConfig,omitempty"`
 	}{
 		BotTokenModel:     token,
 		UpdatedIdentities: updatedIdentities,
+		OneBotConfig: func() *model.BotOneBotConfigModel {
+			cfg, _ := model.BotOneBotConfigGet(token.ID)
+			return cfg
+		}(),
 	})
 }
 
