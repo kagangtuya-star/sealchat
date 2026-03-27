@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sealchat/protocol"
+	"sealchat/utils"
 )
 
 // 频道状态常量
@@ -201,6 +202,7 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 		Name:                    c.Name,
 		Type:                    channelType,
 		DefaultDiceExpr:         c.DefaultDiceExpr,
+		BotCommandPrefixes:      utils.GetConfiguredBotCommandPrefixes(),
 		BuiltInDiceEnabled:      c.BuiltInDiceEnabled,
 		BotFeatureEnabled:       c.BotFeatureEnabled,
 		BotWhisperForwardConfig: c.BotWhisperForwardConfig,

@@ -3,6 +3,8 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { MentionOption } from 'naive-ui';
 import { nanoid } from 'nanoid';
 import { matchText } from '@/utils/pinyinMatch';
+import { useChatStore } from '@/stores/chat';
+import { isBotCommandLikeContent } from '@/utils/botCommand';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -47,6 +49,8 @@ const emit = defineEmits<{
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
 }>();
+
+const chat = useChatStore();
 
 const editorRef = ref<HTMLDivElement | null>(null);
 const wrapperRef = ref<HTMLDivElement | null>(null);
@@ -224,11 +228,14 @@ const extractGalleryAttachmentId = (event: DragEvent) => {
   }
 };
 
-const renderQuickFormatLine = (line: string): string => {
+const renderQuickFormatLine = (line: string, disableAllFormatting = false): string => {
   if (!line) {
     return '<span class="empty-line">\u200B</span>';
   }
   let text = escapeHtml(line);
+  if (disableAllFormatting) {
+    return text;
+  }
   const codeTokens: Array<{ token: string; html: string }> = [];
   const linkTokens: Array<{ token: string; html: string }> = [];
 
@@ -269,7 +276,7 @@ const renderQuickFormatLine = (line: string): string => {
   return text;
 };
 
-const renderQuickFormatFragment = (value: string, hasNextFragment: boolean): string => {
+const renderQuickFormatFragment = (value: string, hasNextFragment: boolean, disableAllFormatting = false): string => {
   const lines = value.split('\n');
   let html = '';
   lines.forEach((line, index) => {
@@ -281,7 +288,7 @@ const renderQuickFormatFragment = (value: string, hasNextFragment: boolean): str
     if (skipTrailingEmptyLine) {
       return;
     }
-    html += renderQuickFormatLine(line);
+    html += renderQuickFormatLine(line, disableAllFormatting);
   });
   return html;
 };
@@ -661,10 +668,11 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
   // 渲染内容
   let html = '';
+  const disableAllFormatting = isBotCommandLikeContent(text, chat.curChannel?.botCommandPrefixes);
   fragments.forEach((fragment, fragmentIndex) => {
     if (fragment.type === 'text') {
       const nextFragment = fragments[fragmentIndex + 1];
-      html += renderQuickFormatFragment(fragment.content, Boolean(nextFragment));
+      html += renderQuickFormatFragment(fragment.content, Boolean(nextFragment), disableAllFormatting);
     } else if (fragment.type === 'image' && fragment.markerId) {
       // 图片节点
       const imageInfo = props.inlineImages[fragment.markerId];

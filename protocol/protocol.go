@@ -8,6 +8,7 @@ type Channel struct {
 	ParentID                string      `json:"parent_id" gorm:"null"`
 	PermType                string      `json:"permType"`
 	DefaultDiceExpr         string      `json:"defaultDiceExpr,omitempty"`
+	BotCommandPrefixes      []string    `json:"botCommandPrefixes,omitempty"`
 	BuiltInDiceEnabled      bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled       bool        `json:"botFeatureEnabled"`
 	BotWhisperForwardConfig string      `json:"botWhisperForwardConfig"`

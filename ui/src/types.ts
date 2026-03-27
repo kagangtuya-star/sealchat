@@ -30,6 +30,7 @@ declare module '@satorijs/protocol' {
   }
   interface Channel {
     defaultDiceExpr?: string;
+    botCommandPrefixes?: string[];
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
     botWhisperForwardConfig?: string;

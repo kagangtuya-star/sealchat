@@ -69,6 +69,7 @@ import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
@@ -10407,21 +10408,22 @@ const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
 
 const renderDicePreviewSegment = (text: string) => {
   if (!text) return '';
+  const disableAllFormatting = isBotCommandLikeContent(text, chat.curChannel?.botCommandPrefixes);
   const matches = matchDiceExpressions(text, defaultDiceExpr.value);
   if (!matches.length) {
-    return renderQuickFormatHtmlFromEscaped(escapeHtml(text));
+    return renderQuickFormatHtmlFromEscaped(escapeHtml(text), { disableAllFormatting });
   }
   let html = '';
   let cursor = 0;
   matches.forEach((match, index) => {
     if (match.start > cursor) {
-      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)));
+      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)), { disableAllFormatting });
     }
     html += buildPreviewDiceChip(match, index);
     cursor = match.end;
   });
   if (cursor < text.length) {
-    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)));
+    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)), { disableAllFormatting });
   }
   return html;
 };
@@ -10430,6 +10432,9 @@ const renderPreviewContent = (value: string) => {
   // 检测是否为 TipTap JSON
   if (isTipTapJson(value)) {
     try {
+      if (isBotCommandLikeContent(value, chat.curChannel?.botCommandPrefixes)) {
+        return DOMPurify.sanitize(renderBotCommandTextAsHtml(value));
+      }
       const json = JSON.parse(value);
       const html = tiptapJsonToHtml(json, {
         baseUrl: urlBase,

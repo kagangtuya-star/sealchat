@@ -17,6 +17,7 @@ import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { contentEscape, contentUnescape } from '@/utils/tools';
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
@@ -58,6 +59,10 @@ const stickyNoteStore = useStickyNoteStore();
 const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
+
+const shouldDisableInlineCodeForBotCommand = (content: string) => (
+  isBotCommandLikeContent(content, chat.curChannel?.botCommandPrefixes)
+);
 const worldGlossary = useWorldGlossaryStore();
 const displayStore = useDisplayStore();
 const channelImageLayout = useChannelImageLayoutStore();
@@ -469,6 +474,11 @@ const parseContent = (payload: any, overrideContent?: string) => {
   // 检测是否为 TipTap JSON 格式
   if (isTipTapJson(content)) {
     try {
+      if (shouldDisableInlineCodeForBotCommand(content)) {
+        const sanitizedHtml = DOMPurify.sanitize(renderBotCommandTextAsHtml(content));
+        hasImage.value = false;
+        return <span v-html={sanitizedHtml}></span>;
+      }
       const html = tiptapJsonToHtml(content, {
         baseUrl: urlBase,
         imageClass: 'inline-image',
@@ -568,7 +578,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
           textItems.push(raw);
         } else if (item.type === 'text') {
           const textContent = typeof item.attrs?.content === 'string' ? item.attrs.content : raw;
-          const rendered = renderQuickFormatHtmlFromEscaped(contentEscape(String(textContent || '')));
+          const rendered = renderQuickFormatHtmlFromEscaped(contentEscape(String(textContent || '')), {
+            disableAllFormatting: shouldDisableInlineCodeForBotCommand(content),
+          });
           textItems.push(`<span style="white-space: pre-wrap">${rendered}</span>`);
         } else {
           textItems.push(`<span style="white-space: pre-wrap">${raw}</span>`);
@@ -1193,7 +1205,9 @@ const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_delet
 const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
 const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
 const quoteSummaryHtml = computed(() => DOMPurify.sanitize(
-  renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
+  shouldDisableInlineCodeForBotCommand(String(quoteItem.value?.content || ''))
+    ? renderBotCommandTextAsHtml(String(quoteItem.value?.content || ''))
+    : renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
 ));
 const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
@@ -4034,6 +4048,18 @@ const handleRetrySend = () => {
   border-bottom-color: color-mix(in srgb, #f59e0b 28%, transparent);
   border-radius: 0.125rem;
   margin: 0;
+}
+
+.content.typo strong,
+.content.typo b {
+  color: inherit;
+  font-weight: 600;
+}
+
+.content.typo em,
+.content.typo i {
+  color: inherit;
+  font-style: italic;
 }
 
 .chat-item > .right > .content {

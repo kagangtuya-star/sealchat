@@ -63,6 +63,58 @@ func TestEnhancePlainContentForHTMLExportQuickFormat(t *testing.T) {
 	}
 }
 
+func TestBuildExportPayloadDoesNotRenderInlineCodeForBotCommandMessage(t *testing.T) {
+	initTestDB(t)
+	now := time.Unix(1700001200, 0)
+	job := &model.MessageExportJobModel{
+		ChannelID:       "channel-bot-command-inline-code",
+		IncludeOOC:      true,
+		IncludeArchived: true,
+	}
+	messages := []*model.MessageModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "cmd", CreatedAt: now, UpdatedAt: now},
+			UserID:            "user-a",
+			Content:           ".ra `1d100` **侦查**",
+			ICMode:            "ic",
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "plain", CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second)},
+			UserID:            "user-a",
+			Content:           "普通消息 `1d100` **侦查**",
+			ICMode:            "ic",
+		},
+	}
+
+	payload := buildExportPayload(job, "BOT 指令频道", messages, nil, &exportExtraOptions{
+		IncludeImages:      true,
+		IncludeDiceCommand: true,
+	})
+
+	if payload == nil || len(payload.Messages) != 2 {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+
+	commandHTML := payload.Messages[0].ContentHTML
+	if strings.Contains(commandHTML, "<code>1d100</code>") {
+		t.Fatalf("bot command inline code should remain literal, got %q", commandHTML)
+	}
+	if !strings.Contains(commandHTML, "`1d100`") {
+		t.Fatalf("bot command inline code backticks should remain, got %q", commandHTML)
+	}
+	if strings.Contains(commandHTML, "<strong>侦查</strong>") {
+		t.Fatalf("bot command should not render bold formatting, got %q", commandHTML)
+	}
+	if !strings.Contains(commandHTML, "**侦查**") {
+		t.Fatalf("bot command bold marker should remain literal, got %q", commandHTML)
+	}
+
+	plainHTML := payload.Messages[1].ContentHTML
+	if !strings.Contains(plainHTML, "<code>1d100</code>") {
+		t.Fatalf("normal message should still render inline code, got %q", plainHTML)
+	}
+}
+
 func TestEnhancePlainContentForHTMLExportInvalidLink(t *testing.T) {
 	input := "[危险](javascript:alert(1))"
 	result := enhancePlainContentForHTMLExport(input)
@@ -223,6 +275,38 @@ func TestBuildBBCodeTextLineDoesNotRenderCodeFence(t *testing.T) {
 	}
 	if !strings.Contains(line, "```hello```") {
 		t.Fatalf("code fence should remain literal text, got %q", line)
+	}
+}
+
+func TestBuildBBCodeTextLineDoesNotRenderInlineCodeForBotCommandMessage(t *testing.T) {
+	payload := &ExportPayload{WithoutTimestamp: true}
+	msg := &ExportMessage{
+		SenderName:  "测试",
+		SenderColor: "#123abc",
+		CreatedAt:   time.Unix(1700000000, 0),
+		Content:     ".ra `1d100` **侦查**",
+	}
+
+	line := buildBBCodeTextLine(payload, msg)
+	if strings.Contains(line, "[code]1d100[/code]") {
+		t.Fatalf("bot command inline code should remain literal, got %q", line)
+	}
+	if !strings.Contains(line, "`1d100`") {
+		t.Fatalf("bot command inline code backticks should remain, got %q", line)
+	}
+	if strings.Contains(line, "[b]侦查[/b]") {
+		t.Fatalf("bot command should not render bold formatting, got %q", line)
+	}
+	if !strings.Contains(line, "**侦查**") {
+		t.Fatalf("bot command bold marker should remain literal, got %q", line)
+	}
+}
+
+func TestStripInlineCodeTagsFromHTMLPreservesBackticks(t *testing.T) {
+	got := stripInlineCodeTagsFromHTML(`前缀 <code>1d100</code> 后缀`)
+	want := "前缀 `1d100` 后缀"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 

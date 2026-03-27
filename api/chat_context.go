@@ -240,22 +240,16 @@ func normalizeBotCommandContent(content string) string {
 }
 
 func normalizeBotCommandContentWithPrefixes(content string, prefixes []string) string {
-	normalizedSource := content
 	leading := strings.TrimLeft(content, " \t\r\n")
 	if leading == "" {
 		return content
 	}
 
-	if service.LooksLikeTipTapJSON(leading) {
-		if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
-			normalizedSource = serialized
-		} else {
-			return content
-		}
+	normalizedSource := content
+	if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
+		normalizedSource = serialized
 	} else if !hasBotCommandPrefix(leading, prefixes) {
 		return content
-	} else if serialized, ok := service.SerializeMessageContentToCommandText(content); ok {
-		normalizedSource = serialized
 	}
 
 	normalized := botCommandTailCleanupPattern.ReplaceAllString(normalizedSource, "")
@@ -284,35 +278,7 @@ func hasBotCommandPrefix(content string, prefixes []string) bool {
 }
 
 func resolveBotCommandPrefixes() []string {
-	collected := make([]string, 0, 6)
-	seen := map[string]struct{}{}
-	appendPrefix := func(prefix string) {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" {
-			return
-		}
-		if _, ok := seen[prefix]; ok {
-			return
-		}
-		seen[prefix] = struct{}{}
-		collected = append(collected, prefix)
-	}
-
-	if cfg := utils.GetConfig(); cfg != nil {
-		for _, prefix := range cfg.Export.DiceCommandPrefixes {
-			appendPrefix(prefix)
-		}
-	}
-	if len(collected) == 0 {
-		appendPrefix(".")
-		appendPrefix("。")
-	}
-	if _, ok := seen["."]; ok {
-		appendPrefix("．")
-		appendPrefix("｡")
-	}
-	appendPrefix("/")
-	return collected
+	return utils.GetConfiguredBotCommandPrefixes()
 }
 
 func extractBotWhisperTargetIDs(event *protocol.Event) []string {

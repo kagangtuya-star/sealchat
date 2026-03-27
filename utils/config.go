@@ -627,6 +627,40 @@ func normalizeExportDiceCommandPrefixes(prefixes []string) []string {
 	return normalized
 }
 
+func ResolveBotCommandPrefixes(prefixes []string) []string {
+	base := normalizeExportDiceCommandPrefixes(prefixes)
+	collected := make([]string, 0, len(base)+3)
+	seen := make(map[string]struct{}, len(base)+3)
+	appendPrefix := func(prefix string) {
+		trimmed := strings.TrimSpace(prefix)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		collected = append(collected, trimmed)
+	}
+
+	for _, prefix := range base {
+		appendPrefix(prefix)
+	}
+	if _, ok := seen["."]; ok {
+		appendPrefix("．")
+		appendPrefix("｡")
+	}
+	appendPrefix("/")
+	return collected
+}
+
+func GetConfiguredBotCommandPrefixes() []string {
+	if cfg := GetConfig(); cfg != nil {
+		return ResolveBotCommandPrefixes(cfg.Export.DiceCommandPrefixes)
+	}
+	return ResolveBotCommandPrefixes(nil)
+}
+
 func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {
 	if cfg == nil {
 		return

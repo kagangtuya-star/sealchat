@@ -41,6 +41,15 @@ func TestNormalizeBotCommandContentWithPrefixes_ConvertsLegacyHTMLCommand(t *tes
 	}
 }
 
+func TestNormalizeBotCommandContentWithPrefixes_ConvertsDiceChipHTMLCommand(t *testing.T) {
+	input := `<span class="dice-chip" data-dice-roll-index="0" data-dice-source=".ra"><span class="dice-chip__formula">d100</span><span class="dice-chip__equals">=</span><span class="dice-chip__result">42</span></span> <code>1d100</code> <strong>侦查</strong>`
+	got := normalizeBotCommandContentWithPrefixes(input, []string{".", "。"})
+	want := ".ra `1d100` **侦查**"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestNormalizeEventForBot_EscapesPlainTextAmpersandCommand(t *testing.T) {
 	event := &protocol.Event{
 		Type: protocol.EventMessageCreated,

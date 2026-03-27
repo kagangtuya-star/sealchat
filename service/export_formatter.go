@@ -75,6 +75,11 @@ type ExportPayload struct {
 	ExtraMeta        map[string]interface{} `json:"extra_meta,omitempty"`
 }
 
+type quickFormatRenderOptions struct {
+	DisableInlineCode bool
+	DisableAll        bool
+}
+
 const diceLogVersion = 105
 
 var formatterRegistry = map[string]exportFormatter{
@@ -134,7 +139,9 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		}
 		originalContent := msg.Content
 		var htmlContent string
-		if html, ok := convertTipTapToHTML(originalContent); ok {
+		if shouldDisableInlineCodeForBotCommand(originalContent) {
+			htmlContent = renderBotCommandRawHTML(originalContent)
+		} else if html, ok := convertTipTapToHTML(originalContent); ok {
 			htmlContent = html
 		} else {
 			htmlContent = enhancePlainContentForHTMLExport(originalContent)
@@ -1345,6 +1352,7 @@ var (
 	quickBoldPattern             = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
 	quickItalicPattern           = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
 	htmlTagPattern               = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
+	inlineCodeHTMLTagPattern     = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
 	bbcodePrePattern             = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
 	bbcodeInlineCodePattern      = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
 	bbcodeLinkPattern            = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
@@ -1361,18 +1369,25 @@ func enhancePlainContentForHTMLExport(content string) string {
 	if content == "" {
 		return ""
 	}
+	options := quickFormatRenderOptions{
+		DisableInlineCode: shouldDisableInlineCodeForBotCommand(content),
+		DisableAll:        shouldDisableInlineCodeForBotCommand(content),
+	}
 	normalized := strings.ReplaceAll(content, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	if normalized == "" {
 		return ""
 	}
 	if isLikelyHTMLContent(normalized) {
+		if options.DisableAll {
+			return renderBotCommandRawHTML(content)
+		}
 		return normalized
 	}
 	normalized = htmlUnescapeDeep(normalized)
 
 	protected, tokens := protectAtTagsForQuickFormat(normalized)
-	converted := convertQuickFormatForFlavor(protected, quickFormatFlavorHTML)
+	converted := convertQuickFormatForFlavor(protected, quickFormatFlavorHTML, options)
 	for _, token := range tokens {
 		converted = strings.ReplaceAll(converted, token.token, token.html)
 	}
@@ -1408,9 +1423,15 @@ func protectAtTagsForQuickFormat(input string) (string, []quickToken) {
 	return result, tokens
 }
 
-func convertQuickFormatForFlavor(input string, flavor quickFormatFlavor) string {
+func convertQuickFormatForFlavor(input string, flavor quickFormatFlavor, options quickFormatRenderOptions) string {
 	if input == "" {
 		return ""
+	}
+	if options.DisableAll {
+		if flavor == quickFormatFlavorHTML {
+			return strings.ReplaceAll(input, "\n", "<br />")
+		}
+		return input
 	}
 
 	fenceTokens := make([]quickToken, 0, 4)
@@ -1422,7 +1443,7 @@ func convertQuickFormatForFlavor(input string, flavor quickFormatFlavor) string 
 		return token
 	})
 
-	inlined := convertQuickInline(protected, flavor)
+	inlined := convertQuickInline(protected, flavor, options)
 	for _, token := range fenceTokens {
 		replacement := token.html
 		if flavor == quickFormatFlavorBBCode {
@@ -1438,7 +1459,7 @@ func convertQuickFormatForFlavor(input string, flavor quickFormatFlavor) string 
 	return inlined
 }
 
-func convertQuickInline(input string, flavor quickFormatFlavor) string {
+func convertQuickInline(input string, flavor quickFormatFlavor, options quickFormatRenderOptions) string {
 	if input == "" {
 		return ""
 	}
@@ -1446,24 +1467,26 @@ func convertQuickInline(input string, flavor quickFormatFlavor) string {
 	escaped := htmlEscape(input)
 
 	inlineCodes := make([]quickToken, 0, 4)
-	codeIndex := 0
-	escaped = quickInlineCodePattern.ReplaceAllStringFunc(escaped, func(segment string) string {
-		match := quickInlineCodePattern.FindStringSubmatch(segment)
-		if len(match) < 2 {
-			return segment
-		}
-		token := fmt.Sprintf("__QF_INLINE_CODE_%d__", codeIndex)
-		codeIndex++
-		entry := quickToken{token: token}
-		switch flavor {
-		case quickFormatFlavorBBCode:
-			entry.bb = "[code]" + match[1] + "[/code]"
-		default:
-			entry.html = "<code>" + match[1] + "</code>"
-		}
-		inlineCodes = append(inlineCodes, entry)
-		return token
-	})
+	if !options.DisableInlineCode {
+		codeIndex := 0
+		escaped = quickInlineCodePattern.ReplaceAllStringFunc(escaped, func(segment string) string {
+			match := quickInlineCodePattern.FindStringSubmatch(segment)
+			if len(match) < 2 {
+				return segment
+			}
+			token := fmt.Sprintf("__QF_INLINE_CODE_%d__", codeIndex)
+			codeIndex++
+			entry := quickToken{token: token}
+			switch flavor {
+			case quickFormatFlavorBBCode:
+				entry.bb = "[code]" + match[1] + "[/code]"
+			default:
+				entry.html = "<code>" + match[1] + "</code>"
+			}
+			inlineCodes = append(inlineCodes, entry)
+			return token
+		})
+	}
 
 	links := make([]quickToken, 0, 4)
 	linkIndex := 0
@@ -1620,16 +1643,44 @@ func buildBBCodeBody(msg *ExportMessage, includeImages bool) string {
 	if raw == "" {
 		return ""
 	}
+	options := quickFormatRenderOptions{
+		DisableInlineCode: shouldDisableInlineCodeForBotCommand(raw),
+		DisableAll:        shouldDisableInlineCodeForBotCommand(raw),
+	}
+	if options.DisableAll {
+		body := resolveBotCommandRawText(raw)
+		body = applyImageVisibilityToPlain(body, includeImages)
+		body = wrapOOCContent(msg.IcMode, body)
+		parts := make([]string, 0, 3)
+		if msg.IsArchived {
+			parts = append(parts, "[已归档]")
+		}
+		if msg.IsWhisper {
+			if label := formatWhisperTargets(msg.WhisperTargets); label != "" {
+				parts = append(parts, label)
+			}
+		}
+		if body != "" {
+			parts = append(parts, body)
+		}
+		return strings.TrimSpace(strings.Join(parts, " "))
+	}
 
 	var body string
 	if htmlValue, ok := convertTipTapToHTML(raw); ok {
 		htmlValue = convertAtTagsToHTML(htmlValue)
+		if options.DisableInlineCode {
+			htmlValue = stripInlineCodeTagsFromHTML(htmlValue)
+		}
 		body = convertRenderedHTMLToBBCode(htmlValue)
 	} else if isLikelyHTMLContent(raw) {
+		if options.DisableInlineCode {
+			raw = stripInlineCodeTagsFromHTML(raw)
+		}
 		body = convertRenderedHTMLToBBCode(raw)
 	} else {
 		protected, tokens := protectAtTagsForQuickFormat(raw)
-		body = convertQuickFormatForFlavor(protected, quickFormatFlavorBBCode)
+		body = convertQuickFormatForFlavor(protected, quickFormatFlavorBBCode, options)
 		for _, token := range tokens {
 			body = strings.ReplaceAll(body, token.token, token.bb)
 		}
@@ -2243,6 +2294,53 @@ func stripImageTagsFromHTML(input string) string {
 		return ""
 	}
 	return strings.TrimSpace(htmlImageTagPattern.ReplaceAllString(input, ""))
+}
+
+func stripInlineCodeTagsFromHTML(input string) string {
+	if strings.TrimSpace(input) == "" {
+		return ""
+	}
+	return inlineCodeHTMLTagPattern.ReplaceAllString(input, "`$1`")
+}
+
+func resolveBotCommandRawText(content string) string {
+	if serialized, ok := SerializeMessageContentToCommandText(content); ok {
+		return serialized
+	}
+	return normalizePlainText(content)
+}
+
+func renderBotCommandRawHTML(content string) string {
+	raw := htmlEscape(resolveBotCommandRawText(content))
+	return strings.ReplaceAll(raw, "\n", "<br />")
+}
+
+func shouldDisableInlineCodeForBotCommand(content string) bool {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" {
+		return false
+	}
+	if serialized, ok := SerializeMessageContentToCommandText(content); ok {
+		leading = serialized
+	}
+	return hasLeadingBotCommandPrefix(leading, utils.GetConfiguredBotCommandPrefixes())
+}
+
+func hasLeadingBotCommandPrefix(content string, prefixes []string) bool {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" {
+		return false
+	}
+	for _, prefix := range prefixes {
+		trimmed := strings.TrimSpace(prefix)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(leading, trimmed) {
+			return true
+		}
+	}
+	return false
 }
 
 func isSingleLineDiceCommand(raw string) bool {

@@ -140,3 +140,29 @@ func TestReadConfigLogUploadEndpointsFallbackOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveBotCommandPrefixesDefaults(t *testing.T) {
+	got := ResolveBotCommandPrefixes(nil)
+	expected := []string{".", "。", "．", "｡", "/"}
+	if len(got) != len(expected) {
+		t.Fatalf("unexpected prefix count: %#v", got)
+	}
+	for idx, want := range expected {
+		if got[idx] != want {
+			t.Fatalf("unexpected prefix at %d: got %q want %q", idx, got[idx], want)
+		}
+	}
+}
+
+func TestResolveBotCommandPrefixesCustom(t *testing.T) {
+	got := ResolveBotCommandPrefixes([]string{"/", "!", " / "})
+	expected := []string{"/", "!"}
+	if len(got) != len(expected) {
+		t.Fatalf("unexpected prefix count: %#v", got)
+	}
+	for idx, want := range expected {
+		if got[idx] != want {
+			t.Fatalf("unexpected prefix at %d: got %q want %q", idx, got[idx], want)
+		}
+	}
+}
