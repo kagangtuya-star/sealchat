@@ -631,6 +631,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return nil
 	})
 
+	oneBotHTTPWorks(app)
+
 	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
 	if indexErr != nil {
 		log.Printf("读取内置 index.html 失败: %v", indexErr)

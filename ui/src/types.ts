@@ -59,8 +59,13 @@ export interface BotWhisperForwardConfig {
   rules: BotWhisperForwardRule[];
 }
 
+export type BotOneBotTransportType = 'forward_ws' | 'reverse_ws' | 'http';
+
 export interface BotOneBotConfig {
   enabled: boolean;
+  transportType: BotOneBotTransportType;
+  httpPathSuffix?: string;
+  httpPostPathSuffix?: string;
   url?: string;
   apiUrl?: string;
   eventUrl?: string;

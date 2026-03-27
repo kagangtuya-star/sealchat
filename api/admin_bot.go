@@ -19,11 +19,15 @@ type adminBotTokenDTO struct {
 	ActiveReferenceCount int64                            `json:"activeReferenceCount"`
 	ActiveReferences     []model.SystemBotActiveReference `json:"activeReferences,omitempty"`
 	UserNickname         string                           `json:"userNickname,omitempty"`
+	OneBotSelfID         int64                            `json:"oneBotSelfId,omitempty"`
 	OneBotConfig         *model.BotOneBotConfigModel      `json:"onebotConfig,omitempty"`
 }
 
 type adminBotOneBotConfigInput struct {
 	Enabled             bool   `json:"enabled"`
+	TransportType       string `json:"transportType"`
+	HTTPPathSuffix      string `json:"httpPathSuffix"`
+	HTTPPostPathSuffix  string `json:"httpPostPathSuffix"`
 	URL                 string `json:"url"`
 	APIURL              string `json:"apiUrl"`
 	EventURL            string `json:"eventUrl"`
@@ -38,6 +42,9 @@ func buildAdminBotOneBotConfig(botUserID string, input *adminBotOneBotConfigInpu
 	return model.NormalizeBotOneBotConfig(&model.BotOneBotConfigModel{
 		BotUserID:           botUserID,
 		Enabled:             input.Enabled,
+		TransportType:       input.TransportType,
+		HTTPPathSuffix:      input.HTTPPathSuffix,
+		HTTPPostPathSuffix:  input.HTTPPostPathSuffix,
 		URL:                 input.URL,
 		APIURL:              input.APIURL,
 		EventURL:            input.EventURL,
@@ -153,12 +160,18 @@ func buildAdminBotTokenList(keyword, scope string) ([]adminBotTokenDTO, error) {
 		}
 		activeReferenceCount := int64(0)
 		activeReferences := []model.SystemBotActiveReference{}
+		oneBotSelfID := int64(0)
 		if isSystemManaged {
 			activeReferences, err = model.ActiveSystemBotReferences(token.ID)
 			if err != nil {
 				return nil, err
 			}
 			activeReferenceCount = int64(len(activeReferences))
+		} else {
+			oneBotSelfID, err = service.GetOrCreateOneBotID(service.OneBotEntityBotUser, token.ID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		item := adminBotTokenDTO{
 			BotTokenModel:        token,
@@ -167,6 +180,7 @@ func buildAdminBotTokenList(keyword, scope string) ([]adminBotTokenDTO, error) {
 			ActiveReferenceCount: activeReferenceCount,
 			ActiveReferences:     activeReferences,
 			UserNickname:         "",
+			OneBotSelfID:         oneBotSelfID,
 			OneBotConfig:         configByBotID[token.ID],
 		}
 		if user != nil {
@@ -328,6 +342,9 @@ func BotTokenAdd(c *fiber.Ctx) error {
 		return err
 	}
 	_ = service.SyncBotMembers(item)
+	if _, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, uid); err != nil {
+		return err
+	}
 	if cfg := buildAdminBotOneBotConfig(uid, data.OneBotConfig); cfg != nil {
 		if _, err := model.BotOneBotConfigUpsert(cfg); err != nil {
 			return err

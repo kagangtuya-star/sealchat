@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import AvatarEditor from '@/components/AvatarEditor.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { urlBase } from '@/stores/_config';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import type { BotOneBotConfig } from '@/types';
@@ -36,6 +37,7 @@ interface BotListItem {
     channelName?: string
   }>
   userNickname?: string
+  oneBotSelfId?: number | string
   onebotConfig?: BotOneBotConfig | null
 }
 
@@ -57,8 +59,41 @@ const editingToken = ref<BotListItem | null>(null);
 const newTokenName = ref('bot');
 const newTokenAvatar = ref('');
 const newTokenColor = ref('#2563eb');
+const normalizeOneBotTransportType = (value?: string): BotOneBotConfig['transportType'] => {
+  switch (String(value || '').trim()) {
+  case 'reverse_ws':
+    return 'reverse_ws';
+  case 'http':
+    return 'http';
+  default:
+    return 'forward_ws';
+  }
+};
+const normalizeOneBotPathSuffix = (value: string | undefined, defaultValue: string) => {
+  let next = String(value || '').trim();
+  if (!next) {
+    next = defaultValue;
+  }
+  if (!next.startsWith('/')) {
+    next = `/${next}`;
+  }
+  next = next.replace(/\/+$/, '');
+  return next || defaultValue;
+};
+const normalizeOneBotHTTPPostAddress = (value?: string) => {
+  let next = String(value || '').trim();
+  if (!next) {
+    return '';
+  }
+  next = next.replace(/\/+$/, '');
+  return next;
+};
+const isAbsoluteHTTPURL = (value?: string) => /^https?:\/\//i.test(String(value || '').trim());
 const defaultOneBotConfig = (): BotOneBotConfig => ({
   enabled: false,
+  transportType: 'forward_ws',
+  httpPathSuffix: '/onebot/v11/http',
+  httpPostPathSuffix: '',
   url: '',
   apiUrl: '',
   eventUrl: '',
@@ -105,6 +140,36 @@ const botAvatarDisplay = computed(() => {
 
 const currentScope = computed<'manual' | 'system'>(() => activeTab.value === 'system' ? 'system' : 'manual');
 const onebotConfigVisible = computed(() => !editingToken.value?.isSystemManaged);
+const onebotSectionVisible = computed(() => onebotConfigVisible.value && Boolean(onebotConfig.value.enabled));
+const onebotTransportType = computed(() => normalizeOneBotTransportType(onebotConfig.value.transportType));
+const onebotForwardWSUniversalURL = computed(() => {
+  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}${urlBase}/onebot/v11/ws`;
+});
+const onebotForwardWSAPIURL = computed(() => `${onebotForwardWSUniversalURL.value}/api`);
+const onebotForwardWSEventURL = computed(() => `${onebotForwardWSUniversalURL.value}/event`);
+const onebotHTTPBaseURL = computed(() => {
+  const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  return `${protocol}${urlBase}${normalizeOneBotPathSuffix(onebotConfig.value.httpPathSuffix, '/onebot/v11/http')}/:action`;
+});
+const onebotHTTPSendGroupExampleURL = computed(() => {
+  const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  return `${protocol}${urlBase}${normalizeOneBotPathSuffix(onebotConfig.value.httpPathSuffix, '/onebot/v11/http')}/send_group_msg`;
+});
+const onebotHTTPPostExampleURL = computed(() => {
+  const value = normalizeOneBotHTTPPostAddress(onebotConfig.value.httpPostPathSuffix);
+  if (!value) {
+    return '未填写';
+  }
+  if (isAbsoluteHTTPURL(value)) {
+    return value;
+  }
+  if (value.startsWith('/')) {
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+    return `${protocol}${urlBase}${value}`;
+  }
+  return value;
+});
 const hasRows = computed(() => rows.value.length > 0);
 const systemTabVisible = computed(() => showSystemBots.value);
 const pageCount = computed(() => Math.max(1, Math.ceil(Math.max(total.value, 1) / pageSize.value)));
@@ -174,6 +239,9 @@ const normalizeRows = (items: any[]) => {
     onebotConfig: item.onebotConfig ? {
       ...defaultOneBotConfig(),
       ...item.onebotConfig,
+      transportType: normalizeOneBotTransportType(item.onebotConfig?.transportType),
+      httpPathSuffix: normalizeOneBotPathSuffix(item.onebotConfig?.httpPathSuffix, '/onebot/v11/http'),
+      httpPostPathSuffix: normalizeOneBotHTTPPostAddress(item.onebotConfig?.httpPostPathSuffix),
       reconnectIntervalMs: Number(item.onebotConfig?.reconnectIntervalMs || 3000) || 3000,
     } : null,
   })) as BotListItem[];
@@ -254,6 +322,9 @@ const openEditModal = (token: BotListItem) => {
   onebotConfig.value = token.onebotConfig ? {
     ...defaultOneBotConfig(),
     ...token.onebotConfig,
+    transportType: normalizeOneBotTransportType(token.onebotConfig?.transportType),
+    httpPathSuffix: normalizeOneBotPathSuffix(token.onebotConfig?.httpPathSuffix, '/onebot/v11/http'),
+    httpPostPathSuffix: normalizeOneBotHTTPPostAddress(token.onebotConfig?.httpPostPathSuffix),
   } : defaultOneBotConfig();
   clearAvatarPreview();
   avatarEditorVisible.value = false;
@@ -286,6 +357,9 @@ const emitUpdatedChannelIdentities = (items?: any[]) => {
 const submitToken = async () => {
   const payloadOneBotConfig = onebotConfigVisible.value ? {
     enabled: Boolean(onebotConfig.value.enabled),
+    transportType: onebotTransportType.value,
+    httpPathSuffix: normalizeOneBotPathSuffix(onebotConfig.value.httpPathSuffix, '/onebot/v11/http'),
+    httpPostPathSuffix: normalizeOneBotHTTPPostAddress(onebotConfig.value.httpPostPathSuffix),
     url: onebotConfig.value.url?.trim() || '',
     apiUrl: onebotConfig.value.apiUrl?.trim() || '',
     eventUrl: onebotConfig.value.eventUrl?.trim() || '',
@@ -502,6 +576,11 @@ const columns = computed<DataTableColumns<BotListItem>>(() => [
           <div style={{ fontSize: '12px', color: 'var(--n-text-color-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {row.userNickname || row.id}
           </div>
+          {!row.isSystemManaged && row.oneBotSelfId ? (
+            <div style={{ fontSize: '12px', color: 'var(--n-text-color-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              OneBot 号 {String(row.oneBotSelfId)}
+            </div>
+          ) : null}
         </div>
       </div>
     ),
@@ -747,28 +826,89 @@ onUnmounted(() => {
         </div>
       </n-form-item>
       <template v-if="onebotConfigVisible">
-        <div class="bot-management__onebot-title">OneBot v11 反向 WS</div>
+        <div class="bot-management__onebot-title">OneBot v11</div>
         <div class="bot-management__onebot-hint">
-          首版支持 Universal 单连接或 API/Event 双连接。未填写 URL 时不会建立反向连接。
+          启用后可选择正向 WS、反向 WS 或 HTTP API 的配置。
         </div>
-        <n-form-item label="启用反向 WS">
+        <n-form-item v-if="editingToken?.oneBotSelfId" label="BOT 伪号码">
+          <n-input :value="String(editingToken.oneBotSelfId)" readonly />
+        </n-form-item>
+        <n-form-item label="启用 OneBot v11">
           <n-switch v-model:value="onebotConfig.enabled" />
         </n-form-item>
-        <n-form-item label="Universal URL">
-          <n-input v-model:value="onebotConfig.url" placeholder="ws://127.0.0.1:8080/onebot/ws" />
-        </n-form-item>
-        <n-form-item label="使用 Universal 单连接">
-          <n-switch v-model:value="onebotConfig.useUniversalClient" />
-        </n-form-item>
-        <n-form-item v-if="!onebotConfig.useUniversalClient" label="API URL">
-          <n-input v-model:value="onebotConfig.apiUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/api" />
-        </n-form-item>
-        <n-form-item v-if="!onebotConfig.useUniversalClient" label="Event URL">
-          <n-input v-model:value="onebotConfig.eventUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/event" />
-        </n-form-item>
-        <n-form-item label="重连间隔（毫秒）">
-          <n-input-number v-model:value="onebotConfig.reconnectIntervalMs" :min="500" :step="500" style="width: 180px" />
-        </n-form-item>
+        <template v-if="onebotSectionVisible">
+          <n-form-item label="连接方式">
+            <n-radio-group v-model:value="onebotConfig.transportType">
+              <n-radio-button value="forward_ws">正向 WS</n-radio-button>
+              <n-radio-button value="reverse_ws">反向 WS</n-radio-button>
+              <n-radio-button value="http">HTTP API</n-radio-button>
+            </n-radio-group>
+          </n-form-item>
+
+          <template v-if="onebotTransportType === 'forward_ws'">
+            <div class="bot-management__onebot-panel">
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">Universal 接入地址</div>
+                <code class="bot-management__onebot-code">{{ onebotForwardWSUniversalURL }}</code>
+              </div>
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">API 接入地址</div>
+                <code class="bot-management__onebot-code">{{ onebotForwardWSAPIURL }}</code>
+              </div>
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">Event 接入地址</div>
+                <code class="bot-management__onebot-code">{{ onebotForwardWSEventURL }}</code>
+              </div>
+              <div class="bot-management__onebot-label">鉴权方式：使用当前 BOT Token</div>
+            </div>
+          </template>
+
+          <template v-else-if="onebotTransportType === 'reverse_ws'">
+            <div class="bot-management__onebot-hint">
+              SealChat 将主动连接外部 OneBot 服务。未填写 URL 时不会建立反向连接。
+            </div>
+            <n-form-item label="Universal URL">
+              <n-input v-model:value="onebotConfig.url" placeholder="ws://127.0.0.1:8080/onebot/ws" />
+            </n-form-item>
+            <n-form-item label="使用 Universal 单连接">
+              <n-switch v-model:value="onebotConfig.useUniversalClient" />
+            </n-form-item>
+            <n-form-item v-if="!onebotConfig.useUniversalClient" label="API URL">
+              <n-input v-model:value="onebotConfig.apiUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/api" />
+            </n-form-item>
+            <n-form-item v-if="!onebotConfig.useUniversalClient" label="Event URL">
+              <n-input v-model:value="onebotConfig.eventUrl" placeholder="ws://127.0.0.1:8080/onebot/ws/event" />
+            </n-form-item>
+            <n-form-item label="重连间隔（毫秒）">
+              <n-input-number v-model:value="onebotConfig.reconnectIntervalMs" :min="500" :step="500" style="width: 180px" />
+            </n-form-item>
+          </template>
+
+          <template v-else>
+            <div class="bot-management__onebot-panel">
+              <n-form-item label="HTTP API 后缀">
+                <n-input v-model:value="onebotConfig.httpPathSuffix" placeholder="/onebot/v11/http" />
+              </n-form-item>
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">HTTP API 地址前缀</div>
+                <code class="bot-management__onebot-code">{{ onebotHTTPBaseURL }}</code>
+              </div>
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">调用示例</div>
+                <code class="bot-management__onebot-code">{{ onebotHTTPSendGroupExampleURL }}</code>
+              </div>
+              <n-form-item label="HTTP POST 地址（预留）">
+                <n-input v-model:value="onebotConfig.httpPostPathSuffix" placeholder="http://127.0.0.1:55001/OlivOSMsgApi/qq/onebot/default" />
+              </n-form-item>
+              <div class="bot-management__onebot-row">
+                <div class="bot-management__onebot-label">HTTP POST 地址示例</div>
+                <code class="bot-management__onebot-code">{{ onebotHTTPPostExampleURL }}</code>
+              </div>
+              <div class="bot-management__onebot-label">说明：HTTP API 后缀已生效，可用于兼容非标准路径的 BOT；HTTP POST 请填写完整 URL，当前仅支持已实现的消息事件上报，不包含 quick operation、notice、request。</div>
+              <div class="bot-management__onebot-label">鉴权方式：使用当前 BOT Token</div>
+            </div>
+          </template>
+        </template>
       </template>
     </n-form>
   </n-modal>
@@ -986,6 +1126,38 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--n-text-color-3);
   margin-top: -4px;
+}
+
+.bot-management__onebot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.bot-management__onebot-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bot-management__onebot-label {
+  font-size: 12px;
+  color: var(--n-text-color-2);
+}
+
+.bot-management__onebot-code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--n-text-color-1);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 @media (max-width: 960px) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strconv"
 	"testing"
 
 	"sealchat/utils"
@@ -52,5 +53,33 @@ func TestOneBotIDMappingGetOrCreateAndResolve(t *testing.T) {
 
 	if _, err := ResolveInternalID(OneBotEntityMessage, 999999999); err == nil {
 		t.Fatal("expected missing numeric id lookup to fail")
+	}
+}
+
+func TestOneBotIDMappingUsesExpectedNumericWidths(t *testing.T) {
+	initTestDB(t)
+
+	botID, err := GetOrCreateOneBotID(OneBotEntityBotUser, "bot-"+utils.NewID())
+	if err != nil {
+		t.Fatalf("GetOrCreateOneBotID bot failed: %v", err)
+	}
+	if got := len(strconv.FormatInt(botID, 10)); got != 10 {
+		t.Fatalf("bot numeric id digits = %d, want 10, value=%d", got, botID)
+	}
+
+	userID, err := GetOrCreateOneBotID(OneBotEntityUser, "user-"+utils.NewID())
+	if err != nil {
+		t.Fatalf("GetOrCreateOneBotID user failed: %v", err)
+	}
+	if got := len(strconv.FormatInt(userID, 10)); got != 16 {
+		t.Fatalf("user numeric id digits = %d, want 16, value=%d", got, userID)
+	}
+
+	channelID, err := GetOrCreateOneBotID(OneBotEntityChannel, "channel-"+utils.NewID())
+	if err != nil {
+		t.Fatalf("GetOrCreateOneBotID channel failed: %v", err)
+	}
+	if got := len(strconv.FormatInt(channelID, 10)); got != 16 {
+		t.Fatalf("channel numeric id digits = %d, want 16, value=%d", got, channelID)
 	}
 }

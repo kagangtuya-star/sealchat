@@ -168,6 +168,29 @@ func dispatchOneBotAction(session *oneBotSession, req *oneBotActionRequest) *one
 	return oneBotSuccessResponse(data, req.Echo)
 }
 
+func isOneBotSupportedAction(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "send_private_msg",
+		"send_group_msg",
+		"send_msg",
+		"delete_msg",
+		"get_msg",
+		"get_login_info",
+		"get_stranger_info",
+		"get_friend_list",
+		"get_group_info",
+		"get_group_list",
+		"get_group_member_info",
+		"get_group_member_list",
+		"can_send_image",
+		"get_status",
+		"get_version_info":
+		return true
+	default:
+		return false
+	}
+}
+
 func oneBotChatContext(session *oneBotSession) *ChatContext {
 	ctx := &ChatContext{
 		User:            session.BotUser,

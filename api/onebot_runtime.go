@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -19,6 +21,15 @@ import (
 )
 
 const oneBotHeartbeatIntervalMs int64 = 15000
+const oneBotHTTPQuickOperationSessionPrefix = "onebot-http-quickop:"
+
+var oneBotHTTPPostClient = &http.Client{Timeout: 5 * time.Second}
+
+type oneBotHTTPQuickOperation struct {
+	Reply      json.RawMessage `json:"reply"`
+	AutoEscape bool            `json:"auto_escape"`
+	AtSender   *bool           `json:"at_sender,omitempty"`
+}
 
 type oneBotSessionRole string
 type oneBotSessionSource string
@@ -30,6 +41,7 @@ const (
 
 	oneBotSessionSourceForward oneBotSessionSource = "forward"
 	oneBotSessionSourceReverse oneBotSessionSource = "reverse"
+	oneBotSessionSourceHTTP    oneBotSessionSource = "http"
 )
 
 type oneBotSession struct {
@@ -173,6 +185,9 @@ func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.
 	if rt == nil || botUserID == "" || event == nil {
 		return
 	}
+	if !strings.HasPrefix(originSessionID, oneBotHTTPQuickOperationSessionPrefix) {
+		rt.publishHTTPPostEvent(botUserID, event)
+	}
 	for _, session := range rt.sessionsByBot(botUserID) {
 		if session == nil {
 			continue
@@ -191,6 +206,223 @@ func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.
 			log.Printf("[onebot] 推送事件失败 session=%s bot=%s err=%v", session.ID, botUserID, err)
 		}
 	}
+}
+
+func (rt *oneBotRuntime) publishHTTPPostEvent(botUserID string, event *protocol.Event) {
+	if rt == nil || botUserID == "" || event == nil {
+		return
+	}
+	cfg, err := model.BotOneBotConfigGet(botUserID)
+	if err != nil {
+		log.Printf("[onebot] 读取 HTTP POST 配置失败 bot=%s err=%v", botUserID, err)
+		return
+	}
+	if cfg == nil || !cfg.Enabled || cfg.TransportType != model.OneBotTransportHTTP {
+		return
+	}
+	targetURL := strings.TrimSpace(cfg.HTTPPostPathSuffix)
+	if targetURL == "" {
+		return
+	}
+	selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUserID)
+	if err != nil {
+		log.Printf("[onebot] 生成 HTTP POST self_id 失败 bot=%s err=%v", botUserID, err)
+		return
+	}
+	payload, ok := projectProtocolEventToOneBot(&oneBotSession{SelfID: selfID}, event)
+	if !ok {
+		return
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[onebot] 编码 HTTP POST 事件失败 bot=%s err=%v", botUserID, err)
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[onebot] 创建 HTTP POST 请求失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Self-ID", strconv.FormatInt(selfID, 10))
+
+	resp, err := oneBotHTTPPostClient.Do(req)
+	if err != nil {
+		log.Printf("[onebot] HTTP POST 上报失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[onebot] 读取 HTTP POST 响应失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
+		return
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("[onebot] HTTP POST 上报返回异常状态 bot=%s url=%s status=%d", botUserID, targetURL, resp.StatusCode)
+		return
+	}
+	if err := rt.applyHTTPPostQuickOperation(botUserID, event, respBody); err != nil {
+		log.Printf("[onebot] HTTP POST 快速操作执行失败 bot=%s url=%s err=%v", botUserID, targetURL, err)
+	}
+}
+
+func parseOneBotHTTPQuickOperation(body []byte) (*oneBotHTTPQuickOperation, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(trimmed, "{") {
+		return nil, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var op oneBotHTTPQuickOperation
+	if err := decoder.Decode(&op); err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
+func hasOneBotQuickReply(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null"
+}
+
+func oneBotQuickReplyAtSenderEnabled(op *oneBotHTTPQuickOperation) bool {
+	if op == nil {
+		return false
+	}
+	if op.AtSender == nil {
+		return true
+	}
+	return *op.AtSender
+}
+
+func prependOneBotQuickReplyAtSegment(raw json.RawMessage, numericUserID int64) (json.RawMessage, bool, error) {
+	if numericUserID <= 0 {
+		return raw, false, nil
+	}
+
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false, err
+	}
+
+	atSegment := map[string]any{
+		"type": "at",
+		"data": map[string]any{
+			"qq": strconv.FormatInt(numericUserID, 10),
+		},
+	}
+
+	var segments []any
+	switch v := value.(type) {
+	case string:
+		segments = []any{
+			atSegment,
+			map[string]any{
+				"type": "text",
+				"data": map[string]any{"text": v},
+			},
+		}
+	case []any:
+		segments = make([]any, 0, len(v)+1)
+		segments = append(segments, atSegment)
+		segments = append(segments, v...)
+	case map[string]any:
+		segments = []any{atSegment, v}
+	default:
+		segments = []any{
+			atSegment,
+			map[string]any{
+				"type": "text",
+				"data": map[string]any{"text": strings.TrimSpace(string(raw))},
+			},
+		}
+	}
+
+	next, err := json.Marshal(segments)
+	if err != nil {
+		return nil, false, err
+	}
+	return next, false, nil
+}
+
+func (rt *oneBotRuntime) applyHTTPPostQuickOperation(botUserID string, event *protocol.Event, body []byte) error {
+	if rt == nil || strings.TrimSpace(botUserID) == "" || event == nil || event.Channel == nil {
+		return nil
+	}
+
+	op, err := parseOneBotHTTPQuickOperation(body)
+	if err != nil {
+		return err
+	}
+	if op == nil || !hasOneBotQuickReply(op.Reply) {
+		return nil
+	}
+
+	botUser := model.UserGet(botUserID)
+	if botUser == nil || botUser.ID == "" || !botUser.IsBot {
+		return errors.New("bot user missing for quick operation")
+	}
+
+	session := newOneBotSession(botUser, oneBotSessionRoleUniversal, oneBotSessionSourceHTTP, nil)
+	session.ID = oneBotHTTPQuickOperationSessionPrefix + utils.NewID()
+	if selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUserID); err == nil {
+		session.SelfID = selfID
+	}
+
+	replyMessage := op.Reply
+	autoEscape := op.AutoEscape
+
+	isPrivate := event.Channel.Type == protocol.DirectChannelType
+	if !isPrivate && oneBotQuickReplyAtSenderEnabled(op) {
+		senderUserID := ""
+		if event.User != nil {
+			senderUserID = strings.TrimSpace(event.User.ID)
+		}
+		if senderUserID == "" && event.Message != nil && event.Message.User != nil {
+			senderUserID = strings.TrimSpace(event.Message.User.ID)
+		}
+		if senderUserID != "" {
+			numericUserID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, senderUserID)
+			if err != nil {
+				return err
+			}
+			replyMessage, autoEscape, err = prependOneBotQuickReplyAtSegment(replyMessage, numericUserID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if isPrivate {
+		targetUserID := ""
+		if event.User != nil {
+			targetUserID = strings.TrimSpace(event.User.ID)
+		}
+		if targetUserID == "" && event.Message != nil && event.Message.User != nil {
+			targetUserID = strings.TrimSpace(event.Message.User.ID)
+		}
+		if targetUserID == "" {
+			return errors.New("quick reply target user missing")
+		}
+		channel, err := ensureOneBotPrivateChannel(botUserID, targetUserID)
+		if err != nil {
+			return err
+		}
+		_, err = oneBotActionSendIntoChannel(session, channel, replyMessage, autoEscape)
+		return err
+	}
+
+	channel, err := ensureOneBotGroupChannel(botUserID, event.Channel.ID)
+	if err != nil {
+		return err
+	}
+	_, err = oneBotActionSendIntoChannel(session, channel, replyMessage, autoEscape)
+	return err
 }
 
 func (rt *oneBotRuntime) sendLifecycleConnect(session *oneBotSession) {
@@ -326,7 +558,7 @@ func (rt *oneBotRuntime) reloadReverseController(botUserID string) {
 	}
 
 	cfg, err := model.BotOneBotConfigGet(botUserID)
-	if err != nil || cfg == nil || !cfg.Enabled {
+	if err != nil || cfg == nil || !cfg.Enabled || cfg.TransportType != model.OneBotTransportReverseWS {
 		if err != nil {
 			log.Printf("[onebot] 读取反向 WS 配置失败 bot=%s err=%v", botUserID, err)
 		}

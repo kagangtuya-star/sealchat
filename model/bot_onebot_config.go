@@ -6,10 +6,21 @@ import (
 )
 
 const DefaultOneBotReconnectIntervalMs int64 = 3000
+const DefaultOneBotHTTPPathSuffix = "/onebot/v11/http"
+const DefaultOneBotHTTPPostPathSuffix = ""
+
+const (
+	OneBotTransportForwardWS = "forward_ws"
+	OneBotTransportReverseWS = "reverse_ws"
+	OneBotTransportHTTP      = "http"
+)
 
 type BotOneBotConfigModel struct {
 	BotUserID           string    `json:"botUserId" gorm:"primaryKey;size:100"`
 	Enabled             bool      `json:"enabled"`
+	TransportType       string    `json:"transportType" gorm:"size:32"`
+	HTTPPathSuffix      string    `json:"httpPathSuffix" gorm:"size:512"`
+	HTTPPostPathSuffix  string    `json:"httpPostPathSuffix" gorm:"size:512"`
 	URL                 string    `json:"url" gorm:"size:512"`
 	APIURL              string    `json:"apiUrl" gorm:"size:512"`
 	EventURL            string    `json:"eventUrl" gorm:"size:512"`
@@ -29,6 +40,9 @@ func NormalizeBotOneBotConfig(input *BotOneBotConfigModel) *BotOneBotConfigModel
 	}
 	out := *input
 	out.BotUserID = strings.TrimSpace(out.BotUserID)
+	out.TransportType = normalizeOneBotTransportType(out.TransportType)
+	out.HTTPPathSuffix = normalizeOneBotPathSuffix(out.HTTPPathSuffix, DefaultOneBotHTTPPathSuffix)
+	out.HTTPPostPathSuffix = normalizeOneBotHTTPPostAddress(out.HTTPPostPathSuffix)
 	out.URL = strings.TrimSpace(out.URL)
 	out.APIURL = strings.TrimSpace(out.APIURL)
 	out.EventURL = strings.TrimSpace(out.EventURL)
@@ -36,6 +50,41 @@ func NormalizeBotOneBotConfig(input *BotOneBotConfigModel) *BotOneBotConfigModel
 		out.ReconnectIntervalMs = DefaultOneBotReconnectIntervalMs
 	}
 	return &out
+}
+
+func normalizeOneBotTransportType(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case OneBotTransportReverseWS:
+		return OneBotTransportReverseWS
+	case OneBotTransportHTTP:
+		return OneBotTransportHTTP
+	default:
+		return OneBotTransportForwardWS
+	}
+}
+
+func normalizeOneBotPathSuffix(raw string, defaultValue string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = defaultValue
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	if trimmed == "" {
+		return defaultValue
+	}
+	return trimmed
+}
+
+func normalizeOneBotHTTPPostAddress(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return DefaultOneBotHTTPPostPathSuffix
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	return trimmed
 }
 
 func BotOneBotConfigGet(botUserID string) (*BotOneBotConfigModel, error) {
