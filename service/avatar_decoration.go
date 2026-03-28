@@ -8,16 +8,12 @@ import (
 )
 
 const (
-	avatarDecorationScaleMin        = 0.5
-	avatarDecorationScaleMax        = 1.5
 	avatarDecorationOffsetMin       = -128
 	avatarDecorationOffsetMax       = 128
 	avatarDecorationRotationMin     = 0
 	avatarDecorationRotationMax     = 360
 	avatarDecorationOpacityMin      = 0
 	avatarDecorationOpacityMax      = 1
-	avatarDecorationPlaybackRateMin = 0.25
-	avatarDecorationPlaybackRateMax = 2.0
 )
 
 func NormalizeAvatarDecoration(userID string, decoration *protocol.AvatarDecoration) (*protocol.AvatarDecoration, error) {
@@ -98,9 +94,6 @@ func NormalizeAvatarDecorationsWithAccess(ownerUserID string, operatorUserID str
 			settings.BlendMode = "normal"
 		}
 
-		if settings.Scale < avatarDecorationScaleMin || settings.Scale > avatarDecorationScaleMax {
-			return nil, errors.New("头像装饰缩放超出允许范围")
-		}
 		if settings.OffsetX < avatarDecorationOffsetMin || settings.OffsetX > avatarDecorationOffsetMax ||
 			settings.OffsetY < avatarDecorationOffsetMin || settings.OffsetY > avatarDecorationOffsetMax {
 			return nil, errors.New("头像装饰位移超出允许范围")
@@ -110,9 +103,6 @@ func NormalizeAvatarDecorationsWithAccess(ownerUserID string, operatorUserID str
 		}
 		if settings.Opacity < avatarDecorationOpacityMin || settings.Opacity > avatarDecorationOpacityMax {
 			return nil, errors.New("头像装饰透明度超出允许范围")
-		}
-		if settings.PlaybackRate < avatarDecorationPlaybackRateMin || settings.PlaybackRate > avatarDecorationPlaybackRateMax {
-			return nil, errors.New("头像装饰播放速度超出允许范围")
 		}
 		if settings.ZIndex != 1 && settings.ZIndex != -1 {
 			return nil, errors.New("头像装饰层级仅支持前景或背景")

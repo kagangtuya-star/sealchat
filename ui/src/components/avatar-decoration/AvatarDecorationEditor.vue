@@ -145,10 +145,13 @@ const getStepPrecision = (step: number) => {
   const index = text.indexOf('.')
   return index >= 0 ? text.length - index - 1 : 0
 }
-const clampStepValue = (value: number, min: number, max: number, step: number) => {
+const roundStepValue = (value: number, step: number) => {
   const precision = getStepPrecision(step)
   const normalized = Math.round(value / step) * step
-  return Number(clamp(normalized, min, max).toFixed(precision))
+  return Number(normalized.toFixed(precision))
+}
+const clampStepValue = (value: number, min: number, max: number, step: number) => {
+  return clamp(roundStepValue(value, step), min, max)
 }
 
 const patchDecoration = (decorationId: string, patch: Partial<AvatarDecoration>) => {
@@ -397,7 +400,7 @@ const updateZIndex = (value: number) => {
 const adjustScaleByWheel = (event: WheelEvent) => {
   event.preventDefault()
   const current = normalizedSelectedDecoration.value?.settings?.scale ?? 1
-  updateScale(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.5, 1.5, 0.05))
+  updateScale(roundStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.05))
 }
 
 const adjustOffsetXByWheel = (event: WheelEvent) => {
@@ -427,7 +430,7 @@ const adjustOpacityByWheel = (event: WheelEvent) => {
 const adjustPlaybackRateByWheel = (event: WheelEvent) => {
   event.preventDefault()
   const current = normalizedSelectedDecoration.value?.settings?.playbackRate ?? 1
-  updatePlaybackRate(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.25, 2, 0.05))
+  updatePlaybackRate(roundStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.05))
 }
 
 const stopDragging = () => {
@@ -632,8 +635,6 @@ onBeforeUnmount(() => {
             <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustScaleByWheel">
               <n-input-number
                 :value="normalizedSelectedDecoration.settings?.scale ?? 1"
-                :min="0.5"
-                :max="1.5"
                 :step="0.05"
                 @update:value="updateScale"
               />
@@ -691,8 +692,6 @@ onBeforeUnmount(() => {
             <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustPlaybackRateByWheel">
               <n-input-number
                 :value="normalizedSelectedDecoration.settings?.playbackRate ?? 1"
-                :min="0.25"
-                :max="2"
                 :step="0.05"
                 @update:value="updatePlaybackRate"
               />
