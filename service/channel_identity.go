@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/protocol"
 )
 
 type ChannelIdentityInput struct {
@@ -15,6 +16,7 @@ type ChannelIdentityInput struct {
 	DisplayName        string
 	Color              string
 	AvatarAttachmentID string
+	AvatarDecoration   *protocol.AvatarDecoration
 	IsDefault          bool
 	IsTemporary        bool
 	ICOOCOnActivate    string
@@ -157,6 +159,10 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
+	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	if err != nil {
+		return nil, err
+	}
 
 	sortMax, err := model.ChannelIdentityMaxSort(input.ChannelID, userID)
 	if err != nil {
@@ -169,6 +175,7 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 		DisplayName:        strings.TrimSpace(input.DisplayName),
 		Color:              input.Color,
 		AvatarAttachmentID: input.AvatarAttachmentID,
+		AvatarDecoration:   avatarDecoration,
 		SortOrder:          sortMax + 1,
 		IsDefault:          input.IsDefault,
 		IsTemporary:        input.IsTemporary,
@@ -226,11 +233,16 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
+	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	if err != nil {
+		return nil, err
+	}
 
 	values := map[string]any{
 		"display_name":         strings.TrimSpace(input.DisplayName),
 		"color":                input.Color,
 		"avatar_attachment_id": input.AvatarAttachmentID,
+		"avatar_decoration":    avatarDecoration,
 		"is_default":           input.IsDefault,
 	}
 
@@ -292,6 +304,10 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
+	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	if err != nil {
+		return nil, err
+	}
 
 	folderIDs := sanitizeFolderIDs(input.FolderIDs)
 	if input.FolderIDs == nil {
@@ -316,6 +332,7 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 			DisplayName:        strings.TrimSpace(input.DisplayName),
 			Color:              input.Color,
 			AvatarAttachmentID: input.AvatarAttachmentID,
+			AvatarDecoration:   avatarDecoration,
 			IsDefault:          input.IsDefault,
 			IsTemporary:        true,
 			SortOrder:          identity.SortOrder,
@@ -504,6 +521,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"displayName":        item.DisplayName,
 		"color":              item.Color,
 		"avatarAttachmentId": item.AvatarAttachmentID,
+		"avatarDecoration":   item.AvatarDecoration,
 		"isDefault":          item.IsDefault,
 		"isTemporary":        item.IsTemporary,
 		"icOocOnActivate":    item.ICOOCOnActivate,

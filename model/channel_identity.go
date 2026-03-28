@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"sealchat/protocol"
 	"sort"
@@ -16,6 +17,7 @@ type ChannelIdentityModel struct {
 	DisplayName        string   `json:"displayName"`
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
+	AvatarDecoration   *protocol.AvatarDecoration `json:"avatarDecoration,omitempty" gorm:"serializer:json"`
 	CharacterCardID    string   `json:"characterCardId,omitempty" gorm:"size:100;index"`
 	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
 	IsTemporary        bool     `json:"isTemporary" gorm:"default:false"`
@@ -35,6 +37,7 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 		DisplayName:        m.DisplayName,
 		Color:              m.Color,
 		AvatarAttachmentID: m.AvatarAttachmentID,
+		AvatarDecoration:   m.AvatarDecoration,
 		IsDefault:          m.IsDefault,
 		IsTemporary:        m.IsTemporary,
 	}
@@ -119,6 +122,24 @@ func ChannelIdentityUpsert(item *ChannelIdentityModel) error {
 func ChannelIdentityUpdate(id string, values map[string]any) error {
 	if len(values) == 0 {
 		return nil
+	}
+	if rawDecoration, ok := values["avatar_decoration"]; ok {
+		switch value := rawDecoration.(type) {
+		case nil:
+			values["avatar_decoration"] = nil
+		case *protocol.AvatarDecoration:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case protocol.AvatarDecoration:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		}
 	}
 	return db.Model(&ChannelIdentityModel{}).Where("id = ?", id).Updates(values).Error
 }

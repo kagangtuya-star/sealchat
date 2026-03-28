@@ -99,6 +99,7 @@ const mapCandidateToUserInfo = (item: ChannelMemberCandidateItem): UserInfo => (
   username: item.username || '',
   nick: item.nickname || '',
   avatar: item.avatar || '',
+  avatarDecoration: null,
   createdAt: null,
   updatedAt: null,
   deletedAt: null,
@@ -609,7 +610,11 @@ const canRemoveMember = (roleId: string, userId?: string) => {
 
       <div class="flex flex-wrap space-x-2 ">
         <div class="relative group" v-for="j in filterMembersByChannelId(i.id)" :key="`${i.id}-${j.user?.id || j.userId}`">
-          <UserLabelV :name="j.user?.nick ?? j.user?.username" :src="j.user?.avatar" />
+          <UserLabelV
+            :name="j.user?.nick ?? j.user?.username"
+            :src="j.user?.avatar"
+            :decoration="j.user?.avatarDecoration"
+          />
           <div class="flex justify-center">
             <n-button class=" opacity-0 group-hover:opacity-100 transition-opacity" size="tiny" type="error"
               :disabled="!canRemoveMember(j.roleId, j.user?.id)"

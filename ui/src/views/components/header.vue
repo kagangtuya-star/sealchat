@@ -786,7 +786,12 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
               class="sc-icon-button sc-user-button"
               :aria-label="`打开 ${userDisplayName} 的菜单`"
             >
-              <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
+              <Avatar
+                class="sc-user-avatar"
+                :src="user.info.avatar"
+                :size="22"
+                :border="false"
+              />
             </button>
           </template>
           <span>{{ userDisplayName }}</span>

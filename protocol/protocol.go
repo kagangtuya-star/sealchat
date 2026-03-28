@@ -54,13 +54,32 @@ type User struct {
 	// Nickname      string // Deprecated
 }
 
+type AvatarDecoration struct {
+	Enabled              bool                      `json:"enabled"`
+	DecorationID         string                    `json:"decorationId,omitempty"`
+	ResourceAttachmentID string                    `json:"resourceAttachmentId,omitempty"`
+	FallbackAttachmentID string                    `json:"fallbackAttachmentId,omitempty"`
+	Settings             AvatarDecorationSettings  `json:"settings"`
+}
+
+type AvatarDecorationSettings struct {
+	Scale     float64 `json:"scale,omitempty"`
+	OffsetX   int     `json:"offsetX,omitempty"`
+	OffsetY   int     `json:"offsetY,omitempty"`
+	Rotation  float64 `json:"rotation,omitempty"`
+	ZIndex    int     `json:"zIndex,omitempty"`
+	Opacity   float64 `json:"opacity,omitempty"`
+	BlendMode string  `json:"blendMode,omitempty"`
+}
+
 type ChannelIdentity struct {
-	ID                 string `json:"id"`
-	DisplayName        string `json:"displayName"`
-	Color              string `json:"color"`
-	AvatarAttachmentID string `json:"avatarAttachmentId"`
-	IsDefault          bool   `json:"isDefault"`
-	IsTemporary        bool   `json:"isTemporary"`
+	ID                 string            `json:"id"`
+	DisplayName        string            `json:"displayName"`
+	Color              string            `json:"color"`
+	AvatarAttachmentID string            `json:"avatarAttachmentId"`
+	AvatarDecoration   *AvatarDecoration `json:"avatarDecoration,omitempty"`
+	IsDefault          bool              `json:"isDefault"`
+	IsTemporary        bool              `json:"isTemporary"`
 }
 
 type CharacterCard struct {
@@ -142,12 +161,13 @@ type Message struct {
 }
 
 type MessageIdentity struct {
-	ID               string `json:"id"`
-	VariantID        string `json:"variantId,omitempty"`
-	DisplayName      string `json:"displayName"`
-	Color            string `json:"color"`
-	AvatarAttachment string `json:"avatarAttachment"`
-	IsTemporary      bool   `json:"isTemporary"`
+	ID               string            `json:"id"`
+	VariantID        string            `json:"variantId,omitempty"`
+	DisplayName      string            `json:"displayName"`
+	Color            string            `json:"color"`
+	AvatarAttachment string            `json:"avatarAttachment"`
+	AvatarDecoration *AvatarDecoration `json:"avatarDecoration,omitempty"`
+	IsTemporary      bool              `json:"isTemporary"`
 }
 
 type ChannelPresence struct {

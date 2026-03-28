@@ -16,6 +16,9 @@ export interface WhisperMeta {
 }
 
 declare module '@satorijs/protocol' {
+  interface User {
+    avatarDecoration?: AvatarDecoration;
+  }
   interface Message {
     whisperMeta?: WhisperMeta;
     whisperToIds?: User[];
@@ -255,6 +258,7 @@ export interface UserInfo {
   username: string;
   nick: string;
   avatar: string;
+  avatarDecoration?: AvatarDecoration | null;
   nick_color?: string;
   brief: string;
   roleIds?: string[];
@@ -263,6 +267,24 @@ export interface UserInfo {
   email?: string;
   emailVerified?: boolean;
   emailVerifiedAt?: string;
+}
+
+export interface AvatarDecorationSettings {
+  scale?: number;
+  offsetX?: number;
+  offsetY?: number;
+  rotation?: number;
+  zIndex?: number;
+  opacity?: number;
+  blendMode?: string;
+}
+
+export interface AvatarDecoration {
+  enabled: boolean;
+  decorationId?: string;
+  resourceAttachmentId?: string;
+  fallbackAttachmentId?: string;
+  settings?: AvatarDecorationSettings;
 }
 
 export interface ChannelMemberCandidateItem {
@@ -496,6 +518,7 @@ export interface ChannelIdentity {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  avatarDecoration?: AvatarDecoration | null;
   characterCardId?: string;
   isDefault: boolean;
   isTemporary: boolean;
@@ -555,5 +578,6 @@ export interface MessageIdentity {
   displayName?: string;
   color?: string;
   avatarAttachment?: string;
+  avatarDecoration?: AvatarDecoration | null;
   isTemporary?: boolean;
 }

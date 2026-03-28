@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
@@ -14,6 +15,7 @@ type channelIdentityPayload struct {
 	DisplayName        string   `json:"displayName"`
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
+	AvatarDecoration   *protocol.AvatarDecoration `json:"avatarDecoration"`
 	IsDefault          bool     `json:"isDefault"`
 	IsTemporary        bool     `json:"isTemporary"`
 	ICOOCOnActivate    string   `json:"icOocOnActivate"`
@@ -73,6 +75,7 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecoration:   payload.AvatarDecoration,
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
@@ -113,6 +116,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecoration:   payload.AvatarDecoration,
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
@@ -176,6 +180,7 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecoration:   payload.AvatarDecoration,
 		IsDefault:          payload.IsDefault,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,

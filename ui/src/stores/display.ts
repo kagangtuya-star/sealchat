@@ -78,6 +78,7 @@ export interface DisplaySettings {
   sidebarWidth: number         // 左侧频道栏宽度 (px)
   channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
+  preferStaticAvatarDecoration: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
@@ -430,6 +431,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   channelNameWrapEnabled: false,
   showAvatar: true,
+  preferStaticAvatarDecoration: false,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
@@ -597,6 +599,7 @@ const loadSettings = (): DisplaySettings => {
       ),
       channelNameWrapEnabled: coerceBoolean((parsed as any)?.channelNameWrapEnabled ?? false),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
         AVATAR_SIZE_DEFAULT,
@@ -722,6 +725,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  preferStaticAvatarDecoration:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
+      ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
+      : base.preferStaticAvatarDecoration,
   avatarSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
       ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)

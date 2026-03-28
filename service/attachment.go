@@ -18,6 +18,7 @@ func ResolveAttachment(token string) (*model.AttachmentModel, error) {
 	if token == "" {
 		return nil, nil
 	}
+	token = strings.TrimPrefix(token, "id:")
 
 	db := model.GetDB()
 	var att model.AttachmentModel

@@ -17,7 +17,7 @@ const message = useMessage()
 
 const model = ref({
   nickname: '',
-  brief: ''
+  brief: '',
 })
 
 // Avatar editing state

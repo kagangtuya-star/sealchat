@@ -147,6 +147,7 @@ watch(
     draft.layout = value.layout
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
+    draft.preferStaticAvatarDecoration = value.preferStaticAvatarDecoration
     draft.showInputPreview = value.showInputPreview
     draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
@@ -229,6 +230,15 @@ const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
 }
+const handleQuickGalleryPageSizeUpdate = (value: number | null) => handleNumericInput('quickGalleryPageSize', value)
+const handleFontSizeUpdate = (value: number | null) => handleNumericInput('fontSize', value)
+const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lineHeight', value)
+const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
+const handleBubbleGapUpdate = (value: number | null) => handleNumericInput('bubbleGap', value)
+const handleCompactBubbleGapUpdate = (value: number | null) => handleNumericInput('compactBubbleGap', value)
+const handleParagraphSpacingUpdate = (value: number | null) => handleNumericInput('paragraphSpacing', value)
+const handleMessagePaddingXUpdate = (value: number | null) => handleNumericInput('messagePaddingX', value)
+const handleMessagePaddingYUpdate = (value: number | null) => handleNumericInput('messagePaddingY', value)
 
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
@@ -542,6 +552,19 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">头像装饰性能</p>
+            <p class="section-desc">低性能模式下优先使用静态兜底资源，后续动效装饰也会遵循此设置</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.preferStaticAvatarDecoration">
+          <template #checked>低性能模式</template>
+          <template #unchecked>默认模式</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">合并连续消息</p>
             <p class="section-desc">相邻同角色消息视作一段，拖动可拆分</p>
           </div>
@@ -777,7 +800,7 @@ const handleOpenTutorialHub = () => {
             :min="QUICK_GALLERY_PAGE_SIZE_LIMITS.MIN"
             :max="QUICK_GALLERY_PAGE_SIZE_LIMITS.MAX"
             :step="1"
-            @update:value="(value) => handleNumericInput('quickGalleryPageSize', value)"
+            @update:value="handleQuickGalleryPageSizeUpdate"
           >
             <template #suffix>张</template>
           </n-input-number>
@@ -924,7 +947,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="12"
                 :max="22"
-                @update:value="(v) => handleNumericInput('fontSize', v)"
+                @update:value="handleFontSizeUpdate"
               />
             </div>
           </div>
@@ -947,7 +970,7 @@ const handleOpenTutorialHub = () => {
                 :min="1.2"
                 :max="2"
                 :step="0.05"
-                @update:value="(v) => handleNumericInput('lineHeight', v)"
+                @update:value="handleLineHeightUpdate"
               />
             </div>
           </div>
@@ -970,7 +993,7 @@ const handleOpenTutorialHub = () => {
                 :min="-1"
                 :max="2"
                 :step="0.1"
-                @update:value="(v) => handleNumericInput('letterSpacing', v)"
+                @update:value="handleLetterSpacingUpdate"
               />
             </div>
           </div>
@@ -998,7 +1021,7 @@ const handleOpenTutorialHub = () => {
                 :min="4"
                 :max="48"
                 :step="2"
-                @update:value="(v) => handleNumericInput('bubbleGap', v)"
+                @update:value="handleBubbleGapUpdate"
               />
             </div>
           </div>
@@ -1021,7 +1044,7 @@ const handleOpenTutorialHub = () => {
                 :min="0"
                 :max="24"
                 :step="1"
-                @update:value="(v) => handleNumericInput('compactBubbleGap', v)"
+                @update:value="handleCompactBubbleGapUpdate"
               />
             </div>
           </div>
@@ -1043,7 +1066,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="0"
                 :max="24"
-                @update:value="(v) => handleNumericInput('paragraphSpacing', v)"
+                @update:value="handleParagraphSpacingUpdate"
               />
             </div>
           </div>
@@ -1076,7 +1099,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="8"
                 :max="48"
-                @update:value="(v) => handleNumericInput('messagePaddingX', v)"
+                @update:value="handleMessagePaddingXUpdate"
               />
             </div>
           </div>
@@ -1098,7 +1121,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="4"
                 :max="32"
-                @update:value="(v) => handleNumericInput('messagePaddingY', v)"
+                @update:value="handleMessagePaddingYUpdate"
               />
             </div>
           </div>

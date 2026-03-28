@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, h, ref, shallowRef, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { NDropdown, NIcon, NTooltip, useDialog } from 'naive-ui';
+import { NDropdown, NIcon, NTooltip, useDialog, type DropdownOption } from 'naive-ui';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Link, Refresh, Users } from '@vicons/tabler';
 import { SearchOutline, UnlinkOutline, AppsOutline, MusicalNotesOutline, BrowsersOutline } from '@vicons/ionicons5';
 import Notif from '@/views/notif.vue';
@@ -60,7 +60,7 @@ const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
-const inputStatsComponent = shallowRef<Component | null>(null);
+const inputStatsComponent = shallowRef<any>(null);
 
 const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心');
 
@@ -80,22 +80,27 @@ const connectionStatus = computed(() => {
   }
 });
 
-const options = computed(() => [
-  { label: t('headerMenu.profile'), key: 'profile' },
-  { label: t('headerMenu.inputStats'), key: 'inputStats' },
-  user.checkPerm('mod_admin') ? { label: t('headerMenu.admin'), key: 'admin' } : null,
-  {
-    label: t('headerMenu.lang'),
-    key: 'lang',
-    children: [
-      { label: t('headerMenu.langAuto'), key: 'lang:auto' },
-      { label: '简体中文', key: 'lang:zh-cn' },
-      { label: 'English', key: 'lang:en' },
-      { label: '日本語', key: 'lang:ja' },
-    ],
-  },
-  { label: t('headerMenu.logout'), key: 'logout' },
-].filter(Boolean));
+const options = computed(() => {
+  const items: DropdownOption[] = [
+    { label: t('headerMenu.profile'), key: 'profile' },
+    { label: t('headerMenu.inputStats'), key: 'inputStats' },
+    {
+      label: t('headerMenu.lang'),
+      key: 'lang',
+      children: [
+        { label: t('headerMenu.langAuto'), key: 'lang:auto' },
+        { label: '简体中文', key: 'lang:zh-cn' },
+        { label: 'English', key: 'lang:en' },
+        { label: '日本語', key: 'lang:ja' },
+      ],
+    },
+    { label: t('headerMenu.logout'), key: 'logout' },
+  ];
+  if (user.checkPerm('mod_admin')) {
+    items.splice(2, 0, { label: t('headerMenu.admin'), key: 'admin' });
+  }
+  return items;
+});
 
 const ensureInputStatsLoaded = async () => {
   if (inputStatsComponent.value || inputStatsLoading.value) {
@@ -277,7 +282,12 @@ const handleSelect = async (key: string | number) => {
         <n-tooltip trigger="hover">
           <template #trigger>
             <button type="button" class="sc-icon-button sc-user-button" :aria-label="`打开 ${userDisplayName} 的菜单`">
-              <Avatar class="sc-user-avatar" :src="user.info.avatar" :size="22" :border="false" />
+              <Avatar
+                class="sc-user-avatar"
+                :src="user.info.avatar"
+                :size="22"
+                :border="false"
+              />
             </button>
           </template>
           <span>{{ userDisplayName }}</span>

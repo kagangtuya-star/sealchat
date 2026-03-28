@@ -116,7 +116,11 @@ const handleConfirm = () => {
           class="relative group pr-1 select-none"
           @click="toggleSelection(j.id)"
         >
-          <UserLabelV :name="j.nick ?? j.username" :src="j.avatar" />
+          <UserLabelV
+            :name="j.nick ?? j.username"
+            :src="j.avatar"
+            :decoration="j.avatarDecoration"
+          />
 
           <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center " v-if="isSelected(j.id)">
             <n-icon size="24" color="#ffffff">

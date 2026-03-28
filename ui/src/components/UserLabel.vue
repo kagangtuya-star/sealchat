@@ -1,10 +1,12 @@
 <script setup lang="tsx">
 import Avatar from './avatar.vue'
+import type { AvatarDecoration } from '@/types'
 
 const props = defineProps<{
   src?: string,
   userId?: string,
-  name?: string
+  name?: string,
+  decoration?: AvatarDecoration | null,
 }>()
 </script>
 

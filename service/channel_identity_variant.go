@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/protocol"
 )
 
 var (
@@ -36,6 +37,7 @@ type ResolvedIdentityAppearance struct {
 	DisplayName        string
 	Color              string
 	AvatarAttachmentID string
+	AvatarDecoration   *protocol.AvatarDecoration
 }
 
 func normalizeChannelIdentityVariantKeyword(keyword string) string {
@@ -367,6 +369,7 @@ func ResolveChannelIdentityAppearance(identity *model.ChannelIdentityModel, vari
 		DisplayName:        identity.DisplayName,
 		Color:              identity.Color,
 		AvatarAttachmentID: identity.AvatarAttachmentID,
+		AvatarDecoration:   identity.AvatarDecoration,
 	}
 	if variant == nil {
 		return result

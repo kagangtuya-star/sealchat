@@ -12,7 +12,7 @@ import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
-import Avatar from '@/components/avatar.vue'
+import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -44,6 +44,7 @@ type EditingPreviewInfo = {
   displayName: string;
   color?: string;
   avatar?: string;
+  avatarDecoration?: import('@/types').AvatarDecoration | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -3005,9 +3006,27 @@ const displayAvatar = computed(() => {
   return props.avatar;
 });
 
+const displayAvatarDecoration = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value) {
+    return selfEditingPreview.value?.avatarDecoration || null;
+  }
+  if (otherEditingPreview.value?.avatarDecoration) {
+    return otherEditingPreview.value.avatarDecoration;
+  }
+  const raw = props.item as any;
+  const identityDecoration = raw?.identity?.avatarDecoration;
+  if (identityDecoration) {
+    return identityDecoration;
+  }
+  return raw?.sender_identity_decoration || null;
+});
+
 const useTextAvatarFallback = computed(() => {
   if (shouldUseSelfPreviewIdentity.value) {
     return Boolean(selfEditingPreview.value?.isTemporary);
+  }
+  if (otherEditingPreview.value) {
+    return Boolean(otherEditingPreview.value.isTemporary);
   }
   return Boolean(
     (props.item as any)?.identity?.isTemporary
@@ -3152,9 +3171,10 @@ const handleRetrySend = () => {
       :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
       @contextmenu="preventAvatarNativeMenu"
     >
-      <Avatar
+      <UserAvatarDecoration
         :src="displayAvatar"
         :border="false"
+        :decoration="displayAvatarDecoration"
         :use-text-fallback="useTextAvatarFallback"
         :fallback-text="avatarFallbackText"
         @longpress="handleAvatarLongpress"

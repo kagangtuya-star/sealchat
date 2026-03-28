@@ -58,6 +58,7 @@ type MessageModel struct {
 	SenderIdentityName        string `json:"sender_identity_name"`
 	SenderIdentityColor       string `json:"sender_identity_color"`
 	SenderIdentityAvatarID    string `json:"sender_identity_avatar_id"`
+	SenderIdentityDecoration  *protocol.AvatarDecoration `json:"sender_identity_decoration,omitempty" gorm:"serializer:json"`
 	SenderIdentityIsTemporary bool   `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID              string `json:"sender_role_id" gorm:"size:100"`
 	MergedMessages            int    `json:"-" gorm:"-"`
@@ -141,13 +142,14 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			msg.WhisperToIds = append(msg.WhisperToIds, target.ToProtocolType())
 		}
 	}
-	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary {
+	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || m.SenderIdentityDecoration != nil {
 		msg.Identity = &protocol.MessageIdentity{
 			ID:               m.SenderIdentityID,
 			VariantID:        m.SenderIdentityVariantID,
 			DisplayName:      m.SenderIdentityName,
 			Color:            m.SenderIdentityColor,
 			AvatarAttachment: m.SenderIdentityAvatarID,
+			AvatarDecoration: m.SenderIdentityDecoration,
 			IsTemporary:      m.SenderIdentityIsTemporary,
 		}
 	}

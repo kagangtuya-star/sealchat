@@ -4,7 +4,7 @@ import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
-import type { ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
+import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
@@ -81,6 +81,8 @@ import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
+import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
+import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
@@ -2480,6 +2482,7 @@ type IdentityAppearancePreview = {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  avatarDecoration?: AvatarDecoration | null;
   isTemporary: boolean;
 };
 
@@ -2647,6 +2650,7 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
     displayName: variant?.displayName || identity.displayName || '',
     color: variant?.color || identity.color || '',
     avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
+    avatarDecoration: identity.avatarDecoration || null,
     isTemporary: Boolean(identity.isTemporary),
   };
 };
@@ -2654,10 +2658,12 @@ const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
+const identityDecorationEditorVisible = ref(false);
 const identityForm = reactive({
   displayName: '',
   color: '',
   avatarAttachmentId: '',
+  avatarDecoration: null as AvatarDecoration | null,
   isDefault: false,
   isTemporary: false,
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
@@ -3455,6 +3461,7 @@ const handleIdentityImportChange = async (event: Event) => {
           displayName: item.displayName || '',
           color: item.color || '',
           avatarAttachmentId: avatarId,
+          avatarDecoration: null,
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -3616,6 +3623,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
             displayName,
             color: identity.color || '',
             avatarAttachmentId: avatarId,
+            avatarDecoration: identity.avatarDecoration || null,
             isDefault: !!identity.isDefault,
             folderIds: mappedFolderIds,
           });
@@ -3630,6 +3638,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
           displayName,
           color: identity.color || '',
           avatarAttachmentId: avatarId,
+          avatarDecoration: identity.avatarDecoration || null,
           isDefault: !!identity.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -3785,6 +3794,8 @@ const applyIdentityAppearanceToMessages = (identity: ChannelIdentity) => {
         avatar: appearance?.avatarAttachmentId
           ? resolveAttachmentUrl(appearance.avatarAttachmentId)
           : (appearance?.isTemporary ? '' : (chat.curMember?.avatar || user.info.avatar || item.avatar)),
+        avatarDecoration: appearance?.avatarDecoration || null,
+        isTemporary: Boolean(appearance?.isTemporary),
       };
     }
     return item;
@@ -3852,6 +3863,7 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.color = normalizeHexColor(identity?.color || '') || '';
   identityColorDraft.value = identityForm.color;
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
+  identityForm.avatarDecoration = identity?.avatarDecoration ? JSON.parse(JSON.stringify(identity.avatarDecoration)) : null;
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.isTemporary = Boolean(identity?.isTemporary);
   identityForm.icOocOnActivate = identity?.isTemporary
@@ -3861,6 +3873,10 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
+};
+
+const openIdentityDecorationEditor = () => {
+  identityDecorationEditorVisible.value = true;
 };
 
 const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
@@ -3940,6 +3956,7 @@ const openIdentityManager = async () => {
 
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
+  identityDecorationEditorVisible.value = false;
   identityVariantDialogVisible.value = false;
   identityVariantEmojiPickerVisible.value = false;
 };
@@ -4195,6 +4212,9 @@ const submitIdentityForm = async () => {
     displayName: identityForm.displayName.trim(),
     color: normalizedColor,
     avatarAttachmentId: identityForm.avatarAttachmentId,
+    avatarDecoration: identityForm.avatarDecoration?.enabled && identityForm.avatarDecoration?.resourceAttachmentId
+      ? JSON.parse(JSON.stringify(identityForm.avatarDecoration))
+      : null,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
@@ -4393,7 +4413,11 @@ const resolveMessageAvatarSource = (message: any) => {
 
 const getMessageAvatar = (message: any) => resolveMessageAvatarSource(message);
 
-const getMessageAvatarMergeKey = (message: any) => resolveMessageAvatarSource(message) || '';
+const getMessageAvatarMergeKey = (message: any) => {
+  const avatarSrc = resolveMessageAvatarSource(message) || '';
+  const avatarDecoration = message?.identity?.avatarDecoration || (message as any)?.sender_identity_decoration || null;
+  return `${avatarSrc}__${JSON.stringify(avatarDecoration)}`;
+};
 
 const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
@@ -7355,11 +7379,13 @@ interface TypingPreviewItem {
   userId: string;
   displayName: string;
   avatar?: string;
+  avatarDecoration?: AvatarDecoration | null;
   color?: string;
   content: string;
   indicatorOnly: boolean;
   mode: 'typing' | 'editing';
   messageId?: string;
+  isTemporary?: boolean;
   tone: 'ic' | 'ooc';
   orderKey: number;
 }
@@ -7377,6 +7403,7 @@ interface EditingPreviewInfo {
   displayName: string;
   color?: string;
   avatar?: string;
+  avatarDecoration?: AvatarDecoration | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -7801,6 +7828,7 @@ const activeIdentityAppearancePreviewSignature = computed(() => {
     appearance?.displayName || '',
     appearance?.color || '',
     appearance?.avatarAttachmentId || '',
+    JSON.stringify(appearance?.avatarDecoration || null),
     appearance?.isTemporary ? '1' : '0',
   ].join('__');
 });
@@ -8063,12 +8091,14 @@ const syncSelfTypingPreview = () => {
     userId: selfPreviewUserId.value,
     displayName,
     avatar,
+    avatarDecoration: activeIdentityAppearanceForPreview.value?.avatarDecoration || null,
     color: normalizedColor,
     content: previewContent,
     indicatorOnly: false,
     mode: 'typing',
     tone,
     messageId: undefined,
+    isTemporary: Boolean(activeIdentityAppearanceForPreview.value?.isTemporary),
     orderKey: 0,
   };
   upsertTypingPreview(payload);
@@ -9143,9 +9173,11 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
         userId: item.userId,
         displayName: item.displayName,
         avatar: item.avatar,
+        avatarDecoration: item.avatarDecoration || null,
         content: contentValue,
         indicatorOnly,
         isSelf: item.userId === user.info.id,
+        isTemporary: item.isTemporary,
         summary,
         previewHtml,
         tone: item.tone ?? 'ic',
@@ -9160,6 +9192,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     let previewAvatar = chat.curMember?.avatar || user.info.avatar || '';
     let previewColor = '';
     let previewIsTemporary = false;
+    let previewAvatarDecoration: AvatarDecoration | null = null;
     const identityPreview = resolveIdentityPreviewInfo(
       chat.editing.channelId,
       chat.editing.identityId,
@@ -9171,6 +9204,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
         previewDisplayName = identityPreview.displayName;
       }
       previewColor = identityPreview.color || '';
+      previewAvatarDecoration = identityPreview.avatarDecoration || null;
       previewIsTemporary = Boolean(identityPreview.isTemporary);
       if (identityPreview.avatar || previewIsTemporary) {
         previewAvatar = identityPreview.avatar || '';
@@ -9181,6 +9215,7 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
       displayName: previewDisplayName,
       color: previewColor,
       avatar: previewAvatar,
+      avatarDecoration: previewAvatarDecoration,
       content: draft,
       indicatorOnly,
       isSelf: true,
@@ -9602,6 +9637,7 @@ type MessageIdentitySnapshot = {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  avatarDecoration?: AvatarDecoration | null;
   isTemporary: boolean;
 };
 
@@ -9632,12 +9668,13 @@ const resolveMessageIdentitySnapshot = (msg?: any): MessageIdentitySnapshot | nu
     || msg?.senderIdentityAvatarId
     || '',
   ).trim();
+  const avatarDecoration = directIdentity?.avatarDecoration || msg?.sender_identity_decoration || null;
   const isTemporary = Boolean(
     directIdentity?.isTemporary
     ?? msg?.sender_identity_is_temporary
     ?? msg?.senderIdentityIsTemporary,
   );
-  if (!identityId && !displayName && !color && !avatarAttachmentId && !isTemporary) {
+  if (!identityId && !displayName && !color && !avatarAttachmentId && !avatarDecoration && !isTemporary) {
     return null;
   }
   return {
@@ -9645,6 +9682,7 @@ const resolveMessageIdentitySnapshot = (msg?: any): MessageIdentitySnapshot | nu
     displayName,
     color,
     avatarAttachmentId,
+    avatarDecoration,
     isTemporary,
   };
 };
@@ -9674,6 +9712,7 @@ const resolveIdentityPreviewInfo = (
       displayName: appearance?.displayName || '',
       avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
       color: appearance?.color || '',
+      avatarDecoration: appearance?.avatarDecoration || null,
       isTemporary: Boolean(appearance?.isTemporary),
     };
   }
@@ -9684,6 +9723,7 @@ const resolveIdentityPreviewInfo = (
     displayName: snapshot.displayName || '',
     avatar: snapshot.avatarAttachmentId ? resolveAttachmentUrl(snapshot.avatarAttachmentId) : '',
     color: snapshot.color || '',
+    avatarDecoration: snapshot.avatarDecoration || null,
     isTemporary: Boolean(snapshot.isTemporary),
   };
 };
@@ -11029,8 +11069,11 @@ const send = throttle(async () => {
         displayName: activeAppearance?.displayName || activeIdentity.displayName,
         color: normalizedIdentityColor,
         avatarAttachment: activeAppearance?.avatarAttachmentId || activeIdentity.avatarAttachmentId,
+        avatarDecoration: activeAppearance?.avatarDecoration || null,
+        isTemporary: Boolean(activeAppearance?.isTemporary),
       } as any;
     }
+    (tmpMsg as any).sender_identity_decoration = activeAppearance?.avatarDecoration || null;
     if (activeAppearance?.displayName) {
       (tmpMsg as any).sender_member_name = activeAppearance.displayName;
     }
@@ -11918,11 +11961,13 @@ chatEvent.on('typing-preview', (e?: Event) => {
 		userId: typingUserId,
 		displayName,
 		avatar,
+		avatarDecoration: identity?.avatarDecoration || null,
 		color: identityColor,
 		content: typingState === 'content' ? (e.typing?.content || '') : '',
 		indicatorOnly: typingState !== 'content' || !e.typing?.content,
 		mode,
 		messageId: e.typing?.messageId,
+		isTemporary: Boolean(identity?.isTemporary),
 		tone: resolveTypingTone(e.typing),
 		orderKey: typeof e.typing?.orderKey === 'number' ? e.typing.orderKey : Number.NaN,
 	});
@@ -14217,7 +14262,13 @@ onBeforeUnmount(() => {
             <template v-else>
               <div class="typing-preview-content">
                 <div v-if="display.showAvatar" class="typing-preview-avatar">
-                  <AvatarVue :border="false" :src="preview.avatar" />
+                  <UserAvatarDecoration
+                    :border="false"
+                    :src="preview.avatar"
+                    :decoration="preview.avatarDecoration"
+                    :use-text-fallback="Boolean(preview.isTemporary)"
+                    :fallback-text="preview.displayName"
+                  />
                 </div>
                 <div class="typing-preview-main">
                   <div class="typing-preview-bubble-header">
@@ -15608,6 +15659,20 @@ onBeforeUnmount(() => {
           </n-space>
         </div>
       </n-form-item>
+      <n-form-item label="头像装饰">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityDecorationEditor">编辑装饰</n-button>
+            <n-tag v-if="identityForm.avatarDecoration?.enabled && identityForm.avatarDecoration?.resourceAttachmentId" size="small" type="success">
+              已配置
+            </n-tag>
+            <n-text v-else depth="3">未配置</n-text>
+          </n-space>
+          <n-text depth="3">
+            仅对当前频道角色生效，并且只会显示在频道消息头像上。
+          </n-text>
+        </div>
+      </n-form-item>
       <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
@@ -15713,6 +15778,26 @@ onBeforeUnmount(() => {
       <n-space justify="end">
         <n-button @click="closeIdentityDialog">取消</n-button>
         <n-button type="primary" :loading="identitySubmitting" @click="submitIdentityForm">{{ identityDialogSubmitText }}</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <n-modal
+    v-model:show="identityDecorationEditorVisible"
+    preset="card"
+    title="编辑频道角色头像装饰"
+    style="max-width: 760px;"
+    :auto-focus="false"
+  >
+    <AvatarDecorationEditor
+      v-model="identityForm.avatarDecoration"
+      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+      :fallback-text="identityForm.displayName"
+      :preview-name="identityForm.displayName || '频道角色预览'"
+      :upload-channel-id="chat.curChannel?.id"
+    />
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="identityDecorationEditorVisible = false">完成</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -17294,10 +17379,14 @@ onBeforeUnmount(() => {
 }
 
 .typing-preview-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: var(--chat-avatar-size, 3rem);
   height: var(--chat-avatar-size, 3rem);
   min-width: var(--chat-avatar-size, 3rem);
+  overflow: visible;
 }
 
 .message-row__handle--placeholder {
