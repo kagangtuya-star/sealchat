@@ -276,6 +276,7 @@ export interface AvatarDecorationSettings {
   rotation?: number;
   zIndex?: number;
   opacity?: number;
+  playbackRate?: number;
   blendMode?: string;
 }
 

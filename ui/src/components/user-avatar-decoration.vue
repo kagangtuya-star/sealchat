@@ -249,6 +249,13 @@ const updateVideoPlayback = async () => {
   }
   const videos = Array.from(root.querySelectorAll<HTMLVideoElement>('[data-decoration-video="1"]'))
   await Promise.all(videos.map(async (video) => {
+    const layerId = String(video.dataset.decorationId || '').trim()
+    const decoration = normalizedDecorations.value.find((item) => item.id === layerId)
+    const playbackRate = decoration?.settings?.playbackRate ?? 1
+    if (video.playbackRate !== playbackRate) {
+      video.playbackRate = playbackRate
+      video.defaultPlaybackRate = playbackRate
+    }
     if (!shouldPlayVideo.value) {
       video.pause()
       return
@@ -344,6 +351,7 @@ watch([resolvedLayers, shouldPlayVideo], () => {
         :src="layer.src"
         :style="layer.style"
         data-decoration-video="1"
+        :data-decoration-id="layer.id"
         muted
         loop
         playsinline
@@ -379,6 +387,7 @@ watch([resolvedLayers, shouldPlayVideo], () => {
         :src="layer.src"
         :style="layer.style"
         data-decoration-video="1"
+        :data-decoration-id="layer.id"
         muted
         loop
         playsinline

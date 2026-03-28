@@ -47,6 +47,7 @@ const defaultSettings = () => ({
   rotation: 0,
   zIndex: 1,
   opacity: 1,
+  playbackRate: 1,
   blendMode: 'normal',
 })
 
@@ -132,6 +133,7 @@ const normalizedSelectedDecoration = computed<AvatarDecoration | null>(() => {
       rotation: selectedDecoration.value.settings?.rotation ?? 0,
       zIndex: selectedDecoration.value.settings?.zIndex ?? 1,
       opacity: selectedDecoration.value.settings?.opacity ?? 1,
+      playbackRate: selectedDecoration.value.settings?.playbackRate ?? 1,
       blendMode: selectedDecoration.value.settings?.blendMode ?? 'normal',
     },
   }
@@ -378,6 +380,13 @@ const updateOpacity = (value: number | null) => {
   })
 }
 
+const updatePlaybackRate = (value: number | null) => {
+  patchSelectedDecoration({
+    enabled: true,
+    settings: { playbackRate: value ?? 1 },
+  })
+}
+
 const updateZIndex = (value: number) => {
   patchSelectedDecoration({
     enabled: true,
@@ -413,6 +422,12 @@ const adjustOpacityByWheel = (event: WheelEvent) => {
   event.preventDefault()
   const current = normalizedSelectedDecoration.value?.settings?.opacity ?? 1
   updateOpacity(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0, 1, 0.05))
+}
+
+const adjustPlaybackRateByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.playbackRate ?? 1
+  updatePlaybackRate(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.25, 2, 0.05))
 }
 
 const stopDragging = () => {
@@ -670,6 +685,17 @@ onBeforeUnmount(() => {
                 @update:value="updateOpacity"
               />
               <span class="avatar-decoration-editor__slider-value">{{ Math.round((normalizedSelectedDecoration.settings?.opacity ?? 1) * 100) }}%</span>
+            </div>
+          </n-form-item>
+          <n-form-item v-if="selectedDecorationKind === 'WEBM'" label="播放速度">
+            <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustPlaybackRateByWheel">
+              <n-input-number
+                :value="normalizedSelectedDecoration.settings?.playbackRate ?? 1"
+                :min="0.25"
+                :max="2"
+                :step="0.05"
+                @update:value="updatePlaybackRate"
+              />
             </div>
           </n-form-item>
           <n-form-item label="层级">
