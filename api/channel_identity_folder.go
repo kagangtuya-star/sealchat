@@ -56,6 +56,12 @@ func ChannelIdentityFolderCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-folder-create",
+	})
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"item": folder})
 }
 
@@ -83,6 +89,12 @@ func ChannelIdentityFolderUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-folder-update",
+	})
 	return c.JSON(fiber.Map{"item": folder})
 }
 
@@ -102,6 +114,12 @@ func ChannelIdentityFolderDelete(c *fiber.Ctx) error {
 	if err := service.ChannelIdentityFolderDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, folderID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      channelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-folder-delete",
+	})
 	return c.JSON(fiber.Map{"success": true})
 }
 
@@ -131,6 +149,12 @@ func ChannelIdentityFolderToggleFavorite(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-folder-favorite",
+	})
 	return c.JSON(fiber.Map{"favorites": favorites})
 }
 
@@ -158,5 +182,11 @@ func ChannelIdentityFolderAssign(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-folder-assign",
+	})
 	return c.JSON(fiber.Map{"membership": membership})
 }

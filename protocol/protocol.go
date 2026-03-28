@@ -392,6 +392,7 @@ const (
 	EventChannelIFormUpdated       EventName = "channel-iform-updated"
 	EventChannelIFormPushed        EventName = "channel-iform-pushed"
 	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
+	EventChannelIdentitiesUpdated  EventName = "channel-identities-updated"
 	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
 	EventWorldUpdated              EventName = "world-updated"
 	EventLobbyAnnouncementUpdated  EventName = "lobby-announcement-updated"

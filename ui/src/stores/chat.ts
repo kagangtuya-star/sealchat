@@ -23,6 +23,7 @@ const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
 const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
 const inFlightRolePermLoads = new Map<string, Promise<void>>();
+const pendingChannelIdentityGatewayRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const botApiPrefixes = ['character.', 'bot.'];
 let botApiPending = 0;
@@ -766,6 +767,17 @@ interface ChannelIdentityUpdatedEvent {
   replacedId?: string;
 }
 
+interface ChannelIdentitiesGatewayEvent {
+  type?: string;
+  channel?: {
+    id?: string;
+  };
+  argv?: {
+    options?: Record<string, any>;
+    Options?: Record<string, any>;
+  };
+}
+
 interface SearchJumpEvent {
   messageId: string;
   channelId?: string;
@@ -776,12 +788,14 @@ interface SearchJumpEvent {
 interface ChatEventMap {
   [event: string]: (...args: any[]) => void;
   'channel-identity-updated': (payload?: ChannelIdentityUpdatedEvent) => void;
+  'channel-identities-updated': (event?: ChannelIdentitiesGatewayEvent) => void;
   'search-jump': (payload?: SearchJumpEvent) => void;
 }
 
 export const chatEvent = new Emitter<ChatEventMap>();
 
 let worldGatewayBound = false;
+let channelIdentityGatewayBound = false;
 const ensureWorldGateway = () => {
   if (worldGatewayBound) return;
   chatEvent.on('world-updated' as any, (event: any) => {
@@ -803,6 +817,34 @@ const ensureWorldGateway = () => {
     });
   });
   worldGatewayBound = true;
+};
+
+const ensureChannelIdentityGateway = () => {
+  if (channelIdentityGatewayBound) return;
+  chatEvent.on('channel-identities-updated' as any, (event?: ChannelIdentitiesGatewayEvent) => {
+    const rawArgv = event?.argv || {};
+    const options = (rawArgv.options || rawArgv.Options || {}) as Record<string, any>;
+    const channelId = String(options.channelId || event?.channel?.id || '').trim();
+    if (!channelId) {
+      return;
+    }
+    const targetUserId = normalizeIdentityScopeUserId(options.targetUserId);
+    const chat = useChatStore();
+    const scopeKey = chat.resolveChannelIdentityScopeKey(channelId, targetUserId);
+    if (!scopeKey) {
+      return;
+    }
+    const existing = pendingChannelIdentityGatewayRefreshTimers.get(scopeKey);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      pendingChannelIdentityGatewayRefreshTimers.delete(scopeKey);
+      void chat.refreshChannelIdentityScopeFromGateway(channelId, targetUserId, String(options.reason || '').trim());
+    }, 80);
+    pendingChannelIdentityGatewayRefreshTimers.set(scopeKey, timer);
+  });
+  channelIdentityGatewayBound = true;
 };
 
 let pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -2850,6 +2892,48 @@ export const useChatStore = defineStore({
         if (inflight === task) {
           inFlightChannelIdentityVariantLoads.delete(scopeKey);
         }
+      }
+    },
+
+    async refreshChannelIdentityScopeFromGateway(channelId: string, targetUserId?: string | null, _reason?: string) {
+      const normalizedChannelId = String(channelId || '').trim();
+      if (!normalizedChannelId) {
+        return;
+      }
+      const normalizedTargetUserId = normalizeIdentityScopeUserId(targetUserId);
+      const scopeKey = this.resolveChannelIdentityScopeKey(normalizedChannelId, normalizedTargetUserId);
+      if (!scopeKey) {
+        return;
+      }
+      const isCurrentChannel = this.curChannel?.id === normalizedChannelId;
+      const hasScopeCache = Boolean(
+        this.channelIdentities[scopeKey]
+        || this.channelIdentityVariants[scopeKey]
+        || this.channelIdentityFolders[scopeKey]
+        || this.channelIdentityLoadedAt[scopeKey]
+        || this.activeChannelIdentity[scopeKey] !== undefined
+      );
+      if (!isCurrentChannel && !hasScopeCache) {
+        return;
+      }
+      await Promise.all([
+        this.loadChannelIdentities(normalizedChannelId, true, normalizedTargetUserId),
+        this.loadChannelIdentityVariants(normalizedChannelId, true, normalizedTargetUserId),
+      ]);
+
+      const currentUserId = normalizeIdentityScopeUserId(useUserStore().info?.id);
+      const isSelfScope = normalizedTargetUserId === '' || normalizedTargetUserId === currentUserId;
+      if (!isCurrentChannel || !isSelfScope) {
+        return;
+      }
+
+      const activeIdentityId = this.activeChannelIdentity[scopeKey];
+      const identities = this.channelIdentities[scopeKey] || [];
+      const activeIdentity = (activeIdentityId ? identities.find(item => item.id === activeIdentityId) : undefined)
+        || identities.find(item => item.isDefault)
+        || identities[0];
+      if (activeIdentity) {
+        chatEvent.emit('channel-identity-updated', { identity: activeIdentity, channelId: normalizedChannelId });
       }
     },
 
@@ -5935,3 +6019,4 @@ chatEvent.on('channel-updated', (event) => {
 });
 
 ensureWorldGateway();
+ensureChannelIdentityGateway();

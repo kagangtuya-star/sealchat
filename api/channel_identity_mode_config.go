@@ -79,6 +79,12 @@ func ChannelIdentityModeConfigUpsert(c *fiber.Ctx) error {
 		if err := model.ChannelIdentityModeConfigDelete(ctx.TargetUserID, channelID); err != nil {
 			return wrapError(c, err, "保存场内场外角色映射失败")
 		}
+		broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+			ChannelID:      channelID,
+			TargetUserID:   ctx.TargetUserID,
+			OperatorUserID: ctx.OperatorUserID,
+			Reason:         "identity-mode-config-delete",
+		})
 		return c.JSON(fiber.Map{
 			"channelId": channelID,
 			"exists":    false,
@@ -93,6 +99,12 @@ func ChannelIdentityModeConfigUpsert(c *fiber.Ctx) error {
 	if err != nil {
 		return wrapError(c, err, "保存场内场外角色映射失败")
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      channelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-mode-config-upsert",
+	})
 	return c.JSON(fiber.Map{
 		"channelId": channelID,
 		"exists":    record != nil,

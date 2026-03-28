@@ -12,17 +12,17 @@ import (
 )
 
 type channelIdentityPayload struct {
-	ChannelID          string   `json:"channelId"`
-	TargetUserID       string   `json:"targetUserId"`
-	DisplayName        string   `json:"displayName"`
-	Color              string   `json:"color"`
-	AvatarAttachmentID string   `json:"avatarAttachmentId"`
-	AvatarDecoration   *protocol.AvatarDecoration `json:"avatarDecoration"`
+	ChannelID          string                        `json:"channelId"`
+	TargetUserID       string                        `json:"targetUserId"`
+	DisplayName        string                        `json:"displayName"`
+	Color              string                        `json:"color"`
+	AvatarAttachmentID string                        `json:"avatarAttachmentId"`
+	AvatarDecoration   *protocol.AvatarDecoration    `json:"avatarDecoration"`
 	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations"`
-	IsDefault          bool     `json:"isDefault"`
-	IsTemporary        bool     `json:"isTemporary"`
-	ICOOCOnActivate    string   `json:"icOocOnActivate"`
-	FolderIDs          []string `json:"folderIds"`
+	IsDefault          bool                          `json:"isDefault"`
+	IsTemporary        bool                          `json:"isTemporary"`
+	ICOOCOnActivate    string                        `json:"icOocOnActivate"`
+	FolderIDs          []string                      `json:"folderIds"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -95,6 +95,12 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-create",
+	})
 
 	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"item": item,
@@ -139,6 +145,12 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-update",
+	})
 	return c.JSON(fiber.Map{
 		"item": item,
 	})
@@ -166,6 +178,12 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      channelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-delete",
+	})
 	return c.JSON(fiber.Map{
 		"success": true,
 	})
@@ -208,6 +226,12 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-replace-temporary",
+	})
 	return c.JSON(fiber.Map{
 		"item":          result.Item,
 		"oldIdentityId": result.OldIdentityID,

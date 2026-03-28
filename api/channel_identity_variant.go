@@ -102,6 +102,12 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-variant-create",
+	})
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
 }
 
@@ -133,6 +139,12 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-variant-update",
+	})
 	return c.JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
 }
 
@@ -152,6 +164,12 @@ func ChannelIdentityVariantDelete(c *fiber.Ctx) error {
 	if err := service.ChannelIdentityVariantDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, variantID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      channelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-variant-delete",
+	})
 	return c.JSON(fiber.Map{"success": true})
 }
 
@@ -172,6 +190,12 @@ func ChannelIdentityVariantReorder(c *fiber.Ctx) error {
 	if err := service.ChannelIdentityVariantReorderWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityID, payload.IDs); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-variant-reorder",
+	})
 	items, err := model.ChannelIdentityVariantListByIdentityID(payload.ChannelID, ctx.TargetUserID, payload.IdentityID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
