@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -261,6 +262,56 @@ func TestOneBotActionSendPrivateMessage(t *testing.T) {
 	}
 }
 
+func TestOneBotActionSendPrivateMessageAcceptsStringUserID(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "privatebot-str", model.BotKindManual)
+	targetUser := createOneBotTestUser(t, "private-target-str", false, "")
+	session := createOneBotTestSession(t, botUser)
+
+	userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, targetUser.ID)
+	if err != nil {
+		t.Fatalf("create user mapping failed: %v", err)
+	}
+
+	resp := dispatchOneBotAction(session, &oneBotActionRequest{
+		Action: "send_private_msg",
+		Params: json.RawMessage(fmt.Sprintf(`{"user_id":"%d","message":"hello private"}`, userID)),
+	})
+	if resp.Status != "ok" || resp.RetCode != 0 {
+		t.Fatalf("send_private_msg response = %#v, want ok", resp)
+	}
+}
+
+func TestOneBotActionGetStrangerInfoAcceptsStringUserID(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "strangerbot-str", model.BotKindManual)
+	targetUser := createOneBotTestUser(t, "stranger-target-str", false, "")
+	session := createOneBotTestSession(t, botUser)
+
+	userID, err := service.GetOrCreateOneBotID(service.OneBotEntityUser, targetUser.ID)
+	if err != nil {
+		t.Fatalf("create user mapping failed: %v", err)
+	}
+
+	resp := dispatchOneBotAction(session, &oneBotActionRequest{
+		Action: "get_stranger_info",
+		Params: json.RawMessage(fmt.Sprintf(`{"user_id":"%d"}`, userID)),
+	})
+	if resp.Status != "ok" || resp.RetCode != 0 {
+		t.Fatalf("get_stranger_info response = %#v, want ok", resp)
+	}
+
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected response data type: %T", resp.Data)
+	}
+	if got := data["user_id"]; got != userID {
+		t.Fatalf("user_id = %#v, want %d", got, userID)
+	}
+}
+
 func TestOneBotPublishProtocolEventCachesMessageContext(t *testing.T) {
 	initOneBotAPITestEnv(t)
 
@@ -343,6 +394,27 @@ func TestOneBotActionSendGroupMessageInheritsCachedICMode(t *testing.T) {
 	}
 	if msg.ICMode != "ooc" {
 		t.Fatalf("message ic_mode = %q, want %q", msg.ICMode, "ooc")
+	}
+}
+
+func TestOneBotActionSendGroupMessageAcceptsStringGroupID(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "group-str", model.BotKindManual)
+	_, channel := createOneBotTestWorldAndChannel(t, botUser.ID)
+	session := createOneBotTestSession(t, botUser)
+
+	groupID, err := service.GetOrCreateOneBotID(service.OneBotEntityChannel, channel.ID)
+	if err != nil {
+		t.Fatalf("create group mapping failed: %v", err)
+	}
+
+	resp := dispatchOneBotAction(session, &oneBotActionRequest{
+		Action: "send_group_msg",
+		Params: json.RawMessage(fmt.Sprintf(`{"group_id":"%d","message":"场内回复"}`, groupID)),
+	})
+	if resp.Status != "ok" || resp.RetCode != 0 {
+		t.Fatalf("send_group_msg response = %#v, want ok", resp)
 	}
 }
 
@@ -514,4 +586,287 @@ func TestOneBotReverseDialLoopSendsRequiredHeaders(t *testing.T) {
 		controller.cancel()
 		t.Fatal("reverse dial did not reach test server in time")
 	}
+}
+
+func TestOneBotReverseDialLoopReconnectsAfterServerDisconnect(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, token := createOneBotTestBot(t, "reverse-reconnect", model.BotKindManual)
+	selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUser.ID)
+	if err != nil {
+		t.Fatalf("create reverse self_id failed: %v", err)
+	}
+
+	var accepted atomic.Int32
+	attemptCh := make(chan int32, 4)
+	upgrader := fastws.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		attempt := accepted.Add(1)
+		attemptCh <- attempt
+
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		if attempt == 1 {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	controller := &oneBotReverseController{
+		botUserID: botUser.ID,
+		stop:      make(chan struct{}),
+	}
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+
+	go rt.runReverseDialLoop(
+		controller,
+		botUser,
+		token,
+		selfID,
+		50,
+		oneBotSessionRoleUniversal,
+		strings.Replace(server.URL, "http://", "ws://", 1),
+	)
+
+	wantAttempts := []int32{1, 2}
+	for _, want := range wantAttempts {
+		select {
+		case got := <-attemptCh:
+			if got != want {
+				controller.cancel()
+				t.Fatalf("accept attempt = %d, want %d", got, want)
+			}
+		case <-time.After(3 * time.Second):
+			controller.cancel()
+			t.Fatalf("did not observe reconnect attempt %d in time", want)
+		}
+	}
+
+	controller.cancel()
+}
+
+func TestOneBotRuntimeStartReverseRuntimeReconnectsOnFreshRuntime(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, token := createOneBotTestBot(t, "reverse-startup", model.BotKindManual)
+	selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUser.ID)
+	if err != nil {
+		t.Fatalf("create reverse self_id failed: %v", err)
+	}
+
+	connectEvents := make(chan map[string]any, 4)
+	upgrader := fastws.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, body, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Errorf("decode lifecycle payload failed: %v", err)
+			return
+		}
+		connectEvents <- payload
+
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	cfg := &model.BotOneBotConfigModel{
+		BotUserID:           botUser.ID,
+		Enabled:             true,
+		TransportType:       model.OneBotTransportReverseWS,
+		URL:                 strings.Replace(server.URL, "http://", "ws://", 1),
+		UseUniversalClient:  true,
+		ReconnectIntervalMs: 50,
+	}
+	if _, err := model.BotOneBotConfigUpsert(cfg); err != nil {
+		t.Fatalf("save reverse config failed: %v", err)
+	}
+
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+	rt.startReverseRuntime()
+
+	select {
+	case payload := <-connectEvents:
+		if payload["post_type"] != "meta_event" {
+			t.Fatalf("post_type = %#v, want %q", payload["post_type"], "meta_event")
+		}
+		if payload["meta_event_type"] != "lifecycle" {
+			t.Fatalf("meta_event_type = %#v, want %q", payload["meta_event_type"], "lifecycle")
+		}
+		if payload["sub_type"] != "connect" {
+			t.Fatalf("sub_type = %#v, want %q", payload["sub_type"], "connect")
+		}
+		switch got := payload["self_id"].(type) {
+		case float64:
+			if int64(got) != selfID {
+				t.Fatalf("self_id = %d, want %d", int64(got), selfID)
+			}
+		default:
+			t.Fatalf("unexpected self_id type: %T", payload["self_id"])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("fresh runtime did not establish reverse websocket in time")
+	}
+
+	rt.reverseMu.Lock()
+	controller := rt.reverseControllers[botUser.ID]
+	rt.reverseMu.Unlock()
+	if controller == nil {
+		t.Fatal("reverse controller not registered")
+	}
+	controller.cancel()
+	_ = token
+}
+
+func TestOneBotReverseDialLoopReconnectsAndStillHandlesActions(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, token := createOneBotTestBot(t, "reverse-action-reconnect", model.BotKindManual)
+	selfID, err := service.GetOrCreateOneBotID(service.OneBotEntityBotUser, botUser.ID)
+	if err != nil {
+		t.Fatalf("create reverse self_id failed: %v", err)
+	}
+
+	var accepted atomic.Int32
+	responseCh := make(chan oneBotActionResponse, 4)
+	upgrader := fastws.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		attempt := accepted.Add(1)
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+		// 先读 SealChat 作为实现端主动发出的 lifecycle connect 元事件。
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+
+		req := map[string]any{
+			"action": "get_login_info",
+			"params": map[string]any{},
+			"echo":   fmt.Sprintf("echo-%d", attempt),
+		}
+		if err := conn.WriteJSON(req); err != nil {
+			t.Errorf("write get_login_info failed: %v", err)
+			return
+		}
+
+		_, body, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("read get_login_info response failed: %v", err)
+			return
+		}
+		var resp oneBotActionResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Errorf("decode get_login_info response failed: %v", err)
+			return
+		}
+		responseCh <- resp
+
+		if attempt == 1 {
+			return
+		}
+
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	controller := &oneBotReverseController{
+		botUserID: botUser.ID,
+		stop:      make(chan struct{}),
+	}
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+
+	go rt.runReverseDialLoop(
+		controller,
+		botUser,
+		token,
+		selfID,
+		50,
+		oneBotSessionRoleUniversal,
+		strings.Replace(server.URL, "http://", "ws://", 1),
+	)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		select {
+		case resp := <-responseCh:
+			if resp.Status != "ok" {
+				controller.cancel()
+				t.Fatalf("attempt %d response status = %q, want ok", attempt, resp.Status)
+			}
+			if resp.Echo != fmt.Sprintf("echo-%d", attempt) {
+				controller.cancel()
+				t.Fatalf("attempt %d response echo = %#v, want %q", attempt, resp.Echo, fmt.Sprintf("echo-%d", attempt))
+			}
+			data, ok := resp.Data.(map[string]any)
+			if !ok {
+				controller.cancel()
+				t.Fatalf("attempt %d response data type = %T", attempt, resp.Data)
+			}
+			switch got := data["user_id"].(type) {
+			case float64:
+				if int64(got) != selfID {
+					controller.cancel()
+					t.Fatalf("attempt %d user_id = %d, want %d", attempt, int64(got), selfID)
+				}
+			default:
+				controller.cancel()
+				t.Fatalf("attempt %d unexpected user_id type: %T", attempt, data["user_id"])
+			}
+		case <-time.After(3 * time.Second):
+			controller.cancel()
+			t.Fatalf("did not receive get_login_info response for attempt %d", attempt)
+		}
+	}
+
+	controller.cancel()
 }
