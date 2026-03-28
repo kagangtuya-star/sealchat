@@ -828,7 +828,7 @@ onUnmounted(() => {
       <template v-if="onebotConfigVisible">
         <div class="bot-management__onebot-title">OneBot v11</div>
         <div class="bot-management__onebot-hint">
-          启用后可选择正向 WS、反向 WS 或 HTTP API 的配置。
+          启用后可选择正向 WS、反向 WS 或 HTTP API 的配置，但只支持基础消息收发功能。
         </div>
         <n-form-item v-if="editingToken?.oneBotSelfId" label="BOT 伪号码">
           <n-input :value="String(editingToken.oneBotSelfId)" readonly />
