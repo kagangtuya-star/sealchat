@@ -7908,15 +7908,6 @@ const onPreviewDragHandlePointerDown = (event: PointerEvent, preview: TypingPrev
   window.addEventListener('pointercancel', onPreviewDragPointerCancel);
   event.preventDefault();
 };
-const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
-  if (!preview?.userId) {
-    return false;
-  }
-  if (preview.userId === user.info.id) {
-    return true;
-  }
-  return canReorderAll.value;
-};
 const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
 const autoScrollTypingPreviewAlways = computed(() => display.settings.autoScrollTypingPreview === true);
 const shouldObserveTypingPreview = computed(() => (
@@ -14374,19 +14365,19 @@ onBeforeUnmount(() => {
           :ref="el => registerTypingPreviewRow(el as HTMLElement | null, preview)"
         >
           <div :class="typingPreviewSurfaceClass(preview)" :data-tone="preview.tone">
-            <div
-              v-if="shouldShowTypingHandle(preview)"
-              :class="typingPreviewHandleClass(preview)"
-              :aria-hidden="!canDragTypingPreview(preview)"
-              tabindex="-1"
-              @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
-            >
-              <span class="message-row__dot" v-for="n in 3" :key="n"></span>
-            </div>
             <template v-if="!display.showAvatar && compactInlineGridLayout">
               <div class="typing-preview-content typing-preview-content--grid">
                 <div class="message-row__grid typing-preview-grid">
-                  <div class="message-row__grid-handle typing-preview-grid__handle"></div>
+                  <div class="message-row__grid-handle typing-preview-grid__handle">
+                    <div
+                      :class="typingPreviewHandleClass(preview)"
+                      :aria-hidden="!canDragTypingPreview(preview)"
+                      tabindex="-1"
+                      @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
+                    >
+                      <span class="message-row__dot" v-for="n in 3" :key="n"></span>
+                    </div>
+                  </div>
                   <div class="message-row__grid-name">
                     <span
                       class="message-row__name"
@@ -14419,6 +14410,14 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else>
+              <div
+                :class="typingPreviewHandleClass(preview)"
+                :aria-hidden="!canDragTypingPreview(preview)"
+                tabindex="-1"
+                @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
+              >
+                <span class="message-row__dot" v-for="n in 3" :key="n"></span>
+              </div>
               <div class="typing-preview-content">
                 <div v-if="display.showAvatar" class="typing-preview-avatar">
                   <UserAvatarDecoration
