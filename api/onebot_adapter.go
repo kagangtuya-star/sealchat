@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -32,6 +33,47 @@ type oneBotActionResponse struct {
 type oneBotActionError struct {
 	RetCode int
 	Message string
+}
+
+type oneBotInt64Param int64
+
+func (v *oneBotInt64Param) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*v = 0
+		return nil
+	}
+
+	var numeric int64
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			*v = 0
+			return nil
+		}
+		parsed, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return err
+		}
+		numeric = parsed
+	} else {
+		var parsed int64
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return err
+		}
+		numeric = parsed
+	}
+
+	*v = oneBotInt64Param(numeric)
+	return nil
+}
+
+func (v oneBotInt64Param) Int64() int64 {
+	return int64(v)
 }
 
 func (e *oneBotActionError) Error() string {
@@ -305,14 +347,14 @@ func decodeOneBotMessageParam(raw json.RawMessage, autoEscape bool) (*service.On
 
 func oneBotActionSendPrivateMessage(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		UserID     int64           `json:"user_id"`
-		Message    json.RawMessage `json:"message"`
-		AutoEscape bool            `json:"auto_escape"`
+		UserID     oneBotInt64Param `json:"user_id"`
+		Message    json.RawMessage  `json:"message"`
+		AutoEscape bool             `json:"auto_escape"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID)
+	targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -325,14 +367,14 @@ func oneBotActionSendPrivateMessage(session *oneBotSession, raw json.RawMessage)
 
 func oneBotActionSendGroupMessage(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		GroupID    int64           `json:"group_id"`
-		Message    json.RawMessage `json:"message"`
-		AutoEscape bool            `json:"auto_escape"`
+		GroupID    oneBotInt64Param `json:"group_id"`
+		Message    json.RawMessage  `json:"message"`
+		AutoEscape bool             `json:"auto_escape"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID)
+	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("group not found")
 	}
@@ -345,11 +387,11 @@ func oneBotActionSendGroupMessage(session *oneBotSession, raw json.RawMessage) (
 
 func oneBotActionSendMessage(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		MessageType string          `json:"message_type"`
-		UserID      int64           `json:"user_id"`
-		GroupID     int64           `json:"group_id"`
-		Message     json.RawMessage `json:"message"`
-		AutoEscape  bool            `json:"auto_escape"`
+		MessageType string           `json:"message_type"`
+		UserID      oneBotInt64Param `json:"user_id"`
+		GroupID     oneBotInt64Param `json:"group_id"`
+		Message     json.RawMessage  `json:"message"`
+		AutoEscape  bool             `json:"auto_escape"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
@@ -357,9 +399,9 @@ func oneBotActionSendMessage(session *oneBotSession, raw json.RawMessage) (any, 
 	messageType := strings.TrimSpace(strings.ToLower(params.MessageType))
 	if messageType == "" {
 		switch {
-		case params.UserID > 0:
+		case params.UserID.Int64() > 0:
 			messageType = "private"
-		case params.GroupID > 0:
+		case params.GroupID.Int64() > 0:
 			messageType = "group"
 		default:
 			return nil, oneBotBadRequest("message_type invalid")
@@ -368,10 +410,10 @@ func oneBotActionSendMessage(session *oneBotSession, raw json.RawMessage) (any, 
 
 	switch messageType {
 	case "private":
-		if params.UserID <= 0 {
+		if params.UserID.Int64() <= 0 {
 			return nil, oneBotBadRequest("user_id missing")
 		}
-		targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID)
+		targetUserID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
 		if err != nil {
 			return nil, oneBotNotFound("user not found")
 		}
@@ -381,10 +423,10 @@ func oneBotActionSendMessage(session *oneBotSession, raw json.RawMessage) (any, 
 		}
 		return oneBotActionSendIntoChannel(session, channel, params.Message, params.AutoEscape)
 	case "group":
-		if params.GroupID <= 0 {
+		if params.GroupID.Int64() <= 0 {
 			return nil, oneBotBadRequest("group_id missing")
 		}
-		channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID)
+		channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID.Int64())
 		if err != nil {
 			return nil, oneBotNotFound("group not found")
 		}
@@ -440,12 +482,12 @@ func oneBotActionSendIntoChannel(session *oneBotSession, channel *model.ChannelM
 
 func oneBotActionDeleteMessage(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		MessageID int64 `json:"message_id"`
+		MessageID oneBotInt64Param `json:"message_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	msg, err := loadOneBotMessageModel(params.MessageID)
+	msg, err := loadOneBotMessageModel(params.MessageID.Int64())
 	if err != nil {
 		return nil, err
 	}
@@ -464,12 +506,12 @@ func oneBotActionDeleteMessage(session *oneBotSession, raw json.RawMessage) (any
 
 func oneBotActionGetMessage(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		MessageID int64 `json:"message_id"`
+		MessageID oneBotInt64Param `json:"message_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	msg, err := loadOneBotMessageModel(params.MessageID)
+	msg, err := loadOneBotMessageModel(params.MessageID.Int64())
 	if err != nil {
 		return nil, err
 	}
@@ -493,12 +535,12 @@ func oneBotActionGetLoginInfo(session *oneBotSession) (any, error) {
 
 func oneBotActionGetStrangerInfo(_ *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		UserID int64 `json:"user_id"`
+		UserID oneBotInt64Param `json:"user_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	internalID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID)
+	internalID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -507,7 +549,7 @@ func oneBotActionGetStrangerInfo(_ *oneBotSession, raw json.RawMessage) (any, er
 		return nil, oneBotNotFound("user not found")
 	}
 	return map[string]any{
-		"user_id":  params.UserID,
+		"user_id":  params.UserID.Int64(),
 		"nickname": strings.TrimSpace(user.Nickname),
 		"sex":      "unknown",
 		"age":      0,
@@ -539,12 +581,12 @@ func oneBotActionGetFriendList(session *oneBotSession) (any, error) {
 
 func oneBotActionGetGroupInfo(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		GroupID int64 `json:"group_id"`
+		GroupID oneBotInt64Param `json:"group_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID)
+	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("group not found")
 	}
@@ -573,13 +615,13 @@ func oneBotActionGetGroupList(session *oneBotSession) (any, error) {
 
 func oneBotActionGetGroupMemberInfo(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		GroupID int64 `json:"group_id"`
-		UserID  int64 `json:"user_id"`
+		GroupID oneBotInt64Param `json:"group_id"`
+		UserID  oneBotInt64Param `json:"user_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID)
+	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("group not found")
 	}
@@ -587,7 +629,7 @@ func oneBotActionGetGroupMemberInfo(session *oneBotSession, raw json.RawMessage)
 	if err != nil {
 		return nil, err
 	}
-	userID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID)
+	userID, err := service.ResolveInternalID(service.OneBotEntityUser, params.UserID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("user not found")
 	}
@@ -600,12 +642,12 @@ func oneBotActionGetGroupMemberInfo(session *oneBotSession, raw json.RawMessage)
 
 func oneBotActionGetGroupMemberList(session *oneBotSession, raw json.RawMessage) (any, error) {
 	var params struct {
-		GroupID int64 `json:"group_id"`
+		GroupID oneBotInt64Param `json:"group_id"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, oneBotBadRequest("invalid params")
 	}
-	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID)
+	channelID, err := service.ResolveInternalID(service.OneBotEntityChannel, params.GroupID.Int64())
 	if err != nil {
 		return nil, oneBotNotFound("group not found")
 	}

@@ -497,6 +497,15 @@ func decodeOneBotActionMessage(raw []byte) (*oneBotActionRequest, error) {
 	return &req, nil
 }
 
+func oneBotDebugSnippet(raw []byte) string {
+	const maxLen = 1024
+	trimmed := strings.TrimSpace(string(raw))
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[:maxLen] + "...(truncated)"
+}
+
 type oneBotReverseController struct {
 	botUserID string
 	stop      chan struct{}
@@ -714,6 +723,8 @@ func (rt *oneBotRuntime) runReverseDialLoop(controller *oneBotReverseController,
 				continue
 			}
 			resp := dispatchOneBotAction(session, req)
+			if resp != nil && (resp.Status != "ok" || resp.RetCode != 0) {
+			}
 			if err := session.sendJSON(resp); err != nil {
 				break
 			}
