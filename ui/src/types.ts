@@ -280,6 +280,7 @@ export interface AvatarDecorationSettings {
 }
 
 export interface AvatarDecoration {
+  id?: string;
   enabled: boolean;
   decorationId?: string;
   resourceAttachmentId?: string;
@@ -519,6 +520,7 @@ export interface ChannelIdentity {
   color: string;
   avatarAttachmentId: string;
   avatarDecoration?: AvatarDecoration | null;
+  avatarDecorations?: AvatarDecoration[] | null;
   characterCardId?: string;
   isDefault: boolean;
   isTemporary: boolean;
@@ -579,5 +581,6 @@ export interface MessageIdentity {
   color?: string;
   avatarAttachment?: string;
   avatarDecoration?: AvatarDecoration | null;
+  avatarDecorations?: AvatarDecoration[] | null;
   isTemporary?: boolean;
 }

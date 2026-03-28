@@ -58,7 +58,7 @@ type MessageModel struct {
 	SenderIdentityName        string `json:"sender_identity_name"`
 	SenderIdentityColor       string `json:"sender_identity_color"`
 	SenderIdentityAvatarID    string `json:"sender_identity_avatar_id"`
-	SenderIdentityDecoration  *protocol.AvatarDecoration `json:"sender_identity_decoration,omitempty" gorm:"serializer:json"`
+	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decorations,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
 	SenderIdentityIsTemporary bool   `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID              string `json:"sender_role_id" gorm:"size:100"`
 	MergedMessages            int    `json:"-" gorm:"-"`
@@ -142,15 +142,21 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			msg.WhisperToIds = append(msg.WhisperToIds, target.ToProtocolType())
 		}
 	}
-	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || m.SenderIdentityDecoration != nil {
+	var legacyDecoration *protocol.AvatarDecoration
+	if len(m.SenderIdentityDecorations) > 0 {
+		first := m.SenderIdentityDecorations[0]
+		legacyDecoration = &first
+	}
+	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || len(m.SenderIdentityDecorations) > 0 {
 		msg.Identity = &protocol.MessageIdentity{
-			ID:               m.SenderIdentityID,
-			VariantID:        m.SenderIdentityVariantID,
-			DisplayName:      m.SenderIdentityName,
-			Color:            m.SenderIdentityColor,
-			AvatarAttachment: m.SenderIdentityAvatarID,
-			AvatarDecoration: m.SenderIdentityDecoration,
-			IsTemporary:      m.SenderIdentityIsTemporary,
+			ID:                m.SenderIdentityID,
+			VariantID:         m.SenderIdentityVariantID,
+			DisplayName:       m.SenderIdentityName,
+			Color:             m.SenderIdentityColor,
+			AvatarAttachment:  m.SenderIdentityAvatarID,
+			AvatarDecoration:  legacyDecoration,
+			AvatarDecorations: m.SenderIdentityDecorations,
+			IsTemporary:       m.SenderIdentityIsTemporary,
 		}
 	}
 	if meta := m.buildWhisperMeta(); meta != nil {

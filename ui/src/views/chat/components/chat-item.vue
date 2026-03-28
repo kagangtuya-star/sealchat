@@ -34,6 +34,7 @@ import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
+import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
 import CharacterCardBadge from './CharacterCardBadge.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
@@ -44,7 +45,7 @@ type EditingPreviewInfo = {
   displayName: string;
   color?: string;
   avatar?: string;
-  avatarDecoration?: import('@/types').AvatarDecoration | null;
+  avatarDecorations?: import('@/types').AvatarDecoration[] | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
@@ -3006,19 +3007,18 @@ const displayAvatar = computed(() => {
   return props.avatar;
 });
 
-const displayAvatarDecoration = computed(() => {
+const displayAvatarDecorations = computed(() => {
   if (shouldUseSelfPreviewIdentity.value) {
-    return selfEditingPreview.value?.avatarDecoration || null;
+    return normalizeAvatarDecorations(selfEditingPreview.value?.avatarDecorations);
   }
-  if (otherEditingPreview.value?.avatarDecoration) {
-    return otherEditingPreview.value.avatarDecoration;
+  if (otherEditingPreview.value) {
+    return normalizeAvatarDecorations(otherEditingPreview.value.avatarDecorations);
   }
   const raw = props.item as any;
-  const identityDecoration = raw?.identity?.avatarDecoration;
-  if (identityDecoration) {
-    return identityDecoration;
-  }
-  return raw?.sender_identity_decoration || null;
+  return normalizeAvatarDecorations(
+    raw?.identity?.avatarDecorations || raw?.sender_identity_decoration,
+    raw?.identity?.avatarDecoration || null,
+  );
 });
 
 const useTextAvatarFallback = computed(() => {
@@ -3174,7 +3174,7 @@ const handleRetrySend = () => {
       <UserAvatarDecoration
         :src="displayAvatar"
         :border="false"
-        :decoration="displayAvatarDecoration"
+        :decorations="displayAvatarDecorations"
         :use-text-fallback="useTextAvatarFallback"
         :fallback-text="avatarFallbackText"
         @longpress="handleAvatarLongpress"

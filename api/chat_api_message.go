@@ -2207,7 +2207,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.SenderIdentityName = appearance.DisplayName
 			m.SenderIdentityColor = appearance.Color
 			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
-			m.SenderIdentityDecoration = appearance.AvatarDecoration
+			m.SenderIdentityDecorations = appearance.AvatarDecorations
 			if appearance.DisplayName != "" {
 				m.SenderMemberName = appearance.DisplayName
 			}
@@ -2864,14 +2864,20 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 				msg.SenderIdentityName = appearance.DisplayName
 				msg.SenderIdentityColor = appearance.Color
 				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
-				msg.SenderIdentityDecoration = appearance.AvatarDecoration
+				msg.SenderIdentityDecorations = appearance.AvatarDecorations
 			}
 			resolvedIdentityProto = identity.ToProtocolType()
 			if resolvedIdentityProto != nil && appearance != nil {
 				resolvedIdentityProto.DisplayName = appearance.DisplayName
 				resolvedIdentityProto.Color = appearance.Color
 				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
-				resolvedIdentityProto.AvatarDecoration = appearance.AvatarDecoration
+				resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
+				if len(appearance.AvatarDecorations) > 0 {
+					first := appearance.AvatarDecorations[0]
+					resolvedIdentityProto.AvatarDecoration = &first
+				} else {
+					resolvedIdentityProto.AvatarDecoration = nil
+				}
 			}
 			if appearance != nil && appearance.DisplayName != "" {
 				msg.SenderMemberName = appearance.DisplayName
@@ -2882,7 +2888,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			msg.SenderIdentityName = ""
 			msg.SenderIdentityColor = ""
 			msg.SenderIdentityAvatarID = ""
-			msg.SenderIdentityDecoration = nil
+			msg.SenderIdentityDecorations = nil
 			msg.SenderIdentityIsTemporary = false
 			msg.SenderRoleID = ""
 			resolvedIdentityProto = nil
@@ -3018,7 +3024,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
-		updates["sender_identity_decoration"] = msg.SenderIdentityDecoration
+		updates["sender_identity_decoration"] = msg.SenderIdentityDecorations
 		updates["sender_identity_is_temporary"] = msg.SenderIdentityIsTemporary
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID

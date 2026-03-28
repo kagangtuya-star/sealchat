@@ -16,6 +16,7 @@ type channelIdentityPayload struct {
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
 	AvatarDecoration   *protocol.AvatarDecoration `json:"avatarDecoration"`
+	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations"`
 	IsDefault          bool     `json:"isDefault"`
 	IsTemporary        bool     `json:"isTemporary"`
 	ICOOCOnActivate    string   `json:"icOocOnActivate"`
@@ -75,7 +76,7 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecoration:   payload.AvatarDecoration,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
@@ -116,7 +117,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecoration:   payload.AvatarDecoration,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:          payload.IsDefault,
 		IsTemporary:        payload.IsTemporary,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
@@ -180,7 +181,7 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
-		AvatarDecoration:   payload.AvatarDecoration,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:          payload.IsDefault,
 		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
@@ -195,4 +196,14 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 		"oldIdentityId": result.OldIdentityID,
 		"removedId":     result.RemovedID,
 	})
+}
+
+func resolveChannelIdentityPayloadDecorations(payload channelIdentityPayload) protocol.AvatarDecorationList {
+	if len(payload.AvatarDecorations) > 0 {
+		return payload.AvatarDecorations
+	}
+	if payload.AvatarDecoration != nil {
+		return protocol.AvatarDecorationList{*payload.AvatarDecoration}
+	}
+	return nil
 }

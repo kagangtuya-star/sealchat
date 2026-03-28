@@ -16,7 +16,7 @@ type ChannelIdentityInput struct {
 	DisplayName        string
 	Color              string
 	AvatarAttachmentID string
-	AvatarDecoration   *protocol.AvatarDecoration
+	AvatarDecorations  protocol.AvatarDecorationList
 	IsDefault          bool
 	IsTemporary        bool
 	ICOOCOnActivate    string
@@ -159,7 +159,7 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	avatarDecorations, err := NormalizeAvatarDecorations(userID, input.AvatarDecorations)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 		DisplayName:        strings.TrimSpace(input.DisplayName),
 		Color:              input.Color,
 		AvatarAttachmentID: input.AvatarAttachmentID,
-		AvatarDecoration:   avatarDecoration,
+		AvatarDecorations:  avatarDecorations,
 		SortOrder:          sortMax + 1,
 		IsDefault:          input.IsDefault,
 		IsTemporary:        input.IsTemporary,
@@ -233,7 +233,7 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	avatarDecorations, err := NormalizeAvatarDecorations(userID, input.AvatarDecorations)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 		"display_name":         strings.TrimSpace(input.DisplayName),
 		"color":                input.Color,
 		"avatar_attachment_id": input.AvatarAttachmentID,
-		"avatar_decoration":    avatarDecoration,
+		"avatar_decoration":    avatarDecorations,
 		"is_default":           input.IsDefault,
 	}
 
@@ -304,7 +304,7 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	avatarDecoration, err := NormalizeAvatarDecoration(userID, input.AvatarDecoration)
+	avatarDecorations, err := NormalizeAvatarDecorations(userID, input.AvatarDecorations)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func ChannelIdentityReplaceTemporary(userID string, identityID string, input *Ch
 			DisplayName:        strings.TrimSpace(input.DisplayName),
 			Color:              input.Color,
 			AvatarAttachmentID: input.AvatarAttachmentID,
-			AvatarDecoration:   avatarDecoration,
+			AvatarDecorations:  avatarDecorations,
 			IsDefault:          input.IsDefault,
 			IsTemporary:        true,
 			SortOrder:          identity.SortOrder,
@@ -521,7 +521,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"displayName":        item.DisplayName,
 		"color":              item.Color,
 		"avatarAttachmentId": item.AvatarAttachmentID,
-		"avatarDecoration":   item.AvatarDecoration,
+		"avatarDecorations":  item.AvatarDecorations,
 		"isDefault":          item.IsDefault,
 		"isTemporary":        item.IsTemporary,
 		"icOocOnActivate":    item.ICOOCOnActivate,

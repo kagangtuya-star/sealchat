@@ -19,17 +19,20 @@ func TestMessageModelToProtocolType2IncludesIdentityAvatarDecoration(t *testing.
 		},
 	}
 	msg := (&MessageModel{
-		SenderIdentityID:        "identity-1",
-		SenderIdentityName:      "频道角色",
-		SenderIdentityAvatarID:  "avatar-1",
-		SenderIdentityDecoration: decoration,
+		SenderIdentityID:          "identity-1",
+		SenderIdentityName:        "频道角色",
+		SenderIdentityAvatarID:    "avatar-1",
+		SenderIdentityDecorations: protocol.AvatarDecorationList{*decoration},
 	}).ToProtocolType2(nil)
 
 	if msg.Identity == nil {
 		t.Fatalf("expected message identity to be present")
 	}
+	if len(msg.Identity.AvatarDecorations) != 1 {
+		t.Fatalf("expected one message identity avatar decoration, got %d", len(msg.Identity.AvatarDecorations))
+	}
 	if msg.Identity.AvatarDecoration == nil {
-		t.Fatalf("expected message identity avatar decoration to be present")
+		t.Fatalf("expected legacy message identity avatar decoration to be present")
 	}
 	if msg.Identity.AvatarDecoration.ResourceAttachmentID != "id:decoration-1" {
 		t.Fatalf("expected message identity avatar decoration resource attachment id to be preserved, got %q", msg.Identity.AvatarDecoration.ResourceAttachmentID)

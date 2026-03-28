@@ -243,6 +243,7 @@ interface EditingIdentitySnapshot {
   displayName?: string;
   color?: string;
   avatarAttachmentId?: string;
+  avatarDecorations?: AvatarDecoration[] | null;
   isTemporary?: boolean;
 }
 
@@ -2799,7 +2800,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecoration?: AvatarDecoration | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
@@ -2807,14 +2808,14 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecoration?: AvatarDecoration | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity);
       return identity;
     },
 
-    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecoration?: AvatarDecoration | null; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityReplaceTemporary(identityId: string, payload: { channelId: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; isDefault: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity; removedId?: string; oldIdentityId?: string }>(`api/v1/channel-identities/${identityId}/replace-temporary`, payload);
       const identity = resp.data.item;
       const removedId = resp.data.removedId || resp.data.oldIdentityId || identityId;

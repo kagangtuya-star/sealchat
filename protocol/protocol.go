@@ -1,5 +1,10 @@
 package protocol
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
 type Channel struct {
 	ID                      string      `json:"id"`
 	WorldID                 string      `json:"worldId,omitempty"`
@@ -55,11 +60,36 @@ type User struct {
 }
 
 type AvatarDecoration struct {
+	ID                   string                   `json:"id,omitempty"`
 	Enabled              bool                      `json:"enabled"`
 	DecorationID         string                    `json:"decorationId,omitempty"`
 	ResourceAttachmentID string                    `json:"resourceAttachmentId,omitempty"`
 	FallbackAttachmentID string                    `json:"fallbackAttachmentId,omitempty"`
 	Settings             AvatarDecorationSettings  `json:"settings"`
+}
+
+type AvatarDecorationList []AvatarDecoration
+
+func (l *AvatarDecorationList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*l = nil
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var list []AvatarDecoration
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return err
+		}
+		*l = AvatarDecorationList(list)
+		return nil
+	}
+	var single AvatarDecoration
+	if err := json.Unmarshal(trimmed, &single); err != nil {
+		return err
+	}
+	*l = AvatarDecorationList{single}
+	return nil
 }
 
 type AvatarDecorationSettings struct {
@@ -78,6 +108,7 @@ type ChannelIdentity struct {
 	Color              string            `json:"color"`
 	AvatarAttachmentID string            `json:"avatarAttachmentId"`
 	AvatarDecoration   *AvatarDecoration `json:"avatarDecoration,omitempty"`
+	AvatarDecorations  AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	IsDefault          bool              `json:"isDefault"`
 	IsTemporary        bool              `json:"isTemporary"`
 }
@@ -167,6 +198,7 @@ type MessageIdentity struct {
 	Color            string            `json:"color"`
 	AvatarAttachment string            `json:"avatarAttachment"`
 	AvatarDecoration *AvatarDecoration `json:"avatarDecoration,omitempty"`
+	AvatarDecorations AvatarDecorationList `json:"avatarDecorations,omitempty"`
 	IsTemporary      bool              `json:"isTemporary"`
 }
 

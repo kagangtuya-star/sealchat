@@ -17,7 +17,7 @@ type ChannelIdentityModel struct {
 	DisplayName        string   `json:"displayName"`
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
-	AvatarDecoration   *protocol.AvatarDecoration `json:"avatarDecoration,omitempty" gorm:"serializer:json"`
+	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
 	CharacterCardID    string   `json:"characterCardId,omitempty" gorm:"size:100;index"`
 	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
 	IsTemporary        bool     `json:"isTemporary" gorm:"default:false"`
@@ -32,12 +32,18 @@ func (*ChannelIdentityModel) TableName() string {
 }
 
 func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
+	var legacyDecoration *protocol.AvatarDecoration
+	if len(m.AvatarDecorations) > 0 {
+		first := m.AvatarDecorations[0]
+		legacyDecoration = &first
+	}
 	return &protocol.ChannelIdentity{
 		ID:                 m.ID,
 		DisplayName:        m.DisplayName,
 		Color:              m.Color,
 		AvatarAttachmentID: m.AvatarAttachmentID,
-		AvatarDecoration:   m.AvatarDecoration,
+		AvatarDecoration:   legacyDecoration,
+		AvatarDecorations:  m.AvatarDecorations,
 		IsDefault:          m.IsDefault,
 		IsTemporary:        m.IsTemporary,
 	}
@@ -127,14 +133,26 @@ func ChannelIdentityUpdate(id string, values map[string]any) error {
 		switch value := rawDecoration.(type) {
 		case nil:
 			values["avatar_decoration"] = nil
-		case *protocol.AvatarDecoration:
+		case protocol.AvatarDecorationList:
 			encoded, err := json.Marshal(value)
 			if err != nil {
 				return err
 			}
 			values["avatar_decoration"] = string(encoded)
-		case protocol.AvatarDecoration:
+		case []protocol.AvatarDecoration:
 			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case *protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{*value})
+			if err != nil {
+				return err
+			}
+			values["avatar_decoration"] = string(encoded)
+		case protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{value})
 			if err != nil {
 				return err
 			}

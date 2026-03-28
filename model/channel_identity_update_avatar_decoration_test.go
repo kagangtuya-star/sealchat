@@ -60,10 +60,10 @@ func TestChannelIdentityUpdatePersistsAvatarDecoration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload identity failed: %v", err)
 	}
-	if updated.AvatarDecoration == nil {
-		t.Fatalf("expected avatar decoration to be persisted")
+	if len(updated.AvatarDecorations) != 1 {
+		t.Fatalf("expected one avatar decoration to be persisted, got %d", len(updated.AvatarDecorations))
 	}
-	if updated.AvatarDecoration.ResourceAttachmentID != "id:decoration-1" {
-		t.Fatalf("expected persisted decoration resource attachment id, got %q", updated.AvatarDecoration.ResourceAttachmentID)
+	if updated.AvatarDecorations[0].ResourceAttachmentID != "id:decoration-1" {
+		t.Fatalf("expected persisted decoration resource attachment id, got %q", updated.AvatarDecorations[0].ResourceAttachmentID)
 	}
 }
