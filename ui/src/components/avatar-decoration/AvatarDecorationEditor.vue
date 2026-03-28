@@ -22,8 +22,9 @@ const emit = defineEmits<{
 const user = useUserStore()
 const utils = useUtilsStore()
 const message = useMessage()
-const inputRef = ref<HTMLInputElement | null>(null)
-const uploading = ref(false)
+const resourceInputRef = ref<HTMLInputElement | null>(null)
+const fallbackInputRef = ref<HTMLInputElement | null>(null)
+const uploadingTarget = ref<'resource' | 'fallback' | null>(null)
 const dragging = ref(false)
 
 let dragPointerId: number | null = null
@@ -66,30 +67,40 @@ const applyPatch = (patch: Partial<AvatarDecoration>) => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-const selectFile = () => {
-  if (inputRef.value) {
-    inputRef.value.value = ''
+const resetInput = (target: 'resource' | 'fallback') => {
+  const input = target === 'resource' ? resourceInputRef.value : fallbackInputRef.value
+  if (input) {
+    input.value = ''
   }
-  inputRef.value?.click()
 }
 
-const handleFileChange = async (event: Event) => {
-  const target = event.target as HTMLInputElement | null
-  const file = target?.files?.[0]
-  if (!file) {
-    return
-  }
+const selectResourceFile = () => {
+  resetInput('resource')
+  resourceInputRef.value?.click()
+}
+
+const selectFallbackFile = () => {
+  resetInput('fallback')
+  fallbackInputRef.value?.click()
+}
+
+const uploadDecorationFile = async (file: File, target: 'resource' | 'fallback') => {
   if (file.size > utils.fileSizeLimit) {
     const limitMB = (utils.fileSizeLimit / 1024 / 1024).toFixed(1)
     message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
     return
   }
-  if (!['image/png', 'image/webp'].includes(file.type)) {
-    message.error('头像装饰仅支持 PNG 或 WEBP')
+  const allowedMimeTypes = target === 'resource'
+    ? ['image/png', 'image/webp', 'video/webm']
+    : ['image/png', 'image/webp']
+  if (!allowedMimeTypes.includes(file.type)) {
+    message.error(target === 'resource'
+      ? '头像装饰资源仅支持 PNG、WEBP 或 WEBM'
+      : '静态兜底图仅支持 PNG 或 WEBP')
     return
   }
 
-  uploading.value = true
+  uploadingTarget.value = target
   try {
     const formData = new FormData()
     formData.append('file', file, file.name)
@@ -104,16 +115,41 @@ const handleFileChange = async (event: Event) => {
       message.error('上传失败，未返回附件ID')
       return
     }
+    if (target === 'resource') {
+      applyPatch({
+        enabled: true,
+        resourceAttachmentId: `id:${attachmentId}`,
+      })
+      message.success('装饰资源上传成功')
+      return
+    }
     applyPatch({
-      enabled: true,
-      resourceAttachmentId: `id:${attachmentId}`,
+      fallbackAttachmentId: `id:${attachmentId}`,
     })
-    message.success('装饰资源上传成功')
+    message.success('静态兜底图上传成功')
   } catch (error) {
-    message.error('装饰资源上传失败: ' + String(error))
+    message.error((target === 'resource' ? '装饰资源上传失败: ' : '静态兜底图上传失败: ') + String(error))
   } finally {
-    uploading.value = false
+    uploadingTarget.value = null
   }
+}
+
+const handleResourceFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  const file = target?.files?.[0]
+  if (!file) {
+    return
+  }
+  await uploadDecorationFile(file, 'resource')
+}
+
+const handleFallbackFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  const file = target?.files?.[0]
+  if (!file) {
+    return
+  }
+  await uploadDecorationFile(file, 'fallback')
 }
 
 const clearDecoration = () => {
@@ -144,6 +180,18 @@ const updateResourceAttachmentId = (value: string) => {
   applyPatch({
     enabled: true,
     resourceAttachmentId: value.trim(),
+  })
+}
+
+const updateFallbackAttachmentId = (value: string) => {
+  applyPatch({
+    fallbackAttachmentId: value.trim(),
+  })
+}
+
+const clearFallbackAttachment = () => {
+  applyPatch({
+    fallbackAttachmentId: '',
   })
 }
 
@@ -248,7 +296,7 @@ onBeforeUnmount(() => {
       <div class="avatar-decoration-editor__preview-head">
         <div class="avatar-decoration-editor__title">频道消息预览</div>
         <div class="avatar-decoration-editor__hint">
-          仅作用于当前频道角色，并且只在频道消息头像中显示。可直接拖拽头像上的装饰层调整位置。
+          仅作用于当前频道角色，并且只在频道消息头像中显示。支持 PNG、WEBP 与透明 WEBM；可直接拖拽头像上的装饰层调整位置。
         </div>
       </div>
       <div class="avatar-decoration-editor__message">
@@ -265,6 +313,7 @@ onBeforeUnmount(() => {
             :use-text-fallback="!avatarSrc"
             :decoration="normalizedDecoration"
             :decoration-enabled="normalizedDecoration.enabled && !!normalizedDecoration.resourceAttachmentId"
+            :pause-when-out-of-view="false"
           />
           <div v-if="normalizedDecoration.resourceAttachmentId" class="avatar-decoration-editor__drag-badge">
             {{ dragging ? '拖拽中' : '拖拽调整' }}
@@ -279,13 +328,21 @@ onBeforeUnmount(() => {
 
     <div class="avatar-decoration-editor__toolbar">
       <input
-        ref="inputRef"
+        ref="resourceInputRef"
+        class="avatar-decoration-editor__file"
+        type="file"
+        accept="image/png,image/webp,video/webm"
+        @change="handleResourceFileChange"
+      />
+      <input
+        ref="fallbackInputRef"
         class="avatar-decoration-editor__file"
         type="file"
         accept="image/png,image/webp"
-        @change="handleFileChange"
+        @change="handleFallbackFileChange"
       />
-      <n-button size="small" :loading="uploading" @click="selectFile">上传装饰图</n-button>
+      <n-button size="small" :loading="uploadingTarget === 'resource'" @click="selectResourceFile">上传装饰资源</n-button>
+      <n-button size="small" tertiary :loading="uploadingTarget === 'fallback'" @click="selectFallbackFile">上传静态兜底</n-button>
       <n-button size="small" quaternary @click="resetDecoration">重置参数</n-button>
       <n-button size="small" quaternary type="warning" @click="clearDecoration">取消佩戴</n-button>
     </div>
@@ -297,6 +354,16 @@ onBeforeUnmount(() => {
           placeholder="id:attachment_id"
           @update:value="updateResourceAttachmentId"
         />
+      </n-form-item>
+      <n-form-item label="静态兜底附件 ID">
+        <div class="avatar-decoration-editor__fallback-field">
+          <n-input
+            :value="normalizedDecoration.fallbackAttachmentId"
+            placeholder="可选，id:attachment_id"
+            @update:value="updateFallbackAttachmentId"
+          />
+          <n-button size="small" quaternary :disabled="!normalizedDecoration.fallbackAttachmentId" @click="clearFallbackAttachment">清除</n-button>
+        </div>
       </n-form-item>
 
       <div class="avatar-decoration-editor__grid">
@@ -473,6 +540,16 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.avatar-decoration-editor__fallback-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.avatar-decoration-editor__fallback-field :deep(.n-input) {
+  flex: 1;
 }
 
 .avatar-decoration-editor__file {

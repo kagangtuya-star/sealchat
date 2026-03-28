@@ -36,8 +36,8 @@ func NormalizeAvatarDecoration(userID string, decoration *protocol.AvatarDecorat
 		return nil, errors.New("头像装饰资源不存在")
 	}
 	resourceMime := strings.ToLower(strings.TrimSpace(resourceAtt.MimeType))
-	if resourceMime != "image/png" && resourceMime != "image/webp" {
-		return nil, errors.New("头像装饰资源仅支持 PNG 或 WEBP")
+	if resourceMime != "image/png" && resourceMime != "image/webp" && resourceMime != "video/webm" {
+		return nil, errors.New("头像装饰资源仅支持 PNG、WEBP 或 WEBM")
 	}
 
 	fallbackID := strings.TrimSpace(decoration.FallbackAttachmentID)

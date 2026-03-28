@@ -553,7 +553,7 @@ const handleOpenTutorialHub = () => {
         <header>
           <div>
             <p class="section-title">头像装饰性能</p>
-            <p class="section-desc">低性能模式下优先使用静态兜底资源，后续动效装饰也会遵循此设置</p>
+            <p class="section-desc">低性能模式下优先使用静态兜底资源；若动效装饰未配置兜底图，则直接隐藏动效层</p>
           </div>
         </header>
         <n-switch v-model:value="draft.preferStaticAvatarDecoration">
