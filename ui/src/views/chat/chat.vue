@@ -4423,10 +4423,24 @@ const getMessageAvatar = (message: any) => resolveMessageAvatarSource(message);
 
 const getMessageAvatarMergeKey = (message: any) => {
   const avatarSrc = resolveMessageAvatarSource(message) || '';
-  const avatarDecorations = cloneAvatarDecorations(
+  let avatarDecorations = cloneAvatarDecorations(
     message?.identity?.avatarDecorations || (message as any)?.sender_identity_decoration,
     message?.identity?.avatarDecoration || null,
   );
+  if (avatarDecorations.length === 0) {
+    const channelId = String(message?.channel?.id || chat.curChannel?.id || '').trim();
+    const identityId = String(
+      message?.identity?.id
+      || (message as any)?.sender_identity_id
+      || (message as any)?.senderRoleId
+      || (message as any)?.sender_role_id
+      || '',
+    ).trim();
+    if (channelId && identityId) {
+      const liveIdentity = (chat.channelIdentities[channelId] || []).find((item) => item.id === identityId);
+      avatarDecorations = cloneAvatarDecorations(liveIdentity?.avatarDecorations, liveIdentity?.avatarDecoration || null);
+    }
+  }
   return `${avatarSrc}__${JSON.stringify(avatarDecorations)}`;
 };
 

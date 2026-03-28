@@ -138,6 +138,16 @@ const normalizedSelectedDecoration = computed<AvatarDecoration | null>(() => {
 })
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const getStepPrecision = (step: number) => {
+  const text = String(step)
+  const index = text.indexOf('.')
+  return index >= 0 ? text.length - index - 1 : 0
+}
+const clampStepValue = (value: number, min: number, max: number, step: number) => {
+  const precision = getStepPrecision(step)
+  const normalized = Math.round(value / step) * step
+  return Number(clamp(normalized, min, max).toFixed(precision))
+}
 
 const patchDecoration = (decorationId: string, patch: Partial<AvatarDecoration>) => {
   const next = normalizedDecorations.value.map((item) => {
@@ -375,6 +385,36 @@ const updateZIndex = (value: number) => {
   })
 }
 
+const adjustScaleByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.scale ?? 1
+  updateScale(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0.5, 1.5, 0.05))
+}
+
+const adjustOffsetXByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.offsetX ?? 0
+  updateOffsetX(clampStepValue(current + (event.deltaY < 0 ? 1 : -1), -128, 128, 1))
+}
+
+const adjustOffsetYByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.offsetY ?? 0
+  updateOffsetY(clampStepValue(current + (event.deltaY < 0 ? 1 : -1), -128, 128, 1))
+}
+
+const adjustRotationByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.rotation ?? 0
+  updateRotation(clampStepValue(current + (event.deltaY < 0 ? 1 : -1), 0, 360, 1))
+}
+
+const adjustOpacityByWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  const current = normalizedSelectedDecoration.value?.settings?.opacity ?? 1
+  updateOpacity(clampStepValue(current + (event.deltaY < 0 ? 0.05 : -0.05), 0, 1, 0.05))
+}
+
 const stopDragging = () => {
   dragging.value = false
   dragPointerId = null
@@ -546,85 +586,91 @@ onBeforeUnmount(() => {
 
     <template v-if="normalizedSelectedDecoration">
       <n-form label-placement="top" size="small">
-        <div class="avatar-decoration-editor__grid">
+        <div class="avatar-decoration-editor__meta-grid">
           <n-form-item label="启用状态">
             <n-switch
               :value="normalizedSelectedDecoration.enabled"
               @update:value="updateEnabled"
             />
           </n-form-item>
-          <n-form-item label="资源类型">
-            <n-input :value="selectedDecorationKind || '未识别'" readonly />
+          <n-form-item label="资源附件 ID">
+            <n-input
+              :value="normalizedSelectedDecoration.resourceAttachmentId"
+              placeholder="id:attachment_id"
+              @update:value="updateResourceAttachmentId"
+            />
           </n-form-item>
-          <n-form-item label="层级说明">
-            <n-input :value="normalizedSelectedDecoration.settings?.zIndex === -1 ? '头像下方' : '头像上方'" readonly />
+          <n-form-item label="静态兜底附件 ID">
+            <div class="avatar-decoration-editor__fallback-field">
+              <n-input
+                :value="normalizedSelectedDecoration.fallbackAttachmentId"
+                placeholder="可选，id:attachment_id"
+                @update:value="updateFallbackAttachmentId"
+              />
+              <n-button size="small" quaternary :disabled="!normalizedSelectedDecoration.fallbackAttachmentId" @click="clearFallbackAttachment">清除</n-button>
+            </div>
           </n-form-item>
         </div>
 
-        <n-form-item label="资源附件 ID">
-          <n-input
-            :value="normalizedSelectedDecoration.resourceAttachmentId"
-            placeholder="id:attachment_id"
-            @update:value="updateResourceAttachmentId"
-          />
-        </n-form-item>
-
-        <n-form-item label="静态兜底附件 ID">
-          <div class="avatar-decoration-editor__fallback-field">
-            <n-input
-              :value="normalizedSelectedDecoration.fallbackAttachmentId"
-              placeholder="可选，id:attachment_id"
-              @update:value="updateFallbackAttachmentId"
-            />
-            <n-button size="small" quaternary :disabled="!normalizedSelectedDecoration.fallbackAttachmentId" @click="clearFallbackAttachment">清除</n-button>
-          </div>
-        </n-form-item>
-
         <div class="avatar-decoration-editor__grid">
           <n-form-item label="缩放">
-            <n-input-number
-              :value="normalizedSelectedDecoration.settings?.scale ?? 1"
-              :min="0.5"
-              :max="1.5"
-              :step="0.05"
-              @update:value="updateScale"
-            />
+            <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustScaleByWheel">
+              <n-input-number
+                :value="normalizedSelectedDecoration.settings?.scale ?? 1"
+                :min="0.5"
+                :max="1.5"
+                :step="0.05"
+                @update:value="updateScale"
+              />
+            </div>
           </n-form-item>
           <n-form-item label="X 偏移">
-            <n-input-number
-              :value="normalizedSelectedDecoration.settings?.offsetX ?? 0"
-              :min="-128"
-              :max="128"
-              :step="1"
-              @update:value="updateOffsetX"
-            />
+            <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustOffsetXByWheel">
+              <n-input-number
+                :value="normalizedSelectedDecoration.settings?.offsetX ?? 0"
+                :min="-128"
+                :max="128"
+                :step="1"
+                @update:value="updateOffsetX"
+              />
+            </div>
           </n-form-item>
           <n-form-item label="Y 偏移">
-            <n-input-number
-              :value="normalizedSelectedDecoration.settings?.offsetY ?? 0"
-              :min="-128"
-              :max="128"
-              :step="1"
-              @update:value="updateOffsetY"
-            />
+            <div class="avatar-decoration-editor__wheel-field" @wheel.prevent="adjustOffsetYByWheel">
+              <n-input-number
+                :value="normalizedSelectedDecoration.settings?.offsetY ?? 0"
+                :min="-128"
+                :max="128"
+                :step="1"
+                @update:value="updateOffsetY"
+              />
+            </div>
           </n-form-item>
           <n-form-item label="旋转">
-            <n-input-number
-              :value="normalizedSelectedDecoration.settings?.rotation ?? 0"
-              :min="0"
-              :max="360"
-              :step="1"
-              @update:value="updateRotation"
-            />
+            <div class="avatar-decoration-editor__slider-field" @wheel.prevent="adjustRotationByWheel">
+              <n-slider
+                :value="normalizedSelectedDecoration.settings?.rotation ?? 0"
+                :min="0"
+                :max="360"
+                :step="1"
+                :tooltip="false"
+                @update:value="updateRotation"
+              />
+              <span class="avatar-decoration-editor__slider-value">{{ Math.round(normalizedSelectedDecoration.settings?.rotation ?? 0) }}°</span>
+            </div>
           </n-form-item>
           <n-form-item label="透明度">
-            <n-input-number
-              :value="normalizedSelectedDecoration.settings?.opacity ?? 1"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              @update:value="updateOpacity"
-            />
+            <div class="avatar-decoration-editor__slider-field" @wheel.prevent="adjustOpacityByWheel">
+              <n-slider
+                :value="normalizedSelectedDecoration.settings?.opacity ?? 1"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :tooltip="false"
+                @update:value="updateOpacity"
+              />
+              <span class="avatar-decoration-editor__slider-value">{{ Math.round((normalizedSelectedDecoration.settings?.opacity ?? 1) * 100) }}%</span>
+            </div>
           </n-form-item>
           <n-form-item label="层级">
             <n-radio-group
@@ -829,6 +875,12 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
 }
 
+.avatar-decoration-editor__meta-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
 .avatar-decoration-editor__fallback-field {
   display: flex;
   align-items: center;
@@ -837,6 +889,29 @@ onBeforeUnmount(() => {
 
 .avatar-decoration-editor__fallback-field :deep(.n-input) {
   flex: 1;
+}
+
+.avatar-decoration-editor__wheel-field,
+.avatar-decoration-editor__wheel-field :deep(.n-input-number) {
+  width: 100%;
+}
+
+.avatar-decoration-editor__slider-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.avatar-decoration-editor__slider-field :deep(.n-slider) {
+  flex: 1;
+}
+
+.avatar-decoration-editor__slider-value {
+  min-width: 3rem;
+  text-align: right;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #94a3b8);
 }
 
 .avatar-decoration-editor__file {
@@ -850,6 +925,7 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
+  .avatar-decoration-editor__meta-grid,
   .avatar-decoration-editor__grid {
     grid-template-columns: 1fr;
   }

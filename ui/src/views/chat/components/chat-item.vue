@@ -3015,10 +3015,26 @@ const displayAvatarDecorations = computed(() => {
     return normalizeAvatarDecorations(otherEditingPreview.value.avatarDecorations);
   }
   const raw = props.item as any;
-  return normalizeAvatarDecorations(
+  const snapshotDecorations = normalizeAvatarDecorations(
     raw?.identity?.avatarDecorations || raw?.sender_identity_decoration,
     raw?.identity?.avatarDecoration || null,
   );
+  if (snapshotDecorations.length > 0) {
+    return snapshotDecorations;
+  }
+  const channelId = String(raw?.channel?.id || chat.curChannel?.id || '').trim();
+  const identityId = String(
+    raw?.identity?.id
+    || raw?.sender_identity_id
+    || raw?.senderRoleId
+    || raw?.sender_role_id
+    || '',
+  ).trim();
+  if (!channelId || !identityId) {
+    return snapshotDecorations;
+  }
+  const liveIdentity = (chat.channelIdentities[channelId] || []).find((item) => item.id === identityId);
+  return normalizeAvatarDecorations(liveIdentity?.avatarDecorations, liveIdentity?.avatarDecoration || null);
 });
 
 const useTextAvatarFallback = computed(() => {
