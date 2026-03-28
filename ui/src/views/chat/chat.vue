@@ -4,7 +4,7 @@ import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
-import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
+import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
@@ -2705,18 +2705,44 @@ const identityVariantAvatarPreview = ref('');
 const identityVariantAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityVariantAvatarEditorVisible = ref(false);
 const identityVariantAvatarEditorFile = ref<File | null>(null);
-const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+const identityManageTargetUserId = ref('');
+const identityManageTargetLabel = ref('');
+const identityManageTargetRoleLabel = ref('');
+const identityManageCandidateModalVisible = ref(false);
+const identityManageCandidateKeyword = ref('');
+const identityManageCandidates = ref<ChannelIdentityManageCandidate[]>([]);
+const identityManageCandidatesLoading = ref(false);
+const identityManageCandidateSelectedUserId = ref<string | null>(null);
+const currentIdentityTargetUserId = computed(() => identityManageTargetUserId.value || user.info.id || '');
+const isManagingOtherUserIdentity = computed(() => (
+  !!identityManageTargetUserId.value && identityManageTargetUserId.value !== (user.info.id || '')
+));
+const currentManagedIdentityLabel = computed(() => {
+  if (!isManagingOtherUserIdentity.value) {
+    return user.info.nick || user.info.username || '自己';
+  }
+  return identityManageTargetLabel.value || identityManageTargetUserId.value;
+});
+const currentChannelIdentities = computed(() => (
+  chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
 const currentEditingIdentityVariants = computed(() => {
   const channelId = chat.curChannel?.id || '';
   const identityId = editingIdentity.value?.id || '';
   if (!channelId || !identityId) {
     return [] as ChannelIdentityVariant[];
   }
-  return chat.getIdentityVariants(channelId, identityId);
+  return chat.getIdentityVariants(channelId, identityId, currentIdentityTargetUserId.value);
 });
-const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
-const identityFavoriteFolderIds = computed(() => chat.channelIdentityFavorites[chat.curChannel?.id || ''] || []);
-const identityFolderMembership = computed<Record<string, string[]>>(() => chat.channelIdentityMembership[chat.curChannel?.id || ''] || {});
+const identityFolders = computed(() => (
+  chat.getScopedChannelIdentityFolders(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const identityFavoriteFolderIds = computed(() => (
+  chat.getScopedChannelIdentityFavorites(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const identityFolderMembership = computed<Record<string, string[]>>(() => (
+  chat.getScopedChannelIdentityMembership(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
 const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
 const identityDialogTitle = computed(() => {
   if (identityDialogMode.value === 'create') {
@@ -2877,7 +2903,7 @@ const toggleFolderFavorite = async (folder: ChannelIdentityFolder, next: boolean
     return;
   }
   try {
-    await chat.toggleChannelIdentityFolderFavorite(folder.id, chat.curChannel.id, next);
+    await chat.toggleChannelIdentityFolderFavorite(folder.id, chat.curChannel.id, next, currentIdentityTargetUserId.value);
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
     message.error(errMsg);
@@ -2904,10 +2930,10 @@ const submitFolderDialog = async () => {
   folderSubmitting.value = true;
   try {
     if (folderDialogMode.value === 'create') {
-      await chat.createChannelIdentityFolder(chat.curChannel.id, name);
+      await chat.createChannelIdentityFolder(chat.curChannel.id, name, undefined, currentIdentityTargetUserId.value);
       message.success('文件夹已创建');
     } else if (editingFolder.value) {
-      await chat.updateChannelIdentityFolder(editingFolder.value.id, chat.curChannel.id, { name });
+      await chat.updateChannelIdentityFolder(editingFolder.value.id, chat.curChannel.id, { name, targetUserId: currentIdentityTargetUserId.value });
       message.success('文件夹已更新');
     }
     folderDialogVisible.value = false;
@@ -2933,7 +2959,7 @@ const handleFolderAction = async (folder: ChannelIdentityFolder, key: string | n
       return;
     }
     try {
-      await chat.deleteChannelIdentityFolder(folder.id, chat.curChannel.id);
+      await chat.deleteChannelIdentityFolder(folder.id, chat.curChannel.id, currentIdentityTargetUserId.value);
       message.success('文件夹已删除');
     } catch (error: any) {
       const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
@@ -2990,7 +3016,7 @@ const handleIdentityFolderAssign = async (mode: 'append' | 'replace' | 'remove')
   }
   try {
     folderAssigning.value = true;
-    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, folderActionTarget.value, mode);
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, folderActionTarget.value, mode, currentIdentityTargetUserId.value);
     message.success('角色分组已更新');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
@@ -3006,7 +3032,7 @@ const handleIdentityFolderClear = async () => {
   }
   try {
     folderAssigning.value = true;
-    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, [], 'replace');
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, [], 'replace', currentIdentityTargetUserId.value);
     message.success('已移除所选角色的所有文件夹');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
@@ -3032,14 +3058,31 @@ watch(() => chat.curChannel?.id, () => {
   activeIdentityFolderId.value = 'all';
   identitySelection.value = [];
   folderActionTarget.value = [];
+  resetIdentityManageTarget();
+});
+
+watch(() => chat.currentWorldId, () => {
+  resetIdentityManageTarget();
 });
 
 watch(identityManageVisible, (visible) => {
   if (!visible) {
     identitySelection.value = [];
     folderActionTarget.value = [];
+    resetIdentityManageTarget();
   }
 });
+
+watch(identityManageCandidateKeyword, useDebounceFn(async (value: string) => {
+  if (!identityManageCandidateModalVisible.value) {
+    return;
+  }
+  try {
+    await loadIdentityManageCandidates(value);
+  } catch (error) {
+    console.warn('加载代管候选用户失败', error);
+  }
+}, 250));
 
 watch(identityDialogVisible, (visible) => {
   if (!visible) {
@@ -3130,6 +3173,88 @@ const canManageIdentities = () => {
   const role = detail?.memberRole;
   // 只有 owner、admin、member 可以触发同步弹窗
   return role === 'owner' || role === 'admin' || role === 'member';
+};
+
+const canManageOtherUserIdentities = computed(() => {
+  if (isInObserverMode()) return false;
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  const enabled = detail?.allowManageOtherUserChannelIdentities || detail?.world?.allowManageOtherUserChannelIdentities;
+  if (!enabled) return false;
+  return Boolean(detail?.memberRole);
+});
+
+const resetIdentityManageTarget = () => {
+  identityManageTargetUserId.value = '';
+  identityManageTargetLabel.value = '';
+  identityManageTargetRoleLabel.value = '';
+  identityManageCandidateSelectedUserId.value = null;
+  identityManageCandidateKeyword.value = '';
+  identityManageCandidates.value = [];
+};
+
+const loadIdentityManageCandidates = async (keyword = '') => {
+  if (!chat.curChannel?.id) {
+    identityManageCandidates.value = [];
+    return;
+  }
+  identityManageCandidatesLoading.value = true;
+  try {
+    const resp = await chat.channelIdentityManageCandidates(chat.curChannel.id, {
+      keyword,
+      page: 1,
+      pageSize: 50,
+    });
+    identityManageCandidates.value = resp.items || [];
+  } finally {
+    identityManageCandidatesLoading.value = false;
+  }
+};
+
+const openIdentityManageUserDialog = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!canManageOtherUserIdentities.value) {
+    message.warning('当前世界未开启该功能或你没有可管理的目标');
+    return;
+  }
+  identityManageCandidateSelectedUserId.value = currentIdentityTargetUserId.value || user.info.id || null;
+  identityManageCandidateKeyword.value = '';
+  identityManageCandidateModalVisible.value = true;
+  try {
+    await loadIdentityManageCandidates('');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '加载候选用户失败');
+  }
+};
+
+const confirmIdentityManageUser = async () => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  const targetUserId = identityManageCandidateSelectedUserId.value || '';
+  if (!targetUserId) {
+    message.warning('请选择用户');
+    return;
+  }
+  const selected = identityManageCandidates.value.find(item => item.userId === targetUserId);
+  identityManageTargetUserId.value = targetUserId === (user.info.id || '') ? '' : targetUserId;
+  identityManageTargetLabel.value = selected?.nickname || selected?.username || targetUserId;
+  identityManageTargetRoleLabel.value = selected?.roleLabel || '';
+  identityManageCandidateModalVisible.value = false;
+  await chat.loadChannelIdentities(chat.curChannel.id, true, identityManageTargetUserId.value || undefined);
+  identityManageVisible.value = true;
+};
+
+const exitIdentityManageUserMode = async () => {
+  const channelId = chat.curChannel?.id;
+  resetIdentityManageTarget();
+  if (channelId) {
+    await chat.loadChannelIdentities(channelId, false);
+  }
 };
 
 const maybePromptIdentitySync = async () => {
@@ -3270,7 +3395,7 @@ const handleIdentityExport = async () => {
   const membershipMap = identityFolderMembership.value;
   const folderList = identityFolders.value;
   const favoriteSet = new Set(identityFavoriteFolderIds.value);
-  const icOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id);
+  const scopedIcOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id, currentIdentityTargetUserId.value);
   identityExporting.value = true;
   try {
     const items: IdentityExportItem[] = [];
@@ -3327,10 +3452,10 @@ const handleIdentityExport = async () => {
         sortOrder: folder.sortOrder,
         isFavorite: favoriteSet.has(folder.id),
       })),
-      icOocConfig: icOocConfig.icRoleId || icOocConfig.oocRoleId
+      icOocConfig: scopedIcOocConfig.icRoleId || scopedIcOocConfig.oocRoleId
         ? {
-            icRoleId: icOocConfig.icRoleId,
-            oocRoleId: icOocConfig.oocRoleId,
+            icRoleId: scopedIcOocConfig.icRoleId,
+            oocRoleId: scopedIcOocConfig.oocRoleId,
           }
         : undefined,
     };
@@ -3445,12 +3570,12 @@ const handleIdentityImportChange = async (event: Event) => {
       for (const folder of sortedFolders) {
         if (!folder?.name) continue;
         try {
-          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder);
+          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
           if (folder.sourceId) {
             folderIdMap.set(folder.sourceId, created.id);
           }
           if (folder.isFavorite) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true);
+            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true, currentIdentityTargetUserId.value);
           }
         } catch (error) {
           console.warn('导入文件夹失败', error);
@@ -3467,6 +3592,7 @@ const handleIdentityImportChange = async (event: Event) => {
           .filter((id): id is string => !!id);
         const created = await chat.channelIdentityCreate({
           channelId: chat.curChannel.id,
+          targetUserId: currentIdentityTargetUserId.value,
           displayName: item.displayName || '',
           color: item.color || '',
           avatarAttachmentId: avatarId,
@@ -3490,11 +3616,11 @@ const handleIdentityImportChange = async (event: Event) => {
         oocRoleId: importedConfig.oocRoleId ? (identityIdMap.get(importedConfig.oocRoleId) || null) : null,
       };
       if (mappedConfig.icRoleId || mappedConfig.oocRoleId) {
-        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig);
+        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig, currentIdentityTargetUserId.value);
       }
     }
 
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     if (successCount > 0) {
       message.success(`成功导入 ${successCount} 个频道角色`);
     } else {
@@ -3543,7 +3669,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
 
   identitySyncing.value = true;
   try {
-    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true);
+    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true, currentIdentityTargetUserId.value);
     const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
 
     if (!sourceList.length) {
@@ -3551,7 +3677,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return;
     }
 
-    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
+    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
     const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
     const normalizeIdentityName = (name: string) => name.trim().toLowerCase();
     const targetIdentityByName = new Map<string, (typeof targetList)[number]>();
@@ -3566,9 +3692,9 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       targetIdentityByName.set(key, identity);
     }
 
-    const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
-    const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
-    const sourceMembership = chat.channelIdentityMembership[sourceChannelId] || {};
+    const sourceFolders = chat.getScopedChannelIdentityFolders(sourceChannelId, currentIdentityTargetUserId.value);
+    const sourceFavorites = new Set(chat.getScopedChannelIdentityFavorites(sourceChannelId, currentIdentityTargetUserId.value));
+    const sourceMembership = chat.getScopedChannelIdentityMembership(sourceChannelId, currentIdentityTargetUserId.value);
     const folderIdMap = new Map<string, string>();
 
     if (sourceFolders.length > 0) {
@@ -3578,12 +3704,12 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       for (const folder of sortedFolders) {
         if (!folder?.name) continue;
         try {
-          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder);
+          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
           if (folder.id) {
             folderIdMap.set(folder.id, created.id);
           }
           if (folder.id && sourceFavorites.has(folder.id)) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true);
+            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true, currentIdentityTargetUserId.value);
           }
         } catch (error) {
           console.warn('同步文件夹失败', error);
@@ -3629,6 +3755,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
           }
           const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
             channelId: targetChannelId,
+            targetUserId: currentIdentityTargetUserId.value,
             displayName,
             color: identity.color || '',
             avatarAttachmentId: avatarId,
@@ -3644,6 +3771,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         }
         const created = await chat.channelIdentityCreate({
           channelId: targetChannelId,
+          targetUserId: currentIdentityTargetUserId.value,
           displayName,
           color: identity.color || '',
           avatarAttachmentId: avatarId,
@@ -3673,8 +3801,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return processedIdentityByName.get(nameKey) || targetIdentityByName.get(nameKey)?.id || null;
     };
 
-    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
-    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId);
+    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId, currentIdentityTargetUserId.value);
+    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId, currentIdentityTargetUserId.value);
     const mappedIcRoleId = resolveMappedIdentityId(sourceConfig.icRoleId);
     const mappedOocRoleId = resolveMappedIdentityId(sourceConfig.oocRoleId);
     let nextIcRoleId = targetConfig.icRoleId;
@@ -3697,10 +3825,10 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       await chat.setChannelIcOocRoleConfig(targetChannelId, {
         icRoleId: nextIcRoleId,
         oocRoleId: nextOocRoleId,
-      });
+      }, currentIdentityTargetUserId.value);
     }
 
-    await chat.loadChannelIdentities(targetChannelId, true);
+    await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
     identitySyncDialogVisible.value = false;
 
     const syncedCount = createdCount + updatedCount;
@@ -3930,7 +4058,7 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
-    await chat.loadChannelIdentityVariants(chat.curChannel.id, true);
+    await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
@@ -3945,7 +4073,7 @@ const openActiveTemporaryIdentityEdit = async () => {
     message.warning('请先选择频道');
     return;
   }
-  await chat.loadChannelIdentities(chat.curChannel.id, false);
+  await chat.loadChannelIdentities(chat.curChannel.id, false, currentIdentityTargetUserId.value);
   const current = chat.getActiveIdentity(chat.curChannel.id);
   if (!current?.isTemporary) {
     message.warning('当前不是临时角色');
@@ -3959,7 +4087,7 @@ const openIdentityManager = async () => {
     message.warning('请先选择频道');
     return;
   }
-  await chat.loadChannelIdentities(chat.curChannel.id, true);
+  await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
   identityManageVisible.value = true;
 };
 
@@ -4152,6 +4280,7 @@ const submitIdentityVariantForm = async () => {
     }
     const payload = {
       channelId: chat.curChannel.id,
+      targetUserId: currentIdentityTargetUserId.value,
       identityId: editingIdentity.value.id,
       selectorEmoji,
       keyword,
@@ -4190,7 +4319,7 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
     return;
   }
   try {
-    await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id);
+      await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id, currentIdentityTargetUserId.value);
     if (editingIdentityVariant.value?.id === variant.id) {
       identityVariantDialogVisible.value = false;
       editingIdentityVariant.value = null;
@@ -4218,6 +4347,7 @@ const submitIdentityForm = async () => {
   identitySubmitting.value = true;
   const payload = {
     channelId: chat.curChannel.id,
+    targetUserId: currentIdentityTargetUserId.value,
     displayName: identityForm.displayName.trim(),
     color: normalizedColor,
     avatarAttachmentId: identityForm.avatarAttachmentId,
@@ -4320,7 +4450,7 @@ const submitIdentityForm = async () => {
         message.success('频道角色已更新');
       }
     }
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     identityDialogVisible.value = false;
 
     // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
@@ -4353,8 +4483,8 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
     return;
   }
   try {
-    await chat.channelIdentityDelete(chat.curChannel.id, identity.id);
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.channelIdentityDelete(chat.curChannel.id, identity.id, currentIdentityTargetUserId.value);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     message.success('已删除频道角色');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
@@ -15992,7 +16122,15 @@ onBeforeUnmount(() => {
             </n-button>
             <div>
               <div class="identity-drawer__title">频道角色管理</div>
-              <div class="identity-drawer__subtitle">支持导入/导出，便于跨频道迁移</div>
+              <div class="identity-drawer__subtitle">
+                <template v-if="isManagingOtherUserIdentity">
+                  当前管理：{{ currentManagedIdentityLabel }}
+                  <span v-if="identityManageTargetRoleLabel">（{{ identityManageTargetRoleLabel }}）</span>
+                </template>
+                <template v-else>
+                  支持导入/导出，便于跨频道迁移
+                </template>
+              </div>
             </div>
           </div>
           <n-space>
@@ -16046,6 +16184,26 @@ onBeforeUnmount(() => {
                 <n-icon :component="ArrowsVertical" size="14" />
               </template>
               同步其他频道
+            </n-button>
+            <n-button
+              v-if="canManageOtherUserIdentities"
+              text
+              size="small"
+              @click="openIdentityManageUserDialog"
+            >
+              <template #icon>
+                <n-icon :component="SearchIcon" size="14" />
+              </template>
+              管理其他用户
+            </n-button>
+            <n-button
+              v-if="isManagingOtherUserIdentity"
+              text
+              size="small"
+              type="warning"
+              @click="exitIdentityManageUserMode"
+            >
+              退出代管
             </n-button>
           </n-space>
         </div>
@@ -16149,7 +16307,7 @@ onBeforeUnmount(() => {
                   <n-tag size="small" type="warning" v-if="identity.isTemporary">临时</n-tag>
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
-                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id).length }} 个</div>
+                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id, currentIdentityTargetUserId).length }} 个</div>
                 <div class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
@@ -16178,6 +16336,49 @@ onBeforeUnmount(() => {
       </template>
     </n-drawer-content>
   </n-drawer>
+  <n-modal
+    v-model:show="identityManageCandidateModalVisible"
+    preset="card"
+    title="选择要管理的用户"
+    :style="{ width: 'min(560px, 92vw)' }"
+  >
+    <div class="space-y-3">
+      <n-input
+        v-model:value="identityManageCandidateKeyword"
+        clearable
+        placeholder="搜索用户ID / 用户名 / 昵称"
+      />
+      <n-spin :show="identityManageCandidatesLoading">
+        <div class="space-y-2" style="max-height: 360px; overflow: auto;">
+          <div
+            v-for="item in identityManageCandidates"
+            :key="item.userId"
+            class="identity-manage-candidate"
+            :class="{ 'is-active': identityManageCandidateSelectedUserId === item.userId }"
+            @click="identityManageCandidateSelectedUserId = item.userId"
+          >
+            <AvatarVue :size="36" :border="false" :src="resolveAttachmentUrl(item.avatar) || ''" :fallback-text="item.nickname || item.username || item.userId" />
+            <div class="identity-manage-candidate__meta">
+              <div class="identity-manage-candidate__name">
+                {{ item.nickname || item.username || item.userId }}
+                <n-tag size="small" type="info">{{ item.roleLabel }}</n-tag>
+                <n-tag v-if="item.isSelf" size="small">自己</n-tag>
+              </div>
+              <div class="identity-manage-candidate__sub">
+                {{ item.username || item.userId }}
+              </div>
+            </div>
+            <n-radio :checked="identityManageCandidateSelectedUserId === item.userId" />
+          </div>
+          <n-empty v-if="!identityManageCandidatesLoading && !identityManageCandidates.length" description="没有可管理的用户" />
+        </div>
+      </n-spin>
+      <n-space justify="end">
+        <n-button @click="identityManageCandidateModalVisible = false">取消</n-button>
+        <n-button type="primary" :disabled="!identityManageCandidateSelectedUserId" @click="confirmIdentityManageUser">确认</n-button>
+      </n-space>
+    </div>
+  </n-modal>
   <n-modal
     v-model:show="folderDialogVisible"
     preset="dialog"
@@ -16239,7 +16440,10 @@ onBeforeUnmount(() => {
       </n-space>
     </div>
   </n-modal>
-  <IcOocRoleConfigPanel v-model:show="icOocRoleConfigPanelVisible" />
+  <IcOocRoleConfigPanel
+    v-model:show="icOocRoleConfigPanelVisible"
+    :target-user-id="currentIdentityTargetUserId"
+  />
 
   <!-- 新增组件 -->
   <ArchiveDrawer
@@ -19875,6 +20079,38 @@ onBeforeUnmount(() => {
   flex: 1 1 160px;
   min-width: 140px;
   max-width: 220px;
+}
+
+.identity-manage-candidate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sc-border-color, rgba(15, 23, 42, 0.12));
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.identity-manage-candidate.is-active {
+  border-color: var(--sc-primary-color, #2563eb);
+  background: color-mix(in srgb, var(--sc-primary-color, #2563eb) 8%, transparent);
+}
+
+.identity-manage-candidate__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-manage-candidate__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.identity-manage-candidate__sub {
+  font-size: 12px;
+  color: var(--sc-text-secondary);
 }
 
 .identity-list {

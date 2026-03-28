@@ -21,10 +21,14 @@ const (
 )
 
 func NormalizeAvatarDecoration(userID string, decoration *protocol.AvatarDecoration) (*protocol.AvatarDecoration, error) {
+	return NormalizeAvatarDecorationWithAccess(userID, userID, "", decoration)
+}
+
+func NormalizeAvatarDecorationWithAccess(ownerUserID string, operatorUserID string, channelID string, decoration *protocol.AvatarDecoration) (*protocol.AvatarDecoration, error) {
 	if decoration == nil {
 		return nil, nil
 	}
-	list, err := NormalizeAvatarDecorations(userID, protocol.AvatarDecorationList{*decoration})
+	list, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, channelID, protocol.AvatarDecorationList{*decoration})
 	if err != nil {
 		return nil, err
 	}
@@ -36,6 +40,10 @@ func NormalizeAvatarDecoration(userID string, decoration *protocol.AvatarDecorat
 }
 
 func NormalizeAvatarDecorations(userID string, decorations protocol.AvatarDecorationList) (protocol.AvatarDecorationList, error) {
+	return NormalizeAvatarDecorationsWithAccess(userID, userID, "", decorations)
+}
+
+func NormalizeAvatarDecorationsWithAccess(ownerUserID string, operatorUserID string, channelID string, decorations protocol.AvatarDecorationList) (protocol.AvatarDecorationList, error) {
 	if len(decorations) == 0 {
 		return nil, nil
 	}
@@ -46,7 +54,7 @@ func NormalizeAvatarDecorations(userID string, decorations protocol.AvatarDecora
 			continue
 		}
 
-		resourceAtt, err := ResolveAttachmentOwnership(userID, resourceID)
+		resourceAtt, err := ResolveAttachmentAccessible(ownerUserID, operatorUserID, channelID, resourceID)
 		if err != nil {
 			return nil, errors.New("头像装饰资源无效或不属于当前用户")
 		}
@@ -60,7 +68,7 @@ func NormalizeAvatarDecorations(userID string, decorations protocol.AvatarDecora
 
 		fallbackID := strings.TrimSpace(rawDecoration.FallbackAttachmentID)
 		if fallbackID != "" {
-			fallbackAtt, err := ResolveAttachmentOwnership(userID, fallbackID)
+			fallbackAtt, err := ResolveAttachmentAccessible(ownerUserID, operatorUserID, channelID, fallbackID)
 			if err != nil {
 				return nil, errors.New("头像装饰兜底资源无效或不属于当前用户")
 			}

@@ -208,17 +208,20 @@ func WorldDetail(c *fiber.Ctx) error {
 
 	// 判断编辑通知是否已确认
 	editNoticeAcked := member.EditNoticeAckedAt != nil
+	manageIdentityNoticeAcked := member.ManageIdentityNoticeAckedAt != nil
 
 	return c.JSON(fiber.Map{
-		"world":                   world,
-		"isMember":                member.ID != "",
-		"memberRole":              member.Role,
-		"memberCount":             memberCount,
-		"allowAdminEditMessages":  world.AllowAdminEditMessages,
-		"allowMemberEditKeywords": world.AllowMemberEditKeywords,
-		"strictWhisperPrivacy":    world.StrictWhisperPrivacy,
-		"ownerNickname":           ownerNickname,
-		"editNoticeAcked":         editNoticeAcked,
+		"world":                               world,
+		"isMember":                            member.ID != "",
+		"memberRole":                          member.Role,
+		"memberCount":                         memberCount,
+		"allowAdminEditMessages":              world.AllowAdminEditMessages,
+		"allowManageOtherUserChannelIdentities": world.AllowManageOtherUserChannelIdentities,
+		"allowMemberEditKeywords":             world.AllowMemberEditKeywords,
+		"strictWhisperPrivacy":                world.StrictWhisperPrivacy,
+		"ownerNickname":                       ownerNickname,
+		"editNoticeAcked":                     editNoticeAcked,
+		"manageIdentityNoticeAcked":           manageIdentityNoticeAcked,
 	})
 }
 
@@ -672,6 +675,26 @@ func WorldAckEditNoticeHandler(c *fiber.Ctx) error {
 	result := db.Model(&model.WorldMemberModel{}).
 		Where("world_id = ? AND user_id = ?", worldID, user.ID).
 		Update("edit_notice_acked_at", now)
+	if result.Error != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "确认失败"})
+	}
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "未加入该世界"})
+	}
+	return c.JSON(fiber.Map{"message": "已确认", "ackedAt": now.UnixMilli()})
+}
+
+func WorldAckManageIdentityNoticeHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	db := model.GetDB()
+	now := time.Now()
+	result := db.Model(&model.WorldMemberModel{}).
+		Where("world_id = ? AND user_id = ?", worldID, user.ID).
+		Update("manage_identity_notice_acked_at", now)
 	if result.Error != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "确认失败"})
 	}

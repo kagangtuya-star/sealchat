@@ -58,6 +58,7 @@ type WorldUpdateParams struct {
 	Avatar                     string
 	EnforceMembership          *bool
 	AllowAdminEditMessages     *bool
+	AllowManageOtherUserChannelIdentities *bool
 	AllowMemberEditKeywords    *bool
 	StrictWhisperPrivacy       *bool
 	ChannelDefaultDiceMode     *string
@@ -540,6 +541,9 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	}
 	if params.AllowAdminEditMessages != nil {
 		updates["allow_admin_edit_messages"] = *params.AllowAdminEditMessages
+	}
+	if params.AllowManageOtherUserChannelIdentities != nil {
+		updates["allow_manage_other_user_channel_identities"] = *params.AllowManageOtherUserChannelIdentities
 	}
 	if params.AllowMemberEditKeywords != nil {
 		updates["allow_member_edit_keywords"] = *params.AllowMemberEditKeywords

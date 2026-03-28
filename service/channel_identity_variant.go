@@ -126,11 +126,11 @@ func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) err
 	return nil
 }
 
-func ensureIdentityVariantAttachmentOwnership(userID string, attachmentID string) error {
+func ensureIdentityVariantAttachmentAccessible(ownerUserID string, operatorUserID string, channelID string, attachmentID string) error {
 	if attachmentID == "" {
 		return nil
 	}
-	_, err := ResolveAttachmentOwnership(userID, attachmentID)
+	_, err := ResolveAttachmentAccessible(ownerUserID, operatorUserID, channelID, attachmentID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("差分头像附件不存在")
@@ -185,20 +185,27 @@ func ChannelIdentityVariantListByUser(channelID string, userID string) ([]*model
 }
 
 func ChannelIdentityVariantCreate(userID string, input *ChannelIdentityVariantInput) (*model.ChannelIdentityVariantModel, error) {
+	return ChannelIdentityVariantCreateWithAccess(userID, userID, input)
+}
+
+func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID string, input *ChannelIdentityVariantInput) (*model.ChannelIdentityVariantModel, error) {
 	if input == nil {
 		return nil, errors.New("参数不能为空")
 	}
 	if err := validateChannelIdentityVariantInput(input); err != nil {
 		return nil, err
 	}
-	identity, err := ensureChannelIdentityVariantOwnership(userID, input.ChannelID, input.IdentityID)
+	identity, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureIdentityVariantAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
+	if strings.TrimSpace(operatorUserID) == "" {
+		operatorUserID = ownerUserID
+	}
+	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	if err := ensureChannelIdentityVariantKeywordUnique(userID, input.ChannelID, identity.ID, input.Keyword, ""); err != nil {
+	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, identity.ID, input.Keyword, ""); err != nil {
 		return nil, err
 	}
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
@@ -209,14 +216,14 @@ func ChannelIdentityVariantCreate(userID string, input *ChannelIdentityVariantIn
 	if err != nil {
 		return nil, err
 	}
-	sortMax, err := model.ChannelIdentityVariantMaxSort(input.ChannelID, userID, identity.ID)
+	sortMax, err := model.ChannelIdentityVariantMaxSort(input.ChannelID, ownerUserID, identity.ID)
 	if err != nil {
 		return nil, err
 	}
 	item := &model.ChannelIdentityVariantModel{
 		IdentityID:         identity.ID,
 		ChannelID:          input.ChannelID,
-		UserID:             userID,
+		UserID:             ownerUserID,
 		SelectorEmoji:      input.SelectorEmoji,
 		Keyword:            input.Keyword,
 		Note:               input.Note,
@@ -250,26 +257,33 @@ func ChannelIdentityVariantGetForUser(userID string, channelID string, variantID
 }
 
 func ChannelIdentityVariantUpdate(userID string, variantID string, input *ChannelIdentityVariantInput) (*model.ChannelIdentityVariantModel, error) {
+	return ChannelIdentityVariantUpdateWithAccess(userID, userID, variantID, input)
+}
+
+func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID string, variantID string, input *ChannelIdentityVariantInput) (*model.ChannelIdentityVariantModel, error) {
 	if input == nil {
 		return nil, errors.New("参数不能为空")
 	}
 	if err := validateChannelIdentityVariantInput(input); err != nil {
 		return nil, err
 	}
-	item, err := ChannelIdentityVariantGetForUser(userID, input.ChannelID, variantID)
+	item, err := ChannelIdentityVariantGetForUser(ownerUserID, input.ChannelID, variantID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ensureChannelIdentityVariantOwnership(userID, input.ChannelID, input.IdentityID); err != nil {
+	if _, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID); err != nil {
 		return nil, err
 	}
 	if item.IdentityID != input.IdentityID {
 		return nil, errors.New("不能将差分移动到其他身份")
 	}
-	if err := ensureIdentityVariantAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
+	if strings.TrimSpace(operatorUserID) == "" {
+		operatorUserID = ownerUserID
+	}
+	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	if err := ensureChannelIdentityVariantKeywordUnique(userID, input.ChannelID, input.IdentityID, input.Keyword, item.ID); err != nil {
+	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, input.IdentityID, input.Keyword, item.ID); err != nil {
 		return nil, err
 	}
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
@@ -297,7 +311,11 @@ func ChannelIdentityVariantUpdate(userID string, variantID string, input *Channe
 }
 
 func ChannelIdentityVariantDelete(userID string, channelID string, variantID string) error {
-	item, err := ChannelIdentityVariantGetForUser(userID, channelID, variantID)
+	return ChannelIdentityVariantDeleteWithAccess(userID, userID, channelID, variantID)
+}
+
+func ChannelIdentityVariantDeleteWithAccess(ownerUserID string, operatorUserID string, channelID string, variantID string) error {
+	item, err := ChannelIdentityVariantGetForUser(ownerUserID, channelID, variantID)
 	if err != nil {
 		return err
 	}
@@ -305,15 +323,19 @@ func ChannelIdentityVariantDelete(userID string, channelID string, variantID str
 }
 
 func ChannelIdentityVariantReorder(userID string, channelID string, identityID string, ids []string) error {
+	return ChannelIdentityVariantReorderWithAccess(userID, userID, channelID, identityID, ids)
+}
+
+func ChannelIdentityVariantReorderWithAccess(ownerUserID string, operatorUserID string, channelID string, identityID string, ids []string) error {
 	channelID = strings.TrimSpace(channelID)
 	identityID = strings.TrimSpace(identityID)
 	if channelID == "" || identityID == "" {
 		return errors.New("缺少频道ID或身份ID")
 	}
-	if _, err := ensureChannelIdentityVariantOwnership(userID, channelID, identityID); err != nil {
+	if _, err := ensureChannelIdentityVariantOwnership(ownerUserID, channelID, identityID); err != nil {
 		return err
 	}
-	items, err := model.ChannelIdentityVariantListByIdentityID(channelID, userID, identityID)
+	items, err := model.ChannelIdentityVariantListByIdentityID(channelID, ownerUserID, identityID)
 	if err != nil {
 		return err
 	}
@@ -336,7 +358,7 @@ func ChannelIdentityVariantReorder(userID string, channelID string, identityID s
 				continue
 			}
 			if err := tx.Model(&model.ChannelIdentityVariantModel{}).
-				Where("id = ? AND channel_id = ? AND user_id = ? AND identity_id = ?", trimmed, channelID, userID, identityID).
+				Where("id = ? AND channel_id = ? AND user_id = ? AND identity_id = ?", trimmed, channelID, ownerUserID, identityID).
 				Update("sort_order", nextSort).Error; err != nil {
 				return err
 			}

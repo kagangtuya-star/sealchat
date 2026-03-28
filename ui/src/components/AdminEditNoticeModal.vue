@@ -6,6 +6,11 @@ const props = defineProps<{
   visible: boolean;
   worldId: string;
   ownerNickname: string;
+  title?: string;
+  content?: string;
+  secondaryText?: string;
+  confirmText?: string;
+  noticeType?: 'edit' | 'manageIdentity';
 }>();
 const emit = defineEmits(['update:visible']);
 
@@ -14,12 +19,19 @@ const chat = useChatStore();
 const close = () => emit('update:visible', false);
 
 const confirmButtonText = computed(() => {
+  if (props.confirmText) {
+    return props.confirmText;
+  }
   return `我已知晓GM「${props.ownerNickname || '管理员'}」开启了此功能`;
 });
 
 const handleConfirm = async () => {
   try {
-    await chat.worldAckEditNotice(props.worldId);
+    if (props.noticeType === 'manageIdentity') {
+      await chat.worldAckManageIdentityNotice(props.worldId);
+    } else {
+      await chat.worldAckEditNotice(props.worldId);
+    }
     close();
   } catch (e) {
     console.error('确认编辑通知失败', e);
@@ -31,14 +43,14 @@ const handleConfirm = async () => {
   <n-modal
     :show="props.visible"
     preset="dialog"
-    title="管理员编辑权限提示"
+    :title="props.title || '管理员编辑权限提示'"
     :mask-closable="false"
     :closable="true"
     @update:show="close"
   >
     <div class="notice-content">
-      <p>该世界已开启"允许管理员编辑其他成员发言"功能。</p>
-      <p class="notice-sub">这意味着世界管理员可以编辑您发送的消息内容。</p>
+      <p>{{ props.content || '该世界已开启"允许管理员编辑其他成员发言"功能。' }}</p>
+      <p class="notice-sub">{{ props.secondaryText || '这意味着世界管理员可以编辑您发送的消息内容。' }}</p>
     </div>
     <template #action>
       <n-button type="primary" @click="handleConfirm">

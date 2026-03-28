@@ -6,6 +6,7 @@ import { useChatStore } from '@/stores/chat'
 interface Props {
   show: boolean
   channelId?: string
+  targetUserId?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -27,7 +28,7 @@ const oocRoleId = ref<string | null>(null)
 const identities = computed(() => {
   const id = localChannelId.value ||  props.channelId || chat.curChannel?.id || ''
   if (!id) return []
-  return chat.channelIdentities[id] || []
+  return chat.getScopedChannelIdentities(id, props.targetUserId)
 })
 
 const identityOptions = computed(() => {
@@ -48,8 +49,8 @@ watch(
       localChannelId.value = channelId
       if (channelId) {
         try {
-          await chat.loadChannelIdentities(channelId, false)
-          const config = chat.getChannelIcOocRoleConfig(channelId)
+          await chat.loadChannelIdentities(channelId, false, props.targetUserId)
+          const config = chat.getChannelIcOocRoleConfig(channelId, props.targetUserId)
           icRoleId.value = config.icRoleId
           oocRoleId.value = config.oocRoleId
         } catch (error) {
@@ -70,7 +71,7 @@ const handleSave = async () => {
     await chat.setChannelIcOocRoleConfig(localChannelId.value, {
       icRoleId: icRoleId.value,
       oocRoleId: oocRoleId.value,
-    })
+    }, props.targetUserId)
     emit('update:show', false)
   } catch (error: any) {
     console.error('保存场内场外角色映射失败', error)

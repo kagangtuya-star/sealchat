@@ -553,6 +553,23 @@ export interface ChannelIcOocRoleConfig {
   oocRoleId: string | null;
 }
 
+export interface ChannelIdentityManageCandidate {
+  userId: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  rank: number;
+  roleLabel: string;
+  isSelf: boolean;
+}
+
+export interface ChannelIdentityManageCandidatesResponse {
+  items: ChannelIdentityManageCandidate[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface CharacterCard {
   id: string;
   userId: string;

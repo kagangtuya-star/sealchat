@@ -12,6 +12,7 @@ import (
 
 type channelIdentityVariantPayload struct {
 	ChannelID          string         `json:"channelId"`
+	TargetUserID       string         `json:"targetUserId"`
 	IdentityID         string         `json:"identityId"`
 	SelectorEmoji      string         `json:"selectorEmoji"`
 	Keyword            string         `json:"keyword"`
@@ -52,15 +53,20 @@ func ChannelIdentityVariantList(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
 	identityID := strings.TrimSpace(c.Query("identityId"))
-	user := getCurUser(c)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
 	var (
 		items []*model.ChannelIdentityVariantModel
-		err   error
 	)
 	if identityID != "" {
-		items, err = model.ChannelIdentityVariantListByIdentityID(channelID, user.ID, identityID)
+		if _, err = model.ChannelIdentityValidateOwnership(identityID, ctx.TargetUserID, channelID); err != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		items, err = model.ChannelIdentityVariantListByIdentityID(channelID, ctx.TargetUserID, identityID)
 	} else {
-		items, err = service.ChannelIdentityVariantListByUser(channelID, user.ID)
+		items, err = service.ChannelIdentityVariantListByUser(channelID, ctx.TargetUserID)
 	}
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -77,8 +83,11 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityVariantCreate(user.ID, &service.ChannelIdentityVariantInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityVariantCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityVariantInput{
 		ChannelID:          payload.ChannelID,
 		IdentityID:         payload.IdentityID,
 		SelectorEmoji:      payload.SelectorEmoji,
@@ -105,8 +114,11 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityVariantUpdate(user.ID, variantID, &service.ChannelIdentityVariantInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityVariantUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, variantID, &service.ChannelIdentityVariantInput{
 		ChannelID:          payload.ChannelID,
 		IdentityID:         payload.IdentityID,
 		SelectorEmoji:      payload.SelectorEmoji,
@@ -133,8 +145,11 @@ func ChannelIdentityVariantDelete(c *fiber.Ctx) error {
 	if channelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	if err := service.ChannelIdentityVariantDelete(user.ID, channelID, variantID); err != nil {
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if err := service.ChannelIdentityVariantDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, variantID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"success": true})
@@ -142,18 +157,22 @@ func ChannelIdentityVariantDelete(c *fiber.Ctx) error {
 
 func ChannelIdentityVariantReorder(c *fiber.Ctx) error {
 	var payload struct {
-		ChannelID  string   `json:"channelId"`
-		IdentityID string   `json:"identityId"`
-		IDs        []string `json:"ids"`
+		ChannelID    string   `json:"channelId"`
+		TargetUserID string   `json:"targetUserId"`
+		IdentityID   string   `json:"identityId"`
+		IDs          []string `json:"ids"`
 	}
 	if err := c.BodyParser(&payload); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
 	}
-	user := getCurUser(c)
-	if err := service.ChannelIdentityVariantReorder(user.ID, payload.ChannelID, payload.IdentityID, payload.IDs); err != nil {
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if err := service.ChannelIdentityVariantReorderWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityID, payload.IDs); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	items, err := model.ChannelIdentityVariantListByIdentityID(payload.ChannelID, user.ID, payload.IdentityID)
+	items, err := model.ChannelIdentityVariantListByIdentityID(payload.ChannelID, ctx.TargetUserID, payload.IdentityID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

@@ -34,6 +34,7 @@ type WorldModel struct {
 	ObserverEnabled            bool    `json:"-" gorm:"default:false"`                         // 专属 OB 旁观链接启用状态
 	EnforceMembership          bool    `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
 	AllowAdminEditMessages     bool    `json:"allowAdminEditMessages" gorm:"default:false"`    // 允许管理员编辑成员发言
+	AllowManageOtherUserChannelIdentities bool `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
 	AllowMemberEditKeywords    bool    `json:"allowMemberEditKeywords" gorm:"default:false"`   // 允许成员编辑世界术语
 	StrictWhisperPrivacy       bool    `json:"strictWhisperPrivacy" gorm:"default:true"`       // 悄悄话严格保密：开启后管理员不可旁路查看
 	ChannelDefaultDiceMode     string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
@@ -77,6 +78,7 @@ type WorldMemberModel struct {
 	Role              string     `json:"role" gorm:"size:24;index"` // owner/admin/member
 	JoinedAt          time.Time  `json:"joinedAt"`
 	EditNoticeAckedAt *time.Time `json:"editNoticeAckedAt"` // 确认管理员编辑提示的时间
+	ManageIdentityNoticeAckedAt *time.Time `json:"manageIdentityNoticeAckedAt"` // 确认频道角色代管提示的时间
 }
 
 func (*WorldMemberModel) TableName() string {

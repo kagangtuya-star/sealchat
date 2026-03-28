@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -12,6 +13,7 @@ import (
 
 type channelIdentityPayload struct {
 	ChannelID          string   `json:"channelId"`
+	TargetUserID       string   `json:"targetUserId"`
 	DisplayName        string   `json:"displayName"`
 	Color              string   `json:"color"`
 	AvatarAttachmentID string   `json:"avatarAttachmentId"`
@@ -30,19 +32,22 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	result, err := service.ChannelIdentityListByUser(channelID, user.ID)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.ChannelIdentityListByUser(channelID, ctx.TargetUserID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	if err := service.ApplyTemporaryIdentityActivateModes(user.ID, result.Items); err != nil {
+	if err := service.ApplyTemporaryIdentityActivateModes(ctx.TargetUserID, result.Items); err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	config, err := model.ChannelIdentityModeConfigGet(user.ID, channelID)
+	config, err := model.ChannelIdentityModeConfigGet(ctx.TargetUserID, channelID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -70,8 +75,11 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityCreate(user.ID, &service.ChannelIdentityInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityInput{
 		ChannelID:          payload.ChannelID,
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
@@ -111,8 +119,11 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityUpdate(user.ID, identityID, &service.ChannelIdentityInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:          payload.ChannelID,
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
@@ -146,8 +157,11 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	if err := service.ChannelIdentityDelete(user.ID, channelID, identityID); err != nil {
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if err := service.ChannelIdentityDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, identityID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
@@ -175,8 +189,11 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	result, err := service.ChannelIdentityReplaceTemporary(user.ID, identityID, &service.ChannelIdentityInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.ChannelIdentityReplaceTemporaryWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:          payload.ChannelID,
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,

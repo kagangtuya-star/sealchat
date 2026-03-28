@@ -69,6 +69,10 @@ func ChannelIdentityFoldersValidateOwnership(channelID string, userID string, fo
 }
 
 func ChannelIdentityFolderCreate(userID string, input *ChannelIdentityFolderInput) (*model.ChannelIdentityFolderModel, error) {
+	return ChannelIdentityFolderCreateWithAccess(userID, userID, input)
+}
+
+func ChannelIdentityFolderCreateWithAccess(ownerUserID string, operatorUserID string, input *ChannelIdentityFolderInput) (*model.ChannelIdentityFolderModel, error) {
 	if input == nil {
 		return nil, errors.New("参数错误")
 	}
@@ -80,18 +84,14 @@ func ChannelIdentityFolderCreate(userID string, input *ChannelIdentityFolderInpu
 	if name == "" {
 		return nil, errors.New("文件夹名称不能为空")
 	}
-	member, err := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false)
-	if err != nil {
+	if err := ensureChannelIdentityOwnerAccessible(channelID, ownerUserID); err != nil {
 		return nil, err
-	}
-	if member == nil {
-		return nil, errors.New("仅频道成员可创建文件夹")
 	}
 	sortOrder := 0
 	if input.SortOrder != nil {
 		sortOrder = *input.SortOrder
 	} else {
-		maxSort, err := model.ChannelIdentityFolderMaxSort(channelID, userID)
+		maxSort, err := model.ChannelIdentityFolderMaxSort(channelID, ownerUserID)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +99,7 @@ func ChannelIdentityFolderCreate(userID string, input *ChannelIdentityFolderInpu
 	}
 	folder := &model.ChannelIdentityFolderModel{
 		ChannelID: channelID,
-		UserID:    userID,
+		UserID:    ownerUserID,
 		Name:      name,
 		SortOrder: sortOrder,
 	}
@@ -110,10 +110,14 @@ func ChannelIdentityFolderCreate(userID string, input *ChannelIdentityFolderInpu
 }
 
 func ChannelIdentityFolderUpdate(userID string, channelID string, folderID string, input *ChannelIdentityFolderInput) (*model.ChannelIdentityFolderModel, error) {
+	return ChannelIdentityFolderUpdateWithAccess(userID, userID, channelID, folderID, input)
+}
+
+func ChannelIdentityFolderUpdateWithAccess(ownerUserID string, operatorUserID string, channelID string, folderID string, input *ChannelIdentityFolderInput) (*model.ChannelIdentityFolderModel, error) {
 	if input == nil {
 		return nil, errors.New("参数错误")
 	}
-	folder, err := model.ChannelIdentityFolderEnsureOwnership(folderID, userID, channelID)
+	folder, err := model.ChannelIdentityFolderEnsureOwnership(folderID, ownerUserID, channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +139,11 @@ func ChannelIdentityFolderUpdate(userID string, channelID string, folderID strin
 }
 
 func ChannelIdentityFolderDelete(userID string, channelID string, folderID string) error {
-	if _, err := model.ChannelIdentityFolderEnsureOwnership(folderID, userID, channelID); err != nil {
+	return ChannelIdentityFolderDeleteWithAccess(userID, userID, channelID, folderID)
+}
+
+func ChannelIdentityFolderDeleteWithAccess(ownerUserID string, operatorUserID string, channelID string, folderID string) error {
+	if _, err := model.ChannelIdentityFolderEnsureOwnership(folderID, ownerUserID, channelID); err != nil {
 		return err
 	}
 	if err := model.ChannelIdentityFolderDelete(folderID); err != nil {
@@ -147,16 +155,24 @@ func ChannelIdentityFolderDelete(userID string, channelID string, folderID strin
 }
 
 func ChannelIdentityFolderToggleFavorite(userID string, channelID string, folderID string, favored bool) ([]string, error) {
-	if _, err := model.ChannelIdentityFolderEnsureOwnership(folderID, userID, channelID); err != nil {
+	return ChannelIdentityFolderToggleFavoriteWithAccess(userID, userID, channelID, folderID, favored)
+}
+
+func ChannelIdentityFolderToggleFavoriteWithAccess(ownerUserID string, operatorUserID string, channelID string, folderID string, favored bool) ([]string, error) {
+	if _, err := model.ChannelIdentityFolderEnsureOwnership(folderID, ownerUserID, channelID); err != nil {
 		return nil, err
 	}
-	if err := model.ChannelIdentityFolderFavoriteSet(channelID, userID, folderID, favored); err != nil {
+	if err := model.ChannelIdentityFolderFavoriteSet(channelID, ownerUserID, folderID, favored); err != nil {
 		return nil, err
 	}
-	return model.ChannelIdentityFolderFavoriteIDs(channelID, userID)
+	return model.ChannelIdentityFolderFavoriteIDs(channelID, ownerUserID)
 }
 
 func ChannelIdentityFolderAssign(userID string, channelID string, identityIDs []string, folderIDs []string, mode string) (map[string][]string, error) {
+	return ChannelIdentityFolderAssignWithAccess(userID, userID, channelID, identityIDs, folderIDs, mode)
+}
+
+func ChannelIdentityFolderAssignWithAccess(ownerUserID string, operatorUserID string, channelID string, identityIDs []string, folderIDs []string, mode string) (map[string][]string, error) {
 	ids := sanitizeIdentityIDs(identityIDs)
 	if len(ids) == 0 {
 		return nil, errors.New("请选择要操作的角色")
@@ -179,7 +195,7 @@ func ChannelIdentityFolderAssign(userID string, channelID string, identityIDs []
 		return nil, errors.New("无效的操作类型")
 	}
 
-	identities, err := model.ChannelIdentityListByIDs(channelID, userID, ids)
+	identities, err := model.ChannelIdentityListByIDs(channelID, ownerUserID, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +203,7 @@ func ChannelIdentityFolderAssign(userID string, channelID string, identityIDs []
 		return nil, errors.New("部分角色不存在或无权限访问")
 	}
 	if mode != "remove" {
-		if _, err := ChannelIdentityFoldersValidateOwnership(channelID, userID, normalizedFolders); err != nil {
+		if _, err := ChannelIdentityFoldersValidateOwnership(channelID, ownerUserID, normalizedFolders); err != nil {
 			return nil, err
 		}
 	}
@@ -203,7 +219,7 @@ func ChannelIdentityFolderAssign(userID string, channelID string, identityIDs []
 				for idx, folderID := range normalizedFolders {
 					records = append(records, &model.ChannelIdentityFolderMemberModel{
 						ChannelID:  channelID,
-						UserID:     userID,
+						UserID:     ownerUserID,
 						FolderID:   folderID,
 						IdentityID: identityID,
 						SortOrder:  idx,
@@ -220,7 +236,7 @@ func ChannelIdentityFolderAssign(userID string, channelID string, identityIDs []
 			for idx, folderID := range normalizedFolders {
 				records = append(records, &model.ChannelIdentityFolderMemberModel{
 					ChannelID:  channelID,
-					UserID:     userID,
+					UserID:     ownerUserID,
 					FolderID:   folderID,
 					IdentityID: identityID,
 					SortOrder:  idx,

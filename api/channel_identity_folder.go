@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -9,12 +10,15 @@ import (
 )
 
 func ChannelIdentityFolderList(c *fiber.Ctx) error {
-	channelID := c.Query("channelId")
+	channelID := strings.TrimSpace(c.Query("channelId"))
 	if channelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	result, err := service.ChannelIdentityListByUser(channelID, user.ID)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.ChannelIdentityListByUser(channelID, ctx.TargetUserID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -26,9 +30,10 @@ func ChannelIdentityFolderList(c *fiber.Ctx) error {
 }
 
 type channelIdentityFolderPayload struct {
-	ChannelID string `json:"channelId"`
-	Name      string `json:"name"`
-	SortOrder *int   `json:"sortOrder"`
+	ChannelID    string `json:"channelId"`
+	TargetUserID string `json:"targetUserId"`
+	Name         string `json:"name"`
+	SortOrder    *int   `json:"sortOrder"`
 }
 
 func ChannelIdentityFolderCreate(c *fiber.Ctx) error {
@@ -39,8 +44,11 @@ func ChannelIdentityFolderCreate(c *fiber.Ctx) error {
 	if payload.ChannelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	folder, err := service.ChannelIdentityFolderCreate(user.ID, &service.ChannelIdentityFolderInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	folder, err := service.ChannelIdentityFolderCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityFolderInput{
 		ChannelID: payload.ChannelID,
 		Name:      payload.Name,
 		SortOrder: payload.SortOrder,
@@ -63,8 +71,11 @@ func ChannelIdentityFolderUpdate(c *fiber.Ctx) error {
 	if payload.ChannelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	folder, err := service.ChannelIdentityFolderUpdate(user.ID, payload.ChannelID, folderID, &service.ChannelIdentityFolderInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	folder, err := service.ChannelIdentityFolderUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, folderID, &service.ChannelIdentityFolderInput{
 		ChannelID: payload.ChannelID,
 		Name:      payload.Name,
 		SortOrder: payload.SortOrder,
@@ -80,20 +91,24 @@ func ChannelIdentityFolderDelete(c *fiber.Ctx) error {
 	if folderID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "无效的文件夹ID"})
 	}
-	channelID := c.Query("channelId")
+	channelID := strings.TrimSpace(c.Query("channelId"))
 	if channelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	if err := service.ChannelIdentityFolderDelete(user.ID, channelID, folderID); err != nil {
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if err := service.ChannelIdentityFolderDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, folderID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"success": true})
 }
 
 type channelIdentityFolderFavoritePayload struct {
-	ChannelID string `json:"channelId"`
-	Favorite  bool   `json:"favorite"`
+	ChannelID    string `json:"channelId"`
+	TargetUserID string `json:"targetUserId"`
+	Favorite     bool   `json:"favorite"`
 }
 
 func ChannelIdentityFolderToggleFavorite(c *fiber.Ctx) error {
@@ -108,8 +123,11 @@ func ChannelIdentityFolderToggleFavorite(c *fiber.Ctx) error {
 	if payload.ChannelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	favorites, err := service.ChannelIdentityFolderToggleFavorite(user.ID, payload.ChannelID, folderID, payload.Favorite)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	favorites, err := service.ChannelIdentityFolderToggleFavoriteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, folderID, payload.Favorite)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -117,10 +135,11 @@ func ChannelIdentityFolderToggleFavorite(c *fiber.Ctx) error {
 }
 
 type channelIdentityFolderAssignPayload struct {
-	ChannelID   string   `json:"channelId"`
-	IdentityIDs []string `json:"identityIds"`
-	FolderIDs   []string `json:"folderIds"`
-	Mode        string   `json:"mode"`
+	ChannelID    string   `json:"channelId"`
+	TargetUserID string   `json:"targetUserId"`
+	IdentityIDs  []string `json:"identityIds"`
+	FolderIDs    []string `json:"folderIds"`
+	Mode         string   `json:"mode"`
 }
 
 func ChannelIdentityFolderAssign(c *fiber.Ctx) error {
@@ -131,8 +150,11 @@ func ChannelIdentityFolderAssign(c *fiber.Ctx) error {
 	if payload.ChannelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
 	}
-	user := getCurUser(c)
-	membership, err := service.ChannelIdentityFolderAssign(user.ID, payload.ChannelID, payload.IdentityIDs, payload.FolderIDs, payload.Mode)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	membership, err := service.ChannelIdentityFolderAssignWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityIDs, payload.FolderIDs, payload.Mode)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}

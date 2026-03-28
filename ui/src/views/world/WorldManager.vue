@@ -50,6 +50,7 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
       description: detail.world?.description,
       visibility: detail.world?.visibility,
       allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
+      allowManageOtherUserChannelIdentities: detail.world?.allowManageOtherUserChannelIdentities ?? false,
       allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
       strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
       channelDefaultDiceMode: detail.world?.channelDefaultDiceMode || 'builtin',
@@ -134,6 +135,10 @@ const confirmRemove = () => {
             <div class="manager-permission-row">
               <n-switch v-model:value="form.allowMemberEditKeywords" />
               <span class="manager-permission-text">允许成员编辑世界术语</span>
+            </div>
+            <div class="manager-permission-row">
+              <n-switch v-model:value="form.allowManageOtherUserChannelIdentities" />
+              <span class="manager-permission-text">允许管理其他用户频道角色</span>
             </div>
             <div class="manager-permission-row">
               <n-switch v-model:value="form.strictWhisperPrivacy" />

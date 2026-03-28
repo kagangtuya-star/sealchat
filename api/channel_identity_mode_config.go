@@ -10,8 +10,9 @@ import (
 )
 
 type channelIdentityModeConfigPayload struct {
-	ICRoleID  *string `json:"icRoleId"`
-	OOCRoleID *string `json:"oocRoleId"`
+	TargetUserID string  `json:"targetUserId"`
+	ICRoleID     *string `json:"icRoleId"`
+	OOCRoleID    *string `json:"oocRoleId"`
 }
 
 func serializeChannelIdentityModeConfig(config *model.ChannelIdentityModeConfigModel) fiber.Map {
@@ -51,30 +52,31 @@ func ChannelIdentityModeConfigUpsert(c *fiber.Ctx) error {
 	if channelID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "缺少频道ID"})
 	}
-	if _, err := resolveChannelAccess(user.ID, channelID); err != nil {
-		return handleChannelAccessErr(c, err)
-	}
 
 	var body channelIdentityModeConfigPayload
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请求参数错误"})
 	}
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, body.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
 
 	icRoleID := normalizeOptionalID(body.ICRoleID)
 	oocRoleID := normalizeOptionalID(body.OOCRoleID)
 	if icRoleID != "" {
-		if _, err := model.ChannelIdentityValidateOwnership(icRoleID, user.ID, channelID); err != nil {
+		if _, err := model.ChannelIdentityValidateOwnership(icRoleID, ctx.TargetUserID, channelID); err != nil {
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "场内角色不存在或不属于当前用户"})
 		}
 	}
 	if oocRoleID != "" {
-		if _, err := model.ChannelIdentityValidateOwnership(oocRoleID, user.ID, channelID); err != nil {
+		if _, err := model.ChannelIdentityValidateOwnership(oocRoleID, ctx.TargetUserID, channelID); err != nil {
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "场外角色不存在或不属于当前用户"})
 		}
 	}
 
 	if icRoleID == "" && oocRoleID == "" {
-		if err := model.ChannelIdentityModeConfigDelete(user.ID, channelID); err != nil {
+		if err := model.ChannelIdentityModeConfigDelete(ctx.TargetUserID, channelID); err != nil {
 			return wrapError(c, err, "保存场内场外角色映射失败")
 		}
 		return c.JSON(fiber.Map{
@@ -87,7 +89,7 @@ func ChannelIdentityModeConfigUpsert(c *fiber.Ctx) error {
 		})
 	}
 
-	record, err := model.ChannelIdentityModeConfigUpsert(user.ID, channelID, icRoleID, oocRoleID)
+	record, err := model.ChannelIdentityModeConfigUpsert(ctx.TargetUserID, channelID, icRoleID, oocRoleID)
 	if err != nil {
 		return wrapError(c, err, "保存场内场外角色映射失败")
 	}
