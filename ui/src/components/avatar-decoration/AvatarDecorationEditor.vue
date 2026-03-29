@@ -504,7 +504,7 @@ onBeforeUnmount(() => {
           <UserAvatarDecoration
             :src="avatarSrc"
             :size="68"
-            :border="true"
+            :border="false"
             :fallback-text="fallbackText || previewName || '频道角色'"
             :use-text-fallback="!avatarSrc"
             :decorations="normalizedDecorations"
