@@ -1458,7 +1458,11 @@ func AudioListScenes(channelScope string) ([]*model.AudioScene, error) {
 }
 
 func AudioListScenesWithFilters(filters AudioSceneFilters) ([]*model.AudioScene, error) {
-	q := model.GetDB().Order("`order`, created_at")
+	q := model.ApplyOrderBy(
+		model.GetDB(),
+		model.OrderField{Name: "order"},
+		model.OrderField{Name: "created_at"},
+	)
 	if filters.ChannelScope != "" {
 		q = q.Where("channel_scope = ?", filters.ChannelScope)
 	}

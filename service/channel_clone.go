@@ -759,7 +759,9 @@ func copyChannelStickyNotes(tx *gorm.DB, sourceID, targetID, targetWorldID strin
 func copyChannelGallery(tx *gorm.DB, sourceID, targetID string, summary *ChannelCopySummary) error {
 	var collections []model.GalleryCollection
 	if err := tx.Where("owner_type = ? AND owner_id = ?", model.OwnerTypeChannel, sourceID).
-		Order("`order`").Find(&collections).Error; err != nil {
+		Clauses(model.BuildOrderBy(
+			model.OrderField{Name: "order"},
+		)).Find(&collections).Error; err != nil {
 		return err
 	}
 	collectionMap := map[string]string{}
