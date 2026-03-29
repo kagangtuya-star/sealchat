@@ -35,3 +35,36 @@ export const findImageMarkerAtPosition = (
 
   return null;
 };
+
+export interface HybridPendingInputContext {
+  inputType: string;
+  data: string;
+  selectionStart: number;
+  selectionEnd: number;
+  previousValue: string;
+}
+
+export const normalizeCursorAfterTextInsertion = (
+  nextValue: string,
+  measuredCursor: number,
+  context: HybridPendingInputContext | null,
+): number => {
+  if (!context) {
+    return measuredCursor;
+  }
+
+  const { inputType, data, selectionStart, selectionEnd, previousValue } = context;
+  if (inputType !== 'insertText' || !data) {
+    return measuredCursor;
+  }
+
+  const start = Math.min(selectionStart, selectionEnd);
+  const end = Math.max(selectionStart, selectionEnd);
+  const expectedValue = `${previousValue.slice(0, start)}${data}${previousValue.slice(end)}`;
+  if (nextValue !== expectedValue) {
+    return measuredCursor;
+  }
+
+  const expectedCursor = start + data.length;
+  return measuredCursor < expectedCursor ? expectedCursor : measuredCursor;
+};

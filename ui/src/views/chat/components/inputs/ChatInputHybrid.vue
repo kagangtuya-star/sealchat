@@ -8,8 +8,10 @@ import {
   buildHybridCaretAnchorHtml,
   findImageMarkerAtPosition,
   HYBRID_INPUT_CARET_ANCHOR_CLASS,
+  normalizeCursorAfterTextInsertion,
 } from './chatInputHybridMarkers';
 import type { HybridImageMarkerInfo } from './chatInputHybridMarkers';
+import type { HybridPendingInputContext } from './chatInputHybridMarkers';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -65,6 +67,7 @@ const isComposing = ref(false);
 let latestInputRenderTaskId = 0;
 let latestCursorRestoreTaskId = 0;
 let hasDeferredExternalRender = false;
+let pendingInputContext: HybridPendingInputContext | null = null;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -1107,7 +1110,13 @@ const handleInput = (event?: InputEvent) => {
   }
 
   // 添加到历史记录
-  const cursorPosition = getCursorPosition();
+  const measuredCursorPosition = getCursorPosition();
+  const cursorPosition = normalizeCursorAfterTextInsertion(
+    text,
+    measuredCursorPosition,
+    pendingInputContext,
+  );
+  pendingInputContext = null;
   addToHistory(text, cursorPosition);
 
   // 标记为内部更新，避免触发重新渲染
@@ -1383,6 +1392,7 @@ const handlePaste = (event: ClipboardEvent) => {
 
   if (files.length > 0) {
     event.preventDefault();
+    pendingInputContext = null;
     const position = getCursorPosition();
     emit('paste-image', { files, selectionStart: position, selectionEnd: position });
     return;
@@ -1391,6 +1401,7 @@ const handlePaste = (event: ClipboardEvent) => {
   const plainText = clipboard.getData('text/plain') || clipboard.getData('text') || '';
   if (plainText) {
     event.preventDefault();
+    pendingInputContext = null;
     insertPlainTextAtCursor(plainText);
     handleInput();
   }
@@ -1431,6 +1442,14 @@ const handleBeforeInput = (event: InputEvent) => {
   if (props.disabled) {
     return;
   }
+  const selection = getSelectionRange();
+  pendingInputContext = {
+    inputType: event.inputType || '',
+    data: typeof event.data === 'string' ? event.data : '',
+    selectionStart: selection.start,
+    selectionEnd: selection.end,
+    previousValue: props.modelValue,
+  };
   const composing = event.isComposing || isComposing.value;
   if (composing) {
     return;
@@ -1546,11 +1565,13 @@ const handleBlur = (event: FocusEvent) => {
 
 const handleCompositionStart = () => {
   isComposing.value = true;
+  pendingInputContext = null;
   emit('composition-start');
 };
 
 const handleCompositionEnd = () => {
   isComposing.value = false;
+  pendingInputContext = null;
   emit('composition-end');
   nextTick(() => {
     syncDomToModel(true);
