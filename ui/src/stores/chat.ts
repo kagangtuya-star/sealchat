@@ -18,6 +18,7 @@ import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
+import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -5932,14 +5933,15 @@ export const useChatStore = defineStore({
 chatEvent.on('message-created-notice', (data: any) => {
   const chId = data.channelId;
   const chat = useChatStore();
-  // console.log('xx', chId, chat.channelTree, chat.channelTreePrivate);
-
-  if (chat.curChannel?.id === chId) {
-    return;
-  }
-
-  if (chat.channelTree.find(c => c.id === chId) || chat.channelTreePrivate.find(c => c.id === chId)) {
-    chat.unreadCountMap[chId] = (chat.unreadCountMap[chId] || 0) + 1;
+  const nextCount = resolveNextUnreadCountForMessageNotice({
+    channelId: chId,
+    currentChannelId: chat.curChannel?.id || '',
+    unreadCountMap: chat.unreadCountMap,
+    channelTree: chat.channelTree,
+    channelTreePrivate: chat.channelTreePrivate,
+  });
+  if (nextCount !== null) {
+    chat.setChannelUnreadCount(chId, nextCount);
   }
 });
 
