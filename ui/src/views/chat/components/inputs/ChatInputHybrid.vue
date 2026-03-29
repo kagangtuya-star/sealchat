@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import type { MentionOption } from 'naive-ui';
-import { nanoid } from 'nanoid';
 import { matchText } from '@/utils/pinyinMatch';
 import { useChatStore } from '@/stores/chat';
 import { isBotCommandLikeContent } from '@/utils/botCommand';
+import {
+  buildHybridCaretAnchorHtml,
+  findImageMarkerAtPosition,
+  HYBRID_INPUT_CARET_ANCHOR_CLASS,
+} from './chatInputHybridMarkers';
+import type { HybridImageMarkerInfo } from './chatInputHybridMarkers';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -59,6 +64,7 @@ const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更�
 const isComposing = ref(false);
 let latestInputRenderTaskId = 0;
 let latestCursorRestoreTaskId = 0;
+let hasDeferredExternalRender = false;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -98,7 +104,6 @@ const BLOCK_TAGS = new Set([
   'SECTION', 'ARTICLE', 'ASIDE', 'HEADER', 'FOOTER', 'NAV',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
 ]);
-const IMAGE_TOKEN_REGEX = /\[\[图片:([^\]]+)\]\]/g;
 const QUICK_INLINE_CODE_PATTERN = /`([^`\n]+)`/g;
 const QUICK_LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
@@ -299,6 +304,9 @@ const isImageElement = (node: Node): node is HTMLElement =>
 const isMentionElement = (node: Node): node is HTMLElement =>
   node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__mention');
 
+const isCaretAnchorElement = (node: Node): node is HTMLElement =>
+  node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains(HYBRID_INPUT_CARET_ANCHOR_CLASS);
+
 const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
   node.nodeType === Node.TEXT_NODE
   && node.textContent === ZERO_WIDTH_SPACE
@@ -320,6 +328,37 @@ const resolveEmptyLinePlaceholderPosition = (node: Node | null): { node: Node; o
       return { node: textNode, offset: Math.max(1, length) };
     }
   }
+  return null;
+};
+
+const resolveLeadingCaretPosition = (node: Node | null): { node: Node; offset: number } | null => {
+  let current: Node | null = node;
+  while (current) {
+    const placeholderPosition = resolveEmptyLinePlaceholderPosition(current);
+    if (placeholderPosition) {
+      return placeholderPosition;
+    }
+
+    if (current.nodeType === Node.TEXT_NODE) {
+      return { node: current, offset: 0 };
+    }
+
+    if (isCaretAnchorElement(current)) {
+      const textNode = current.firstChild;
+      if (textNode?.nodeType === Node.TEXT_NODE) {
+        const length = textNode.textContent?.length ?? 1;
+        return { node: textNode, offset: Math.max(1, length) };
+      }
+    }
+
+    if (current.nodeType === Node.ELEMENT_NODE && current.firstChild) {
+      current = current.firstChild;
+      continue;
+    }
+
+    current = current.nextSibling;
+  }
+
   return null;
 };
 
@@ -472,6 +511,10 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
     const index = Array.prototype.indexOf.call(parent.childNodes, node);
     if (position <= 0) {
       return { node: parent, offset: index };
+    }
+    const leadingCaretPosition = resolveLeadingCaretPosition(parent.childNodes[index + 1] ?? null);
+    if (leadingCaretPosition) {
+      return leadingCaretPosition;
     }
     return { node: parent, offset: index + 1 };
   }
@@ -694,6 +737,7 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
         html += `<button class="image-remove" data-marker-id="${fragment.markerId}">×</button>`;
         html += `</span>`;
+        html += buildHybridCaretAnchorHtml();
       }
     } else if (fragment.type === 'at' && fragment.atId) {
       // @提及节点 - 渲染为简单的 @名字 格式（不使用胶囊）
@@ -730,6 +774,39 @@ const escapeHtml = (text: string): string => {
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
 };
 
+const scheduleExternalRender = () => {
+  if (isComposing.value) {
+    hasDeferredExternalRender = true;
+    return;
+  }
+  renderContent(true);
+};
+
+const syncDomToModel = (preserveCursor = true) => {
+  if (!editorRef.value) {
+    return;
+  }
+  latestCursorRestoreTaskId++;
+  const text = extractContentWithLineBreaks();
+  const cursorPosition = getCursorPosition();
+  const needsDeferredExternalRender = hasDeferredExternalRender;
+  hasDeferredExternalRender = false;
+  isInternalUpdate.value = true;
+  emit('update:modelValue', text);
+  checkMentionTrigger(text, cursorPosition);
+  nextTick(() => {
+    isInternalUpdate.value = false;
+    renderContent(preserveCursor, text, cursorPosition);
+    if (needsDeferredExternalRender && !isComposing.value) {
+      nextTick(() => {
+        if (!isComposing.value) {
+          renderContent(true);
+        }
+      });
+    }
+  });
+};
+
 // 监听内容变化
 watch(() => props.modelValue, () => {
   // 如果是内部输入导致的更新，不重新渲染（避免光标丢失）
@@ -737,12 +814,12 @@ watch(() => props.modelValue, () => {
     return;
   }
   // 外部更新时保留光标位置（比如图片插入）
-  renderContent(true);
+  scheduleExternalRender();
 });
 
 // 监听图片变化（图片状态更新时保留光标）
 watch(() => props.inlineImages, () => {
-  renderContent(true);
+  scheduleExternalRender();
 }, { deep: true });
 
 // 添加历史记录（带去抖动）
@@ -826,11 +903,7 @@ const setCursorPosition = (position: number) => {
   setSelectionRange(position, position);
 };
 
-interface MarkerInfo {
-  markerId: string;
-  start: number;
-  end: number;
-}
+type MarkerInfo = HybridImageMarkerInfo;
 
 interface QuickFormatBoundaryDeleteResult {
   nextValue: string;
@@ -917,24 +990,7 @@ const deleteForwardAtSelection = (): boolean => {
 };
 
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
-  if (!props.modelValue || position < 0) {
-    return null;
-  }
-  const text = props.modelValue;
-  IMAGE_TOKEN_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = IMAGE_TOKEN_REGEX.exec(text)) !== null) {
-    const start = match.index;
-    const end = start + match[0].length;
-    if (position >= start && position <= end) {
-      return {
-        markerId: match[1],
-        start,
-        end,
-      };
-    }
-  }
-  return null;
+  return findImageMarkerAtPosition(props.modelValue, position);
 };
 
 const removeImageMarker = (marker: MarkerInfo) => {
@@ -1496,6 +1552,9 @@ const handleCompositionStart = () => {
 const handleCompositionEnd = () => {
   isComposing.value = false;
   emit('composition-end');
+  nextTick(() => {
+    syncDomToModel(true);
+  });
 };
 
 // 暴露方法
@@ -1715,6 +1774,14 @@ defineExpose({
 
 .empty-line {
   display: inline;
+}
+
+:deep(.hybrid-input__caret-anchor) {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: middle;
+  white-space: pre;
 }
 
 :deep(.hybrid-input__image) {
