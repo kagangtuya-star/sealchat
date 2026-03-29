@@ -4,29 +4,59 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"sync"
 	"testing"
 
 	"sealchat/model"
 	"sealchat/utils"
 )
 
-var testDBOnce sync.Once
-
 func initTestDB(t *testing.T) {
 	t.Helper()
-	testDBOnce.Do(func() {
-		cfg := &utils.AppConfig{
-			DSN: ":memory:",
-			SQLite: utils.SQLiteConfig{
-				EnableWAL:       false,
-				TxLockImmediate: false,
-				ReadConnections: 1,
-				OptimizeOnInit:  false,
-			},
-		}
-		model.DBInit(cfg)
-	})
+	cfg := &utils.AppConfig{
+		DSN: fmt.Sprintf("file:service-test-%s?mode=memory&cache=shared", utils.NewID()),
+		SQLite: utils.SQLiteConfig{
+			EnableWAL:       false,
+			TxLockImmediate: false,
+			ReadConnections: 1,
+			OptimizeOnInit:  false,
+		},
+	}
+	model.DBInit(cfg)
+}
+
+func TestInitTestDBResetsDatabaseState(t *testing.T) {
+	initTestDB(t)
+	db := model.GetDB()
+
+	userID := "reset-user-" + utils.NewID()
+	if err := db.Create(&model.UserModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: userID},
+		Username:          "reset_" + userID,
+		Nickname:          "Reset User",
+		Password:          "pw",
+		Salt:              "salt",
+	}).Error; err != nil {
+		t.Fatalf("create user failed: %v", err)
+	}
+
+	var beforeCount int64
+	if err := db.Model(&model.UserModel{}).Where("id = ?", userID).Count(&beforeCount).Error; err != nil {
+		t.Fatalf("count existing user failed: %v", err)
+	}
+	if beforeCount != 1 {
+		t.Fatalf("before reset user count=%d, want 1", beforeCount)
+	}
+
+	initTestDB(t)
+	db = model.GetDB()
+
+	var afterCount int64
+	if err := db.Model(&model.UserModel{}).Where("id = ?", userID).Count(&afterCount).Error; err != nil {
+		t.Fatalf("count user after reset failed: %v", err)
+	}
+	if afterCount != 0 {
+		t.Fatalf("after reset user count=%d, want 0", afterCount)
+	}
 }
 
 func TestSyncWorldChannelRolesMemberPublicOnly(t *testing.T) {
