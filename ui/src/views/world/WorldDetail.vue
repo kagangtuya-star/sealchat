@@ -3,6 +3,7 @@ import WorldInviteList from "./WorldInviteList.vue"
 import WorldManager from "./WorldManager.vue"
 import WorldMemberManager from "./WorldMemberManager.vue"
 import WorldObserverLinkCard from "./WorldObserverLinkCard.vue"
+import EmailNotificationManager from "@/views/split/components/EmailNotificationManager.vue"
 
 import { onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -141,6 +142,14 @@ const handleLeaveWorld = () => {
       <n-collapse v-model:expanded-names="obExpandedNames" arrow-placement="right">
         <n-collapse-item name="ob-link" title="OB旁观链接">
           <WorldObserverLinkCard :world-id="worldId" :can-manage="canManageWorld" />
+        </n-collapse-item>
+      </n-collapse>
+    </n-card>
+
+    <n-card v-if="canManageWorld" class="world-ob-card">
+      <n-collapse arrow-placement="right">
+        <n-collapse-item name="digest-push" title="世界未读提醒">
+          <EmailNotificationManager scope-type="world" :scope-id="worldId" />
         </n-collapse-item>
       </n-collapse>
     </n-card>

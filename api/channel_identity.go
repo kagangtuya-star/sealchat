@@ -2,20 +2,27 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
 type channelIdentityPayload struct {
-	ChannelID          string   `json:"channelId"`
-	DisplayName        string   `json:"displayName"`
-	Color              string   `json:"color"`
-	AvatarAttachmentID string   `json:"avatarAttachmentId"`
-	IsDefault          bool     `json:"isDefault"`
-	FolderIDs          []string `json:"folderIds"`
+	ChannelID          string                        `json:"channelId"`
+	TargetUserID       string                        `json:"targetUserId"`
+	DisplayName        string                        `json:"displayName"`
+	Color              string                        `json:"color"`
+	AvatarAttachmentID string                        `json:"avatarAttachmentId"`
+	AvatarDecoration   *protocol.AvatarDecoration    `json:"avatarDecoration"`
+	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations"`
+	IsDefault          bool                          `json:"isDefault"`
+	IsTemporary        bool                          `json:"isTemporary"`
+	ICOOCOnActivate    string                        `json:"icOocOnActivate"`
+	FolderIDs          []string                      `json:"folderIds"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -25,14 +32,22 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	result, err := service.ChannelIdentityListByUser(channelID, user.ID)
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.ChannelIdentityListByUser(channelID, ctx.TargetUserID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	config, err := model.ChannelIdentityModeConfigGet(user.ID, channelID)
+	if err := service.ApplyTemporaryIdentityActivateModes(ctx.TargetUserID, result.Items); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+	config, err := model.ChannelIdentityModeConfigGet(ctx.TargetUserID, channelID)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -60,13 +75,19 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityCreate(user.ID, &service.ChannelIdentityInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityInput{
 		ChannelID:          payload.ChannelID,
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:          payload.IsDefault,
+		IsTemporary:        payload.IsTemporary,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -74,6 +95,12 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-create",
+	})
 
 	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"item": item,
@@ -98,13 +125,19 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	item, err := service.ChannelIdentityUpdate(user.ID, identityID, &service.ChannelIdentityInput{
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:          payload.ChannelID,
 		DisplayName:        payload.DisplayName,
 		Color:              payload.Color,
 		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:          payload.IsDefault,
+		IsTemporary:        payload.IsTemporary,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
 		FolderIDs:          payload.FolderIDs,
 	})
 	if err != nil {
@@ -112,6 +145,12 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-update",
+	})
 	return c.JSON(fiber.Map{
 		"item": item,
 	})
@@ -130,13 +169,82 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 			"error": "缺少频道ID",
 		})
 	}
-	user := getCurUser(c)
-	if err := service.ChannelIdentityDelete(user.ID, channelID, identityID); err != nil {
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if err := service.ChannelIdentityDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, identityID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      channelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-delete",
+	})
 	return c.JSON(fiber.Map{
 		"success": true,
 	})
+}
+
+func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
+	identityID := c.Params("id")
+	if identityID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "无效的身份ID",
+		})
+	}
+	payload := channelIdentityPayload{}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+	if payload.ChannelID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "缺少频道ID",
+		})
+	}
+	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	result, err := service.ChannelIdentityReplaceTemporaryWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
+		ChannelID:          payload.ChannelID,
+		DisplayName:        payload.DisplayName,
+		Color:              payload.Color,
+		AvatarAttachmentID: payload.AvatarAttachmentID,
+		AvatarDecorations:  resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:          payload.IsDefault,
+		ICOOCOnActivate:    payload.ICOOCOnActivate,
+		FolderIDs:          payload.FolderIDs,
+	})
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+	broadcastChannelIdentityRefresh(channelIdentityRefreshPayload{
+		ChannelID:      payload.ChannelID,
+		TargetUserID:   ctx.TargetUserID,
+		OperatorUserID: ctx.OperatorUserID,
+		Reason:         "identity-replace-temporary",
+	})
+	return c.JSON(fiber.Map{
+		"item":          result.Item,
+		"oldIdentityId": result.OldIdentityID,
+		"removedId":     result.RemovedID,
+	})
+}
+
+func resolveChannelIdentityPayloadDecorations(payload channelIdentityPayload) protocol.AvatarDecorationList {
+	if len(payload.AvatarDecorations) > 0 {
+		return payload.AvatarDecorations
+	}
+	if payload.AvatarDecoration != nil {
+		return protocol.AvatarDecorationList{*payload.AvatarDecoration}
+	}
+	return nil
 }

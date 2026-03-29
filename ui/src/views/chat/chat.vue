@@ -3,8 +3,8 @@ import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat';
-import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
-import type { ChannelIdentity, ChannelIdentityFolder, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel } from '@/types'
+import type { Event, Message, User } from '@satorijs/protocol'
+import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
 import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
@@ -69,6 +69,8 @@ import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
+import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -79,6 +81,10 @@ import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
+import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
+import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
+import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
+import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
@@ -215,6 +221,8 @@ type ExternalPanelKey =
   | 'display'
   | 'favorites'
   | 'channel-images'
+  | 'world-glossary'
+  | 'world-announcement'
   | 'character-card'
   | 'sticky-note';
 
@@ -247,6 +255,15 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'channel-images':
       openChannelImagesPanel();
       return;
+    case 'world-glossary':
+      if (!chat.currentWorldId) return;
+      worldGlossary.ensureKeywords(chat.currentWorldId, { force: true });
+      worldGlossary.setManagerVisible(true);
+      return;
+    case 'world-announcement':
+      if (!chat.currentWorldId) return;
+      showWorldAnnouncementModal.value = true;
+      return;
     case 'character-card':
       openCharacterCardPanel();
       return;
@@ -274,7 +291,7 @@ const setCharacterCardVisible = (visible: boolean) => {
   openCharacterCardPanel();
 };
 
-const getStickyNoteVisible = () => stickyNoteStore.uiVisible.value;
+const getStickyNoteVisible = () => stickyNoteStore.uiVisible;
 
 const getCharacterCardVisible = () => characterCardPanelVisible.value;
 
@@ -294,7 +311,7 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     }
     return chat.icMode;
   },
-  set: (mode) => {
+  set: (mode: 'ic' | 'ooc') => {
     if (chat.editing) {
       chat.updateEditingIcMode(mode);
     } else {
@@ -329,9 +346,16 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
+const canManageWorldAnnouncements = computed(() => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const role = chat.worldDetailMap[worldId]?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
 
 const channelBackgroundStyle = computed(() => {
   const channel = chat.curChannel as SChannel | null;
@@ -393,6 +417,9 @@ const botOptionsLoading = ref(false);
 const botOptionsFetched = ref(false);
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  : false;
+const hasTouchPoints = typeof navigator !== 'undefined'
+  ? (navigator.maxTouchPoints || 0) > 0
   : false;
 const chatRootContainerRef = ref<HTMLElement | null>(null);
 const DICE_TRAY_EDGE_OVERLAY_CLASS = 'dice-tray-popover-edge';
@@ -1272,7 +1299,7 @@ const checkAvatarPromptOnMount = () => {
 
 watch(
   showActionRibbon,
-  () => {
+  (visible) => {
     syncActionRibbonState();
   },
   { immediate: true },
@@ -1705,12 +1732,48 @@ if (typeof window !== 'undefined') {
 const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
+const minimalInputActionsHostRef = ref<HTMLElement | null>(null);
+const minimalInputMeasureRef = ref<HTMLElement | null>(null);
+const minimalInputToolbarVisible = ref(false);
+const minimalInputMeasuredHeight = ref(0);
+let minimalInputMeasureObserver: ResizeObserver | null = null;
 const inputMode = ref<'plain' | 'rich'>('plain');
 const richContentCache = ref<string | null>(null);
 const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
-const isMobileWideInput = computed(() => wideInputMode.value && isMobileUa);
+const MINIMAL_INPUT_STACKED_THRESHOLD = 104;
+const MINIMAL_INPUT_WIDE_BUTTON_THRESHOLD = 128;
+const isMobileInteractionMode = computed(() => {
+  if (isMobileUa) {
+    return true;
+  }
+  const width = windowWidth.value;
+  return width > 0 && width <= 768 && isCoarsePointerDevice && hasTouchPoints;
+});
+const isMobileWideInput = computed(() => wideInputMode.value && isMobileInteractionMode.value);
+const isMobileMinimalInputActive = computed(() => (
+  display.settings.mobileMinimalInputEnabled
+  && isMobileInteractionMode.value
+  && !isMobileWideInput.value
+  && !isEmbedMode.value
+));
+const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
+  if (!isMobileMinimalInputActive.value || !minimalInputToolbarVisible.value) {
+    return null;
+  }
+  return minimalInputActionsHostRef.value;
+});
+const showMinimalStackedSideControls = computed(() => (
+  isMobileMinimalInputActive.value
+  && !isEditing.value
+  && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_STACKED_THRESHOLD
+));
+const showMinimalWideInputShortcut = computed(() => (
+  showMinimalStackedSideControls.value
+  && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_WIDE_BUTTON_THRESHOLD
+));
 const inputAreaHeightPreview = ref<number | null>(null);
+const inputAreaHeightBeforeWideMode = ref<number | null>(null);
 const customInputHeight = computed(() => (
   inputAreaHeightPreview.value !== null
     ? inputAreaHeightPreview.value
@@ -1731,12 +1794,22 @@ const chatInputStyle = computed(() => {
 });
 const wideInputTooltip = computed(() => (wideInputMode.value ? '退出广域输入模式' : '进入广域输入模式'));
 const toggleWideInputMode = () => {
-  wideInputMode.value = !wideInputMode.value;
-  // 切换广域模式时清除自定义高度，回到默认的两种高度
-  if (customInputHeight.value > 0) {
-    display.updateSettings({ inputAreaHeight: 0 });
-    inputAreaHeightPreview.value = null;
+  const nextWideInputMode = !wideInputMode.value;
+  if (nextWideInputMode) {
+    inputAreaHeightBeforeWideMode.value = customInputHeight.value > 0 ? customInputHeight.value : null;
+    // 进入广域模式时隐藏用户自定义高度，回到广域预设高度
+    if (customInputHeight.value > 0) {
+      display.updateSettings({ inputAreaHeight: 0 });
+      inputAreaHeightPreview.value = null;
+    }
+  } else {
+    const savedHeight = inputAreaHeightBeforeWideMode.value;
+    if (customInputHeight.value <= 0 && savedHeight && savedHeight > 0) {
+      display.updateSettings({ inputAreaHeight: savedHeight });
+    }
+    inputAreaHeightBeforeWideMode.value = null;
   }
+  wideInputMode.value = nextWideInputMode;
   nextTick(() => {
     textInputRef.value?.focus?.();
     updateWideInputViewportHeight();
@@ -1756,6 +1829,11 @@ const updateWideInputViewportHeight = () => {
   document.documentElement.style.setProperty('--wide-input-height', `${Math.round(height)}px`);
 };
 
+const measureMinimalInputHeight = () => {
+  const el = minimalInputMeasureRef.value;
+  minimalInputMeasuredHeight.value = el ? Math.round(el.getBoundingClientRect().height) : 0;
+};
+
 if (typeof window !== 'undefined') {
   useEventListener(window, 'resize', updateWideInputViewportHeight);
   useEventListener(window, 'orientationchange', updateWideInputViewportHeight);
@@ -1768,9 +1846,34 @@ watch(isMobileWideInput, () => {
   updateWideInputViewportHeight();
 }, { immediate: true });
 
+watch(minimalInputMeasureRef, (el, prevEl) => {
+  if (minimalInputMeasureObserver && prevEl) {
+    minimalInputMeasureObserver.unobserve(prevEl);
+  }
+  if (!el || typeof ResizeObserver === 'undefined') {
+    if (!el) {
+      minimalInputMeasuredHeight.value = 0;
+    }
+    return;
+  }
+  if (!minimalInputMeasureObserver) {
+    minimalInputMeasureObserver = new ResizeObserver(() => {
+      measureMinimalInputHeight();
+    });
+  }
+  minimalInputMeasureObserver.observe(el);
+  nextTick(() => {
+    measureMinimalInputHeight();
+  });
+}, { flush: 'post' });
+
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.documentElement.style.removeProperty('--wide-input-height');
+  }
+  if (minimalInputMeasureObserver) {
+    minimalInputMeasureObserver.disconnect();
+    minimalInputMeasureObserver = null;
   }
 });
 
@@ -1861,6 +1964,7 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
   if (exitWideInput) {
+    inputAreaHeightBeforeWideMode.value = null;
     if (finalHeight !== display.settings.inputAreaHeight) {
       display.updateSettings({ inputAreaHeight: finalHeight });
     }
@@ -1873,6 +1977,9 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
     });
     return;
   }
+  if (wideInputMode.value && finalHeight !== display.settings.inputAreaHeight) {
+    inputAreaHeightBeforeWideMode.value = null;
+  }
   if (finalHeight !== display.settings.inputAreaHeight) {
     display.updateSettings({ inputAreaHeight: finalHeight });
   }
@@ -1880,6 +1987,9 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
 
 const handleInputResizeReset = () => {
   inputAreaHeightPreview.value = null;
+  if (wideInputMode.value) {
+    inputAreaHeightBeforeWideMode.value = null;
+  }
   display.updateSettings({ inputAreaHeight: 0 });
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
@@ -2373,9 +2483,19 @@ type IdentityAppearancePreview = {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  avatarDecorations?: AvatarDecoration[] | null;
+  isTemporary: boolean;
 };
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const cloneAvatarDecorations = (
+  value?: AvatarDecoration[] | AvatarDecoration | null,
+  legacyValue?: AvatarDecoration | null,
+): AvatarDecoration[] => normalizeAvatarDecorations(value, legacyValue).map(item => ({
+  ...item,
+  settings: item.settings ? { ...item.settings } : undefined,
+}))
 
 const resolveIdentityShortcutMatch = (
   rawDraft: string,
@@ -2539,20 +2659,27 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
     displayName: variant?.displayName || identity.displayName || '',
     color: variant?.color || identity.color || '',
     avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
+    avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
+    isTemporary: Boolean(identity.isTemporary),
   };
 };
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
+const identityDecorationEditorVisible = ref(false);
 const identityForm = reactive({
   displayName: '',
   color: '',
   avatarAttachmentId: '',
+  avatarDecorations: [] as AvatarDecoration[],
   isDefault: false,
+  isTemporary: false,
+  icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
 });
+const identityColorDraft = ref('');
 const identityOriginalCardId = ref('');
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
@@ -2573,22 +2700,67 @@ const identityVariantForm = reactive({
   color: '',
   enabled: true,
 });
+const identityVariantColorDraft = ref('');
 const identityVariantAvatarPreview = ref('');
 const identityVariantAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityVariantAvatarEditorVisible = ref(false);
 const identityVariantAvatarEditorFile = ref<File | null>(null);
-const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curChannel?.id || ''] || []);
+const identityManageTargetUserId = ref('');
+const identityManageTargetLabel = ref('');
+const identityManageTargetRoleLabel = ref('');
+const identityManageCandidateModalVisible = ref(false);
+const identityManageCandidateKeyword = ref('');
+const identityManageCandidates = ref<ChannelIdentityManageCandidate[]>([]);
+const identityManageCandidatesLoading = ref(false);
+const identityManageCandidateSelectedUserId = ref<string | null>(null);
+const currentIdentityTargetUserId = computed(() => identityManageTargetUserId.value || user.info.id || '');
+const isManagingOtherUserIdentity = computed(() => (
+  !!identityManageTargetUserId.value && identityManageTargetUserId.value !== (user.info.id || '')
+));
+const currentManagedIdentityLabel = computed(() => {
+  if (!isManagingOtherUserIdentity.value) {
+    return user.info.nick || user.info.username || '自己';
+  }
+  return identityManageTargetLabel.value || identityManageTargetUserId.value;
+});
+const currentChannelIdentities = computed(() => (
+  chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
 const currentEditingIdentityVariants = computed(() => {
   const channelId = chat.curChannel?.id || '';
   const identityId = editingIdentity.value?.id || '';
   if (!channelId || !identityId) {
     return [] as ChannelIdentityVariant[];
   }
-  return chat.getIdentityVariants(channelId, identityId);
+  return chat.getIdentityVariants(channelId, identityId, currentIdentityTargetUserId.value);
 });
-const identityFolders = computed(() => chat.channelIdentityFolders[chat.curChannel?.id || ''] || []);
-const identityFavoriteFolderIds = computed(() => chat.channelIdentityFavorites[chat.curChannel?.id || ''] || []);
-const identityFolderMembership = computed<Record<string, string[]>>(() => chat.channelIdentityMembership[chat.curChannel?.id || ''] || {});
+const identityFolders = computed(() => (
+  chat.getScopedChannelIdentityFolders(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const identityFavoriteFolderIds = computed(() => (
+  chat.getScopedChannelIdentityFavorites(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const identityFolderMembership = computed<Record<string, string[]>>(() => (
+  chat.getScopedChannelIdentityMembership(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
+const identityDialogTitle = computed(() => {
+  if (identityDialogMode.value === 'create') {
+    return '创建频道角色';
+  }
+  return isEditingTemporaryIdentity.value ? '编辑临时频道角色' : '编辑频道角色';
+});
+const identityDialogSubmitText = computed(() => (
+  isEditingTemporaryIdentity.value ? '保存并生成新身份' : '保存'
+));
+const identityTemporaryHint = computed(() => (
+  isEditingTemporaryIdentity.value
+    ? '改名会生成新的频道角色 ID，历史消息保留旧身份；头像差分与已绑人物卡不会自动迁移。'
+    : ''
+));
+const temporaryIdentityActivateModeLabel = computed(() => (
+  identityForm.icOocOnActivate === 'ooc' ? '场外' : '场内'
+));
 const activeIdentityFolderId = ref<'all' | 'favorites' | 'ungrouped' | string>('all');
 const identitySelection = ref<string[]>([]);
 const folderActionTarget = ref<string[]>([]);
@@ -2731,7 +2903,7 @@ const toggleFolderFavorite = async (folder: ChannelIdentityFolder, next: boolean
     return;
   }
   try {
-    await chat.toggleChannelIdentityFolderFavorite(folder.id, chat.curChannel.id, next);
+    await chat.toggleChannelIdentityFolderFavorite(folder.id, chat.curChannel.id, next, currentIdentityTargetUserId.value);
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
     message.error(errMsg);
@@ -2758,10 +2930,10 @@ const submitFolderDialog = async () => {
   folderSubmitting.value = true;
   try {
     if (folderDialogMode.value === 'create') {
-      await chat.createChannelIdentityFolder(chat.curChannel.id, name);
+      await chat.createChannelIdentityFolder(chat.curChannel.id, name, undefined, currentIdentityTargetUserId.value);
       message.success('文件夹已创建');
     } else if (editingFolder.value) {
-      await chat.updateChannelIdentityFolder(editingFolder.value.id, chat.curChannel.id, { name });
+      await chat.updateChannelIdentityFolder(editingFolder.value.id, chat.curChannel.id, { name, targetUserId: currentIdentityTargetUserId.value });
       message.success('文件夹已更新');
     }
     folderDialogVisible.value = false;
@@ -2787,7 +2959,7 @@ const handleFolderAction = async (folder: ChannelIdentityFolder, key: string | n
       return;
     }
     try {
-      await chat.deleteChannelIdentityFolder(folder.id, chat.curChannel.id);
+      await chat.deleteChannelIdentityFolder(folder.id, chat.curChannel.id, currentIdentityTargetUserId.value);
       message.success('文件夹已删除');
     } catch (error: any) {
       const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
@@ -2844,7 +3016,7 @@ const handleIdentityFolderAssign = async (mode: 'append' | 'replace' | 'remove')
   }
   try {
     folderAssigning.value = true;
-    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, folderActionTarget.value, mode);
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, folderActionTarget.value, mode, currentIdentityTargetUserId.value);
     message.success('角色分组已更新');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
@@ -2860,7 +3032,7 @@ const handleIdentityFolderClear = async () => {
   }
   try {
     folderAssigning.value = true;
-    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, [], 'replace');
+    await chat.assignIdentitiesToFolders(chat.curChannel.id, identitySelection.value, [], 'replace', currentIdentityTargetUserId.value);
     message.success('已移除所选角色的所有文件夹');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '操作失败，请稍后重试';
@@ -2886,14 +3058,31 @@ watch(() => chat.curChannel?.id, () => {
   activeIdentityFolderId.value = 'all';
   identitySelection.value = [];
   folderActionTarget.value = [];
+  resetIdentityManageTarget();
+});
+
+watch(() => chat.currentWorldId, () => {
+  resetIdentityManageTarget();
 });
 
 watch(identityManageVisible, (visible) => {
   if (!visible) {
     identitySelection.value = [];
     folderActionTarget.value = [];
+    resetIdentityManageTarget();
   }
 });
+
+watch(identityManageCandidateKeyword, useDebounceFn(async (value: string) => {
+  if (!identityManageCandidateModalVisible.value) {
+    return;
+  }
+  try {
+    await loadIdentityManageCandidates(value);
+  } catch (error) {
+    console.warn('加载代管候选用户失败', error);
+  }
+}, 250));
 
 watch(identityDialogVisible, (visible) => {
   if (!visible) {
@@ -2984,6 +3173,88 @@ const canManageIdentities = () => {
   const role = detail?.memberRole;
   // 只有 owner、admin、member 可以触发同步弹窗
   return role === 'owner' || role === 'admin' || role === 'member';
+};
+
+const canManageOtherUserIdentities = computed(() => {
+  if (isInObserverMode()) return false;
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  const enabled = detail?.allowManageOtherUserChannelIdentities || detail?.world?.allowManageOtherUserChannelIdentities;
+  if (!enabled) return false;
+  return Boolean(detail?.memberRole);
+});
+
+const resetIdentityManageTarget = () => {
+  identityManageTargetUserId.value = '';
+  identityManageTargetLabel.value = '';
+  identityManageTargetRoleLabel.value = '';
+  identityManageCandidateSelectedUserId.value = null;
+  identityManageCandidateKeyword.value = '';
+  identityManageCandidates.value = [];
+};
+
+const loadIdentityManageCandidates = async (keyword = '') => {
+  if (!chat.curChannel?.id) {
+    identityManageCandidates.value = [];
+    return;
+  }
+  identityManageCandidatesLoading.value = true;
+  try {
+    const resp = await chat.channelIdentityManageCandidates(chat.curChannel.id, {
+      keyword,
+      page: 1,
+      pageSize: 50,
+    });
+    identityManageCandidates.value = resp.items || [];
+  } finally {
+    identityManageCandidatesLoading.value = false;
+  }
+};
+
+const openIdentityManageUserDialog = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!canManageOtherUserIdentities.value) {
+    message.warning('当前世界未开启该功能或你没有可管理的目标');
+    return;
+  }
+  identityManageCandidateSelectedUserId.value = currentIdentityTargetUserId.value || user.info.id || null;
+  identityManageCandidateKeyword.value = '';
+  identityManageCandidateModalVisible.value = true;
+  try {
+    await loadIdentityManageCandidates('');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '加载候选用户失败');
+  }
+};
+
+const confirmIdentityManageUser = async () => {
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  const targetUserId = identityManageCandidateSelectedUserId.value || '';
+  if (!targetUserId) {
+    message.warning('请选择用户');
+    return;
+  }
+  const selected = identityManageCandidates.value.find(item => item.userId === targetUserId);
+  identityManageTargetUserId.value = targetUserId === (user.info.id || '') ? '' : targetUserId;
+  identityManageTargetLabel.value = selected?.nickname || selected?.username || targetUserId;
+  identityManageTargetRoleLabel.value = selected?.roleLabel || '';
+  identityManageCandidateModalVisible.value = false;
+  await chat.loadChannelIdentities(chat.curChannel.id, true, identityManageTargetUserId.value || undefined);
+  identityManageVisible.value = true;
+};
+
+const exitIdentityManageUserMode = async () => {
+  const channelId = chat.curChannel?.id;
+  resetIdentityManageTarget();
+  if (channelId) {
+    await chat.loadChannelIdentities(channelId, false);
+  }
 };
 
 const maybePromptIdentitySync = async () => {
@@ -3124,7 +3395,7 @@ const handleIdentityExport = async () => {
   const membershipMap = identityFolderMembership.value;
   const folderList = identityFolders.value;
   const favoriteSet = new Set(identityFavoriteFolderIds.value);
-  const icOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id);
+  const scopedIcOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id, currentIdentityTargetUserId.value);
   identityExporting.value = true;
   try {
     const items: IdentityExportItem[] = [];
@@ -3181,10 +3452,10 @@ const handleIdentityExport = async () => {
         sortOrder: folder.sortOrder,
         isFavorite: favoriteSet.has(folder.id),
       })),
-      icOocConfig: icOocConfig.icRoleId || icOocConfig.oocRoleId
+      icOocConfig: scopedIcOocConfig.icRoleId || scopedIcOocConfig.oocRoleId
         ? {
-            icRoleId: icOocConfig.icRoleId,
-            oocRoleId: icOocConfig.oocRoleId,
+            icRoleId: scopedIcOocConfig.icRoleId,
+            oocRoleId: scopedIcOocConfig.oocRoleId,
           }
         : undefined,
     };
@@ -3299,12 +3570,12 @@ const handleIdentityImportChange = async (event: Event) => {
       for (const folder of sortedFolders) {
         if (!folder?.name) continue;
         try {
-          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder);
+          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
           if (folder.sourceId) {
             folderIdMap.set(folder.sourceId, created.id);
           }
           if (folder.isFavorite) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true);
+            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true, currentIdentityTargetUserId.value);
           }
         } catch (error) {
           console.warn('导入文件夹失败', error);
@@ -3321,9 +3592,11 @@ const handleIdentityImportChange = async (event: Event) => {
           .filter((id): id is string => !!id);
         const created = await chat.channelIdentityCreate({
           channelId: chat.curChannel.id,
+          targetUserId: currentIdentityTargetUserId.value,
           displayName: item.displayName || '',
           color: item.color || '',
           avatarAttachmentId: avatarId,
+          avatarDecorations: [],
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -3343,11 +3616,11 @@ const handleIdentityImportChange = async (event: Event) => {
         oocRoleId: importedConfig.oocRoleId ? (identityIdMap.get(importedConfig.oocRoleId) || null) : null,
       };
       if (mappedConfig.icRoleId || mappedConfig.oocRoleId) {
-        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig);
+        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig, currentIdentityTargetUserId.value);
       }
     }
 
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     if (successCount > 0) {
       message.success(`成功导入 ${successCount} 个频道角色`);
     } else {
@@ -3396,7 +3669,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
 
   identitySyncing.value = true;
   try {
-    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true);
+    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true, currentIdentityTargetUserId.value);
     const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
 
     if (!sourceList.length) {
@@ -3404,7 +3677,7 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return;
     }
 
-    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
+    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
     const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
     const normalizeIdentityName = (name: string) => name.trim().toLowerCase();
     const targetIdentityByName = new Map<string, (typeof targetList)[number]>();
@@ -3419,9 +3692,9 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       targetIdentityByName.set(key, identity);
     }
 
-    const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
-    const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
-    const sourceMembership = chat.channelIdentityMembership[sourceChannelId] || {};
+    const sourceFolders = chat.getScopedChannelIdentityFolders(sourceChannelId, currentIdentityTargetUserId.value);
+    const sourceFavorites = new Set(chat.getScopedChannelIdentityFavorites(sourceChannelId, currentIdentityTargetUserId.value));
+    const sourceMembership = chat.getScopedChannelIdentityMembership(sourceChannelId, currentIdentityTargetUserId.value);
     const folderIdMap = new Map<string, string>();
 
     if (sourceFolders.length > 0) {
@@ -3431,12 +3704,12 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       for (const folder of sortedFolders) {
         if (!folder?.name) continue;
         try {
-          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder);
+          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
           if (folder.id) {
             folderIdMap.set(folder.id, created.id);
           }
           if (folder.id && sourceFavorites.has(folder.id)) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true);
+            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true, currentIdentityTargetUserId.value);
           }
         } catch (error) {
           console.warn('同步文件夹失败', error);
@@ -3482,9 +3755,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
           }
           const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
             channelId: targetChannelId,
+            targetUserId: currentIdentityTargetUserId.value,
             displayName,
             color: identity.color || '',
             avatarAttachmentId: avatarId,
+            avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
             isDefault: !!identity.isDefault,
             folderIds: mappedFolderIds,
           });
@@ -3496,9 +3771,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         }
         const created = await chat.channelIdentityCreate({
           channelId: targetChannelId,
+          targetUserId: currentIdentityTargetUserId.value,
           displayName,
           color: identity.color || '',
           avatarAttachmentId: avatarId,
+          avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
           isDefault: !!identity.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -3524,8 +3801,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return processedIdentityByName.get(nameKey) || targetIdentityByName.get(nameKey)?.id || null;
     };
 
-    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
-    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId);
+    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId, currentIdentityTargetUserId.value);
+    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId, currentIdentityTargetUserId.value);
     const mappedIcRoleId = resolveMappedIdentityId(sourceConfig.icRoleId);
     const mappedOocRoleId = resolveMappedIdentityId(sourceConfig.oocRoleId);
     let nextIcRoleId = targetConfig.icRoleId;
@@ -3548,10 +3825,10 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       await chat.setChannelIcOocRoleConfig(targetChannelId, {
         icRoleId: nextIcRoleId,
         oocRoleId: nextOocRoleId,
-      });
+      }, currentIdentityTargetUserId.value);
     }
 
-    await chat.loadChannelIdentities(targetChannelId, true);
+    await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
     identitySyncDialogVisible.value = false;
 
     const syncedCount = createdCount + updatedCount;
@@ -3597,127 +3874,103 @@ const normalizeHexColor = (value: string) => {
   return color;
 };
 
+const normalizeColorDraftText = (value: string) => String(value || '').trim().toLowerCase();
+
+const commitIdentityColorDraft = (showWarning = true) => {
+  const draft = normalizeColorDraftText(identityColorDraft.value);
+  if (!draft) {
+    identityForm.color = '';
+    identityColorDraft.value = '';
+    return true;
+  }
+  const normalized = normalizeHexColor(draft);
+  if (!normalized) {
+    if (showWarning) {
+      message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    }
+    return false;
+  }
+  identityForm.color = normalized;
+  identityColorDraft.value = normalized;
+  return true;
+};
+
+const commitIdentityVariantColorDraft = (showWarning = true) => {
+  const draft = normalizeColorDraftText(identityVariantColorDraft.value);
+  if (!draft) {
+    identityVariantForm.color = '';
+    identityVariantColorDraft.value = '';
+    return true;
+  }
+  const normalized = normalizeHexColor(draft);
+  if (!normalized) {
+    if (showWarning) {
+      message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+    }
+    return false;
+  }
+  identityVariantForm.color = normalized;
+  identityVariantColorDraft.value = normalized;
+  return true;
+};
+
 const applyIdentityAppearanceToMessages = (identity: ChannelIdentity) => {
   if (!identity || identity.channelId !== chat.curChannel?.id) {
     return;
   }
-  const normalizedColor = normalizeHexColor(identity.color || '');
-  const avatarAttachment = identity.avatarAttachmentId || '';
-  const displayName = identity.displayName || '';
-  let updated = false;
-  for (const msg of rows.value) {
-    const senderIdentityId = (msg as any).sender_identity_id;
-    if (senderIdentityId === identity.id) {
-      if (displayName) {
-        msg.sender_member_name = displayName;
-        (msg as any).sender_identity_name = displayName;
-      }
-      (msg as any).sender_identity_color = normalizedColor;
-      (msg as any).sender_identity_avatar_id = avatarAttachment;
-      if (!msg.identity) {
-        msg.identity = {
-          id: identity.id,
-          displayName,
-          color: normalizedColor,
-          avatarAttachment,
-        } as any;
-      }
-      updated = true;
-    }
-    if (msg.identity?.id === identity.id) {
-      msg.identity.displayName = displayName;
-      msg.identity.color = normalizedColor;
-      msg.identity.avatarAttachment = avatarAttachment;
-      updated = true;
-    }
-    if (msg.quote?.identity?.id === identity.id) {
-      msg.quote.identity.displayName = displayName;
-      msg.quote.identity.color = normalizedColor;
-      msg.quote.identity.avatarAttachment = avatarAttachment;
-      updated = true;
-    }
-    if ((msg.quote as any)?.sender_identity_id === identity.id) {
-      (msg.quote as any).sender_identity_color = normalizedColor;
-      (msg.quote as any).sender_identity_avatar_id = avatarAttachment;
-      if (displayName) {
-        msg.quote.sender_member_name = displayName;
-      }
-      updated = true;
-    }
+  if (chat.getActiveIdentityId(identity.channelId) !== identity.id) {
+    return;
   }
+  const appearance = resolveIdentityAppearancePreview(identity, null);
   typingPreviewList.value = typingPreviewList.value.map((item) => {
     if (item.userId === user.info.id) {
       return {
         ...item,
-        displayName: displayName || item.displayName,
+        displayName: appearance?.displayName || item.displayName,
+        color: appearance?.color || item.color,
+        avatar: appearance?.avatarAttachmentId
+          ? resolveAttachmentUrl(appearance.avatarAttachmentId)
+          : (appearance?.isTemporary ? '' : (chat.curMember?.avatar || user.info.avatar || item.avatar)),
+        avatarDecorations: cloneAvatarDecorations(appearance?.avatarDecorations),
+        isTemporary: Boolean(appearance?.isTemporary),
       };
     }
     return item;
   });
-  if (updated) {
-    rows.value = [...rows.value];
-  }
 };
 
-const clearRemovedIdentityFromMessages = (identityId: string) => {
-  let updated = false;
-  for (const msg of rows.value) {
-    if ((msg as any).sender_identity_id === identityId) {
-      const fallbackName = msg.member?.nick || msg.user?.nick || msg.user?.name || msg.sender_member_name;
-      msg.sender_member_name = fallbackName;
-      delete (msg as any).sender_identity_id;
-      delete (msg as any).sender_identity_name;
-      delete (msg as any).sender_identity_color;
-      delete (msg as any).sender_identity_avatar_id;
-      if (msg.identity?.id === identityId) {
-        msg.identity = undefined;
-      }
-      updated = true;
-    } else if (msg.identity?.id === identityId) {
-      msg.identity = undefined;
-      updated = true;
-    }
-    if (msg.quote?.identity?.id === identityId) {
-      msg.quote.identity = undefined;
-      updated = true;
-    }
-    if ((msg.quote as any)?.sender_identity_id === identityId) {
-      const fallbackQuoteName = msg.quote?.member?.nick || msg.quote?.user?.nick || msg.quote?.user?.name || msg.quote?.sender_member_name;
-      if (msg.quote) {
-        msg.quote.sender_member_name = fallbackQuoteName;
-      }
-      delete (msg.quote as any)?.sender_identity_id;
-      delete (msg.quote as any)?.sender_identity_name;
-      delete (msg.quote as any)?.sender_identity_color;
-      delete (msg.quote as any)?.sender_identity_avatar_id;
-      updated = true;
-    }
-  }
-  typingPreviewList.value = typingPreviewList.value.map((item) => {
-    if (item.userId === user.info.id) {
-      return {
-        ...item,
-        displayName: chat.curMember?.nick || user.info.nick || item.displayName,
-      };
-    }
-    return item;
-  });
-  if (updated) {
-    rows.value = [...rows.value];
-  }
+const clearRemovedIdentityFromMessages = (_identityId: string) => {
+  // 历史消息以消息快照为准，删除 live identity 时不再擦除 sender_identity_* 数据。
 };
 
 const handleIdentityColorBlur = () => {
-  if (!identityForm.color) {
-    return;
-  }
-  const normalized = normalizeHexColor(identityForm.color);
-  if (!normalized) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
-    identityForm.color = '';
-    return;
-  }
+  commitIdentityColorDraft(true);
+};
+
+const handleIdentityColorPickerUpdate = (value: string | null) => {
+  const normalized = normalizeHexColor(String(value || ''));
   identityForm.color = normalized;
+  identityColorDraft.value = normalized;
+};
+
+const clearIdentityColor = () => {
+  identityForm.color = '';
+  identityColorDraft.value = '';
+};
+
+const handleIdentityVariantColorBlur = () => {
+  commitIdentityVariantColorDraft(true);
+};
+
+const handleIdentityVariantColorPickerUpdate = (value: string | null) => {
+  const normalized = normalizeHexColor(String(value || ''));
+  identityVariantForm.color = normalized;
+  identityVariantColorDraft.value = normalized;
+};
+
+const clearIdentityVariantColor = () => {
+  identityVariantForm.color = '';
+  identityVariantColorDraft.value = '';
 };
 
 const handleIdentityUpdated = (payload?: any) => {
@@ -3745,13 +3998,39 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityAvatarFile = null;
   identityForm.displayName = identity?.displayName || '';
   identityForm.color = normalizeHexColor(identity?.color || '') || '';
+  identityColorDraft.value = identityForm.color;
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
+  identityForm.avatarDecorations = cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration);
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
+  identityForm.isTemporary = Boolean(identity?.isTemporary);
+  identityForm.icOocOnActivate = identity?.isTemporary
+    ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
+    : '';
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
   identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
+
+const openIdentityDecorationEditor = () => {
+  identityDecorationEditorVisible.value = true;
+};
+
+const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
+  identityForm.icOocOnActivate = mode;
+};
+
+watch(() => identityForm.isTemporary, (isTemporary) => {
+  if (!isTemporary) {
+    if (identityDialogMode.value === 'create') {
+      identityForm.icOocOnActivate = '';
+    }
+    return;
+  }
+  if (!identityForm.icOocOnActivate) {
+    identityForm.icOocOnActivate = chat.icMode === 'ooc' ? 'ooc' : 'ic';
+  }
+});
 
 const openIdentityCreate = async () => {
   if (!chat.curChannel?.id) {
@@ -3779,7 +4058,7 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
-    await chat.loadChannelIdentityVariants(chat.curChannel.id, true);
+    await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
@@ -3789,17 +4068,32 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   identityDialogVisible.value = true;
 };
 
+const openActiveTemporaryIdentityEdit = async () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  await chat.loadChannelIdentities(chat.curChannel.id, false, currentIdentityTargetUserId.value);
+  const current = chat.getActiveIdentity(chat.curChannel.id);
+  if (!current?.isTemporary) {
+    message.warning('当前不是临时角色');
+    return;
+  }
+  await openIdentityEdit(current);
+};
+
 const openIdentityManager = async () => {
   if (!chat.curChannel?.id) {
     message.warning('请先选择频道');
     return;
   }
-  await chat.loadChannelIdentities(chat.curChannel.id, true);
+  await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
   identityManageVisible.value = true;
 };
 
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
+  identityDecorationEditorVisible.value = false;
   identityVariantDialogVisible.value = false;
   identityVariantEmojiPickerVisible.value = false;
 };
@@ -3866,6 +4160,7 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
   identityVariantForm.displayName = variant?.displayName || '';
   identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantColorDraft.value = identityVariantForm.color;
   identityVariantForm.enabled = variant?.enabled !== false;
   identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
 };
@@ -3956,7 +4251,7 @@ const submitIdentityVariantForm = async () => {
   const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
   const keyword = String(identityVariantForm.keyword || '').trim();
   const note = String(identityVariantForm.note || '').trim();
-  const rawColor = String(identityVariantForm.color || '').trim();
+  const rawColor = normalizeColorDraftText(identityVariantColorDraft.value);
   const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
   if (!selectorEmoji) {
     message.warning('请选择差分表情');
@@ -3966,11 +4261,9 @@ const submitIdentityVariantForm = async () => {
     message.warning('请输入切换关键词');
     return;
   }
-  if (rawColor && !normalizedColor) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+  if (!commitIdentityVariantColorDraft(true)) {
     return;
   }
-  identityVariantForm.color = normalizedColor;
   identityVariantSubmitting.value = true;
   try {
     let avatarAttachmentId = identityVariantForm.avatarAttachmentId;
@@ -3987,6 +4280,7 @@ const submitIdentityVariantForm = async () => {
     }
     const payload = {
       channelId: chat.curChannel.id,
+      targetUserId: currentIdentityTargetUserId.value,
       identityId: editingIdentity.value.id,
       selectorEmoji,
       keyword,
@@ -4025,7 +4319,7 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
     return;
   }
   try {
-    await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id);
+      await chat.channelIdentityVariantDelete(chat.curChannel.id, variant.id, currentIdentityTargetUserId.value);
     if (editingIdentityVariant.value?.id === variant.id) {
       identityVariantDialogVisible.value = false;
       editingIdentityVariant.value = null;
@@ -4046,21 +4340,22 @@ const submitIdentityForm = async () => {
     message.warning('频道昵称不能为空');
     return;
   }
-  const rawColor = identityForm.color || '';
-  const trimmedColor = rawColor.trim();
-  const normalizedColor = trimmedColor ? normalizeHexColor(trimmedColor) : '';
-  if (trimmedColor && !normalizedColor) {
-    message.warning('颜色格式应为 #RGB 或 #RRGGBB');
+  if (!commitIdentityColorDraft(true)) {
     return;
   }
-  identityForm.color = normalizedColor;
+  const normalizedColor = identityForm.color;
   identitySubmitting.value = true;
   const payload = {
     channelId: chat.curChannel.id,
+    targetUserId: currentIdentityTargetUserId.value,
     displayName: identityForm.displayName.trim(),
     color: normalizedColor,
     avatarAttachmentId: identityForm.avatarAttachmentId,
+    avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
+      .filter(item => item.enabled && item.resourceAttachmentId),
     isDefault: identityForm.isDefault,
+    isTemporary: identityForm.isTemporary,
+    icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
   };
   const wasCreating = identityDialogMode.value === 'create';
@@ -4076,6 +4371,29 @@ const submitIdentityForm = async () => {
       payload.avatarAttachmentId = identityForm.avatarAttachmentId;
       identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
       identityAvatarFile = null;
+    } else if (payload.isTemporary) {
+      const generatedAvatarFile = await buildGeneratedAvatarFile({
+        displayName: payload.displayName,
+        accentColor: payload.color,
+        size: 256,
+        themeSeed: {
+          palette: display.settings.palette,
+          customThemeEnabled: display.settings.customThemeEnabled,
+          activeCustomThemeId: display.settings.activeCustomThemeId,
+        },
+      }, `identity-${Date.now()}.png`);
+      const uploadResult = await uploadImageAttachment(generatedAvatarFile, {
+        channelId: chat.curChannel.id,
+        skipCompression: true,
+      });
+      const fileToken = uploadResult.attachmentId;
+      if (!fileToken) {
+        throw new Error('上传失败：未返回附件ID');
+      }
+      const normalizedToken = normalizeAttachmentId(fileToken);
+      identityForm.avatarAttachmentId = normalizedToken;
+      payload.avatarAttachmentId = identityForm.avatarAttachmentId;
+      identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
     }
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
@@ -4097,26 +4415,42 @@ const submitIdentityForm = async () => {
       }
       message.success('频道角色已创建');
     } else if (editingIdentity.value) {
-      await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
-      // Handle character card binding changes for existing identity
-      if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
-        if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
-          message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
-        } else {
-          try {
-            if (identityForm.characterCardId) {
-              await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
-            } else {
-              await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+      if (editingIdentity.value.isTemporary) {
+        const replacedIdentity = await chat.channelIdentityReplaceTemporary(editingIdentity.value.id, payload);
+        if (replacedIdentity?.id && chat.curChannel?.id && identityForm.characterCardId && identityForm.characterCardId !== identityOriginalCardId.value) {
+          if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+            message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+          } else {
+            try {
+              await characterCardStore.bindIdentity(chat.curChannel.id, replacedIdentity.id, identityForm.characterCardId);
+            } catch (e) {
+              console.warn('Failed to bind character card for replaced identity', e);
             }
-          } catch (e) {
-            console.warn('Failed to update character card binding', e);
           }
         }
+        message.success('临时频道角色已替换，新身份已生效');
+      } else {
+        await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+        // Handle character card binding changes for existing identity
+        if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+          if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+            message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+          } else {
+            try {
+              if (identityForm.characterCardId) {
+                await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+              } else {
+                await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+              }
+            } catch (e) {
+              console.warn('Failed to update character card binding', e);
+            }
+          }
+        }
+        message.success('频道角色已更新');
       }
-      message.success('频道角色已更新');
     }
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     identityDialogVisible.value = false;
 
     // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
@@ -4149,8 +4483,8 @@ const deleteIdentity = async (identity: ChannelIdentity) => {
     return;
   }
   try {
-    await chat.channelIdentityDelete(chat.curChannel.id, identity.id);
-    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    await chat.channelIdentityDelete(chat.curChannel.id, identity.id, currentIdentityTargetUserId.value);
+    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
     message.success('已删除频道角色');
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '删除失败，请稍后重试';
@@ -4196,6 +4530,7 @@ const resolveMessageAvatarSource = (message: any) => {
   if (canOverrideIdentity && editingPreview.avatar) {
     return editingPreview.avatar;
   }
+  const identitySnapshot = resolveMessageIdentitySnapshot(message);
   const candidates = [
     message?.identity?.avatarAttachment,
     (message as any)?.sender_identity_avatar_id,
@@ -4208,12 +4543,36 @@ const resolveMessageAvatarSource = (message: any) => {
       return resolveAttachmentUrl(id) || String(id);
     }
   }
+  if (identitySnapshot?.isTemporary) {
+    return '';
+  }
   return message?.member?.avatar || message?.user?.avatar || '';
 };
 
 const getMessageAvatar = (message: any) => resolveMessageAvatarSource(message);
 
-const getMessageAvatarMergeKey = (message: any) => resolveMessageAvatarSource(message) || '';
+const getMessageAvatarMergeKey = (message: any) => {
+  const avatarSrc = resolveMessageAvatarSource(message) || '';
+  let avatarDecorations = cloneAvatarDecorations(
+    message?.identity?.avatarDecorations || (message as any)?.sender_identity_decoration,
+    message?.identity?.avatarDecoration || null,
+  );
+  if (avatarDecorations.length === 0) {
+    const channelId = String(message?.channel?.id || chat.curChannel?.id || '').trim();
+    const identityId = String(
+      message?.identity?.id
+      || (message as any)?.sender_identity_id
+      || (message as any)?.senderRoleId
+      || (message as any)?.sender_role_id
+      || '',
+    ).trim();
+    if (channelId && identityId) {
+      const liveIdentity = (chat.channelIdentities[channelId] || []).find((item) => item.id === identityId);
+      avatarDecorations = cloneAvatarDecorations(liveIdentity?.avatarDecorations, liveIdentity?.avatarDecoration || null);
+    }
+  }
+  return `${avatarSrc}__${JSON.stringify(avatarDecorations)}`;
+};
 
 const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
@@ -6145,9 +6504,25 @@ const dragState = reactive({
   ghostOffsetY: 0,
 });
 
+const mobileMessageDragLongPressEnabled = computed(() => (
+  isMobileUa && display.settings.mobileMessageDragLongPressEnabled === true
+));
+
+const pendingDragHoldState = reactive({
+  item: null as Message | null,
+  pointerId: null as number | null,
+  startX: 0,
+  startY: 0,
+  lastClientY: 0,
+  handleEl: null as HTMLElement | null,
+  timerId: null as number | null,
+});
+
 const AUTO_SCROLL_EDGE_THRESHOLD = 60;
 const AUTO_SCROLL_MIN_SPEED = 2;
 const AUTO_SCROLL_MAX_SPEED = 18;
+const MOBILE_MESSAGE_DRAG_LONG_PRESS_MS = 350;
+const MOBILE_MESSAGE_DRAG_CANCEL_DISTANCE_PX = 10;
 
 const stopAutoScroll = () => {
   if (dragState.autoScrollRafId !== null) {
@@ -6228,6 +6603,39 @@ const releaseHandlePointerCapture = () => {
     }
   }
   dragState.handleEl = null;
+};
+
+const clearPendingDragHoldTimer = () => {
+  if (pendingDragHoldState.timerId === null || typeof window === 'undefined') {
+    return;
+  }
+  window.clearTimeout(pendingDragHoldState.timerId);
+  pendingDragHoldState.timerId = null;
+};
+
+const detachPendingDragHoldListeners = () => {
+  window.removeEventListener('pointermove', onPendingDragHoldPointerMove);
+  window.removeEventListener('pointerup', onPendingDragHoldPointerUp);
+  window.removeEventListener('pointercancel', onPendingDragHoldPointerCancel);
+  window.removeEventListener('blur', onPendingDragHoldWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onPendingDragHoldVisibilityChange);
+  }
+};
+
+const resetPendingDragHoldState = () => {
+  clearPendingDragHoldTimer();
+  pendingDragHoldState.item = null;
+  pendingDragHoldState.pointerId = null;
+  pendingDragHoldState.startX = 0;
+  pendingDragHoldState.startY = 0;
+  pendingDragHoldState.lastClientY = 0;
+  pendingDragHoldState.handleEl = null;
+};
+
+const cancelPendingDragHold = () => {
+  detachPendingDragHoldListeners();
+  resetPendingDragHoldState();
 };
 
 const resetDragState = () => {
@@ -6720,6 +7128,7 @@ const restoreMessageOrderFromSnapshot = (messageId: string, snapshot: Message[])
 };
 
 const cancelDrag = () => {
+  cancelPendingDragHold();
   detachDragListeners();
   stopAutoScroll();
   resetDragState();
@@ -6848,14 +7257,20 @@ const onDragKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
+const startMessageDrag = ({
+  item,
+  pointerId,
+  clientY,
+  handleEl,
+}: {
+  item: Message;
+  pointerId: number;
+  clientY: number;
+  handleEl: HTMLElement | null;
+}) => {
   if (!canDragMessage(item) || !item.id) {
     return;
   }
-  if (event.pointerType === 'mouse' && event.button !== 0) {
-    return;
-  }
-  const handleEl = event.currentTarget as HTMLElement | null;
   const rowEl = messageRowRefs.get(item.id);
   if (!rowEl) {
     return;
@@ -6863,7 +7278,7 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   if (handleEl) {
     dragState.handleEl = handleEl;
     try {
-      handleEl.setPointerCapture?.(event.pointerId);
+      handleEl.setPointerCapture?.(pointerId);
     } catch {
       // ignore capture failure
     }
@@ -6871,8 +7286,8 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   dragState.snapshot = rows.value.slice();
   dragState.clientOpId = nanoid();
   dragState.activeId = item.id;
-  dragState.pointerId = event.pointerId;
-  dragState.startY = event.clientY;
+  dragState.pointerId = pointerId;
+  dragState.startY = clientY;
   dragState.overId = item.id;
   dragState.position = 'after';
   dragState.originEl = rowEl;
@@ -6884,8 +7299,8 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
   // Now add the collapse class
   rowEl.classList.add('message-row--drag-source');
   
-  updateOverTarget(event.clientY);
-  updateAutoScroll(event.clientY);
+  updateOverTarget(clientY);
+  updateAutoScroll(clientY);
 
   window.addEventListener('pointermove', onDragPointerMove);
   window.addEventListener('pointerup', onDragPointerUp);
@@ -6896,6 +7311,101 @@ const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
     document.addEventListener('visibilitychange', onDragVisibilityChange);
   }
   handleEl?.addEventListener('lostpointercapture', onDragHandleLostPointerCapture);
+};
+
+const onPendingDragHoldPointerMove = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  pendingDragHoldState.lastClientY = event.clientY;
+  const deltaX = event.clientX - pendingDragHoldState.startX;
+  const deltaY = event.clientY - pendingDragHoldState.startY;
+  if (Math.hypot(deltaX, deltaY) > MOBILE_MESSAGE_DRAG_CANCEL_DISTANCE_PX) {
+    cancelPendingDragHold();
+  }
+};
+
+const onPendingDragHoldPointerUp = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldPointerCancel = (event: PointerEvent) => {
+  if (event.pointerId !== pendingDragHoldState.pointerId) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldWindowBlur = () => {
+  if (pendingDragHoldState.pointerId === null) {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const onPendingDragHoldVisibilityChange = () => {
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+    return;
+  }
+  cancelPendingDragHold();
+};
+
+const schedulePendingDragHold = (event: PointerEvent, item: Message) => {
+  cancelPendingDragHold();
+  pendingDragHoldState.item = item;
+  pendingDragHoldState.pointerId = event.pointerId;
+  pendingDragHoldState.startX = event.clientX;
+  pendingDragHoldState.startY = event.clientY;
+  pendingDragHoldState.lastClientY = event.clientY;
+  pendingDragHoldState.handleEl = event.currentTarget as HTMLElement | null;
+  window.addEventListener('pointermove', onPendingDragHoldPointerMove);
+  window.addEventListener('pointerup', onPendingDragHoldPointerUp);
+  window.addEventListener('pointercancel', onPendingDragHoldPointerCancel);
+  window.addEventListener('blur', onPendingDragHoldWindowBlur);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onPendingDragHoldVisibilityChange);
+  }
+  if (typeof window !== 'undefined') {
+    pendingDragHoldState.timerId = window.setTimeout(() => {
+      const itemToDrag = pendingDragHoldState.item;
+      const pointerId = pendingDragHoldState.pointerId;
+      const handleEl = pendingDragHoldState.handleEl;
+      const clientY = pendingDragHoldState.lastClientY || pendingDragHoldState.startY;
+      detachPendingDragHoldListeners();
+      resetPendingDragHoldState();
+      if (!itemToDrag || pointerId === null) {
+        return;
+      }
+      startMessageDrag({
+        item: itemToDrag,
+        pointerId,
+        clientY,
+        handleEl,
+      });
+    }, MOBILE_MESSAGE_DRAG_LONG_PRESS_MS);
+  }
+};
+
+const onDragHandlePointerDown = (event: PointerEvent, item: Message) => {
+  if (!canDragMessage(item) || !item.id) {
+    return;
+  }
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  if (mobileMessageDragLongPressEnabled.value && event.pointerType !== 'mouse') {
+    schedulePendingDragHold(event, item);
+    return;
+  }
+  startMessageDrag({
+    item,
+    pointerId: event.pointerId,
+    clientY: event.clientY,
+    handleEl: event.currentTarget as HTMLElement | null,
+  });
 
   event.preventDefault();
 };
@@ -7024,11 +7534,13 @@ interface TypingPreviewItem {
   userId: string;
   displayName: string;
   avatar?: string;
+  avatarDecorations?: AvatarDecoration[] | null;
   color?: string;
   content: string;
   indicatorOnly: boolean;
   mode: 'typing' | 'editing';
   messageId?: string;
+  isTemporary?: boolean;
   tone: 'ic' | 'ooc';
   orderKey: number;
 }
@@ -7044,10 +7556,13 @@ const resolveTypingTone = (typing?: { icMode?: string; ic_mode?: string; tone?: 
 interface EditingPreviewInfo {
   userId: string;
   displayName: string;
+  color?: string;
   avatar?: string;
+  avatarDecorations?: AvatarDecoration[] | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
+  isTemporary?: boolean;
   summary: string;
   previewHtml: string;
   tone: 'ic' | 'ooc';
@@ -7393,15 +7908,6 @@ const onPreviewDragHandlePointerDown = (event: PointerEvent, preview: TypingPrev
   window.addEventListener('pointercancel', onPreviewDragPointerCancel);
   event.preventDefault();
 };
-const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
-  if (!preview?.userId) {
-    return false;
-  }
-  if (preview.userId === user.info.id) {
-    return true;
-  }
-  return canReorderAll.value;
-};
 const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
 const autoScrollTypingPreviewAlways = computed(() => display.settings.autoScrollTypingPreview === true);
 const shouldObserveTypingPreview = computed(() => (
@@ -7468,6 +7974,8 @@ const activeIdentityAppearancePreviewSignature = computed(() => {
     appearance?.displayName || '',
     appearance?.color || '',
     appearance?.avatarAttachmentId || '',
+    JSON.stringify(appearance?.avatarDecorations || []),
+    appearance?.isTemporary ? '1' : '0',
   ].join('__');
 });
 const effectiveIdentityVariantForEmojiPanel = computed(() => activeIdentityVariantForPreview.value);
@@ -7729,12 +8237,14 @@ const syncSelfTypingPreview = () => {
     userId: selfPreviewUserId.value,
     displayName,
     avatar,
+    avatarDecorations: cloneAvatarDecorations(activeIdentityAppearanceForPreview.value?.avatarDecorations),
     color: normalizedColor,
     content: previewContent,
     indicatorOnly: false,
     mode: 'typing',
     tone,
     messageId: undefined,
+    isTemporary: Boolean(activeIdentityAppearanceForPreview.value?.isTemporary),
     orderKey: 0,
   };
   upsertTypingPreview(payload);
@@ -8360,6 +8870,10 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   return !isRichContentEmpty(content);
 };
 
+const hasMeaningfulDraft = computed(() => (
+  isEditing.value || isContentMeaningful(inputMode.value, textToSend.value)
+));
+
 const getServerAlignedNowMs = () => {
   const localNow = Date.now();
   const offset = Number(chat.serverTimeOffsetMs);
@@ -8749,6 +9263,37 @@ const handleHistoryPopoverShow = (show: boolean) => {
   }
 };
 
+const closeInputExtraOverlays = () => {
+  emojiPopoverShow.value = false;
+  historyPopoverVisible.value = false;
+  closeAllDiceTrays();
+  diceSettingsVisible.value = false;
+};
+
+watch(
+  () => isMobileMinimalInputActive.value,
+  (active) => {
+    if (!active) {
+      minimalInputToolbarVisible.value = false;
+      closeInputExtraOverlays();
+    }
+  },
+);
+
+watch(minimalInputToolbarVisible, (visible) => {
+  if (!visible) {
+    closeInputExtraOverlays();
+  }
+});
+
+const toggleMinimalInputToolbar = () => {
+  const next = !minimalInputToolbarVisible.value;
+  minimalInputToolbarVisible.value = next;
+  if (!next) {
+    closeInputExtraOverlays();
+  }
+};
+
 watch(hasHistoryEntries, (has) => {
   if (!has) {
     historyPopoverVisible.value = false;
@@ -8774,9 +9319,11 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
         userId: item.userId,
         displayName: item.displayName,
         avatar: item.avatar,
+        avatarDecorations: cloneAvatarDecorations(item.avatarDecorations),
         content: contentValue,
         indicatorOnly,
         isSelf: item.userId === user.info.id,
+        isTemporary: item.isTemporary,
         summary,
         previewHtml,
         tone: item.tone ?? 'ic',
@@ -8789,22 +9336,36 @@ const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
     const { summary, previewHtml } = indicatorOnly ? { summary: '', previewHtml: '' } : buildPreviewMeta(draft);
     let previewDisplayName = chat.curMember?.nick || user.info.nick || user.info.name || '我';
     let previewAvatar = chat.curMember?.avatar || user.info.avatar || '';
-    const identityPreview = resolveIdentityPreviewInfo(chat.editing.channelId, chat.editing.identityId, chat.editing.identityVariantId);
+    let previewColor = '';
+    let previewIsTemporary = false;
+    let previewAvatarDecorations: AvatarDecoration[] = [];
+    const identityPreview = resolveIdentityPreviewInfo(
+      chat.editing.channelId,
+      chat.editing.identityId,
+      chat.editing.identityVariantId,
+      chat.editing.identitySnapshot as MessageIdentitySnapshot | null | undefined,
+    );
     if (identityPreview) {
       if (identityPreview.displayName) {
         previewDisplayName = identityPreview.displayName;
       }
-      if (identityPreview.avatar) {
-        previewAvatar = identityPreview.avatar;
+      previewColor = identityPreview.color || '';
+      previewAvatarDecorations = cloneAvatarDecorations(identityPreview.avatarDecorations);
+      previewIsTemporary = Boolean(identityPreview.isTemporary);
+      if (identityPreview.avatar || previewIsTemporary) {
+        previewAvatar = identityPreview.avatar || '';
       }
     }
     map[chat.editing.messageId] = {
       userId: user.info.id,
       displayName: previewDisplayName,
+      color: previewColor,
       avatar: previewAvatar,
+      avatarDecorations: previewAvatarDecorations,
       content: draft,
       indicatorOnly,
       isSelf: true,
+      isTemporary: previewIsTemporary,
       summary,
       previewHtml,
       tone: chat.editing.icMode === 'ooc' ? 'ooc' : 'ic',
@@ -8854,8 +9415,20 @@ const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
-const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
-const whisperMentionableCandidates = ref<WhisperCandidate[]>([]);
+const whisperCandidateUsers = ref<Array<{
+  userId: string;
+  userDisplayName: string;
+  userColor?: string;
+  avatar: string;
+  icIdentityId?: string;
+  icDisplayName?: string;
+  icColor?: string;
+  icAvatar?: string;
+  oocIdentityId?: string;
+  oocDisplayName?: string;
+  oocColor?: string;
+  oocAvatar?: string;
+}>>([]);
 
 type WhisperIdentityType = 'ic' | 'ooc' | 'user';
 
@@ -8867,20 +9440,13 @@ interface WhisperCandidate {
   secondaryName: string;
   color: string;
   identityTypes: WhisperIdentityType[];
+  userDisplayName: string;
+  icDisplayName: string;
+  oocDisplayName: string;
+  userColor: string;
+  icColor: string;
+  oocColor: string;
 }
-
-const whisperIdentityTypeOrder: Record<WhisperIdentityType, number> = {
-  ic: 0,
-  ooc: 1,
-  user: 2,
-};
-
-const normalizeWhisperIdentityType = (value?: string): WhisperIdentityType => {
-  if (value === 'ic' || value === 'ooc') {
-    return value;
-  }
-  return 'user';
-};
 
 const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
   switch (type) {
@@ -8893,64 +9459,85 @@ const whisperIdentityTypeLabel = (type: WhisperIdentityType): string => {
   }
 };
 
-const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: string; avatar?: string; color?: string; identityType?: string }>) => {
-  const deduped = new Map<string, { candidate: WhisperCandidate; primaryWeight: number; types: Set<WhisperIdentityType> }>();
+const resolveWhisperCandidatePreferredName = (
+  item: { userDisplayName?: string; icDisplayName?: string; oocDisplayName?: string },
+  mode: 'ic' | 'ooc',
+) => {
+  if (mode === 'ooc') {
+    return item.oocDisplayName || item.icDisplayName || item.userDisplayName || '未知成员';
+  }
+  return item.icDisplayName || item.oocDisplayName || item.userDisplayName || '未知成员';
+};
+
+const buildWhisperCandidateSummary = (item: { userDisplayName?: string; icDisplayName?: string; oocDisplayName?: string }) => {
+  const ic = item.icDisplayName || '未配置';
+  const ooc = item.oocDisplayName || '未配置';
+  const userName = item.userDisplayName || '未知成员';
+  return `场内：${ic} | 场外：${ooc} | 用户：${userName}`;
+};
+
+const resolveWhisperMetaNameStyle = (color?: string) => {
+  const normalized = normalizeHexColor(color || '');
+  return normalized ? { color: normalized } : undefined;
+};
+
+const buildWhisperCandidates = (items: Array<{
+  userId?: string;
+  userDisplayName?: string;
+  userColor?: string;
+  avatar?: string;
+  icIdentityId?: string;
+  icDisplayName?: string;
+  icColor?: string;
+  icAvatar?: string;
+  oocIdentityId?: string;
+  oocDisplayName?: string;
+  oocColor?: string;
+  oocAvatar?: string;
+}>, mode: 'ic' | 'ooc') => {
+  const candidates: WhisperCandidate[] = [];
   for (const item of items) {
     const userId = String(item?.userId || '').trim();
     if (!userId || userId === user.info.id) {
       continue;
     }
-    const identityType = normalizeWhisperIdentityType(item?.identityType);
-    const displayName = item?.displayName || '未知成员';
-    const avatar = item?.avatar || '';
-    const color = normalizeHexColor(item?.color || '') || '';
-    const weight = whisperIdentityTypeOrder[identityType];
+    const icDisplayName = String(item?.icDisplayName || '').trim();
+    const oocDisplayName = String(item?.oocDisplayName || '').trim();
+    const userDisplayName = String(item?.userDisplayName || '').trim() || '未知成员';
+    const userColor = normalizeHexColor(item?.userColor || '') || '';
+    const icColor = normalizeHexColor(item?.icColor || '') || '';
+    const oocColor = normalizeHexColor(item?.oocColor || '') || '';
+    const identityTypes: WhisperIdentityType[] = [];
+    if (icDisplayName) identityTypes.push('ic');
+    if (oocDisplayName) identityTypes.push('ooc');
+    if (!identityTypes.length) identityTypes.push('user');
 
-    const existing = deduped.get(userId);
-    if (!existing) {
-      deduped.set(userId, {
-        primaryWeight: weight,
-        types: new Set<WhisperIdentityType>([identityType]),
-        candidate: {
-          raw: {
-            id: userId,
-            name: displayName,
-            nick: displayName,
-            avatar,
-            color,
-          },
-          id: userId,
-          avatar,
-          displayName,
-          secondaryName: '',
-          color,
-          identityTypes: [identityType],
-        },
-      });
-      continue;
-    }
+    const displayName = resolveWhisperCandidatePreferredName({ userDisplayName, icDisplayName, oocDisplayName }, mode);
+    const avatar = mode === 'ooc'
+      ? (item?.oocAvatar || item?.icAvatar || item?.avatar || '')
+      : (item?.icAvatar || item?.oocAvatar || item?.avatar || '');
+    const color = normalizeHexColor(
+      mode === 'ooc'
+        ? (item?.oocColor || item?.icColor || item?.userColor || '')
+        : (item?.icColor || item?.oocColor || item?.userColor || ''),
+    ) || '';
 
-    existing.types.add(identityType);
-    if (weight < existing.primaryWeight) {
-      existing.primaryWeight = weight;
-      existing.candidate.avatar = avatar;
-      existing.candidate.displayName = displayName;
-      existing.candidate.color = color;
-      existing.candidate.raw = {
-        id: userId,
-        name: displayName,
-        nick: displayName,
-        avatar,
-        color,
-      };
-    }
+    candidates.push({
+      raw: item,
+      id: userId,
+      avatar,
+      displayName,
+      secondaryName: buildWhisperCandidateSummary({ userDisplayName, icDisplayName, oocDisplayName }),
+      color,
+      identityTypes,
+      userDisplayName,
+      icDisplayName,
+      oocDisplayName,
+      userColor,
+      icColor,
+      oocColor,
+    });
   }
-
-  const candidates = Array.from(deduped.values()).map((entry) => {
-    const types = Array.from(entry.types).sort((a, b) => whisperIdentityTypeOrder[a] - whisperIdentityTypeOrder[b]);
-    entry.candidate.identityTypes = types;
-    return entry.candidate;
-  });
 
   candidates.sort((a, b) => {
     const aHasIc = a.identityTypes.includes('ic');
@@ -8964,15 +9551,17 @@ const buildWhisperCandidates = (items: Array<{ userId?: string; displayName?: st
   return candidates;
 };
 
-const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
-  const id = target?.id;
-  if (id) {
-    const mapped = whisperCandidateColorMap.value.get(String(id));
-    if (mapped) {
-      return mapped;
-    }
-  }
-  const fallback = target?.color || target?.nick_color || target?.nickColor || '';
+const resolveWhisperTargetColor = (target: {
+  id?: string;
+  color?: string;
+  nick_color?: string;
+  nickColor?: string;
+  whisperIcColor?: string;
+  whisperOocColor?: string;
+} | null | undefined) => {
+  const fallback = chat.icMode === 'ooc'
+    ? (target?.whisperOocColor || target?.whisperIcColor || target?.color || target?.nick_color || target?.nickColor || '')
+    : (target?.whisperIcColor || target?.whisperOocColor || target?.color || target?.nick_color || target?.nickColor || '');
   return normalizeHexColor(fallback) || '';
 };
 
@@ -8981,7 +9570,7 @@ const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color
   return color ? { color } : undefined;
 };
 
-const whisperCandidates = computed<WhisperCandidate[]>(() => whisperMentionableCandidates.value);
+const whisperCandidates = computed<WhisperCandidate[]>(() => buildWhisperCandidates(whisperCandidateUsers.value, chat.icMode as 'ic' | 'ooc'));
 
 const filteredWhisperCandidates = computed(() => {
   const keyword = whisperQuery.value.trim();
@@ -8992,6 +9581,9 @@ const filteredWhisperCandidates = computed(() => {
     const candidates = [
       candidate.displayName,
       candidate.secondaryName,
+      candidate.icDisplayName,
+      candidate.oocDisplayName,
+      candidate.userDisplayName,
       candidate.id,
     ].filter(Boolean).map((str) => String(str));
     return candidates.some((name) => matchText(keyword, name));
@@ -9014,11 +9606,21 @@ const whisperPlaceholderText = computed(() => {
   }
   if (whisperTargets.value.length === 1) {
     const target = whisperTargets.value[0];
-    const name = target?.nick || target?.name || '未知成员';
+    const name = resolveSelectedWhisperTargetName(target);
     return t('inputBox.whisperPlaceholder', { target: `@${name}` });
   }
   return t('inputBox.whisperPlaceholderMultiple', { count: whisperTargets.value.length });
 });
+
+const resolveSelectedWhisperTargetName = (target: any) => {
+  if (!target) {
+    return '未知成员';
+  }
+  if (chat.icMode === 'ooc') {
+    return target?.whisperOocDisplayName || target?.whisperIcDisplayName || target?.nick || target?.name || target?.whisperUserDisplayName || '未知成员';
+  }
+  return target?.whisperIcDisplayName || target?.whisperOocDisplayName || target?.nick || target?.name || target?.whisperUserDisplayName || '未知成员';
+};
 
 const ensureInputFocus = () => {
   nextTick(() => {
@@ -9176,6 +9778,64 @@ const resolveMessageIdentityId = (msg?: any): string | null => {
   return null;
 };
 
+type MessageIdentitySnapshot = {
+  identityId: string | null;
+  displayName: string;
+  color: string;
+  avatarAttachmentId: string;
+  avatarDecorations?: AvatarDecoration[] | null;
+  isTemporary: boolean;
+};
+
+const resolveMessageIdentitySnapshot = (msg?: any): MessageIdentitySnapshot | null => {
+  if (!msg) {
+    return null;
+  }
+  const directIdentity = msg.identity || msg.identity_info || msg.identityData;
+  const identityId = resolveMessageIdentityId(msg);
+  const displayName = String(
+    directIdentity?.displayName
+    || msg?.sender_identity_name
+    || (identityId ? msg?.sender_member_name : '')
+    || '',
+  ).trim();
+  const color = normalizeHexColor(
+    String(
+      directIdentity?.color
+      || msg?.sender_identity_color
+      || '',
+    ),
+  ) || '';
+  const avatarAttachmentId = String(
+    directIdentity?.avatarAttachment
+    || msg?.sender_identity_avatar_id
+    || msg?.sender_identity_avatar
+    || msg?.senderIdentityAvatarID
+    || msg?.senderIdentityAvatarId
+    || '',
+  ).trim();
+  const avatarDecorations = cloneAvatarDecorations(
+    directIdentity?.avatarDecorations || msg?.sender_identity_decoration,
+    directIdentity?.avatarDecoration || null,
+  );
+  const isTemporary = Boolean(
+    directIdentity?.isTemporary
+    ?? msg?.sender_identity_is_temporary
+    ?? msg?.senderIdentityIsTemporary,
+  );
+  if (!identityId && !displayName && !color && !avatarAttachmentId && avatarDecorations.length === 0 && !isTemporary) {
+    return null;
+  }
+  return {
+    identityId,
+    displayName,
+    color,
+    avatarAttachmentId,
+    avatarDecorations,
+    isTemporary,
+  };
+};
+
 const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
   if (!channelId || !identityId) {
     return null;
@@ -9184,17 +9844,36 @@ const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
   return list.find((item) => item.id === identityId) || null;
 };
 
-const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | null, identityVariantId?: string | null) => {
-  const identity = findIdentityMeta(channelId, identityId);
-  if (!identity) {
+const resolveIdentityPreviewInfo = (
+  channelId?: string,
+  identityId?: string | null,
+  identityVariantId?: string | null,
+  snapshot?: MessageIdentitySnapshot | null,
+) => {
+  if (!identityId) {
     return null;
   }
-  const variant = identityVariantId ? chat.getIdentityVariants(channelId, identityId).find(item => item.id === identityVariantId) || null : null;
-  const appearance = resolveIdentityAppearancePreview(identity, variant);
+  const identity = findIdentityMeta(channelId, identityId);
+  if (identity) {
+    const variant = identityVariantId ? chat.getIdentityVariants(channelId, identityId).find(item => item.id === identityVariantId) || null : null;
+    const appearance = resolveIdentityAppearancePreview(identity, variant);
+    return {
+      displayName: appearance?.displayName || '',
+      avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
+      color: appearance?.color || '',
+      avatarDecorations: cloneAvatarDecorations(appearance?.avatarDecorations),
+      isTemporary: Boolean(appearance?.isTemporary),
+    };
+  }
+  if (!snapshot || snapshot.identityId !== identityId) {
+    return null;
+  }
   return {
-    displayName: appearance?.displayName || '',
-    avatar: appearance?.avatarAttachmentId ? resolveAttachmentUrl(appearance.avatarAttachmentId) : '',
-    color: appearance?.color || '',
+    displayName: snapshot.displayName || '',
+    avatar: snapshot.avatarAttachmentId ? resolveAttachmentUrl(snapshot.avatarAttachmentId) : '',
+    color: snapshot.color || '',
+    avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations),
+    isTemporary: Boolean(snapshot.isTemporary),
   };
 };
 
@@ -9351,6 +10030,7 @@ const beginEdit = (target?: Message) => {
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
   const identityVariantId = resolveIdentityVariantIdFromMessage(target);
+  const identitySnapshot = resolveMessageIdentitySnapshot(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
@@ -9363,6 +10043,7 @@ const beginEdit = (target?: Message) => {
     icMode,
     identityId: identityId || null,
     identityVariantId,
+    identitySnapshot,
   });
   inputMode.value = detectedMode;
 };
@@ -9530,7 +10211,7 @@ function openWhisperPanel(source: 'slash' | 'manual') {
   whisperPickerSource.value = source;
   whisperPanelVisible.value = true;
   whisperSelectionIndex.value = 0;
-  void loadWhisperCandidateColors();
+  void loadWhisperCandidates();
   if (source === 'manual') {
     whisperQuery.value = '';
     nextTick(() => {
@@ -9546,28 +10227,18 @@ function closeWhisperPanel() {
   whisperPickerSource.value = null;
 }
 
-const loadWhisperCandidateColors = async () => {
+const loadWhisperCandidates = async () => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId || channelId.length >= 30) {
-    whisperCandidateColorMap.value = new Map();
-    whisperMentionableCandidates.value = [];
+    whisperCandidateUsers.value = [];
     return;
   }
   try {
-    const resp = await chat.fetchMentionableMembers(channelId);
-    const items = resp?.items || [];
-    const candidates = buildWhisperCandidates(items);
-    const nextMap = new Map<string, string>();
-    for (const candidate of candidates) {
-      if (candidate.color) {
-        nextMap.set(candidate.id, candidate.color);
-      }
-    }
-    whisperCandidateColorMap.value = nextMap;
-    whisperMentionableCandidates.value = candidates;
+    const resp = await chat.fetchWhisperCandidates(channelId);
+    whisperCandidateUsers.value = resp?.items || [];
   } catch (error) {
-    console.warn('获取悄悄话候选成员颜色失败', error);
-    whisperMentionableCandidates.value = [];
+    console.warn('获取悄悄话候选成员失败', error);
+    whisperCandidateUsers.value = [];
   }
 };
 
@@ -9578,14 +10249,27 @@ const onWhisperTargetToggle = (candidate: WhisperCandidate) => {
   const raw = candidate.raw || {};
   const targetUser: User = {
     id: candidate.id,
-    name: raw.name || raw.username || raw.nick || candidate.displayName,
+    name: raw.userDisplayName || raw.name || raw.username || raw.nick || candidate.displayName,
     nick: candidate.displayName,
     avatar: candidate.avatar,
     discriminator: raw.discriminator || '',
     is_bot: !!raw.is_bot,
   };
   (targetUser as any).color = candidate.color || '';
+  (targetUser as any).whisperIcDisplayName = candidate.icDisplayName || '';
+  (targetUser as any).whisperOocDisplayName = candidate.oocDisplayName || '';
+  (targetUser as any).whisperUserDisplayName = candidate.userDisplayName || '';
+  (targetUser as any).whisperUserColor = candidate.userColor || '';
+  (targetUser as any).whisperIcColor = candidate.icColor || '';
+  (targetUser as any).whisperOocColor = candidate.oocColor || '';
   chat.toggleWhisperTarget(targetUser);
+};
+
+const handleWhisperCandidateChecked = (candidate: WhisperCandidate, checked: boolean) => {
+  if (checked === isWhisperTarget(candidate)) {
+    return;
+  }
+  onWhisperTargetToggle(candidate);
 };
 
 const confirmWhisperSelection = () => {
@@ -9913,21 +10597,22 @@ const buildPreviewDiceChip = (match: DiceMatch, index: number) => {
 
 const renderDicePreviewSegment = (text: string) => {
   if (!text) return '';
+  const disableAllFormatting = isBotCommandLikeContent(text, chat.curChannel?.botCommandPrefixes);
   const matches = matchDiceExpressions(text, defaultDiceExpr.value);
   if (!matches.length) {
-    return renderQuickFormatHtmlFromEscaped(escapeHtml(text));
+    return renderQuickFormatHtmlFromEscaped(escapeHtml(text), { disableAllFormatting });
   }
   let html = '';
   let cursor = 0;
   matches.forEach((match, index) => {
     if (match.start > cursor) {
-      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)));
+      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)), { disableAllFormatting });
     }
     html += buildPreviewDiceChip(match, index);
     cursor = match.end;
   });
   if (cursor < text.length) {
-    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)));
+    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)), { disableAllFormatting });
   }
   return html;
 };
@@ -9936,6 +10621,9 @@ const renderPreviewContent = (value: string) => {
   // 检测是否为 TipTap JSON
   if (isTipTapJson(value)) {
     try {
+      if (isBotCommandLikeContent(value, chat.curChannel?.botCommandPrefixes)) {
+        return DOMPurify.sanitize(renderBotCommandTextAsHtml(value));
+      }
       const json = JSON.parse(value);
       const html = tiptapJsonToHtml(json, {
         baseUrl: urlBase,
@@ -10530,8 +11218,12 @@ const send = throttle(async () => {
         displayName: activeAppearance?.displayName || activeIdentity.displayName,
         color: normalizedIdentityColor,
         avatarAttachment: activeAppearance?.avatarAttachmentId || activeIdentity.avatarAttachmentId,
+        avatarDecorations: cloneAvatarDecorations(activeAppearance?.avatarDecorations),
+        avatarDecoration: firstAvatarDecoration(activeAppearance?.avatarDecorations),
+        isTemporary: Boolean(activeAppearance?.isTemporary),
       } as any;
     }
+    (tmpMsg as any).sender_identity_decoration = cloneAvatarDecorations(activeAppearance?.avatarDecorations);
     if (activeAppearance?.displayName) {
       (tmpMsg as any).sender_member_name = activeAppearance.displayName;
     }
@@ -10720,10 +11412,9 @@ watch(
       return;
     }
     resetDraftOrderContext();
-    whisperCandidateColorMap.value = new Map();
-    whisperMentionableCandidates.value = [];
+    whisperCandidateUsers.value = [];
     if (whisperPanelVisible.value) {
-      void loadWhisperCandidateColors();
+      void loadWhisperCandidates();
     }
   },
 );
@@ -10793,8 +11484,8 @@ watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds
   if (targetIds === prevIds) {
     return;
   }
-  if (targetIds && whisperCandidateColorMap.value.size === 0) {
-    void loadWhisperCandidateColors();
+  if (targetIds && whisperCandidateUsers.value.length === 0) {
+    void loadWhisperCandidates();
   }
   stopTypingPreviewNow();
   emitTypingPreview();
@@ -10840,17 +11531,16 @@ watch(typingPreviewMode, (mode) => {
 });
 
 watch(() => identityForm.color, (value) => {
-  if (!value) {
-    return;
+  const normalized = normalizeColorDraftText(value);
+  if (identityColorDraft.value !== normalized) {
+    identityColorDraft.value = normalized;
   }
-  const trimmed = value.trim();
-  if (trimmed !== value) {
-    identityForm.color = trimmed;
-    return;
-  }
-  const lower = trimmed.toLowerCase();
-  if (lower !== trimmed) {
-    identityForm.color = lower;
+});
+
+watch(() => identityVariantForm.color, (value) => {
+  const normalized = normalizeColorDraftText(value);
+  if (identityVariantColorDraft.value !== normalized) {
+    identityVariantColorDraft.value = normalized;
   }
 });
 
@@ -11421,11 +12111,13 @@ chatEvent.on('typing-preview', (e?: Event) => {
 		userId: typingUserId,
 		displayName,
 		avatar,
+		avatarDecorations: cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration),
 		color: identityColor,
 		content: typingState === 'content' ? (e.typing?.content || '') : '',
 		indicatorOnly: typingState !== 'content' || !e.typing?.content,
 		mode,
 		messageId: e.typing?.messageId,
+		isTemporary: Boolean(identity?.isTemporary),
 		tone: resolveTypingTone(e.typing),
 		orderKey: typeof e.typing?.orderKey === 'number' ? e.typing.orderKey : Number.NaN,
 	});
@@ -12955,46 +13647,456 @@ onBeforeUnmount(() => {
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <ChatActionRibbon
-        v-if="showActionRibbon && !isEmbedMode"
-        :filters="chat.filterState"
-        :roles="ribbonRoleOptions"
-        :archive-active="archiveDrawerVisible"
-        :export-active="exportManagerVisible"
-        :identity-active="identityDialogVisible"
-        :gallery-active="galleryPanelVisible"
-        :display-active="displaySettingsVisible"
-        :favorite-active="display.favoriteBarEnabled"
-        :channel-images-active="channelImagesPanelVisible"
-        :can-import="canManageWorldKeywords"
-        :import-active="importDialogVisible"
-        :split-enabled="splitEntryEnabled"
-        :split-active="false"
-        :sticky-note-enabled="true"
-        :sticky-note-active="stickyNoteStore.uiVisible"
-        :webhook-enabled="webhookManageAllowed"
-        :webhook-active="webhookDrawerVisible"
-        :email-notification-enabled="true"
-        :email-notification-active="emailNotificationDrawerVisible"
-        :character-card-enabled="!!chat.curChannel?.id"
-        :character-card-active="characterCardPanelVisible"
-        @update:filters="chat.setFilterState($event)"
-        @open-archive="archiveDrawerVisible = true"
-        @open-export="exportManagerVisible = true"
-        @open-import="importDialogVisible = true"
-        @open-identity-manager="openIdentityManager"
-        @open-gallery="openGalleryPanel"
-        @open-display-settings="displaySettingsVisible = true"
-        @open-favorites="channelFavoritesVisible = true"
-        @open-channel-images="openChannelImagesPanel"
-        @open-split="openSplitView"
-        @toggle-sticky-note="toggleStickyNotes"
-        @open-webhook="webhookDrawerVisible = true"
-        @open-email-notification="emailNotificationDrawerVisible = true"
-        @open-character-card="openCharacterCardPanel"
-        @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
-      />
+      <div v-if="showActionRibbon && !isEmbedMode" class="chat-top-toolbar-stack">
+        <ChatActionRibbon
+          :filters="chat.filterState"
+          :roles="ribbonRoleOptions"
+          :archive-active="archiveDrawerVisible"
+          :export-active="exportManagerVisible"
+          :identity-active="identityDialogVisible"
+          :gallery-active="galleryPanelVisible"
+          :display-active="displaySettingsVisible"
+          :favorite-active="display.favoriteBarEnabled"
+          :channel-images-active="channelImagesPanelVisible"
+          :can-import="canManageWorldKeywords"
+          :import-active="importDialogVisible"
+          :split-enabled="splitEntryEnabled"
+          :split-active="false"
+          :sticky-note-enabled="true"
+          :sticky-note-active="stickyNoteStore.uiVisible"
+          :webhook-enabled="webhookManageAllowed"
+          :webhook-active="webhookDrawerVisible"
+          :email-notification-enabled="webhookManageAllowed"
+          :email-notification-active="emailNotificationDrawerVisible"
+          :character-card-enabled="!!chat.curChannel?.id"
+          :character-card-active="characterCardPanelVisible"
+          @update:filters="chat.setFilterState($event)"
+          @open-archive="archiveDrawerVisible = true"
+          @open-export="exportManagerVisible = true"
+          @open-import="importDialogVisible = true"
+          @open-identity-manager="openIdentityManager"
+          @open-gallery="openGalleryPanel"
+          @open-display-settings="displaySettingsVisible = true"
+          @open-favorites="channelFavoritesVisible = true"
+          @open-channel-images="openChannelImagesPanel"
+          @open-split="openSplitView"
+          @toggle-sticky-note="toggleStickyNotes"
+          @open-webhook="webhookDrawerVisible = true"
+          @open-email-notification="emailNotificationDrawerVisible = true"
+          @open-character-card="openCharacterCardPanel"
+          @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
+        />
+      </div>
     </transition>
+
+    <Teleport v-if="inputExtraActionsTeleportTarget" :to="inputExtraActionsTeleportTarget">
+      <div
+        class="chat-input-actions__teleport-content"
+        :class="{ 'chat-input-actions__teleport-content--compact-toolbar': isMobileMinimalInputActive }"
+      >
+        <div class="chat-input-actions__group chat-input-actions__group--leading chat-input-actions__group--leading-extras">
+          <div class="chat-input-actions__cell">
+            <div class="emoji-trigger">
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    quaternary
+                    circle
+                    ref="emojiTriggerButtonRef"
+                    @click="handleEmojiTriggerClick"
+                  >
+                    <template #icon>
+                      <n-icon :component="Plus" size="18" />
+                    </template>
+                  </n-button>
+                </template>
+                添加表情
+              </n-tooltip>
+
+              <n-popover
+                v-model:show="emojiPopoverShow"
+                trigger="manual"
+                placement="bottom-start"
+                :x="emojiPopoverXCoord"
+                :y="emojiPopoverYCoord"
+                @clickoutside="emojiPopoverShow = false"
+              >
+                <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
+                  <div class="emoji-panel__header">
+                    <div class="emoji-panel__header-left">
+                      <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button text size="small" @click="handleEmojiManageClick">
+                            <template #icon>
+                              <n-icon :component="Settings" />
+                            </template>
+                          </n-button>
+                        </template>
+                        表情管理
+                      </n-tooltip>
+                    </div>
+                    <div class="emoji-panel__header-right">
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button
+                            text
+                            size="small"
+                            class="emoji-panel__toggle-remark"
+                            @click="toggleEmojiRemarkVisible"
+                          >
+                            <span>{{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}</span>
+                            <n-icon :component="emojiRemarkVisible ? EyeOffOutline : EyeOutline" />
+                          </n-button>
+                        </template>
+                        {{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}
+                      </n-tooltip>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button text size="small" @click="emojiPopoverShow = false">
+                            <template #icon>
+                              <n-icon :component="CloseIcon" />
+                            </template>
+                          </n-button>
+                        </template>
+                        关闭
+                      </n-tooltip>
+                    </div>
+                  </div>
+
+                  <div class="emoji-panel__tabs emoji-panel__tabs--with-utf">
+                    <template v-if="hasEmojiItems && hasMultipleTabs">
+                      <button
+                        class="emoji-panel__tab"
+                        :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === null }"
+                        @click="switchEmojiPanelTab('gallery'); activeEmojiTab = null"
+                      >
+                        全部
+                      </button>
+                      <button
+                        v-for="tab in emojiTabOptions"
+                        :key="tab.id"
+                        class="emoji-panel__tab"
+                        :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === tab.id }"
+                        :title="tab.name"
+                        @click="switchEmojiPanelTab('gallery'); activeEmojiTab = tab.id"
+                      >
+                        <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                      </button>
+                    </template>
+                    <button
+                      class="emoji-panel__tab emoji-panel__tab--utf"
+                      :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'utf' }"
+                      title="UTF 表情"
+                      @click="switchEmojiPanelTab('utf')"
+                    >
+                      <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
+                      <span class="emoji-panel__tab-text">UTF</span>
+                    </button>
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <button
+                          class="emoji-panel__tab emoji-panel__tab--variant"
+                          :class="{
+                            'emoji-panel__tab--active': emojiPanelTab === 'variant',
+                            'emoji-panel__tab--muted': !activeIdentityForEmojiPanel || !hasIdentityVariantOptions,
+                          }"
+                          :aria-disabled="!activeIdentityForEmojiPanel || !hasIdentityVariantOptions"
+                          @click="handleEmojiVariantTabClick"
+                        >
+                          <span class="emoji-panel__tab-icon" aria-hidden="true">🎭</span>
+                          <span class="emoji-panel__tab-text">差分</span>
+                        </button>
+                      </template>
+                      {{ identityVariantTabTooltip }}
+                    </n-tooltip>
+                  </div>
+
+                  <div v-if="(emojiPanelTab === 'gallery' && hasEmojiItems) || emojiPanelTab === 'variant'" class="emoji-panel__search">
+                    <n-input
+                      v-model:value="emojiSearchQuery"
+                      size="small"
+                      :placeholder="emojiPanelTab === 'variant' ? '搜索差分关键词或备注...' : '搜索表情...'"
+                      clearable
+                    />
+                  </div>
+
+                  <div v-if="emojiPanelTab === 'gallery' && !hasEmojiItems" class="emoji-panel__empty">
+                    当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
+                  </div>
+
+                  <div
+                    class="emoji-panel__content"
+                    :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
+                  >
+                    <template v-if="emojiPanelTab === 'utf'">
+                      <div class="emoji-panel__utf-host">
+                        <EmojiPickerModal
+                          embedded
+                          mode="emoji-only"
+                          initial-tab="emoji"
+                          @select="handleUtfEmojiSelect"
+                        />
+                      </div>
+                    </template>
+                    <template v-else-if="emojiPanelTab === 'variant'">
+                      <div v-if="!activeIdentityForEmojiPanel" class="emoji-panel__empty">
+                        请先选择频道角色
+                      </div>
+                      <div v-else-if="!hasIdentityVariantOptions" class="emoji-panel__empty">
+                        当前频道角色没有可用的头像差分
+                      </div>
+                      <div v-else class="identity-variant-picker">
+                        <n-tooltip trigger="hover">
+                          <template #trigger>
+                            <button
+                              type="button"
+                              class="identity-variant-picker__item identity-variant-picker__item--default"
+                              :class="{ 'is-active': !effectiveIdentityVariantForEmojiPanel }"
+                              @click="handleEmojiVariantSelect('')"
+                            >
+                              <div class="identity-variant-picker__badge">↺</div>
+                              <AvatarVue
+                                :size="40"
+                                :border="false"
+                                :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || (activeIdentityForEmojiPanel.isTemporary ? '' : user.info.avatar)"
+                                :use-text-fallback="activeIdentityForEmojiPanel.isTemporary"
+                                :fallback-text="activeIdentityForEmojiPanel.displayName"
+                              />
+                              <div class="identity-variant-picker__title">默认头像</div>
+                              <div class="identity-variant-picker__hint">恢复</div>
+                            </button>
+                          </template>
+                          {{ describeIdentityVariantCard(null) }}
+                        </n-tooltip>
+                        <n-tooltip
+                          v-for="variant in filteredIdentityVariantOptions"
+                          :key="variant.id"
+                          trigger="hover"
+                        >
+                          <template #trigger>
+                            <button
+                              type="button"
+                              class="identity-variant-picker__item"
+                              :class="{ 'is-active': effectiveIdentityVariantForEmojiPanel?.id === variant.id }"
+                              @click="handleEmojiVariantSelect(variant.id)"
+                            >
+                              <div class="identity-variant-picker__badge">
+                                <img
+                                  v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                                  :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                                  :alt="resolveVariantNote(variant)"
+                                />
+                                <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+                              </div>
+                              <AvatarVue
+                                :size="40"
+                                :border="false"
+                                :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || (activeIdentityForEmojiPanel.isTemporary ? '' : user.info.avatar)"
+                                :use-text-fallback="activeIdentityForEmojiPanel.isTemporary"
+                                :fallback-text="variant.displayName || activeIdentityForEmojiPanel.displayName"
+                              />
+                              <div class="identity-variant-picker__title">{{ resolveVariantNote(variant) }}</div>
+                              <div class="identity-variant-picker__hint">={{ variant.keyword }}</div>
+                            </button>
+                          </template>
+                          <span class="identity-variant-picker__tooltip">{{ describeIdentityVariantCard(variant) }}</span>
+                        </n-tooltip>
+                        <div v-if="emojiSearchQuery && !filteredIdentityVariantOptions.length" class="emoji-panel__empty">
+                          没有匹配的头像差分
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else>
+                    <template v-if="isManagingEmoji">
+                      <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                        没有匹配的表情
+                      </div>
+                      <template v-else>
+                        <n-checkbox-group v-model:value="selectedEmojiIds">
+                          <div class="emoji-grid">
+                            <div class="emoji-manage-item" v-for="(item, idx) in filteredEmojiItems" :key="item.id">
+                              <div class="emoji-manage-item__content">
+                                <n-checkbox :value="item.id">
+                                  <div class="emoji-item">
+                                    <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                    <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">
+                                      {{ item.remark || `收藏${idx + 1}` }}
+                                    </div>
+                                  </div>
+                                </n-checkbox>
+                                <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">编辑备注</n-button>
+                              </div>
+                            </div>
+                          </div>
+                        </n-checkbox-group>
+                      </template>
+
+                      <div class="emoji-panel__actions">
+                        <n-button type="error" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
+                          删除选中
+                        </n-button>
+                        <n-button type="default" size="small" @click="exitEmojiManage">
+                          退出管理
+                        </n-button>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                        没有匹配的表情
+                      </div>
+                      <div v-else class="emoji-grid">
+                        <div
+                          class="emoji-item"
+                          v-for="(item, idx) in filteredEmojiItems"
+                          :key="item.id"
+                          draggable="true"
+                          @dragstart="handleGalleryEmojiDragStart(item, $event)"
+                          @click="handleQuickGalleryEmojiClick(item)"
+                        >
+                          <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                          <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
+                          <div class="emoji-item__actions">
+                            <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    </template>
+                  </div>
+                </div>
+              </n-popover>
+            </div>
+          </div>
+          <div class="chat-input-actions__cell">
+            <GalleryButton />
+          </div>
+        </div>
+
+        <div class="chat-input-actions__group chat-input-actions__group--addons">
+          <div class="chat-input-actions__cell">
+            <ChatIcOocToggle
+              v-model="inputIcMode"
+              compact
+            />
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperToggleActive }"
+                  @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
+                  <span class="chat-input-actions__icon">W</span>
+                </n-button>
+              </template>
+              {{ t('inputBox.whisperTooltip') }}
+            </n-tooltip>
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button quaternary circle @click="doUpload">
+                  <template #icon>
+                    <n-icon :component="Upload" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              上传图片
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  :type="inputMode === 'rich' ? 'primary' : 'default'"
+                  @click="toggleInputMode"
+                >
+                  <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
+                </n-button>
+              </template>
+              {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  :type="wideInputMode ? 'primary' : 'default'"
+                  @click="toggleWideInputMode"
+                >
+                  <template #icon>
+                    <n-icon :component="ArrowsVertical" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              {{ wideInputTooltip }}
+            </n-tooltip>
+          </div>
+
+          <div class="chat-input-actions__cell">
+            <n-popover
+              trigger="click"
+              placement="top"
+              :show="historyPopoverVisible"
+              :show-arrow="false"
+              class="history-popover"
+              @update:show="handleHistoryPopoverShow"
+            >
+              <template #trigger>
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button quaternary circle>
+                      <template #icon>
+                        <n-icon :component="ArrowBackUp" size="18" />
+                      </template>
+                    </n-button>
+                  </template>
+                  输入历史 / 保存当前
+                </n-tooltip>
+              </template>
+              <div class="history-panel" @click.stop>
+                <div class="history-panel__header">
+                  <span class="history-panel__title">输入回溯</span>
+                  <n-button
+                    size="tiny"
+                    tertiary
+                    round
+                    :disabled="!canManuallySaveHistory"
+                    @click.stop="handleManualHistoryRecord"
+                  >保存当前</n-button>
+                </div>
+                <div v-if="historyEntryViews.length" class="history-panel__body">
+                  <button
+                    v-for="entry in historyEntryViews"
+                    :key="entry.id"
+                    type="button"
+                    class="history-entry"
+                    @click="restoreHistoryEntry(entry.id)"
+                  >
+                    <div class="history-entry__meta">
+                      <span class="history-entry__tag" :class="{ 'history-entry__tag--rich': entry.mode === 'rich' }">
+                        {{ entry.mode === 'rich' ? '富文本' : '纯文本' }}
+                      </span>
+                      <span class="history-entry__time">{{ entry.timeLabel }}</span>
+                    </div>
+                    <div class="history-entry__preview" :title="entry.fullPreview">{{ entry.preview }}</div>
+                  </button>
+                </div>
+                <div v-else class="history-panel__empty">
+                  <p>暂无历史记录</p>
+                  <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
+                </div>
+              </div>
+            </n-popover>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="520">
       <n-drawer-content closable>
@@ -13005,8 +14107,8 @@ onBeforeUnmount(() => {
 
     <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
       <n-drawer-content closable>
-        <template #header>邮件提醒</template>
-        <EmailNotificationManager :channel-id="chat.curChannel?.id || ''" />
+        <template #header>未读提醒</template>
+        <EmailNotificationManager scope-type="channel" :scope-id="chat.curChannel?.id || ''" />
       </n-drawer-content>
     </n-drawer>
 
@@ -13263,19 +14365,19 @@ onBeforeUnmount(() => {
           :ref="el => registerTypingPreviewRow(el as HTMLElement | null, preview)"
         >
           <div :class="typingPreviewSurfaceClass(preview)" :data-tone="preview.tone">
-            <div
-              v-if="shouldShowTypingHandle(preview)"
-              :class="typingPreviewHandleClass(preview)"
-              :aria-hidden="!canDragTypingPreview(preview)"
-              tabindex="-1"
-              @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
-            >
-              <span class="message-row__dot" v-for="n in 3" :key="n"></span>
-            </div>
             <template v-if="!display.showAvatar && compactInlineGridLayout">
               <div class="typing-preview-content typing-preview-content--grid">
                 <div class="message-row__grid typing-preview-grid">
-                  <div class="message-row__grid-handle typing-preview-grid__handle"></div>
+                  <div class="message-row__grid-handle typing-preview-grid__handle">
+                    <div
+                      :class="typingPreviewHandleClass(preview)"
+                      :aria-hidden="!canDragTypingPreview(preview)"
+                      tabindex="-1"
+                      @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
+                    >
+                      <span class="message-row__dot" v-for="n in 3" :key="n"></span>
+                    </div>
+                  </div>
                   <div class="message-row__grid-name">
                     <span
                       class="message-row__name"
@@ -13308,9 +14410,23 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else>
+              <div
+                :class="typingPreviewHandleClass(preview)"
+                :aria-hidden="!canDragTypingPreview(preview)"
+                tabindex="-1"
+                @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
+              >
+                <span class="message-row__dot" v-for="n in 3" :key="n"></span>
+              </div>
               <div class="typing-preview-content">
                 <div v-if="display.showAvatar" class="typing-preview-avatar">
-                  <AvatarVue :border="false" :src="preview.avatar" />
+                  <UserAvatarDecoration
+                    :border="false"
+                    :src="preview.avatar"
+                    :decorations="preview.avatarDecorations"
+                    :use-text-fallback="Boolean(preview.isTemporary)"
+                    :fallback-text="preview.displayName"
+                  />
                 </div>
                 <div class="typing-preview-main">
                   <div class="typing-preview-bubble-header">
@@ -13453,7 +14569,7 @@ onBeforeUnmount(() => {
             <div class="whisper-panel__list" @keydown="handleWhisperKeydown">
               <div v-for="(candidate, idx) in filteredWhisperCandidates" :key="candidate.id"
                 class="whisper-panel__item"
-                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate.raw) }"
+                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate) }"
                 @mousedown.prevent @mouseenter="whisperSelectionIndex = idx"
                 @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
@@ -13471,12 +14587,21 @@ onBeforeUnmount(() => {
                       </span>
                     </div>
                   </div>
-                  <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
+                  <div v-if="candidate.secondaryName" class="whisper-panel__sub">
+                    <span class="whisper-panel__sub-label">场内：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.icColor)">{{ candidate.icDisplayName || '未配置' }}</span>
+                    <span class="whisper-panel__sub-sep"> | </span>
+                    <span class="whisper-panel__sub-label">场外：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.oocColor)">{{ candidate.oocDisplayName || '未配置' }}</span>
+                    <span class="whisper-panel__sub-sep"> | </span>
+                    <span class="whisper-panel__sub-label">用户：</span>
+                    <span class="whisper-panel__sub-name" :style="resolveWhisperMetaNameStyle(candidate.userColor)">{{ candidate.userDisplayName }}</span>
+                  </div>
                 </div>
                 <n-checkbox
                   class="whisper-panel__checkbox"
-                  :checked="isWhisperTarget(candidate.raw)"
-                  @update:checked="() => onWhisperTargetToggle(candidate)"
+                  :checked="isWhisperTarget(candidate)"
+                  @update:checked="(checked) => handleWhisperCandidateChecked(candidate, checked)"
                   @click.stop
                 />
               </div>
@@ -13522,11 +14647,17 @@ onBeforeUnmount(() => {
               :style="getWhisperTargetStyle(target)"
               @close.stop="chat.removeWhisperTarget(target)"
             >
-              {{ target.nick || target.name }}
+              {{ resolveSelectedWhisperTargetName(target) }}
             </n-tag>
           </div>
           <div class="chat-input-area relative flex-1">
             <div
+              v-if="isMobileMinimalInputActive && minimalInputToolbarVisible"
+              ref="minimalInputActionsHostRef"
+              class="chat-input-inline-toolbar-host"
+            />
+            <div
+              v-if="!isMobileMinimalInputActive"
               :class="[
                 'chat-input-actions',
                 'input-floating-toolbar',
@@ -13543,6 +14674,7 @@ onBeforeUnmount(() => {
                     v-if="chat.curChannel"
                     :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
+                    @edit-temporary="openActiveTemporaryIdentityEdit"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
                     @avatar-setup="handleOpenAvatarPrompt"
@@ -13568,10 +14700,11 @@ onBeforeUnmount(() => {
 
                     <n-popover
                       v-model:show="emojiPopoverShow"
-                      trigger="click"
+                      trigger="manual"
                       placement="bottom-start"
                       :x="emojiPopoverXCoord"
                       :y="emojiPopoverYCoord"
+                      @clickoutside="emojiPopoverShow = false"
                     >
                       <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
                         <div class="emoji-panel__header">
@@ -13711,7 +14844,9 @@ onBeforeUnmount(() => {
                                     <AvatarVue
                                       :size="40"
                                       :border="false"
-                                      :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                      :src="resolveAttachmentUrl(activeIdentityForEmojiPanel.avatarAttachmentId) || (activeIdentityForEmojiPanel.isTemporary ? '' : user.info.avatar)"
+                                      :use-text-fallback="activeIdentityForEmojiPanel.isTemporary"
+                                      :fallback-text="activeIdentityForEmojiPanel.displayName"
                                     />
                                     <div class="identity-variant-picker__title">默认头像</div>
                                     <div class="identity-variant-picker__hint">恢复</div>
@@ -13742,7 +14877,9 @@ onBeforeUnmount(() => {
                                     <AvatarVue
                                       :size="40"
                                       :border="false"
-                                      :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || user.info.avatar"
+                                      :src="resolveAttachmentUrl(variant.avatarAttachmentId || activeIdentityForEmojiPanel.avatarAttachmentId) || (activeIdentityForEmojiPanel.isTemporary ? '' : user.info.avatar)"
+                                      :use-text-fallback="activeIdentityForEmojiPanel.isTemporary"
+                                      :fallback-text="variant.displayName || activeIdentityForEmojiPanel.displayName"
                                     />
                                     <div class="identity-variant-picker__title">{{ resolveVariantNote(variant) }}</div>
                                     <div class="identity-variant-picker__hint">={{ variant.keyword }}</div>
@@ -14307,7 +15444,207 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <div class="chat-input-editor-row" :style="chatInputStyle">
+            <div
+              v-if="isMobileMinimalInputActive"
+              class="chat-input-editor-row chat-input-editor-row--minimal"
+              :class="{ 'chat-input-editor-row--side-stacked': showMinimalStackedSideControls }"
+              :style="chatInputStyle"
+            >
+              <div class="chat-input-minimal-side">
+                <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
+                  <ChannelIdentitySwitcher
+                    v-if="chat.curChannel"
+                    compact
+                    :preview-appearance="activeIdentityAppearanceForPreview"
+                    @create="openIdentityCreate"
+                    @edit-temporary="openActiveTemporaryIdentityEdit"
+                    @manage="openIdentityManager"
+                    @identity-changed="emitTypingPreview"
+                    @avatar-setup="handleOpenAvatarPrompt"
+                  />
+                </div>
+                <div
+                  v-if="showMinimalStackedSideControls"
+                  class="chat-input-minimal-side__aux"
+                >
+                  <ChatIcOocToggle
+                    v-model="inputIcMode"
+                    compact
+                  />
+                </div>
+              </div>
+              <div class="chat-input-editor-main">
+                <KeywordSuggestPanel
+                  :visible="keywordSuggestVisible"
+                  :options="keywordSuggestOptions"
+                  :active-index="keywordSuggestIndex"
+                  :loading="keywordSuggestLoading"
+                  @select="handleKeywordSuggestSelect"
+                  @hover="handleKeywordSuggestHover"
+                />
+                <div
+                  ref="minimalInputMeasureRef"
+                  class="chat-input-measure-shell"
+                >
+                  <ChatInputSwitcher
+                    ref="textInputRef"
+                    v-model="textToSend"
+                    v-model:mode="inputMode"
+                    :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')"
+                    :whisper-mode="whisperMode"
+                    :disabled="spectatorInputDisabled"
+                    :mention-options="atOptions"
+                    :mention-loading="atLoading"
+                    :mention-prefix="atPrefix"
+                    :mention-render-label="atRenderLabel"
+                    :rows="1"
+                    :input-class="chatInputClassList"
+                    :send-shortcut="display.settings.sendShortcut"
+                    :inline-images="inlineImagePreviewMap"
+                    :default-i-form-embed-link="defaultIFormEmbedLink"
+                    @mention-search="atHandleSearch"
+                    @mention-select="handleMentionSelect"
+                    @keydown="keyDown"
+                    @blur="handleChatInputBlur"
+                    @input="handleSlashInput"
+                    @paste-image="handlePlainPasteImage"
+                    @drop-files="handlePlainDropFiles"
+                    @drop-gallery-item="handleDropGalleryItem"
+                    @upload-button-click="handleRichUploadButtonClick"
+                    @remove-image="removeInlineImage"
+                  />
+                </div>
+                <input
+                  ref="inlineImageInputRef"
+                  class="hidden"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  @change="handleInlineFileChange"
+                />
+              </div>
+              <div
+                v-if="!isEditing && !hasMeaningfulDraft && !showMinimalStackedSideControls"
+                class="chat-input-actions__cell"
+              >
+                <ChatIcOocToggle
+                  v-model="inputIcMode"
+                  compact
+                />
+              </div>
+              <div
+                v-if="!isEditing"
+                class="chat-input-minimal-actions"
+                :class="{
+                  'chat-input-minimal-actions--stacked': showMinimalStackedSideControls,
+                  'chat-input-minimal-actions--draft': hasMeaningfulDraft,
+                }"
+              >
+                <template v-if="showMinimalStackedSideControls">
+                  <div
+                    v-if="showMinimalWideInputShortcut"
+                    class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--top"
+                  >
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-tool-btn"
+                      :class="{ 'chat-input-minimal-tool-btn--active': wideInputMode }"
+                      :aria-label="wideInputTooltip"
+                      @click="toggleWideInputMode"
+                    >
+                      <template #icon>
+                        <n-icon :component="ArrowsVertical" size="16" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div
+                    v-if="hasMeaningfulDraft"
+                    class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--middle"
+                  >
+                    <n-button
+                      size="medium"
+                      @click="send"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="send-action-btn send-action-btn--compact"
+                    >
+                      <template #icon>
+                        <n-icon :component="Send" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div class="chat-input-actions__cell chat-input-minimal-actions__slot chat-input-minimal-actions__slot--bottom">
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-toggle"
+                      :class="{ 'chat-input-minimal-toggle--active': minimalInputToolbarVisible }"
+                      :aria-label="minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏'"
+                      @click="toggleMinimalInputToolbar"
+                    >
+                      <template #icon>
+                        <n-icon :component="Plus" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                </template>
+                <div
+                  v-else
+                  class="chat-input-minimal-actions__primary"
+                >
+                  <div
+                    v-if="hasMeaningfulDraft"
+                    class="chat-input-actions__cell"
+                  >
+                    <n-button
+                      size="medium"
+                      @click="send"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="send-action-btn send-action-btn--compact"
+                    >
+                      <template #icon>
+                        <n-icon :component="Send" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                  <div class="chat-input-actions__cell">
+                    <n-button
+                      quaternary
+                      circle
+                      class="chat-input-minimal-toggle"
+                      :class="{ 'chat-input-minimal-toggle--active': minimalInputToolbarVisible }"
+                      :aria-label="minimalInputToolbarVisible ? '收起完整工具栏' : '展开完整工具栏'"
+                      @click="toggleMinimalInputToolbar"
+                    >
+                      <template #icon>
+                        <n-icon :component="Plus" size="18" />
+                      </template>
+                    </n-button>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="isEditing"
+                class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline"
+              >
+                <div class="edit-actions-group">
+                  <n-button size="medium" @click="saveEdit"
+                    :disabled="isSavingEdit || spectatorInputDisabled || chat.connectState !== 'connected'"
+                    class="edit-action-btn edit-action-btn--save">
+                    <template #icon>
+                      <n-icon :component="Check" size="16" />
+                    </template>
+                  </n-button>
+                  <n-button size="medium" @click="cancelEditing"
+                    class="edit-action-btn edit-action-btn--cancel">
+                    <template #icon>
+                      <n-icon :component="X" size="16" />
+                    </template>
+                  </n-button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
                 <KeywordSuggestPanel
                   :visible="keywordSuggestVisible"
@@ -14420,44 +15757,81 @@ onBeforeUnmount(() => {
   <n-modal
     v-model:show="identityDialogVisible"
     preset="card"
-    :title="identityDialogMode === 'create' ? '创建频道角色' : '编辑频道角色'"
     :auto-focus="false"
     class="identity-dialog"
   >
-    <n-form label-width="90px" label-placement="left">
+    <template #header>
+      <div class="identity-dialog__header">
+        <span class="identity-dialog__header-title">{{ identityDialogTitle }}</span>
+        <n-tooltip v-if="identityTemporaryHint" trigger="hover">
+          <template #trigger>
+            <button
+              type="button"
+              class="identity-dialog__header-help"
+              aria-label="查看临时身份说明"
+            >
+              ？
+            </button>
+          </template>
+          {{ identityTemporaryHint }}
+        </n-tooltip>
+      </div>
+    </template>
+    <n-form label-width="90px" label-placement="left" class="identity-dialog__form">
       <n-form-item label="频道昵称">
         <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
       </n-form-item>
       <n-form-item label="昵称颜色">
         <div class="identity-color-field">
           <n-color-picker
-            v-model:value="identityForm.color"
+            :value="identityForm.color"
             :modes="['hex']"
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            @update:value="handleIdentityColorPickerUpdate"
           />
           <n-input
-            v-model:value="identityForm.color"
+            v-model:value="identityColorDraft"
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
             @blur="handleIdentityColorBlur"
             @keyup.enter="handleIdentityColorBlur"
           />
-          <n-button tertiary size="small" @click="identityForm.color = ''">清除</n-button>
+          <n-button tertiary size="small" @click="clearIdentityColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item label="频道头像">
         <div class="identity-avatar-field">
-          <AvatarVue :size="48" :border="false" :src="identityAvatarDisplay || user.info.avatar" />
+          <AvatarVue
+            :size="48"
+            :border="false"
+            :src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :use-text-fallback="identityForm.isTemporary"
+            :fallback-text="identityForm.displayName"
+          />
           <n-space>
             <n-button size="small" type="primary" @click="handleIdentityAvatarTrigger">上传头像</n-button>
             <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
       </n-form-item>
-      <n-form-item label="绑定人物卡">
+      <n-form-item label="头像装饰">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityDecorationEditor">编辑装饰</n-button>
+            <n-tag v-if="identityForm.avatarDecorations.some(item => item.enabled && item.resourceAttachmentId)" size="small" type="success">
+              已配置
+            </n-tag>
+            <n-text v-else depth="3">未配置</n-text>
+          </n-space>
+          <n-text depth="3">
+            仅对当前频道角色生效，并且只会显示在频道消息头像上。
+          </n-text>
+        </div>
+      </n-form-item>
+      <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
           :options="characterCardSelectOptions"
@@ -14465,75 +15839,123 @@ onBeforeUnmount(() => {
           clearable
         />
       </n-form-item>
-      <n-form-item>
+      <n-form-item v-if="!isEditingTemporaryIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
-      <n-divider title-placement="left">头像差分</n-divider>
-      <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
-        <div class="identity-variant-section__header">
-          <div>
-            <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
-            <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
-          </div>
-          <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
-        </div>
-        <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
-          <div
-            v-for="variant in currentEditingIdentityVariants"
-            :key="variant.id"
-            class="identity-variant-list__item"
-          >
-            <button
-              type="button"
-              class="identity-variant-list__selector"
-              @click="openIdentityVariantEdit(variant)"
+      <n-form-item v-if="identityForm.isTemporary || isEditingTemporaryIdentity" label="切换到此角色时">
+        <div class="identity-mini-mode-switch">
+          <n-button-group size="small">
+            <n-button
+              :type="identityForm.icOocOnActivate !== 'ooc' ? 'primary' : 'default'"
+              @click="setTemporaryIdentityActivateMode('ic')"
             >
-              <img
-                v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
-                :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
-                :alt="resolveVariantNote(variant)"
-              />
-              <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
-            </button>
-            <AvatarVue
-              :size="40"
-              :border="false"
-              :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || user.info.avatar"
-            />
-            <div class="identity-variant-list__meta">
-              <div class="identity-variant-list__name-row">
-                <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
-                <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
-                <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
-              </div>
-              <div class="identity-variant-list__sub">
-                <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
-                <span v-else>仅覆盖头像</span>
-                <span v-if="variant.color">颜色：{{ variant.color }}</span>
-              </div>
+              场内
+            </n-button>
+            <n-button
+              :type="identityForm.icOocOnActivate === 'ooc' ? 'primary' : 'default'"
+              @click="setTemporaryIdentityActivateMode('ooc')"
+            >
+              场外
+            </n-button>
+          </n-button-group>
+          <span class="identity-mini-mode-switch__hint">切换到这个临时角色时，自动切到{{ temporaryIdentityActivateModeLabel }}</span>
+        </div>
+      </n-form-item>
+      <n-form-item v-if="identityDialogMode === 'create'" class="identity-dialog__check-item">
+        <n-checkbox v-model:checked="identityForm.isTemporary">
+          创建为临时 NPC 角色
+        </n-checkbox>
+      </n-form-item>
+      <template v-if="!isEditingTemporaryIdentity">
+        <n-divider title-placement="left" class="identity-dialog__variant-divider">头像差分</n-divider>
+        <div v-if="identityDialogMode === 'edit' && editingIdentity" class="identity-variant-section">
+          <div class="identity-variant-section__header">
+            <div>
+              <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
+              <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
             </div>
-            <div class="identity-variant-list__actions">
-              <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
-              <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
+            <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
+          </div>
+          <div v-if="currentEditingIdentityVariants.length" class="identity-variant-list">
+            <div
+              v-for="variant in currentEditingIdentityVariants"
+              :key="variant.id"
+              class="identity-variant-list__item"
+            >
+              <button
+                type="button"
+                class="identity-variant-list__selector"
+                @click="openIdentityVariantEdit(variant)"
+              >
+                <img
+                  v-if="isVariantSelectorEmojiAttachment(variant.selectorEmoji)"
+                  :src="resolveVariantSelectorEmojiSrc(variant.selectorEmoji)"
+                  :alt="resolveVariantNote(variant)"
+                />
+                <span v-else>{{ variant.selectorEmoji || '🙂' }}</span>
+              </button>
+              <AvatarVue
+                :size="40"
+                :border="false"
+                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : user.info.avatar)"
+                :use-text-fallback="identityForm.isTemporary"
+                :fallback-text="variant.displayName || identityForm.displayName"
+              />
+              <div class="identity-variant-list__meta">
+                <div class="identity-variant-list__name-row">
+                  <span class="identity-variant-list__name">{{ resolveVariantNote(variant) }}</span>
+                  <n-tag size="small" type="info">={{ variant.keyword }}</n-tag>
+                  <n-tag v-if="variant.enabled === false" size="small" type="warning">停用</n-tag>
+                </div>
+                <div class="identity-variant-list__sub">
+                  <span v-if="variant.displayName">覆盖昵称：{{ variant.displayName }}</span>
+                  <span v-else>仅覆盖头像</span>
+                  <span v-if="variant.color">颜色：{{ variant.color }}</span>
+                </div>
+              </div>
+              <div class="identity-variant-list__actions">
+                <n-button text size="small" @click="openIdentityVariantEdit(variant)">编辑</n-button>
+                <n-button text size="small" type="error" @click="deleteIdentityVariant(variant)">删除</n-button>
+              </div>
             </div>
           </div>
+          <n-empty v-else description="当前角色还没有头像差分">
+            <template #extra>
+              <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
+            </template>
+          </n-empty>
         </div>
-        <n-empty v-else description="当前角色还没有头像差分">
-          <template #extra>
-            <n-button size="small" type="primary" @click="openIdentityVariantCreate">创建首个差分</n-button>
-          </template>
-        </n-empty>
-      </div>
-      <n-alert v-else type="info" :show-icon="false">
-        请先保存频道角色，随后即可继续配置头像差分。
-      </n-alert>
+        <n-alert v-else type="info" :show-icon="false">
+          请先保存频道角色，随后即可继续配置头像差分。
+        </n-alert>
+      </template>
     </n-form>
     <template #footer>
       <n-space justify="end">
         <n-button @click="closeIdentityDialog">取消</n-button>
-        <n-button type="primary" :loading="identitySubmitting" @click="submitIdentityForm">保存</n-button>
+        <n-button type="primary" :loading="identitySubmitting" @click="submitIdentityForm">{{ identityDialogSubmitText }}</n-button>
+      </n-space>
+    </template>
+  </n-modal>
+  <n-modal
+    v-model:show="identityDecorationEditorVisible"
+    preset="card"
+    title="编辑频道角色头像装饰"
+    style="max-width: 760px;"
+    :auto-focus="false"
+  >
+    <AvatarDecorationEditor
+      v-model="identityForm.avatarDecorations"
+      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+      :fallback-text="identityForm.displayName"
+      :preview-name="identityForm.displayName || '频道角色预览'"
+      :upload-channel-id="chat.curChannel?.id"
+    />
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="identityDecorationEditorVisible = false">完成</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -14588,7 +16010,13 @@ onBeforeUnmount(() => {
       </n-form-item>
       <n-form-item label="差分头像">
         <div class="identity-avatar-field">
-          <AvatarVue :size="48" :border="false" :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || user.info.avatar" />
+          <AvatarVue
+            :size="48"
+            :border="false"
+            :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :use-text-fallback="identityForm.isTemporary"
+            :fallback-text="identityVariantForm.displayName || identityForm.displayName"
+          />
           <n-space>
             <n-button size="small" type="primary" @click="handleIdentityVariantAvatarTrigger">上传头像</n-button>
             <n-button
@@ -14612,19 +16040,22 @@ onBeforeUnmount(() => {
       <n-form-item label="覆盖颜色">
         <div class="identity-color-field">
           <n-color-picker
-            v-model:value="identityVariantForm.color"
+            :value="identityVariantForm.color"
             :modes="['hex']"
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            @update:value="handleIdentityVariantColorPickerUpdate"
           />
           <n-input
-            v-model:value="identityVariantForm.color"
+            v-model:value="identityVariantColorDraft"
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
+            @blur="handleIdentityVariantColorBlur"
+            @keyup.enter="handleIdentityVariantColorBlur"
           />
-          <n-button tertiary size="small" @click="identityVariantForm.color = ''">清除</n-button>
+          <n-button tertiary size="small" @click="clearIdentityVariantColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item>
@@ -14690,7 +16121,15 @@ onBeforeUnmount(() => {
             </n-button>
             <div>
               <div class="identity-drawer__title">频道角色管理</div>
-              <div class="identity-drawer__subtitle">支持导入/导出，便于跨频道迁移</div>
+              <div class="identity-drawer__subtitle">
+                <template v-if="isManagingOtherUserIdentity">
+                  当前管理：{{ currentManagedIdentityLabel }}
+                  <span v-if="identityManageTargetRoleLabel">（{{ identityManageTargetRoleLabel }}）</span>
+                </template>
+                <template v-else>
+                  支持导入/导出，便于跨频道迁移
+                </template>
+              </div>
             </div>
           </div>
           <n-space>
@@ -14744,6 +16183,26 @@ onBeforeUnmount(() => {
                 <n-icon :component="ArrowsVertical" size="14" />
               </template>
               同步其他频道
+            </n-button>
+            <n-button
+              v-if="canManageOtherUserIdentities"
+              text
+              size="small"
+              @click="openIdentityManageUserDialog"
+            >
+              <template #icon>
+                <n-icon :component="SearchIcon" size="14" />
+              </template>
+              管理其他用户
+            </n-button>
+            <n-button
+              v-if="isManagingOtherUserIdentity"
+              text
+              size="small"
+              type="warning"
+              @click="exitIdentityManageUserMode"
+            >
+              退出代管
             </n-button>
           </n-space>
         </div>
@@ -14830,7 +16289,9 @@ onBeforeUnmount(() => {
               <AvatarVue
                 :size="40"
                 :border="false"
-                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || user.info.avatar"
+                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || (identity.isTemporary ? '' : user.info.avatar)"
+                :use-text-fallback="identity.isTemporary"
+                :fallback-text="identity.displayName"
               />
               <div class="identity-list__meta">
                 <div class="identity-list__name">
@@ -14842,9 +16303,10 @@ onBeforeUnmount(() => {
                     {{ identity.displayName }}
                   </span>
                   <n-tag size="small" type="info" v-if="identity.isDefault">默认</n-tag>
+                  <n-tag size="small" type="warning" v-if="identity.isTemporary">临时</n-tag>
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
-                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id).length }} 个</div>
+                <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id, currentIdentityTargetUserId).length }} 个</div>
                 <div class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
@@ -14873,6 +16335,49 @@ onBeforeUnmount(() => {
       </template>
     </n-drawer-content>
   </n-drawer>
+  <n-modal
+    v-model:show="identityManageCandidateModalVisible"
+    preset="card"
+    title="选择要管理的用户"
+    :style="{ width: 'min(560px, 92vw)' }"
+  >
+    <div class="space-y-3">
+      <n-input
+        v-model:value="identityManageCandidateKeyword"
+        clearable
+        placeholder="搜索用户ID / 用户名 / 昵称"
+      />
+      <n-spin :show="identityManageCandidatesLoading">
+        <div class="space-y-2" style="max-height: 360px; overflow: auto;">
+          <div
+            v-for="item in identityManageCandidates"
+            :key="item.userId"
+            class="identity-manage-candidate"
+            :class="{ 'is-active': identityManageCandidateSelectedUserId === item.userId }"
+            @click="identityManageCandidateSelectedUserId = item.userId"
+          >
+            <AvatarVue :size="36" :border="false" :src="resolveAttachmentUrl(item.avatar) || ''" :fallback-text="item.nickname || item.username || item.userId" />
+            <div class="identity-manage-candidate__meta">
+              <div class="identity-manage-candidate__name">
+                {{ item.nickname || item.username || item.userId }}
+                <n-tag size="small" type="info">{{ item.roleLabel }}</n-tag>
+                <n-tag v-if="item.isSelf" size="small">自己</n-tag>
+              </div>
+              <div class="identity-manage-candidate__sub">
+                {{ item.username || item.userId }}
+              </div>
+            </div>
+            <n-radio :checked="identityManageCandidateSelectedUserId === item.userId" />
+          </div>
+          <n-empty v-if="!identityManageCandidatesLoading && !identityManageCandidates.length" description="没有可管理的用户" />
+        </div>
+      </n-spin>
+      <n-space justify="end">
+        <n-button @click="identityManageCandidateModalVisible = false">取消</n-button>
+        <n-button type="primary" :disabled="!identityManageCandidateSelectedUserId" @click="confirmIdentityManageUser">确认</n-button>
+      </n-space>
+    </div>
+  </n-modal>
   <n-modal
     v-model:show="folderDialogVisible"
     preset="dialog"
@@ -14934,7 +16439,10 @@ onBeforeUnmount(() => {
       </n-space>
     </div>
   </n-modal>
-  <IcOocRoleConfigPanel v-model:show="icOocRoleConfigPanelVisible" />
+  <IcOocRoleConfigPanel
+    v-model:show="icOocRoleConfigPanelVisible"
+    :target-user-id="currentIdentityTargetUserId"
+  />
 
   <!-- 新增组件 -->
   <ArchiveDrawer
@@ -14987,6 +16495,13 @@ onBeforeUnmount(() => {
 
   <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
   <WorldKeywordManager />
+  <AnnouncementManagerModal
+    v-model:visible="showWorldAnnouncementModal"
+    scope-type="world"
+    :scope-id="chat.currentWorldId"
+    title="世界公告"
+    :can-manage="canManageWorldAnnouncements"
+  />
 
   <!-- 新用户引导系统 -->
   <OnboardingRoot v-if="!chat.isObserver" />
@@ -16096,10 +17611,14 @@ onBeforeUnmount(() => {
 }
 
 .typing-preview-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: var(--chat-avatar-size, 3rem);
   height: var(--chat-avatar-size, 3rem);
   min-width: var(--chat-avatar-size, 3rem);
+  overflow: visible;
 }
 
 .message-row__handle--placeholder {
@@ -17054,6 +18573,44 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.chat-top-toolbar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.chat-input-inline-toolbar-host {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  margin-bottom: 0.55rem;
+  padding: 0 0.1rem 0.1rem;
+  scrollbar-width: none;
+}
+
+.chat-input-inline-toolbar-host::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-input-actions__teleport-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.chat-input-actions__teleport-content--compact-toolbar {
+  flex-wrap: wrap;
+  padding: 0.15rem 0;
+}
+
+.chat-input-actions__teleport-content--compact-toolbar .chat-input-actions__group {
+  flex-wrap: wrap;
+}
+
 .chat-input-actions {
   display: flex;
   align-items: center;
@@ -17073,11 +18630,27 @@ onBeforeUnmount(() => {
   flex-wrap: nowrap;
 }
 
+.chat-input-actions__group--minimal-trailing {
+  margin-left: auto;
+  flex: 0 0 auto;
+  gap: 0.45rem;
+}
+
 .chat-input-editor-row {
   display: flex;
   align-items: flex-end;
   gap: 0.75rem;
   margin-top: 0.75rem;
+}
+
+.chat-input-editor-row--minimal {
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0;
+}
+
+.chat-input-editor-row--minimal.chat-input-editor-row--side-stacked {
+  align-items: stretch;
 }
 
 .chat-input-editor-main {
@@ -17091,6 +18664,88 @@ onBeforeUnmount(() => {
 
 .chat-input-editor-main :deep(.hybrid-input) {
   width: 100%;
+}
+
+.chat-input-editor-row:not(.chat-input-editor-row--minimal) .chat-input-editor-main :deep(.hybrid-input) {
+  min-height: 46px;
+}
+
+.chat-input-editor-row--minimal .chat-input-editor-main {
+  flex: 1 1 0;
+}
+
+.chat-input-measure-shell {
+  min-width: 0;
+}
+
+.chat-input-minimal-side,
+.chat-input-minimal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.chat-input-minimal-actions {
+  align-self: center;
+}
+
+.chat-input-minimal-actions--draft,
+.chat-input-minimal-actions--stacked {
+  width: calc(72px + 0.4rem);
+  min-width: calc(72px + 0.4rem);
+}
+
+.chat-input-minimal-actions--draft {
+  justify-content: center;
+}
+
+.chat-input-editor-row--minimal.chat-input-editor-row--side-stacked .chat-input-minimal-side {
+  justify-content: space-between;
+  padding-block: 0.05rem;
+}
+
+.chat-input-minimal-actions--stacked {
+  align-self: stretch;
+  justify-content: space-between;
+  padding-block: 0.05rem;
+}
+
+.chat-input-minimal-side__aux {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__primary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__slot {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-input-minimal-actions__slot--middle {
+  margin-block: auto;
+}
+
+.chat-input-minimal-actions > .chat-input-actions__cell,
+.chat-input-minimal-actions__primary > .chat-input-actions__cell {
+  display: flex;
+  justify-content: center;
+}
+
+.chat-input-editor-row--minimal .chat-input-send-inline {
+  align-self: center;
 }
 
 .chat-input-send-inline {
@@ -17136,10 +18791,40 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
+.send-action-btn--compact {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  background-color: color-mix(in srgb, var(--sc-primary-color, #2563eb) 13%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.26) !important;
+  color: var(--sc-primary-color, #2563eb) !important;
+  box-shadow: 0 8px 18px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.18);
+}
+
+.send-action-btn--compact:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.4) !important;
+  color: var(--sc-primary-color, #2563eb) !important;
+  transform: translateY(-1px);
+}
+
 :root[data-display-palette='night'] .send-action-btn:hover:not(:disabled) {
   background-color: rgba(96, 165, 250, 0.2) !important;
   border-color: rgba(96, 165, 250, 0.45) !important;
   color: #60a5fa !important;
+}
+
+:root[data-display-palette='night'] .send-action-btn--compact {
+  background-color: color-mix(in srgb, var(--sc-primary-color, #60a5fa) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35) !important;
+  color: color-mix(in srgb, white 82%, var(--sc-primary-color, #93c5fd)) !important;
+  box-shadow: 0 10px 24px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24);
+}
+
+:root[data-display-palette='night'] .send-action-btn--compact:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.24) !important;
+  border-color: rgba(var(--sc-primary-rgb, 96, 165, 250), 0.45) !important;
+  color: color-mix(in srgb, white 88%, var(--sc-primary-color, #bfdbfe)) !important;
 }
 
 .edit-action-btn {
@@ -17212,7 +18897,65 @@ onBeforeUnmount(() => {
   height: clamp(24px, 2.8vw, 32px);
 }
 
+.chat-input-minimal-toggle,
+.chat-input-minimal-tool-btn {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-secondary) !important;
+  box-shadow: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.chat-input-minimal-toggle:hover:not(:disabled),
+.chat-input-minimal-tool-btn:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.14) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.28) !important;
+  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
+  transform: translateY(-1px);
+}
+
+.chat-input-minimal-toggle--active,
+.chat-input-minimal-tool-btn--active {
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #2563eb)) 15%, var(--sc-bg-elevated, #ffffff)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.34) !important;
+  color: var(--primary-color, var(--sc-primary-color, #2563eb)) !important;
+  box-shadow: 0 0 0 1px rgba(var(--sc-primary-rgb, 37, 99, 235), 0.2);
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle,
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn {
+  background-color: color-mix(in srgb, var(--sc-bg-elevated, #26262c) 92%, transparent) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: rgba(226, 232, 240, 0.86) !important;
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle:hover:not(:disabled),
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn:hover:not(:disabled) {
+  background-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.2) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.34) !important;
+  color: color-mix(in srgb, white 86%, var(--primary-color, var(--sc-primary-color, #93c5fd))) !important;
+}
+
+:root[data-display-palette='night'] .chat-input-minimal-toggle--active,
+:root[data-display-palette='night'] .chat-input-minimal-tool-btn--active {
+  background-color: color-mix(in srgb, var(--primary-color, var(--sc-primary-color, #60a5fa)) 18%, var(--sc-bg-elevated, #26262c)) !important;
+  border-color: rgba(var(--sc-primary-rgb, 59, 130, 246), 0.4) !important;
+  color: color-mix(in srgb, white 90%, var(--primary-color, var(--sc-primary-color, #bfdbfe))) !important;
+}
+
 @media (max-width: 520px) {
+  .chat-top-toolbar-stack {
+    gap: 0.35rem;
+  }
+
+  .chat-input-inline-toolbar-host {
+    padding-left: 0.1rem;
+    padding-right: 0.1rem;
+  }
+
   .chat-input-actions {
     gap: 0.25rem;
   }
@@ -17243,6 +18986,13 @@ onBeforeUnmount(() => {
     width: 40px !important;
     height: 40px !important;
     border-radius: 8px !important;
+  }
+
+  .send-action-btn--compact,
+  .chat-input-minimal-toggle,
+  .chat-input-minimal-tool-btn {
+    width: 34px !important;
+    height: 34px !important;
   }
 
   .edit-actions-group {
@@ -17573,6 +19323,31 @@ onBeforeUnmount(() => {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, padding-top 0.2s ease;
 }
 
+.chat-input-editor-row--minimal .chat-text :deep(textarea) {
+  min-height: 2.75rem;
+  border-radius: 1.1rem;
+  padding: 0.72rem 1rem;
+  background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.95));
+  border-color: color-mix(in srgb, var(--sc-border-mute, rgba(148, 163, 184, 0.28)) 82%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.chat-input-editor-row--minimal .chat-input-editor-main :deep(.hybrid-input),
+.chat-input-editor-row--minimal .chat-input-editor-main :deep(.tiptap-editor) {
+  min-height: 2.75rem;
+  border-radius: 1.1rem;
+  padding: 0.72rem 1rem;
+  background-color: var(--sc-bg-elevated, rgba(248, 250, 252, 0.95));
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute, rgba(148, 163, 184, 0.28)) 82%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-text :deep(textarea),
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-input-editor-main :deep(.hybrid-input),
+:root[data-display-palette='night'] .chat-input-editor-row--minimal .chat-input-editor-main :deep(.tiptap-editor) {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
 .chat-text.whisper-mode :deep(textarea) {
   border-color: #7c3aed;
   box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35);
@@ -17627,7 +19402,7 @@ onBeforeUnmount(() => {
 .whisper-panel__title {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #5b21b6;
+  color: var(--sc-text-primary);
   margin-bottom: 0.4rem;
 }
 
@@ -17671,7 +19446,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #4338ca;
+  color: var(--sc-text-primary);
 }
 
 .whisper-panel__tags {
@@ -17708,7 +19483,21 @@ onBeforeUnmount(() => {
 
 .whisper-panel__sub {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--sc-text-secondary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.whisper-panel__sub-label {
+  color: var(--sc-text-secondary);
+}
+
+.whisper-panel__sub-name {
+  font-weight: 600;
+}
+
+.whisper-panel__sub-sep {
+  color: var(--sc-text-secondary);
 }
 
 .whisper-panel__empty {
@@ -17720,6 +19509,7 @@ onBeforeUnmount(() => {
 
 .whisper-panel__checkbox {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .whisper-panel__footer {
@@ -17796,6 +19586,10 @@ onBeforeUnmount(() => {
 .identity-switcher-cell {
   display: flex;
   align-items: center;
+}
+
+.identity-switcher-cell--minimal {
+  flex: 0 0 auto;
 }
 
 .input-floating-toolbar {
@@ -18119,6 +19913,65 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
+.identity-mini-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.identity-mini-mode-switch__hint {
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.identity-dialog__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.identity-dialog__header-title {
+  font-weight: 600;
+}
+
+.identity-dialog__header-help {
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.28));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 0.78rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+
+.identity-dialog__header-help:hover {
+  color: var(--sc-text-primary, #0f172a);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.identity-dialog__form {
+  :deep(.n-form-item) {
+    margin-bottom: 0.75rem;
+  }
+}
+
+.identity-dialog__check-item {
+  :deep(.n-form-item-blank) {
+    min-height: auto;
+  }
+}
+
+.identity-dialog__variant-divider {
+  margin: 0.15rem 0 0;
+}
+
 .identity-manager {
   display: grid;
   grid-template-columns: minmax(140px, 160px) minmax(0, 1fr);
@@ -18227,6 +20080,38 @@ onBeforeUnmount(() => {
   max-width: 220px;
 }
 
+.identity-manage-candidate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sc-border-color, rgba(15, 23, 42, 0.12));
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.identity-manage-candidate.is-active {
+  border-color: var(--sc-primary-color, #2563eb);
+  background: color-mix(in srgb, var(--sc-primary-color, #2563eb) 8%, transparent);
+}
+
+.identity-manage-candidate__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-manage-candidate__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.identity-manage-candidate__sub {
+  font-size: 12px;
+  color: var(--sc-text-secondary);
+}
+
 .identity-list {
   display: flex;
   flex-direction: column;
@@ -18325,7 +20210,7 @@ onBeforeUnmount(() => {
 .identity-variant-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .identity-variant-section__header {

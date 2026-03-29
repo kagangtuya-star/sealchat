@@ -448,6 +448,21 @@ const checkEditNoticeForWorld = async (worldId: string) => {
     const detail = await chat.worldDetail(worldId, { force: true });
     if (detail?.allowAdminEditMessages || detail?.world?.allowAdminEditMessages) {
       if (!detail?.editNoticeAcked) {
+        editNoticeType.value = 'edit';
+        editNoticeTitle.value = '管理员编辑权限提示';
+        editNoticeContent.value = '该世界已开启"允许管理员编辑其他成员发言"功能。';
+        editNoticeSecondaryText.value = '这意味着世界管理员可以编辑您发送的消息内容。';
+        editNoticeOwnerNickname.value = detail?.ownerNickname || '管理员';
+        showEditNoticeModal.value = true;
+        return;
+      }
+    }
+    if (detail?.allowManageOtherUserChannelIdentities || detail?.world?.allowManageOtherUserChannelIdentities) {
+      if (!detail?.manageIdentityNoticeAcked) {
+        editNoticeType.value = 'manageIdentity';
+        editNoticeTitle.value = '频道角色代管提示';
+        editNoticeContent.value = '该世界已开启“允许管理其他用户频道角色”功能。';
+        editNoticeSecondaryText.value = '这意味着权限等级不低于你的其他成员，可以查看并编辑你在频道中的聊天角色配置。';
         editNoticeOwnerNickname.value = detail?.ownerNickname || '管理员';
         showEditNoticeModal.value = true;
       }
@@ -465,6 +480,10 @@ const showSortModal = ref(false);
 const showArchiveModal = ref(false);
 const showEditNoticeModal = ref(false);
 const editNoticeOwnerNickname = ref('');
+const editNoticeType = ref<'edit' | 'manageIdentity'>('edit');
+const editNoticeTitle = ref('');
+const editNoticeContent = ref('');
+const editNoticeSecondaryText = ref('');
 const showAnnouncementModal = ref(false);
 const showAnnouncementPopup = ref(false);
 const announcementPopupItem = ref<AnnouncementItem | null>(null);
@@ -617,7 +636,7 @@ const handleAckWorldAnnouncement = async () => {
                 <div class="flex justify-center space-x-1">
                   <n-dropdown trigger="click" :options="[
                     { label: '进入', key: 'enter', item: chat.temporaryArchivedChannel },
-                    { label: '频道管理', key: 'manage', item: chat.temporaryArchivedChannel },
+                    { label: '频道设置', key: 'manage', item: chat.temporaryArchivedChannel },
                     { label: '复制频道', key: 'copy', item: chat.temporaryArchivedChannel },
                     { label: '恢复归档', key: 'unarchive', item: chat.temporaryArchivedChannel, show: canShowArchive(chat.temporaryArchivedChannel as SChannel) }
                   ]" @select="handleSelect">
@@ -668,7 +687,7 @@ const handleAckWorldAnnouncement = async () => {
                     <n-dropdown trigger="click" :options="[
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
-                      { label: '频道管理', key: 'manage', item: i },
+                      { label: '频道设置', key: 'manage', item: i },
                       { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
                       { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
@@ -724,7 +743,7 @@ const handleAckWorldAnnouncement = async () => {
                       <div class="flex justify-center space-x-1">
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
-                          { label: '频道管理', key: 'manage', item: child },
+                          { label: '频道设置', key: 'manage', item: child },
                           { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },
                           { label: '退出', key: 'leave', item: i, show: i.permType === 'non-public' },
@@ -889,6 +908,10 @@ const handleAckWorldAnnouncement = async () => {
     v-model:visible="showEditNoticeModal"
     :world-id="chat.currentWorldId"
     :owner-nickname="editNoticeOwnerNickname"
+    :notice-type="editNoticeType"
+    :title="editNoticeTitle"
+    :content="editNoticeContent"
+    :secondary-text="editNoticeSecondaryText"
   />
   <AnnouncementManagerModal
     v-model:visible="showAnnouncementModal"

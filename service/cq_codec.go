@@ -78,6 +78,35 @@ func ParseCQCode(content string) []*protocol.Element {
 				Type:  "at",
 				Attrs: attrs,
 			})
+		case "image":
+			src := strings.TrimSpace(paramMap["url"])
+			if src == "" {
+				src = strings.TrimSpace(paramMap["file"])
+			}
+			if src == "" {
+				elements = append(elements, &protocol.Element{
+					Type:  "text",
+					Attrs: protocol.Dict{"content": fullMatch},
+				})
+				break
+			}
+			elements = append(elements, &protocol.Element{
+				Type:  "img",
+				Attrs: protocol.Dict{"src": unescapeCQ(src)},
+			})
+		case "reply":
+			replyID := strings.TrimSpace(paramMap["id"])
+			if replyID == "" {
+				elements = append(elements, &protocol.Element{
+					Type:  "text",
+					Attrs: protocol.Dict{"content": fullMatch},
+				})
+				break
+			}
+			elements = append(elements, &protocol.Element{
+				Type:  "quote",
+				Attrs: protocol.Dict{"id": unescapeCQ(replyID)},
+			})
 		default:
 			// 不支持的 CQ 类型，保留原文
 			elements = append(elements, &protocol.Element{
@@ -133,6 +162,24 @@ func EncodeCQCode(elements []*protocol.Element) string {
 				}
 				sb.WriteString("]")
 			}
+		case "img", "image", "file":
+			src := getStringAttr(el.Attrs, "src")
+			if src == "" {
+				continue
+			}
+			sb.WriteString("[CQ:image,file=")
+			sb.WriteString(escapeCQ(src))
+			sb.WriteString(",url=")
+			sb.WriteString(escapeCQ(src))
+			sb.WriteString("]")
+		case "quote":
+			id := getStringAttr(el.Attrs, "id")
+			if id == "" {
+				continue
+			}
+			sb.WriteString("[CQ:reply,id=")
+			sb.WriteString(escapeCQ(id))
+			sb.WriteString("]")
 		default:
 			// 其他类型使用默认的 ToString
 			sb.WriteString(el.ToString())

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
@@ -11,24 +11,62 @@ const message = useMessage();
 const dialog = useDialog();
 const form = ref<any>({});
 const loading = ref(false);
+const botOptionsLoading = ref(false);
+const botList = ref<any[]>([]);
+
+const diceModeOptions = [
+  { label: '内置掷骰', value: 'builtin' },
+  { label: 'BOT掷骰', value: 'bot' },
+];
+
+const botSelectOptions = computed(() => botList.value.map((item) => ({
+  label: item.nick || item.username || item.name || 'Bot',
+  value: item.id,
+})));
 
 const close = () => emit('update:visible', false);
 
-watch(() => props.worldId, async (id) => {
-  if (!id) return;
-  const detail = await chat.worldDetail(id);
-  form.value = {
-    name: detail.world?.name,
-    description: detail.world?.description,
-    visibility: detail.world?.visibility,
-    allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
-    allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
-    strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
-    characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
-  };
+const loadBotOptions = async () => {
+  botOptionsLoading.value = true;
+  try {
+    const resp = await chat.botList();
+    botList.value = resp?.items || [];
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '加载 BOT 列表失败');
+  } finally {
+    botOptionsLoading.value = false;
+  }
+};
+
+watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
+  if (!id || !visible) return;
+  try {
+    const [detail] = await Promise.all([
+      chat.worldDetail(id),
+      loadBotOptions(),
+    ]);
+    form.value = {
+      name: detail.world?.name,
+      description: detail.world?.description,
+      visibility: detail.world?.visibility,
+      allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
+      allowManageOtherUserChannelIdentities: detail.world?.allowManageOtherUserChannelIdentities ?? false,
+      allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
+      strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
+      channelDefaultDiceMode: detail.world?.channelDefaultDiceMode || 'builtin',
+      channelDefaultBotId: detail.world?.channelDefaultBotId || '',
+      characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
+    };
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '加载世界信息失败');
+  }
 }, { immediate: true });
 
 const save = async () => {
+  if (form.value.channelDefaultDiceMode === 'bot' && !form.value.channelDefaultBotId) {
+    message.error('选择 BOT 掷骰时必须指定默认 BOT');
+    return;
+  }
   loading.value = true;
   try {
     await chat.worldUpdate(props.worldId, form.value);
@@ -99,8 +137,42 @@ const confirmRemove = () => {
               <span class="manager-permission-text">允许成员编辑世界术语</span>
             </div>
             <div class="manager-permission-row">
+              <n-switch v-model:value="form.allowManageOtherUserChannelIdentities" />
+              <span class="manager-permission-text">允许管理其他用户频道角色</span>
+            </div>
+            <div class="manager-permission-row">
               <n-switch v-model:value="form.strictWhisperPrivacy" />
               <span class="manager-permission-text">不允许管理员查看所有的悄悄话</span>
+            </div>
+            <div class="manager-permission-block">
+              <div class="manager-permission-title">新频道默认掷骰方式</div>
+              <n-radio-group v-model:value="form.channelDefaultDiceMode">
+                <n-space>
+                  <n-radio
+                    v-for="item in diceModeOptions"
+                    :key="item.value"
+                    :value="item.value"
+                  >
+                    {{ item.label }}
+                  </n-radio>
+                </n-space>
+              </n-radio-group>
+            </div>
+            <div
+              v-if="form.channelDefaultDiceMode === 'bot'"
+              class="manager-permission-block"
+            >
+              <div class="manager-permission-title">默认 BOT</div>
+              <n-select
+                v-model:value="form.channelDefaultBotId"
+                :options="botSelectOptions"
+                :loading="botOptionsLoading"
+                placeholder="选择当前已添加的 BOT"
+                clearable
+              />
+            </div>
+            <div class="manager-permission-hint">
+              仅影响后续新建频道，不修改现有频道。
             </div>
           </div>
         </n-form-item>
@@ -145,8 +217,24 @@ const confirmRemove = () => {
   gap: 8px;
 }
 
+.manager-permission-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.manager-permission-title {
+  color: var(--sc-text-primary);
+  font-size: 13px;
+}
+
 .manager-permission-text {
   color: var(--sc-text-secondary);
   font-size: 13px;
+}
+
+.manager-permission-hint {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
 }
 </style>

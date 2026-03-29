@@ -1,5 +1,10 @@
 package protocol
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
 type Channel struct {
 	ID                      string      `json:"id"`
 	WorldID                 string      `json:"worldId,omitempty"`
@@ -8,6 +13,7 @@ type Channel struct {
 	ParentID                string      `json:"parent_id" gorm:"null"`
 	PermType                string      `json:"permType"`
 	DefaultDiceExpr         string      `json:"defaultDiceExpr,omitempty"`
+	BotCommandPrefixes      []string    `json:"botCommandPrefixes,omitempty"`
 	BuiltInDiceEnabled      bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled       bool        `json:"botFeatureEnabled"`
 	BotWhisperForwardConfig string      `json:"botWhisperForwardConfig"`
@@ -53,12 +59,59 @@ type User struct {
 	// Nickname      string // Deprecated
 }
 
+type AvatarDecoration struct {
+	ID                   string                   `json:"id,omitempty"`
+	Enabled              bool                     `json:"enabled"`
+	DecorationID         string                   `json:"decorationId,omitempty"`
+	ResourceAttachmentID string                   `json:"resourceAttachmentId,omitempty"`
+	FallbackAttachmentID string                   `json:"fallbackAttachmentId,omitempty"`
+	Settings             AvatarDecorationSettings `json:"settings"`
+}
+
+type AvatarDecorationList []AvatarDecoration
+
+func (l *AvatarDecorationList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*l = nil
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var list []AvatarDecoration
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return err
+		}
+		*l = AvatarDecorationList(list)
+		return nil
+	}
+	var single AvatarDecoration
+	if err := json.Unmarshal(trimmed, &single); err != nil {
+		return err
+	}
+	*l = AvatarDecorationList{single}
+	return nil
+}
+
+type AvatarDecorationSettings struct {
+	Scale        float64 `json:"scale,omitempty"`
+	OffsetX      int     `json:"offsetX,omitempty"`
+	OffsetY      int     `json:"offsetY,omitempty"`
+	Rotation     float64 `json:"rotation,omitempty"`
+	ZIndex       int     `json:"zIndex,omitempty"`
+	Opacity      float64 `json:"opacity,omitempty"`
+	PlaybackRate float64 `json:"playbackRate,omitempty"`
+	BlendMode    string  `json:"blendMode,omitempty"`
+}
+
 type ChannelIdentity struct {
-	ID                 string `json:"id"`
-	DisplayName        string `json:"displayName"`
-	Color              string `json:"color"`
-	AvatarAttachmentID string `json:"avatarAttachmentId"`
-	IsDefault          bool   `json:"isDefault"`
+	ID                 string               `json:"id"`
+	DisplayName        string               `json:"displayName"`
+	Color              string               `json:"color"`
+	AvatarAttachmentID string               `json:"avatarAttachmentId"`
+	AvatarDecoration   *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations  AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	IsDefault          bool                 `json:"isDefault"`
+	IsTemporary        bool                 `json:"isTemporary"`
 }
 
 type CharacterCard struct {
@@ -140,11 +193,14 @@ type Message struct {
 }
 
 type MessageIdentity struct {
-	ID               string `json:"id"`
-	VariantID        string `json:"variantId,omitempty"`
-	DisplayName      string `json:"displayName"`
-	Color            string `json:"color"`
-	AvatarAttachment string `json:"avatarAttachment"`
+	ID                string               `json:"id"`
+	VariantID         string               `json:"variantId,omitempty"`
+	DisplayName       string               `json:"displayName"`
+	Color             string               `json:"color"`
+	AvatarAttachment  string               `json:"avatarAttachment"`
+	AvatarDecoration  *AvatarDecoration    `json:"avatarDecoration,omitempty"`
+	AvatarDecorations AvatarDecorationList `json:"avatarDecorations,omitempty"`
+	IsTemporary       bool                 `json:"isTemporary"`
 }
 
 type ChannelPresence struct {
@@ -255,17 +311,18 @@ type ChannelImageLayoutEventPayload struct {
 }
 
 type WhisperMeta struct {
-	SenderMemberID   string   `json:"senderMemberId,omitempty"`
-	SenderMemberName string   `json:"senderMemberName,omitempty"`
-	SenderUserID     string   `json:"senderUserId,omitempty"`
-	SenderUserNick   string   `json:"senderUserNick,omitempty"`
-	SenderUserName   string   `json:"senderUserName,omitempty"`
-	TargetMemberID   string   `json:"targetMemberId,omitempty"`
-	TargetMemberName string   `json:"targetMemberName,omitempty"`
-	TargetUserID     string   `json:"targetUserId,omitempty"`
-	TargetUserNick   string   `json:"targetUserNick,omitempty"`
-	TargetUserName   string   `json:"targetUserName,omitempty"`
-	TargetUserIds    []string `json:"targetUserIds,omitempty"`
+	SenderMemberID     string   `json:"senderMemberId,omitempty"`
+	SenderMemberName   string   `json:"senderMemberName,omitempty"`
+	SenderUserID       string   `json:"senderUserId,omitempty"`
+	SenderUserNick     string   `json:"senderUserNick,omitempty"`
+	SenderUserName     string   `json:"senderUserName,omitempty"`
+	TargetMemberID     string   `json:"targetMemberId,omitempty"`
+	TargetMemberName   string   `json:"targetMemberName,omitempty"`
+	TargetUserID       string   `json:"targetUserId,omitempty"`
+	TargetUserNick     string   `json:"targetUserNick,omitempty"`
+	TargetUserName     string   `json:"targetUserName,omitempty"`
+	TargetUserIds      []string `json:"targetUserIds,omitempty"`
+	TargetDisplayNames []string `json:"targetDisplayNames,omitempty"`
 }
 
 type MessageReorder struct {
@@ -335,6 +392,7 @@ const (
 	EventChannelIFormUpdated       EventName = "channel-iform-updated"
 	EventChannelIFormPushed        EventName = "channel-iform-pushed"
 	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
+	EventChannelIdentitiesUpdated  EventName = "channel-identities-updated"
 	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
 	EventWorldUpdated              EventName = "world-updated"
 	EventLobbyAnnouncementUpdated  EventName = "lobby-announcement-updated"

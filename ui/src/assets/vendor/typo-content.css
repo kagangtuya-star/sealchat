@@ -1,0 +1,180 @@
+/*!
+ * Scoped typography styles derived from typo.css.
+ * Source: https://github.com/sofish/typo.css/blob/master/typo.css
+ * License: MIT
+ */
+
+.typo {
+  text-rendering: optimizeLegibility;
+}
+
+.typo p,
+.typo pre,
+.typo ul,
+.typo ol,
+.typo dl,
+.typo form,
+.typo hr,
+.typo table,
+.typo blockquote {
+  margin-bottom: 1.2em;
+}
+
+.typo h1,
+.typo h2,
+.typo h3,
+.typo h4,
+.typo h5,
+.typo h6 {
+  margin-top: 1.2em;
+  margin-bottom: 0.6em;
+  line-height: 1.35;
+  font-family: "PingFang SC", Verdana, "Helvetica Neue", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  font-weight: 100;
+  color: #000;
+}
+
+.typo h1 {
+  font-size: 2em;
+}
+
+.typo h2 {
+  font-size: 1.8em;
+}
+
+.typo h3 {
+  font-size: 1.6em;
+}
+
+.typo h4 {
+  font-size: 1.4em;
+}
+
+.typo h5,
+.typo h6 {
+  font-size: 1.2em;
+}
+
+.typo ul {
+  margin-left: 1.3em;
+  list-style: disc;
+}
+
+.typo ol {
+  margin-left: 1.9em;
+  list-style: decimal;
+}
+
+.typo li ul,
+.typo li ol {
+  margin-bottom: 0.8em;
+  margin-left: 2em;
+}
+
+.typo li ul {
+  list-style: circle;
+}
+
+.typo blockquote {
+  position: relative;
+  color: #999;
+  font-weight: 400;
+  border-left: 1px solid #1abc9c;
+  padding-left: 1em;
+  margin: 1em 3em 1em 2em;
+}
+
+@media only screen and (max-width: 640px) {
+  .typo blockquote {
+    margin: 1em 0;
+  }
+}
+
+.typo a {
+  color: #1abc9c;
+  border-bottom: 1px solid #1abc9c;
+  text-decoration: none;
+}
+
+.typo a:hover {
+  color: #555;
+  border-bottom-color: #555;
+  text-decoration: none;
+}
+
+.typo u,
+.typo .typo-u {
+  text-decoration: underline;
+}
+
+.typo mark {
+  background: #fffdd1;
+  border-bottom: 1px solid #ffedce;
+  padding: 2px;
+  margin: 0 5px;
+}
+
+.typo pre,
+.typo code,
+.typo pre tt {
+  font-family: Courier, "Courier New", monospace;
+}
+
+.typo pre {
+  display: block;
+  padding: 1em 1.5em;
+  background: #f8f8f8;
+  border: 1px solid #ddd;
+  -webkit-overflow-scrolling: touch;
+}
+
+.typo hr {
+  height: 10px;
+  border: none;
+  border-bottom: 1px solid #cfcfcf;
+  margin-bottom: 0.8em;
+}
+
+.typo small,
+.typo figcaption {
+  font-size: 0.9em;
+  color: #888;
+}
+
+.typo strong,
+.typo b {
+  font-weight: bold;
+  color: #000;
+}
+
+.typo em,
+.typo legend,
+.typo caption {
+  color: #000;
+  font-weight: inherit;
+  font-style: normal;
+}
+
+.typo table th,
+.typo table td,
+.typo table caption {
+  padding: 0.5em 1em;
+  color: #666;
+  border: 1px solid #ddd;
+}
+
+.typo table th {
+  background: #fbfbfb;
+}
+
+.typo table thead th {
+  background: #f1f1f1;
+}
+
+.typo table caption {
+  border-bottom: none;
+}
+
+.typo img {
+  max-width: 100%;
+}

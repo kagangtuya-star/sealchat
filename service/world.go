@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"sealchat/model"
 	"sealchat/pm"
@@ -16,17 +17,20 @@ import (
 )
 
 var (
-	ErrWorldNotFound             = errors.New("world not found")
-	ErrWorldPermission           = errors.New("world permission denied")
-	ErrWorldCreateForbidden      = errors.New("仅平台管理员可创建世界")
-	ErrWorldInviteInvalid        = errors.New("world invite invalid")
-	ErrWorldMemberInvalid        = errors.New("world member invalid")
-	ErrWorldOwnerImmutable       = errors.New("world owner immutable")
-	ErrWorldDescriptionTooLong   = errors.New("世界简介不能超过30字")
-	ErrWorldSystemDefaultProtect = errors.New("系统默认世界不可删除")
-	ErrWorldObserverSlugInvalid  = errors.New("world observer slug invalid")
-	ErrWorldObserverSlugConflict = errors.New("world observer slug conflict")
-	ErrWorldObserverLinkInvalid  = errors.New("world observer link invalid")
+	ErrWorldNotFound              = errors.New("world not found")
+	ErrWorldPermission            = errors.New("world permission denied")
+	ErrWorldCreateForbidden       = errors.New("仅平台管理员可创建世界")
+	ErrWorldInviteInvalid         = errors.New("world invite invalid")
+	ErrWorldMemberInvalid         = errors.New("world member invalid")
+	ErrWorldOwnerImmutable        = errors.New("world owner immutable")
+	ErrWorldDescriptionTooLong    = errors.New("世界简介不能超过30字")
+	ErrWorldSystemDefaultProtect  = errors.New("系统默认世界不可删除")
+	ErrWorldObserverSlugInvalid   = errors.New("world observer slug invalid")
+	ErrWorldObserverSlugConflict  = errors.New("world observer slug conflict")
+	ErrWorldObserverLinkInvalid   = errors.New("world observer link invalid")
+	ErrWorldDefaultDiceMode       = errors.New("world default dice mode invalid")
+	ErrWorldDefaultDiceBotEmpty   = errors.New("world default dice bot required")
+	ErrWorldDefaultDiceBotInvalid = errors.New("world default dice bot invalid")
 )
 
 const worldDescriptionMaxLength = 30
@@ -54,8 +58,11 @@ type WorldUpdateParams struct {
 	Avatar                     string
 	EnforceMembership          *bool
 	AllowAdminEditMessages     *bool
+	AllowManageOtherUserChannelIdentities *bool
 	AllowMemberEditKeywords    *bool
 	StrictWhisperPrivacy       *bool
+	ChannelDefaultDiceMode     *string
+	ChannelDefaultBotID        *string
 	CharacterCardBadgeTemplate *string
 }
 
@@ -73,6 +80,108 @@ func normalizeWorldBadgeTemplate(template string) (string, error) {
 		return "", errors.New("徽章模板长度需在512个字符以内")
 	}
 	return template, nil
+}
+
+func normalizeWorldChannelDefaultDiceMode(mode string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	if normalized == "" {
+		return model.WorldChannelDefaultDiceModeBuiltin, nil
+	}
+	switch normalized {
+	case model.WorldChannelDefaultDiceModeBuiltin, model.WorldChannelDefaultDiceModeBot:
+		return normalized, nil
+	default:
+		return "", ErrWorldDefaultDiceMode
+	}
+}
+
+func validateWorldDefaultBotID(botID string) (string, error) {
+	trimmed := strings.TrimSpace(botID)
+	if trimmed == "" {
+		return "", nil
+	}
+	user := model.UserGet(trimmed)
+	if user == nil || user.ID == "" || !user.IsBot {
+		return "", ErrWorldDefaultDiceBotInvalid
+	}
+	return trimmed, nil
+}
+
+func ResolveWorldChannelDefaultDiceConfig(worldID string) (string, string, error) {
+	world, err := GetWorldByID(worldID)
+	if err != nil {
+		return "", "", err
+	}
+	mode, err := normalizeWorldChannelDefaultDiceMode(world.ChannelDefaultDiceMode)
+	if err != nil {
+		return "", "", err
+	}
+	botID, err := validateWorldDefaultBotID(world.ChannelDefaultBotID)
+	if err != nil {
+		return "", "", err
+	}
+	if mode == model.WorldChannelDefaultDiceModeBot && botID == "" {
+		return "", "", ErrWorldDefaultDiceBotEmpty
+	}
+	return mode, botID, nil
+}
+
+func ApplyWorldChannelDefaultDiceConfig(channelID, mode, botID string) error {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return errors.New("频道ID不能为空")
+	}
+	normalizedMode, err := normalizeWorldChannelDefaultDiceMode(mode)
+	if err != nil {
+		return err
+	}
+	validBotID, err := validateWorldDefaultBotID(botID)
+	if err != nil {
+		return err
+	}
+	if normalizedMode != model.WorldChannelDefaultDiceModeBot {
+		return nil
+	}
+	if validBotID == "" {
+		return ErrWorldDefaultDiceBotEmpty
+	}
+	roleID := fmt.Sprintf("ch-%s-bot", channelID)
+	tx := model.GetDB().Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+	if err := tx.Model(&model.ChannelModel{}).
+		Where("id = ?", channelID).
+		Updates(map[string]any{
+			"built_in_dice_enabled": false,
+			"bot_feature_enabled":   true,
+			"updated_at":            time.Now(),
+		}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	mapping := &model.UserRoleMappingModel{
+		UserID:   validBotID,
+		RoleID:   roleID,
+		RoleType: "channel",
+	}
+	mapping.Init()
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(mapping).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	if err := EnsureBotChannelIdentity(validBotID, channelID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func normalizeWorldObserverSlug(slug string) (string, error) {
@@ -433,11 +542,37 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 	if params.AllowAdminEditMessages != nil {
 		updates["allow_admin_edit_messages"] = *params.AllowAdminEditMessages
 	}
+	if params.AllowManageOtherUserChannelIdentities != nil {
+		updates["allow_manage_other_user_channel_identities"] = *params.AllowManageOtherUserChannelIdentities
+	}
 	if params.AllowMemberEditKeywords != nil {
 		updates["allow_member_edit_keywords"] = *params.AllowMemberEditKeywords
 	}
 	if params.StrictWhisperPrivacy != nil {
 		updates["strict_whisper_privacy"] = *params.StrictWhisperPrivacy
+	}
+	if params.ChannelDefaultDiceMode != nil || params.ChannelDefaultBotID != nil {
+		nextMode := world.ChannelDefaultDiceMode
+		if params.ChannelDefaultDiceMode != nil {
+			nextMode = *params.ChannelDefaultDiceMode
+		}
+		normalizedMode, err := normalizeWorldChannelDefaultDiceMode(nextMode)
+		if err != nil {
+			return nil, err
+		}
+		nextBotID := world.ChannelDefaultBotID
+		if params.ChannelDefaultBotID != nil {
+			nextBotID = *params.ChannelDefaultBotID
+		}
+		normalizedBotID, err := validateWorldDefaultBotID(nextBotID)
+		if err != nil {
+			return nil, err
+		}
+		if normalizedMode == model.WorldChannelDefaultDiceModeBot && normalizedBotID == "" {
+			return nil, ErrWorldDefaultDiceBotEmpty
+		}
+		updates["channel_default_dice_mode"] = normalizedMode
+		updates["channel_default_bot_id"] = normalizedBotID
 	}
 	if params.CharacterCardBadgeTemplate != nil {
 		template, err := normalizeWorldBadgeTemplate(*params.CharacterCardBadgeTemplate)

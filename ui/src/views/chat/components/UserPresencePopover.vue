@@ -99,7 +99,11 @@ const handleRefresh = () => {
         :key="member.id"
         class="presence-item"
       >
-        <Avatar :src="member.avatar" :size="32" :border="false" />
+        <Avatar
+          :src="member.avatar"
+          :size="32"
+          :border="false"
+        />
         <div class="presence-info">
           <div class="presence-name">
             <span

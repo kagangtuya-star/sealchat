@@ -142,6 +142,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&TimelineUserLastRecordModel{})
 	db.AutoMigrate(&UserEmojiModel{})
 	db.AutoMigrate(&BotTokenModel{})
+	db.AutoMigrate(&BotOneBotConfigModel{})
+	db.AutoMigrate(&OneBotIDMappingModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
 	db.AutoMigrate(&ChannelIdentityVariantModel{})
@@ -164,6 +166,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ServiceMetricSample{})
 	db.AutoMigrate(&ChatImportJobModel{})
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})
+	db.AutoMigrate(&DigestWebhookIntegrationModel{})
+	db.AutoMigrate(&DigestPushRuleModel{}, &DigestWindowVisitorModel{}, &DigestWindowSpeakerModel{}, &DigestRecordModel{}, &DigestDeliveryLogModel{})
 	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{}, &StickyNoteFolderModel{})
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
@@ -171,6 +175,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})
 	db.AutoMigrate(&ExportColorProfileModel{})
+	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
+		log.Printf("初始化未读提醒索引失败: %v", err)
+	}
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").
@@ -189,6 +196,9 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := BackfillWorldData(); err != nil {
 		log.Printf("初始化世界数据失败: %v", err)
 	}
+	if err := BackfillBotKinds(); err != nil {
+		log.Printf("回填 bot_kind 失败: %v", err)
+	}
 
 	if IsSQLite() {
 		go func() {
@@ -204,6 +214,131 @@ func DBInit(cfg *utils.AppConfig) {
 			}
 		}()
 	}
+}
+
+func ensureDigestPushIndexesAndConstraints() error {
+	if db == nil {
+		return nil
+	}
+	if err := deduplicateDigestPushRules(); err != nil {
+		return err
+	}
+	if err := deduplicateDigestRecords(); err != nil {
+		return err
+	}
+	if !db.Migrator().HasIndex(&DigestPushRuleModel{}, "udx_digest_push_rule_scope") {
+		if err := db.Migrator().CreateIndex(&DigestPushRuleModel{}, "udx_digest_push_rule_scope"); err != nil {
+			return err
+		}
+	}
+	if !db.Migrator().HasIndex(&DigestRecordModel{}, "udx_digest_record_rule_window") {
+		if err := db.Migrator().CreateIndex(&DigestRecordModel{}, "udx_digest_record_rule_window"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deduplicateDigestPushRules() error {
+	type duplicateKey struct {
+		ScopeType string
+		ScopeID   string
+	}
+	type duplicateRow struct {
+		ScopeType string
+		ScopeID   string
+		Count     int64
+	}
+	var rows []duplicateRow
+	if err := db.Model(&DigestPushRuleModel{}).
+		Select("scope_type, scope_id, COUNT(*) as count").
+		Group("scope_type, scope_id").
+		Having("COUNT(*) > 1").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		key := duplicateKey{ScopeType: row.ScopeType, ScopeID: row.ScopeID}
+		var items []DigestPushRuleModel
+		if err := db.Where("scope_type = ? AND scope_id = ?", key.ScopeType, key.ScopeID).
+			Order("updated_at DESC").
+			Order("created_at DESC").
+			Order("id DESC").
+			Find(&items).Error; err != nil {
+			return err
+		}
+		if len(items) <= 1 {
+			continue
+		}
+		staleIDs := make([]string, 0, len(items)-1)
+		for _, item := range items[1:] {
+			staleIDs = append(staleIDs, item.ID)
+		}
+		if len(staleIDs) == 0 {
+			continue
+		}
+		if err := db.Where("id IN ?", staleIDs).Delete(&DigestPushRuleModel{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deduplicateDigestRecords() error {
+	type duplicateKey struct {
+		RuleID        string
+		WindowSeconds int
+		WindowStart   int64
+	}
+	type duplicateRow struct {
+		RuleID        string
+		WindowSeconds int
+		WindowStart   int64
+		Count         int64
+	}
+	var rows []duplicateRow
+	if err := db.Model(&DigestRecordModel{}).
+		Select("rule_id, window_seconds, window_start, COUNT(*) as count").
+		Group("rule_id, window_seconds, window_start").
+		Having("COUNT(*) > 1").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		key := duplicateKey{
+			RuleID:        row.RuleID,
+			WindowSeconds: row.WindowSeconds,
+			WindowStart:   row.WindowStart,
+		}
+		var items []DigestRecordModel
+		if err := db.Where("rule_id = ? AND window_seconds = ? AND window_start = ?", key.RuleID, key.WindowSeconds, key.WindowStart).
+			Order("generated_at DESC").
+			Order("updated_at DESC").
+			Order("created_at DESC").
+			Order("id DESC").
+			Find(&items).Error; err != nil {
+			return err
+		}
+		if len(items) <= 1 {
+			continue
+		}
+		staleIDs := make([]string, 0, len(items)-1)
+		for _, item := range items[1:] {
+			staleIDs = append(staleIDs, item.ID)
+		}
+		if len(staleIDs) == 0 {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("digest_id IN ?", staleIDs).Delete(&DigestDeliveryLogModel{}).Error; err != nil {
+				return err
+			}
+			return tx.Where("id IN ?", staleIDs).Delete(&DigestRecordModel{}).Error
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func GetDB() *gorm.DB {

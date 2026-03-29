@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import type { ServerConfig, UserInfo } from "@/types";
+import type { BotOneBotConfig, ServerConfig, UserInfo } from "@/types";
 import { Howl, Howler } from 'howler';
 
 import axiosFactory from "axios"
@@ -120,15 +120,16 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenList() {
+    async botTokenList(params?: { keyword?: string; scope?: 'manual' | 'system' | 'all' }) {
       const user = useUserStore();
       const resp = await api.get('api/v1/admin/bot-token-list', {
-        headers: { 'Authorization': user.token }
+        headers: { 'Authorization': user.token },
+        params,
       })
       return resp
     },
 
-    async botTokenAdd(input: string | { name: string; avatar?: string; nickColor?: string }) {
+    async botTokenAdd(input: string | { name: string; avatar?: string; nickColor?: string; onebotConfig?: BotOneBotConfig }) {
       const user = useUserStore();
       const payload = typeof input === 'string' ? { name: input } : input;
       const resp = await api.post('api/v1/admin/bot-token-add', payload, {
@@ -137,7 +138,7 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
-    async botTokenUpdate(payload: { id: string; name?: string; avatar?: string; nickColor?: string }) {
+    async botTokenUpdate(payload: { id: string; name?: string; avatar?: string; nickColor?: string; onebotConfig?: BotOneBotConfig }) {
       const user = useUserStore();
       const resp = await api.post('api/v1/admin/bot-token-update', payload, {
         headers: { 'Authorization': user.token }
@@ -150,6 +151,14 @@ export const useUtilsStore = defineStore({
       const resp = await api.post(`api/v1/admin/bot-token-delete`, {}, {
         headers: { 'Authorization': user.token },
         params: { id },
+      })
+      return resp
+    },
+
+    async botTokenBatchDelete(ids: string[]) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/bot-token-batch-delete', { ids }, {
+        headers: { 'Authorization': user.token },
       })
       return resp
     },

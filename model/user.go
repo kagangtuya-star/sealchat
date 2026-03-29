@@ -33,6 +33,7 @@ type UserModel struct {
 	Password string `gorm:"not null" json:"-"`                                  // 密码，非空
 	Salt     string `gorm:"not null" json:"-"`                                  // 盐，非空
 	IsBot    bool   `gorm:"null" json:"is_bot"`                                 // 是否是机器人
+	BotKind  string `gorm:"size:32;index" json:"botKind,omitempty"`             // BOT 类型：manual/channel_webhook/digest_pull
 
 	Email           *string    `gorm:"size:254;index:idx_user_email,unique" json:"email,omitempty"`
 	EmailVerified   bool       `gorm:"default:false" json:"emailVerified"`
@@ -368,12 +369,19 @@ func UserGet(id string) *UserModel {
 // UserBotList 查询所有启用的机器人用户
 func UserBotList() ([]*UserModel, error) {
 	var bots []*UserModel
-	webhookBotSubQuery := db.Model(&ChannelWebhookIntegrationModel{}).
-		Select("DISTINCT bot_user_id").
-		Where("bot_user_id <> ''")
-	err := db.Where("disabled = ? AND is_bot = ?", false, true).
-		Where("id NOT IN (?)", webhookBotSubQuery).
-		Find(&bots).Error
+	q := db.Where("disabled = ? AND is_bot = ?", false, true)
+	internalBotSet, err := InternalBotUserIDSet(nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(internalBotSet) > 0 {
+		internalBotIDs := make([]string, 0, len(internalBotSet))
+		for id := range internalBotSet {
+			internalBotIDs = append(internalBotIDs, id)
+		}
+		q = q.Where("id NOT IN ?", internalBotIDs)
+	}
+	err = q.Find(&bots).Error
 	if err != nil {
 		return nil, err
 	}

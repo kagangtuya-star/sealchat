@@ -35,6 +35,7 @@ export const useUserStore = defineStore({
       username: "",
       nick: '',
       avatar: '',
+      avatarDecoration: null,
       brief: '',
       disabled: false,
       email: undefined,
@@ -128,7 +129,7 @@ export const useUserStore = defineStore({
       return this.info;
     },
 
-    async changeInfo(info: { nick: string, brief: string }) {
+    async changeInfo(info: { nick: string, brief: string, avatarDecoration?: UserInfo['avatarDecoration'] }) {
       const resp = await api.post('api/v1/user-info-update', info, {
         headers: { 'Authorization': this.token }
       })

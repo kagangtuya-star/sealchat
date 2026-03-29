@@ -208,17 +208,20 @@ func WorldDetail(c *fiber.Ctx) error {
 
 	// 判断编辑通知是否已确认
 	editNoticeAcked := member.EditNoticeAckedAt != nil
+	manageIdentityNoticeAcked := member.ManageIdentityNoticeAckedAt != nil
 
 	return c.JSON(fiber.Map{
-		"world":                   world,
-		"isMember":                member.ID != "",
-		"memberRole":              member.Role,
-		"memberCount":             memberCount,
-		"allowAdminEditMessages":  world.AllowAdminEditMessages,
-		"allowMemberEditKeywords": world.AllowMemberEditKeywords,
-		"strictWhisperPrivacy":    world.StrictWhisperPrivacy,
-		"ownerNickname":           ownerNickname,
-		"editNoticeAcked":         editNoticeAcked,
+		"world":                               world,
+		"isMember":                            member.ID != "",
+		"memberRole":                          member.Role,
+		"memberCount":                         memberCount,
+		"allowAdminEditMessages":              world.AllowAdminEditMessages,
+		"allowManageOtherUserChannelIdentities": world.AllowManageOtherUserChannelIdentities,
+		"allowMemberEditKeywords":             world.AllowMemberEditKeywords,
+		"strictWhisperPrivacy":                world.StrictWhisperPrivacy,
+		"ownerNickname":                       ownerNickname,
+		"editNoticeAcked":                     editNoticeAcked,
+		"manageIdentityNoticeAcked":           manageIdentityNoticeAcked,
 	})
 }
 
@@ -351,6 +354,12 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权编辑世界"})
 		case errors.Is(err, service.ErrWorldDescriptionTooLong):
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		case errors.Is(err, service.ErrWorldDefaultDiceMode):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认掷骰方式无效"})
+		case errors.Is(err, service.ErrWorldDefaultDiceBotEmpty):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "选择 BOT 掷骰时必须指定默认 BOT"})
+		case errors.Is(err, service.ErrWorldDefaultDiceBotInvalid):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认 BOT 不存在或不是机器人"})
 		default:
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新世界失败"})
 		}
@@ -666,6 +675,26 @@ func WorldAckEditNoticeHandler(c *fiber.Ctx) error {
 	result := db.Model(&model.WorldMemberModel{}).
 		Where("world_id = ? AND user_id = ?", worldID, user.ID).
 		Update("edit_notice_acked_at", now)
+	if result.Error != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "确认失败"})
+	}
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "未加入该世界"})
+	}
+	return c.JSON(fiber.Map{"message": "已确认", "ackedAt": now.UnixMilli()})
+}
+
+func WorldAckManageIdentityNoticeHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	db := model.GetDB()
+	now := time.Now()
+	result := db.Model(&model.WorldMemberModel{}).
+		Where("world_id = ? AND user_id = ?", worldID, user.ID).
+		Update("manage_identity_notice_acked_at", now)
 	if result.Error != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "确认失败"})
 	}

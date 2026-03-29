@@ -81,6 +81,10 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 	case htmlparser.TextNode:
 		buf.WriteString(html.UnescapeString(node.Data))
 	case htmlparser.ElementNode:
+		if source, ok := resolveDiceHTMLSource(node); ok {
+			buf.WriteString(source)
+			return
+		}
 		tag := strings.ToLower(strings.TrimSpace(node.Data))
 		switch tag {
 		case "br":
@@ -178,6 +182,30 @@ func renderHTMLCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBl
 			renderHTMLChildrenCommandText(buf, node, inCodeBlock)
 		}
 	}
+}
+
+func resolveDiceHTMLSource(node *htmlparser.Node) (string, bool) {
+	if node == nil || node.Type != htmlparser.ElementNode {
+		return "", false
+	}
+	className := ""
+	source := ""
+	for _, attr := range node.Attr {
+		key := strings.ToLower(strings.TrimSpace(attr.Key))
+		switch key {
+		case "class":
+			className = attr.Val
+		case "data-dice-source":
+			source = html.UnescapeString(attr.Val)
+		}
+	}
+	if source == "" {
+		return "", false
+	}
+	if strings.Contains(className, "dice-roll-group") || strings.Contains(className, "dice-chip") {
+		return source, true
+	}
+	return "", false
 }
 
 func renderHTMLChildrenCommandText(buf *strings.Builder, node *htmlparser.Node, inCodeBlock bool) {

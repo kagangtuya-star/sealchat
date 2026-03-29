@@ -8,9 +8,14 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"gorm.io/gorm"
 
 	"sealchat/model"
 )
+
+type BotAppearanceSyncResult struct {
+	UpdatedIdentities []*model.ChannelIdentityModel
+}
 
 func privateBotIDsByChannel(channel *model.ChannelModel) []string {
 	if channel == nil {
@@ -148,10 +153,10 @@ func SyncBotUserProfile(token *model.BotTokenModel) error {
 	if name := strings.TrimSpace(token.Name); name != "" && user.Nickname != name {
 		updates["nickname"] = name
 	}
-	if strings.TrimSpace(token.Avatar) != "" && user.Avatar != token.Avatar {
+	if user.Avatar != strings.TrimSpace(token.Avatar) {
 		updates["avatar"] = token.Avatar
 	}
-	if strings.TrimSpace(token.NickColor) != "" && user.NickColor != token.NickColor {
+	if user.NickColor != model.ChannelIdentityNormalizeColor(token.NickColor) {
 		updates["nick_color"] = token.NickColor
 	}
 	if len(updates) == 0 {
@@ -172,6 +177,87 @@ func SyncBotMembers(token *model.BotTokenModel) error {
 	return model.GetDB().Model(&model.MemberModel{}).
 		Where("user_id = ?", token.ID).
 		Update("nickname", name).Error
+}
+
+func SyncBotChannelAppearance(token *model.BotTokenModel) (*BotAppearanceSyncResult, error) {
+	if token == nil || token.ID == "" {
+		return &BotAppearanceSyncResult{}, nil
+	}
+
+	displayName := strings.TrimSpace(token.Name)
+	if displayName == "" {
+		user := model.UserGet(token.ID)
+		if user != nil {
+			displayName = strings.TrimSpace(user.Nickname)
+			if displayName == "" {
+				displayName = strings.TrimSpace(user.Username)
+			}
+		}
+	}
+	if displayName == "" {
+		displayName = "Bot"
+	}
+
+	color := model.ChannelIdentityNormalizeColor(token.NickColor)
+	avatar := strings.TrimSpace(token.Avatar)
+	result := &BotAppearanceSyncResult{
+		UpdatedIdentities: []*model.ChannelIdentityModel{},
+	}
+
+	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		var managedIdentities []*model.ChannelIdentityModel
+		if err := tx.Where("user_id = ? AND (is_hidden = ? OR is_default = ?)", token.ID, true, true).Find(&managedIdentities).Error; err != nil {
+			return err
+		}
+
+		for _, identity := range managedIdentities {
+			if identity == nil || identity.ID == "" {
+				continue
+			}
+			updates := map[string]any{}
+			if identity.DisplayName != displayName {
+				updates["display_name"] = displayName
+				identity.DisplayName = displayName
+			}
+			if identity.Color != color {
+				updates["color"] = color
+				identity.Color = color
+			}
+			if identity.AvatarAttachmentID != avatar {
+				updates["avatar_attachment_id"] = avatar
+				identity.AvatarAttachmentID = avatar
+			}
+			if len(updates) > 0 {
+				if err := tx.Model(&model.ChannelIdentityModel{}).Where("id = ?", identity.ID).Updates(updates).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Model(&model.MessageModel{}).
+				Where("channel_id = ? AND sender_identity_id = ?", identity.ChannelID, identity.ID).
+				Updates(map[string]any{
+					"sender_member_name":        displayName,
+					"sender_identity_name":      displayName,
+					"sender_identity_color":     color,
+					"sender_identity_avatar_id": avatar,
+				}).Error; err != nil {
+				return err
+			}
+			result.UpdatedIdentities = append(result.UpdatedIdentities, identity)
+		}
+
+		return tx.Model(&model.MessageModel{}).
+			Where("user_id = ? AND (sender_identity_id = '' OR sender_identity_id IS NULL)", token.ID).
+			Updates(map[string]any{
+				"sender_member_name":        displayName,
+				"sender_identity_name":      "",
+				"sender_identity_color":     color,
+				"sender_identity_avatar_id": avatar,
+			}).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // EnsureBotChannelIdentity creates a default channel identity for bot users once they join a channel.

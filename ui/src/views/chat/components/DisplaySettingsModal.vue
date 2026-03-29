@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
+import { useMessage } from 'naive-ui'
 import {
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
@@ -7,6 +8,11 @@ import {
   type DisplaySettings
 } from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
+import {
+  downloadDisplaySettingsTransfer,
+  exportDisplaySettingsPackage,
+  importDisplaySettingsPackage,
+} from '@/services/displaySettingsTransfer'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
@@ -33,13 +39,20 @@ const fontSettingsPanelVisible = ref(false)
 const keywordQuickInputTriggerDraft = ref('/')
 const identityQuickSwitchTriggerDraft = ref('/')
 const identityVariantQuickSwitchTriggerDraft = ref('=')
+const transferProcessing = ref(false)
+const importFileInputRef = ref<HTMLInputElement | null>(null)
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
+const message = useMessage()
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
   { label: '日期 + 时间（2024-05-30 14:35）', value: 'datetime' },
   { label: '日期 + 时间（含秒）', value: 'datetimeSeconds' },
+]
+const transferMenuOptions = [
+  { label: '导出当前配置', key: 'export' },
+  { label: '导入 JSON / ZIP', key: 'import' },
 ]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
@@ -134,6 +147,7 @@ watch(
     draft.layout = value.layout
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
+    draft.preferStaticAvatarDecoration = value.preferStaticAvatarDecoration
     draft.showInputPreview = value.showInputPreview
     draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
@@ -155,6 +169,7 @@ watch(
   draft.messagePaddingX = value.messagePaddingX
   draft.messagePaddingY = value.messagePaddingY
   draft.sendShortcut = value.sendShortcut
+  draft.mobileMinimalInputEnabled = value.mobileMinimalInputEnabled
   draft.enableIcToggleHotkey = value.enableIcToggleHotkey
   syncFavoriteBar(value)
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
@@ -165,15 +180,16 @@ watch(
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
   draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
   draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
-    draft.toolbarHotkeys = value.toolbarHotkeys
-    draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-    draft.showDragIndicator = value.showDragIndicator
-    draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-    draft.disableContextMenu = value.disableContextMenu
-    draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
-    draft.quickGalleryPageSize = value.quickGalleryPageSize
-    draft.avatarSize = value.avatarSize
-    draft.avatarBorderRadius = value.avatarBorderRadius
+  draft.toolbarHotkeys = value.toolbarHotkeys
+  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
+  draft.showDragIndicator = value.showDragIndicator
+  draft.mobileMessageDragLongPressEnabled = value.mobileMessageDragLongPressEnabled
+  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
+  draft.disableContextMenu = value.disableContextMenu
+  draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
+  draft.quickGalleryPageSize = value.quickGalleryPageSize
+  draft.avatarSize = value.avatarSize
+  draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
@@ -214,6 +230,15 @@ const handleNumericInput = (key: NumericSettingKey, value: number | null) => {
   if (value === null) return
   draft[key] = value as DisplaySettings[NumericSettingKey]
 }
+const handleQuickGalleryPageSizeUpdate = (value: number | null) => handleNumericInput('quickGalleryPageSize', value)
+const handleFontSizeUpdate = (value: number | null) => handleNumericInput('fontSize', value)
+const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lineHeight', value)
+const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
+const handleBubbleGapUpdate = (value: number | null) => handleNumericInput('bubbleGap', value)
+const handleCompactBubbleGapUpdate = (value: number | null) => handleNumericInput('compactBubbleGap', value)
+const handleParagraphSpacingUpdate = (value: number | null) => handleNumericInput('paragraphSpacing', value)
+const handleMessagePaddingXUpdate = (value: number | null) => handleNumericInput('messagePaddingX', value)
+const handleMessagePaddingYUpdate = (value: number | null) => handleNumericInput('messagePaddingY', value)
 
 const handleRestoreDefaults = () => {
   const defaults = createDefaultDisplaySettings()
@@ -259,13 +284,17 @@ const deepEqual = (a: any, b: any): boolean => {
 
 const AUTO_SAVE_DEBOUNCE_MS = 150
 let autoSaveTimer: number | undefined
+const clearAutoSaveTimer = () => {
+  if (typeof window === 'undefined') return
+  if (autoSaveTimer === undefined) return
+  window.clearTimeout(autoSaveTimer)
+  autoSaveTimer = undefined
+}
 const scheduleAutoSave = () => {
   if (typeof window === 'undefined') return
   if (!props.visible) return
 
-  if (autoSaveTimer !== undefined) {
-    window.clearTimeout(autoSaveTimer)
-  }
+  clearAutoSaveTimer()
 
   autoSaveTimer = window.setTimeout(() => {
     const next = stripCustomThemeFields(draft as any)
@@ -282,6 +311,61 @@ const flushAutoSave = () => {
   emit('save', next as any)
 }
 
+const handleExportSettings = async () => {
+  if (transferProcessing.value) return
+  transferProcessing.value = true
+  try {
+    clearAutoSaveTimer()
+    flushAutoSave()
+    const result = await exportDisplaySettingsPackage(display.settings)
+    downloadDisplaySettingsTransfer(result.blob, result.filename)
+    if (result.warnings.length > 0) {
+      message.warning(result.warnings.join('\n'))
+    }
+    message.success(result.format === 'zip' ? '配置已导出为 ZIP（含字体文件）' : '配置已导出为 JSON')
+  } catch (error: any) {
+    message.error(error?.message || '导出配置失败')
+  } finally {
+    transferProcessing.value = false
+  }
+}
+
+const handleTriggerImport = () => {
+  if (transferProcessing.value) return
+  clearAutoSaveTimer()
+  importFileInputRef.value?.click()
+}
+
+const handleImportFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  transferProcessing.value = true
+  try {
+    const result = await importDisplaySettingsPackage(file)
+    await display.replaceSettings(result.settings, { restoreFontAsset: result.importedFont })
+    if (result.warnings.length > 0) {
+      message.warning(result.warnings.join('\n'))
+    }
+    message.success(result.importedFont ? '配置导入成功，字体文件已恢复' : '配置导入成功')
+  } catch (error: any) {
+    message.error(error?.message || '导入配置失败')
+  } finally {
+    input.value = ''
+    transferProcessing.value = false
+  }
+}
+
+const handleTransferAction = async (key: string | number) => {
+  if (key === 'export') {
+    await handleExportSettings()
+    return
+  }
+  if (key === 'import') {
+    handleTriggerImport()
+  }
+}
+
 watch(
   draft,
   () => {
@@ -295,19 +379,12 @@ watch(
   (visible, prevVisible) => {
     // If user closes the modal right after editing, flush pending changes once.
     if (!visible && prevVisible) {
-      if (typeof window !== 'undefined' && autoSaveTimer !== undefined) {
-        window.clearTimeout(autoSaveTimer)
-        autoSaveTimer = undefined
-      }
+      clearAutoSaveTimer()
       flushAutoSave()
       return
     }
     if (visible) return
-    if (typeof window === 'undefined') return
-    if (autoSaveTimer !== undefined) {
-      window.clearTimeout(autoSaveTimer)
-      autoSaveTimer = undefined
-    }
+    clearAutoSaveTimer()
   },
 )
 
@@ -475,6 +552,19 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">头像装饰性能</p>
+            <p class="section-desc">低性能模式下优先使用静态兜底资源；若动效装饰未配置兜底图，则直接隐藏动效层</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.preferStaticAvatarDecoration">
+          <template #checked>低性能模式</template>
+          <template #unchecked>默认模式</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">合并连续消息</p>
             <p class="section-desc">相邻同角色消息视作一段，拖动可拆分</p>
           </div>
@@ -495,6 +585,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showDragIndicator">
           <template #checked>显示指示线</template>
           <template #unchecked>隐藏指示线</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">移动端拖动需长按</p>
+            <p class="section-desc">仅移动端生效，长按左侧拖动控件后才会开始拖动消息，减少误触发</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileMessageDragLongPressEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
         </n-switch>
       </section>
 
@@ -659,6 +762,19 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">移动端简洁输入框</p>
+            <p class="section-desc">仅移动端生效，底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileMinimalInputEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">快捷画廊点击动作</p>
             <p class="section-desc">仅影响快捷画廊里非“表情收藏”文件夹的图片；表情收藏仍保持点击直接发送</p>
           </div>
@@ -684,7 +800,7 @@ const handleOpenTutorialHub = () => {
             :min="QUICK_GALLERY_PAGE_SIZE_LIMITS.MIN"
             :max="QUICK_GALLERY_PAGE_SIZE_LIMITS.MAX"
             :step="1"
-            @update:value="(value) => handleNumericInput('quickGalleryPageSize', value)"
+            @update:value="handleQuickGalleryPageSizeUpdate"
           >
             <template #suffix>张</template>
           </n-input-number>
@@ -831,7 +947,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="12"
                 :max="22"
-                @update:value="(v) => handleNumericInput('fontSize', v)"
+                @update:value="handleFontSizeUpdate"
               />
             </div>
           </div>
@@ -854,7 +970,7 @@ const handleOpenTutorialHub = () => {
                 :min="1.2"
                 :max="2"
                 :step="0.05"
-                @update:value="(v) => handleNumericInput('lineHeight', v)"
+                @update:value="handleLineHeightUpdate"
               />
             </div>
           </div>
@@ -877,7 +993,7 @@ const handleOpenTutorialHub = () => {
                 :min="-1"
                 :max="2"
                 :step="0.1"
-                @update:value="(v) => handleNumericInput('letterSpacing', v)"
+                @update:value="handleLetterSpacingUpdate"
               />
             </div>
           </div>
@@ -905,7 +1021,7 @@ const handleOpenTutorialHub = () => {
                 :min="4"
                 :max="48"
                 :step="2"
-                @update:value="(v) => handleNumericInput('bubbleGap', v)"
+                @update:value="handleBubbleGapUpdate"
               />
             </div>
           </div>
@@ -928,7 +1044,7 @@ const handleOpenTutorialHub = () => {
                 :min="0"
                 :max="24"
                 :step="1"
-                @update:value="(v) => handleNumericInput('compactBubbleGap', v)"
+                @update:value="handleCompactBubbleGapUpdate"
               />
             </div>
           </div>
@@ -950,7 +1066,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="0"
                 :max="24"
-                @update:value="(v) => handleNumericInput('paragraphSpacing', v)"
+                @update:value="handleParagraphSpacingUpdate"
               />
             </div>
           </div>
@@ -983,7 +1099,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="8"
                 :max="48"
-                @update:value="(v) => handleNumericInput('messagePaddingX', v)"
+                @update:value="handleMessagePaddingXUpdate"
               />
             </div>
           </div>
@@ -1005,7 +1121,7 @@ const handleOpenTutorialHub = () => {
                 size="small"
                 :min="4"
                 :max="32"
-                @update:value="(v) => handleNumericInput('messagePaddingY', v)"
+                @update:value="handleMessagePaddingYUpdate"
               />
             </div>
           </div>
@@ -1057,7 +1173,26 @@ const handleOpenTutorialHub = () => {
         </div>
       </section>
 
-      <n-space justify="end" align="center" class="display-settings__footer">
+      <input
+        ref="importFileInputRef"
+        class="display-settings__hidden-file-input"
+        type="file"
+        accept=".json,.zip,application/json,application/zip"
+        @change="handleImportFile"
+      >
+
+      <n-space justify="space-between" align="center" class="display-settings__footer">
+        <n-dropdown trigger="click" :options="transferMenuOptions" @select="handleTransferAction">
+          <n-button
+            quaternary
+            size="small"
+            text-color="#fff"
+            :disabled="transferProcessing"
+            :loading="transferProcessing"
+          >
+            导入 / 导出
+          </n-button>
+        </n-dropdown>
         <n-space size="small">
           <n-button quaternary size="small" text-color="#fff" @click="handleClose">关闭</n-button>
           <n-button tertiary size="small" text-color="#fff" @click="handleRestoreDefaults">恢复默认</n-button>
@@ -1383,6 +1518,11 @@ const handleOpenTutorialHub = () => {
 
 .display-settings__footer {
   margin-top: 0.5rem;
+  width: 100%;
+}
+
+.display-settings__hidden-file-input {
+  display: none;
 }
 
 @media (max-width: 720px) {

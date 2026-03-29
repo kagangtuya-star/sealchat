@@ -1,30 +1,39 @@
 <script setup lang="tsx">
-import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useUserStore } from '@/stores/user';
 import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import type { DropdownOption, DropdownMixedOption, DropdownRenderOption } from 'naive-ui';
-import { NDropdown, NButton, NIcon, NTooltip, NPopover } from 'naive-ui';
-import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings } from '@vicons/tabler';
+import type { DropdownOption, DropdownGroupOption, DropdownDividerOption, DropdownRenderOption, DropdownProps } from 'naive-ui';
+import { NDropdown, NButton, NIcon, NTooltip } from 'naive-ui';
+import { Plus, Star, AlertTriangle, Camera, LayoutList, Settings, Edit } from '@vicons/tabler';
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 import { useI18n } from 'vue-i18n';
+
+type DropdownMixedOption = DropdownOption | DropdownGroupOption | DropdownDividerOption | DropdownRenderOption;
+type DropdownRenderLabelFn = NonNullable<DropdownProps['renderLabel']>;
+type IdentityDropdownOption = DropdownOption & {
+  rawLabel?: string;
+};
 
 const props = withDefaults(defineProps<{
   channelId?: string;
   disabled?: boolean;
+  compact?: boolean;
   previewAppearance?: {
     identityId?: string;
     displayName?: string;
     color?: string;
     avatarAttachmentId?: string;
     variantId?: string;
+    isTemporary?: boolean;
   } | null;
 }>(), {
   channelId: undefined,
   disabled: false,
+  compact: false,
   previewAppearance: null,
 });
 
@@ -32,6 +41,8 @@ const emit = defineEmits<{
   (event: 'create'): void;
   (event: 'manage'): void;
   (event: 'avatar-setup'): void;
+  (event: 'identity-changed'): void;
+  (event: 'edit-temporary'): void;
 }>();
 
 const { t } = useI18n();
@@ -147,12 +158,51 @@ const displayColor = computed(() => (
   || activeIdentity.value?.color
   || ''
 ));
+const displayIsTemporary = computed(() => (
+  Boolean(props.previewAppearance?.isTemporary ?? activeIdentity.value?.isTemporary)
+));
+const displayAvatarText = computed(() => (
+  props.previewAppearance?.displayName
+  || activeIdentityVariant.value?.displayName
+  || activeIdentity.value?.displayName
+  || fallbackName.value
+));
 
 // Mobile detection for responsive display
 const isMobile = ref(false);
 const MOBILE_BREAKPOINT = 768;
 const MAX_NAME_LENGTH_MOBILE = 4;
 const MOBILE_DROPDOWN_VIEWPORT_RATIO = 0.62;
+const MAX_ROLE_LABEL_UNITS = 12;
+
+const getRoleLabelDisplayUnits = (value: string) => {
+  let units = 0;
+  for (const char of Array.from(value)) {
+    units += /[\u0000-\u00ff]/.test(char) ? 0.5 : 1;
+  }
+  return units;
+};
+
+const truncateRoleLabel = (value?: string, maxUnits = MAX_ROLE_LABEL_UNITS) => {
+  const normalized = String(value || '');
+  if (!normalized) {
+    return '';
+  }
+  if (getRoleLabelDisplayUnits(normalized) <= maxUnits) {
+    return normalized;
+  }
+  let units = 0;
+  let result = '';
+  for (const char of Array.from(normalized)) {
+    const nextUnits = units + (/[\u0000-\u00ff]/.test(char) ? 0.5 : 1);
+    if (nextUnits > maxUnits) {
+      break;
+    }
+    result += char;
+    units = nextUnits;
+  }
+  return `${result}…`;
+};
 
 const updateIsMobile = () => {
   const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
@@ -164,6 +214,9 @@ const updateIsMobile = () => {
 
 // Displayed name: on mobile, if name exceeds 4 characters, show "切换" instead
 const displayedButtonLabel = computed(() => {
+  if (props.compact && isMobile.value) {
+    return '';
+  }
   const name = displayName.value;
   if (isMobile.value && name.length > MAX_NAME_LENGTH_MOBILE) {
     return '切换';
@@ -171,13 +224,33 @@ const displayedButtonLabel = computed(() => {
   return name;
 });
 
+const avatarSize = computed(() => (props.compact && isMobile.value ? 22 : 28));
+
 const avatarSrc = computed(() => {
-  return buildAttachmentUrl(
+  const resolved = buildAttachmentUrl(
     props.previewAppearance?.avatarAttachmentId
     || activeIdentityVariant.value?.avatarAttachmentId
     || activeIdentity.value?.avatarAttachmentId,
-  ) || fallbackAvatar.value;
+  );
+  if (resolved) {
+    return resolved;
+  }
+  if (displayIsTemporary.value) {
+    return '';
+  }
+  return fallbackAvatar.value;
 });
+const primaryActionKey = computed(() => (
+  activeIdentity.value?.isTemporary ? '__edit_temporary' : '__create'
+));
+const primaryActionLabel = computed(() => (
+  primaryActionKey.value === '__edit_temporary' ? '编辑临时角色' : '创建新角色'
+));
+const primaryActionHint = computed(() => (
+  primaryActionKey.value === '__edit_temporary'
+    ? ''
+    : ''
+));
 const toggleActionLabel = computed(() => (
   filterMode.value === 'favorites' ? '显示全部角色' : '仅显示收藏角色'
 ));
@@ -193,6 +266,13 @@ const renderActionIconByKey = (key: string) => {
     return (
       <NIcon size={18}>
         <Plus />
+      </NIcon>
+    );
+  }
+  if (key === '__edit_temporary') {
+    return (
+      <NIcon size={18}>
+        <Edit />
       </NIcon>
     );
   }
@@ -220,12 +300,12 @@ const renderMobileActionRow = () => (
         <button
           type="button"
           class="identity-action-bar-inline__btn"
-          title="创建新角色"
-          aria-label="创建新角色"
+          title={primaryActionHint.value || primaryActionLabel.value}
+          aria-label={primaryActionLabel.value}
           onMousedown={consumeDropdownActionPointer}
-          onClick={handleMobileCreateAction}
+          onClick={handleMobilePrimaryAction}
         >
-          {renderActionIconByKey('__create')}
+          {renderActionIconByKey(primaryActionKey.value)}
         </button>
         <button
           type="button"
@@ -243,17 +323,19 @@ const renderMobileActionRow = () => (
 );
 
 const options = computed<DropdownMixedOption[]>(() => {
-  const list = sortedIdentities.value.map<DropdownOption>((item) => ({
+  const list = sortedIdentities.value.map<IdentityDropdownOption>((item) => ({
     key: item.id,
     label: item.displayName,
+    rawLabel: item.displayName,
     icon: () => (
       <AvatarVue
         size={24}
         border={false}
-        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || fallbackAvatar.value}
+        src={buildAttachmentUrl(resolveIdentityAvatarToken(item)) || (item.isTemporary ? '' : fallbackAvatar.value)}
+        useTextFallback={Boolean(item.isTemporary)}
+        fallbackText={item.displayName || fallbackName.value}
       />
     ),
-    class: item.id === displayIdentityId.value ? 'identity-option identity-option--active' : 'identity-option',
     extra: item.color,
   }));
   if (!list.length) {
@@ -287,11 +369,12 @@ const options = computed<DropdownMixedOption[]>(() => {
   if (canManageIdentities.value) {
     result.push(
       {
-        key: '__create',
-        label: '创建新角色',
+        key: primaryActionKey.value,
+        label: primaryActionLabel.value,
         class: 'identity-option identity-option--action identity-action identity-action--create',
-        icon: () => renderActionIconByKey('__create'),
-      },
+        icon: () => renderActionIconByKey(primaryActionKey.value),
+        hint: primaryActionHint.value,
+      } as DropdownOption,
       {
         key: '__manage',
         label: '管理角色',
@@ -323,9 +406,13 @@ const handleMobileToggleAction = (event: MouseEvent) => {
   consumeDropdownActionPointer(event);
   applyToggleFilterMode(false);
 };
-const handleMobileCreateAction = (event: MouseEvent) => {
+const handleMobilePrimaryAction = (event: MouseEvent) => {
   consumeDropdownActionPointer(event);
   dropdownVisible.value = false;
+  if (primaryActionKey.value === '__edit_temporary') {
+    emit('edit-temporary');
+    return;
+  }
   emit('create');
 };
 const handleMobileManageAction = (event: MouseEvent) => {
@@ -334,64 +421,53 @@ const handleMobileManageAction = (event: MouseEvent) => {
   emit('manage');
 };
 
-const renderOption: DropdownRenderOption = ({ node, option }) => {
-  if (option.key === '__divider') {
-    return node;
-  }
-  if (option.key === '__create' || option.key === '__manage' || option.key === '__toggle') {
+const renderLabel: DropdownRenderLabelFn = (option) => {
+  if (option.key === '__create' || option.key === '__edit_temporary' || option.key === '__manage' || option.key === '__toggle') {
     const label = String(option.label || '');
-    const actionKey = String(option.key || '');
-    return cloneVNode(
-      node,
-      {
-        class: [node.props?.class, 'identity-option-node', 'identity-option-node--action'],
-      },
-      {
-        default: () => (
-          <div
-            class="identity-action-option"
-            title={label}
-            aria-label={label}
-          >
-            <span class="identity-action-option__icon">
-              {renderActionIconByKey(actionKey)}
-            </span>
-            <span class="identity-action-option__text">{label}</span>
-          </div>
-        ),
-      },
+    const hint = String((option as any).hint || '');
+    return (
+      <div
+        class="identity-action-option identity-option-node identity-option-node--action"
+        title={label}
+        aria-label={label}
+      >
+        <span class="identity-action-option__body">
+          <span class="identity-action-option__text">{label}</span>
+          {hint ? <span class="identity-action-option__hint">{hint}</span> : null}
+        </span>
+      </div>
     );
   }
   if (option.key === '__placeholder') {
-    return cloneVNode(node, {
-      class: [node.props?.class, 'identity-option-node', 'identity-option-node--placeholder'],
-    });
+    return (
+      <div class="identity-option-node identity-option-node--placeholder">
+        {String(option.label || '')}
+      </div>
+    );
   }
   const color = (option as any).extra as string | undefined;
   const isActive = displayIdentityId.value === option.key;
-  return cloneVNode(
-    node,
-    {
-      class: [node.props?.class, 'identity-option-node', isActive ? 'identity-option-node--active' : ''],
-    },
-    {
-      default: () => (
-        <div class="identity-option">
-          {option.icon?.()}
-          <span class="identity-option__label">
-            {color ? <span class="identity-option__dot" style={{ backgroundColor: color }}></span> : null}
-            <span class="identity-option__name" style={color ? { color } : undefined}>{option.label as string}</span>
-            {isActive ? <span class="identity-option__tag">当前</span> : null}
-          </span>
-        </div>
-      ),
-    },
+  const rawLabel = String((option as IdentityDropdownOption).rawLabel || option.label || '');
+  const truncatedLabel = truncateRoleLabel(rawLabel);
+  return (
+    <span
+      class={['identity-option__label', isActive ? 'identity-option__label--active' : '']}
+      title={rawLabel}
+      aria-label={rawLabel}
+    >
+      {color ? <span class="identity-option__dot" style={{ backgroundColor: color }}></span> : null}
+      <span class="identity-option__name" style={color ? { color } : undefined}>{truncatedLabel}</span>
+    </span>
   );
 };
 
 const handleSelect = async (key: string | number) => {
   if (key === '__create') {
     emit('create');
+    return;
+  }
+  if (key === '__edit_temporary') {
+    emit('edit-temporary');
     return;
   }
   if (key === '__manage') {
@@ -529,6 +605,7 @@ const showAvatarSetupBadge = computed(() => {
   if (!canManageIdentities.value) return false;
   // Show badge when user has no avatar AND there's no active channel identity avatar
   if (!user.hasDefaultAvatar) return false;
+  if (activeIdentity.value?.isTemporary) return false;
   // If using a channel identity with a custom avatar, don't show
   if (activeIdentity.value?.avatarAttachmentId) return false;
   return true;
@@ -696,7 +773,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
       :show-arrow="false"
       placement="top-start"
       :disabled="!resolvedChannelId || disabled"
-      :render-option="renderOption"
+      :render-label="renderLabel"
       :menu-props="dropdownMenuProps"
       :content-class="dropdownOverlayClass"
       @update:show="handleDropdownShowUpdate"
@@ -706,26 +783,36 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         tertiary
         size="small"
         class="identity-switcher"
+        :class="{ 'identity-switcher--compact': props.compact && isMobile }"
         :disabled="!resolvedChannelId || disabled"
+        :title="displayName"
       >
         <AvatarVue
-          :size="28"
+          :size="avatarSize"
           :border="false"
           :src="avatarSrc"
+          :use-text-fallback="displayIsTemporary"
+          :fallback-text="displayAvatarText"
           class="identity-switcher__avatar"
         />
         <span
-          v-if="displayColor"
+          v-if="displayColor && (!props.compact || !isMobile)"
           class="identity-switcher__color"
           :style="{ backgroundColor: displayColor }"
         />
         <span
+          v-if="displayedButtonLabel"
           class="identity-switcher__label"
           :style="displayColor ? { color: displayColor } : undefined"
         >
           {{ displayedButtonLabel }}
         </span>
-        <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
+        <n-icon
+          v-if="showFavoriteBadge && (!props.compact || !isMobile)"
+          :component="Star"
+          size="12"
+          class="identity-switcher__favorite"
+        />
       </n-button>
     </n-dropdown>
 
@@ -749,6 +836,13 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
   color: var(--sc-text-primary, #374151);
   transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+.identity-switcher--compact {
+  gap: 0.2rem;
+  min-width: 2.25rem;
+  padding: 0.2rem 0.32rem;
+  border-radius: 999px;
 }
 
 .identity-switcher__label {
@@ -785,7 +879,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   min-width: 11rem;
 }
 
-.identity-option--active .identity-option__name {
+.identity-option__label--active .identity-option__name {
   font-weight: 600;
 }
 
@@ -793,6 +887,8 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .identity-option__dot {
@@ -804,6 +900,10 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 .identity-option__name {
   font-size: 0.95rem;
+  max-width: 12em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .identity-option__tag {
@@ -869,7 +969,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
 
 .identity-action-option {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   min-width: 11rem;
 }
@@ -884,9 +984,22 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
   flex: 0 0 auto;
 }
 
+.identity-action-option__body {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  line-height: 1.2;
+}
+
 .identity-action-option__text {
   display: inline-flex;
   align-items: center;
+}
+
+.identity-action-option__hint {
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary, #64748b);
+  white-space: normal;
 }
 
 .identity-option-node--placeholder {

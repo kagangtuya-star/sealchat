@@ -78,6 +78,7 @@ export interface DisplaySettings {
   sidebarWidth: number         // 左侧频道栏宽度 (px)
   channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
+  preferStaticAvatarDecoration: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
@@ -101,6 +102,7 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  mobileMinimalInputEnabled: boolean
   enableIcToggleHotkey: boolean
   favoriteChannelBarEnabled: boolean
   favoriteChannelIdsByWorld: Record<string, string[]>
@@ -118,6 +120,7 @@ export interface DisplaySettings {
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
   showDragIndicator: boolean  // 拖拽时显示蓝色指示线
+  mobileMessageDragLongPressEnabled: boolean  // 移动端长按左侧拖动控件后才开始拖动消息
   highlightNewlySentMessage: boolean  // 新到达消息短暂弱高亮（兼容旧键名）
   // 自定义主题
   customThemeEnabled: boolean
@@ -428,6 +431,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   channelNameWrapEnabled: false,
   showAvatar: true,
+  preferStaticAvatarDecoration: false,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
@@ -451,6 +455,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
+  mobileMinimalInputEnabled: false,
   enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
   favoriteChannelIdsByWorld: {},
@@ -467,6 +472,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
+  mobileMessageDragLongPressEnabled: false,
   highlightNewlySentMessage: true,
   customThemeEnabled: false,
   customThemes: [],
@@ -593,6 +599,7 @@ const loadSettings = (): DisplaySettings => {
       ),
       channelNameWrapEnabled: coerceBoolean((parsed as any)?.channelNameWrapEnabled ?? false),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
         AVATAR_SIZE_DEFAULT,
@@ -661,6 +668,7 @@ const loadSettings = (): DisplaySettings => {
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      mobileMinimalInputEnabled: coerceBoolean((parsed as any)?.mobileMinimalInputEnabled ?? false),
       enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
       favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
       favoriteChannelIdsByWorld,
@@ -682,6 +690,7 @@ const loadSettings = (): DisplaySettings => {
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
+      mobileMessageDragLongPressEnabled: coerceBoolean((parsed as any)?.mobileMessageDragLongPressEnabled ?? false),
       highlightNewlySentMessage: coerceBoolean((parsed as any)?.highlightNewlySentMessage ?? true),
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
@@ -716,6 +725,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  preferStaticAvatarDecoration:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
+      ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
+      : base.preferStaticAvatarDecoration,
   avatarSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
       ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)
@@ -833,6 +846,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  mobileMinimalInputEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMinimalInputEnabled')
+      ? coerceBoolean((patch as any).mobileMinimalInputEnabled ?? false)
+      : base.mobileMinimalInputEnabled,
   enableIcToggleHotkey:
     patch && Object.prototype.hasOwnProperty.call(patch, 'enableIcToggleHotkey')
       ? coerceBoolean((patch as any).enableIcToggleHotkey)
@@ -902,6 +919,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showDragIndicator')
       ? coerceBoolean((patch as any).showDragIndicator)
       : base.showDragIndicator,
+  mobileMessageDragLongPressEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'mobileMessageDragLongPressEnabled')
+      ? coerceBoolean((patch as any).mobileMessageDragLongPressEnabled)
+      : base.mobileMessageDragLongPressEnabled,
   highlightNewlySentMessage:
     patch && Object.prototype.hasOwnProperty.call(patch, 'highlightNewlySentMessage')
       ? coerceBoolean((patch as any).highlightNewlySentMessage)
@@ -1152,6 +1173,14 @@ export const useDisplayStore = defineStore('display', {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
       this.applyTheme()
+    },
+    async replaceSettings(snapshot: Partial<DisplaySettings>, options?: { restoreFontAsset?: boolean }) {
+      this.settings = normalizeWith(defaultSettings(), snapshot)
+      this.persist()
+      this.applyTheme()
+      if (options?.restoreFontAsset) {
+        await this.restoreGlobalFontAsset()
+      }
     },
     reset() {
       this.settings = defaultSettings()

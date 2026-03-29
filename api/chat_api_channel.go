@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -36,8 +38,29 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 	if !service.IsWorldAdmin(worldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
 		return nil, fmt.Errorf("无权在该世界创建频道")
 	}
+	defaultDiceMode, defaultBotID, err := service.ResolveWorldChannelDefaultDiceConfig(worldID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldDefaultDiceMode):
+			return nil, fmt.Errorf("当前世界默认掷骰方式无效，请在世界管理中重新设置")
+		case errors.Is(err, service.ErrWorldDefaultDiceBotEmpty):
+			return nil, fmt.Errorf("当前世界启用了 BOT 掷骰默认值，但未指定默认 BOT")
+		case errors.Is(err, service.ErrWorldDefaultDiceBotInvalid):
+			return nil, fmt.Errorf("当前世界默认 BOT 无效，请在世界管理中重新选择")
+		default:
+			return nil, err
+		}
+	}
 
 	m := service.ChannelNew(utils.NewID(), permType, data.Name, worldID, ctx.User.ID, data.ParentID)
+	if m != nil && defaultDiceMode == model.WorldChannelDefaultDiceModeBot {
+		if err := service.ApplyWorldChannelDefaultDiceConfig(m.ID, defaultDiceMode, defaultBotID); err != nil {
+			log.Printf("应用世界默认掷骰配置失败[channel=%s world=%s]: %v", m.ID, worldID, err)
+		} else {
+			m.BuiltInDiceEnabled = false
+			m.BotFeatureEnabled = true
+		}
+	}
 	if m != nil {
 		ev := &protocol.Event{
 			Type:    protocol.EventChannelUpdated,
@@ -329,6 +352,11 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 		Member: memberPT,
 	})
 	ctx.BroadcastChannelPresence(channelId)
+	go func(channelID, userID string) {
+		if err := service.RecordDigestWindowVisit(channelID, userID); err != nil {
+			log.Printf("digest-push: 记录频道访问失败 channel=%s user=%s err=%v", channelID, userID, err)
+		}
+	}(channelId, ctx.User.ID)
 
 	// 获取第一条未读消息信息
 	firstUnreadMsgId, firstUnreadMsgTime, _ := model.ChannelGetFirstUnreadInfo(channelId, ctx.User.ID, &model.FirstUnreadFilterOptions{

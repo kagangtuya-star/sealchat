@@ -14,6 +14,9 @@ const (
 	WorldVisibilityPrivate  = "private"
 	WorldVisibilityUnlisted = "unlisted"
 
+	WorldChannelDefaultDiceModeBuiltin = "builtin"
+	WorldChannelDefaultDiceModeBot     = "bot"
+
 	WorldRoleOwner     = "owner"
 	WorldRoleAdmin     = "admin"
 	WorldRoleMember    = "member"
@@ -31,10 +34,13 @@ type WorldModel struct {
 	ObserverEnabled            bool    `json:"-" gorm:"default:false"`                         // 专属 OB 旁观链接启用状态
 	EnforceMembership          bool    `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
 	AllowAdminEditMessages     bool    `json:"allowAdminEditMessages" gorm:"default:false"`    // 允许管理员编辑成员发言
+	AllowManageOtherUserChannelIdentities bool `json:"allowManageOtherUserChannelIdentities" gorm:"default:false"` // 允许管理其他用户频道角色
 	AllowMemberEditKeywords    bool    `json:"allowMemberEditKeywords" gorm:"default:false"`   // 允许成员编辑世界术语
 	StrictWhisperPrivacy       bool    `json:"strictWhisperPrivacy" gorm:"default:true"`       // 悄悄话严格保密：开启后管理员不可旁路查看
-	CharacterCardBadgeTemplate string  `json:"characterCardBadgeTemplate" gorm:"size:512"`     // 世界徽章模板
-	IsSystemDefault            bool    `json:"isSystemDefault" gorm:"default:false;index"`     // 系统默认世界标识，仅允许一个
+	ChannelDefaultDiceMode     string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
+	ChannelDefaultBotID        string  `json:"channelDefaultBotId" gorm:"size:100"`
+	CharacterCardBadgeTemplate string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
+	IsSystemDefault            bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                    string  `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID           string  `json:"defaultChannelId" gorm:"size:100"`
 	InviteSlug                 string  `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
@@ -58,6 +64,9 @@ func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {
 	if strings.TrimSpace(m.Status) == "" {
 		m.Status = "active"
 	}
+	if strings.TrimSpace(m.ChannelDefaultDiceMode) == "" {
+		m.ChannelDefaultDiceMode = WorldChannelDefaultDiceModeBuiltin
+	}
 	return nil
 }
 
@@ -69,6 +78,7 @@ type WorldMemberModel struct {
 	Role              string     `json:"role" gorm:"size:24;index"` // owner/admin/member
 	JoinedAt          time.Time  `json:"joinedAt"`
 	EditNoticeAckedAt *time.Time `json:"editNoticeAckedAt"` // 确认管理员编辑提示的时间
+	ManageIdentityNoticeAckedAt *time.Time `json:"manageIdentityNoticeAckedAt"` // 确认频道角色代管提示的时间
 }
 
 func (*WorldMemberModel) TableName() string {
@@ -147,12 +157,13 @@ func BackfillWorldData() error {
 		} else {
 			// 没有任何世界，创建新的系统默认世界
 			world = WorldModel{
-				Name:                 "默认世界",
-				Description:          "系统初始化自动创建的默认世界",
-				Visibility:           "public",
-				StrictWhisperPrivacy: true,
-				IsSystemDefault:      true,
-				Status:               "active",
+				Name:                   "默认世界",
+				Description:            "系统初始化自动创建的默认世界",
+				Visibility:             "public",
+				StrictWhisperPrivacy:   true,
+				ChannelDefaultDiceMode: WorldChannelDefaultDiceModeBuiltin,
+				IsSystemDefault:        true,
+				Status:                 "active",
 			}
 			if err := db.Create(&world).Error; err != nil {
 				return err
@@ -172,6 +183,9 @@ func BackfillWorldData() error {
 	_ = db.Model(&ChannelModel{}).
 		Where("status = '' OR status IS NULL").
 		Update("status", "active")
+	_ = db.Model(&WorldModel{}).
+		Where("channel_default_dice_mode = '' OR channel_default_dice_mode IS NULL").
+		Update("channel_default_dice_mode", WorldChannelDefaultDiceModeBuiltin)
 
 	// 如果默认世界没有默认频道记录，尝试写入一个已有频道
 	if strings.TrimSpace(world.DefaultChannelID) == "" {

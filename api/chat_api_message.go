@@ -2201,11 +2201,13 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	if identity != nil {
 		m.SenderRoleID = identity.ID
 		m.SenderIdentityID = identity.ID
+		m.SenderIdentityIsTemporary = identity.IsTemporary
 		if appearance != nil {
 			m.SenderIdentityVariantID = appearance.VariantID
 			m.SenderIdentityName = appearance.DisplayName
 			m.SenderIdentityColor = appearance.Color
 			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+			m.SenderIdentityDecorations = appearance.AvatarDecorations
 			if appearance.DisplayName != "" {
 				m.SenderMemberName = appearance.DisplayName
 			}
@@ -2333,6 +2335,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		go func(channelID string, message model.MessageModel) {
+			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
+				log.Printf("digest-push: 记录消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
+			}
+		}(data.ChannelID, m)
 
 		if isHiddenDice && len(channelId) < 30 {
 			go sendHiddenDicePrivateCopy(ctx, channelData, messageData)
@@ -2590,7 +2597,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
@@ -2851,17 +2858,26 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		if identity != nil {
 			msg.SenderIdentityID = identity.ID
 			msg.SenderRoleID = identity.ID
+			msg.SenderIdentityIsTemporary = identity.IsTemporary
 			if appearance != nil {
 				msg.SenderIdentityVariantID = appearance.VariantID
 				msg.SenderIdentityName = appearance.DisplayName
 				msg.SenderIdentityColor = appearance.Color
 				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+				msg.SenderIdentityDecorations = appearance.AvatarDecorations
 			}
 			resolvedIdentityProto = identity.ToProtocolType()
 			if resolvedIdentityProto != nil && appearance != nil {
 				resolvedIdentityProto.DisplayName = appearance.DisplayName
 				resolvedIdentityProto.Color = appearance.Color
 				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+				resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
+				if len(appearance.AvatarDecorations) > 0 {
+					first := appearance.AvatarDecorations[0]
+					resolvedIdentityProto.AvatarDecoration = &first
+				} else {
+					resolvedIdentityProto.AvatarDecoration = nil
+				}
 			}
 			if appearance != nil && appearance.DisplayName != "" {
 				msg.SenderMemberName = appearance.DisplayName
@@ -2872,6 +2888,8 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			msg.SenderIdentityName = ""
 			msg.SenderIdentityColor = ""
 			msg.SenderIdentityAvatarID = ""
+			msg.SenderIdentityDecorations = nil
+			msg.SenderIdentityIsTemporary = false
 			msg.SenderRoleID = ""
 			resolvedIdentityProto = nil
 			if authorMember != nil && authorMember.Nickname != "" {
@@ -3006,6 +3024,8 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_identity_name"] = msg.SenderIdentityName
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
+		updates["sender_identity_decoration"] = msg.SenderIdentityDecorations
+		updates["sender_identity_is_temporary"] = msg.SenderIdentityIsTemporary
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
 	}
@@ -3651,6 +3671,11 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		go func(channelID string, message model.MessageModel) {
+			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
+				log.Printf("digest-push: 记录 BOT 消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
+			}
+		}(data.ChannelID, m)
 	}
 }
 
@@ -3718,6 +3743,11 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		User:    userData,
 	})
 	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
+	go func(channelID string, message model.MessageModel) {
+		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
+			log.Printf("digest-push: 记录私聊副本摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
+		}
+	}(ch.ID, m)
 }
 
 func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, msg *model.MessageModel, privateOtherUser string) {
@@ -3873,6 +3903,11 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 		})
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
+	go func(channelID string, message model.MessageModel) {
+		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
+			log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
+		}
+	}(targetChannelID, m)
 }
 
 func resolveBotWhisperForwardTargetChannel(ctx *ChatContext, content, privateOtherUser string) (*model.ChannelModel, string) {

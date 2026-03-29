@@ -86,6 +86,28 @@ func TestParseCQCodeAtContent(t *testing.T) {
 	if id := getStringAttr(elements[0].Attrs, "id"); id != "SEALCHAT-123" {
 		t.Errorf("expected id 'SEALCHAT-123', got %q", id)
 	}
+
+	elements = ParseCQCode("[CQ:image,file=https://img.example/test.png]")
+	if len(elements) != 1 {
+		t.Fatalf("expected 1 image element, got %d", len(elements))
+	}
+	if elements[0].Type != "img" {
+		t.Fatalf("expected type 'img', got %q", elements[0].Type)
+	}
+	if src := getStringAttr(elements[0].Attrs, "src"); src != "https://img.example/test.png" {
+		t.Fatalf("expected image src, got %q", src)
+	}
+
+	elements = ParseCQCode("[CQ:reply,id=123456]")
+	if len(elements) != 1 {
+		t.Fatalf("expected 1 reply element, got %d", len(elements))
+	}
+	if elements[0].Type != "quote" {
+		t.Fatalf("expected type 'quote', got %q", elements[0].Type)
+	}
+	if id := getStringAttr(elements[0].Attrs, "id"); id != "123456" {
+		t.Fatalf("expected quote id '123456', got %q", id)
+	}
 }
 
 func TestEncodeCQCode(t *testing.T) {
@@ -183,6 +205,17 @@ func TestConvertSatoriToCQWithBr(t *testing.T) {
 	}
 	if !strings.Contains(result, "前文\n后文") {
 		t.Fatalf("expected newline converted content, got: %q", result)
+	}
+}
+
+func TestConvertSatoriToCQWithImageAndReply(t *testing.T) {
+	input := `<quote id="123456"></quote><img src="https://img.example/test.png" />`
+	result := ConvertSatoriToCQ(input)
+	if !strings.Contains(result, "[CQ:reply,id=123456]") {
+		t.Fatalf("expected reply cq in result, got %q", result)
+	}
+	if !strings.Contains(result, "[CQ:image,file=https://img.example/test.png,url=https://img.example/test.png]") {
+		t.Fatalf("expected image cq in result, got %q", result)
 	}
 }
 

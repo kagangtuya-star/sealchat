@@ -22,5 +22,5 @@ var (
 	PermFuncChannelCreatePublic    = gorbac.NewStdPermission("func_channel_create_public")     // 系统 - 频道 - 创建公开频道
 	PermFuncChannelCreateNonPublic = gorbac.NewStdPermission("func_channel_create_non_public") // 系统 - 频道 - 创建个人频道
 
-	// "g_channel_settings_edit": 1, // 频道管理 - 通用权限
+	// "g_channel_settings_edit": 1, // 频道设置 - 通用权限
 )

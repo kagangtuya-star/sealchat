@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import type { MentionOption } from 'naive-ui';
-import { nanoid } from 'nanoid';
 import { matchText } from '@/utils/pinyinMatch';
+import { useChatStore } from '@/stores/chat';
+import { isBotCommandLikeContent } from '@/utils/botCommand';
+import {
+  buildHybridCaretAnchorHtml,
+  findImageMarkerAtPosition,
+  HYBRID_INPUT_CARET_ANCHOR_CLASS,
+  normalizeCursorAfterTextInsertion,
+} from './chatInputHybridMarkers';
+import type { HybridImageMarkerInfo } from './chatInputHybridMarkers';
+import type { HybridPendingInputContext } from './chatInputHybridMarkers';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -48,6 +57,8 @@ const emit = defineEmits<{
   (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
 }>();
 
+const chat = useChatStore();
+
 const editorRef = ref<HTMLDivElement | null>(null);
 const wrapperRef = ref<HTMLDivElement | null>(null);
 const isFocused = ref(false);
@@ -55,6 +66,8 @@ const isInternalUpdate = ref(false); // 标记是否是内部输入导致的更�
 const isComposing = ref(false);
 let latestInputRenderTaskId = 0;
 let latestCursorRestoreTaskId = 0;
+let hasDeferredExternalRender = false;
+let pendingInputContext: HybridPendingInputContext | null = null;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -94,7 +107,6 @@ const BLOCK_TAGS = new Set([
   'SECTION', 'ARTICLE', 'ASIDE', 'HEADER', 'FOOTER', 'NAV',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
 ]);
-const IMAGE_TOKEN_REGEX = /\[\[图片:([^\]]+)\]\]/g;
 const QUICK_INLINE_CODE_PATTERN = /`([^`\n]+)`/g;
 const QUICK_LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
@@ -224,11 +236,14 @@ const extractGalleryAttachmentId = (event: DragEvent) => {
   }
 };
 
-const renderQuickFormatLine = (line: string): string => {
+const renderQuickFormatLine = (line: string, disableAllFormatting = false): string => {
   if (!line) {
     return '<span class="empty-line">\u200B</span>';
   }
   let text = escapeHtml(line);
+  if (disableAllFormatting) {
+    return text;
+  }
   const codeTokens: Array<{ token: string; html: string }> = [];
   const linkTokens: Array<{ token: string; html: string }> = [];
 
@@ -269,7 +284,7 @@ const renderQuickFormatLine = (line: string): string => {
   return text;
 };
 
-const renderQuickFormatFragment = (value: string, hasNextFragment: boolean): string => {
+const renderQuickFormatFragment = (value: string, hasNextFragment: boolean, disableAllFormatting = false): string => {
   const lines = value.split('\n');
   let html = '';
   lines.forEach((line, index) => {
@@ -281,7 +296,7 @@ const renderQuickFormatFragment = (value: string, hasNextFragment: boolean): str
     if (skipTrailingEmptyLine) {
       return;
     }
-    html += renderQuickFormatLine(line);
+    html += renderQuickFormatLine(line, disableAllFormatting);
   });
   return html;
 };
@@ -291,6 +306,9 @@ const isImageElement = (node: Node): node is HTMLElement =>
 
 const isMentionElement = (node: Node): node is HTMLElement =>
   node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__mention');
+
+const isCaretAnchorElement = (node: Node): node is HTMLElement =>
+  node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains(HYBRID_INPUT_CARET_ANCHOR_CLASS);
 
 const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
   node.nodeType === Node.TEXT_NODE
@@ -313,6 +331,37 @@ const resolveEmptyLinePlaceholderPosition = (node: Node | null): { node: Node; o
       return { node: textNode, offset: Math.max(1, length) };
     }
   }
+  return null;
+};
+
+const resolveLeadingCaretPosition = (node: Node | null): { node: Node; offset: number } | null => {
+  let current: Node | null = node;
+  while (current) {
+    const placeholderPosition = resolveEmptyLinePlaceholderPosition(current);
+    if (placeholderPosition) {
+      return placeholderPosition;
+    }
+
+    if (current.nodeType === Node.TEXT_NODE) {
+      return { node: current, offset: 0 };
+    }
+
+    if (isCaretAnchorElement(current)) {
+      const textNode = current.firstChild;
+      if (textNode?.nodeType === Node.TEXT_NODE) {
+        const length = textNode.textContent?.length ?? 1;
+        return { node: textNode, offset: Math.max(1, length) };
+      }
+    }
+
+    if (current.nodeType === Node.ELEMENT_NODE && current.firstChild) {
+      current = current.firstChild;
+      continue;
+    }
+
+    current = current.nextSibling;
+  }
+
   return null;
 };
 
@@ -465,6 +514,10 @@ const resolvePositionByIndex = (node: Node, position: number): { node: Node; off
     const index = Array.prototype.indexOf.call(parent.childNodes, node);
     if (position <= 0) {
       return { node: parent, offset: index };
+    }
+    const leadingCaretPosition = resolveLeadingCaretPosition(parent.childNodes[index + 1] ?? null);
+    if (leadingCaretPosition) {
+      return leadingCaretPosition;
     }
     return { node: parent, offset: index + 1 };
   }
@@ -661,10 +714,11 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
   // 渲染内容
   let html = '';
+  const disableAllFormatting = isBotCommandLikeContent(text, chat.curChannel?.botCommandPrefixes);
   fragments.forEach((fragment, fragmentIndex) => {
     if (fragment.type === 'text') {
       const nextFragment = fragments[fragmentIndex + 1];
-      html += renderQuickFormatFragment(fragment.content, Boolean(nextFragment));
+      html += renderQuickFormatFragment(fragment.content, Boolean(nextFragment), disableAllFormatting);
     } else if (fragment.type === 'image' && fragment.markerId) {
       // 图片节点
       const imageInfo = props.inlineImages[fragment.markerId];
@@ -686,6 +740,7 @@ const renderContent = (preserveCursor = false, sourceText?: string, cursorOverri
 
         html += `<button class="image-remove" data-marker-id="${fragment.markerId}">×</button>`;
         html += `</span>`;
+        html += buildHybridCaretAnchorHtml();
       }
     } else if (fragment.type === 'at' && fragment.atId) {
       // @提及节点 - 渲染为简单的 @名字 格式（不使用胶囊）
@@ -722,6 +777,39 @@ const escapeHtml = (text: string): string => {
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
 };
 
+const scheduleExternalRender = () => {
+  if (isComposing.value) {
+    hasDeferredExternalRender = true;
+    return;
+  }
+  renderContent(true);
+};
+
+const syncDomToModel = (preserveCursor = true) => {
+  if (!editorRef.value) {
+    return;
+  }
+  latestCursorRestoreTaskId++;
+  const text = extractContentWithLineBreaks();
+  const cursorPosition = getCursorPosition();
+  const needsDeferredExternalRender = hasDeferredExternalRender;
+  hasDeferredExternalRender = false;
+  isInternalUpdate.value = true;
+  emit('update:modelValue', text);
+  checkMentionTrigger(text, cursorPosition);
+  nextTick(() => {
+    isInternalUpdate.value = false;
+    renderContent(preserveCursor, text, cursorPosition);
+    if (needsDeferredExternalRender && !isComposing.value) {
+      nextTick(() => {
+        if (!isComposing.value) {
+          renderContent(true);
+        }
+      });
+    }
+  });
+};
+
 // 监听内容变化
 watch(() => props.modelValue, () => {
   // 如果是内部输入导致的更新，不重新渲染（避免光标丢失）
@@ -729,12 +817,12 @@ watch(() => props.modelValue, () => {
     return;
   }
   // 外部更新时保留光标位置（比如图片插入）
-  renderContent(true);
+  scheduleExternalRender();
 });
 
 // 监听图片变化（图片状态更新时保留光标）
 watch(() => props.inlineImages, () => {
-  renderContent(true);
+  scheduleExternalRender();
 }, { deep: true });
 
 // 添加历史记录（带去抖动）
@@ -818,11 +906,7 @@ const setCursorPosition = (position: number) => {
   setSelectionRange(position, position);
 };
 
-interface MarkerInfo {
-  markerId: string;
-  start: number;
-  end: number;
-}
+type MarkerInfo = HybridImageMarkerInfo;
 
 interface QuickFormatBoundaryDeleteResult {
   nextValue: string;
@@ -909,24 +993,7 @@ const deleteForwardAtSelection = (): boolean => {
 };
 
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
-  if (!props.modelValue || position < 0) {
-    return null;
-  }
-  const text = props.modelValue;
-  IMAGE_TOKEN_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = IMAGE_TOKEN_REGEX.exec(text)) !== null) {
-    const start = match.index;
-    const end = start + match[0].length;
-    if (position >= start && position <= end) {
-      return {
-        markerId: match[1],
-        start,
-        end,
-      };
-    }
-  }
-  return null;
+  return findImageMarkerAtPosition(props.modelValue, position);
 };
 
 const removeImageMarker = (marker: MarkerInfo) => {
@@ -1043,7 +1110,13 @@ const handleInput = (event?: InputEvent) => {
   }
 
   // 添加到历史记录
-  const cursorPosition = getCursorPosition();
+  const measuredCursorPosition = getCursorPosition();
+  const cursorPosition = normalizeCursorAfterTextInsertion(
+    text,
+    measuredCursorPosition,
+    pendingInputContext,
+  );
+  pendingInputContext = null;
   addToHistory(text, cursorPosition);
 
   // 标记为内部更新，避免触发重新渲染
@@ -1319,6 +1392,7 @@ const handlePaste = (event: ClipboardEvent) => {
 
   if (files.length > 0) {
     event.preventDefault();
+    pendingInputContext = null;
     const position = getCursorPosition();
     emit('paste-image', { files, selectionStart: position, selectionEnd: position });
     return;
@@ -1327,6 +1401,7 @@ const handlePaste = (event: ClipboardEvent) => {
   const plainText = clipboard.getData('text/plain') || clipboard.getData('text') || '';
   if (plainText) {
     event.preventDefault();
+    pendingInputContext = null;
     insertPlainTextAtCursor(plainText);
     handleInput();
   }
@@ -1367,6 +1442,14 @@ const handleBeforeInput = (event: InputEvent) => {
   if (props.disabled) {
     return;
   }
+  const selection = getSelectionRange();
+  pendingInputContext = {
+    inputType: event.inputType || '',
+    data: typeof event.data === 'string' ? event.data : '',
+    selectionStart: selection.start,
+    selectionEnd: selection.end,
+    previousValue: props.modelValue,
+  };
   const composing = event.isComposing || isComposing.value;
   if (composing) {
     return;
@@ -1482,12 +1565,17 @@ const handleBlur = (event: FocusEvent) => {
 
 const handleCompositionStart = () => {
   isComposing.value = true;
+  pendingInputContext = null;
   emit('composition-start');
 };
 
 const handleCompositionEnd = () => {
   isComposing.value = false;
+  pendingInputContext = null;
   emit('composition-end');
+  nextTick(() => {
+    syncDomToModel(true);
+  });
 };
 
 // 暴露方法
@@ -1678,6 +1766,7 @@ defineExpose({
 }
 
 .hybrid-input.chat-input--expanded {
+  height: calc(100vh / 3);
   min-height: calc(100vh / 3);
   max-height: calc(100vh / 3);
 }
@@ -1693,6 +1782,7 @@ defineExpose({
 }
 
 .hybrid-input.chat-input--custom-height {
+  height: var(--custom-input-height, 2.5rem);
   min-height: var(--custom-input-height, 2.5rem);
   max-height: var(--custom-input-height, 12rem);
 }
@@ -1705,6 +1795,14 @@ defineExpose({
 
 .empty-line {
   display: inline;
+}
+
+:deep(.hybrid-input__caret-anchor) {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: middle;
+  white-space: pre;
 }
 
 :deep(.hybrid-input__image) {

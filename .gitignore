@@ -29,6 +29,9 @@ dist/
 config.yaml
 version.yaml
 assets/
+!ui/src/assets/
+!ui/src/assets/vendor/
+!ui/src/assets/vendor/**
 data.db
 chat.db
 static/

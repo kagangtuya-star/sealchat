@@ -18,6 +18,7 @@ func ResolveAttachment(token string) (*model.AttachmentModel, error) {
 	if token == "" {
 		return nil, nil
 	}
+	token = strings.TrimPrefix(token, "id:")
 
 	db := model.GetDB()
 	var att model.AttachmentModel
@@ -72,4 +73,36 @@ func ResolveAttachmentOwnership(userID string, token string) (*model.AttachmentM
 		return nil, errors.New("无法使用他人上传的头像")
 	}
 	return att, nil
+}
+
+// ResolveAttachmentAccessible allows delegated identity editing to keep using
+// attachments that belong to either the operator, the managed target user, or
+// the current channel scope.
+func ResolveAttachmentAccessible(ownerUserID string, operatorUserID string, channelID string, token string) (*model.AttachmentModel, error) {
+	if token == "" {
+		return nil, nil
+	}
+	att, err := ResolveAttachment(token)
+	if err != nil {
+		return nil, err
+	}
+	if att == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	operatorUserID = strings.TrimSpace(operatorUserID)
+	channelID = strings.TrimSpace(channelID)
+	attachmentChannelID := strings.TrimSpace(att.ChannelID)
+
+	if operatorUserID != "" && att.UserID == operatorUserID {
+		return att, nil
+	}
+	if ownerUserID != "" && att.UserID == ownerUserID {
+		return att, nil
+	}
+	if channelID != "" && attachmentChannelID == channelID {
+		return att, nil
+	}
+	return nil, errors.New("无法使用他人上传的头像")
 }

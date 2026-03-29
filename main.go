@@ -36,7 +36,7 @@ func main() {
 		ConfigExport             int64    `long:"config-export" description:"导出指定版本配置到文件"`
 		SQLiteVacuum             bool     `long:"sqlite-vacuum" description:"手动执行 SQLite 数据库空间整理（VACUUM）"`
 		SQLiteFTSRebuild         bool     `long:"sqlite-fts-rebuild" description:"手动全量重建 SQLite FTS 索引"`
-		CleanupWebhookBotFriends bool     `long:"cleanup-webhook-bot-friends" description:"清理 webhook BOT 历史遗留的好友关系与私聊频道（物理删除）"`
+		CleanupWebhookBotFriends bool     `long:"cleanup-webhook-bot-friends" description:"清理无 active 引用的系统 BOT（webhook/digest）及其历史遗留数据（好友/私聊/成员/token 等，物理删除）"`
 		UserSecret               string   `long:"user-secret" description:"用户秘密工具：list 列出平台管理员，reset 按用户名重置密码为123456" choice:"list" choice:"reset"`
 		Username                 []string `long:"username" description:"目标用户名，可重复指定"`
 		AdminOnly                bool     `long:"admin-only" description:"仅允许重置平台管理员"`
@@ -106,7 +106,7 @@ func main() {
 		}
 		if opts.CleanupWebhookBotFriends {
 			if err := handleCleanupWebhookBotFriends(); err != nil {
-				log.Fatalf("Webhook BOT 历史好友数据清理失败: %v", err)
+				log.Fatalf("系统 BOT 历史好友数据清理失败: %v", err)
 			}
 			return
 		}
@@ -212,14 +212,8 @@ func main() {
 		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
 
-	// 启动未读消息邮件通知 Worker
-	if config.EmailNotification.Enabled {
-		service.StartUnreadNotificationWorker(service.UnreadNotificationWorkerConfig{
-			CheckIntervalSec: config.EmailNotification.CheckIntervalSec,
-			MaxPerHour:       config.EmailNotification.MaxPerHour,
-			SiteURL:          config.Domain,
-		}, config.EmailNotification.SMTP)
-	}
+	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
+	service.StartDigestPushWorker()
 
 	// 启动更新检测 Worker
 	if config.UpdateCheck.Enabled {

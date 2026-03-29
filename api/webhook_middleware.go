@@ -13,6 +13,9 @@ import (
 func getAuthorizationToken(c *fiber.Ctx) string {
 	token := strings.TrimSpace(c.Get("Authorization"))
 	if token == "" {
+		token = strings.TrimSpace(c.Query("token"))
+	}
+	if token == "" {
 		return ""
 	}
 	lower := strings.ToLower(token)

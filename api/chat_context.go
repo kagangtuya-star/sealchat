@@ -17,11 +17,12 @@ var (
 )
 
 type ChatContext struct {
-	Conn     *WsSyncConn
-	User     *model.UserModel
-	Members  []*model.MemberModel
-	Echo     string
-	ConnInfo *ConnInfo
+	Conn            *WsSyncConn
+	User            *model.UserModel
+	Members         []*model.MemberModel
+	Echo            string
+	ConnInfo        *ConnInfo
+	OneBotSessionID string
 
 	ChannelUsersMap *utils.SyncMap[string, *utils.SyncSet[string]]
 	UserId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
@@ -166,43 +167,7 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			return true
 		})
 		if active != nil {
-			whisperTargetIDs := extractBotWhisperTargetIDs(data)
-			if len(whisperTargetIDs) > 0 {
-				if active.BotLastWhisperTargets == nil {
-					active.BotLastWhisperTargets = &utils.SyncMap[string, []string]{}
-				}
-				active.BotLastWhisperTargets.Store(channelId, whisperTargetIDs)
-			}
-			if data.MessageContext != nil {
-				if active.BotLastMessageContext == nil {
-					active.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
-				}
-				active.BotLastMessageContext.Store(channelId, data.MessageContext)
-				if data.MessageContext.IsHiddenDice && data.MessageContext.SenderUserID != "" {
-					if active.BotHiddenDicePending == nil {
-						active.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
-					}
-					senderUserID := strings.TrimSpace(data.MessageContext.SenderUserID)
-					pendingTargets := whisperTargetIDs
-					if senderUserID != "" {
-						pendingTargets = normalizeWhisperTargetIDs(append(pendingTargets, senderUserID))
-					}
-					primaryTargetID := senderUserID
-					for _, id := range whisperTargetIDs {
-						id = strings.TrimSpace(id)
-						if id != "" && id != senderUserID {
-							primaryTargetID = id
-							break
-						}
-					}
-					active.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
-						TargetUserID:  primaryTargetID,
-						TargetUserIDs: pendingTargets,
-						Count:         0,
-						CreatedAt:     time.Now().UnixMilli(),
-					})
-				}
-			}
+			cacheBotEventContext(active, channelId, data)
 			_ = active.Conn.WriteJSON(struct {
 				protocol.Event
 				Op protocol.Opcode `json:"op"`
@@ -213,6 +178,52 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 		}
 	}
+	getOneBotRuntime().publishProtocolEvent(botID, data, ctx.OneBotSessionID)
+}
+
+func cacheBotEventContext(info *ConnInfo, channelId string, data *protocol.Event) {
+	if info == nil || channelId == "" || data == nil {
+		return
+	}
+	whisperTargetIDs := extractBotWhisperTargetIDs(data)
+	if len(whisperTargetIDs) > 0 {
+		if info.BotLastWhisperTargets == nil {
+			info.BotLastWhisperTargets = &utils.SyncMap[string, []string]{}
+		}
+		info.BotLastWhisperTargets.Store(channelId, whisperTargetIDs)
+	}
+	if data.MessageContext == nil {
+		return
+	}
+	if info.BotLastMessageContext == nil {
+		info.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
+	}
+	info.BotLastMessageContext.Store(channelId, data.MessageContext)
+	if !data.MessageContext.IsHiddenDice || data.MessageContext.SenderUserID == "" {
+		return
+	}
+	if info.BotHiddenDicePending == nil {
+		info.BotHiddenDicePending = &utils.SyncMap[string, *BotHiddenDicePending]{}
+	}
+	senderUserID := strings.TrimSpace(data.MessageContext.SenderUserID)
+	pendingTargets := whisperTargetIDs
+	if senderUserID != "" {
+		pendingTargets = normalizeWhisperTargetIDs(append(pendingTargets, senderUserID))
+	}
+	primaryTargetID := senderUserID
+	for _, id := range whisperTargetIDs {
+		id = strings.TrimSpace(id)
+		if id != "" && id != senderUserID {
+			primaryTargetID = id
+			break
+		}
+	}
+	info.BotHiddenDicePending.Store(channelId, &BotHiddenDicePending{
+		TargetUserID:  primaryTargetID,
+		TargetUserIDs: pendingTargets,
+		Count:         0,
+		CreatedAt:     time.Now().UnixMilli(),
+	})
 }
 
 func normalizeEventForBot(event *protocol.Event) *protocol.Event {
@@ -240,22 +251,16 @@ func normalizeBotCommandContent(content string) string {
 }
 
 func normalizeBotCommandContentWithPrefixes(content string, prefixes []string) string {
-	normalizedSource := content
 	leading := strings.TrimLeft(content, " \t\r\n")
 	if leading == "" {
 		return content
 	}
 
-	if service.LooksLikeTipTapJSON(leading) {
-		if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
-			normalizedSource = serialized
-		} else {
-			return content
-		}
+	normalizedSource := content
+	if serialized, ok := service.SerializeMessageContentToCommandText(content); ok && hasBotCommandPrefix(serialized, prefixes) {
+		normalizedSource = serialized
 	} else if !hasBotCommandPrefix(leading, prefixes) {
 		return content
-	} else if serialized, ok := service.SerializeMessageContentToCommandText(content); ok {
-		normalizedSource = serialized
 	}
 
 	normalized := botCommandTailCleanupPattern.ReplaceAllString(normalizedSource, "")
@@ -284,35 +289,7 @@ func hasBotCommandPrefix(content string, prefixes []string) bool {
 }
 
 func resolveBotCommandPrefixes() []string {
-	collected := make([]string, 0, 6)
-	seen := map[string]struct{}{}
-	appendPrefix := func(prefix string) {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" {
-			return
-		}
-		if _, ok := seen[prefix]; ok {
-			return
-		}
-		seen[prefix] = struct{}{}
-		collected = append(collected, prefix)
-	}
-
-	if cfg := utils.GetConfig(); cfg != nil {
-		for _, prefix := range cfg.Export.DiceCommandPrefixes {
-			appendPrefix(prefix)
-		}
-	}
-	if len(collected) == 0 {
-		appendPrefix(".")
-		appendPrefix("。")
-	}
-	if _, ok := seen["."]; ok {
-		appendPrefix("．")
-		appendPrefix("｡")
-	}
-	appendPrefix("/")
-	return collected
+	return utils.GetConfiguredBotCommandPrefixes()
 }
 
 func extractBotWhisperTargetIDs(event *protocol.Event) []string {

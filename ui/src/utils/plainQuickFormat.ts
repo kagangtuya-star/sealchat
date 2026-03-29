@@ -3,6 +3,12 @@ const codeFenceLiteralPattern = /```([\s\S]*?)```/g;
 const linkPattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const boldPattern = /\*\*([^\n*][^*\n]*?)\*\*/g;
 const italicPattern = /(^|[^*])\*([^*\n]+)\*/g;
+const inlineCodeHtmlPattern = /<code\b[^>]*>(.*?)<\/code>/gis;
+
+export interface QuickFormatRenderOptions {
+  disableInlineCode?: boolean;
+  disableAllFormatting?: boolean;
+}
 
 const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
@@ -19,16 +25,21 @@ const isSafeHttpUrl = (value: string) => {
   }
 };
 
-const processInlineFromEscaped = (escapedInput: string) => {
+const processInlineFromEscaped = (escapedInput: string, options: QuickFormatRenderOptions = {}) => {
   let text = escapedInput;
+  if (options.disableAllFormatting) {
+    return text;
+  }
   const codeTokens: Array<{ token: string; html: string }> = [];
   const linkTokens: Array<{ token: string; html: string }> = [];
 
-  text = text.replace(inlineCodePattern, (_, code: string) => {
-    const token = `__QF_CODE_${codeTokens.length}__`;
-    codeTokens.push({ token, html: `<code>${code}</code>` });
-    return token;
-  });
+  if (!options.disableInlineCode) {
+    text = text.replace(inlineCodePattern, (_, code: string) => {
+      const token = `__QF_CODE_${codeTokens.length}__`;
+      codeTokens.push({ token, html: `<code>${code}</code>` });
+      return token;
+    });
+  }
 
   text = text.replace(linkPattern, (full: string, label: string, url: string) => {
     if (!isSafeHttpUrl(url)) {
@@ -56,7 +67,7 @@ const processInlineFromEscaped = (escapedInput: string) => {
   return text;
 };
 
-export const renderQuickFormatHtmlFromEscaped = (escapedInput: string) => {
+export const renderQuickFormatHtmlFromEscaped = (escapedInput: string, options: QuickFormatRenderOptions = {}) => {
   if (!escapedInput) {
     return '';
   }
@@ -70,7 +81,7 @@ export const renderQuickFormatHtmlFromEscaped = (escapedInput: string) => {
     return token;
   });
 
-  text = processInlineFromEscaped(text);
+  text = processInlineFromEscaped(text, options);
 
   fenceTokens.forEach((entry) => {
     text = text.split(entry.token).join(entry.html);
@@ -79,6 +90,13 @@ export const renderQuickFormatHtmlFromEscaped = (escapedInput: string) => {
   text = text.replace(/\n/g, '<br />');
 
   return text;
+};
+
+export const stripInlineCodeTagsFromHtml = (htmlInput: string) => {
+  if (!htmlInput) {
+    return '';
+  }
+  return htmlInput.replace(inlineCodeHtmlPattern, '`$1`');
 };
 
 const normalizeQuickFormatText = (value: string) => value.replace(/\u00a0/g, ' ');

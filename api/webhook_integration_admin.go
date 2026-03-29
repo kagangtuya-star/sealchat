@@ -155,6 +155,7 @@ func WebhookIntegrationCreate(c *fiber.Ctx) error {
 		Password:          "",
 		Salt:              "BOT_SALT",
 		IsBot:             true,
+		BotKind:           model.BotKindChannelWebhook,
 		Avatar:            "",
 		NickColor:         nickColor,
 	}
@@ -257,15 +258,31 @@ func WebhookIntegrationRevoke(c *fiber.Ctx) error {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "授权不存在"})
 	}
 
-	if err := model.GetDB().Model(&model.ChannelWebhookIntegrationModel{}).
-		Where("id = ?", integration.ID).
-		Update("status", model.WebhookIntegrationStatusRevoked).Error; err != nil {
+	tx := model.GetDB().Begin()
+	if tx.Error != nil {
+		return wrapError(c, tx.Error, "撤销授权失败")
+	}
+	rollback := func(err error) error {
+		tx.Rollback()
 		return wrapError(c, err, "撤销授权失败")
 	}
-	// 让 token 立即失效（同时避免 bot token 被其它 API 使用）
-	_ = model.GetDB().Model(&model.BotTokenModel{}).
+
+	if err := tx.Model(&model.ChannelWebhookIntegrationModel{}).
+		Where("id = ?", integration.ID).
+		Update("status", model.WebhookIntegrationStatusRevoked).Error; err != nil {
+		return rollback(err)
+	}
+	if err := tx.Model(&model.BotTokenModel{}).
 		Where("id = ?", integration.BotUserID).
-		Updates(map[string]any{"expires_at": int64(0)}).Error
+		Updates(map[string]any{"expires_at": int64(0)}).Error; err != nil {
+		return rollback(err)
+	}
+	if _, err := model.CleanupOrphanSystemBotByUserIDTx(tx, integration.BotUserID); err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		return wrapError(c, err, "撤销授权失败")
+	}
 
 	return c.JSON(fiber.Map{"success": true})
 }

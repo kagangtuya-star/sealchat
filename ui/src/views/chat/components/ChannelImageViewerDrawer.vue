@@ -309,6 +309,8 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
                   :src="item.senderAvatar"
                   :size="20"
                   :border="false"
+                  :use-text-fallback="item.senderIdentityIsTemporary"
+                  :fallback-text="item.senderName"
                 />
                 <span class="sender-name">{{ item.senderName || '未知' }}</span>
               </div>

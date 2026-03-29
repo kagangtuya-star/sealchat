@@ -298,6 +298,43 @@ const buildNameMapFromProfiles = (input?: Record<string, ExportColorProfileEntry
   return result
 }
 
+const hasSavedProfileOverride = (item: Pick<ColorProfileRow, 'customColor' | 'customName'>) => {
+  return !!(normalizeHexColor(item.customColor || '') || normalizeProfileText(item.customName || ''))
+}
+
+const resolveColorProfileSortRank = (
+  item: Pick<ColorProfileRow, 'identityId' | 'customColor' | 'customName'>,
+  config?: { icRoleId?: string | null; oocRoleId?: string | null } | null,
+) => {
+  if (hasSavedProfileOverride(item)) {
+    return 0
+  }
+  if (item.identityId && item.identityId === String(config?.icRoleId || '').trim()) {
+    return 1
+  }
+  if (item.identityId && item.identityId === String(config?.oocRoleId || '').trim()) {
+    return 2
+  }
+  return 3
+}
+
+const sortColorProfileRows = (
+  rows: ColorProfileRow[],
+  config?: { icRoleId?: string | null; oocRoleId?: string | null } | null,
+) => {
+  return rows.slice().sort((a, b) => {
+    const rankDiff = resolveColorProfileSortRank(a, config) - resolveColorProfileSortRank(b, config)
+    if (rankDiff !== 0) {
+      return rankDiff
+    }
+    const labelDiff = a.label.localeCompare(b.label, 'zh-Hans-CN')
+    if (labelDiff !== 0) {
+      return labelDiff
+    }
+    return a.identityId.localeCompare(b.identityId, 'zh-Hans-CN')
+  })
+}
+
 const getRowPreviewColor = (item: ColorProfileRow) => {
   return normalizeHexColor(item.customColor || '') || item.defaultColor || '#111111'
 }
@@ -362,7 +399,8 @@ const openColorProfilePanel = async () => {
   const seq = ++colorProfileLoadSeq
   colorProfileLoading.value = true
   try {
-    const [speakerResp, profileResp] = await Promise.all([
+    const [, speakerResp, profileResp] = await Promise.all([
+      chat.loadChannelIdentities(props.channelId, true),
       chat.channelSpeakerOptions(props.channelId),
       chat.channelExportColorProfileGet(props.channelId),
     ])
@@ -371,7 +409,8 @@ const openColorProfilePanel = async () => {
     }
     const savedProfiles = normalizeProfileMap(profileResp?.profiles)
     textColorizeBBCodeProfileMap.value = savedProfiles
-    const rows = (speakerResp?.items || [])
+    const icOocConfig = chat.getChannelIcOocRoleConfig(props.channelId)
+    const rows = sortColorProfileRows((speakerResp?.items || [])
       .map((item) => {
         const identityId = String(item?.id || '').trim()
         const mapKey = buildColorMapKey(identityId)
@@ -388,8 +427,7 @@ const openColorProfilePanel = async () => {
           customName: normalizeProfileText(String(savedProfile.name || '')),
         } as ColorProfileRow
       })
-      .filter((item): item is ColorProfileRow => !!item)
-      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'))
+      .filter((item): item is ColorProfileRow => !!item), icOocConfig)
     colorProfileRows.value = rows
   } catch (error) {
     if (seq !== colorProfileLoadSeq) {

@@ -242,7 +242,7 @@ const handleViewChannel = async (channelId: string) => {
 };
 
 const handleManageChannel = (channelId: string) => {
-  // 打开频道管理设置（先切换到该频道，再打开设置）
+  // 打开频道设置设置（先切换到该频道，再打开设置）
   visible.value = false;
   // 通过事件触发侧边栏打开设置
   chat.channelSwitchTo(channelId).then(() => {

@@ -1,6 +1,9 @@
 package model
 
 import (
+	"strings"
+
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"sealchat/utils"
@@ -18,10 +21,9 @@ func (*UserPreferenceModel) TableName() string {
 	return "user_preferences"
 }
 
-// UserPreferenceGet 获取用户偏好
-func UserPreferenceGet(userID, key string) (*UserPreferenceModel, error) {
+func userPreferenceGetWithDB(conn *gorm.DB, userID, key string) (*UserPreferenceModel, error) {
 	var record UserPreferenceModel
-	err := db.Where("user_id = ? AND pref_key = ?", userID, key).Limit(1).Find(&record).Error
+	err := conn.Where("user_id = ? AND pref_key = ?", userID, key).Limit(1).Find(&record).Error
 	if err != nil {
 		return nil, err
 	}
@@ -31,8 +33,34 @@ func UserPreferenceGet(userID, key string) (*UserPreferenceModel, error) {
 	return &record, nil
 }
 
+// UserPreferenceGet 获取用户偏好
+func UserPreferenceGet(userID, key string) (*UserPreferenceModel, error) {
+	return userPreferenceGetWithDB(db, userID, key)
+}
+
+// UserPreferenceListByPrefix 按 key 前缀获取用户偏好
+func UserPreferenceListByPrefix(userID, prefix string) ([]UserPreferenceModel, error) {
+	userID = strings.TrimSpace(userID)
+	prefix = strings.TrimSpace(prefix)
+	if userID == "" || prefix == "" {
+		return []UserPreferenceModel{}, nil
+	}
+	var items []UserPreferenceModel
+	if err := db.Where("user_id = ? AND pref_key LIKE ?", userID, prefix+"%").
+		Order("pref_key ASC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // UserPreferenceUpsert 创建或更新用户偏好
 func UserPreferenceUpsert(userID, key, value string) (*UserPreferenceModel, error) {
+	return UserPreferenceUpsertTx(db, userID, key, value)
+}
+
+// UserPreferenceUpsertTx 创建或更新用户偏好（事务版）
+func UserPreferenceUpsertTx(conn *gorm.DB, userID, key, value string) (*UserPreferenceModel, error) {
 	record := &UserPreferenceModel{
 		StringPKBaseModel: StringPKBaseModel{ID: utils.NewID()},
 		UserID:            userID,
@@ -40,7 +68,7 @@ func UserPreferenceUpsert(userID, key, value string) (*UserPreferenceModel, erro
 		PrefValue:         value,
 	}
 
-	err := db.Clauses(clause.OnConflict{
+	err := conn.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_id"}, {Name: "pref_key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"pref_value", "updated_at"}),
 	}).Create(record).Error
@@ -51,4 +79,19 @@ func UserPreferenceUpsert(userID, key, value string) (*UserPreferenceModel, erro
 	record.PrefKey = key
 	record.PrefValue = value
 	return record, nil
+}
+
+// UserPreferenceDelete 删除用户偏好
+func UserPreferenceDelete(userID, key string) error {
+	return UserPreferenceDeleteTx(db, userID, key)
+}
+
+// UserPreferenceDeleteTx 删除用户偏好（事务版）
+func UserPreferenceDeleteTx(conn *gorm.DB, userID, key string) error {
+	userID = strings.TrimSpace(userID)
+	key = strings.TrimSpace(key)
+	if userID == "" || key == "" {
+		return nil
+	}
+	return conn.Where("user_id = ? AND pref_key = ?", userID, key).Delete(&UserPreferenceModel{}).Error
 }

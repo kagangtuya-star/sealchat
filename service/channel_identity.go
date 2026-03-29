@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/protocol"
 )
 
 type ChannelIdentityInput struct {
@@ -15,8 +16,96 @@ type ChannelIdentityInput struct {
 	DisplayName        string
 	Color              string
 	AvatarAttachmentID string
+	AvatarDecorations  protocol.AvatarDecorationList
 	IsDefault          bool
+	IsTemporary        bool
+	ICOOCOnActivate    string
 	FolderIDs          []string
+}
+
+type ChannelIdentityReplaceResult struct {
+	Item          *model.ChannelIdentityModel
+	OldIdentityID string
+	RemovedID     string
+}
+
+const temporaryIdentityActivateModePrefPrefix = "tmpMode:"
+
+func normalizeTemporaryIdentityActivateMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ic":
+		return "ic"
+	case "ooc":
+		return "ooc"
+	default:
+		return ""
+	}
+}
+
+func temporaryIdentityActivateModePrefKey(identityID string) string {
+	identityID = strings.TrimSpace(identityID)
+	if identityID == "" {
+		return ""
+	}
+	return temporaryIdentityActivateModePrefPrefix + identityID
+}
+
+func syncTemporaryIdentityActivateMode(userID, identityID, mode string) error {
+	return syncTemporaryIdentityActivateModeTx(model.GetDB(), userID, identityID, mode)
+}
+
+func syncTemporaryIdentityActivateModeTx(conn *gorm.DB, userID, identityID, mode string) error {
+	key := temporaryIdentityActivateModePrefKey(identityID)
+	if key == "" {
+		return nil
+	}
+	normalizedMode := normalizeTemporaryIdentityActivateMode(mode)
+	if normalizedMode == "" {
+		return model.UserPreferenceDeleteTx(conn, userID, key)
+	}
+	_, err := model.UserPreferenceUpsertTx(conn, userID, key, normalizedMode)
+	return err
+}
+
+func loadTemporaryIdentityActivateModeMap(userID string) (map[string]string, error) {
+	items, err := model.UserPreferenceListByPrefix(userID, temporaryIdentityActivateModePrefPrefix)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(items))
+	for _, item := range items {
+		key := strings.TrimSpace(item.PrefKey)
+		if !strings.HasPrefix(key, temporaryIdentityActivateModePrefPrefix) {
+			continue
+		}
+		identityID := strings.TrimSpace(strings.TrimPrefix(key, temporaryIdentityActivateModePrefPrefix))
+		if identityID == "" {
+			continue
+		}
+		mode := normalizeTemporaryIdentityActivateMode(item.PrefValue)
+		if mode == "" {
+			continue
+		}
+		result[identityID] = mode
+	}
+	return result, nil
+}
+
+func ApplyTemporaryIdentityActivateModes(userID string, identities []*model.ChannelIdentityModel) error {
+	if len(identities) == 0 {
+		return nil
+	}
+	modeMap, err := loadTemporaryIdentityActivateModeMap(userID)
+	if err != nil {
+		return err
+	}
+	for _, identity := range identities {
+		if identity == nil || !identity.IsTemporary {
+			continue
+		}
+		identity.ICOOCOnActivate = modeMap[identity.ID]
+	}
+	return nil
 }
 
 func validateIdentityInput(input *ChannelIdentityInput) error {
@@ -36,14 +125,15 @@ func validateIdentityInput(input *ChannelIdentityInput) error {
 	if len(input.FolderIDs) > 20 {
 		return errors.New("文件夹数量过多")
 	}
+	input.ICOOCOnActivate = normalizeTemporaryIdentityActivateMode(input.ICOOCOnActivate)
 	return nil
 }
 
-func ensureAttachmentOwnership(userID string, attachmentID string) error {
+func ensureAttachmentAccessible(ownerUserID string, operatorUserID string, channelID string, attachmentID string) error {
 	if attachmentID == "" {
 		return nil
 	}
-	_, err := ResolveAttachmentOwnership(userID, attachmentID)
+	_, err := ResolveAttachmentAccessible(ownerUserID, operatorUserID, channelID, attachmentID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.New("头像附件不存在")
@@ -54,35 +144,43 @@ func ensureAttachmentOwnership(userID string, attachmentID string) error {
 }
 
 func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
+	return ChannelIdentityCreateWithAccess(userID, userID, input)
+}
+
+func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
 	if err := validateIdentityInput(input); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(operatorUserID) == "" {
+		operatorUserID = ownerUserID
+	}
+	if err := ensureChannelIdentityOwnerAccessible(input.ChannelID, ownerUserID); err != nil {
+		return nil, err
+	}
 
-	member, err := model.MemberGetByUserIDAndChannelIDBase(userID, input.ChannelID, "", false)
+	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+		return nil, err
+	}
+	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
 	if err != nil {
 		return nil, err
 	}
-	if member == nil {
-		return nil, errors.New("仅频道成员可创建频道身份")
-	}
 
-	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
-		return nil, err
-	}
-
-	sortMax, err := model.ChannelIdentityMaxSort(input.ChannelID, userID)
+	sortMax, err := model.ChannelIdentityMaxSort(input.ChannelID, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
 
 	item := &model.ChannelIdentityModel{
 		ChannelID:          input.ChannelID,
-		UserID:             userID,
+		UserID:             ownerUserID,
 		DisplayName:        strings.TrimSpace(input.DisplayName),
 		Color:              input.Color,
 		AvatarAttachmentID: input.AvatarAttachmentID,
+		AvatarDecorations:  avatarDecorations,
 		SortOrder:          sortMax + 1,
 		IsDefault:          input.IsDefault,
+		IsTemporary:        input.IsTemporary,
 	}
 	if item.IsDefault {
 		if err := model.ChannelIdentityEnsureSingleDefault(item.ChannelID, item.UserID, ""); err != nil {
@@ -97,11 +195,17 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 	if folderIDs == nil {
 		folderIDs = []string{}
 	}
-	membership, err := ChannelIdentityFolderAssign(userID, input.ChannelID, []string{item.ID}, folderIDs, "replace")
+	membership, err := ChannelIdentityFolderAssignWithAccess(ownerUserID, operatorUserID, input.ChannelID, []string{item.ID}, folderIDs, "replace")
 	if err != nil {
 		return nil, err
 	}
 	item.FolderIDs = membership[item.ID]
+	item.ICOOCOnActivate = input.ICOOCOnActivate
+	if item.IsTemporary {
+		if err := syncTemporaryIdentityActivateMode(ownerUserID, item.ID, input.ICOOCOnActivate); err != nil {
+			return nil, err
+		}
+	}
 
 	// 如果当前无默认身份，则自动设置为默认
 	if !item.IsDefault {
@@ -121,14 +225,25 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 }
 
 func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
+	return ChannelIdentityUpdateWithAccess(userID, userID, identityID, input)
+}
+
+func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
 	if err := validateIdentityInput(input); err != nil {
 		return nil, err
 	}
-	identity, err := model.ChannelIdentityValidateOwnership(identityID, userID, input.ChannelID)
+	identity, err := model.ChannelIdentityValidateOwnership(identityID, ownerUserID, input.ChannelID)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureAttachmentOwnership(userID, input.AvatarAttachmentID); err != nil {
+	if strings.TrimSpace(operatorUserID) == "" {
+		operatorUserID = ownerUserID
+	}
+	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+		return nil, err
+	}
+	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
+	if err != nil {
 		return nil, err
 	}
 
@@ -136,6 +251,7 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 		"display_name":         strings.TrimSpace(input.DisplayName),
 		"color":                input.Color,
 		"avatar_attachment_id": input.AvatarAttachmentID,
+		"avatar_decoration":    avatarDecorations,
 		"is_default":           input.IsDefault,
 	}
 
@@ -157,8 +273,9 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 	if err != nil {
 		return nil, err
 	}
+	updated.ICOOCOnActivate = ""
 	if input.FolderIDs != nil {
-		membership, err := ChannelIdentityFolderAssign(userID, input.ChannelID, []string{identity.ID}, input.FolderIDs, "replace")
+		membership, err := ChannelIdentityFolderAssignWithAccess(ownerUserID, operatorUserID, input.ChannelID, []string{identity.ID}, input.FolderIDs, "replace")
 		if err != nil {
 			return nil, err
 		}
@@ -169,11 +286,185 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 			updated.FolderIDs = membership[identity.ID]
 		}
 	}
+	if updated.IsTemporary {
+		updated.ICOOCOnActivate = input.ICOOCOnActivate
+		if err := syncTemporaryIdentityActivateMode(ownerUserID, updated.ID, input.ICOOCOnActivate); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := syncTemporaryIdentityActivateMode(ownerUserID, updated.ID, ""); err != nil {
+			return nil, err
+		}
+	}
 	return updated, nil
 }
 
+func ChannelIdentityReplaceTemporary(userID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityReplaceResult, error) {
+	return ChannelIdentityReplaceTemporaryWithAccess(userID, userID, identityID, input)
+}
+
+func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*ChannelIdentityReplaceResult, error) {
+	if err := validateIdentityInput(input); err != nil {
+		return nil, err
+	}
+	identity, err := model.ChannelIdentityValidateOwnership(identityID, ownerUserID, input.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if !identity.IsTemporary {
+		return nil, errors.New("仅临时身份支持替换式编辑")
+	}
+	if strings.TrimSpace(operatorUserID) == "" {
+		operatorUserID = ownerUserID
+	}
+	if err := ensureAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
+		return nil, err
+	}
+	avatarDecorations, err := NormalizeAvatarDecorationsWithAccess(ownerUserID, operatorUserID, input.ChannelID, input.AvatarDecorations)
+	if err != nil {
+		return nil, err
+	}
+
+	folderIDs := sanitizeFolderIDs(input.FolderIDs)
+	if input.FolderIDs == nil {
+		membership, err := loadIdentityFolderMembership([]string{identity.ID})
+		if err != nil {
+			return nil, err
+		}
+		folderIDs = sanitizeFolderIDs(membership[identity.ID])
+	}
+	if _, err := ChannelIdentityFoldersValidateOwnership(input.ChannelID, ownerUserID, folderIDs); err != nil {
+		return nil, err
+	}
+
+	result := &ChannelIdentityReplaceResult{
+		OldIdentityID: identity.ID,
+		RemovedID:     identity.ID,
+	}
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		item := &model.ChannelIdentityModel{
+			ChannelID:          identity.ChannelID,
+			UserID:             identity.UserID,
+			DisplayName:        strings.TrimSpace(input.DisplayName),
+			Color:              input.Color,
+			AvatarAttachmentID: input.AvatarAttachmentID,
+			AvatarDecorations:  avatarDecorations,
+			IsDefault:          input.IsDefault,
+			IsTemporary:        true,
+			SortOrder:          identity.SortOrder,
+		}
+		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		if item.IsDefault {
+			if err := tx.Model(&model.ChannelIdentityModel{}).
+				Where("channel_id = ? AND user_id = ? AND id <> ?", item.ChannelID, item.UserID, item.ID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		if len(folderIDs) > 0 {
+			records := make([]*model.ChannelIdentityFolderMemberModel, 0, len(folderIDs))
+			for idx, folderID := range folderIDs {
+				records = append(records, &model.ChannelIdentityFolderMemberModel{
+					ChannelID:  item.ChannelID,
+					UserID:     item.UserID,
+					FolderID:   folderID,
+					IdentityID: item.ID,
+					SortOrder:  idx,
+				})
+			}
+			if err := tx.Create(&records).Error; err != nil {
+				return err
+			}
+		}
+
+		var config model.ChannelIdentityModeConfigModel
+		if err := tx.Where("user_id = ? AND channel_id = ?", identity.UserID, identity.ChannelID).
+			Limit(1).
+			Find(&config).Error; err != nil {
+			return err
+		}
+		configExists := config.ID != ""
+		if configExists {
+			nextICIdentityID := config.ICIdentityID
+			nextOOCIdentityID := config.OOCIdentityID
+			changed := false
+			if nextICIdentityID == identity.ID {
+				nextICIdentityID = item.ID
+				changed = true
+			}
+			if nextOOCIdentityID == identity.ID {
+				nextOOCIdentityID = item.ID
+				changed = true
+			}
+			if changed {
+				if _, err := model.ChannelIdentityModeConfigUpsertTx(tx, identity.UserID, identity.ChannelID, nextICIdentityID, nextOOCIdentityID); err != nil {
+					return err
+				}
+			}
+		}
+
+		if err := syncTemporaryIdentityActivateModeTx(tx, identity.UserID, item.ID, input.ICOOCOnActivate); err != nil {
+			return err
+		}
+		if err := syncTemporaryIdentityActivateModeTx(tx, identity.UserID, identity.ID, ""); err != nil {
+			return err
+		}
+
+		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityVariantModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("identity_id = ?", identity.ID).Delete(&model.ChannelIdentityFolderMemberModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", identity.ID).Delete(&model.ChannelIdentityModel{}).Error; err != nil {
+			return err
+		}
+		if !item.IsDefault {
+			var hasDefault int64
+			if err := tx.Model(&model.ChannelIdentityModel{}).
+				Where("channel_id = ? AND user_id = ? AND is_default = ?", item.ChannelID, item.UserID, true).
+				Count(&hasDefault).Error; err != nil {
+				return err
+			}
+			if hasDefault == 0 {
+				var fallback model.ChannelIdentityModel
+				if err := tx.Where("channel_id = ? AND user_id = ?", item.ChannelID, item.UserID).
+					Order("sort_order ASC, created_at ASC").
+					Limit(1).
+					Find(&fallback).Error; err != nil {
+					return err
+				}
+				if fallback.ID != "" {
+					if err := tx.Model(&model.ChannelIdentityModel{}).
+						Where("id = ?", fallback.ID).
+						Update("is_default", true).Error; err != nil {
+						return err
+					}
+					if fallback.ID == item.ID {
+						item.IsDefault = true
+					}
+				}
+			}
+		}
+		item.FolderIDs = append([]string{}, folderIDs...)
+		item.ICOOCOnActivate = input.ICOOCOnActivate
+		result.Item = item
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func ChannelIdentityDelete(userID string, channelID string, identityID string) error {
-	identity, err := model.ChannelIdentityValidateOwnership(identityID, userID, channelID)
+	return ChannelIdentityDeleteWithAccess(userID, userID, channelID, identityID)
+}
+
+func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, channelID string, identityID string) error {
+	identity, err := model.ChannelIdentityValidateOwnership(identityID, ownerUserID, channelID)
 	if err != nil {
 		return err
 	}
@@ -183,14 +474,17 @@ func ChannelIdentityDelete(userID string, channelID string, identityID string) e
 	if err := model.ChannelIdentityDelete(identity.ID); err != nil {
 		return err
 	}
-	if err := model.ChannelIdentityModeConfigClearIdentityReferences(userID, channelID, identity.ID); err != nil {
+	if err := model.ChannelIdentityModeConfigClearIdentityReferences(ownerUserID, channelID, identity.ID); err != nil {
+		return err
+	}
+	if err := syncTemporaryIdentityActivateMode(ownerUserID, identity.ID, ""); err != nil {
 		return err
 	}
 	_ = model.ChannelIdentityFolderMemberDeleteByIdentityIDs([]string{identity.ID})
 
 	if identity.IsDefault {
 		// 重新指定一个默认身份
-		items, err := model.ChannelIdentityList(channelID, userID)
+		items, err := model.ChannelIdentityList(channelID, ownerUserID)
 		if err != nil {
 			return err
 		}
@@ -247,7 +541,10 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"displayName":        item.DisplayName,
 		"color":              item.Color,
 		"avatarAttachmentId": item.AvatarAttachmentID,
+		"avatarDecorations":  item.AvatarDecorations,
 		"isDefault":          item.IsDefault,
+		"isTemporary":        item.IsTemporary,
+		"icOocOnActivate":    item.ICOOCOnActivate,
 		"sortOrder":          item.SortOrder,
 		"folderIds":          item.FolderIDs,
 	}

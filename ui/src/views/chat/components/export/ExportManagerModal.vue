@@ -374,7 +374,7 @@ watch(
     :show="props.visible"
     preset="card"
     title="导出管理"
-    :mask-closable="false"
+    :mask-closable="true"
     :style="{ width: modalWidth }"
     class="export-manager-modal"
     display-directive="if"

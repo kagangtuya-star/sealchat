@@ -12,11 +12,12 @@ import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
-import Avatar from '@/components/avatar.vue'
+import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { contentEscape, contentUnescape } from '@/utils/tools';
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
@@ -33,6 +34,7 @@ import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
+import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
 import CharacterCardBadge from './CharacterCardBadge.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
@@ -41,10 +43,13 @@ import type { ChannelIForm } from '@/types/iform';
 type EditingPreviewInfo = {
   userId: string;
   displayName: string;
+  color?: string;
   avatar?: string;
+  avatarDecorations?: import('@/types').AvatarDecoration[] | null;
   content: string;
   indicatorOnly: boolean;
   isSelf: boolean;
+  isTemporary?: boolean;
   summary: string;
   previewHtml: string;
   tone: 'ic' | 'ooc';
@@ -56,6 +61,10 @@ const stickyNoteStore = useStickyNoteStore();
 const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
+
+const shouldDisableInlineCodeForBotCommand = (content: string) => (
+  isBotCommandLikeContent(content, chat.curChannel?.botCommandPrefixes)
+);
 const worldGlossary = useWorldGlossaryStore();
 const displayStore = useDisplayStore();
 const channelImageLayout = useChannelImageLayoutStore();
@@ -467,6 +476,11 @@ const parseContent = (payload: any, overrideContent?: string) => {
   // 检测是否为 TipTap JSON 格式
   if (isTipTapJson(content)) {
     try {
+      if (shouldDisableInlineCodeForBotCommand(content)) {
+        const sanitizedHtml = DOMPurify.sanitize(renderBotCommandTextAsHtml(content));
+        hasImage.value = false;
+        return <span v-html={sanitizedHtml}></span>;
+      }
       const html = tiptapJsonToHtml(content, {
         baseUrl: urlBase,
         imageClass: 'inline-image',
@@ -566,7 +580,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
           textItems.push(raw);
         } else if (item.type === 'text') {
           const textContent = typeof item.attrs?.content === 'string' ? item.attrs.content : raw;
-          const rendered = renderQuickFormatHtmlFromEscaped(contentEscape(String(textContent || '')));
+          const rendered = renderQuickFormatHtmlFromEscaped(contentEscape(String(textContent || '')), {
+            disableAllFormatting: shouldDisableInlineCodeForBotCommand(content),
+          });
           textItems.push(`<span style="white-space: pre-wrap">${rendered}</span>`);
         } else {
           textItems.push(`<span style="white-space: pre-wrap">${raw}</span>`);
@@ -1004,7 +1020,14 @@ const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
   || item?.whisperMeta?.senderUserNick
   || item?.whisperMeta?.senderUserName
   || '未知成员';
-const getTargetDisplayName = (item: any) => item?.whisperMeta?.targetMemberName
+const getWhisperMetaTargetDisplayNames = (item: any) => {
+  const names = item?.whisperMeta?.targetDisplayNames;
+  if (!Array.isArray(names)) return [];
+  return names.map((name: any) => String(name || '').trim()).filter(Boolean);
+};
+
+const getTargetDisplayName = (item: any) => getWhisperMetaTargetDisplayNames(item)[0]
+  || item?.whisperMeta?.targetMemberName
   || item?.whisperTo?.nick
   || item?.whisperTo?.name
   || item?.whisperMeta?.targetUserNick
@@ -1051,6 +1074,14 @@ const resolveChannelIdentityColor = (identityId?: string) => {
 };
 
 const resolveWhisperTargets = (item: any) => {
+  const metaNames = getWhisperMetaTargetDisplayNames(item);
+  const metaIds = Array.isArray(item?.whisperMeta?.targetUserIds) ? item.whisperMeta.targetUserIds : [];
+  if (metaNames.length > 0) {
+    return metaNames.map((name: string, index: number) => ({
+      id: metaIds[index] || '',
+      name,
+    }));
+  }
   const list = item?.whisperToIds || item?.whisper_to_ids || item?.whisperTargets || item?.whisper_targets;
   if (Array.isArray(list) && list.length > 0) {
     return list.map((entry: any) => {
@@ -1063,7 +1094,6 @@ const resolveWhisperTargets = (item: any) => {
       return { id, name };
     });
   }
-  const metaIds = item?.whisperMeta?.targetUserIds;
   if (Array.isArray(metaIds) && metaIds.length > 0) {
     return metaIds.map((id: string) => ({
       id,
@@ -1177,7 +1207,9 @@ const quoteIsDeleted = computed(() => Boolean((quoteItem.value as any)?.is_delet
 const quoteIsRevoked = computed(() => Boolean((quoteItem.value as any)?.is_revoked || (quoteItem.value as any)?.isRevoked));
 const quoteSummary = computed(() => buildQuoteSummary(quoteItem.value));
 const quoteSummaryHtml = computed(() => DOMPurify.sanitize(
-  renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
+  shouldDisableInlineCodeForBotCommand(String(quoteItem.value?.content || ''))
+    ? renderBotCommandTextAsHtml(String(quoteItem.value?.content || ''))
+    : renderQuickFormatHtmlFromEscaped(contentEscape(quoteSummary.value || '')),
 ));
 const quoteJumpEnabled = computed(() => Boolean(quoteItem.value?.id));
 
@@ -1190,17 +1222,6 @@ const otherEditingPreview = computed(() => (
 const shouldUseSelfPreviewIdentity = computed(() => (
   Boolean(selfEditingPreview.value && targetUserId.value && targetUserId.value === user.info.id)
 ));
-
-const contentClassList = computed(() => {
-  const classes: Record<string, boolean> = {
-    'whisper-content': Boolean(props.item?.isWhisper),
-    'content--editing-preview': Boolean(otherEditingPreview.value),
-  };
-  if (otherEditingPreview.value && props.layout === 'bubble') {
-    classes['content--editing-preview--bubble'] = true;
-  }
-  return classes;
-});
 
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const resolveMessageUserId = (item: any) => (
@@ -1236,6 +1257,21 @@ const canEdit = computed(() => {
   }
   return false;
 });
+const hasEditAction = computed(() => !selfEditingPreview.value);
+const canShowEditAction = computed(() => canEdit.value && hasEditAction.value);
+
+const contentClassList = computed(() => {
+  const classes: Record<string, boolean> = {
+    'whisper-content': Boolean(props.item?.isWhisper),
+    'content--editing-preview': Boolean(otherEditingPreview.value),
+    'content--has-edit-action': hasEditAction.value,
+    'content--image-resize-mode': imageResizeMode.value,
+  };
+  if (otherEditingPreview.value && props.layout === 'bubble') {
+    classes['content--editing-preview--bubble'] = true;
+  }
+  return classes;
+});
 
 const canReeditRevoked = computed(() => {
   return Boolean(props.item?.is_revoked && props.isSelf);
@@ -1255,10 +1291,14 @@ const effectiveIsSelected = computed(() => {
 });
 
 const hoverTimestampVisible = ref(false);
+const mobileActionBarVisible = ref(false);
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 let timestampInterval: ReturnType<typeof setInterval> | null = null;
 
 const shouldForceTimestampVisible = computed(() => displayStore.settings.alwaysShowTimestamp);
+const isActionBarVisible = computed(() => (
+  isEditing.value || (isMobileUa && mobileActionBarVisible.value)
+));
 const timestampShouldRender = computed(() => {
   if (!props.showHeader || props.bodyOnly) {
     return false;
@@ -1301,7 +1341,7 @@ const handleMobileTimestampTap = (e: MouseEvent) => {
     return;
   }
   
-  if (!isMobileUa || shouldForceTimestampVisible.value) {
+  if (!isMobileUa) {
     return;
   }
   // Ignore if target is an interactive element
@@ -1310,7 +1350,11 @@ const handleMobileTimestampTap = (e: MouseEvent) => {
     return;
   }
   e.stopPropagation(); // Prevent global click handler from immediately hiding
-  hoverTimestampVisible.value = !hoverTimestampVisible.value;
+  const nextVisible = !mobileActionBarVisible.value;
+  mobileActionBarVisible.value = nextVisible;
+  if (!shouldForceTimestampVisible.value) {
+    hoverTimestampVisible.value = nextVisible;
+  }
 };
 
 const chatItemRef = ref<HTMLElement | null>(null);
@@ -1327,6 +1371,11 @@ const handleGlobalClickForTimestamp = (e: MouseEvent) => {
       hoverTimestampVisible.value = false;
     }
   }
+  if (mobileActionBarVisible.value) {
+    if (chatItemRef.value && !chatItemRef.value.contains(target)) {
+      mobileActionBarVisible.value = false;
+    }
+  }
   if (revokedReeditExpanded.value) {
     if (revokedTriggerRef.value && !revokedTriggerRef.value.contains(target)) {
       revokedReeditExpanded.value = false;
@@ -1339,9 +1388,12 @@ watch(shouldForceTimestampVisible, (value) => {
     clearHoverTimer();
   }
   hoverTimestampVisible.value = false;
+  mobileActionBarVisible.value = false;
 });
 watch(() => props.item?.id, () => {
   revokedReeditExpanded.value = false;
+  hoverTimestampVisible.value = false;
+  mobileActionBarVisible.value = false;
 });
 watch(() => props.item?.is_revoked, (value) => {
   if (!value) {
@@ -2946,14 +2998,69 @@ const nick = computed(() => {
 
 // 仅编辑自己的消息时，才使用本地编辑预览覆盖头像
 const displayAvatar = computed(() => {
-  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.avatar) {
-    return selfEditingPreview.value.avatar;
+  if (shouldUseSelfPreviewIdentity.value) {
+    return selfEditingPreview.value?.avatar || '';
   }
   if (otherEditingPreview.value?.avatar) {
     return otherEditingPreview.value.avatar;
   }
   return props.avatar;
 });
+
+const displayAvatarDecorations = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value) {
+    return normalizeAvatarDecorations(selfEditingPreview.value?.avatarDecorations);
+  }
+  if (otherEditingPreview.value) {
+    return normalizeAvatarDecorations(otherEditingPreview.value.avatarDecorations);
+  }
+  const raw = props.item as any;
+  const snapshotDecorations = normalizeAvatarDecorations(
+    raw?.identity?.avatarDecorations || raw?.sender_identity_decoration,
+    raw?.identity?.avatarDecoration || null,
+  );
+  if (snapshotDecorations.length > 0) {
+    return snapshotDecorations;
+  }
+  const channelId = String(raw?.channel?.id || chat.curChannel?.id || '').trim();
+  const identityId = String(
+    raw?.identity?.id
+    || raw?.sender_identity_id
+    || raw?.senderRoleId
+    || raw?.sender_role_id
+    || '',
+  ).trim();
+  if (!channelId || !identityId) {
+    return snapshotDecorations;
+  }
+  const liveIdentity = (chat.channelIdentities[channelId] || []).find((item) => item.id === identityId);
+  return normalizeAvatarDecorations(liveIdentity?.avatarDecorations, liveIdentity?.avatarDecoration || null);
+});
+
+const useTextAvatarFallback = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value) {
+    return Boolean(selfEditingPreview.value?.isTemporary);
+  }
+  if (otherEditingPreview.value) {
+    return Boolean(otherEditingPreview.value.isTemporary);
+  }
+  return Boolean(
+    (props.item as any)?.identity?.isTemporary
+    ?? (props.item as any)?.sender_identity_is_temporary,
+  );
+});
+
+const avatarFallbackText = computed(() => (
+  selfEditingPreview.value?.displayName
+  || props.username
+  || (props.item as any)?.identity?.displayName
+  || (props.item as any)?.sender_identity_name
+  || props.item?.sender_member_name
+  || props.item?.member?.nick
+  || props.item?.user?.nick
+  || props.item?.user?.name
+  || '匿'
+));
 
 const messageReactions = computed(() => {
   if (!props.item?.id) {
@@ -2972,7 +3079,12 @@ const handleReactionToggle = async (emoji: string) => {
   }
 };
 
-const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
+const nameColor = computed(() => {
+  if (shouldUseSelfPreviewIdentity.value && selfEditingPreview.value?.color) {
+    return selfEditingPreview.value.color;
+  }
+  return props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '';
+});
 
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
 
@@ -3075,7 +3187,16 @@ const handleRetrySend = () => {
       :class="{ 'chat-item__avatar--hidden': props.hideAvatar }"
       @contextmenu="preventAvatarNativeMenu"
     >
-      <Avatar :src="displayAvatar" :border="false" @longpress="handleAvatarLongpress" @click="doAvatarClick" @dblclick="doAvatarDblClick" />
+      <UserAvatarDecoration
+        :src="displayAvatar"
+        :border="false"
+        :decorations="displayAvatarDecorations"
+        :use-text-fallback="useTextAvatarFallback"
+        :fallback-text="avatarFallbackText"
+        @longpress="handleAvatarLongpress"
+        @click="doAvatarClick"
+        @dblclick="doAvatarDblClick"
+      />
     </div>
     <!-- <img class="rounded-md w-12 h-12 border-gray-500 border" :src="props.avatar" /> -->
     <!-- <n-avatar :src="imgAvatar" size="large" bordered>海豹</n-avatar> -->
@@ -3156,11 +3277,11 @@ const handleRetrySend = () => {
         <span v-if="isBotMessageItem(props.item)"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
+      <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
-        <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
-          :class="{ 'message-action-bar--active': isEditing }">
-          <n-tooltip trigger="hover">
+        <div v-if="hasEditAction" class="message-action-bar"
+          :class="{ 'message-action-bar--active': canShowEditAction && isActionBarVisible }">
+          <n-tooltip v-if="canShowEditAction" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="message-action-bar__btn" @click="handleEditClick">
                 <n-icon :component="Edit" size="18" />
@@ -3168,6 +3289,17 @@ const handleRetrySend = () => {
             </template>
             编辑消息
           </n-tooltip>
+          <n-button
+            v-else
+            text
+            size="small"
+            disabled
+            tabindex="-1"
+            aria-hidden="true"
+            class="message-action-bar__btn message-action-bar__btn--placeholder"
+          >
+            <n-icon :component="Edit" size="18" />
+          </n-button>
         </div>
         <template v-if="!otherEditingPreview">
           <div>
@@ -3613,6 +3745,11 @@ const handleRetrySend = () => {
   letter-spacing: var(--chat-letter-spacing, 0px);
 }
 
+.chat-item > .right > .content.content--has-edit-action {
+  --message-edit-slot-width: clamp(0.42rem, 1.1vw, 0.72rem);
+  padding-right: calc(var(--chat-message-padding-x, 1.1rem) + var(--message-edit-slot-width));
+}
+
 .chat-item > .right > .content.whisper-content {
   background: var(--chat-whisper-bg, #eef2ff);
   border: 1px solid var(--chat-whisper-border, rgba(99, 102, 241, 0.35));
@@ -3698,6 +3835,7 @@ const handleRetrySend = () => {
   display: block;
   width: 100%;
   max-width: none;
+  box-sizing: border-box;
   padding: 0.18rem 0;
   background: transparent;
   box-shadow: none;
@@ -3813,14 +3951,16 @@ const handleRetrySend = () => {
 
 .content img {
   max-width: min(36vw, 200px);
+  display: block;
+  vertical-align: top;
+  margin: 0.35rem 0;
 }
 
 .content .inline-image {
   max-height: 6rem;
   width: auto;
   border-radius: 0.375rem;
-  vertical-align: middle;
-  margin: 0 0.25rem;
+  vertical-align: top;
 }
 
 .content .message-image-adjustable {
@@ -3878,10 +4018,27 @@ const handleRetrySend = () => {
   max-height: 12rem;
   height: auto;
   border-radius: 0.5rem;
-  vertical-align: middle;
-  margin: 0.5rem 0.25rem;
-  display: inline-block;
+  vertical-align: top;
+  margin: 0.35rem 0;
+  display: block;
   object-fit: contain;
+}
+
+.content.content--image-resize-mode,
+.content.content--image-resize-mode p,
+.content.content--image-resize-mode li,
+.content.content--image-resize-mode blockquote {
+  text-align: left;
+  text-align-last: auto;
+  text-justify: auto;
+}
+
+.content.content--image-resize-mode img,
+.content.content--image-resize-mode .inline-image,
+.content.content--image-resize-mode .rich-inline-image {
+  display: block;
+  margin: 0.35rem 0;
+  vertical-align: top;
 }
 
 /* 富文本内容样式 */
@@ -3889,98 +4046,56 @@ const handleRetrySend = () => {
   font-size: var(--chat-font-size, 0.95rem);
   line-height: var(--chat-line-height, 1.6);
   letter-spacing: var(--chat-letter-spacing, 0px);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-.content h1,
-.content h2,
-.content h3 {
-  margin: 0.75rem 0 0.5rem;
-  font-weight: 600;
-  line-height: 1.3;
+.content.typo blockquote {
+  border-left-color: color-mix(in srgb, var(--primary-color, #3b82f6) 68%, transparent);
+  color: var(--chat-text-secondary, #64748b);
 }
 
-.content h1 {
-  font-size: 1.5rem;
-}
-
-.content h2 {
-  font-size: 1.25rem;
-}
-
-.content h3 {
-  font-size: 1.1rem;
-}
-
-.content ul,
-.content ol {
-  padding-left: 1.5rem;
-  margin: 0.5rem 0;
-}
-
-.content ul {
-  list-style-type: disc;
-}
-
-.content ol {
-  list-style-type: decimal;
-}
-
-.content li {
-  margin: 0.25rem 0;
-}
-
-.content blockquote {
-  border-left: 3px solid #3b82f6;
-  padding-left: 1rem;
-  margin: 0.5rem 0;
-  color: #6b7280;
-}
-
-.content code {
+.content.typo code {
   background-color: var(--chat-inline-code-bg, #f3f4f6);
   color: var(--chat-inline-code-fg, inherit);
   border: 1px solid var(--chat-inline-code-border, transparent);
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
-  font-family: 'Courier New', monospace;
   font-size: 0.9em;
 }
 
-.content pre {
+.content.typo pre {
   background-color: #1f2937;
   color: #f9fafb;
+  border-color: color-mix(in srgb, #1f2937 78%, white 22%);
   border-radius: 0.5rem;
-  padding: 1rem;
-  margin: 0.75rem 0;
   overflow-x: auto;
 }
 
-.content pre code {
+.content.typo pre code {
   background-color: transparent;
   color: inherit;
+  border: none;
   padding: 0;
 }
 
-.content strong {
+.content.typo mark {
+  background-color: #fef08a;
+  border-bottom-color: color-mix(in srgb, #f59e0b 28%, transparent);
+  border-radius: 0.125rem;
+  margin: 0;
+}
+
+.content.typo strong,
+.content.typo b {
+  color: inherit;
   font-weight: 600;
 }
 
-.content em {
+.content.typo em,
+.content.typo i {
+  color: inherit;
   font-style: italic;
-}
-
-.content u {
-  text-decoration: underline;
-}
-
-.content s {
-  text-decoration: line-through;
-}
-
-.content mark {
-  background-color: #fef08a;
-  padding: 0.1rem 0.2rem;
-  border-radius: 0.125rem;
 }
 
 .chat-item > .right > .content {
@@ -4004,17 +4119,17 @@ const handleRetrySend = () => {
   --message-link-indicator-color: color-mix(in srgb, var(--message-link-color) 84%, var(--chat-text-secondary, #64748b));
 }
 
-.content a {
+.content.typo a {
   color: var(--message-link-color);
-  text-decoration: underline;
-  text-decoration-color: var(--message-link-underline-color);
-  text-underline-offset: 2px;
-  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+  border-bottom-color: var(--message-link-underline-color);
+  text-decoration: none;
+  transition: color 0.16s ease, border-bottom-color 0.16s ease;
 }
 
-.content a:hover {
+.content.typo a:hover {
   color: var(--message-link-hover-color);
-  text-decoration-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+  text-decoration: none;
 }
 
 .content a.message-external-link {
@@ -4034,19 +4149,14 @@ const handleRetrySend = () => {
   transform: translateY(-0.06em);
 }
 
-.content hr {
+.content.typo hr {
   border: none;
   border-top: 2px solid #e5e7eb;
   margin: 1rem 0;
 }
 
-.content p {
-  margin: 0;
-  line-height: 1.5;
-}
-
-.content p + p {
-  margin-top: var(--chat-paragraph-spacing, 0.5rem);
+.content.typo p {
+  line-height: inherit;
 }
 .edited-label {
   @apply text-xs font-medium;
@@ -4057,17 +4167,23 @@ const handleRetrySend = () => {
 .message-action-bar {
   position: absolute;
   top: -1.6rem;
-  right: -0.4rem;
+  right: clamp(-0.25rem, 0.8vw, 0.25rem);
   display: flex;
   gap: 0.25rem;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .message-action-bar__btn {
   pointer-events: auto;
   color: rgba(15, 23, 42, 0.75);
+  padding: 0;
+}
+
+.message-action-bar__btn--placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 :root[data-display-palette='night'] .message-action-bar__btn {
@@ -4082,9 +4198,51 @@ const handleRetrySend = () => {
 }
 
 .chat-item--layout-compact .message-action-bar {
-  top: 50%;
-  right: 0.35rem;
-  transform: translateY(-50%);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  justify-content: center;
+  align-items: center;
+  transform: none;
+}
+
+.chat-item--layout-compact .message-action-bar__btn {
+  width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  min-width: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  height: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  min-height: var(--message-edit-slot-width, clamp(1.4rem, 3.6vw, 1.95rem));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat-item > .right > .content.content--has-edit-action {
+    --message-edit-slot-width: clamp(0.72rem, 2.8vw, 1.05rem);
+    padding-right: calc(var(--chat-message-padding-x, 1.1rem) + var(--message-edit-slot-width));
+  }
+
+  .message-action-bar {
+    right: clamp(0.15rem, 2vw, 0.8rem);
+  }
+
+  .message-action-bar__btn {
+    min-width: 1.72rem;
+    min-height: 1.72rem;
+    border-radius: 999px;
+  }
+
+  .chat-item--layout-compact .message-action-bar {
+    width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+  }
+
+  .chat-item--layout-compact .message-action-bar__btn {
+    width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    min-width: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    height: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+    min-height: var(--message-edit-slot-width, clamp(1.2rem, 4.6vw, 1.65rem));
+  }
 }
 
 .chat-item > .right > .content.content--editing-preview {
@@ -4316,6 +4474,20 @@ const handleRetrySend = () => {
   padding: 0;
   background: transparent;
   color: var(--chat-text-secondary);
+}
+
+.chat--layout-compact .chat-item > .right > .content.content--has-edit-action,
+.chat--layout-compact .chat-item--ooc > .right > .content.content--has-edit-action {
+  --message-edit-slot-width: clamp(1.4rem, 3.6vw, 1.95rem);
+  padding-right: var(--message-edit-slot-width);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .chat--layout-compact .chat-item > .right > .content.content--has-edit-action,
+  .chat--layout-compact .chat-item--ooc > .right > .content.content--has-edit-action {
+    --message-edit-slot-width: clamp(1.2rem, 4.6vw, 1.65rem);
+    padding-right: var(--message-edit-slot-width);
+  }
 }
 
 .chat--has-background .chat-item--ooc .right .content {

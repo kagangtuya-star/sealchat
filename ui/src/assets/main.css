@@ -1,4 +1,5 @@
 @import './base.css';
+@import './vendor/typo-content.css';
 
 :root {
   --chat-stage-bg: #fbfdf7;

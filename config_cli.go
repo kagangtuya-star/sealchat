@@ -314,9 +314,15 @@ func handleCleanupWebhookBotFriends() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Webhook BOT 历史好友数据清理完成")
-	fmt.Printf("webhookBotCount: %d\n", stats.WebhookBotCount)
+	fmt.Println("系统 BOT 历史遗留数据清理完成")
+	fmt.Printf("systemBotCount: %d\n", stats.WebhookBotCount)
+	fmt.Printf("activeReferenceSkippedCount: %d\n", stats.ActiveReferenceSkippedCount)
+	fmt.Printf("userRoleMappingDeleted: %d\n", stats.UserRoleMappingDeleted)
+	fmt.Printf("memberDeleted: %d\n", stats.MemberDeleted)
+	fmt.Printf("worldMemberDeleted: %d\n", stats.WorldMemberDeleted)
 	fmt.Printf("friendRelationDeleted: %d\n", stats.FriendRelationDeleted)
 	fmt.Printf("privateChannelDeleted: %d\n", stats.PrivateChannelDeleted)
+	fmt.Printf("userDeleted: %d\n", stats.UserDeleted)
+	fmt.Printf("botTokenDeleted: %d\n", stats.BotTokenDeleted)
 	return nil
 }

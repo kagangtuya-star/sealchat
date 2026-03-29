@@ -281,6 +281,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	// External webhook API (channelId + token auth) - 必须在 v1Auth 之前定义
 	v1.Get("/webhook/channels/:channelId/changes", WebhookAuthMiddleware, WebhookChanges)
+	v1.Get("/webhook/channels/:channelId/digests", WebhookAuthMiddleware, WebhookDigestList)
+	v1.Get("/webhook/channels/:channelId/digests/latest", WebhookAuthMiddleware, WebhookDigestLatest)
+	v1.Get("/webhook/worlds/:worldId/digests", WebhookWorldDigestList)
+	v1.Get("/webhook/worlds/:worldId/digests/latest", WebhookWorldDigestLatest)
 	v1.Post("/webhook/channels/:channelId/messages", WebhookAuthMiddleware, WebhookMessages)
 
 	v1Auth := v1.Group("")
@@ -344,6 +348,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-identities", ChannelIdentityList)
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
+	v1Auth.Post("/channel-identities/:id/replace-temporary", ChannelIdentityReplaceTemporary)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 	v1Auth.Get("/channel-identity-variants", ChannelIdentityVariantList)
 	v1Auth.Post("/channel-identity-variants", ChannelIdentityVariantCreate)
@@ -395,6 +400,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channels/:channelId/messages/:messageId/image-layouts", ChannelMessageImageLayoutsSave)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 	v1Auth.Get("/channels/:channelId/mentionable-members-all", ChannelMentionableMembersAll)
+	v1Auth.Get("/channels/:channelId/whisper-candidates", ChannelWhisperCandidates)
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
@@ -406,11 +412,19 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	webhookIntegrations.Post("/:id/rotate", WebhookIntegrationRotate)
 	webhookIntegrations.Post("/:id/revoke", WebhookIntegrationRevoke)
 
-	// Email notification settings
-	v1Auth.Get("/channels/:channelId/email-notification", EmailNotificationSettingsGet)
-	v1Auth.Post("/channels/:channelId/email-notification", EmailNotificationSettingsUpsert)
-	v1Auth.Delete("/channels/:channelId/email-notification", EmailNotificationSettingsDelete)
-	v1Auth.Post("/email-notification/test", EmailNotificationTestSend)
+	// Digest push settings (reuse original UI entry position, replace capability semantics)
+	v1Auth.Get("/channels/:channelId/digest-push", DigestPushSettingsGet)
+	v1Auth.Post("/channels/:channelId/digest-push", DigestPushSettingsUpsert)
+	v1Auth.Delete("/channels/:channelId/digest-push", DigestPushSettingsDelete)
+	v1Auth.Post("/channels/:channelId/digest-push/test", DigestPushTest)
+	v1Auth.Get("/worlds/:worldId/digest-push", WorldDigestPushSettingsGet)
+	v1Auth.Post("/worlds/:worldId/digest-push", WorldDigestPushSettingsUpsert)
+	v1Auth.Delete("/worlds/:worldId/digest-push", WorldDigestPushSettingsDelete)
+	v1Auth.Post("/worlds/:worldId/digest-push/test", WorldDigestPushTest)
+	v1Auth.Get("/worlds/:worldId/digest-integrations", WorldDigestIntegrationList)
+	v1Auth.Post("/worlds/:worldId/digest-integrations", WorldDigestIntegrationCreate)
+	v1Auth.Post("/worlds/:worldId/digest-integrations/:id/rotate", WorldDigestIntegrationRotate)
+	v1Auth.Post("/worlds/:worldId/digest-integrations/:id/revoke", WorldDigestIntegrationRevoke)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}
@@ -458,6 +472,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channels/:channelId/member-options", ChannelMemberOptions)
 	v1Auth.Get("/channels/:channelId/speaker-options", ChannelSpeakerOptions)
 	v1Auth.Get("/channels/:channelId/speaker-role-options", ChannelSpeakerRoleOptions)
+	v1Auth.Get("/channels/:channelId/identity-manage-candidates", ChannelIdentityManageCandidates)
 	v1Auth.Get("/channels/:channelId/export-color-profile", ExportColorProfileGet)
 	v1Auth.Post("/channels/:channelId/export-color-profile", ExportColorProfileUpsert)
 	v1Auth.Delete("/channels/:channelId/export-color-profile", ExportColorProfileDelete)
@@ -488,6 +503,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Get("/favorites", WorldFavoriteListHandler)
 	worldGroup.Post("/:worldId/favorite", WorldFavoriteToggleHandler)
 	worldGroup.Post("/:worldId/ack-edit-notice", WorldAckEditNoticeHandler)
+	worldGroup.Post("/:worldId/ack-manage-identity-notice", WorldAckManageIdentityNoticeHandler)
 	worldGroup.Get("/:worldId/announcements", WorldAnnouncementListHandler)
 	worldGroup.Post("/:worldId/announcements", WorldAnnouncementCreateHandler)
 	worldGroup.Get("/:worldId/announcements/pending-popup", WorldAnnouncementPendingPopupHandler)
@@ -550,6 +566,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/bot-token-add", BotTokenAdd)
 	v1AuthAdmin.Post("/admin/bot-token-update", BotTokenUpdate)
 	v1AuthAdmin.Post("/admin/bot-token-delete", BotTokenDelete)
+	v1AuthAdmin.Post("/admin/bot-token-batch-delete", BotTokenBatchDelete)
 	v1AuthAdmin.Get("/admin/user-list", AdminUserList)
 	v1AuthAdmin.Post("/admin/user-disable", AdminUserDisable)
 	v1AuthAdmin.Post("/admin/user-enable", AdminUserEnable)
@@ -616,6 +633,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return nil
 	})
 
+	oneBotHTTPWorks(app)
+
 	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
 	if indexErr != nil {
 		log.Printf("读取内置 index.html 失败: %v", indexErr)
@@ -639,6 +658,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	}))
 
 	websocketWorks(app)
+	oneBotWSWorks(app)
+	startOneBotReverseRuntime()
 
 	// Check port availability and find fallback if needed
 	listenAddr := config.ServeAt

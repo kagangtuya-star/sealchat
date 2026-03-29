@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 import TabRoles from './TabRoles.vue'
 import TabAppearance from './TabAppearance.vue'
 import TabBotWhisperForward from './TabBotWhisperForward.vue'
+import TabDiceMode from './TabDiceMode.vue'
 
 const message = useMessage();
 const dialog = useDialog();
@@ -22,7 +23,6 @@ const modelShow = defineModel({
   set(value: any): any {
     if (value) {
       if (props.channel) {
-        console.log(2222, props.channel);
         model.value = clone(props.channel);
       }
     }
@@ -139,6 +139,10 @@ const tabRef = ref('members');
 
       <n-tab-pane name="members2" tab="权限配置">
         <TabRoles :channel="channel" />
+      </n-tab-pane>
+
+      <n-tab-pane name="dice-mode" tab="掷骰设置">
+        <TabDiceMode :channel="model" @update="doReload" />
       </n-tab-pane>
 
       <n-tab-pane name="appearance" tab="外观设置">

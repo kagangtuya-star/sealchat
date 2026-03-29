@@ -171,11 +171,7 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 	}
 
 	mimeType := strings.ToLower(meta[:semi])
-
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	if expectImage && !isSupportedImageMime(mimeType) {
+	if expectImage && mimeType != "" && !isSupportedImageMime(mimeType) {
 		return "", fmt.Errorf("unsupported image type: %s", mimeType)
 	}
 
@@ -199,6 +195,9 @@ func processDataURLToAttachment(dataURL, userID, channelID string, cfg SatoriAtt
 
 	// Verify actual content type from magic bytes
 	detectedMime := http.DetectContentType(decoded)
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = strings.ToLower(detectedMime)
+	}
 	if expectImage && !isSupportedImageMime(detectedMime) {
 		return "", fmt.Errorf("detected mime type not supported: %s", detectedMime)
 	}

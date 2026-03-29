@@ -12,9 +12,13 @@ export interface WhisperMeta {
   targetUserNick?: string;
   targetUserName?: string;
   targetUserIds?: string[];
+  targetDisplayNames?: string[];
 }
 
 declare module '@satorijs/protocol' {
+  interface User {
+    avatarDecoration?: AvatarDecoration;
+  }
   interface Message {
     whisperMeta?: WhisperMeta;
     whisperToIds?: User[];
@@ -29,6 +33,7 @@ declare module '@satorijs/protocol' {
   }
   interface Channel {
     defaultDiceExpr?: string;
+    botCommandPrefixes?: string[];
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
     botWhisperForwardConfig?: string;
@@ -57,6 +62,20 @@ export interface BotWhisperForwardConfig {
   rules: BotWhisperForwardRule[];
 }
 
+export type BotOneBotTransportType = 'forward_ws' | 'reverse_ws' | 'http';
+
+export interface BotOneBotConfig {
+  enabled: boolean;
+  transportType: BotOneBotTransportType;
+  httpPathSuffix?: string;
+  httpPostPathSuffix?: string;
+  url?: string;
+  apiUrl?: string;
+  eventUrl?: string;
+  useUniversalClient: boolean;
+  reconnectIntervalMs: number;
+}
+
 export interface SatoriMessage {
   id?: string;
   channel?: Channel;
@@ -76,6 +95,7 @@ export interface SatoriMessage {
   sender_member_name?: string;
   sender_role_id?: string;
   sender_identity_variant_id?: string;
+  sender_identity_is_temporary?: boolean;
   isPinned?: boolean;
   pinnedAt?: number;
   pinnedBy?: string;
@@ -238,6 +258,7 @@ export interface UserInfo {
   username: string;
   nick: string;
   avatar: string;
+  avatarDecoration?: AvatarDecoration | null;
   nick_color?: string;
   brief: string;
   roleIds?: string[];
@@ -246,6 +267,26 @@ export interface UserInfo {
   email?: string;
   emailVerified?: boolean;
   emailVerifiedAt?: string;
+}
+
+export interface AvatarDecorationSettings {
+  scale?: number;
+  offsetX?: number;
+  offsetY?: number;
+  rotation?: number;
+  zIndex?: number;
+  opacity?: number;
+  playbackRate?: number;
+  blendMode?: string;
+}
+
+export interface AvatarDecoration {
+  id?: string;
+  enabled: boolean;
+  decorationId?: string;
+  resourceAttachmentId?: string;
+  fallbackAttachmentId?: string;
+  settings?: AvatarDecorationSettings;
 }
 
 export interface ChannelMemberCandidateItem {
@@ -479,8 +520,12 @@ export interface ChannelIdentity {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  avatarDecoration?: AvatarDecoration | null;
+  avatarDecorations?: AvatarDecoration[] | null;
   characterCardId?: string;
   isDefault: boolean;
+  isTemporary: boolean;
+  icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];
 }
@@ -506,6 +551,23 @@ export interface ChannelIdentityVariant {
 export interface ChannelIcOocRoleConfig {
   icRoleId: string | null;
   oocRoleId: string | null;
+}
+
+export interface ChannelIdentityManageCandidate {
+  userId: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  rank: number;
+  roleLabel: string;
+  isSelf: boolean;
+}
+
+export interface ChannelIdentityManageCandidatesResponse {
+  items: ChannelIdentityManageCandidate[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface CharacterCard {
@@ -536,4 +598,7 @@ export interface MessageIdentity {
   displayName?: string;
   color?: string;
   avatarAttachment?: string;
+  avatarDecoration?: AvatarDecoration | null;
+  avatarDecorations?: AvatarDecoration[] | null;
+  isTemporary?: boolean;
 }
