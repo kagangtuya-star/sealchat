@@ -41,6 +41,13 @@ type AudioAssetVariant struct {
 
 type JSONList[T any] []T
 
+func (jl JSONList[T]) MarshalJSON() ([]byte, error) {
+	if jl == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]T(jl))
+}
+
 func (jl JSONList[T]) Value() (driver.Value, error) {
 	if jl == nil {
 		return []byte("[]"), nil
@@ -54,7 +61,7 @@ func (jl JSONList[T]) Value() (driver.Value, error) {
 
 func (jl *JSONList[T]) Scan(value interface{}) error {
 	if value == nil {
-		*jl = nil
+		*jl = JSONList[T]{}
 		return nil
 	}
 	var data []byte
@@ -67,12 +74,15 @@ func (jl *JSONList[T]) Scan(value interface{}) error {
 		return fmt.Errorf("unsupported type %T for JSONList", value)
 	}
 	if len(data) == 0 {
-		*jl = nil
+		*jl = JSONList[T]{}
 		return nil
 	}
 	var out []T
 	if err := json.Unmarshal(data, &out); err != nil {
 		return err
+	}
+	if out == nil {
+		out = []T{}
 	}
 	*jl = out
 	return nil

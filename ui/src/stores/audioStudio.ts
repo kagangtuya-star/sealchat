@@ -331,6 +331,22 @@ interface PaginationState {
   total: number;
 }
 
+function normalizeAssetTags(tags: AudioAsset['tags'] | null | undefined): string[] {
+  if (!Array.isArray(tags)) return [];
+  return tags.map((tag) => String(tag));
+}
+
+function normalizeAudioAsset(asset: AudioAsset): AudioAsset {
+  return {
+    ...asset,
+    tags: normalizeAssetTags(asset.tags),
+  };
+}
+
+function normalizeAudioAssets(assets: AudioAsset[]): AudioAsset[] {
+  return assets.map((asset) => normalizeAudioAsset(asset));
+}
+
 interface FetchAssetsOptions {
   filters?: Partial<AudioSearchFilters>;
   pagination?: Partial<PaginationState>;
@@ -1580,7 +1596,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const params = buildAssetQueryParams(mergedFilters, pagination);
         const resp = await api.get('/api/v1/audio/assets', { params });
         const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
-        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const items = normalizeAudioAssets(Array.isArray(raw) ? raw : raw?.items || []);
         const page = !Array.isArray(raw) && raw?.page ? raw.page : pagination.page;
         const pageSize = !Array.isArray(raw) && raw?.pageSize ? raw.pageSize : pagination.pageSize;
         const total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
@@ -1603,7 +1619,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const cached = query
           ? await audioDb.assets.where('searchIndex').startsWith(query).toArray()
           : await audioDb.assets.orderBy('updatedAt').reverse().toArray();
-        const fallback = cached.map((meta) => ({
+        const fallback = cached.map((meta) => normalizeAudioAsset({
           id: meta.id,
           name: meta.name,
           folderId: meta.folderId,
@@ -1665,7 +1681,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const params = buildAssetQueryParams(playlistFilters, { page, pageSize, total: 0 });
         const resp = await api.get('/api/v1/audio/assets', { params });
         const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
-        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const items = normalizeAudioAssets(Array.isArray(raw) ? raw : raw?.items || []);
         total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
         for (const item of items) {
           if (item?.id) {
@@ -1708,7 +1724,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const params = buildAssetQueryParams(playlistFilters, { page, pageSize, total: 0 });
         const resp = await api.get('/api/v1/audio/assets', { params });
         const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
-        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const items = normalizeAudioAssets(Array.isArray(raw) ? raw : raw?.items || []);
         total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
         for (const item of items) {
           if (item?.id) {
@@ -1911,7 +1927,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async fetchSingleAsset(assetId: string) {
       const resp = await api.get(`/api/v1/audio/assets/${assetId}`);
-      const asset = resp.data as AudioAsset;
+      const asset = normalizeAudioAsset(resp.data as AudioAsset);
       this.assets = [...this.assets.filter((item) => item.id !== asset.id), asset];
       await audioDb.assets.put(toCachedMeta(asset));
       return asset;
@@ -2364,19 +2380,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     upsertAssetLocally(asset: AudioAsset) {
+      const normalizedAsset = normalizeAudioAsset(asset);
       const updateList = (list: AudioAsset[]) => {
-        const index = list.findIndex((item) => item.id === asset.id);
+        const index = list.findIndex((item) => item.id === normalizedAsset.id);
         if (index >= 0) {
-          list[index] = { ...list[index], ...asset };
+          list[index] = { ...list[index], ...normalizedAsset };
         } else {
-          list.unshift(asset);
+          list.unshift(normalizedAsset);
         }
       };
       updateList(this.assets);
       updateList(this.filteredAssets);
       updateList(this.trackSelectableAssets);
       if (!this.selectedAssetId) {
-        this.selectedAssetId = asset.id;
+        this.selectedAssetId = normalizedAsset.id;
       }
     },
 

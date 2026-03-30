@@ -772,7 +772,7 @@ func pickExtension(mimeType, tempPath string) string {
 }
 
 func normalizeTags(tags []string) []string {
-	var result []string
+	result := make([]string, 0, len(tags))
 	seen := map[string]struct{}{}
 	for _, tag := range tags {
 		trimmed := strings.TrimSpace(tag)
