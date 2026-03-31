@@ -9755,6 +9755,60 @@ const resolveMessageWhisperTargetId = (msg?: any): string | null => {
   return null;
 };
 
+const buildWhisperTargetUserFromMessage = (id: string, entry?: any, displayName?: string): User | null => {
+  const normalizedId = String(id || entry?.id || '').trim();
+  if (!normalizedId) {
+    return null;
+  }
+  const channelUser = chat.curChannelUsers.find((member: any) => member?.id === normalizedId);
+  const nick = String(
+    entry?.nick
+    || channelUser?.nick
+    || displayName
+    || entry?.name
+    || channelUser?.name
+    || normalizedId,
+  ).trim();
+  return {
+    id: normalizedId,
+    name: String(entry?.name || channelUser?.name || nick || normalizedId).trim(),
+    nick: nick || normalizedId,
+    avatar: String(entry?.avatar || channelUser?.avatar || '').trim(),
+    discriminator: String(entry?.discriminator || channelUser?.discriminator || '').trim(),
+    is_bot: Boolean(entry?.is_bot || channelUser?.is_bot),
+  };
+};
+
+const resolveMessageWhisperTargets = (msg?: any): User[] => {
+  if (!msg) {
+    return [];
+  }
+  const metaIds = Array.isArray(msg?.whisperMeta?.targetUserIds) ? msg.whisperMeta.targetUserIds : [];
+  const metaNames = Array.isArray(msg?.whisperMeta?.targetDisplayNames) ? msg.whisperMeta.targetDisplayNames : [];
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    return list
+      .map((entry: any, index: number) => {
+        if (typeof entry === 'string') {
+          return buildWhisperTargetUserFromMessage(entry, null, metaNames[index]);
+        }
+        return buildWhisperTargetUserFromMessage(entry?.id, entry, metaNames[index]);
+      })
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  if (metaIds.length > 0) {
+    return metaIds
+      .map((id: string, index: number) => buildWhisperTargetUserFromMessage(id, null, metaNames[index]))
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  const singleId = resolveMessageWhisperTargetId(msg);
+  if (!singleId) {
+    return [];
+  }
+  const single = buildWhisperTargetUserFromMessage(singleId, msg?.whisperTo || msg?.whisper_to || msg?.whisper_target, msg?.whisperMeta?.targetMemberName);
+  return single ? [single] : [];
+};
+
 const resolveMessageIdentityId = (msg?: any): string | null => {
   if (!msg) {
     return null;
@@ -9967,6 +10021,8 @@ interface EditSaveSnapshot {
   token: number;
   channelId: string;
   messageId: string;
+  isWhisper: boolean;
+  whisperTargetIds: string[];
   icMode: 'ic' | 'ooc';
   identityId: string | null;
   identityVariantId: string | null;
@@ -9995,6 +10051,8 @@ const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
     token: editSessionToken.value,
     channelId: editing.channelId,
     messageId: editing.messageId,
+    isWhisper: Boolean(editing.isWhisper),
+    whisperTargetIds: chat.whisperTargets.map((target) => String(target?.id || '').trim()).filter(Boolean),
     icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
     identityId: editing.identityId ?? null,
     identityVariantId: editing.identityVariantId ?? null,
@@ -10028,6 +10086,7 @@ const beginEdit = (target?: Message) => {
   invalidateEditSession();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
+  const whisperTargets = resolveMessageWhisperTargets(target);
   const identityId = resolveMessageIdentityId(target);
   const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const identitySnapshot = resolveMessageIdentitySnapshot(target);
@@ -10040,6 +10099,7 @@ const beginEdit = (target?: Message) => {
     mode: detectedMode,
     isWhisper: Boolean(target.isWhisper),
     whisperTargetId,
+    whisperTargets,
     icMode,
     identityId: identityId || null,
     identityVariantId,
@@ -10166,8 +10226,15 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null } = {};
+    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; whisperTargetIds?: string[] } = {};
     updateOptions.icMode = snapshot.icMode;
+    if (snapshot.isWhisper) {
+      if (snapshot.whisperTargetIds.length === 0) {
+        message.error('悄悄话至少需要一个可见对象');
+        return;
+      }
+      updateOptions.whisperTargetIds = snapshot.whisperTargetIds;
+    }
     if (snapshot.identityId !== snapshot.initialIdentityId) {
       updateOptions.identityId = snapshot.identityId;
     }
@@ -10272,6 +10339,20 @@ const handleWhisperCandidateChecked = (candidate: WhisperCandidate, checked: boo
   onWhisperTargetToggle(candidate);
 };
 
+const selectAllFilteredWhisperCandidates = () => {
+  filteredWhisperCandidates.value.forEach((candidate) => {
+    if (!isWhisperTarget(candidate)) {
+      onWhisperTargetToggle(candidate);
+    }
+  });
+};
+
+const invertFilteredWhisperCandidates = () => {
+  filteredWhisperCandidates.value.forEach((candidate) => {
+    onWhisperTargetToggle(candidate);
+  });
+};
+
 const confirmWhisperSelection = () => {
   chat.confirmWhisperTargets();
   const source = whisperPickerSource.value;
@@ -10343,9 +10424,8 @@ const startWhisperSelection = () => {
     message.warning(t('inputBox.whisperNoOnline'));
     return;
   }
-  if (whisperPanelVisible.value || chat.whisperTargets.length > 0) {
+  if (whisperPanelVisible.value) {
     closeWhisperPanel();
-    clearWhisperTargets();
     return;
   }
   openWhisperPanel('manual');
@@ -10956,6 +11036,13 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     }
     chat.curReplyTo = null;
     chat.clearWhisperTargets();
+    if (chat.editing.isWhisper) {
+      (chat.editing.whisperTargets || []).forEach((target) => {
+        if (target?.id) {
+          chat.toggleWhisperTarget({ ...target });
+        }
+      });
+    }
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
@@ -14562,7 +14649,13 @@ onBeforeUnmount(() => {
       <div class="chat-input-wrapper flex flex-col w-full relative">
         <transition name="fade">
           <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop @pointerdown.stop>
-            <div class="whisper-panel__title">{{ t('inputBox.whisperPanelTitle') }}</div>
+            <div class="whisper-panel__title">
+              <span>{{ t('inputBox.whisperPanelTitle') }}</span>
+              <div class="whisper-panel__toolbar">
+                <n-button size="tiny" quaternary :disabled="!filteredWhisperCandidates.length" @click="selectAllFilteredWhisperCandidates">全选</n-button>
+                <n-button size="tiny" quaternary :disabled="!filteredWhisperCandidates.length" @click="invertFilteredWhisperCandidates">反选</n-button>
+              </div>
+            </div>
             <n-input v-if="whisperPickerSource === 'manual'" ref="whisperSearchInputRef"
               v-model:value="whisperQuery" size="small" :placeholder="t('inputBox.whisperSearchPlaceholder')" clearable
               @keydown="handleWhisperKeydown" />

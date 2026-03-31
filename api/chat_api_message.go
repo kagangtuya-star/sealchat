@@ -36,6 +36,37 @@ type messageOrderPlacement struct {
 	AfterID  string
 }
 
+func buildWhisperVisibilityDiff(authorID string, oldRecipientIDs []string, newRecipientIDs []string) ([]string, []string) {
+	updateTargets := normalizeWhisperTargetIDs(append([]string{authorID}, newRecipientIDs...))
+	oldVisible := normalizeWhisperTargetIDs(append([]string{authorID}, oldRecipientIDs...))
+	updateSet := make(map[string]struct{}, len(updateTargets))
+	for _, id := range updateTargets {
+		updateSet[id] = struct{}{}
+	}
+	removeTargets := make([]string, 0, len(oldVisible))
+	for _, id := range oldVisible {
+		if _, ok := updateSet[id]; ok {
+			continue
+		}
+		removeTargets = append(removeTargets, id)
+	}
+	return updateTargets, removeTargets
+}
+
+func sameWhisperRecipientIDs(left []string, right []string) bool {
+	left = normalizeWhisperTargetIDs(left)
+	right = normalizeWhisperTargetIDs(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 var hiddenDiceForwardPattern = regexp.MustCompile(`SEALCHAT-Group:([A-Za-z0-9_-]+)`)
 var atTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
 
@@ -2762,12 +2793,13 @@ func apiMessageList(ctx *ChatContext, data *struct {
 }
 
 func apiMessageUpdate(ctx *ChatContext, data *struct {
-	ChannelID         string  `json:"channel_id"`
-	MessageID         string  `json:"message_id"`
-	Content           string  `json:"content"`
-	ICMode            string  `json:"ic_mode"`
-	IdentityID        *string `json:"identity_id"`
-	IdentityVariantID *string `json:"identity_variant_id"`
+	ChannelID         string   `json:"channel_id"`
+	MessageID         string   `json:"message_id"`
+	Content           string   `json:"content"`
+	WhisperToIds      []string `json:"whisper_to_ids"`
+	ICMode            string   `json:"ic_mode"`
+	IdentityID        *string  `json:"identity_id"`
+	IdentityVariantID *string  `json:"identity_variant_id"`
 }) (any, error) {
 	if strings.TrimSpace(data.Content) == "" {
 		return nil, fmt.Errorf("消息内容不能为空")
@@ -2793,6 +2825,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if channel.ID == "" {
 		return nil, nil
 	}
+	oldRecipientIDs := resolveWhisperRecipients(msg.WhisperTo, model.GetWhisperRecipientIDs(msg.ID), msg.UserID)
 
 	// 权限检查：是否为消息作者，或世界管理员代编辑
 	isAuthor := msg.UserID == ctx.User.ID
@@ -2923,6 +2956,71 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if msg.IsWhisper {
 		msg.WhisperTargets = loadWhisperTargetsForMessage(data.ChannelID, msg.ID, msg.WhisperTarget)
 	}
+	whisperRecipientsChanged := false
+	if msg.IsWhisper && data.WhisperToIds != nil {
+		nextRecipientIDs := resolveWhisperRecipients("", data.WhisperToIds, msg.UserID)
+		if len(nextRecipientIDs) == 0 {
+			return nil, fmt.Errorf("悄悄话至少需要一个可见对象")
+		}
+		if len(nextRecipientIDs) > 10 {
+			return nil, fmt.Errorf("悄悄话收件人数量不能超过10人")
+		}
+		var whisperTargets []*model.UserModel
+		if len(data.ChannelID) < 30 {
+			whisperTargets = make([]*model.UserModel, 0, len(nextRecipientIDs))
+			for _, id := range nextRecipientIDs {
+				target := loadWhisperTargetForChannel(data.ChannelID, id)
+				if target == nil {
+					return nil, fmt.Errorf("悄悄话目标不存在或不可见")
+				}
+				whisperTargets = append(whisperTargets, target)
+			}
+		} else {
+			fr, _ := model.FriendRelationGetByID(data.ChannelID)
+			if fr.ID == "" {
+				return nil, fmt.Errorf("私聊频道不存在")
+			}
+			privateOtherUser := fr.UserID1
+			if fr.UserID1 == ctx.User.ID {
+				privateOtherUser = fr.UserID2
+			}
+			for _, id := range nextRecipientIDs {
+				if id != privateOtherUser {
+					return nil, fmt.Errorf("私聊消息只能发送给当前会话对象")
+				}
+			}
+			target := loadWhisperTargetForChannel(data.ChannelID, privateOtherUser)
+			if target == nil {
+				return nil, fmt.Errorf("私聊对象不存在")
+			}
+			whisperTargets = []*model.UserModel{target}
+		}
+		whisperRecipientsChanged = !sameWhisperRecipientIDs(oldRecipientIDs, nextRecipientIDs)
+		msg.WhisperTo = nextRecipientIDs[0]
+		if len(whisperTargets) > 0 {
+			msg.WhisperTarget = whisperTargets[0]
+		} else {
+			msg.WhisperTarget = nil
+		}
+		msg.WhisperTargets = whisperTargets
+		msg.WhisperTargetMemberID = ""
+		msg.WhisperTargetMemberName = ""
+		msg.WhisperTargetUserName = ""
+		msg.WhisperTargetUserNick = ""
+		if msg.WhisperTarget != nil {
+			msg.WhisperTargetUserNick = msg.WhisperTarget.Nickname
+			msg.WhisperTargetUserName = msg.WhisperTarget.Username
+			if member, _ := model.MemberGetByUserIDAndChannelIDBase(msg.WhisperTarget.ID, data.ChannelID, "", false); member != nil {
+				msg.WhisperTargetMemberID = member.ID
+				msg.WhisperTargetMemberName = member.Nickname
+			}
+		}
+		if whisperRecipientsChanged {
+			if err := model.ReplaceWhisperRecipients(msg.ID, nextRecipientIDs); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	existingRolls, err := model.MessageDiceRollListByMessageID(msg.ID)
 	if err != nil {
@@ -2981,7 +3079,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if icMode != "" && icMode != msg.ICMode {
 		icModeChanged = true
 	}
-	if prevContent == newContent && !icModeChanged {
+	if prevContent == newContent && !icModeChanged && !identityChanged && !whisperRecipientsChanged {
 		return &struct {
 			Message *protocol.Message `json:"message"`
 		}{Message: buildMessage()}, nil
@@ -3029,6 +3127,13 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
 	}
+	if msg.IsWhisper && data.WhisperToIds != nil {
+		updates["whisper_to"] = msg.WhisperTo
+		updates["whisper_target_member_id"] = msg.WhisperTargetMemberID
+		updates["whisper_target_member_name"] = msg.WhisperTargetMemberName
+		updates["whisper_target_user_name"] = msg.WhisperTargetUserName
+		updates["whisper_target_user_nick"] = msg.WhisperTargetUserNick
+	}
 	updates["edited_by_user_id"] = ctx.User.ID
 	updates["edited_by_user_name"] = editorUserName
 	msg.EditedByUserID = ctx.User.ID
@@ -3068,16 +3173,20 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 
 	if msg.IsWhisper {
-		recipients := []string{ctx.User.ID}
-		if msg.WhisperTo != "" {
-			recipients = append(recipients, msg.WhisperTo)
+		currentRecipientIDs := resolveWhisperRecipients(msg.WhisperTo, model.GetWhisperRecipientIDs(msg.ID), msg.UserID)
+		updateTargets, removeTargets := buildWhisperVisibilityDiff(msg.UserID, oldRecipientIDs, currentRecipientIDs)
+		if len(updateTargets) > 0 {
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, updateTargets, ev)
 		}
-		recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
-		if len(recipientIDs) > 0 {
-			recipients = append(recipients, recipientIDs...)
+		if len(removeTargets) > 0 {
+			removeEvent := &protocol.Event{
+				Type:    protocol.EventMessageRemoved,
+				Message: messageData,
+				Channel: channelData,
+				User:    ctx.User.ToProtocolType(),
+			}
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, removeTargets, removeEvent)
 		}
-		recipients = lo.Uniq(recipients)
-		ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
 	} else {
 		ctx.BroadcastEventInChannel(data.ChannelID, ev)
 		ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)

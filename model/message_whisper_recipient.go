@@ -1,5 +1,11 @@
 package model
 
+import (
+	"strings"
+
+	"gorm.io/gorm"
+)
+
 type MessageWhisperRecipientModel struct {
 	StringPKBaseModel
 	MessageID string `json:"message_id" gorm:"size:100;uniqueIndex:idx_mwr_unique,priority:1;index:idx_mwr_message"`
@@ -43,8 +49,12 @@ func CreateWhisperRecipients(messageID string, userIDs []string) error {
 	if messageID == "" || len(userIDs) == 0 {
 		return nil
 	}
-	recipients := make([]MessageWhisperRecipientModel, len(userIDs))
-	for i, uid := range userIDs {
+	normalizedIDs := normalizeWhisperRecipientIDs(userIDs)
+	if len(normalizedIDs) == 0 {
+		return nil
+	}
+	recipients := make([]MessageWhisperRecipientModel, len(normalizedIDs))
+	for i, uid := range normalizedIDs {
 		recipients[i] = MessageWhisperRecipientModel{
 			MessageID: messageID,
 			UserID:    uid,
@@ -52,6 +62,55 @@ func CreateWhisperRecipients(messageID string, userIDs []string) error {
 		recipients[i].Init()
 	}
 	return GetDB().Create(&recipients).Error
+}
+
+func normalizeWhisperRecipientIDs(userIDs []string) []string {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(userIDs))
+	seen := make(map[string]struct{}, len(userIDs))
+	for _, uid := range userIDs {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		result = append(result, uid)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// ReplaceWhisperRecipients 全量替换消息的收件人记录
+func ReplaceWhisperRecipients(messageID string, userIDs []string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil
+	}
+	normalizedIDs := normalizeWhisperRecipientIDs(userIDs)
+	return GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("message_id = ?", messageID).Delete(&MessageWhisperRecipientModel{}).Error; err != nil {
+			return err
+		}
+		if len(normalizedIDs) == 0 {
+			return nil
+		}
+		recipients := make([]MessageWhisperRecipientModel, len(normalizedIDs))
+		for i, uid := range normalizedIDs {
+			recipients[i] = MessageWhisperRecipientModel{
+				MessageID: messageID,
+				UserID:    uid,
+			}
+			recipients[i].Init()
+		}
+		return tx.Create(&recipients).Error
+	})
 }
 
 // HasWhisperRecipient 判断用户是否为消息收件人
