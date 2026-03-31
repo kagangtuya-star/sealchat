@@ -52,9 +52,12 @@ const dialog = useDialog();
 const cancel = () => emit('close');
 
 const BOT_CONFIG_MODAL_Z_INDEX = 3200;
+const BOT_TOKEN_PREVIEW_MODAL_Z_INDEX = 3205;
 const BOT_AVATAR_MODAL_Z_INDEX = 3210;
 
 const showModal = ref(false);
+const tokenPreviewVisible = ref(false);
+const previewTokenValue = ref('');
 const editingToken = ref<BotListItem | null>(null);
 const newTokenName = ref('bot');
 const newTokenAvatar = ref('');
@@ -462,6 +465,16 @@ const copyToken = async (value?: string) => {
   }
 };
 
+const openTokenPreview = (value?: string) => {
+  const token = String(value || '').trim();
+  if (!token) {
+    message.warning('Token 为空，无法查看');
+    return;
+  }
+  previewTokenValue.value = token;
+  tokenPreviewVisible.value = true;
+};
+
 const resolveAvatar = (value?: string, version?: number | string) => {
   if (!value) {
     return '';
@@ -606,9 +619,9 @@ const columns = computed<DataTableColumns<BotListItem>>(() => [
   {
     title: 'Token',
     key: 'token',
-    minWidth: 220,
+    minWidth: 280,
     render: (row: BotListItem) => (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
         <code style={{
           fontSize: '12px',
           padding: '2px 6px',
@@ -620,6 +633,7 @@ const columns = computed<DataTableColumns<BotListItem>>(() => [
           {formatToken(row.token)}
         </code>
         <n-button text size="small" onClick={() => copyToken(row.token)}>复制</n-button>
+        <n-button text size="small" onClick={() => openTokenPreview(row.token)}>查看</n-button>
       </div>
     ),
   },
@@ -651,6 +665,13 @@ watch(showModal, (visible) => {
   avatarEditorVisible.value = false;
   avatarEditorFile.value = null;
   clearAvatarPreview();
+});
+
+watch(tokenPreviewVisible, (visible) => {
+  if (visible) {
+    return;
+  }
+  previewTokenValue.value = '';
 });
 
 watch(newTokenAvatar, (value, oldValue) => {
@@ -914,6 +935,24 @@ onUnmounted(() => {
   </n-modal>
 
   <n-modal
+    v-model:show="tokenPreviewVisible"
+    :z-index="BOT_TOKEN_PREVIEW_MODAL_Z_INDEX"
+    preset="card"
+    title="查看 Token"
+    style="max-width: 560px;"
+  >
+    <n-space vertical size="small">
+      <div class="text-sm text-gray-500">
+        当前展示的是完整 BOT Token，请注意避免截图或泄露。
+      </div>
+      <code class="bot-management__token-preview">{{ previewTokenValue }}</code>
+      <n-space justify="end">
+        <n-button size="small" @click="copyToken(previewTokenValue)">复制 token</n-button>
+      </n-space>
+    </n-space>
+  </n-modal>
+
+  <n-modal
     v-model:show="avatarEditorVisible"
     :z-index="BOT_AVATAR_MODAL_Z_INDEX"
     preset="card"
@@ -936,6 +975,17 @@ onUnmounted(() => {
   height: 61vh;
   min-height: 0;
   overflow: hidden;
+}
+
+.bot-management__token-preview {
+  display: block;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .bot-management__body {
