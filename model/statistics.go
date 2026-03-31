@@ -1,9 +1,11 @@
 package model
 
-// CountActiveUsers 返回未禁用的注册用户数量。
+// CountActiveUsers 返回未禁用的非 BOT 注册用户数量。
 func CountActiveUsers() (int64, error) {
 	var count int64
-	err := db.Model(&UserModel{}).Where("disabled = ?", false).Count(&count).Error
+	err := db.Model(&UserModel{}).
+		Where("disabled = ? AND is_bot = ?", false, false).
+		Count(&count).Error
 	return count, err
 }
 
