@@ -163,6 +163,14 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async cleanupOrphanSystemBots() {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/system-bots/cleanup-orphaned', {}, {
+        headers: { 'Authorization': user.token },
+      })
+      return resp
+    },
+
     async configSet(data: ServerConfig) {
       const user = useUserStore();
       const resp = await api.put('api/v1/config', data, {

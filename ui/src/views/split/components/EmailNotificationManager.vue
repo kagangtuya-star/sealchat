@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -274,9 +274,16 @@ const buildPassiveUrl = (path: string, extraQuery = '') => {
   const query = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
   return `${accessBaseUrl.value}${normalizedPath}${query}`
 }
+const tokenMatchesTailFragment = (token: string, tokenTailFragment: string) => {
+  const normalizedToken = String(token || '').trim()
+  const normalizedTail = String(tokenTailFragment || '').trim()
+  if (!normalizedToken || !normalizedTail) return false
+  return normalizedToken.endsWith(normalizedTail)
+}
 const passivePullUrl = computed(() => buildPassiveUrl(settings.value.passivePullPath, 'limit=30'))
 const passiveLatestUrl = computed(() => buildPassiveUrl(settings.value.passiveLatestPath))
 const passiveTokenReady = computed(() => !!passiveToken.value.trim())
+const passivePullEnabled = computed(() => settings.value.enabled && (settings.value.pushMode === 'passive' || settings.value.pushMode === 'both'))
 const showFixedThreshold = computed(() => settings.value.activeUserThresholdMode === 'fixed')
 const showActivePush = computed(() => settings.value.pushMode === 'active' || settings.value.pushMode === 'both')
 const showWorldChannelPicker = computed(() => isWorldScope.value && settings.value.availableChannels.length > 0)
@@ -366,6 +373,12 @@ const persistPassivePullCache = () => {
   writeWebhookIntegrationCache(passiveIntegrationId.value)
 }
 
+const clearPassivePullState = () => {
+  passiveIntegrationId.value = ''
+  passiveToken.value = ''
+  persistPassivePullCache()
+}
+
 const listWebhookIntegrations = async () => {
   const path = isWorldScope.value
     ? `/api/v1/worlds/${props.scopeId}/digest-integrations`
@@ -430,7 +443,6 @@ const revokePassivePullToken = async () => {
 
 const ensurePassivePullToken = async (forceRotate = false) => {
   if (!hasScope.value) return
-  if (!forceRotate && passiveTokenReady.value) return
   passiveTokenLoading.value = true
   passiveTokenError.value = ''
   try {
@@ -441,12 +453,27 @@ const ensurePassivePullToken = async (forceRotate = false) => {
       && (isWorldScope.value || (item.capabilities || []).includes('read_digest')),
     )
     if (dedicated) {
+      const cachedToken = passiveToken.value.trim()
+      const cachedIntegrationId = passiveIntegrationId.value.trim()
       passiveIntegrationId.value = dedicated.id
-      if (!passiveTokenReady.value || forceRotate) {
+      if (forceRotate) {
         await rotatePassivePullToken()
-      } else {
-        persistPassivePullCache()
+        return
       }
+      if (tokenMatchesTailFragment(cachedToken, dedicated.tokenTailFragment)) {
+        passiveToken.value = cachedToken
+        persistPassivePullCache()
+        return
+      }
+      if (cachedToken) {
+        passiveToken.value = ''
+        persistPassivePullCache()
+        passiveTokenError.value = cachedIntegrationId && cachedIntegrationId !== dedicated.id
+          ? '检测到该摘要拉取 BOT 已被服务端收敛，原本地缓存 token 已失效；当前仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
+          : '检测到本地缓存 token 已失效；服务端仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
+        return
+      }
+      await rotatePassivePullToken()
       return
     }
     await createPassivePullToken()
@@ -479,7 +506,11 @@ const refresh = async () => {
   } finally {
     loading.value = false
   }
-  await ensurePassivePullToken()
+  if (passivePullEnabled.value) {
+    await ensurePassivePullToken()
+  } else {
+    clearPassivePullState()
+  }
   await loadLatestRecord()
 }
 
@@ -538,6 +569,12 @@ const saveSettings = async () => {
     settings.value = normalizeSettingsValue(resp.data)
     signingSecret.value = ''
     clearSigningSecret.value = false
+    if (passivePullEnabled.value) {
+      await ensurePassivePullToken()
+    } else {
+      clearPassivePullState()
+    }
+    await loadLatestRecord()
     message.success(`${scopeLabel.value}未读提醒配置已保存`)
   } catch (e: any) {
     saveErrorText.value = e?.response?.data?.message || e?.message || '保存失败'
@@ -556,6 +593,7 @@ const removeSettings = async () => {
       ? `/api/v1/worlds/${props.scopeId}/digest-push`
       : `/api/v1/channels/${props.scopeId}/digest-push`
     await api.delete(path)
+    clearPassivePullState()
     await refresh()
     message.success(`${scopeLabel.value}未读提醒配置已删除`)
   } catch (e: any) {
@@ -638,7 +676,6 @@ watch(() => settings.value.pushMode, () => {
 watch(passiveToken, () => {
   persistPassivePullCache()
 })
-onMounted(refresh)
 </script>
 
 <template>
@@ -795,6 +832,9 @@ onMounted(refresh)
     <n-card title="被动拉取" size="small" class="mb-3">
       <n-space vertical size="small">
         <div class="text-sm">系统会自动创建摘要拉取 token，并拼成可直接访问的完整链接：</div>
+        <div class="text-xs text-gray-500">
+          仅在启用当前{{ scopeLabel }}未读提醒且推送方式包含“被动拉取”时，才会生成专用 token 与系统 BOT。
+        </div>
         <n-alert v-if="passiveTokenError" type="warning" :bordered="false">
           {{ passiveTokenError }}
         </n-alert>
@@ -808,9 +848,9 @@ onMounted(refresh)
             :disabled="passiveTokenLoading"
           />
           <n-space class="mt-2" justify="end">
-            <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken()">自动生成</n-button>
-            <n-button size="small" :loading="passiveTokenLoading" @click="ensurePassivePullToken(true)">重新生成</n-button>
-            <n-button size="small" type="error" :disabled="passiveTokenLoading || !passiveIntegrationId" @click="revokePassivePullToken()">撤销</n-button>
+            <n-button size="small" :loading="passiveTokenLoading" :disabled="!passivePullEnabled" @click="ensurePassivePullToken()">自动生成</n-button>
+            <n-button size="small" :loading="passiveTokenLoading" :disabled="!passivePullEnabled" @click="ensurePassivePullToken(true)">重新生成</n-button>
+            <n-button size="small" type="error" :disabled="passiveTokenLoading || !passiveIntegrationId || !passivePullEnabled" @click="revokePassivePullToken()">撤销</n-button>
           </n-space>
         </div>
         <div class="text-xs break-all">

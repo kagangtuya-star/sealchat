@@ -116,6 +116,7 @@ const activeTab = ref<'manual' | 'system'>('manual');
 const showSystemBots = ref(false);
 const keyword = ref('');
 const loading = ref(false);
+const cleanupLoading = ref(false);
 const rows = ref<BotListItem[]>([]);
 const total = ref(0);
 const checkedRowKeys = ref<string[]>([]);
@@ -192,6 +193,7 @@ const currentStatsText = computed(() => {
   }
   return `标准 BOT ${total.value} 个`;
 });
+const systemCleanupVisible = computed(() => showSystemBots.value && activeTab.value === 'system');
 
 const kindLabel = (row: BotListItem) => {
   switch ((row.botKind || '').trim()) {
@@ -449,6 +451,31 @@ const batchDelete = async () => {
         syncBotListSideEffects();
       } catch (error: any) {
         message.error(`批量删除失败: ${error?.response?.data?.message || '未知错误'}`);
+      }
+    },
+  });
+};
+
+const cleanupOrphanSystemBots = async () => {
+  dialog.warning({
+    title: '清理孤儿系统 BOT',
+    content: '该操作会清理没有 active integration 引用的系统 BOT；若同一频道或世界存在多个摘要拉取 BOT，也会自动收敛为一个并保留当前仍在使用中的 token。确认继续？',
+    positiveText: '开始清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      cleanupLoading.value = true;
+      try {
+        const resp = await utils.cleanupOrphanSystemBots();
+        const stats = resp?.data?.stats || {};
+        const deleted = Number(stats.webhookBotCount || 0) || 0;
+        const skipped = Number(stats.activeReferenceSkippedCount || 0) || 0;
+        message.success(`孤儿系统 BOT 清理完成：删除 ${deleted} 个，跳过 ${skipped} 个仍被 active integration 引用的 BOT`);
+        await refresh();
+        syncBotListSideEffects();
+      } catch (error: any) {
+        message.error(`清理失败: ${error?.response?.data?.message || '未知错误'}`);
+      } finally {
+        cleanupLoading.value = false;
       }
     },
   });
@@ -734,6 +761,18 @@ onUnmounted(() => {
               <n-icon :component="Refresh" />
             </template>
             刷新
+          </n-button>
+          <n-button
+            v-if="systemCleanupVisible"
+            quaternary
+            circle
+            :loading="cleanupLoading"
+            title="清理孤儿系统 BOT"
+            @click="cleanupOrphanSystemBots"
+          >
+            <template #icon>
+              <n-icon :component="Trash" />
+            </template>
           </n-button>
           <n-button type="primary" @click="openCreateModal">新增 BOT</n-button>
         </div>

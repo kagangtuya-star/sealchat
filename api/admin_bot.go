@@ -492,3 +492,14 @@ func BotTokenBatchDelete(c *fiber.Ctx) error {
 		"failedItems":  failed,
 	})
 }
+
+func CleanupOrphanSystemBots(c *fiber.Ctx) error {
+	stats, err := cleanupOrphanSystemBotsForAdmin()
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{
+		"message": "清理完成",
+		"stats":   stats,
+	})
+}

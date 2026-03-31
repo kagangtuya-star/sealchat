@@ -567,6 +567,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/bot-token-update", BotTokenUpdate)
 	v1AuthAdmin.Post("/admin/bot-token-delete", BotTokenDelete)
 	v1AuthAdmin.Post("/admin/bot-token-batch-delete", BotTokenBatchDelete)
+	v1AuthAdmin.Post("/admin/system-bots/cleanup-orphaned", CleanupOrphanSystemBots)
 	v1AuthAdmin.Get("/admin/user-list", AdminUserList)
 	v1AuthAdmin.Post("/admin/user-disable", AdminUserDisable)
 	v1AuthAdmin.Post("/admin/user-enable", AdminUserEnable)
