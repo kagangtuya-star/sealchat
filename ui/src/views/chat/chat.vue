@@ -258,6 +258,7 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'world-glossary':
       if (!chat.currentWorldId) return;
       worldGlossary.ensureKeywords(chat.currentWorldId, { force: true });
+      worldGlossary.ensureEffectiveKeywords(chat.currentWorldId, { force: true });
       worldGlossary.setManagerVisible(true);
       return;
     case 'world-announcement':
@@ -1601,6 +1602,7 @@ watch(
       return
     }
     worldGlossary.ensureKeywords(worldId)
+    worldGlossary.ensureEffectiveKeywords(worldId)
     chat.worldDetail(worldId)
     hideSelectionBar()
   },

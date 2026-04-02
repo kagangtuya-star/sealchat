@@ -19,10 +19,13 @@ import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
 import KeywordRichEditor from './KeywordRichEditor.vue'
+import WorldExternalGlossaryManager from './WorldExternalGlossaryManager.vue'
+import { useWorldExternalGlossaryStore } from '@/stores/worldExternalGlossary'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 type KeywordDisplayStyle = 'standard' | 'minimal' | 'inherit'
 const glossary = useWorldGlossaryStore()
+const worldExternalGlossary = useWorldExternalGlossaryStore()
 const chat = useChatStore()
 const utils = useUtilsStore()
 const message = useMessage()
@@ -981,6 +984,13 @@ onUnmounted(() => {
             <span>术语词库</span>
           </div>
           <div class="space-x-2 flex items-center">
+            <n-button
+              size="tiny"
+              :disabled="!canEdit"
+              @click="worldExternalGlossary.setManagerVisible(true)"
+            >
+              外挂术语
+            </n-button>
             <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
           </div>
         </div>
@@ -1474,6 +1484,8 @@ onUnmounted(() => {
       </n-space>
     </template>
   </n-modal>
+
+  <WorldExternalGlossaryManager />
 </template>
 
 <style scoped>

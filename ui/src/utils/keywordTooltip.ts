@@ -7,6 +7,7 @@ interface TooltipContent {
   description: string
   descriptionFormat?: 'plain' | 'rich'
   matchedVia?: string
+  sourceName?: string
 }
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
@@ -565,6 +566,13 @@ export function createKeywordTooltip(
       redirect.className = 'keyword-tooltip__redirect'
       redirect.textContent = `重定向自: ${data.matchedVia}`
       tooltip.appendChild(redirect)
+    }
+
+    if (data.sourceName) {
+      const source = document.createElement('div')
+      source.className = 'keyword-tooltip__redirect'
+      source.textContent = `来源: ${data.sourceName}`
+      tooltip.appendChild(source)
     }
 
     if (data.description) {

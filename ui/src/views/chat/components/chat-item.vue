@@ -1789,7 +1789,7 @@ const compiledKeywords = computed(() => {
   if (!worldId) {
     return []
   }
-  return worldGlossary.compiledMap[worldId] || []
+  return worldGlossary.effectiveCompiledMap[worldId] || []
 })
 
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
@@ -1798,7 +1798,7 @@ const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordT
 const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
 
 const keywordTooltipResolver = (keywordId: string) => {
-  const keyword = worldGlossary.keywordById[keywordId]
+  const keyword = worldGlossary.effectiveKeywordById[keywordId]
   if (!keyword) {
     return null
   }
@@ -1806,6 +1806,7 @@ const keywordTooltipResolver = (keywordId: string) => {
     title: keyword.keyword,
     description: keyword.description,
     descriptionFormat: keyword.descriptionFormat,
+    sourceName: keyword.sourceName,
   }
 }
 
@@ -1817,8 +1818,8 @@ const handleKeywordQuickEdit = (keywordId: string) => {
   if (!worldId) {
     return
   }
-  const keyword = worldGlossary.keywordById[keywordId]
-  if (!keyword) {
+  const keyword = worldGlossary.effectiveKeywordById[keywordId]
+  if (!keyword || !keyword.canQuickEdit) {
     return
   }
   worldGlossary.openEditor(worldId, keyword)

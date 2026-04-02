@@ -19,11 +19,23 @@ export interface WorldKeywordItem {
   matchedVia?: string
 }
 
+export interface EffectiveWorldKeywordItem extends WorldKeywordItem {
+  sourceType: 'world' | 'external_library'
+  sourceId: string
+  sourceName: string
+  canQuickEdit: boolean
+}
+
 export interface WorldKeywordListResponse {
   items: WorldKeywordItem[]
   total: number
   page: number
   pageSize: number
+}
+
+export interface EffectiveWorldKeywordListResponse {
+  items: EffectiveWorldKeywordItem[]
+  total: number
 }
 
 export interface WorldKeywordPayload {
@@ -57,6 +69,18 @@ export async function fetchWorldKeywords(worldId: string, params?: { page?: numb
 export async function fetchWorldKeywordsPublic(worldId: string, params?: { page?: number; pageSize?: number; q?: string; category?: string }) {
   if (!worldId) throw new Error('worldId is required')
   const { data } = await api.get<WorldKeywordListResponse>(`/api/v1/public/worlds/${worldId}/keywords`, { params })
+  return data
+}
+
+export async function fetchEffectiveWorldKeywords(worldId: string, params?: { q?: string; category?: string; includeDisabled?: boolean }) {
+  if (!worldId) throw new Error('worldId is required')
+  const { data } = await api.get<EffectiveWorldKeywordListResponse>(`/api/v1/worlds/${worldId}/keywords/effective`, { params })
+  return data
+}
+
+export async function fetchEffectiveWorldKeywordsPublic(worldId: string, params?: { q?: string; category?: string }) {
+  if (!worldId) throw new Error('worldId is required')
+  const { data } = await api.get<EffectiveWorldKeywordListResponse>(`/api/v1/public/worlds/${worldId}/keywords/effective`, { params })
   return data
 }
 

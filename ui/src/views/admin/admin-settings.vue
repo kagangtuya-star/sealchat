@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
+import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
 
 const emit = defineEmits(['close']);
@@ -22,6 +23,9 @@ const cancel = () => {
       </n-tab-pane>
       <n-tab-pane name="user" tab="用户管理">
         <admin-settings-user @close="cancel" />
+      </n-tab-pane>
+      <n-tab-pane name="external-glossary" tab="外挂世界术语">
+        <admin-settings-external-glossary />
       </n-tab-pane>
     </n-tabs>
   </div>
