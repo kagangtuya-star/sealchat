@@ -221,12 +221,6 @@ const reset = async () => {
   // modified.value = true;
 }
 
-const emit = defineEmits(['close']);
-
-const cancel = () => {
-  emit('close');
-}
-
 const save = async () => {
   try {
     await utils.configSet(model.value);
@@ -236,6 +230,11 @@ const save = async () => {
     message.error('失败:' + (error as any)?.response?.data?.message || '未知原因')
   }
 }
+
+defineExpose({
+  save,
+  isModified: () => modified.value,
+})
 
 const fetchUpdateStatus = async () => {
   updateLoading.value = true;
@@ -1299,10 +1298,6 @@ const clearLoginBg = () => {
       </n-form-item>
 
     </n-form>
-  </div>
-  <div class="space-x-2 float-right">
-    <n-button @click="cancel">关闭</n-button>
-    <n-button type="primary" :disabled="!modified" @click="save">保存</n-button>
   </div>
 </template>
 
