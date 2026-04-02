@@ -538,17 +538,17 @@ func ExternalGlossaryTermImport(libraryID, actorID string, entries []WorldKeywor
 			continue
 		}
 		var existing model.ExternalGlossaryTermModel
-		err := db.Where("library_id = ? AND keyword = ?", strings.TrimSpace(libraryID), item.Keyword).First(&existing).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if _, createErr := ExternalGlossaryTermCreate(libraryID, actorID, item); createErr != nil {
-					stats.Skipped++
-					continue
-				}
-				stats.Created++
+		result := db.Select("id").Where("library_id = ? AND keyword = ?", strings.TrimSpace(libraryID), item.Keyword).Limit(1).Find(&existing)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 || strings.TrimSpace(existing.ID) == "" {
+			if _, createErr := ExternalGlossaryTermCreate(libraryID, actorID, item); createErr != nil {
+				stats.Skipped++
 				continue
 			}
-			return nil, err
+			stats.Created++
+			continue
 		}
 		if !replace {
 			stats.Skipped++
