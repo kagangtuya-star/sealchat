@@ -974,7 +974,7 @@ onMounted(async () => {
                 <n-button size="small" tertiary type="error" :disabled="!selectedTermIds.length" @click="handleBulkDeleteTerms">批量删除</n-button>
               </div>
 
-              <n-spin :show="store.termLoadingMap[selectedLibrary.id]">
+              <n-spin :show="store.termLoadingMap[selectedLibrary.id]" class="external-glossary-admin__table-spin">
                 <div class="external-glossary-admin__table-wrap">
                   <table class="external-glossary-admin__table">
                     <thead>
@@ -1235,6 +1235,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.external-glossary-admin__drawer :deep(.n-drawer-body-content-wrapper) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .external-glossary-admin {
   display: flex;
   flex-direction: column;
@@ -1359,7 +1367,19 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.external-glossary-admin__table-spin {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.external-glossary-admin__table-spin :deep(.n-spin-content) {
+  display: flex;
+  flex: 1;
   min-height: 0;
 }
 
