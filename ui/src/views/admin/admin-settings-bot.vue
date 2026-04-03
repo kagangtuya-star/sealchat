@@ -5,7 +5,9 @@ import { urlBase } from '@/stores/_config';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import type { BotOneBotConfig } from '@/types';
+import { copyTextWithFallback } from '@/utils/clipboard';
 import AdminBotActiveReferencePopover from './components/AdminBotActiveReferencePopover.vue';
+import { copyBotTokenWithPreviewFallback } from './utils/botTokenClipboard';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { Refresh, Search, Trash } from '@vicons/tabler';
 import type { DataTableColumns } from 'naive-ui';
@@ -482,14 +484,16 @@ const cleanupOrphanSystemBots = async () => {
 };
 
 const copyToken = async (value?: string) => {
-  const token = String(value || '').trim();
-  if (!token) return;
-  try {
-    await navigator.clipboard.writeText(token);
-    message.success('Token 已复制');
-  } catch {
-    message.warning('复制失败，请手动复制');
-  }
+  await copyBotTokenWithPreviewFallback(value, {
+    copyText: copyTextWithFallback,
+    onCopySuccess: () => {
+      message.success('Token 已复制');
+    },
+    onManualCopyRequired: (token) => {
+      openTokenPreview(token);
+      message.warning('当前浏览器不支持直接复制，已打开完整 Token，请手动复制');
+    },
+  });
 };
 
 const openTokenPreview = (value?: string) => {
