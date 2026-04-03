@@ -51,6 +51,17 @@ type WorldKeywordImportStats struct {
 	Skipped int `json:"skipped"`
 }
 
+type KeywordCategoryInfo struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Count    int64  `json:"count"`
+}
+
+type KeywordCategoryPriorityUpdate struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+}
+
 func ensureWorldKeywordPermission(worldID, userID string, requireAdmin bool) error {
 	if strings.TrimSpace(worldID) == "" || strings.TrimSpace(userID) == "" {
 		return ErrWorldPermission
@@ -174,6 +185,22 @@ func upsertWorldKeywordCategory(tx *gorm.DB, worldID, categoryName, actorID stri
 		return nil
 	}
 	return tx.Model(&existing).Update("updated_by", actorID).Error
+}
+
+func loadWorldKeywordCategoryPriorityMap(db *gorm.DB, worldID string) (map[string]int, error) {
+	var categories []model.WorldKeywordCategoryModel
+	if err := db.Where("world_id = ?", strings.TrimSpace(worldID)).Find(&categories).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(categories))
+	for _, item := range categories {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		result[name] = item.Priority
+	}
+	return result, nil
 }
 
 func cleanupWorldKeywordCategoryIfUnused(tx *gorm.DB, worldID, categoryName string) error {
@@ -549,6 +576,67 @@ func WorldKeywordListCategories(worldID, userID string) ([]string, error) {
 	return merged, nil
 }
 
+func WorldKeywordListCategoryInfos(worldID, userID string) ([]KeywordCategoryInfo, error) {
+	if err := ensureWorldKeywordPermission(worldID, userID, false); err != nil {
+		return nil, err
+	}
+	type categoryCountRow struct {
+		Category string
+		Count    int64
+	}
+	db := model.GetDB()
+	var keywordCategories []categoryCountRow
+	if err := db.Model(&model.WorldKeywordModel{}).
+		Select("category, COUNT(*) AS count").
+		Where("world_id = ? AND category != ''", worldID).
+		Group("category").
+		Scan(&keywordCategories).Error; err != nil {
+		return nil, err
+	}
+	var managedCategories []model.WorldKeywordCategoryModel
+	if err := db.Where("world_id = ?", worldID).Find(&managedCategories).Error; err != nil {
+		return nil, err
+	}
+	merged := map[string]*KeywordCategoryInfo{}
+	for _, item := range managedCategories {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		merged[name] = &KeywordCategoryInfo{
+			Name:     name,
+			Priority: item.Priority,
+			Count:    0,
+		}
+	}
+	for _, item := range keywordCategories {
+		name := strings.TrimSpace(item.Category)
+		if name == "" {
+			continue
+		}
+		if existing, ok := merged[name]; ok {
+			existing.Count = item.Count
+			continue
+		}
+		merged[name] = &KeywordCategoryInfo{
+			Name:     name,
+			Priority: 0,
+			Count:    item.Count,
+		}
+	}
+	result := make([]KeywordCategoryInfo, 0, len(merged))
+	for _, item := range merged {
+		result = append(result, *item)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Priority != result[j].Priority {
+			return result[i].Priority > result[j].Priority
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result, nil
+}
+
 // WorldKeywordCategoryCreate 创建分类。
 func WorldKeywordCategoryCreate(worldID, actorID, categoryName string) (string, error) {
 	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
@@ -564,6 +652,82 @@ func WorldKeywordCategoryCreate(worldID, actorID, categoryName string) (string, 
 		return "", err
 	}
 	return name, nil
+}
+
+func WorldKeywordCategoryUpdatePriority(worldID, actorID, categoryName string, priority int) (*KeywordCategoryInfo, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return nil, err
+	}
+	name, err := normalizeWorldKeywordCategoryName(categoryName)
+	if err != nil {
+		return nil, err
+	}
+	db := model.GetDB()
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := upsertWorldKeywordCategory(tx, worldID, name, actorID); err != nil {
+			return err
+		}
+		return tx.Model(&model.WorldKeywordCategoryModel{}).
+			Where("world_id = ? AND name = ?", worldID, name).
+			Updates(map[string]any{
+				"priority":   priority,
+				"updated_by": actorID,
+			}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	infos, err := WorldKeywordListCategoryInfos(worldID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range infos {
+		if item.Name == name {
+			result := item
+			return &result, nil
+		}
+	}
+	return &KeywordCategoryInfo{Name: name, Priority: priority, Count: 0}, nil
+}
+
+func WorldKeywordCategoryBulkUpdatePriority(worldID, actorID string, items []KeywordCategoryPriorityUpdate) (int, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return 0, err
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	updated := 0
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		seen := make(map[string]struct{}, len(items))
+		for _, item := range items {
+			name, err := normalizeWorldKeywordCategoryName(item.Name)
+			if err != nil {
+				return err
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			if err := upsertWorldKeywordCategory(tx, worldID, name, actorID); err != nil {
+				return err
+			}
+			res := tx.Model(&model.WorldKeywordCategoryModel{}).
+				Where("world_id = ? AND name = ?", worldID, name).
+				Updates(map[string]any{
+					"priority":   item.Priority,
+					"updated_by": actorID,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected > 0 {
+				updated++
+			}
+		}
+		return nil
+	})
+	return updated, err
 }
 
 // WorldKeywordCategoryRename 批量重命名分类。
@@ -584,8 +748,30 @@ func WorldKeywordCategoryRename(worldID, actorID, oldName, newName string) (int6
 	}
 	var updated int64
 	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
-		if err := upsertWorldKeywordCategory(tx, worldID, to, actorID); err != nil {
+		oldPriority := 0
+		var oldCategory model.WorldKeywordCategoryModel
+		if err := tx.Where("world_id = ? AND name = ?", worldID, from).Limit(1).First(&oldCategory).Error; err == nil {
+			oldPriority = oldCategory.Priority
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		var targetCategory model.WorldKeywordCategoryModel
+		targetErr := tx.Where("world_id = ? AND name = ?", worldID, to).Limit(1).First(&targetCategory).Error
+		if targetErr != nil {
+			if !errors.Is(targetErr, gorm.ErrRecordNotFound) {
+				return targetErr
+			}
+			record := &model.WorldKeywordCategoryModel{
+				WorldID:   worldID,
+				Name:      to,
+				Priority:  oldPriority,
+				CreatedBy: actorID,
+				UpdatedBy: actorID,
+			}
+			record.Normalize()
+			if err := tx.Create(record).Error; err != nil {
+				return err
+			}
 		}
 		res := tx.Model(&model.WorldKeywordModel{}).
 			Where("world_id = ? AND category = ?", worldID, from).

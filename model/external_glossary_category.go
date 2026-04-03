@@ -5,10 +5,11 @@ import "strings"
 // ExternalGlossaryCategoryModel 存储外挂术语库分类（可独立于术语存在）。
 type ExternalGlossaryCategoryModel struct {
 	StringPKBaseModel
-	LibraryID  string `json:"libraryId" gorm:"size:100;index:idx_external_glossary_category_name,priority:1"`
-	Name       string `json:"name" gorm:"size:100;index:idx_external_glossary_category_name,priority:2"`
-	CreatedBy  string `json:"createdBy" gorm:"size:100"`
-	UpdatedBy  string `json:"updatedBy" gorm:"size:100"`
+	LibraryID string `json:"libraryId" gorm:"size:100;index:idx_external_glossary_category_name,priority:1"`
+	Name      string `json:"name" gorm:"size:100;index:idx_external_glossary_category_name,priority:2"`
+	Priority  int    `json:"priority" gorm:"default:0"`
+	CreatedBy string `json:"createdBy" gorm:"size:100"`
+	UpdatedBy string `json:"updatedBy" gorm:"size:100"`
 }
 
 func (*ExternalGlossaryCategoryModel) TableName() string { return "external_glossary_categories" }

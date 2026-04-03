@@ -38,7 +38,10 @@ type EffectiveWorldKeywordItem struct {
 	SourceType        string   `json:"sourceType"`
 	SourceID          string   `json:"sourceId"`
 	SourceName        string   `json:"sourceName"`
+	CategoryPriority  int      `json:"categoryPriority"`
+	SourceSortOrder   int      `json:"sourceSortOrder"`
 	CanQuickEdit      bool     `json:"canQuickEdit"`
+	categoryPriority  int
 	priorityTier      int
 	sourceSortOrder   int
 	updatedAtUnixNano int64
@@ -48,7 +51,7 @@ func normalizeEffectiveWorldKeywordDedupeKey(keyword string) string {
 	return strings.ToLower(strings.TrimSpace(keyword))
 }
 
-func buildEffectiveWorldKeywordItemFromWorld(item *model.WorldKeywordModel) *EffectiveWorldKeywordItem {
+func buildEffectiveWorldKeywordItemFromWorld(item *model.WorldKeywordModel, categoryPriority int) *EffectiveWorldKeywordItem {
 	if item == nil {
 		return nil
 	}
@@ -71,14 +74,17 @@ func buildEffectiveWorldKeywordItemFromWorld(item *model.WorldKeywordModel) *Eff
 		SourceType:        EffectiveWorldKeywordSourceWorld,
 		SourceID:          item.WorldID,
 		SourceName:        "当前世界",
+		CategoryPriority:  categoryPriority,
+		SourceSortOrder:   0,
 		CanQuickEdit:      true,
+		categoryPriority:  categoryPriority,
 		priorityTier:      0,
 		sourceSortOrder:   0,
 		updatedAtUnixNano: item.UpdatedAt.UnixNano(),
 	}
 }
 
-func buildEffectiveWorldKeywordItemFromExternal(worldID string, item *model.ExternalGlossaryTermModel, library *model.ExternalGlossaryLibraryModel) *EffectiveWorldKeywordItem {
+func buildEffectiveWorldKeywordItemFromExternal(worldID string, item *model.ExternalGlossaryTermModel, library *model.ExternalGlossaryLibraryModel, categoryPriority int) *EffectiveWorldKeywordItem {
 	if item == nil || library == nil {
 		return nil
 	}
@@ -101,7 +107,10 @@ func buildEffectiveWorldKeywordItemFromExternal(worldID string, item *model.Exte
 		SourceType:        EffectiveWorldKeywordSourceExternalLibrary,
 		SourceID:          library.ID,
 		SourceName:        library.Name,
+		CategoryPriority:  categoryPriority,
+		SourceSortOrder:   library.SortOrder,
 		CanQuickEdit:      false,
+		categoryPriority:  categoryPriority,
 		priorityTier:      1,
 		sourceSortOrder:   library.SortOrder,
 		updatedAtUnixNano: item.UpdatedAt.UnixNano(),
@@ -148,6 +157,9 @@ func sortEffectiveWorldKeywordItems(items []*EffectiveWorldKeywordItem) {
 	sort.Slice(items, func(i, j int) bool {
 		left := items[i]
 		right := items[j]
+		if left.categoryPriority != right.categoryPriority {
+			return left.categoryPriority > right.categoryPriority
+		}
 		if left.priorityTier != right.priorityTier {
 			return left.priorityTier < right.priorityTier
 		}
@@ -194,7 +206,11 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 	db := model.GetDB()
 	worldID = strings.TrimSpace(worldID)
 	items := make([]*EffectiveWorldKeywordItem, 0, 64)
-	seenByKeyword := map[string]struct{}{}
+
+	worldCategoryPriorityMap, err := loadWorldKeywordCategoryPriorityMap(db, worldID)
+	if err != nil {
+		return nil, err
+	}
 
 	worldQuery := db.Model(&model.WorldKeywordModel{}).Where("world_id = ?", worldID)
 	if !opts.IncludeDisabled {
@@ -205,16 +221,9 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 		return nil, err
 	}
 	for _, item := range worldItems {
-		view := buildEffectiveWorldKeywordItemFromWorld(item)
+		view := buildEffectiveWorldKeywordItemFromWorld(item, worldCategoryPriorityMap[strings.TrimSpace(item.Category)])
 		if view == nil {
 			continue
-		}
-		key := normalizeEffectiveWorldKeywordDedupeKey(view.Keyword)
-		if key != "" {
-			if _, exists := seenByKeyword[key]; exists {
-				continue
-			}
-			seenByKeyword[key] = struct{}{}
 		}
 		items = append(items, view)
 	}
@@ -248,6 +257,14 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 			activeLibraryIDs = append(activeLibraryIDs, library.ID)
 		}
 		if len(activeLibraryIDs) > 0 {
+			externalCategoryPriorityMap := make(map[string]map[string]int, len(activeLibraryIDs))
+			for _, libraryID := range activeLibraryIDs {
+				priorities, err := loadExternalGlossaryCategoryPriorityMap(db, libraryID)
+				if err != nil {
+					return nil, err
+				}
+				externalCategoryPriorityMap[libraryID] = priorities
+			}
 			termQuery := db.Model(&model.ExternalGlossaryTermModel{}).Where("library_id IN ?", activeLibraryIDs)
 			if !opts.IncludeDisabled {
 				termQuery = termQuery.Where("is_enabled = ?", true)
@@ -258,16 +275,13 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 			}
 			for _, item := range externalItems {
 				library := libraryMap[item.LibraryID]
-				view := buildEffectiveWorldKeywordItemFromExternal(worldID, item, library)
+				categoryPriority := 0
+				if priorities, ok := externalCategoryPriorityMap[item.LibraryID]; ok {
+					categoryPriority = priorities[strings.TrimSpace(item.Category)]
+				}
+				view := buildEffectiveWorldKeywordItemFromExternal(worldID, item, library, categoryPriority)
 				if view == nil {
 					continue
-				}
-				key := normalizeEffectiveWorldKeywordDedupeKey(view.Keyword)
-				if key != "" {
-					if _, exists := seenByKeyword[key]; exists {
-						continue
-					}
-					seenByKeyword[key] = struct{}{}
 				}
 				items = append(items, view)
 			}
@@ -275,5 +289,20 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 	}
 
 	sortEffectiveWorldKeywordItems(items)
-	return filterEffectiveWorldKeywordItems(items, opts), nil
+	deduped := make([]*EffectiveWorldKeywordItem, 0, len(items))
+	seenByKeyword := map[string]struct{}{}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		key := normalizeEffectiveWorldKeywordDedupeKey(item.Keyword)
+		if key != "" {
+			if _, exists := seenByKeyword[key]; exists {
+				continue
+			}
+			seenByKeyword[key] = struct{}{}
+		}
+		deduped = append(deduped, item)
+	}
+	return filterEffectiveWorldKeywordItems(deduped, opts), nil
 }

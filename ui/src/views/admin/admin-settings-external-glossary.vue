@@ -4,7 +4,7 @@ import { useDialog, useMessage } from 'naive-ui'
 import { useExternalGlossaryStore } from '@/stores/externalGlossary'
 import { triggerBlobDownload } from '@/utils/download'
 import type { ExternalGlossaryLibraryItem, ExternalGlossaryTermItem } from '@/models/externalGlossary'
-import type { WorldKeywordPayload } from '@/models/worldGlossary'
+import type { KeywordCategoryInfo, WorldKeywordPayload } from '@/models/worldGlossary'
 import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
@@ -33,6 +33,10 @@ const editorVisible = ref(false)
 const importLibraryVisible = ref(false)
 const importTermsVisible = ref(false)
 const categoryVisible = ref(false)
+const categoryPriorityVisible = ref(false)
+const categoryPrioritySaving = ref(false)
+const categoryPriorityDragSource = ref<string | null>(null)
+const categoryPriorityDragTarget = ref<string | null>(null)
 const termModalVisible = ref(false)
 const termEditingId = ref('')
 const termImportReplace = ref(false)
@@ -71,6 +75,8 @@ const termImportForm = reactive({
 })
 
 const categoryDraft = ref('')
+const categoryPriorityDrafts = reactive<Record<string, number>>({})
+const categoryPriorityItems = ref<KeywordCategoryInfo[]>([])
 
 const selectedLibrary = computed(() => {
   const libraryId = store.activeLibraryId
@@ -282,6 +288,7 @@ async function ensureSelectedLibraryResources() {
   await Promise.all([
     store.ensureTerms(library.id, { force: true }),
     store.ensureCategories(library.id, { force: true }),
+    store.ensureCategoryInfos(library.id, { force: true }),
   ])
 }
 
@@ -689,6 +696,98 @@ async function handleDeleteCategory(category: string) {
   }
 }
 
+async function openCategoryPriorityEditor() {
+  const library = selectedLibrary.value
+  if (!library) return
+  try {
+    const items = await store.ensureCategoryInfos(library.id, { force: true })
+    Object.keys(categoryPriorityDrafts).forEach((key) => delete categoryPriorityDrafts[key])
+    items.forEach((item) => {
+      categoryPriorityDrafts[item.name] = item.priority || 0
+    })
+    categoryPriorityItems.value = [...items]
+    categoryPriorityVisible.value = true
+  } catch (error) {
+    message.error(resolveErrorMessage(error, '加载分类优先级失败'))
+  }
+}
+
+async function handleSaveCategoryPriority(category: string) {
+  const library = selectedLibrary.value
+  if (!library) return
+  try {
+    await store.setCategoryPriority(library.id, category, Number(categoryPriorityDrafts[category] || 0))
+    const latest = await store.ensureCategoryInfos(library.id, { force: true })
+    categoryPriorityItems.value = [...latest]
+    message.success('分类优先级已更新')
+  } catch (error) {
+    message.error(resolveErrorMessage(error, '更新分类优先级失败'))
+  }
+}
+
+function applyCategoryPriorityOrder(items: KeywordCategoryInfo[]) {
+  const total = items.length
+  items.forEach((item, index) => {
+    categoryPriorityDrafts[item.name] = total - index
+  })
+}
+
+function handleCategoryPriorityDragStart(item: KeywordCategoryInfo) {
+  if (categoryPrioritySaving.value) return
+  categoryPriorityDragSource.value = item.name
+}
+
+function handleCategoryPriorityDragEnter(item: KeywordCategoryInfo) {
+  if (categoryPrioritySaving.value || !categoryPriorityDragSource.value || categoryPriorityDragSource.value === item.name) return
+  categoryPriorityDragTarget.value = item.name
+}
+
+function handleCategoryPriorityDragOver(event: DragEvent) {
+  if (categoryPrioritySaving.value) return
+  event.preventDefault()
+}
+
+function handleCategoryPriorityDragLeave() {
+  categoryPriorityDragTarget.value = null
+}
+
+async function handleCategoryPriorityDrop(item: KeywordCategoryInfo) {
+  const library = selectedLibrary.value
+  const sourceName = categoryPriorityDragSource.value
+  if (!library || categoryPrioritySaving.value || !sourceName || sourceName === item.name) return
+  const items = [...categoryPriorityItems.value]
+  const fromIndex = items.findIndex((entry) => entry.name === sourceName)
+  const toIndex = items.findIndex((entry) => entry.name === item.name)
+  if (fromIndex < 0 || toIndex < 0) return
+  const [moved] = items.splice(fromIndex, 1)
+  items.splice(toIndex, 0, moved)
+  applyCategoryPriorityOrder(items)
+  categoryPriorityItems.value = items.map((entry) => ({ ...entry, priority: categoryPriorityDrafts[entry.name] || 0 }))
+  categoryPrioritySaving.value = true
+  try {
+    await store.setCategoryPriorities(library.id, items.map((entry) => ({
+      name: entry.name,
+      priority: categoryPriorityDrafts[entry.name] || 0,
+    })))
+    const latest = await store.ensureCategoryInfos(library.id, { force: true })
+    categoryPriorityItems.value = [...latest]
+    message.success('已按拖拽顺序更新分类优先级')
+  } catch (error) {
+    message.error(resolveErrorMessage(error, '拖拽更新分类优先级失败'))
+    const latest = await store.ensureCategoryInfos(library.id, { force: true })
+    categoryPriorityItems.value = [...latest]
+  } finally {
+    categoryPrioritySaving.value = false
+    categoryPriorityDragSource.value = null
+    categoryPriorityDragTarget.value = null
+  }
+}
+
+function handleCategoryPriorityDragEnd() {
+  categoryPriorityDragSource.value = null
+  categoryPriorityDragTarget.value = null
+}
+
 watch(() => store.activeLibraryId, () => {
   selectedTermIds.value = []
   termCategoryFilter.value = ''
@@ -851,6 +950,7 @@ onMounted(async () => {
                 </div>
                 <n-space size="small">
                   <n-button size="small" @click="categoryVisible = true">分类</n-button>
+                  <n-button size="small" @click="openCategoryPriorityEditor">分类优先级</n-button>
                   <n-button size="small" @click="handleExportTerms">导出术语</n-button>
                   <n-button size="small" type="primary" @click="openCreateTerm">新建术语</n-button>
                   <n-button size="small" secondary @click="importTermsVisible = true">导入术语</n-button>
@@ -1094,6 +1194,43 @@ onMounted(async () => {
         <n-empty v-if="!categoryOptions.length" description="暂无分类" />
       </n-space>
     </n-modal>
+
+    <n-modal v-model:show="categoryPriorityVisible" preset="card" title="分类优先级" class="external-glossary-admin__modal">
+      <n-space vertical>
+        <div class="external-glossary-admin__category-tip">拖动排序后会立即保存，最上方优先级最高。</div>
+        <div
+          v-for="category in categoryPriorityItems"
+          :key="category.name"
+          class="external-glossary-admin__category-row"
+          :draggable="!categoryPrioritySaving"
+          :class="{ 'is-active': categoryPriorityDragTarget === category.name }"
+          @dragstart="handleCategoryPriorityDragStart(category)"
+          @dragenter="handleCategoryPriorityDragEnter(category)"
+          @dragover="handleCategoryPriorityDragOver"
+          @dragleave="handleCategoryPriorityDragLeave"
+          @drop="handleCategoryPriorityDrop(category)"
+          @dragend="handleCategoryPriorityDragEnd"
+        >
+          <div class="external-glossary-admin__category-meta">
+            <div class="external-glossary-admin__category-name">
+              <span class="external-glossary-admin__category-drag">::</span>
+              <span>{{ category.name }}</span>
+            </div>
+            <span class="external-glossary-admin__category-count">{{ category.count }} 个术语</span>
+          </div>
+          <n-space size="small">
+            <n-input-number
+              v-model:value="categoryPriorityDrafts[category.name]"
+              size="small"
+              style="width: 100px"
+              :disabled="categoryPrioritySaving"
+            />
+            <n-button size="tiny" text type="primary" :loading="categoryPrioritySaving" @click="handleSaveCategoryPriority(category.name)">保存</n-button>
+          </n-space>
+        </div>
+        <n-empty v-if="!categoryPriorityItems.length" description="暂无可配置分类" />
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
@@ -1263,6 +1400,44 @@ onMounted(async () => {
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  cursor: grab;
+}
+
+.external-glossary-admin__category-row.is-active {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.external-glossary-admin__category-row:active {
+  cursor: grabbing;
+}
+
+.external-glossary-admin__category-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.external-glossary-admin__category-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.external-glossary-admin__category-tip {
+  color: var(--text-color-3);
+  font-size: 12px;
+}
+
+.external-glossary-admin__category-drag {
+  color: var(--text-color-3);
+  font-size: 12px;
+  letter-spacing: 1px;
+  user-select: none;
+}
+
+.external-glossary-admin__category-count {
+  color: var(--text-color-3);
+  font-size: 12px;
 }
 
 .external-glossary-admin__pagination {

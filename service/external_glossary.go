@@ -289,6 +289,22 @@ func upsertExternalGlossaryCategory(tx *gorm.DB, libraryID, categoryName, actorI
 	return tx.Model(&existing).Update("updated_by", actorID).Error
 }
 
+func loadExternalGlossaryCategoryPriorityMap(db *gorm.DB, libraryID string) (map[string]int, error) {
+	var categories []model.ExternalGlossaryCategoryModel
+	if err := db.Where("library_id = ?", strings.TrimSpace(libraryID)).Find(&categories).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(categories))
+	for _, item := range categories {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		result[name] = item.Priority
+	}
+	return result, nil
+}
+
 func cleanupExternalGlossaryCategoryIfUnused(tx *gorm.DB, libraryID, categoryName string) error {
 	categoryName = strings.TrimSpace(categoryName)
 	if categoryName == "" {
@@ -618,6 +634,67 @@ func ExternalGlossaryCategoryList(libraryID, actorID string) ([]string, error) {
 	return merged, nil
 }
 
+func ExternalGlossaryCategoryListInfos(libraryID, actorID string) ([]KeywordCategoryInfo, error) {
+	if err := ensureExternalGlossaryAdmin(actorID); err != nil {
+		return nil, err
+	}
+	type categoryCountRow struct {
+		Category string
+		Count    int64
+	}
+	db := model.GetDB()
+	var termCategories []categoryCountRow
+	if err := db.Model(&model.ExternalGlossaryTermModel{}).
+		Select("category, COUNT(*) AS count").
+		Where("library_id = ? AND category != ''", strings.TrimSpace(libraryID)).
+		Group("category").
+		Scan(&termCategories).Error; err != nil {
+		return nil, err
+	}
+	var managedCategories []model.ExternalGlossaryCategoryModel
+	if err := db.Where("library_id = ?", strings.TrimSpace(libraryID)).Find(&managedCategories).Error; err != nil {
+		return nil, err
+	}
+	merged := map[string]*KeywordCategoryInfo{}
+	for _, item := range managedCategories {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		merged[name] = &KeywordCategoryInfo{
+			Name:     name,
+			Priority: item.Priority,
+			Count:    0,
+		}
+	}
+	for _, item := range termCategories {
+		name := strings.TrimSpace(item.Category)
+		if name == "" {
+			continue
+		}
+		if existing, ok := merged[name]; ok {
+			existing.Count = item.Count
+			continue
+		}
+		merged[name] = &KeywordCategoryInfo{
+			Name:     name,
+			Priority: 0,
+			Count:    item.Count,
+		}
+	}
+	result := make([]KeywordCategoryInfo, 0, len(merged))
+	for _, item := range merged {
+		result = append(result, *item)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Priority != result[j].Priority {
+			return result[i].Priority > result[j].Priority
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result, nil
+}
+
 func ExternalGlossaryCategoryCreate(libraryID, actorID, categoryName string) (string, error) {
 	if err := ensureExternalGlossaryAdmin(actorID); err != nil {
 		return "", err
@@ -632,6 +709,83 @@ func ExternalGlossaryCategoryCreate(libraryID, actorID, categoryName string) (st
 		return "", err
 	}
 	return name, nil
+}
+
+func ExternalGlossaryCategoryUpdatePriority(libraryID, actorID, categoryName string, priority int) (*KeywordCategoryInfo, error) {
+	if err := ensureExternalGlossaryAdmin(actorID); err != nil {
+		return nil, err
+	}
+	name, err := normalizeExternalGlossaryCategoryName(categoryName)
+	if err != nil {
+		return nil, err
+	}
+	db := model.GetDB()
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := upsertExternalGlossaryCategory(tx, strings.TrimSpace(libraryID), name, actorID); err != nil {
+			return err
+		}
+		return tx.Model(&model.ExternalGlossaryCategoryModel{}).
+			Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), name).
+			Updates(map[string]any{
+				"priority":   priority,
+				"updated_by": actorID,
+			}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	infos, err := ExternalGlossaryCategoryListInfos(libraryID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range infos {
+		if item.Name == name {
+			result := item
+			return &result, nil
+		}
+	}
+	return &KeywordCategoryInfo{Name: name, Priority: priority, Count: 0}, nil
+}
+
+func ExternalGlossaryCategoryBulkUpdatePriority(libraryID, actorID string, items []KeywordCategoryPriorityUpdate) (int, error) {
+	if err := ensureExternalGlossaryAdmin(actorID); err != nil {
+		return 0, err
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	updated := 0
+	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		seen := make(map[string]struct{}, len(items))
+		libraryID = strings.TrimSpace(libraryID)
+		for _, item := range items {
+			name, err := normalizeExternalGlossaryCategoryName(item.Name)
+			if err != nil {
+				return err
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			if err := upsertExternalGlossaryCategory(tx, libraryID, name, actorID); err != nil {
+				return err
+			}
+			res := tx.Model(&model.ExternalGlossaryCategoryModel{}).
+				Where("library_id = ? AND name = ?", libraryID, name).
+				Updates(map[string]any{
+					"priority":   item.Priority,
+					"updated_by": actorID,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected > 0 {
+				updated++
+			}
+		}
+		return nil
+	})
+	return updated, err
 }
 
 func ExternalGlossaryCategoryRename(libraryID, actorID, oldName, newName string) (int64, string, error) {
@@ -651,8 +805,30 @@ func ExternalGlossaryCategoryRename(libraryID, actorID, oldName, newName string)
 	}
 	var updated int64
 	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
-		if err := upsertExternalGlossaryCategory(tx, strings.TrimSpace(libraryID), to, actorID); err != nil {
+		oldPriority := 0
+		var oldCategory model.ExternalGlossaryCategoryModel
+		if err := tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), from).Limit(1).First(&oldCategory).Error; err == nil {
+			oldPriority = oldCategory.Priority
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		var targetCategory model.ExternalGlossaryCategoryModel
+		targetErr := tx.Where("library_id = ? AND name = ?", strings.TrimSpace(libraryID), to).Limit(1).First(&targetCategory).Error
+		if targetErr != nil {
+			if !errors.Is(targetErr, gorm.ErrRecordNotFound) {
+				return targetErr
+			}
+			record := &model.ExternalGlossaryCategoryModel{
+				LibraryID: strings.TrimSpace(libraryID),
+				Name:      to,
+				Priority:  oldPriority,
+				CreatedBy: actorID,
+				UpdatedBy: actorID,
+			}
+			record.Normalize()
+			if err := tx.Create(record).Error; err != nil {
+				return err
+			}
 		}
 		res := tx.Model(&model.ExternalGlossaryTermModel{}).
 			Where("library_id = ? AND category = ?", strings.TrimSpace(libraryID), from).

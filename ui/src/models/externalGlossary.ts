@@ -1,5 +1,5 @@
 import { api } from '@/stores/_config'
-import type { WorldKeywordPayload, WorldKeywordReorderItem } from './worldGlossary'
+import type { KeywordCategoryInfo, WorldKeywordPayload, WorldKeywordReorderItem } from './worldGlossary'
 
 export interface ExternalGlossaryLibraryItem {
   id: string
@@ -166,6 +166,11 @@ export async function fetchExternalGlossaryCategories(libraryId: string) {
   return data.categories
 }
 
+export async function fetchExternalGlossaryCategoryInfos(libraryId: string) {
+  const { data } = await api.get<{ items: KeywordCategoryInfo[] }>(`/api/v1/admin/external-glossaries/${libraryId}/categories/manage`)
+  return data.items
+}
+
 export async function createExternalGlossaryCategory(libraryId: string, name: string) {
   const { data } = await api.post<{ name: string }>(`/api/v1/admin/external-glossaries/${libraryId}/categories`, { name })
   return data.name
@@ -178,5 +183,15 @@ export async function renameExternalGlossaryCategory(libraryId: string, oldName:
 
 export async function deleteExternalGlossaryCategory(libraryId: string, name: string) {
   const { data } = await api.post<{ updated: number }>(`/api/v1/admin/external-glossaries/${libraryId}/categories/delete`, { name })
+  return data.updated
+}
+
+export async function updateExternalGlossaryCategoryPriority(libraryId: string, name: string, priority: number) {
+  const { data } = await api.post<{ item: KeywordCategoryInfo }>(`/api/v1/admin/external-glossaries/${libraryId}/categories/priority`, { name, priority })
+  return data.item
+}
+
+export async function bulkUpdateExternalGlossaryCategoryPriority(libraryId: string, items: Array<{ name: string; priority: number }>) {
+  const { data } = await api.post<{ updated: number }>(`/api/v1/admin/external-glossaries/${libraryId}/categories/priority/bulk`, { items })
   return data.updated
 }

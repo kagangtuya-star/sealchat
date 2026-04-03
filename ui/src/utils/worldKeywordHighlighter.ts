@@ -29,6 +29,49 @@ function canProcessNode(node: Node) {
   return Boolean(node.textContent && node.textContent.trim().length)
 }
 
+function compareKeywordPriority(left: CompiledKeywordSpan, right: CompiledKeywordSpan) {
+  const leftCategoryPriority = left.categoryPriority || 0
+  const rightCategoryPriority = right.categoryPriority || 0
+  if (leftCategoryPriority !== rightCategoryPriority) return rightCategoryPriority - leftCategoryPriority
+
+  const leftTier = left.sourceType === 'world' ? 0 : 1
+  const rightTier = right.sourceType === 'world' ? 0 : 1
+  if (leftTier !== rightTier) return leftTier - rightTier
+
+  const leftSourceSort = left.sourceSortOrder || 0
+  const rightSourceSort = right.sourceSortOrder || 0
+  if (leftSourceSort !== rightSourceSort) return rightSourceSort - leftSourceSort
+
+  const leftSortOrder = left.sortOrder || 0
+  const rightSortOrder = right.sortOrder || 0
+  if (leftSortOrder !== rightSortOrder) return rightSortOrder - leftSortOrder
+
+  if ((left.updatedAt || '') !== (right.updatedAt || '')) return (right.updatedAt || '').localeCompare(left.updatedAt || '')
+  return (left.id || '').localeCompare(right.id || '')
+}
+
+function compareRangePriority(
+  left: { start: number; end: number; keyword: CompiledKeywordSpan },
+  right: { start: number; end: number; keyword: CompiledKeywordSpan },
+) {
+  const keywordPriority = compareKeywordPriority(left.keyword, right.keyword)
+  if (keywordPriority !== 0) return keywordPriority
+
+  const leftLength = left.end - left.start
+  const rightLength = right.end - right.start
+  if (leftLength !== rightLength) return rightLength - leftLength
+  if (left.start !== right.start) return left.start - right.start
+  if (left.end !== right.end) return left.end - right.end
+  return 0
+}
+
+function rangesOverlap(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+) {
+  return left.start < right.end && right.start < left.end
+}
+
 function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
   const ranges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
 
@@ -36,73 +79,38 @@ function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
     return ranges
   }
 
-  // Build merged regex with capturing groups for O(n) matching
-  // Each keyword gets its own capturing group, allowing identification via match indices
-  try {
-    const patterns = compiled.map((entry) => `(${entry.regex.source})`)
-    const mergedPattern = patterns.join('|')
-    const mergedRegex = new RegExp(mergedPattern, 'gi')
-
+  compiled.forEach((entry) => {
+    const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
     let match: RegExpExecArray | null
-    while ((match = mergedRegex.exec(text)) !== null) {
+    while ((match = regex.exec(text)) !== null) {
       if (!match[0]) {
-        mergedRegex.lastIndex += 1
+        regex.lastIndex += 1
         continue
       }
-
-      // Find which capturing group matched (index 1 to N corresponds to compiled[0] to compiled[N-1])
-      let keywordIndex = -1
-      for (let i = 1; i < match.length; i++) {
-        if (match[i] !== undefined) {
-          keywordIndex = i - 1
-          break
-        }
-      }
-
-      if (keywordIndex >= 0 && keywordIndex < compiled.length) {
-        ranges.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          keyword: compiled[keywordIndex]
-        })
-      }
-
-      if (match.index === mergedRegex.lastIndex) {
-        mergedRegex.lastIndex += 1
+      ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
+      if (match.index === regex.lastIndex) {
+        regex.lastIndex += 1
       }
     }
-  } catch {
-    // Fallback to original approach if regex merge fails
-    compiled.forEach((entry) => {
-      const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
-      let match: RegExpExecArray | null
-      while ((match = regex.exec(text)) !== null) {
-        if (!match[0]) {
-          regex.lastIndex += 1
-          continue
-        }
-        ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
-        if (match.index === regex.lastIndex) {
-          regex.lastIndex += 1
-        }
-      }
-    })
-  }
+  })
 
-  // Sort by start position, prefer longer matches
-  ranges.sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start))
+  ranges.sort(compareRangePriority)
 
-  // Filter overlapping ranges
-  const filtered: typeof ranges = []
-  let cursor = -1
+  // Overlapping candidates now prefer configured classification priority first.
+  const selected: typeof ranges = []
   ranges.forEach((range) => {
-    if (range.start < cursor) {
+    if (selected.some((existing) => rangesOverlap(existing, range))) {
       return
     }
-    filtered.push(range)
-    cursor = range.end
+    selected.push(range)
   })
-  return filtered
+
+  selected.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start
+    if (a.end !== b.end) return a.end - b.end
+    return compareKeywordPriority(a.keyword, b.keyword)
+  })
+  return selected
 }
 
 function attachTouchDoubleTap(target: HTMLElement, handler: () => void) {

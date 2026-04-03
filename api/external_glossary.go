@@ -528,6 +528,18 @@ func ExternalGlossaryCategoryListHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"categories": categories})
 }
 
+func ExternalGlossaryCategoryInfoListHandler(c *fiber.Ctx) error {
+	user, err := ensureExternalGlossaryAdminAPI(c)
+	if err != nil {
+		return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"message": err.Error()})
+	}
+	items, listErr := service.ExternalGlossaryCategoryListInfos(c.Params("libraryId"), user.ID)
+	if listErr != nil {
+		return c.Status(mapExternalGlossaryErrorStatus(listErr)).JSON(fiber.Map{"message": listErr.Error()})
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
 func ExternalGlossaryCategoryCreateHandler(c *fiber.Ctx) error {
 	user, err := ensureExternalGlossaryAdminAPI(c)
 	if err != nil {
@@ -586,5 +598,46 @@ func ExternalGlossaryCategoryDeleteHandler(c *fiber.Ctx) error {
 	}
 	requestID := utils.NewID()
 	broadcastExternalGlossaryLibraryChanged([]string{c.Params("libraryId")}, "category-deleted", requestID, true)
+	return c.JSON(fiber.Map{"updated": updated, "requestId": requestID})
+}
+
+func ExternalGlossaryCategoryPriorityUpdateHandler(c *fiber.Ctx) error {
+	user, err := ensureExternalGlossaryAdminAPI(c)
+	if err != nil {
+		return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"message": err.Error()})
+	}
+	var payload struct {
+		Name     string `json:"name"`
+		Priority int    `json:"priority"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	item, updateErr := service.ExternalGlossaryCategoryUpdatePriority(c.Params("libraryId"), user.ID, payload.Name, payload.Priority)
+	if updateErr != nil {
+		return c.Status(mapExternalGlossaryErrorStatus(updateErr)).JSON(fiber.Map{"message": updateErr.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastExternalGlossaryLibraryChanged([]string{c.Params("libraryId")}, "category-priority-updated", requestID, true)
+	return c.JSON(fiber.Map{"item": item, "requestId": requestID})
+}
+
+func ExternalGlossaryCategoryPriorityBulkUpdateHandler(c *fiber.Ctx) error {
+	user, err := ensureExternalGlossaryAdminAPI(c)
+	if err != nil {
+		return c.Status(err.(*fiber.Error).Code).JSON(fiber.Map{"message": err.Error()})
+	}
+	var payload struct {
+		Items []service.KeywordCategoryPriorityUpdate `json:"items"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	updated, updateErr := service.ExternalGlossaryCategoryBulkUpdatePriority(c.Params("libraryId"), user.ID, payload.Items)
+	if updateErr != nil {
+		return c.Status(mapExternalGlossaryErrorStatus(updateErr)).JSON(fiber.Map{"message": updateErr.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastExternalGlossaryLibraryChanged([]string{c.Params("libraryId")}, "category-priority-bulk-updated", requestID, true)
 	return c.JSON(fiber.Map{"updated": updated, "requestId": requestID})
 }

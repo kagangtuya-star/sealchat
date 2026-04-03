@@ -23,7 +23,15 @@ export interface EffectiveWorldKeywordItem extends WorldKeywordItem {
   sourceType: 'world' | 'external_library'
   sourceId: string
   sourceName: string
+  categoryPriority?: number
+  sourceSortOrder?: number
   canQuickEdit: boolean
+}
+
+export interface KeywordCategoryInfo {
+  name: string
+  priority: number
+  count: number
 }
 
 export interface WorldKeywordListResponse {
@@ -124,6 +132,11 @@ export async function fetchWorldKeywordCategories(worldId: string): Promise<stri
   return data.categories
 }
 
+export async function fetchWorldKeywordCategoryInfos(worldId: string): Promise<KeywordCategoryInfo[]> {
+  const { data } = await api.get<{ items: KeywordCategoryInfo[] }>(`/api/v1/worlds/${worldId}/keywords/categories/manage`)
+  return data.items
+}
+
 export async function createWorldKeywordCategory(worldId: string, name: string): Promise<string> {
   const { data } = await api.post<{ name: string }>(`/api/v1/worlds/${worldId}/keywords/categories`, { name })
   return data.name
@@ -136,6 +149,16 @@ export async function renameWorldKeywordCategory(worldId: string, oldName: strin
 
 export async function deleteWorldKeywordCategory(worldId: string, name: string): Promise<number> {
   const { data } = await api.post<{ updated: number }>(`/api/v1/worlds/${worldId}/keywords/categories/delete`, { name })
+  return data.updated
+}
+
+export async function updateWorldKeywordCategoryPriority(worldId: string, name: string, priority: number): Promise<KeywordCategoryInfo> {
+  const { data } = await api.post<{ item: KeywordCategoryInfo }>(`/api/v1/worlds/${worldId}/keywords/categories/priority`, { name, priority })
+  return data.item
+}
+
+export async function bulkUpdateWorldKeywordCategoryPriority(worldId: string, items: Array<{ name: string; priority: number }>): Promise<number> {
+  const { data } = await api.post<{ updated: number }>(`/api/v1/worlds/${worldId}/keywords/categories/priority/bulk`, { items })
   return data.updated
 }
 

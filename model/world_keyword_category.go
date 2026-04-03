@@ -7,6 +7,7 @@ type WorldKeywordCategoryModel struct {
 	StringPKBaseModel
 	WorldID   string `json:"worldId" gorm:"size:100;index:idx_world_keyword_category_name,priority:1"`
 	Name      string `json:"name" gorm:"size:100;index:idx_world_keyword_category_name,priority:2"`
+	Priority  int    `json:"priority" gorm:"default:0"`
 	CreatedBy string `json:"createdBy" gorm:"size:100"`
 	UpdatedBy string `json:"updatedBy" gorm:"size:100"`
 }

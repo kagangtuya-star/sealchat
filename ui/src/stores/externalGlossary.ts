@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { chatEvent } from './chat'
+import { chatEvent, useChatStore } from './chat'
+import { useWorldGlossaryStore } from './worldGlossary'
 import type {
   ExternalGlossaryLibraryItem,
   ExternalGlossaryLibraryPayload,
@@ -8,6 +9,7 @@ import type {
 } from '@/models/externalGlossary'
 import {
   bulkDeleteExternalGlossaryLibraries,
+  bulkUpdateExternalGlossaryCategoryPriority,
   bulkDeleteExternalGlossaryTerms,
   createExternalGlossaryCategory,
   createExternalGlossaryLibrary,
@@ -17,6 +19,7 @@ import {
   deleteExternalGlossaryTerm,
   exportExternalGlossaryLibrary,
   exportExternalGlossaryTerms,
+  fetchExternalGlossaryCategoryInfos,
   fetchExternalGlossaryCategories,
   fetchExternalGlossaryLibraries,
   fetchExternalGlossaryTerms,
@@ -25,10 +28,11 @@ import {
   renameExternalGlossaryCategory,
   reorderExternalGlossaryLibraries,
   reorderExternalGlossaryTerms,
+  updateExternalGlossaryCategoryPriority,
   updateExternalGlossaryLibrary,
   updateExternalGlossaryTerm,
 } from '@/models/externalGlossary'
-import type { WorldKeywordPayload, WorldKeywordReorderItem } from '@/models/worldGlossary'
+import type { KeywordCategoryInfo, WorldKeywordPayload, WorldKeywordReorderItem } from '@/models/worldGlossary'
 
 interface LibraryPageState {
   items: ExternalGlossaryLibraryItem[]
@@ -48,10 +52,17 @@ interface TermPageState {
 
 let gatewayBound = false
 
+async function refreshCurrentWorldEffectiveKeywords() {
+  const worldId = useChatStore().currentWorldId
+  if (!worldId) return
+  await useWorldGlossaryStore().ensureEffectiveKeywords(worldId, { force: true })
+}
+
 export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
   const libraryPage = ref<LibraryPageState | null>(null)
   const termPages = ref<Record<string, TermPageState>>({})
   const categoriesMap = ref<Record<string, string[]>>({})
+  const categoryInfoMap = ref<Record<string, KeywordCategoryInfo[]>>({})
   const libraryVersion = ref(0)
   const libraryLoading = ref(false)
   const termLoadingMap = ref<Record<string, boolean>>({})
@@ -145,6 +156,16 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     const categories = await fetchExternalGlossaryCategories(libraryId)
     categoriesMap.value = { ...categoriesMap.value, [libraryId]: categories }
     return categories
+  }
+
+  async function ensureCategoryInfos(libraryId: string, opts?: { force?: boolean }) {
+    if (!libraryId) return []
+    if (!opts?.force && categoryInfoMap.value[libraryId]?.length) {
+      return categoryInfoMap.value[libraryId]
+    }
+    const items = await fetchExternalGlossaryCategoryInfos(libraryId)
+    categoryInfoMap.value = { ...categoryInfoMap.value, [libraryId]: items }
+    return items
   }
 
   async function createLibrary(payload: ExternalGlossaryLibraryPayload) {
@@ -303,6 +324,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
   async function addCategory(libraryId: string, name: string) {
     const nameCreated = await createExternalGlossaryCategory(libraryId, name)
     await ensureCategories(libraryId, { force: true })
+    await ensureCategoryInfos(libraryId, { force: true })
     return nameCreated
   }
 
@@ -310,6 +332,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     const result = await renameExternalGlossaryCategory(libraryId, oldName, newName)
     await ensureTerms(libraryId, { force: true })
     await ensureCategories(libraryId, { force: true })
+    await ensureCategoryInfos(libraryId, { force: true })
     return result
   }
 
@@ -317,6 +340,21 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     const updated = await deleteExternalGlossaryCategory(libraryId, name)
     await ensureTerms(libraryId, { force: true })
     await ensureCategories(libraryId, { force: true })
+    await ensureCategoryInfos(libraryId, { force: true })
+    return updated
+  }
+
+  async function setCategoryPriority(libraryId: string, name: string, priority: number) {
+    const item = await updateExternalGlossaryCategoryPriority(libraryId, name, priority)
+    await ensureCategoryInfos(libraryId, { force: true })
+    await refreshCurrentWorldEffectiveKeywords()
+    return item
+  }
+
+  async function setCategoryPriorities(libraryId: string, items: Array<{ name: string; priority: number }>) {
+    const updated = await bulkUpdateExternalGlossaryCategoryPriority(libraryId, items)
+    await ensureCategoryInfos(libraryId, { force: true })
+    await refreshCurrentWorldEffectiveKeywords()
     return updated
   }
 
@@ -340,6 +378,9 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
       if (categoriesMap.value[libraryId]) {
         void ensureCategories(libraryId, { force: true })
       }
+      if (categoryInfoMap.value[libraryId]) {
+        void ensureCategoryInfos(libraryId, { force: true })
+      }
     })
   }
 
@@ -355,6 +396,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     libraryPage,
     termPages,
     categoriesMap,
+    categoryInfoMap,
     libraryLoading,
     termLoadingMap,
     activeLibraryId,
@@ -363,6 +405,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     ensureLibraries,
     ensureTerms,
     ensureCategories,
+    ensureCategoryInfos,
     createLibrary,
     editLibrary,
     removeLibrary,
@@ -382,5 +425,7 @@ export const useExternalGlossaryStore = defineStore('externalGlossary', () => {
     addCategory,
     renameCategory,
     removeCategory,
+    setCategoryPriority,
+    setCategoryPriorities,
   }
 })
