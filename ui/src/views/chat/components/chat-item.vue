@@ -35,7 +35,7 @@ import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } fr
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
-import CharacterCardBadge from './CharacterCardBadge.vue'
+import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
 import type { ChannelIForm } from '@/types/iform';
@@ -3231,7 +3231,11 @@ const handleRetrySend = () => {
             </template>
             {{ messageSendErrorReason }}
           </n-tooltip>
-          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+          <IdentityMetaInlineRow
+            :identity-id="senderIdentityId"
+            :identity-color="nameColor"
+            :channel-id="chat.curChannel?.id || ''"
+          />
         </template>
 
         <template v-else>
@@ -3255,7 +3259,11 @@ const handleRetrySend = () => {
             </template>
             {{ messageSendErrorReason }}
           </n-tooltip>
-          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+          <IdentityMetaInlineRow
+            :identity-id="senderIdentityId"
+            :identity-color="nameColor"
+            :channel-id="chat.curChannel?.id || ''"
+          />
         </template>
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>

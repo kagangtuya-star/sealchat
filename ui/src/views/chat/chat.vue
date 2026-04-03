@@ -17,6 +17,7 @@ import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
+import ChannelRemarkManager from './components/ChannelRemarkManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import IcOocRoleConfigPanel from './components/IcOocRoleConfigPanel.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
@@ -50,6 +51,7 @@ import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
+import { useCharacterRemarkStore } from '@/stores/characterRemark';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
 import { copyTextWithFallback } from '@/utils/clipboard';
@@ -105,6 +107,7 @@ const user = useUserStore();
 const gallery = useGalleryStore();
 const utils = useUtilsStore();
 const display = useDisplayStore();
+const characterRemarkStore = useCharacterRemarkStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
@@ -220,6 +223,7 @@ type ExternalPanelKey =
   | 'gallery'
   | 'display'
   | 'favorites'
+  | 'character-remark'
   | 'channel-images'
   | 'world-glossary'
   | 'world-announcement'
@@ -251,6 +255,9 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
       return;
     case 'favorites':
       channelFavoritesVisible.value = true;
+      return;
+    case 'character-remark':
+      characterRemarkManagerVisible.value = true;
       return;
     case 'channel-images':
       openChannelImagesPanel();
@@ -347,6 +354,7 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const characterRemarkManagerVisible = ref(false);
 const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
@@ -1147,6 +1155,11 @@ const initCharacterCardBadge = (
   }
 };
 
+const initCharacterRemark = (channelId?: string) => {
+  if (!channelId || chat.isObserver) return;
+  void characterRemarkStore.requestRemarkSnapshot(channelId);
+};
+
 const CHARACTER_RESUME_SYNC_MIN_INTERVAL_MS = 1500;
 let lastCharacterResumeSyncAt = 0;
 let characterResumeSyncEpoch = 0;
@@ -1232,6 +1245,7 @@ const presenceBadgeUsers = new Set<string>();
 watch(
   () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled] as const,
   ([channelId, characterApiEnabled]) => {
+    initCharacterRemark(channelId);
     if (!channelId || characterApiEnabled !== true) return;
     void (async () => {
       const didSync = await simulateCurrentIdentitySelection(channelId);
@@ -12264,6 +12278,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   }
   if (hasNewPresence) {
     initCharacterCardBadge(channelId);
+    initCharacterRemark(channelId);
   }
 });
 
@@ -12327,6 +12342,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       await fetchLatestMessages();
     }
     await fetchPinnedMessages();
+    initCharacterRemark(chat.curChannel?.id);
     void syncCharacterCardAfterResume('ws-connected', {
       forceIdentityReload: true,
       bypassCooldown: true,
@@ -12347,6 +12363,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
+  initCharacterRemark(chat.curChannel?.id);
   initialMessageJumpReady.value = true;
   void consumePendingMessageJump();
   firstLoad = true;
@@ -13746,6 +13763,7 @@ onBeforeUnmount(() => {
           :gallery-active="galleryPanelVisible"
           :display-active="displaySettingsVisible"
           :favorite-active="display.favoriteBarEnabled"
+          :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
           :can-import="canManageWorldKeywords"
           :import-active="importDialogVisible"
@@ -13767,6 +13785,7 @@ onBeforeUnmount(() => {
           @open-gallery="openGalleryPanel"
           @open-display-settings="displaySettingsVisible = true"
           @open-favorites="channelFavoritesVisible = true"
+          @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
           @open-split="openSplitView"
           @toggle-sticky-note="toggleStickyNotes"
@@ -16589,6 +16608,7 @@ onBeforeUnmount(() => {
   />
 
   <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
+  <ChannelRemarkManager v-model:show="characterRemarkManagerVisible" />
   <WorldKeywordManager />
   <AnnouncementManagerModal
     v-model:visible="showWorldAnnouncementModal"

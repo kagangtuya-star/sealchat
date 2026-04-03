@@ -135,6 +135,8 @@ export interface DisplaySettings {
   // 人物卡
   characterCardBadgeEnabled: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
+  showOwnIdentityRemark: boolean
+  showOthersIdentityRemark: boolean
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -483,6 +485,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeTemplateByWorld: {},
+  showOwnIdentityRemark: true,
+  showOthersIdentityRemark: true,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -703,6 +707,8 @@ const loadSettings = (): DisplaySettings => {
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
         ? (parsed as any).characterCardBadgeTemplateByWorld
         : {},
+      showOwnIdentityRemark: coerceBoolean((parsed as any)?.showOwnIdentityRemark ?? true),
+      showOthersIdentityRemark: coerceBoolean((parsed as any)?.showOthersIdentityRemark ?? true),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -965,6 +971,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
           ? (patch as any).characterCardBadgeTemplateByWorld
           : {})
       : { ...base.characterCardBadgeTemplateByWorld },
+  showOwnIdentityRemark:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showOwnIdentityRemark')
+      ? coerceBoolean((patch as any).showOwnIdentityRemark)
+      : base.showOwnIdentityRemark,
+  showOthersIdentityRemark:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showOthersIdentityRemark')
+      ? coerceBoolean((patch as any).showOthersIdentityRemark)
+      : base.showOthersIdentityRemark,
 })
 
 export const useDisplayStore = defineStore('display', {
