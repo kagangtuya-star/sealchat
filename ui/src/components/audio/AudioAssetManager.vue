@@ -428,6 +428,7 @@ import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
 
 const audio = useAudioStudioStore();
@@ -1058,8 +1059,13 @@ function confirmDeleteAsset(asset: AudioAsset) {
 
 function copyStream(id: string) {
   const url = audio.buildStreamUrl(id);
-  navigator.clipboard.writeText(url).then(() => {
-    message.success('播放链接已复制');
+  void copyTextWithResult(url, {
+    onSuccess: () => {
+      message.success('播放链接已复制');
+    },
+    onFailure: () => {
+      message.error('复制失败');
+    },
   });
 }
 

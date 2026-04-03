@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { NAlert, NButton, NCard, NCheckbox, NCheckboxGroup, NDivider, NInput, NSpace, NTag, useDialog } from 'naive-ui';
+import { NAlert, NButton, NCard, NCheckbox, NCheckboxGroup, NDivider, NInput, NSpace, NTag, useDialog, useMessage } from 'naive-ui';
 import { api, urlBase } from '@/stores/_config';
+import { copyTextWithResult } from '@/utils/clipboard';
 
 type WebhookIntegrationItem = {
   id: string;
@@ -22,6 +23,7 @@ const props = defineProps<{
 }>();
 
 const dialog = useDialog();
+const message = useMessage();
 const loading = ref(false);
 const errorText = ref('');
 const items = ref<WebhookIntegrationItem[]>([]);
@@ -125,11 +127,11 @@ const refresh = async () => {
 const copyText = async (text: string) => {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
-  try {
-    await navigator.clipboard.writeText(trimmed);
-  } catch {
-    // 忽略：某些浏览器/非 https 环境可能失败
-  }
+  await copyTextWithResult(trimmed, {
+    onFailure: () => {
+      message.warning('复制失败，请手动复制 token');
+    },
+  });
 };
 
 const createIntegration = async () => {

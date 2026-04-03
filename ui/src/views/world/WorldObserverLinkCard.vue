@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { useChatStore } from '@/stores/chat';
+import { copyTextWithResult } from '@/utils/clipboard';
 
 const props = defineProps<{
   worldId: string;
@@ -240,24 +241,14 @@ const copyText = async (value: string, successText: string) => {
     message.warning('请先填写并保存 OB 链接标识');
     return;
   }
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-    } else {
-      const textarea = document.createElement('textarea');
-      textarea.value = value;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-    }
-    message.success(successText);
-  } catch {
-    message.error('复制失败，请手动复制');
-  }
+  await copyTextWithResult(value, {
+    onSuccess: () => {
+      message.success(successText);
+    },
+    onFailure: () => {
+      message.error('复制失败，请手动复制');
+    },
+  });
 };
 
 const copyLink = async () => copyText(fullLink.value, '已复制 OB 旁观链接');
