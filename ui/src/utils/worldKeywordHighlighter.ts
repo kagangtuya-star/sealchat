@@ -1,5 +1,6 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 import type { KeywordTooltipController } from './keywordTooltip'
+import { shouldKeepKeywordTooltipOpenOnTransition } from './keywordTooltipHoverBoundary'
 import { applyKeywordTooltipSessionToElement } from './worldKeywordTooltipCandidates'
 
 interface HighlightOptions {
@@ -264,20 +265,28 @@ function setupEventDelegation(
       const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
       if (!span || !root.contains(span)) return
 
-      // Check if mouse moved to another highlight or outside
       const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
-      const movedToHighlight = relatedTarget?.closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-
-      // Only hide if not moving to another highlight
-      if (!movedToHighlight || !root.contains(movedToHighlight)) {
+      if (!shouldKeepKeywordTooltipOpenOnTransition({
+        root,
+        relatedTarget,
+        hoverTooltip: tooltip.getHoverTooltipElement(),
+      })) {
         tooltip.hide(span)
         currentHoveredSpan = null
       }
     })
 
-    // Fallback: hide tooltip when mouse leaves root entirely
-    root.addEventListener('mouseleave', () => {
-      if (currentHoveredSpan) {
+    root.addEventListener('mouseleave', (e) => {
+      if (!currentHoveredSpan) {
+        return
+      }
+
+      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
+      if (!shouldKeepKeywordTooltipOpenOnTransition({
+        root,
+        relatedTarget,
+        hoverTooltip: tooltip.getHoverTooltipElement(),
+      })) {
         tooltip.hide(currentHoveredSpan)
         currentHoveredSpan = null
       }

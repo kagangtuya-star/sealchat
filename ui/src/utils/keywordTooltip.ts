@@ -10,6 +10,7 @@ import {
   type KeywordTooltipCandidate,
   type KeywordTooltipSessionState,
 } from './worldKeywordTooltipCandidates'
+import { isTargetWithinElement } from './keywordTooltipHoverBoundary'
 import { shouldReuseHoverTooltipForPin } from './keywordTooltipPinReuse'
 import { shouldHideTooltipBeforePositioning } from './keywordTooltipVisibility'
 
@@ -433,6 +434,7 @@ export interface KeywordTooltipController {
   unpin: () => void
   destroy: () => void
   hideAll: () => void
+  getHoverTooltipElement: () => HTMLElement | null
   getCurrentLevel: () => number
 }
 
@@ -448,6 +450,7 @@ export function createKeywordTooltip(
       unpin() { },
       destroy() { },
       hideAll() { },
+      getHoverTooltipElement: () => null,
       getCurrentLevel: () => 0
     }
   }
@@ -462,10 +465,35 @@ export function createKeywordTooltip(
   let currentHoveredKeywordId: string | null = null
   let candidateLoadToken = 0
 
+  const setupHoverTooltipLifecycle = (tooltip: HTMLDivElement) => {
+    if (tooltip.dataset.hoverLifecycleBound === '1') {
+      return
+    }
+    tooltip.dataset.hoverLifecycleBound = '1'
+
+    tooltip.addEventListener('mouseenter', () => {
+      clearPendingHide()
+    })
+
+    tooltip.addEventListener('mouseleave', (event) => {
+      if (currentTooltip?.isPinned) {
+        return
+      }
+
+      const relatedTarget = event.relatedTarget as EventTarget | null
+      if (isTargetWithinElement(relatedTarget, currentSession?.target ?? null)) {
+        return
+      }
+
+      hide()
+    })
+  }
+
   const getHoverTooltip = () => {
     if (!hoverTooltipElement) {
       hoverTooltipElement = createTooltipElement(level)
       hoverTooltipElement.classList.add('keyword-tooltip--hover')
+      setupHoverTooltipLifecycle(hoverTooltipElement)
     }
     return hoverTooltipElement
   }
@@ -1064,6 +1092,7 @@ export function createKeywordTooltip(
       currentTooltip = null
       hideAllTooltips()
     },
+    getHoverTooltipElement: () => hoverTooltipElement,
     getCurrentLevel: () => level
   }
 }
