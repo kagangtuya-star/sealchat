@@ -64,9 +64,57 @@ html[data-display-palette='night'] .keyword-highlight--underline:hover {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
+:root[data-display-palette='night'] .keyword-tooltip__nav-btn {
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
 .keyword-tooltip__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.keyword-tooltip__title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.keyword-tooltip__nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.keyword-tooltip__nav-btn {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.keyword-tooltip__nav-btn:disabled {
+  opacity: 0.35;
+}
+
+.keyword-tooltip__nav-count {
+  min-width: 28px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .keyword-tooltip__redirect {
@@ -80,6 +128,10 @@ html[data-display-palette='night'] .keyword-highlight--underline:hover {
   white-space: pre-line;
   line-height: 1.4;
   margin-bottom: 0;
+}
+
+.keyword-tooltip--swipeable {
+  touch-action: pan-y;
 }
 
 /* Rich text content styles */

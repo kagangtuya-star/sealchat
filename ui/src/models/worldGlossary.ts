@@ -80,13 +80,19 @@ export async function fetchWorldKeywordsPublic(worldId: string, params?: { page?
   return data
 }
 
-export async function fetchEffectiveWorldKeywords(worldId: string, params?: { q?: string; category?: string; includeDisabled?: boolean }) {
+export async function fetchEffectiveWorldKeywords(
+  worldId: string,
+  params?: { q?: string; category?: string; includeDisabled?: boolean; includeAllMatches?: boolean },
+) {
   if (!worldId) throw new Error('worldId is required')
   const { data } = await api.get<EffectiveWorldKeywordListResponse>(`/api/v1/worlds/${worldId}/keywords/effective`, { params })
   return data
 }
 
-export async function fetchEffectiveWorldKeywordsPublic(worldId: string, params?: { q?: string; category?: string }) {
+export async function fetchEffectiveWorldKeywordsPublic(
+  worldId: string,
+  params?: { q?: string; category?: string; includeAllMatches?: boolean },
+) {
   if (!worldId) throw new Error('worldId is required')
   const { data } = await api.get<EffectiveWorldKeywordListResponse>(`/api/v1/public/worlds/${worldId}/keywords/effective`, { params })
   return data

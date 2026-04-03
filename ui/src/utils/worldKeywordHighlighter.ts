@@ -1,5 +1,6 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 import type { KeywordTooltipController } from './keywordTooltip'
+import { applyKeywordTooltipSessionToElement } from './worldKeywordTooltipCandidates'
 
 interface HighlightOptions {
   underlineOnly: boolean
@@ -9,6 +10,17 @@ interface HighlightOptions {
 
 const HIGHLIGHT_CLASS = 'keyword-highlight'
 const UNDERLINE_ONLY_CLASS = 'keyword-highlight--underline'
+
+interface MatchedKeywordCandidate {
+  keyword: CompiledKeywordSpan
+  matchedVia: string
+}
+
+interface HighlightRangeGroup {
+  start: number
+  end: number
+  candidates: MatchedKeywordCandidate[]
+}
 
 function clearExistingHighlights(root: HTMLElement) {
   const highlights = root.querySelectorAll(`span.${HIGHLIGHT_CLASS}`)
@@ -72,11 +84,11 @@ function rangesOverlap(
   return left.start < right.end && right.start < left.end
 }
 
-function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
-  const ranges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
+function buildRanges(text: string, compiled: CompiledKeywordSpan[]): HighlightRangeGroup[] {
+  const rawRanges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
 
   if (!compiled.length || !text) {
-    return ranges
+    return []
   }
 
   compiled.forEach((entry) => {
@@ -87,28 +99,47 @@ function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
         regex.lastIndex += 1
         continue
       }
-      ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
+      rawRanges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
       if (match.index === regex.lastIndex) {
         regex.lastIndex += 1
       }
     }
   })
 
-  ranges.sort(compareRangePriority)
+  rawRanges.sort(compareRangePriority)
 
   // Overlapping candidates now prefer configured classification priority first.
-  const selected: typeof ranges = []
-  ranges.forEach((range) => {
+  const selected: HighlightRangeGroup[] = []
+  rawRanges.forEach((range) => {
+    const existingExactRange = selected.find((existing) => existing.start === range.start && existing.end === range.end)
+    if (existingExactRange) {
+      if (!existingExactRange.candidates.some((candidate) => candidate.keyword.id === range.keyword.id)) {
+        existingExactRange.candidates.push({
+          keyword: range.keyword,
+          matchedVia: range.keyword.source,
+        })
+        existingExactRange.candidates.sort((left, right) => compareKeywordPriority(left.keyword, right.keyword))
+      }
+      return
+    }
+
     if (selected.some((existing) => rangesOverlap(existing, range))) {
       return
     }
-    selected.push(range)
+    selected.push({
+      start: range.start,
+      end: range.end,
+      candidates: [{
+        keyword: range.keyword,
+        matchedVia: range.keyword.source,
+      }],
+    })
   })
 
   selected.sort((a, b) => {
     if (a.start !== b.start) return a.start - b.start
     if (a.end !== b.end) return a.end - b.end
-    return compareKeywordPriority(a.keyword, b.keyword)
+    return compareKeywordPriority(a.candidates[0].keyword, b.candidates[0].keyword)
   })
   return selected
 }
@@ -152,8 +183,13 @@ function wrapRanges(
   let lastIndex = 0
 
   ranges.forEach((range) => {
+    const primaryCandidate = range.candidates[0]
+    if (!primaryCandidate) {
+      return
+    }
+
     // Skip if deduplication is enabled and this keyword was already highlighted
-    if (options.deduplicate && highlightedKeywords.has(range.keyword.id)) {
+    if (options.deduplicate && highlightedKeywords.has(primaryCandidate.keyword.id)) {
       return
     }
 
@@ -163,13 +199,18 @@ function wrapRanges(
     const span = document.createElement('span')
     span.className = HIGHLIGHT_CLASS
     const shouldUnderline =
-      range.keyword.display === 'minimal' ||
-      (options.underlineOnly && range.keyword.display === 'inherit')
+      primaryCandidate.keyword.display === 'minimal' ||
+      (options.underlineOnly && primaryCandidate.keyword.display === 'inherit')
     if (shouldUnderline) {
       span.classList.add(UNDERLINE_ONLY_CLASS)
     }
-    span.dataset.keywordId = range.keyword.id
-    span.dataset.keywordSource = range.keyword.source
+    applyKeywordTooltipSessionToElement(span, {
+      candidates: range.candidates.map((candidate) => ({
+        keywordId: candidate.keyword.id,
+        matchedVia: candidate.matchedVia,
+      })),
+      activeIndex: 0,
+    })
     span.textContent = text.slice(range.start, range.end)
 
     // No individual event listeners - using event delegation instead
@@ -178,7 +219,7 @@ function wrapRanges(
 
     // Track this keyword as highlighted if deduplication is enabled
     if (options.deduplicate) {
-      highlightedKeywords.add(range.keyword.id)
+      highlightedKeywords.add(primaryCandidate.keyword.id)
     }
 
     lastIndex = range.end

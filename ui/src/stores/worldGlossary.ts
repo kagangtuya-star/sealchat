@@ -29,6 +29,10 @@ import {
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
 import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
+import {
+  dedupeEffectiveKeywordsByKeyword,
+  filterExactEffectiveKeywordCandidates,
+} from '@/utils/worldKeywordConflictCandidates'
 import { useUtilsStore } from './utils'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
@@ -170,13 +174,15 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const quickPrefill = ref<string | null>(null)
   const importState = ref<KeywordImportState>({ visible: false, processing: false, worldId: null, lastStats: null })
   const searchQuery = ref('')
+  const effectiveConflictCandidateCache = new Map<string, EffectiveWorldKeywordItem[]>()
+  const effectiveConflictCandidatePending = new Map<string, Promise<EffectiveWorldKeywordItem[]>>()
 
   const currentWorldId = computed(() => useChatStore().currentWorldId)
 
   const currentKeywords = computed(() => {
     const worldId = currentWorldId.value
     if (!worldId) return []
-    return effectivePages.value[worldId]?.items || []
+    return dedupeEffectiveKeywordsByKeyword(effectivePages.value[worldId]?.items || [])
   })
 
   const currentCompiled = computed(() => {
@@ -407,9 +413,63 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
         ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query })
         : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query })
       updateEffectiveKeywordCache(worldId, data.items, data)
+      Array.from(effectiveConflictCandidateCache.keys()).forEach((key) => {
+        if (key.startsWith(`${worldId}::`)) {
+          effectiveConflictCandidateCache.delete(key)
+        }
+      })
+      Array.from(effectiveConflictCandidatePending.keys()).forEach((key) => {
+        if (key.startsWith(`${worldId}::`)) {
+          effectiveConflictCandidatePending.delete(key)
+        }
+      })
       effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: Date.now() }
     } finally {
       effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: false }
+    }
+  }
+
+  async function ensureEffectiveKeywordConflictCandidates(worldId: string, matchedText: string) {
+    const normalizedMatchedText = String(matchedText || '').trim().toLowerCase()
+    if (!worldId || !normalizedMatchedText) {
+      return []
+    }
+    const cacheKey = `${worldId}::${normalizedMatchedText}`
+    const cached = effectiveConflictCandidateCache.get(cacheKey)
+    if (cached) {
+      return cached
+    }
+    const pending = effectiveConflictCandidatePending.get(cacheKey)
+    if (pending) {
+      return pending
+    }
+
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) {
+      return []
+    }
+
+    const request = (async () => {
+      const data = chat.isObserver
+        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: matchedText, includeAllMatches: true })
+        : await fetchEffectiveWorldKeywords(worldId, { q: matchedText, includeAllMatches: true })
+      const normalizedItems = data.items.map(normalizeEffectiveKeywordItem)
+      const exactMatches = filterExactEffectiveKeywordCandidates(normalizedItems, matchedText)
+      const nextMap = { ...effectiveKeywordById.value }
+      exactMatches.forEach((item) => {
+        nextMap[item.id] = item
+      })
+      effectiveKeywordById.value = nextMap
+      effectiveConflictCandidateCache.set(cacheKey, exactMatches)
+      return exactMatches
+    })()
+
+    effectiveConflictCandidatePending.set(cacheKey, request)
+    try {
+      return await request
+    } finally {
+      effectiveConflictCandidatePending.delete(cacheKey)
     }
   }
 
@@ -632,6 +692,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     loadingMap,
     ensureKeywords,
     ensureEffectiveKeywords,
+    ensureEffectiveKeywordConflictCandidates,
     createKeyword,
     editKeyword,
     removeKeyword,

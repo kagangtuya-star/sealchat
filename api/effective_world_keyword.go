@@ -10,9 +10,10 @@ import (
 
 func parseEffectiveWorldKeywordListOptions(c *fiber.Ctx) service.EffectiveWorldKeywordListOptions {
 	return service.EffectiveWorldKeywordListOptions{
-		Query:           strings.TrimSpace(c.Query("q")),
-		Category:        strings.TrimSpace(c.Query("category")),
-		IncludeDisabled: c.QueryBool("includeDisabled"),
+		Query:             strings.TrimSpace(c.Query("q")),
+		Category:          strings.TrimSpace(c.Query("category")),
+		IncludeDisabled:   c.QueryBool("includeDisabled"),
+		IncludeAllMatches: c.QueryBool("includeAllMatches"),
 	}
 }
 

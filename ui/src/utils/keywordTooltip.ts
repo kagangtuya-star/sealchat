@@ -1,6 +1,17 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 import { createImageTokenRegex, isValidAttachmentToken } from '@/utils/attachmentMarkdown'
 import { tiptapJsonToHtml, isTipTapJson } from '@/utils/tiptap-render'
+import {
+  applyKeywordTooltipSessionToElement,
+  parseKeywordTooltipSession,
+  resetKeywordTooltipSessionOnElement,
+  resolveActiveKeywordTooltipCandidate,
+  serializeKeywordTooltipCandidates,
+  type KeywordTooltipCandidate,
+  type KeywordTooltipSessionState,
+} from './worldKeywordTooltipCandidates'
+import { shouldReuseHoverTooltipForPin } from './keywordTooltipPinReuse'
+import { shouldHideTooltipBeforePositioning } from './keywordTooltipVisibility'
 
 interface TooltipContent {
   title: string
@@ -11,12 +22,21 @@ interface TooltipContent {
 }
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
+type CandidateLoader = (
+  target: HTMLElement,
+  session: KeywordTooltipSessionState,
+) => Promise<KeywordTooltipCandidate[] | null | undefined>
 
 interface TooltipInstance {
   element: HTMLDivElement
   level: number
   keywordId: string
   isPinned: boolean
+}
+
+interface TooltipSession extends KeywordTooltipSessionState {
+  isPinned: boolean
+  target: HTMLElement
 }
 
 const MAX_NESTING_DEPTH = 4
@@ -26,6 +46,8 @@ const TOOLTIP_MAX_WIDTH = 360
 const TOOLTIP_MIN_WIDTH = 180
 const TOOLTIP_MAX_HEIGHT_RATIO = 0.6 // 最大高度为视口高度的60%
 const FONT_SURFACE_ATTR = 'data-sc-font-surface'
+const SWIPE_LOCK_THRESHOLD_PX = 12
+const SWIPE_COMMIT_THRESHOLD_PX = 44
 
 // 确保滚动条样式已注入到页面
 let tooltipStylesInjected = false
@@ -401,6 +423,7 @@ export interface KeywordTooltipOptions {
   onKeywordDoubleInvoke?: (keywordId: string) => void
   underlineOnly?: boolean
   textIndent?: number  // 多段首行缩进值（em），0 或未定义则不缩进
+  candidateLoader?: CandidateLoader
 }
 
 export interface KeywordTooltipController {
@@ -433,9 +456,11 @@ export function createKeywordTooltip(
   const underlineOnly = options?.underlineOnly ?? false
   const textIndent = options?.textIndent ?? 0
   let currentTooltip: TooltipInstance | null = null
+  let currentSession: TooltipSession | null = null
   let hoverTooltipElement: HTMLDivElement | null = null
   let nestedTooltipControllers: Map<string, KeywordTooltipController> = new Map()
   let currentHoveredKeywordId: string | null = null
+  let candidateLoadToken = 0
 
   const getHoverTooltip = () => {
     if (!hoverTooltipElement) {
@@ -449,6 +474,80 @@ export function createKeywordTooltip(
     nestedTooltipControllers.forEach(ctrl => ctrl.destroy())
     nestedTooltipControllers.clear()
     currentHoveredKeywordId = null
+  }
+
+  const createSession = (target: HTMLElement, keywordId: string, isPinned: boolean): TooltipSession => {
+    const parsed = parseKeywordTooltipSession(target, keywordId, target.dataset.keywordSource)
+    return {
+      ...parsed,
+      isPinned,
+      target,
+    }
+  }
+
+  const getActiveCandidate = (session: TooltipSession | null) => (
+    session ? resolveActiveKeywordTooltipCandidate(session) : null
+  )
+
+  const getActiveKeywordId = (session: TooltipSession | null) => getActiveCandidate(session)?.keywordId || null
+
+  const syncSessionToTarget = (session: TooltipSession) => {
+    applyKeywordTooltipSessionToElement(session.target, session)
+  }
+
+  const resetCurrentSessionTarget = () => {
+    if (!currentSession) return
+    resetKeywordTooltipSessionOnElement(currentSession.target)
+    currentSession = null
+  }
+
+  const hydrateSessionCandidates = async (
+    session: TooltipSession,
+    tooltip: HTMLDivElement,
+  ) => {
+    if (!options?.candidateLoader || session.candidates.length > 1 || currentSession !== session) {
+      return
+    }
+
+    const requestToken = ++candidateLoadToken
+    const currentActiveKeywordId = getActiveKeywordId(session)
+    const loadedCandidates = await options.candidateLoader(session.target, session)
+
+    if (
+      requestToken !== candidateLoadToken
+      || currentSession !== session
+      || !loadedCandidates
+      || loadedCandidates.length <= session.candidates.length
+    ) {
+      return
+    }
+
+    session.candidates = loadedCandidates
+    const nextActiveIndex = currentActiveKeywordId
+      ? loadedCandidates.findIndex((candidate) => candidate.keywordId === currentActiveKeywordId)
+      : -1
+    session.activeIndex = nextActiveIndex >= 0 ? nextActiveIndex : 0
+    syncSessionToTarget(session)
+
+    const activeCandidate = getActiveCandidate(session)
+    if (!activeCandidate) {
+      return
+    }
+
+    const data = resolver(activeCandidate.keywordId)
+    if (!data) {
+      return
+    }
+
+    if (currentTooltip?.element === tooltip) {
+      currentTooltip.keywordId = activeCandidate.keywordId
+    }
+
+    renderContent(tooltip, {
+      ...data,
+      matchedVia: activeCandidate.matchedVia,
+    }, activeCandidate.keywordId, session.isPinned, session)
+    positionTooltip(tooltip, session.target)
   }
 
   const getOrCreateNestedController = (keywordId: string): KeywordTooltipController => {
@@ -466,7 +565,12 @@ export function createKeywordTooltip(
     return controller
   }
 
-  const setupTooltipEventDelegation = (tooltip: HTMLDivElement, currentKeywordId: string) => {
+  const setupTooltipEventDelegation = (tooltip: HTMLDivElement) => {
+    if (tooltip.dataset.nestedKeywordBound === '1') {
+      return
+    }
+    tooltip.dataset.nestedKeywordBound = '1'
+
     // Use event delegation on the tooltip element for nested keyword interactions
     tooltip.addEventListener('mouseover', (e) => {
       const target = e.target as HTMLElement
@@ -481,6 +585,7 @@ export function createKeywordTooltip(
         return
       }
 
+      const currentKeywordId = getActiveKeywordId(currentSession)
       if (nestedKeywordId === currentKeywordId) {
         return
       }
@@ -501,6 +606,7 @@ export function createKeywordTooltip(
       if (!keywordSpan) return
 
       const nestedKeywordId = keywordSpan.dataset.keywordId
+      const currentKeywordId = getActiveKeywordId(currentSession)
       if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
 
       // Check if we're moving to a child element (still inside the keyword)
@@ -521,6 +627,7 @@ export function createKeywordTooltip(
       // If clicking on a nested keyword, handle it
       if (keywordSpan) {
         const nestedKeywordId = keywordSpan.dataset.keywordId
+        const currentKeywordId = getActiveKeywordId(currentSession)
         if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
 
         e.stopPropagation()
@@ -542,6 +649,7 @@ export function createKeywordTooltip(
       if (!keywordSpan) return
 
       const nestedKeywordId = keywordSpan.dataset.keywordId
+      const currentKeywordId = getActiveKeywordId(currentSession)
       if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return
       e.stopPropagation()
       e.preventDefault()
@@ -549,15 +657,143 @@ export function createKeywordTooltip(
     })
   }
 
-  const renderContent = (tooltip: HTMLDivElement, data: TooltipContent, keywordId: string, isPinned: boolean) => {
+  const setupTooltipSwipeNavigation = (tooltip: HTMLDivElement) => {
+    if (tooltip.dataset.swipeNavigationBound === '1') {
+      return
+    }
+    tooltip.dataset.swipeNavigationBound = '1'
+
+    let pointerId: number | null = null
+    let startX = 0
+    let startY = 0
+    let lockedAxis: 'x' | 'y' | null = null
+    let hasSwitched = false
+
+    const clearGestureState = () => {
+      pointerId = null
+      lockedAxis = null
+      hasSwitched = false
+      startX = 0
+      startY = 0
+    }
+
+    tooltip.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse') return
+      const session = currentSession
+      if (!session?.isPinned || session.candidates.length <= 1) return
+      pointerId = event.pointerId
+      startX = event.clientX
+      startY = event.clientY
+      lockedAxis = null
+      hasSwitched = false
+    })
+
+    tooltip.addEventListener('pointermove', (event) => {
+      if (pointerId !== event.pointerId) return
+      const session = currentSession
+      if (!session?.isPinned || session.candidates.length <= 1) return
+
+      const deltaX = event.clientX - startX
+      const deltaY = event.clientY - startY
+      const absX = Math.abs(deltaX)
+      const absY = Math.abs(deltaY)
+
+      if (!lockedAxis) {
+        if (absX < SWIPE_LOCK_THRESHOLD_PX && absY < SWIPE_LOCK_THRESHOLD_PX) {
+          return
+        }
+        lockedAxis = absX > absY ? 'x' : 'y'
+      }
+
+      if (lockedAxis === 'x') {
+        event.preventDefault()
+      }
+    }, { passive: false })
+
+    tooltip.addEventListener('pointerup', (event) => {
+      if (pointerId !== event.pointerId) return
+      const session = currentSession
+      if (!session?.isPinned || session.candidates.length <= 1) {
+        clearGestureState()
+        return
+      }
+
+      const deltaX = event.clientX - startX
+      const deltaY = event.clientY - startY
+      if (
+        lockedAxis === 'x'
+        && !hasSwitched
+        && Math.abs(deltaX) >= SWIPE_COMMIT_THRESHOLD_PX
+        && Math.abs(deltaX) > Math.abs(deltaY)
+      ) {
+        hasSwitched = true
+        event.preventDefault()
+        switchSessionCandidate(session, deltaX > 0 ? -1 : 1, tooltip)
+      }
+      clearGestureState()
+    })
+
+    tooltip.addEventListener('pointercancel', clearGestureState)
+  }
+
+  const renderContent = (
+    tooltip: HTMLDivElement,
+    data: TooltipContent,
+    keywordId: string,
+    isPinned: boolean,
+    session: TooltipSession,
+  ) => {
     cleanupNestedControllers()
 
     tooltip.innerHTML = ''
     tooltip.classList.toggle('keyword-tooltip--pinned', isPinned)
+    tooltip.classList.toggle('keyword-tooltip--multi', session.candidates.length > 1)
+    tooltip.classList.toggle('keyword-tooltip--swipeable', isPinned && session.candidates.length > 1)
 
     const header = document.createElement('div')
     header.className = 'keyword-tooltip__header'
-    header.textContent = data.title || '术语'
+
+    const title = document.createElement('div')
+    title.className = 'keyword-tooltip__title'
+    title.textContent = data.title || '术语'
+    header.appendChild(title)
+
+    if (session.candidates.length > 1) {
+      const nav = document.createElement('div')
+      nav.className = 'keyword-tooltip__nav'
+
+      const previousButton = document.createElement('button')
+      previousButton.type = 'button'
+      previousButton.className = 'keyword-tooltip__nav-btn'
+      previousButton.textContent = '‹'
+      previousButton.disabled = session.activeIndex <= 0
+      previousButton.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        switchSessionCandidate(session, -1, tooltip)
+      })
+
+      const counter = document.createElement('span')
+      counter.className = 'keyword-tooltip__nav-count'
+      counter.textContent = `${session.activeIndex + 1}/${session.candidates.length}`
+
+      const nextButton = document.createElement('button')
+      nextButton.type = 'button'
+      nextButton.className = 'keyword-tooltip__nav-btn'
+      nextButton.textContent = '›'
+      nextButton.disabled = session.activeIndex >= session.candidates.length - 1
+      nextButton.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        switchSessionCandidate(session, 1, tooltip)
+      })
+
+      nav.appendChild(previousButton)
+      nav.appendChild(counter)
+      nav.appendChild(nextButton)
+      header.appendChild(nav)
+    }
+
     tooltip.appendChild(header)
 
     // Show redirect info if matched via alias
@@ -635,21 +871,60 @@ export function createKeywordTooltip(
     }
 
     // Setup event delegation for nested keywords
-    setupTooltipEventDelegation(tooltip, keywordId)
+    setupTooltipEventDelegation(tooltip)
+    setupTooltipSwipeNavigation(tooltip)
 
     // Setup image click handler for ViewerJS
     setupImageViewer(tooltip)
   }
 
+  const switchSessionCandidate = (
+    session: TooltipSession,
+    delta: number,
+    tooltip: HTMLDivElement,
+  ) => {
+    const nextIndex = session.activeIndex + delta
+    if (nextIndex < 0 || nextIndex >= session.candidates.length) {
+      return
+    }
+
+    session.activeIndex = nextIndex
+    syncSessionToTarget(session)
+
+    const activeCandidate = getActiveCandidate(session)
+    if (!activeCandidate) {
+      return
+    }
+
+    const data = resolver(activeCandidate.keywordId)
+    if (!data) {
+      return
+    }
+
+    if (currentTooltip?.element === tooltip) {
+      currentTooltip.keywordId = activeCandidate.keywordId
+    }
+
+    renderContent(tooltip, {
+      ...data,
+      matchedVia: activeCandidate.matchedVia,
+    }, activeCandidate.keywordId, session.isPinned, session)
+    positionTooltip(tooltip, session.target)
+  }
+
   const positionTooltip = (tooltip: HTMLDivElement, target: HTMLElement) => {
-    tooltip.style.visibility = 'hidden'
-    tooltip.style.display = 'block'
+    const shouldHideBeforePositioning = shouldHideTooltipBeforePositioning(tooltip)
+    if (shouldHideBeforePositioning) {
+      tooltip.style.visibility = 'hidden'
+      tooltip.style.display = 'block'
+    }
     tooltip.style.top = '0'
     tooltip.style.left = '0'
 
     const lowerTooltips = tooltipStack.filter(t => t.level < level && t.isPinned)
     const { top, left } = findBestPosition(target, tooltip, lowerTooltips)
 
+    tooltip.style.display = 'block'
     tooltip.style.visibility = 'visible'
     tooltip.style.top = `${top}px`
     tooltip.style.left = `${left}px`
@@ -660,25 +935,35 @@ export function createKeywordTooltip(
 
     if (currentTooltip?.isPinned) return
 
-    const data = resolver(keywordId)
+    const session = createSession(target, keywordId, false)
+    const activeCandidate = getActiveCandidate(session)
+    if (!activeCandidate) {
+      hide()
+      return
+    }
+
+    const data = resolver(activeCandidate.keywordId)
     if (!data) {
       hide()
       return
     }
 
-    // Get matched source from target element
-    const matchedVia = target.dataset.keywordSource || undefined
-    const enrichedData = { ...data, matchedVia }
-
+    currentSession = session
+    syncSessionToTarget(session)
     const tooltip = getHoverTooltip()
-    renderContent(tooltip, enrichedData, keywordId, false)
+    renderContent(tooltip, {
+      ...data,
+      matchedVia: activeCandidate.matchedVia,
+    }, activeCandidate.keywordId, false, session)
     positionTooltip(tooltip, target)
+    void hydrateSessionCandidates(session, tooltip)
   }
 
   const hide = () => {
     clearPendingHide()
     pendingHideTimer = setTimeout(() => {
       if (hoverTooltipElement && !currentTooltip?.isPinned) {
+        resetCurrentSessionTarget()
         hoverTooltipElement.style.display = 'none'
       }
       pendingHideTimer = null
@@ -688,28 +973,43 @@ export function createKeywordTooltip(
   const pin = (target: HTMLElement, keywordId: string) => {
     clearPendingHide()
 
-    const data = resolver(keywordId)
+    const session = createSession(target, keywordId, true)
+    const activeCandidate = getActiveCandidate(session)
+    if (!activeCandidate) return
+
+    const data = resolver(activeCandidate.keywordId)
     if (!data) return
 
-    // Get matched source from target element
-    const matchedVia = target.dataset.keywordSource || undefined
-    const enrichedData = { ...data, matchedVia }
-
+    resetCurrentSessionTarget()
     hideTooltipsFromLevel(level)
 
-    if (hoverTooltipElement) {
-      hoverTooltipElement.style.display = 'none'
+    let tooltip: HTMLDivElement
+    if (shouldReuseHoverTooltipForPin(hoverTooltipElement)) {
+      tooltip = hoverTooltipElement as HTMLDivElement
+      tooltip.classList.remove('keyword-tooltip--hover')
+      hoverTooltipElement = null
+    } else {
+      if (hoverTooltipElement) {
+        hoverTooltipElement.style.display = 'none'
+      }
+      tooltip = createTooltipElement(level)
     }
 
-    const tooltip = createTooltipElement(level)
+    currentSession = session
+    syncSessionToTarget(session)
+
     tooltip.classList.add('keyword-tooltip--pinned')
-    renderContent(tooltip, enrichedData, keywordId, true)
+    renderContent(tooltip, {
+      ...data,
+      matchedVia: activeCandidate.matchedVia,
+    }, activeCandidate.keywordId, true, session)
     positionTooltip(tooltip, target)
+    void hydrateSessionCandidates(session, tooltip)
 
     currentTooltip = {
       element: tooltip,
       level,
-      keywordId,
+      keywordId: activeCandidate.keywordId,
       isPinned: true
     }
     tooltipStack.push(currentTooltip)
@@ -718,12 +1018,15 @@ export function createKeywordTooltip(
     updateParentHasChildClass()
 
     setupGlobalClickHandler(() => {
+      resetCurrentSessionTarget()
+      currentTooltip = null
       hideAllTooltips()
     })
   }
 
   const unpin = () => {
     if (currentTooltip) {
+      resetCurrentSessionTarget()
       hideTooltipsFromLevel(level)
       currentTooltip = null
     }
@@ -732,6 +1035,7 @@ export function createKeywordTooltip(
   const destroy = () => {
     clearPendingHide()
     cleanupNestedControllers()
+    resetCurrentSessionTarget()
     if (hoverTooltipElement) {
       hoverTooltipElement.remove()
       hoverTooltipElement = null
@@ -755,7 +1059,11 @@ export function createKeywordTooltip(
     pin,
     unpin,
     destroy,
-    hideAll: hideAllTooltips,
+    hideAll() {
+      resetCurrentSessionTarget()
+      currentTooltip = null
+      hideAllTooltips()
+    },
     getCurrentLevel: () => level
   }
 }
@@ -807,7 +1115,10 @@ function applyHighlightsToText(text: string, compiled: CompiledKeywordSpan[], un
       classes.push('keyword-highlight--underline')
     }
     const matchedText = text.slice(range.start, range.end)
-    result += `<span class="${classes.join(' ')}" data-keyword-id="${escapeHtml(range.keyword.id)}" data-keyword-source="${escapeHtml(range.keyword.source)}">${escapeHtml(matchedText)}</span>`
+    const serializedCandidates = escapeHtml(serializeKeywordTooltipCandidates([
+      { keywordId: range.keyword.id, matchedVia: range.keyword.source },
+    ]))
+    result += `<span class="${classes.join(' ')}" data-keyword-id="${escapeHtml(range.keyword.id)}" data-keyword-source="${escapeHtml(range.keyword.source)}" data-keyword-candidates="${serializedCandidates}" data-keyword-active-index="0">${escapeHtml(matchedText)}</span>`
     lastIndex = range.end
   })
   if (lastIndex < text.length) {

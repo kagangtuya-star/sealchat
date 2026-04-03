@@ -21007,10 +21007,56 @@ onBeforeUnmount(() => {
 }
 
 :global(.keyword-tooltip__header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-weight: 600;
   margin-bottom: 6px;
   color: #1e293b;
   font-size: 15px;
+}
+
+:global(.keyword-tooltip__title) {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+:global(.keyword-tooltip__nav) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+:global(.keyword-tooltip__nav-btn) {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+:global(.keyword-tooltip__nav-btn:not(:disabled):hover) {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+:global(.keyword-tooltip__nav-btn:disabled) {
+  opacity: 0.35;
+}
+
+:global(.keyword-tooltip__nav-count) {
+  min-width: 30px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.68;
 }
 
 :global(.keyword-tooltip__body) {
@@ -21053,6 +21099,17 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-tooltip__header),
 :global(:root[data-display-palette='night'] .keyword-tooltip__header) {
   color: #fafafa;
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__nav-btn),
+:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn) {
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover),
+:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover) {
+  background: rgba(51, 65, 85, 0.98);
 }
 
 :global([data-display-palette='night'] .keyword-tooltip__body),
@@ -21120,6 +21177,10 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: transparent;
+}
+
+:global(.keyword-tooltip--swipeable) {
+  touch-action: pan-y;
 }
 
 /* Spoiler styles */

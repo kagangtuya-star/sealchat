@@ -14,9 +14,10 @@ const (
 )
 
 type EffectiveWorldKeywordListOptions struct {
-	Query           string
-	Category        string
-	IncludeDisabled bool
+	Query             string
+	Category          string
+	IncludeDisabled   bool
+	IncludeAllMatches bool
 }
 
 type EffectiveWorldKeywordItem struct {
@@ -289,6 +290,9 @@ func buildEffectiveWorldKeywordList(worldID string, opts EffectiveWorldKeywordLi
 	}
 
 	sortEffectiveWorldKeywordItems(items)
+	if opts.IncludeAllMatches {
+		return filterEffectiveWorldKeywordItems(items, opts), nil
+	}
 	deduped := make([]*EffectiveWorldKeywordItem, 0, len(items))
 	seenByKeyword := map[string]struct{}{}
 	for _, item := range items {

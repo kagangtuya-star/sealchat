@@ -28,6 +28,7 @@ import { useDisplayStore, type TimestampFormat } from '@/stores/display'
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
+import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCandidates'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
@@ -1810,6 +1811,25 @@ const keywordTooltipResolver = (keywordId: string) => {
   }
 }
 
+const loadKeywordConflictCandidates = async (
+  target: HTMLElement,
+  session: KeywordTooltipSessionState,
+) => {
+  const worldId = chat.currentWorldId
+  const matchedText = String(target.textContent || '').trim()
+  if (!worldId || !matchedText || session.candidates.length > 1) {
+    return session.candidates
+  }
+  const items = await worldGlossary.ensureEffectiveKeywordConflictCandidates(worldId, matchedText)
+  if (!items.length) {
+    return session.candidates
+  }
+  return items.map((item) => ({
+    keywordId: item.id,
+    matchedVia: matchedText,
+  }))
+}
+
 const handleKeywordQuickEdit = (keywordId: string) => {
   if (!props.worldKeywordEditable) {
     return
@@ -1831,6 +1851,7 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
   underlineOnly: keywordUnderlineOnly.value,
   textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+  candidateLoader: loadKeywordConflictCandidates,
 })
 
 // Lazy rendering state
@@ -2938,6 +2959,7 @@ watch(
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
       underlineOnly: keywordUnderlineOnly.value,
       textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+      candidateLoader: loadKeywordConflictCandidates,
     })
     void applyKeywordHighlights()
   },
