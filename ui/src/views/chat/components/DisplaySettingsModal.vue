@@ -191,6 +191,8 @@ watch(
   draft.avatarSize = value.avatarSize
   draft.avatarBorderRadius = value.avatarBorderRadius
   draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
+  draft.characterCardBadgeAutoContrastEnabled = value.characterCardBadgeAutoContrastEnabled
+  draft.identityRemarkAutoContrastEnabled = value.identityRemarkAutoContrastEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },

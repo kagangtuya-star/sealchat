@@ -3,15 +3,19 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@/stores/chat'
 import { useCharacterRemarkStore } from '@/stores/characterRemark'
+import { useDisplayStore } from '@/stores/display'
+import { resolveIdentityMetaStyle } from '@/utils/identityMetaContrast'
 
 const props = defineProps<{
   identityId?: string
   identityColor?: string
   channelId?: string
+  hostBackgroundColor?: string
 }>()
 
 const chatStore = useChatStore()
 const remarkStore = useCharacterRemarkStore()
+const displayStore = useDisplayStore()
 const message = useMessage()
 
 const editing = ref(false)
@@ -41,14 +45,12 @@ const isVisible = computed(() => remarkStore.shouldShowRemark(remarkEntry.value)
 
 const displayText = computed(() => remarkEntry.value?.content || '')
 
-const remarkStyle = computed(() => {
-  if (!props.identityColor) return {}
-  return {
-    backgroundColor: `${props.identityColor}0d`,
-    color: props.identityColor,
-    borderColor: `${props.identityColor}2b`,
-  }
-})
+const remarkStyle = computed(() => resolveIdentityMetaStyle({
+  enabled: displayStore.settings.identityRemarkAutoContrastEnabled,
+  kind: 'remark',
+  identityColor: props.identityColor,
+  backgroundColor: props.hostBackgroundColor,
+}).style)
 
 const beginEdit = async () => {
   if (!isEditable.value || !isVisible.value) {

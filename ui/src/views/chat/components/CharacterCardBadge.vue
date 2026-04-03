@@ -4,10 +4,12 @@ import { useCharacterCardStore } from '@/stores/characterCard';
 import { useDisplayStore } from '@/stores/display';
 import { useChatStore } from '@/stores/chat';
 import { renderCardTemplate, getWorldCardTemplate } from '@/utils/characterCardTemplate';
+import { resolveIdentityMetaStyle } from '@/utils/identityMetaContrast';
 
 const props = defineProps<{
   identityId?: string;
   identityColor?: string;
+  hostBackgroundColor?: string;
 }>();
 
 const cardStore = useCharacterCardStore();
@@ -81,14 +83,12 @@ const isVisible = computed(() => {
   return displayStore.settings.characterCardBadgeEnabled && !!renderedContent.value;
 });
 
-const badgeStyle = computed(() => {
-  if (!props.identityColor) return {};
-  return {
-    backgroundColor: `${props.identityColor}12`,
-    color: props.identityColor,
-    borderColor: `${props.identityColor}33`,
-  };
-});
+const badgeStyle = computed(() => resolveIdentityMetaStyle({
+  enabled: displayStore.settings.characterCardBadgeAutoContrastEnabled,
+  kind: 'badge',
+  identityColor: props.identityColor,
+  backgroundColor: props.hostBackgroundColor,
+}).style);
 </script>
 
 <template>

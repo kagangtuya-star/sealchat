@@ -100,6 +100,13 @@ watch(
             @update:value="display.updateSettings({ showOthersIdentityRemark: $event })"
           />
         </div>
+        <div class="remark-manager__switch-row">
+          <span>自动提高可读性</span>
+          <n-switch
+            :value="display.settings.identityRemarkAutoContrastEnabled"
+            @update:value="display.updateSettings({ identityRemarkAutoContrastEnabled: $event })"
+          />
+        </div>
       </div>
     </section>
 
