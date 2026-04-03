@@ -29,6 +29,7 @@ import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCandidates'
+import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
@@ -1797,6 +1798,13 @@ const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywor
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
 const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
+const hasExternalKeywordSource = computed(() => {
+  const worldId = chat.currentWorldId
+  if (!worldId) {
+    return false
+  }
+  return (worldGlossary.effectivePages[worldId]?.items || []).some((item) => item.sourceType === 'external_library')
+})
 
 const keywordTooltipResolver = (keywordId: string) => {
   const keyword = worldGlossary.effectiveKeywordById[keywordId]
@@ -1807,7 +1815,7 @@ const keywordTooltipResolver = (keywordId: string) => {
     title: keyword.keyword,
     description: keyword.description,
     descriptionFormat: keyword.descriptionFormat,
-    sourceName: keyword.sourceName,
+    sourceName: formatWorldKeywordSourceLabel(keyword.sourceName, keyword.category, hasExternalKeywordSource.value),
   }
 }
 
