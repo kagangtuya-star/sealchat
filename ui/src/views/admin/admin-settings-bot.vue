@@ -5,7 +5,9 @@ import { urlBase } from '@/stores/_config';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import type { BotOneBotConfig } from '@/types';
+import { copyTextWithFallback } from '@/utils/clipboard';
 import AdminBotActiveReferencePopover from './components/AdminBotActiveReferencePopover.vue';
+import { copyBotTokenWithPreviewFallback } from './utils/botTokenClipboard';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { Refresh, Search, Trash } from '@vicons/tabler';
 import type { DataTableColumns } from 'naive-ui';
@@ -52,9 +54,12 @@ const dialog = useDialog();
 const cancel = () => emit('close');
 
 const BOT_CONFIG_MODAL_Z_INDEX = 3200;
+const BOT_TOKEN_PREVIEW_MODAL_Z_INDEX = 3205;
 const BOT_AVATAR_MODAL_Z_INDEX = 3210;
 
 const showModal = ref(false);
+const tokenPreviewVisible = ref(false);
+const previewTokenValue = ref('');
 const editingToken = ref<BotListItem | null>(null);
 const newTokenName = ref('bot');
 const newTokenAvatar = ref('');
@@ -113,6 +118,7 @@ const activeTab = ref<'manual' | 'system'>('manual');
 const showSystemBots = ref(false);
 const keyword = ref('');
 const loading = ref(false);
+const cleanupLoading = ref(false);
 const rows = ref<BotListItem[]>([]);
 const total = ref(0);
 const checkedRowKeys = ref<string[]>([]);
@@ -189,6 +195,7 @@ const currentStatsText = computed(() => {
   }
   return `标准 BOT ${total.value} 个`;
 });
+const systemCleanupVisible = computed(() => showSystemBots.value && activeTab.value === 'system');
 
 const kindLabel = (row: BotListItem) => {
   switch ((row.botKind || '').trim()) {
@@ -451,15 +458,52 @@ const batchDelete = async () => {
   });
 };
 
+const cleanupOrphanSystemBots = async () => {
+  dialog.warning({
+    title: '清理孤儿系统 BOT',
+    content: '该操作会清理没有 active integration 引用的系统 BOT；若同一频道或世界存在多个摘要拉取 BOT，也会自动收敛为一个并保留当前仍在使用中的 token。确认继续？',
+    positiveText: '开始清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      cleanupLoading.value = true;
+      try {
+        const resp = await utils.cleanupOrphanSystemBots();
+        const stats = resp?.data?.stats || {};
+        const deleted = Number(stats.webhookBotCount || 0) || 0;
+        const skipped = Number(stats.activeReferenceSkippedCount || 0) || 0;
+        message.success(`孤儿系统 BOT 清理完成：删除 ${deleted} 个，跳过 ${skipped} 个仍被 active integration 引用的 BOT`);
+        await refresh();
+        syncBotListSideEffects();
+      } catch (error: any) {
+        message.error(`清理失败: ${error?.response?.data?.message || '未知错误'}`);
+      } finally {
+        cleanupLoading.value = false;
+      }
+    },
+  });
+};
+
 const copyToken = async (value?: string) => {
+  await copyBotTokenWithPreviewFallback(value, {
+    copyText: copyTextWithFallback,
+    onCopySuccess: () => {
+      message.success('Token 已复制');
+    },
+    onManualCopyRequired: (token) => {
+      openTokenPreview(token);
+      message.warning('当前浏览器不支持直接复制，已打开完整 Token，请手动复制');
+    },
+  });
+};
+
+const openTokenPreview = (value?: string) => {
   const token = String(value || '').trim();
-  if (!token) return;
-  try {
-    await navigator.clipboard.writeText(token);
-    message.success('Token 已复制');
-  } catch {
-    message.warning('复制失败，请手动复制');
+  if (!token) {
+    message.warning('Token 为空，无法查看');
+    return;
   }
+  previewTokenValue.value = token;
+  tokenPreviewVisible.value = true;
 };
 
 const resolveAvatar = (value?: string, version?: number | string) => {
@@ -606,9 +650,9 @@ const columns = computed<DataTableColumns<BotListItem>>(() => [
   {
     title: 'Token',
     key: 'token',
-    minWidth: 220,
+    minWidth: 280,
     render: (row: BotListItem) => (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
         <code style={{
           fontSize: '12px',
           padding: '2px 6px',
@@ -620,6 +664,7 @@ const columns = computed<DataTableColumns<BotListItem>>(() => [
           {formatToken(row.token)}
         </code>
         <n-button text size="small" onClick={() => copyToken(row.token)}>复制</n-button>
+        <n-button text size="small" onClick={() => openTokenPreview(row.token)}>查看</n-button>
       </div>
     ),
   },
@@ -651,6 +696,13 @@ watch(showModal, (visible) => {
   avatarEditorVisible.value = false;
   avatarEditorFile.value = null;
   clearAvatarPreview();
+});
+
+watch(tokenPreviewVisible, (visible) => {
+  if (visible) {
+    return;
+  }
+  previewTokenValue.value = '';
 });
 
 watch(newTokenAvatar, (value, oldValue) => {
@@ -713,6 +765,18 @@ onUnmounted(() => {
               <n-icon :component="Refresh" />
             </template>
             刷新
+          </n-button>
+          <n-button
+            v-if="systemCleanupVisible"
+            quaternary
+            circle
+            :loading="cleanupLoading"
+            title="清理孤儿系统 BOT"
+            @click="cleanupOrphanSystemBots"
+          >
+            <template #icon>
+              <n-icon :component="Trash" />
+            </template>
           </n-button>
           <n-button type="primary" @click="openCreateModal">新增 BOT</n-button>
         </div>
@@ -914,6 +978,24 @@ onUnmounted(() => {
   </n-modal>
 
   <n-modal
+    v-model:show="tokenPreviewVisible"
+    :z-index="BOT_TOKEN_PREVIEW_MODAL_Z_INDEX"
+    preset="card"
+    title="查看 Token"
+    style="max-width: 560px;"
+  >
+    <n-space vertical size="small">
+      <div class="text-sm text-gray-500">
+        当前展示的是完整 BOT Token，请注意避免截图或泄露。
+      </div>
+      <code class="bot-management__token-preview">{{ previewTokenValue }}</code>
+      <n-space justify="end">
+        <n-button size="small" @click="copyToken(previewTokenValue)">复制 token</n-button>
+      </n-space>
+    </n-space>
+  </n-modal>
+
+  <n-modal
     v-model:show="avatarEditorVisible"
     :z-index="BOT_AVATAR_MODAL_Z_INDEX"
     preset="card"
@@ -936,6 +1018,17 @@ onUnmounted(() => {
   height: 61vh;
   min-height: 0;
   overflow: hidden;
+}
+
+.bot-management__token-preview {
+  display: block;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .bot-management__body {

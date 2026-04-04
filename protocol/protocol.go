@@ -362,40 +362,42 @@ type Argv struct {
 type EventName string
 
 const (
-	EventGenresAdded               EventName = "genres-added"
-	EventGenresDeleted             EventName = "genres-deleted"
-	EventMessage                   EventName = "message"
-	EventMessageCreated            EventName = "message-created"
-	EventMessageDeleted            EventName = "message-deleted"
-	EventMessageUpdated            EventName = "message-updated"
-	EventMessageArchived           EventName = "message-archived"
-	EventMessageUnarchived         EventName = "message-unarchived"
-	EventMessagePinned             EventName = "message-pinned"
-	EventMessageUnpinned           EventName = "message-unpinned"
-	EventMessageReordered          EventName = "message-reordered"
-	EventMessageRemoved            EventName = "message-removed"
-	EventMessageReaction           EventName = "message.reaction"
-	EventInteractionCommand        EventName = "interaction/command"
-	EventReactionAdded             EventName = "reaction-added"
-	EventReactionDeleted           EventName = "reaction-deleted"
-	EventReactionDeletedOne        EventName = "reaction-deleted/one"
-	EventReactionDeletedAll        EventName = "reaction-deleted/all"
-	EventReactionDeletedEmoji      EventName = "reaction-deleted/emoji"
-	EventSend                      EventName = "send"
-	EventFriendRequest             EventName = "friend-request"
-	EventGuildRequest              EventName = "guild-request"
-	EventGuildMemberRequest        EventName = "guild-member-request"
-	EventTypingPreview             EventName = "typing-preview"
-	EventChannelPresenceUpdated    EventName = "channel-presence-updated"
-	EventChannelUpdated            EventName = "channel-updated"
-	EventAudioStateUpdated         EventName = "audio-state-updated"
-	EventChannelIFormUpdated       EventName = "channel-iform-updated"
-	EventChannelIFormPushed        EventName = "channel-iform-pushed"
-	EventChannelImageLayoutUpdated EventName = "channel-image-layout-updated"
-	EventChannelIdentitiesUpdated  EventName = "channel-identities-updated"
-	EventWorldKeywordsUpdated      EventName = "world-keywords-updated"
-	EventWorldUpdated              EventName = "world-updated"
-	EventLobbyAnnouncementUpdated  EventName = "lobby-announcement-updated"
+	EventGenresAdded                    EventName = "genres-added"
+	EventGenresDeleted                  EventName = "genres-deleted"
+	EventMessage                        EventName = "message"
+	EventMessageCreated                 EventName = "message-created"
+	EventMessageDeleted                 EventName = "message-deleted"
+	EventMessageUpdated                 EventName = "message-updated"
+	EventMessageArchived                EventName = "message-archived"
+	EventMessageUnarchived              EventName = "message-unarchived"
+	EventMessagePinned                  EventName = "message-pinned"
+	EventMessageUnpinned                EventName = "message-unpinned"
+	EventMessageReordered               EventName = "message-reordered"
+	EventMessageRemoved                 EventName = "message-removed"
+	EventMessageReaction                EventName = "message.reaction"
+	EventInteractionCommand             EventName = "interaction/command"
+	EventReactionAdded                  EventName = "reaction-added"
+	EventReactionDeleted                EventName = "reaction-deleted"
+	EventReactionDeletedOne             EventName = "reaction-deleted/one"
+	EventReactionDeletedAll             EventName = "reaction-deleted/all"
+	EventReactionDeletedEmoji           EventName = "reaction-deleted/emoji"
+	EventSend                           EventName = "send"
+	EventFriendRequest                  EventName = "friend-request"
+	EventGuildRequest                   EventName = "guild-request"
+	EventGuildMemberRequest             EventName = "guild-member-request"
+	EventTypingPreview                  EventName = "typing-preview"
+	EventChannelPresenceUpdated         EventName = "channel-presence-updated"
+	EventChannelUpdated                 EventName = "channel-updated"
+	EventAudioStateUpdated              EventName = "audio-state-updated"
+	EventChannelIFormUpdated            EventName = "channel-iform-updated"
+	EventChannelIFormPushed             EventName = "channel-iform-pushed"
+	EventChannelImageLayoutUpdated      EventName = "channel-image-layout-updated"
+	EventChannelIdentitiesUpdated       EventName = "channel-identities-updated"
+	EventWorldKeywordsUpdated           EventName = "world-keywords-updated"
+	EventExternalGlossariesUpdated      EventName = "external-glossaries-updated"
+	EventWorldExternalGlossariesUpdated EventName = "world-external-glossaries-updated"
+	EventWorldUpdated                   EventName = "world-updated"
+	EventLobbyAnnouncementUpdated       EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"
@@ -408,6 +410,9 @@ const (
 	// Character Card Badge Events
 	EventCharacterCardBadgeUpdated  EventName = "character-card-badge-updated"
 	EventCharacterCardBadgeSnapshot EventName = "character-card-badge-snapshot"
+	// Character Remark Events
+	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
+	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
 )
 
 // MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
@@ -454,6 +459,8 @@ type Event struct {
 	CharacterCard              *CharacterCardEventPayload         `json:"characterCard,omitempty"`
 	CharacterCardBadge         *CharacterCardBadgeEventPayload    `json:"characterCardBadge,omitempty"`
 	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload `json:"characterCardBadgeSnapshot,omitempty"`
+	CharacterRemark            *CharacterRemarkEventPayload       `json:"characterRemark,omitempty"`
+	CharacterRemarkSnapshot    *CharacterRemarkSnapshotPayload    `json:"characterRemarkSnapshot,omitempty"`
 	MessageContext             *MessageContext                    `json:"messageContext,omitempty"`
 	MessageReaction            *MessageReactionEvent              `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate        bool                               `json:"is_interactive_update,omitempty"`
@@ -635,4 +642,17 @@ type CharacterCardBadgeEventPayload struct {
 // CharacterCardBadgeSnapshotPayload 角色徽章快照载荷
 type CharacterCardBadgeSnapshotPayload struct {
 	Items []*CharacterCardBadgeEventPayload `json:"items,omitempty"`
+}
+
+// CharacterRemarkEventPayload 角色备注事件载荷
+type CharacterRemarkEventPayload struct {
+	IdentityID string `json:"identityId,omitempty"`
+	UserID     string `json:"userId,omitempty"`
+	Content    string `json:"content,omitempty"`
+	Action     string `json:"action,omitempty"` // update/clear
+}
+
+// CharacterRemarkSnapshotPayload 角色备注快照载荷
+type CharacterRemarkSnapshotPayload struct {
+	Items []*CharacterRemarkEventPayload `json:"items,omitempty"`
 }

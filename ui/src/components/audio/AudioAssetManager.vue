@@ -201,8 +201,8 @@
           </ul>
           <div class="audio-library__tags">
             <strong>标签：</strong>
-            <template v-if="selectedAsset.tags.length">
-              <n-tag v-for="tag in selectedAsset.tags" :key="tag" size="small" class="audio-library__tag" bordered>
+            <template v-if="selectedAssetTags.length">
+              <n-tag v-for="tag in selectedAssetTags" :key="tag" size="small" class="audio-library__tag" bordered>
                 {{ tag }}
               </n-tag>
             </template>
@@ -428,6 +428,7 @@ import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
 
 const audio = useAudioStudioStore();
@@ -575,7 +576,8 @@ const folderSelectOptions = computed(() => {
 const tagOptions = computed(() => {
   const tags = new Set<string>();
   audio.assets.forEach((asset) => {
-    asset.tags.forEach((tag) => tags.add(tag));
+    const assetTags = Array.isArray(asset.tags) ? asset.tags : [];
+    assetTags.forEach((tag) => tags.add(tag));
   });
   return Array.from(tags).map((tag) => ({ label: tag, value: tag }));
 });
@@ -594,6 +596,11 @@ const scopeOptions = computed(() => [
 const canEditSelectedAsset = computed(() => {
   if (!selectedAsset.value) return false;
   return audio.canEditAsset(selectedAsset.value);
+});
+
+const selectedAssetTags = computed(() => {
+  if (!selectedAsset.value || !Array.isArray(selectedAsset.value.tags)) return [];
+  return selectedAsset.value.tags;
 });
 
 const columns = computed<DataTableColumns<AudioAsset>>(() => [
@@ -635,14 +642,15 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     title: '标签',
     key: 'tags',
     minWidth: 160,
-    render: (row) =>
-      row.tags.length
+    render: (row) => {
+      const tags = Array.isArray(row.tags) ? row.tags : [];
+      return tags.length
         ? h(
             NSpace,
             { size: 4, wrap: true },
             {
               default: () =>
-                row.tags.map((tag) =>
+                tags.map((tag) =>
                   h(
                     NTag,
                     { size: 'tiny', bordered: false, key: tag },
@@ -651,7 +659,8 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
                 ),
             }
           )
-        : '-',
+        : '-';
+    },
   },
   {
     title: '上传者',
@@ -1050,8 +1059,13 @@ function confirmDeleteAsset(asset: AudioAsset) {
 
 function copyStream(id: string) {
   const url = audio.buildStreamUrl(id);
-  navigator.clipboard.writeText(url).then(() => {
-    message.success('播放链接已复制');
+  void copyTextWithResult(url, {
+    onSuccess: () => {
+      message.success('播放链接已复制');
+    },
+    onFailure: () => {
+      message.error('复制失败');
+    },
   });
 }
 

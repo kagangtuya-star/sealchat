@@ -18,6 +18,7 @@ import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
+import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -152,6 +153,7 @@ interface ChatState {
     mode?: 'plain' | 'rich';
     isWhisper?: boolean;
     whisperTargetId?: string | null;
+    whisperTargets?: User[];
     icMode?: 'ic' | 'ooc';
     identityId?: string | null;
     identityVariantId?: string | null;
@@ -4144,7 +4146,7 @@ export const useChatStore = defineStore({
       return (resp as any)?.data || null;
     },
 
-    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null }) {
+    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; whisperTargetIds?: string[] }) {
       const payload: Record<string, any> = { channel_id, message_id, content };
       if (options?.icMode) {
         payload.ic_mode = options.icMode;
@@ -4154,6 +4156,10 @@ export const useChatStore = defineStore({
       }
       if (options && 'identityVariantId' in options) {
         payload.identity_variant_id = options.identityVariantId ?? '';
+      }
+      if (options && 'whisperTargetIds' in options) {
+        const whisperTargetIds = Array.from(new Set((options.whisperTargetIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+        payload.whisper_to_ids = whisperTargetIds;
       }
       const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', payload);
       if ((resp as any)?.err) {
@@ -4488,12 +4494,19 @@ export const useChatStore = defineStore({
       // 保留已选目标，仅关闭面板
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; identitySnapshot?: EditingIdentitySnapshot | null }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; whisperTargets?: User[]; icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; identitySnapshot?: EditingIdentitySnapshot | null }) {
       const normalizedIdentityId = typeof payload.identityId === 'undefined' ? null : (payload.identityId || null);
       const normalizedIdentityVariantId = typeof payload.identityVariantId === 'undefined' ? null : (payload.identityVariantId || null);
+      const normalizedWhisperTargets = Array.isArray(payload.whisperTargets)
+        ? payload.whisperTargets
+          .filter((target) => target?.id)
+          .map((target) => ({ ...target }))
+        : [];
       const previousActiveIdentity = payload.channelId ? this.getActiveIdentityId(payload.channelId) : '';
       this.editing = {
         ...payload,
+        whisperTargets: normalizedWhisperTargets,
+        whisperTargetId: payload.whisperTargetId || normalizedWhisperTargets[0]?.id || null,
         identityId: normalizedIdentityId,
         identityVariantId: normalizedIdentityVariantId,
         initialIdentityId: normalizedIdentityId,
@@ -4566,6 +4579,7 @@ export const useChatStore = defineStore({
       if (this.editing) {
         this.restoreEditingIdentity();
       }
+      this.clearWhisperTargets();
       this.editing = null;
     },
 
@@ -5932,14 +5946,15 @@ export const useChatStore = defineStore({
 chatEvent.on('message-created-notice', (data: any) => {
   const chId = data.channelId;
   const chat = useChatStore();
-  // console.log('xx', chId, chat.channelTree, chat.channelTreePrivate);
-
-  if (chat.curChannel?.id === chId) {
-    return;
-  }
-
-  if (chat.channelTree.find(c => c.id === chId) || chat.channelTreePrivate.find(c => c.id === chId)) {
-    chat.unreadCountMap[chId] = (chat.unreadCountMap[chId] || 0) + 1;
+  const nextCount = resolveNextUnreadCountForMessageNotice({
+    channelId: chId,
+    currentChannelId: chat.curChannel?.id || '',
+    unreadCountMap: chat.unreadCountMap,
+    channelTree: chat.channelTree,
+    channelTreePrivate: chat.channelTreePrivate,
+  });
+  if (nextCount !== null) {
+    chat.setChannelUnreadCount(chId, nextCount);
   }
 });
 

@@ -36,7 +36,10 @@ func GalleryEnsureDefaultCollection(ownerType model.OwnerType, ownerID, creatorI
 	db := model.GetDB()
 	var col model.GalleryCollection
 	err := db.Where("owner_type = ? AND owner_id = ? AND collection_type IS NULL", ownerType, ownerID).
-		Order("`order`, created_at").
+		Clauses(model.BuildOrderBy(
+			model.OrderField{Name: "order"},
+			model.OrderField{Name: "created_at"},
+		)).
 		Limit(1).
 		Take(&col).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import defaultAvatarUrl from '@/assets/head3.png';
 import { urlBase } from '@/stores/_config';
+import { buildPushNotificationTag } from '@/utils/pushNotificationTag';
 
 const STORAGE_KEY = 'sc-push-notification-enabled';
 
@@ -139,8 +140,9 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
      * @param body 通知内容（用户名: 消息内容）
      * @param channelId 频道 ID（用于点击跳转）
      * @param icon 可选，通知图标 URL（默认使用默认头像）
+     * @param messageId 可选，消息 ID（用于生成唯一通知 tag）
      */
-    const showNotification = (title: string, body: string, channelId: string, icon?: string): void => {
+    const showNotification = (title: string, body: string, channelId: string, icon?: string, messageId?: string): void => {
         const hasTopFocus = () => {
             try {
                 return window.top ? window.top.document.hasFocus() : document.hasFocus();
@@ -174,12 +176,17 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
                 resolvedIcon = new URL(resolvedIcon, window.location.origin).href;
             }
 
-            const notification = new Notification(title, {
+            const options: NotificationOptions = {
                 body,
                 icon: resolvedIcon,
-                tag: `sealchat-channel-${channelId}`, // 同一频道的通知会合并
                 requireInteraction: false,
-            });
+            };
+            const notificationTag = buildPushNotificationTag(channelId, messageId);
+            if (notificationTag) {
+                options.tag = notificationTag;
+            }
+
+            const notification = new Notification(title, options);
 
             // 点击通知：聚焦窗口并跳转到频道
             notification.onclick = () => {

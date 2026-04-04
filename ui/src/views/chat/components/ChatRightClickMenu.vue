@@ -117,6 +117,51 @@ const resolveWhisperTargetId = (msg?: any): string | null => {
   return null;
 };
 
+const buildWhisperTargetUser = (id: string, entry?: any, displayName?: string): User | null => {
+  const normalizedId = String(id || entry?.id || '').trim();
+  if (!normalizedId) {
+    return null;
+  }
+  return {
+    id: normalizedId,
+    name: String(entry?.name || entry?.username || displayName || normalizedId).trim(),
+    nick: String(entry?.nick || displayName || entry?.name || normalizedId).trim(),
+    avatar: String(entry?.avatar || '').trim(),
+    discriminator: String(entry?.discriminator || '').trim(),
+    is_bot: Boolean(entry?.is_bot),
+  };
+};
+
+const resolveWhisperTargets = (msg?: any): User[] => {
+  if (!msg) {
+    return [];
+  }
+  const metaIds = Array.isArray(msg?.whisperMeta?.targetUserIds) ? msg.whisperMeta.targetUserIds : [];
+  const metaNames = Array.isArray(msg?.whisperMeta?.targetDisplayNames) ? msg.whisperMeta.targetDisplayNames : [];
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    return list
+      .map((entry: any, index: number) => {
+        if (typeof entry === 'string') {
+          return buildWhisperTargetUser(entry, null, metaNames[index]);
+        }
+        return buildWhisperTargetUser(entry?.id, entry, metaNames[index]);
+      })
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  if (metaIds.length > 0) {
+    return metaIds
+      .map((id: string, index: number) => buildWhisperTargetUser(id, null, metaNames[index]))
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  const singleId = resolveWhisperTargetId(msg);
+  if (!singleId) {
+    return [];
+  }
+  const single = buildWhisperTargetUser(singleId, msg?.whisperTo || msg?.whisper_to || msg?.whisper_target, msg?.whisperMeta?.targetMemberName);
+  return single ? [single] : [];
+};
+
 const resolveIdentityId = (msg?: any): string | null => {
   if (!msg) {
     return null;
@@ -544,6 +589,7 @@ const clickEdit = () => {
   const target = menuMessage.value.raw;
   const mode = detectContentMode(target.content || target.originalContent || '');
   const whisperTargetId = resolveWhisperTargetId(target);
+  const whisperTargets = resolveWhisperTargets(target);
   const identityId = resolveIdentityId(target);
   const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
@@ -554,6 +600,7 @@ const clickEdit = () => {
     mode,
     isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
     whisperTargetId,
+    whisperTargets,
     icMode,
     identityId: identityId || null,
   });

@@ -134,7 +134,11 @@ export interface DisplaySettings {
   inputAreaHeight: number  // 0 means auto
   // 人物卡
   characterCardBadgeEnabled: boolean
+  characterCardBadgeAutoContrastEnabled: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
+  identityRemarkAutoContrastEnabled: boolean
+  showOwnIdentityRemark: boolean
+  showOthersIdentityRemark: boolean
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -482,7 +486,11 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
+  characterCardBadgeAutoContrastEnabled: true,
   characterCardBadgeTemplateByWorld: {},
+  identityRemarkAutoContrastEnabled: true,
+  showOwnIdentityRemark: true,
+  showOthersIdentityRemark: true,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -700,9 +708,13 @@ const loadSettings = (): DisplaySettings => {
       quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
+      characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
         ? (parsed as any).characterCardBadgeTemplateByWorld
         : {},
+      identityRemarkAutoContrastEnabled: coerceBoolean((parsed as any)?.identityRemarkAutoContrastEnabled ?? true),
+      showOwnIdentityRemark: coerceBoolean((parsed as any)?.showOwnIdentityRemark ?? true),
+      showOthersIdentityRemark: coerceBoolean((parsed as any)?.showOthersIdentityRemark ?? true),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -959,12 +971,28 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeEnabled')
       ? coerceBoolean((patch as any).characterCardBadgeEnabled)
       : base.characterCardBadgeEnabled,
+  characterCardBadgeAutoContrastEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeAutoContrastEnabled')
+      ? coerceBoolean((patch as any).characterCardBadgeAutoContrastEnabled)
+      : base.characterCardBadgeAutoContrastEnabled,
   characterCardBadgeTemplateByWorld:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeTemplateByWorld')
       ? (isPlainObject((patch as any).characterCardBadgeTemplateByWorld)
           ? (patch as any).characterCardBadgeTemplateByWorld
           : {})
       : { ...base.characterCardBadgeTemplateByWorld },
+  identityRemarkAutoContrastEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'identityRemarkAutoContrastEnabled')
+      ? coerceBoolean((patch as any).identityRemarkAutoContrastEnabled)
+      : base.identityRemarkAutoContrastEnabled,
+  showOwnIdentityRemark:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showOwnIdentityRemark')
+      ? coerceBoolean((patch as any).showOwnIdentityRemark)
+      : base.showOwnIdentityRemark,
+  showOthersIdentityRemark:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showOthersIdentityRemark')
+      ? coerceBoolean((patch as any).showOthersIdentityRemark)
+      : base.showOthersIdentityRemark,
 })
 
 export const useDisplayStore = defineStore('display', {

@@ -14,6 +14,7 @@ import {
   Upload as UploadIcon,
   Users as UsersIcon,
   Id as CharacterCardIcon,
+  Message2 as CharacterRemarkIcon,
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
@@ -52,6 +53,7 @@ interface Props {
   emailNotificationActive?: boolean
   characterCardEnabled?: boolean
   characterCardActive?: boolean
+  characterRemarkActive?: boolean
 }
 
 interface Emits {
@@ -69,6 +71,7 @@ interface Emits {
   (e: 'open-webhook'): void
   (e: 'open-email-notification'): void
   (e: 'open-character-card'): void
+  (e: 'open-character-remark'): void
   (e: 'clear-filters'): void
 }
 
@@ -108,6 +111,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
     { key: 'channel-images', label: '图片浏览', icon: PhotoIcon, emitEvent: 'open-channel-images', activeKey: 'channelImagesActive' },
     { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
+    { key: 'character-remark', label: '角色备注', icon: CharacterRemarkIcon, emitEvent: 'open-character-remark', activeKey: 'characterRemarkActive' },
   ]
   
   // Add import button if allowed (before 消息归档)
@@ -284,7 +288,7 @@ onBeforeUnmount(() => {
 
 // Re-calculate when canImport changes (button list changes)
 watch(
-  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled, props.emailNotificationEnabled, props.characterCardEnabled],
+  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled, props.emailNotificationEnabled, props.characterCardEnabled, props.characterRemarkActive],
   () => {
     nextTick(calculateVisibleCount)
   }

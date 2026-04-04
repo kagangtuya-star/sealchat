@@ -9,7 +9,7 @@ import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
 import { matchText } from '@/utils/pinyinMatch'
-import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
+import type { KeywordCategoryInfo, WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import {
   createWorldKeywordCategory,
   renameWorldKeywordCategory,
@@ -19,10 +19,13 @@ import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
 import KeywordRichEditor from './KeywordRichEditor.vue'
+import WorldExternalGlossaryManager from './WorldExternalGlossaryManager.vue'
+import { useWorldExternalGlossaryStore } from '@/stores/worldExternalGlossary'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 type KeywordDisplayStyle = 'standard' | 'minimal' | 'inherit'
 const glossary = useWorldGlossaryStore()
+const worldExternalGlossary = useWorldExternalGlossaryStore()
 const chat = useChatStore()
 const utils = useUtilsStore()
 const message = useMessage()
@@ -169,6 +172,11 @@ const exportCategoryFilter = ref<string[]>([])
 const categoryManagerVisible = ref(false)
 const categoryStats = ref<Array<{ name: string; count: number }>>([])
 const newCategoryName = ref('')
+const categoryPriorityVisible = ref(false)
+const categoryPrioritySaving = ref(false)
+const categoryPriorityDragSource = ref<string | null>(null)
+const categoryPriorityDragTarget = ref<string | null>(null)
+const categoryPriorityDrafts = reactive<Record<string, number>>({})
 
 // Import category assignment
 const importTargetCategory = ref('')
@@ -185,6 +193,8 @@ const dragTargetId = ref<string | null>(null)
 const isReordering = ref(false)
 
 const importText = reactive({ content: '' })
+
+const categoryPriorityItems = ref<KeywordCategoryInfo[]>([])
 
 const isRegexMatch = computed({
   get: () => formModel.matchMode === 'regex',
@@ -595,6 +605,100 @@ async function handleCreateCategory() {
   }
 }
 
+async function openCategoryPriorityManager() {
+  const worldId = currentWorldId.value
+  if (!worldId) return
+  try {
+    const items = await glossary.ensureCategoryInfos(worldId, { force: true })
+    Object.keys(categoryPriorityDrafts).forEach((key) => delete categoryPriorityDrafts[key])
+    items.forEach((item) => {
+      categoryPriorityDrafts[item.name] = item.priority || 0
+    })
+    categoryPriorityItems.value = [...items]
+    categoryPriorityVisible.value = true
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '加载分类优先级失败'))
+  }
+}
+
+async function handleSaveCategoryPriority(name: string) {
+  const worldId = currentWorldId.value
+  if (!worldId || !name) return
+  try {
+    const priority = Number(categoryPriorityDrafts[name] || 0)
+    await glossary.setCategoryPriority(worldId, name, priority)
+    const latest = await glossary.ensureCategoryInfos(worldId, { force: true })
+    categoryPriorityItems.value = [...latest]
+    categoryOptions.value = await glossary.fetchCategories(worldId)
+    message.success(`已更新分类 "${name}" 的优先级`)
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '更新分类优先级失败'))
+  }
+}
+
+function applyCategoryPriorityOrder(list: KeywordCategoryInfo[]) {
+  const total = list.length
+  list.forEach((item, index) => {
+    categoryPriorityDrafts[item.name] = total - index
+  })
+}
+
+function handleCategoryPriorityDragStart(item: KeywordCategoryInfo) {
+  if (categoryPrioritySaving.value) return
+  categoryPriorityDragSource.value = item.name
+}
+
+function handleCategoryPriorityDragEnter(item: KeywordCategoryInfo) {
+  if (categoryPrioritySaving.value || !categoryPriorityDragSource.value || categoryPriorityDragSource.value === item.name) return
+  categoryPriorityDragTarget.value = item.name
+}
+
+function handleCategoryPriorityDragOver(event: DragEvent) {
+  if (categoryPrioritySaving.value) return
+  event.preventDefault()
+}
+
+function handleCategoryPriorityDragLeave() {
+  categoryPriorityDragTarget.value = null
+}
+
+async function handleCategoryPriorityDrop(item: KeywordCategoryInfo) {
+  const worldId = currentWorldId.value
+  const sourceName = categoryPriorityDragSource.value
+  if (!worldId || categoryPrioritySaving.value || !sourceName || sourceName === item.name) return
+  const items = [...categoryPriorityItems.value]
+  const fromIndex = items.findIndex((entry) => entry.name === sourceName)
+  const toIndex = items.findIndex((entry) => entry.name === item.name)
+  if (fromIndex < 0 || toIndex < 0) return
+  const [moved] = items.splice(fromIndex, 1)
+  items.splice(toIndex, 0, moved)
+  applyCategoryPriorityOrder(items)
+  categoryPriorityItems.value = items.map((entry) => ({ ...entry, priority: categoryPriorityDrafts[entry.name] || 0 }))
+  categoryPrioritySaving.value = true
+  try {
+    await glossary.setCategoryPriorities(worldId, items.map((entry) => ({
+      name: entry.name,
+      priority: categoryPriorityDrafts[entry.name] || 0,
+    })))
+    const latest = await glossary.ensureCategoryInfos(worldId, { force: true })
+    categoryPriorityItems.value = [...latest]
+    message.success('已按拖拽顺序更新分类优先级')
+  } catch (error: any) {
+    message.error(resolveErrorMessage(error, '拖拽更新分类优先级失败'))
+    const latest = await glossary.ensureCategoryInfos(worldId, { force: true })
+    categoryPriorityItems.value = [...latest]
+  } finally {
+    categoryPrioritySaving.value = false
+    categoryPriorityDragSource.value = null
+    categoryPriorityDragTarget.value = null
+  }
+}
+
+function handleCategoryPriorityDragEnd() {
+  categoryPriorityDragSource.value = null
+  categoryPriorityDragTarget.value = null
+}
+
 async function handleBulkModifyCategoryToTarget(targetCategory: string, targetIds?: string[]) {
   const worldId = currentWorldId.value
   if (!worldId || !targetCategory.trim()) return
@@ -981,6 +1085,13 @@ onUnmounted(() => {
             <span>术语词库</span>
           </div>
           <div class="space-x-2 flex items-center">
+            <n-button
+              size="tiny"
+              :disabled="!canEdit"
+              @click="worldExternalGlossary.setManagerVisible(true)"
+            >
+              外挂术语
+            </n-button>
             <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
           </div>
         </div>
@@ -1023,6 +1134,9 @@ onUnmounted(() => {
               </n-button>
               <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openCategoryManager">
                 分类管理
+              </n-button>
+              <n-button size="tiny" tertiary :disabled="!canEdit || !currentWorldId" @click="openCategoryPriorityManager">
+                分类优先级
               </n-button>
             </div>
             <div class="keyword-manager__action-group keyword-manager__action-group--bulk">
@@ -1437,6 +1551,44 @@ onUnmounted(() => {
     </template>
   </n-modal>
 
+  <n-modal v-model:show="categoryPriorityVisible" preset="card" title="分类优先级" style="width: 560px">
+    <div class="text-xs text-gray-400 mb-3">拖动排序后会立即保存，最上方优先级最高。</div>
+    <div class="category-manager__list">
+      <div v-for="item in categoryPriorityItems" :key="item.name" class="category-manager__item">
+        <div
+          class="category-manager__info"
+          :draggable="!categoryPrioritySaving"
+          :class="{ 'keyword-drop-target': categoryPriorityDragTarget === item.name, 'keyword-dragging': categoryPriorityDragSource === item.name }"
+          @dragstart="handleCategoryPriorityDragStart(item)"
+          @dragenter="handleCategoryPriorityDragEnter(item)"
+          @dragover="handleCategoryPriorityDragOver"
+          @dragleave="handleCategoryPriorityDragLeave"
+          @drop="handleCategoryPriorityDrop(item)"
+          @dragend="handleCategoryPriorityDragEnd"
+        >
+          <span class="category-manager__drag-label">::</span>
+          <n-tag :bordered="false" size="small">{{ item.name }}</n-tag>
+          <span class="category-manager__count">{{ item.count }} 个术语</span>
+        </div>
+        <div class="category-manager__actions">
+          <n-input-number
+            v-model:value="categoryPriorityDrafts[item.name]"
+            size="small"
+            style="width: 100px"
+            :disabled="categoryPrioritySaving"
+          />
+          <n-button size="tiny" tertiary type="primary" :loading="categoryPrioritySaving" @click="handleSaveCategoryPriority(item.name)">
+            保存
+          </n-button>
+        </div>
+      </div>
+      <div v-if="!categoryPriorityItems.length" class="text-center text-gray-400 py-4">暂无可配置分类</div>
+    </div>
+    <template #action>
+      <n-button @click="categoryPriorityVisible = false">关闭</n-button>
+    </template>
+  </n-modal>
+
   <!-- Bulk Modify Category Modal -->
   <n-modal v-model:show="bulkCategoryModalVisible" preset="card" title="批量修改分类" style="width: 420px">
     <div class="mb-2 text-sm text-gray-500">将为 {{ selectedIds.length }} 个术语修改分类</div>
@@ -1474,6 +1626,8 @@ onUnmounted(() => {
       </n-space>
     </template>
   </n-modal>
+
+  <WorldExternalGlossaryManager />
 </template>
 
 <style scoped>
@@ -1874,6 +2028,18 @@ tr[draggable="true"]:active {
   align-items: center;
   gap: 12px;
   flex: 1;
+  cursor: grab;
+}
+
+.category-manager__info:active {
+  cursor: grabbing;
+}
+
+.category-manager__drag-label {
+  color: #94a3b8;
+  font-size: 12px;
+  letter-spacing: 1px;
+  user-select: none;
 }
 
 .category-manager__count {

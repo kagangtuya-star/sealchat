@@ -1,5 +1,7 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 import type { KeywordTooltipController } from './keywordTooltip'
+import { shouldKeepKeywordTooltipOpenOnTransition } from './keywordTooltipHoverBoundary'
+import { applyKeywordTooltipSessionToElement } from './worldKeywordTooltipCandidates'
 
 interface HighlightOptions {
   underlineOnly: boolean
@@ -9,6 +11,17 @@ interface HighlightOptions {
 
 const HIGHLIGHT_CLASS = 'keyword-highlight'
 const UNDERLINE_ONLY_CLASS = 'keyword-highlight--underline'
+
+interface MatchedKeywordCandidate {
+  keyword: CompiledKeywordSpan
+  matchedVia: string
+}
+
+interface HighlightRangeGroup {
+  start: number
+  end: number
+  candidates: MatchedKeywordCandidate[]
+}
 
 function clearExistingHighlights(root: HTMLElement) {
   const highlights = root.querySelectorAll(`span.${HIGHLIGHT_CLASS}`)
@@ -29,80 +42,107 @@ function canProcessNode(node: Node) {
   return Boolean(node.textContent && node.textContent.trim().length)
 }
 
-function buildRanges(text: string, compiled: CompiledKeywordSpan[]) {
-  const ranges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
+function compareKeywordPriority(left: CompiledKeywordSpan, right: CompiledKeywordSpan) {
+  const leftCategoryPriority = left.categoryPriority || 0
+  const rightCategoryPriority = right.categoryPriority || 0
+  if (leftCategoryPriority !== rightCategoryPriority) return rightCategoryPriority - leftCategoryPriority
+
+  const leftTier = left.sourceType === 'world' ? 0 : 1
+  const rightTier = right.sourceType === 'world' ? 0 : 1
+  if (leftTier !== rightTier) return leftTier - rightTier
+
+  const leftSourceSort = left.sourceSortOrder || 0
+  const rightSourceSort = right.sourceSortOrder || 0
+  if (leftSourceSort !== rightSourceSort) return rightSourceSort - leftSourceSort
+
+  const leftSortOrder = left.sortOrder || 0
+  const rightSortOrder = right.sortOrder || 0
+  if (leftSortOrder !== rightSortOrder) return rightSortOrder - leftSortOrder
+
+  if ((left.updatedAt || '') !== (right.updatedAt || '')) return (right.updatedAt || '').localeCompare(left.updatedAt || '')
+  return (left.id || '').localeCompare(right.id || '')
+}
+
+function compareRangePriority(
+  left: { start: number; end: number; keyword: CompiledKeywordSpan },
+  right: { start: number; end: number; keyword: CompiledKeywordSpan },
+) {
+  const keywordPriority = compareKeywordPriority(left.keyword, right.keyword)
+  if (keywordPriority !== 0) return keywordPriority
+
+  const leftLength = left.end - left.start
+  const rightLength = right.end - right.start
+  if (leftLength !== rightLength) return rightLength - leftLength
+  if (left.start !== right.start) return left.start - right.start
+  if (left.end !== right.end) return left.end - right.end
+  return 0
+}
+
+function rangesOverlap(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+) {
+  return left.start < right.end && right.start < left.end
+}
+
+function buildRanges(text: string, compiled: CompiledKeywordSpan[]): HighlightRangeGroup[] {
+  const rawRanges: Array<{ start: number; end: number; keyword: CompiledKeywordSpan }> = []
 
   if (!compiled.length || !text) {
-    return ranges
+    return []
   }
 
-  // Build merged regex with capturing groups for O(n) matching
-  // Each keyword gets its own capturing group, allowing identification via match indices
-  try {
-    const patterns = compiled.map((entry) => `(${entry.regex.source})`)
-    const mergedPattern = patterns.join('|')
-    const mergedRegex = new RegExp(mergedPattern, 'gi')
-
+  compiled.forEach((entry) => {
+    const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
     let match: RegExpExecArray | null
-    while ((match = mergedRegex.exec(text)) !== null) {
+    while ((match = regex.exec(text)) !== null) {
       if (!match[0]) {
-        mergedRegex.lastIndex += 1
+        regex.lastIndex += 1
         continue
       }
-
-      // Find which capturing group matched (index 1 to N corresponds to compiled[0] to compiled[N-1])
-      let keywordIndex = -1
-      for (let i = 1; i < match.length; i++) {
-        if (match[i] !== undefined) {
-          keywordIndex = i - 1
-          break
-        }
-      }
-
-      if (keywordIndex >= 0 && keywordIndex < compiled.length) {
-        ranges.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          keyword: compiled[keywordIndex]
-        })
-      }
-
-      if (match.index === mergedRegex.lastIndex) {
-        mergedRegex.lastIndex += 1
+      rawRanges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
+      if (match.index === regex.lastIndex) {
+        regex.lastIndex += 1
       }
     }
-  } catch {
-    // Fallback to original approach if regex merge fails
-    compiled.forEach((entry) => {
-      const regex = new RegExp(entry.regex.source, entry.regex.flags.includes('g') ? entry.regex.flags : `${entry.regex.flags}g`)
-      let match: RegExpExecArray | null
-      while ((match = regex.exec(text)) !== null) {
-        if (!match[0]) {
-          regex.lastIndex += 1
-          continue
-        }
-        ranges.push({ start: match.index, end: match.index + match[0].length, keyword: entry })
-        if (match.index === regex.lastIndex) {
-          regex.lastIndex += 1
-        }
+  })
+
+  rawRanges.sort(compareRangePriority)
+
+  // Overlapping candidates now prefer configured classification priority first.
+  const selected: HighlightRangeGroup[] = []
+  rawRanges.forEach((range) => {
+    const existingExactRange = selected.find((existing) => existing.start === range.start && existing.end === range.end)
+    if (existingExactRange) {
+      if (!existingExactRange.candidates.some((candidate) => candidate.keyword.id === range.keyword.id)) {
+        existingExactRange.candidates.push({
+          keyword: range.keyword,
+          matchedVia: range.keyword.source,
+        })
+        existingExactRange.candidates.sort((left, right) => compareKeywordPriority(left.keyword, right.keyword))
       }
-    })
-  }
-
-  // Sort by start position, prefer longer matches
-  ranges.sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start))
-
-  // Filter overlapping ranges
-  const filtered: typeof ranges = []
-  let cursor = -1
-  ranges.forEach((range) => {
-    if (range.start < cursor) {
       return
     }
-    filtered.push(range)
-    cursor = range.end
+
+    if (selected.some((existing) => rangesOverlap(existing, range))) {
+      return
+    }
+    selected.push({
+      start: range.start,
+      end: range.end,
+      candidates: [{
+        keyword: range.keyword,
+        matchedVia: range.keyword.source,
+      }],
+    })
   })
-  return filtered
+
+  selected.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start
+    if (a.end !== b.end) return a.end - b.end
+    return compareKeywordPriority(a.candidates[0].keyword, b.candidates[0].keyword)
+  })
+  return selected
 }
 
 function attachTouchDoubleTap(target: HTMLElement, handler: () => void) {
@@ -144,8 +184,13 @@ function wrapRanges(
   let lastIndex = 0
 
   ranges.forEach((range) => {
+    const primaryCandidate = range.candidates[0]
+    if (!primaryCandidate) {
+      return
+    }
+
     // Skip if deduplication is enabled and this keyword was already highlighted
-    if (options.deduplicate && highlightedKeywords.has(range.keyword.id)) {
+    if (options.deduplicate && highlightedKeywords.has(primaryCandidate.keyword.id)) {
       return
     }
 
@@ -155,13 +200,18 @@ function wrapRanges(
     const span = document.createElement('span')
     span.className = HIGHLIGHT_CLASS
     const shouldUnderline =
-      range.keyword.display === 'minimal' ||
-      (options.underlineOnly && range.keyword.display === 'inherit')
+      primaryCandidate.keyword.display === 'minimal' ||
+      (options.underlineOnly && primaryCandidate.keyword.display === 'inherit')
     if (shouldUnderline) {
       span.classList.add(UNDERLINE_ONLY_CLASS)
     }
-    span.dataset.keywordId = range.keyword.id
-    span.dataset.keywordSource = range.keyword.source
+    applyKeywordTooltipSessionToElement(span, {
+      candidates: range.candidates.map((candidate) => ({
+        keywordId: candidate.keyword.id,
+        matchedVia: candidate.matchedVia,
+      })),
+      activeIndex: 0,
+    })
     span.textContent = text.slice(range.start, range.end)
 
     // No individual event listeners - using event delegation instead
@@ -170,7 +220,7 @@ function wrapRanges(
 
     // Track this keyword as highlighted if deduplication is enabled
     if (options.deduplicate) {
-      highlightedKeywords.add(range.keyword.id)
+      highlightedKeywords.add(primaryCandidate.keyword.id)
     }
 
     lastIndex = range.end
@@ -215,20 +265,28 @@ function setupEventDelegation(
       const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
       if (!span || !root.contains(span)) return
 
-      // Check if mouse moved to another highlight or outside
       const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
-      const movedToHighlight = relatedTarget?.closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-
-      // Only hide if not moving to another highlight
-      if (!movedToHighlight || !root.contains(movedToHighlight)) {
+      if (!shouldKeepKeywordTooltipOpenOnTransition({
+        root,
+        relatedTarget,
+        hoverTooltip: tooltip.getHoverTooltipElement(),
+      })) {
         tooltip.hide(span)
         currentHoveredSpan = null
       }
     })
 
-    // Fallback: hide tooltip when mouse leaves root entirely
-    root.addEventListener('mouseleave', () => {
-      if (currentHoveredSpan) {
+    root.addEventListener('mouseleave', (e) => {
+      if (!currentHoveredSpan) {
+        return
+      }
+
+      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
+      if (!shouldKeepKeywordTooltipOpenOnTransition({
+        root,
+        relatedTarget,
+        hoverTooltip: tooltip.getHoverTooltipElement(),
+      })) {
         tooltip.hide(currentHoveredSpan)
         currentHoveredSpan = null
       }

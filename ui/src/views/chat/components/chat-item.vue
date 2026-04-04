@@ -28,6 +28,8 @@ import { useDisplayStore, type TimestampFormat } from '@/stores/display'
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
+import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCandidates'
+import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
@@ -35,7 +37,7 @@ import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } fr
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
-import CharacterCardBadge from './CharacterCardBadge.vue'
+import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
 import type { ChannelIForm } from '@/types/iform';
@@ -1789,16 +1791,23 @@ const compiledKeywords = computed(() => {
   if (!worldId) {
     return []
   }
-  return worldGlossary.compiledMap[worldId] || []
+  return worldGlossary.effectiveCompiledMap[worldId] || []
 })
 
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
 const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
+const hasExternalKeywordSource = computed(() => {
+  const worldId = chat.currentWorldId
+  if (!worldId) {
+    return false
+  }
+  return (worldGlossary.effectivePages[worldId]?.items || []).some((item) => item.sourceType === 'external_library')
+})
 
 const keywordTooltipResolver = (keywordId: string) => {
-  const keyword = worldGlossary.keywordById[keywordId]
+  const keyword = worldGlossary.effectiveKeywordById[keywordId]
   if (!keyword) {
     return null
   }
@@ -1806,7 +1815,27 @@ const keywordTooltipResolver = (keywordId: string) => {
     title: keyword.keyword,
     description: keyword.description,
     descriptionFormat: keyword.descriptionFormat,
+    sourceName: formatWorldKeywordSourceLabel(keyword.sourceName, keyword.category, hasExternalKeywordSource.value),
   }
+}
+
+const loadKeywordConflictCandidates = async (
+  target: HTMLElement,
+  session: KeywordTooltipSessionState,
+) => {
+  const worldId = chat.currentWorldId
+  const matchedText = String(target.textContent || '').trim()
+  if (!worldId || !matchedText || session.candidates.length > 1) {
+    return session.candidates
+  }
+  const items = await worldGlossary.ensureEffectiveKeywordConflictCandidates(worldId, matchedText)
+  if (!items.length) {
+    return session.candidates
+  }
+  return items.map((item) => ({
+    keywordId: item.id,
+    matchedVia: matchedText,
+  }))
 }
 
 const handleKeywordQuickEdit = (keywordId: string) => {
@@ -1817,8 +1846,8 @@ const handleKeywordQuickEdit = (keywordId: string) => {
   if (!worldId) {
     return
   }
-  const keyword = worldGlossary.keywordById[keywordId]
-  if (!keyword) {
+  const keyword = worldGlossary.effectiveKeywordById[keywordId]
+  if (!keyword || !keyword.canQuickEdit) {
     return
   }
   worldGlossary.openEditor(worldId, keyword)
@@ -1830,6 +1859,7 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
   underlineOnly: keywordUnderlineOnly.value,
   textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+  candidateLoader: loadKeywordConflictCandidates,
 })
 
 // Lazy rendering state
@@ -2937,6 +2967,7 @@ watch(
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
       underlineOnly: keywordUnderlineOnly.value,
       textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+      candidateLoader: loadKeywordConflictCandidates,
     })
     void applyKeywordHighlights()
   },
@@ -3230,7 +3261,11 @@ const handleRetrySend = () => {
             </template>
             {{ messageSendErrorReason }}
           </n-tooltip>
-          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+          <IdentityMetaInlineRow
+            :identity-id="senderIdentityId"
+            :identity-color="nameColor"
+            :channel-id="chat.curChannel?.id || ''"
+          />
         </template>
 
         <template v-else>
@@ -3254,7 +3289,11 @@ const handleRetrySend = () => {
             </template>
             {{ messageSendErrorReason }}
           </n-tooltip>
-          <CharacterCardBadge :identity-id="senderIdentityId" :identity-color="nameColor" />
+          <IdentityMetaInlineRow
+            :identity-id="senderIdentityId"
+            :identity-color="nameColor"
+            :channel-id="chat.curChannel?.id || ''"
+          />
         </template>
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>

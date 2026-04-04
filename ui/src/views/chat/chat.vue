@@ -17,6 +17,7 @@ import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
+import ChannelRemarkManager from './components/ChannelRemarkManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import IcOocRoleConfigPanel from './components/IcOocRoleConfigPanel.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
@@ -50,6 +51,7 @@ import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
+import { useCharacterRemarkStore } from '@/stores/characterRemark';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
 import { copyTextWithFallback } from '@/utils/clipboard';
@@ -71,6 +73,7 @@ import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
+import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -105,6 +108,7 @@ const user = useUserStore();
 const gallery = useGalleryStore();
 const utils = useUtilsStore();
 const display = useDisplayStore();
+const characterRemarkStore = useCharacterRemarkStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
@@ -220,6 +224,7 @@ type ExternalPanelKey =
   | 'gallery'
   | 'display'
   | 'favorites'
+  | 'character-remark'
   | 'channel-images'
   | 'world-glossary'
   | 'world-announcement'
@@ -252,12 +257,16 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'favorites':
       channelFavoritesVisible.value = true;
       return;
+    case 'character-remark':
+      characterRemarkManagerVisible.value = true;
+      return;
     case 'channel-images':
       openChannelImagesPanel();
       return;
     case 'world-glossary':
       if (!chat.currentWorldId) return;
       worldGlossary.ensureKeywords(chat.currentWorldId, { force: true });
+      worldGlossary.ensureEffectiveKeywords(chat.currentWorldId, { force: true });
       worldGlossary.setManagerVisible(true);
       return;
     case 'world-announcement':
@@ -346,6 +355,7 @@ const canManageWorldKeywords = computed(() => {
   return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
+const characterRemarkManagerVisible = ref(false);
 const showWorldAnnouncementModal = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
@@ -1146,6 +1156,11 @@ const initCharacterCardBadge = (
   }
 };
 
+const initCharacterRemark = (channelId?: string) => {
+  if (!channelId || chat.isObserver) return;
+  void characterRemarkStore.requestRemarkSnapshot(channelId);
+};
+
 const CHARACTER_RESUME_SYNC_MIN_INTERVAL_MS = 1500;
 let lastCharacterResumeSyncAt = 0;
 let characterResumeSyncEpoch = 0;
@@ -1231,6 +1246,7 @@ const presenceBadgeUsers = new Set<string>();
 watch(
   () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled] as const,
   ([channelId, characterApiEnabled]) => {
+    initCharacterRemark(channelId);
     if (!channelId || characterApiEnabled !== true) return;
     void (async () => {
       const didSync = await simulateCurrentIdentitySelection(channelId);
@@ -1601,6 +1617,7 @@ watch(
       return
     }
     worldGlossary.ensureKeywords(worldId)
+    worldGlossary.ensureEffectiveKeywords(worldId)
     chat.worldDetail(worldId)
     hideSelectionBar()
   },
@@ -9755,6 +9772,60 @@ const resolveMessageWhisperTargetId = (msg?: any): string | null => {
   return null;
 };
 
+const buildWhisperTargetUserFromMessage = (id: string, entry?: any, displayName?: string): User | null => {
+  const normalizedId = String(id || entry?.id || '').trim();
+  if (!normalizedId) {
+    return null;
+  }
+  const channelUser = chat.curChannelUsers.find((member: any) => member?.id === normalizedId);
+  const nick = String(
+    entry?.nick
+    || channelUser?.nick
+    || displayName
+    || entry?.name
+    || channelUser?.name
+    || normalizedId,
+  ).trim();
+  return {
+    id: normalizedId,
+    name: String(entry?.name || channelUser?.name || nick || normalizedId).trim(),
+    nick: nick || normalizedId,
+    avatar: String(entry?.avatar || channelUser?.avatar || '').trim(),
+    discriminator: String(entry?.discriminator || channelUser?.discriminator || '').trim(),
+    is_bot: Boolean(entry?.is_bot || channelUser?.is_bot),
+  };
+};
+
+const resolveMessageWhisperTargets = (msg?: any): User[] => {
+  if (!msg) {
+    return [];
+  }
+  const metaIds = Array.isArray(msg?.whisperMeta?.targetUserIds) ? msg.whisperMeta.targetUserIds : [];
+  const metaNames = Array.isArray(msg?.whisperMeta?.targetDisplayNames) ? msg.whisperMeta.targetDisplayNames : [];
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    return list
+      .map((entry: any, index: number) => {
+        if (typeof entry === 'string') {
+          return buildWhisperTargetUserFromMessage(entry, null, metaNames[index]);
+        }
+        return buildWhisperTargetUserFromMessage(entry?.id, entry, metaNames[index]);
+      })
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  if (metaIds.length > 0) {
+    return metaIds
+      .map((id: string, index: number) => buildWhisperTargetUserFromMessage(id, null, metaNames[index]))
+      .filter((target: User | null): target is User => Boolean(target));
+  }
+  const singleId = resolveMessageWhisperTargetId(msg);
+  if (!singleId) {
+    return [];
+  }
+  const single = buildWhisperTargetUserFromMessage(singleId, msg?.whisperTo || msg?.whisper_to || msg?.whisper_target, msg?.whisperMeta?.targetMemberName);
+  return single ? [single] : [];
+};
+
 const resolveMessageIdentityId = (msg?: any): string | null => {
   if (!msg) {
     return null;
@@ -9967,6 +10038,8 @@ interface EditSaveSnapshot {
   token: number;
   channelId: string;
   messageId: string;
+  isWhisper: boolean;
+  whisperTargetIds: string[];
   icMode: 'ic' | 'ooc';
   identityId: string | null;
   identityVariantId: string | null;
@@ -9995,6 +10068,8 @@ const createEditSaveSnapshot = (): EditSaveSnapshot | null => {
     token: editSessionToken.value,
     channelId: editing.channelId,
     messageId: editing.messageId,
+    isWhisper: Boolean(editing.isWhisper),
+    whisperTargetIds: chat.whisperTargets.map((target) => String(target?.id || '').trim()).filter(Boolean),
     icMode: editing.icMode === 'ooc' ? 'ooc' : 'ic',
     identityId: editing.identityId ?? null,
     identityVariantId: editing.identityVariantId ?? null,
@@ -10028,6 +10103,7 @@ const beginEdit = (target?: Message) => {
   invalidateEditSession();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
+  const whisperTargets = resolveMessageWhisperTargets(target);
   const identityId = resolveMessageIdentityId(target);
   const identityVariantId = resolveIdentityVariantIdFromMessage(target);
   const identitySnapshot = resolveMessageIdentitySnapshot(target);
@@ -10040,6 +10116,7 @@ const beginEdit = (target?: Message) => {
     mode: detectedMode,
     isWhisper: Boolean(target.isWhisper),
     whisperTargetId,
+    whisperTargets,
     icMode,
     identityId: identityId || null,
     identityVariantId,
@@ -10166,8 +10243,15 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null } = {};
+    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; whisperTargetIds?: string[] } = {};
     updateOptions.icMode = snapshot.icMode;
+    if (snapshot.isWhisper) {
+      if (snapshot.whisperTargetIds.length === 0) {
+        message.error('悄悄话至少需要一个可见对象');
+        return;
+      }
+      updateOptions.whisperTargetIds = snapshot.whisperTargetIds;
+    }
     if (snapshot.identityId !== snapshot.initialIdentityId) {
       updateOptions.identityId = snapshot.identityId;
     }
@@ -10272,6 +10356,20 @@ const handleWhisperCandidateChecked = (candidate: WhisperCandidate, checked: boo
   onWhisperTargetToggle(candidate);
 };
 
+const selectAllFilteredWhisperCandidates = () => {
+  filteredWhisperCandidates.value.forEach((candidate) => {
+    if (!isWhisperTarget(candidate)) {
+      onWhisperTargetToggle(candidate);
+    }
+  });
+};
+
+const invertFilteredWhisperCandidates = () => {
+  filteredWhisperCandidates.value.forEach((candidate) => {
+    onWhisperTargetToggle(candidate);
+  });
+};
+
 const confirmWhisperSelection = () => {
   chat.confirmWhisperTargets();
   const source = whisperPickerSource.value;
@@ -10343,9 +10441,8 @@ const startWhisperSelection = () => {
     message.warning(t('inputBox.whisperNoOnline'));
     return;
   }
-  if (whisperPanelVisible.value || chat.whisperTargets.length > 0) {
+  if (whisperPanelVisible.value) {
     closeWhisperPanel();
-    clearWhisperTargets();
     return;
   }
   openWhisperPanel('manual');
@@ -10370,31 +10467,6 @@ const replaceAtTokensWithDisplayText = (value: string) => {
     const display = decodeAtTokenText(name || id || '用户');
     return `@${display}`;
   });
-};
-
-const extractPushNotificationPreview = (content: string) => {
-  if (!content) {
-    return '';
-  }
-
-  if (isTipTapJson(content)) {
-    try {
-      return tiptapJsonToPlainText(content).replace(/\s+/g, ' ').trim();
-    } catch {
-      return '';
-    }
-  }
-
-  return contentUnescape(
-    replaceAtTokensWithDisplayText(content)
-      .replace(/\[\[(?:图片:[^\]]+|img:id:[^\]]+)\]\]/g, '[图片]')
-      .replace(/<img\s+[^>]*>/gi, '[图片]')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|li|h[1-6]|blockquote|pre)>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-  )
-    .replace(/\s+/g, ' ')
-    .trim();
 };
 
 const collectMentionIdsFromText = (value: string, output: Set<string>) => {
@@ -10956,6 +11028,13 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     }
     chat.curReplyTo = null;
     chat.clearWhisperTargets();
+    if (chat.editing.isWhisper) {
+      (chat.editing.whisperTargets || []).forEach((target) => {
+        if (target?.id) {
+          chat.toggleWhisperTarget({ ...target });
+        }
+      });
+    }
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
@@ -11863,7 +11942,7 @@ chatEvent.on('message-created', (e?: Event) => {
           
           // 提取消息内容预览，兼容富文本、旧 HTML 和实体编码
           const rawContent = incoming.content || '';
-          const plainText = extractPushNotificationPreview(rawContent);
+          const plainText = extractPushNotificationPreviewText(rawContent);
           const preview = plainText.length > 50 ? plainText.slice(0, 50) + '...' : plainText;
           
           // 获取发送者头像（优先角色头像，其次用户/成员头像）
@@ -11876,7 +11955,8 @@ chatEvent.on('message-created', (e?: Event) => {
             chat.curChannel?.name || 'SealChat',
             `${senderName}: ${preview || '发送了一条消息'}`,
             chat.curChannel?.id || '',
-            avatarUrl
+            avatarUrl,
+            incoming.id,
           );
         }
       });
@@ -12175,6 +12255,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   }
   if (hasNewPresence) {
     initCharacterCardBadge(channelId);
+    initCharacterRemark(channelId);
   }
 });
 
@@ -12238,6 +12319,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       await fetchLatestMessages();
     }
     await fetchPinnedMessages();
+    initCharacterRemark(chat.curChannel?.id);
     void syncCharacterCardAfterResume('ws-connected', {
       forceIdentityReload: true,
       bypassCooldown: true,
@@ -12258,6 +12340,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
+  initCharacterRemark(chat.curChannel?.id);
   initialMessageJumpReady.value = true;
   void consumePendingMessageJump();
   firstLoad = true;
@@ -13657,6 +13740,7 @@ onBeforeUnmount(() => {
           :gallery-active="galleryPanelVisible"
           :display-active="displaySettingsVisible"
           :favorite-active="display.favoriteBarEnabled"
+          :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
           :can-import="canManageWorldKeywords"
           :import-active="importDialogVisible"
@@ -13678,6 +13762,7 @@ onBeforeUnmount(() => {
           @open-gallery="openGalleryPanel"
           @open-display-settings="displaySettingsVisible = true"
           @open-favorites="channelFavoritesVisible = true"
+          @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
           @open-split="openSplitView"
           @toggle-sticky-note="toggleStickyNotes"
@@ -14562,7 +14647,13 @@ onBeforeUnmount(() => {
       <div class="chat-input-wrapper flex flex-col w-full relative">
         <transition name="fade">
           <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop @pointerdown.stop>
-            <div class="whisper-panel__title">{{ t('inputBox.whisperPanelTitle') }}</div>
+            <div class="whisper-panel__title">
+              <span>{{ t('inputBox.whisperPanelTitle') }}</span>
+              <div class="whisper-panel__toolbar">
+                <n-button size="tiny" quaternary :disabled="!filteredWhisperCandidates.length" @click="selectAllFilteredWhisperCandidates">全选</n-button>
+                <n-button size="tiny" quaternary :disabled="!filteredWhisperCandidates.length" @click="invertFilteredWhisperCandidates">反选</n-button>
+              </div>
+            </div>
             <n-input v-if="whisperPickerSource === 'manual'" ref="whisperSearchInputRef"
               v-model:value="whisperQuery" size="small" :placeholder="t('inputBox.whisperSearchPlaceholder')" clearable
               @keydown="handleWhisperKeydown" />
@@ -16494,6 +16585,7 @@ onBeforeUnmount(() => {
   />
 
   <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
+  <ChannelRemarkManager v-model:show="characterRemarkManagerVisible" />
   <WorldKeywordManager />
   <AnnouncementManagerModal
     v-model:visible="showWorldAnnouncementModal"
@@ -20915,10 +21007,56 @@ onBeforeUnmount(() => {
 }
 
 :global(.keyword-tooltip__header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-weight: 600;
   margin-bottom: 6px;
   color: #1e293b;
   font-size: 15px;
+}
+
+:global(.keyword-tooltip__title) {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+:global(.keyword-tooltip__nav) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+:global(.keyword-tooltip__nav-btn) {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+:global(.keyword-tooltip__nav-btn:not(:disabled):hover) {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+:global(.keyword-tooltip__nav-btn:disabled) {
+  opacity: 0.35;
+}
+
+:global(.keyword-tooltip__nav-count) {
+  min-width: 30px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.68;
 }
 
 :global(.keyword-tooltip__body) {
@@ -20961,6 +21099,17 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-tooltip__header),
 :global(:root[data-display-palette='night'] .keyword-tooltip__header) {
   color: #fafafa;
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__nav-btn),
+:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn) {
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover),
+:global(:root[data-display-palette='night'] .keyword-tooltip__nav-btn:not(:disabled):hover) {
+  background: rgba(51, 65, 85, 0.98);
 }
 
 :global([data-display-palette='night'] .keyword-tooltip__body),
@@ -21028,6 +21177,10 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: transparent;
+}
+
+:global(.keyword-tooltip--swipeable) {
+  touch-action: pan-y;
 }
 
 /* Spoiler styles */

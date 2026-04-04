@@ -1070,6 +1070,21 @@ nav a:first-of-type {
   border-bottom-color: var(--keyword-border-color) !important;
 }
 
+:root[data-custom-theme='true'] .keyword-tooltip__nav-btn {
+  background-color: color-mix(in srgb, var(--sc-bg-surface) 88%, transparent) !important;
+  color: var(--sc-text-primary) !important;
+  border-color: var(--sc-border-mute) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-tooltip__nav-btn:not(:disabled):hover {
+  background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-tooltip__nav-count {
+  color: var(--sc-text-secondary, var(--sc-text-primary)) !important;
+}
+
 /* 术语气泡多段首行缩进样式 - 全局 */
 .keyword-tooltip__body--indented .keyword-tooltip__paragraph {
   text-indent: var(--keyword-tooltip-text-indent, 0);

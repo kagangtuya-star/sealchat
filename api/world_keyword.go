@@ -332,6 +332,23 @@ func WorldKeywordCategoriesHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"categories": categories})
 }
 
+func WorldKeywordCategoryInfoListHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	items, err := service.WorldKeywordListCategoryInfos(worldID, user.ID)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
 func WorldKeywordCategoryCreateHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
@@ -417,6 +434,67 @@ func WorldKeywordCategoryDeleteHandler(c *fiber.Ctx) error {
 	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
 		WorldID:     worldID,
 		Operation:   "category-deleted",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"updated": updated, "requestId": requestID})
+}
+
+func WorldKeywordCategoryPriorityUpdateHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		Name     string `json:"name"`
+		Priority int    `json:"priority"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	item, err := service.WorldKeywordCategoryUpdatePriority(worldID, user.ID, payload.Name, payload.Priority)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "category-priority-updated",
+		RequestID:   requestID,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"item": item, "requestId": requestID})
+}
+
+func WorldKeywordCategoryPriorityBulkUpdateHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		Items []service.KeywordCategoryPriorityUpdate `json:"items"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	updated, err := service.WorldKeywordCategoryBulkUpdatePriority(worldID, user.ID, payload.Items)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "category-priority-bulk-updated",
 		RequestID:   requestID,
 		ForceReload: true,
 	})

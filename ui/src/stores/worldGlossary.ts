@@ -2,11 +2,21 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { chatEvent, useChatStore } from './chat'
 import { useUserStore } from './user'
-import type { WorldKeywordItem, WorldKeywordPayload, WorldKeywordReorderItem } from '@/models/worldGlossary'
+import type {
+  EffectiveWorldKeywordItem,
+  KeywordCategoryInfo,
+  WorldKeywordItem,
+  WorldKeywordPayload,
+  WorldKeywordReorderItem,
+} from '@/models/worldGlossary'
 import {
+  fetchEffectiveWorldKeywords,
+  fetchEffectiveWorldKeywordsPublic,
   fetchWorldKeywords,
   fetchWorldKeywordsPublic,
   createWorldKeyword,
+  bulkUpdateWorldKeywordCategoryPriority,
+  fetchWorldKeywordCategoryInfos,
   updateWorldKeyword,
   deleteWorldKeyword,
   bulkDeleteWorldKeywords,
@@ -15,9 +25,14 @@ import {
   exportWorldKeywords,
   fetchWorldKeywordCategories,
   fetchWorldKeywordCategoriesPublic,
+  updateWorldKeywordCategoryPriority,
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
 import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
+import {
+  dedupeEffectiveKeywordsByKeyword,
+  filterExactEffectiveKeywordCandidates,
+} from '@/utils/worldKeywordConflictCandidates'
 import { useUtilsStore } from './utils'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
@@ -30,6 +45,14 @@ interface KeywordPageState {
   fetchedAt: number
 }
 
+interface EffectiveKeywordPageState {
+  items: EffectiveWorldKeywordItem[]
+  total: number
+  fetchedAt: number
+}
+
+const DEFAULT_CATEGORY_PRIORITY = 0
+
 export interface CompiledKeywordSpan {
   id: string
   keyword: string
@@ -40,6 +63,13 @@ export interface CompiledKeywordSpan {
   display: 'standard' | 'minimal' | 'inherit'
   description: string
   descriptionFormat?: 'plain' | 'rich'
+  categoryPriority?: number
+  sourceType?: 'world' | 'external_library'
+  sourceName?: string
+  sourceSortOrder?: number
+  sortOrder?: number
+  updatedAt?: string
+  canQuickEdit?: boolean
 }
 
 interface ImportStats {
@@ -99,30 +129,66 @@ const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => {
   }
 }
 
+const normalizeEffectiveKeywordItem = (item: EffectiveWorldKeywordItem): EffectiveWorldKeywordItem => {
+  const normalized = normalizeKeywordItem(item)
+  return {
+    ...normalized,
+    sourceType: item.sourceType,
+    sourceId: item.sourceId,
+    sourceName: item.sourceName,
+    categoryPriority: item.categoryPriority ?? DEFAULT_CATEGORY_PRIORITY,
+    sourceSortOrder: item.sourceSortOrder ?? 0,
+    canQuickEdit: item.canQuickEdit,
+  }
+}
+
+const compareEffectiveKeywordPriority = (left: EffectiveWorldKeywordItem, right: EffectiveWorldKeywordItem) => {
+  const leftPriority = left.categoryPriority ?? DEFAULT_CATEGORY_PRIORITY
+  const rightPriority = right.categoryPriority ?? DEFAULT_CATEGORY_PRIORITY
+  if (leftPriority !== rightPriority) return rightPriority - leftPriority
+  const leftTier = left.sourceType === 'world' ? 0 : 1
+  const rightTier = right.sourceType === 'world' ? 0 : 1
+  if (leftTier !== rightTier) return leftTier - rightTier
+  const leftSourceSort = left.sourceSortOrder ?? 0
+  const rightSourceSort = right.sourceSortOrder ?? 0
+  if (leftSourceSort !== rightSourceSort) return rightSourceSort - leftSourceSort
+  if ((left.sortOrder || 0) !== (right.sortOrder || 0)) return (right.sortOrder || 0) - (left.sortOrder || 0)
+  if ((left.updatedAt || '') !== (right.updatedAt || '')) return (right.updatedAt || '').localeCompare(left.updatedAt || '')
+  return (left.id || '').localeCompare(right.id || '')
+}
+
 export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const pages = ref<Record<string, KeywordPageState>>({})
   const loadingMap = ref<Record<string, boolean>>({})
   const compiledMap = ref<Record<string, CompiledKeywordSpan[]>>({})
   const keywordById = ref<Record<string, WorldKeywordItem>>({})
+  const categoryInfoMap = ref<Record<string, KeywordCategoryInfo[]>>({})
   const versionMap = ref<Record<string, number>>({})
+  const effectivePages = ref<Record<string, EffectiveKeywordPageState>>({})
+  const effectiveCompiledMap = ref<Record<string, CompiledKeywordSpan[]>>({})
+  const effectiveKeywordById = ref<Record<string, EffectiveWorldKeywordItem>>({})
+  const effectiveLoadingMap = ref<Record<string, boolean>>({})
+  const effectiveVersionMap = ref<Record<string, number>>({})
   const managerVisible = ref(false)
   const editorState = ref<KeywordEditorState>({ visible: false, worldId: null, keyword: null, prefill: null })
   const quickPrefill = ref<string | null>(null)
   const importState = ref<KeywordImportState>({ visible: false, processing: false, worldId: null, lastStats: null })
   const searchQuery = ref('')
+  const effectiveConflictCandidateCache = new Map<string, EffectiveWorldKeywordItem[]>()
+  const effectiveConflictCandidatePending = new Map<string, Promise<EffectiveWorldKeywordItem[]>>()
 
   const currentWorldId = computed(() => useChatStore().currentWorldId)
 
   const currentKeywords = computed(() => {
     const worldId = currentWorldId.value
     if (!worldId) return []
-    return pages.value[worldId]?.items || []
+    return dedupeEffectiveKeywordsByKeyword(effectivePages.value[worldId]?.items || [])
   })
 
   const currentCompiled = computed(() => {
     const worldId = currentWorldId.value
     if (!worldId) return []
-    return compiledMap.value[worldId] || []
+    return effectiveCompiledMap.value[worldId] || []
   })
 
   function setManagerVisible(visible: boolean) {
@@ -190,6 +256,11 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
                 display,
                 description: item.description,
                 descriptionFormat: item.descriptionFormat,
+                categoryPriority: DEFAULT_CATEGORY_PRIORITY,
+                sourceType: 'world',
+                sourceSortOrder: 0,
+                sortOrder: item.sortOrder,
+                updatedAt: item.updatedAt,
               })
             } catch (error) {
               console.warn('invalid keyword pattern', item.keyword, error)
@@ -197,6 +268,53 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
           })
       })
     compiledMap.value[worldId] = entries
+  }
+
+  function rebuildEffectiveCompiled(worldId: string) {
+    const page = effectivePages.value[worldId]
+    if (!page) {
+      effectiveCompiledMap.value[worldId] = []
+      return
+    }
+    const entries: CompiledKeywordSpan[] = []
+    page.items
+      .filter((item) => item && item.isEnabled)
+      .forEach((item) => {
+        const display = item.display || 'inherit'
+        const baseSources = [item.keyword, ...(item.aliases || [])]
+        baseSources
+          .map((text) => text?.trim())
+          .filter((text): text is string => Boolean(text))
+          .forEach((text) => {
+            try {
+              const pattern =
+                item.matchMode === 'regex'
+                  ? new RegExp(text, 'g')
+                  : new RegExp(escapeRegExp(text), 'gi')
+              entries.push({
+                id: item.id,
+                keyword: item.keyword,
+                category: item.category || '',
+                source: text,
+                regex: pattern,
+                matchMode: item.matchMode,
+                display,
+                description: item.description,
+                descriptionFormat: item.descriptionFormat,
+                categoryPriority: item.categoryPriority ?? DEFAULT_CATEGORY_PRIORITY,
+                sourceType: item.sourceType,
+                sourceName: item.sourceName,
+                sourceSortOrder: item.sourceSortOrder ?? 0,
+                sortOrder: item.sortOrder,
+                updatedAt: item.updatedAt,
+                canQuickEdit: item.canQuickEdit,
+              })
+            } catch (error) {
+              console.warn('invalid effective keyword pattern', item.keyword, error)
+            }
+          })
+      })
+    effectiveCompiledMap.value[worldId] = entries
   }
 
   function updateKeywordCache(worldId: string, list: WorldKeywordItem[], meta?: { total?: number; page?: number; pageSize?: number }) {
@@ -230,6 +348,31 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     rebuildCompiled(worldId)
   }
 
+  function updateEffectiveKeywordCache(worldId: string, list: EffectiveWorldKeywordItem[], meta?: { total?: number }) {
+    const normalizedList = list.map(normalizeEffectiveKeywordItem)
+    normalizedList.sort(compareEffectiveKeywordPriority)
+    effectivePages.value = {
+      ...effectivePages.value,
+      [worldId]: {
+        items: normalizedList,
+        total: meta?.total ?? normalizedList.length,
+        fetchedAt: Date.now(),
+      },
+    }
+    const nextMap = { ...effectiveKeywordById.value }
+    normalizedList.forEach((item) => {
+      nextMap[item.id] = item
+    })
+    const keepIds = new Set(normalizedList.map((item) => item.id))
+    Object.entries(nextMap).forEach(([id, item]) => {
+      if (item.worldId === worldId && !keepIds.has(id)) {
+        delete nextMap[id]
+      }
+    })
+    effectiveKeywordById.value = nextMap
+    rebuildEffectiveCompiled(worldId)
+  }
+
   async function ensureKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
     if (!worldId) return
     const chat = useChatStore()
@@ -255,11 +398,87 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
   }
 
+  async function ensureEffectiveKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
+    if (!worldId) return
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) return
+    const page = effectivePages.value[worldId]
+    if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000) {
+      return
+    }
+    effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: true }
+    try {
+      const data = chat.isObserver
+        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query })
+        : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query })
+      updateEffectiveKeywordCache(worldId, data.items, data)
+      Array.from(effectiveConflictCandidateCache.keys()).forEach((key) => {
+        if (key.startsWith(`${worldId}::`)) {
+          effectiveConflictCandidateCache.delete(key)
+        }
+      })
+      Array.from(effectiveConflictCandidatePending.keys()).forEach((key) => {
+        if (key.startsWith(`${worldId}::`)) {
+          effectiveConflictCandidatePending.delete(key)
+        }
+      })
+      effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: Date.now() }
+    } finally {
+      effectiveLoadingMap.value = { ...effectiveLoadingMap.value, [worldId]: false }
+    }
+  }
+
+  async function ensureEffectiveKeywordConflictCandidates(worldId: string, matchedText: string) {
+    const normalizedMatchedText = String(matchedText || '').trim().toLowerCase()
+    if (!worldId || !normalizedMatchedText) {
+      return []
+    }
+    const cacheKey = `${worldId}::${normalizedMatchedText}`
+    const cached = effectiveConflictCandidateCache.get(cacheKey)
+    if (cached) {
+      return cached
+    }
+    const pending = effectiveConflictCandidatePending.get(cacheKey)
+    if (pending) {
+      return pending
+    }
+
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) {
+      return []
+    }
+
+    const request = (async () => {
+      const data = chat.isObserver
+        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: matchedText, includeAllMatches: true })
+        : await fetchEffectiveWorldKeywords(worldId, { q: matchedText, includeAllMatches: true })
+      const normalizedItems = data.items.map(normalizeEffectiveKeywordItem)
+      const exactMatches = filterExactEffectiveKeywordCandidates(normalizedItems, matchedText)
+      const nextMap = { ...effectiveKeywordById.value }
+      exactMatches.forEach((item) => {
+        nextMap[item.id] = item
+      })
+      effectiveKeywordById.value = nextMap
+      effectiveConflictCandidateCache.set(cacheKey, exactMatches)
+      return exactMatches
+    })()
+
+    effectiveConflictCandidatePending.set(cacheKey, request)
+    try {
+      return await request
+    } finally {
+      effectiveConflictCandidatePending.delete(cacheKey)
+    }
+  }
+
   async function createKeyword(worldId: string, payload: WorldKeywordPayload) {
     const item = await createWorldKeyword(worldId, payload)
     const list = [...(pages.value[worldId]?.items || [])]
     list.unshift(normalizeKeywordItem(item))
     updateKeywordCache(worldId, list)
+    await ensureEffectiveKeywords(worldId, { force: true })
     return item
   }
 
@@ -267,6 +486,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     const item = await updateWorldKeyword(worldId, keywordId, payload)
     const list = (pages.value[worldId]?.items || []).map((existing) => (existing.id === keywordId ? normalizeKeywordItem(item) : existing))
     updateKeywordCache(worldId, list)
+    await ensureEffectiveKeywords(worldId, { force: true })
     return item
   }
 
@@ -274,6 +494,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     await deleteWorldKeyword(worldId, keywordId)
     const list = (pages.value[worldId]?.items || []).filter((item) => item.id !== keywordId)
     updateKeywordCache(worldId, list)
+    await ensureEffectiveKeywords(worldId, { force: true })
   }
 
   async function removeKeywordBulk(worldId: string, ids: string[]) {
@@ -281,6 +502,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     if (removed > 0) {
       const list = (pages.value[worldId]?.items || []).filter((item) => !ids.includes(item.id))
       updateKeywordCache(worldId, list)
+      await ensureEffectiveKeywords(worldId, { force: true })
     }
   }
 
@@ -313,6 +535,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
     const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
     updateKeywordCache(worldId, nextList)
+    await ensureEffectiveKeywords(worldId, { force: true })
   }
 
   async function setKeywordDisplayBulk(worldId: string, ids: string[], display: 'standard' | 'minimal' | 'inherit') {
@@ -345,6 +568,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
     const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
     updateKeywordCache(worldId, nextList)
+    await ensureEffectiveKeywords(worldId, { force: true })
   }
 
   async function importKeywords(worldId: string, items: WorldKeywordPayload[], replace = false) {
@@ -353,6 +577,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     importState.value.lastStats = stats
     importState.value.processing = false
     await ensureKeywords(worldId, { force: true })
+    await ensureEffectiveKeywords(worldId, { force: true })
     return stats
   }
 
@@ -366,6 +591,30 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       return fetchWorldKeywordCategoriesPublic(worldId)
     }
     return fetchWorldKeywordCategories(worldId)
+  }
+
+  async function ensureCategoryInfos(worldId: string, opts?: { force?: boolean }) {
+    if (!worldId) return []
+    if (!opts?.force && categoryInfoMap.value[worldId]?.length) {
+      return categoryInfoMap.value[worldId]
+    }
+    const items = await fetchWorldKeywordCategoryInfos(worldId)
+    categoryInfoMap.value = { ...categoryInfoMap.value, [worldId]: items }
+    return items
+  }
+
+  async function setCategoryPriority(worldId: string, name: string, priority: number) {
+    const item = await updateWorldKeywordCategoryPriority(worldId, name, priority)
+    await ensureCategoryInfos(worldId, { force: true })
+    await ensureEffectiveKeywords(worldId, { force: true })
+    return item
+  }
+
+  async function setCategoryPriorities(worldId: string, items: Array<{ name: string; priority: number }>) {
+    const updated = await bulkUpdateWorldKeywordCategoryPriority(worldId, items)
+    await ensureCategoryInfos(worldId, { force: true })
+    await ensureEffectiveKeywords(worldId, { force: true })
+    return updated
   }
 
   async function reorderKeywords(worldId: string, items: WorldKeywordReorderItem[]) {
@@ -382,12 +631,13 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       })
       nextList.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0))
       updateKeywordCache(worldId, nextList)
+      await ensureEffectiveKeywords(worldId, { force: true })
     }
     return updated
   }
 
   function handleGatewayEvent(event?: any) {
-    if (!event || event.type !== 'world-keywords-updated') {
+    if (!event || (event.type !== 'world-keywords-updated' && event.type !== 'world-external-glossaries-updated')) {
       return
     }
     const rawArgv = event?.argv || {}
@@ -402,12 +652,20 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       return
     }
     versionMap.value = { ...versionMap.value, [worldId]: revision }
-    void ensureKeywords(worldId, { force: true })
+    if (event.type === 'world-keywords-updated') {
+      void ensureKeywords(worldId, { force: true })
+    }
+    if (categoryInfoMap.value[worldId]) {
+      void ensureCategoryInfos(worldId, { force: true })
+    }
+    effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: revision }
+    void ensureEffectiveKeywords(worldId, { force: true })
   }
 
   function ensureGateway() {
     if (gatewayBound) return
     chatEvent.on('world-keywords-updated' as any, handleGatewayEvent)
+    chatEvent.on('world-external-glossaries-updated' as any, handleGatewayEvent)
     gatewayBound = true
   }
 
@@ -417,7 +675,13 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     pages,
     compiledMap,
     keywordById,
+    categoryInfoMap,
     versionMap,
+    effectivePages,
+    effectiveCompiledMap,
+    effectiveKeywordById,
+    effectiveLoadingMap,
+    effectiveVersionMap,
     managerVisible,
     editorState,
     quickPrefill,
@@ -427,6 +691,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     currentCompiled,
     loadingMap,
     ensureKeywords,
+    ensureEffectiveKeywords,
+    ensureEffectiveKeywordConflictCandidates,
     createKeyword,
     editKeyword,
     removeKeyword,
@@ -434,6 +700,9 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     importKeywords,
     exportKeywords,
     fetchCategories,
+    ensureCategoryInfos,
+    setCategoryPriority,
+    setCategoryPriorities,
     reorderKeywords,
     setKeywordEnabledBulk,
     setKeywordDisplayBulk,

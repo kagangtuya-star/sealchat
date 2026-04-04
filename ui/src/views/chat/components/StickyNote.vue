@@ -262,7 +262,7 @@ import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver'
 import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
-import { copyTextWithFallback } from '@/utils/clipboard'
+import { copyTextWithFallback, copyTextWithResult } from '@/utils/clipboard'
 import ChatInputRich from './inputs/ChatInputRich.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 
@@ -980,7 +980,11 @@ async function saveContentNow() {
 
 function copyContent() {
   const text = note.value?.contentText || note.value?.content || ''
-  navigator.clipboard.writeText(text)
+  void copyTextWithResult(text, {
+    onFailure: () => {
+      message.error('复制失败')
+    },
+  })
 }
 
 function roundRatio(value: number) {

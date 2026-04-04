@@ -167,6 +167,9 @@ func DigestPushSettingsUpsert(c *fiber.Ctx) error {
 		}
 		saved.LastProcessedWindowStart = 0
 	}
+	if err := syncDigestPullIntegrationForRule(model.DigestScopeTypeChannel, channel.ID, saved, user.ID); err != nil {
+		return wrapError(c, err, "同步摘要拉取 BOT 失败")
+	}
 	resp, err := buildDigestPushSettingsResponse(model.DigestScopeTypeChannel, channel.ID, saved)
 	if err != nil {
 		return wrapError(c, err, "构建未读提醒配置失败")
@@ -179,8 +182,16 @@ func DigestPushSettingsDelete(c *fiber.Ctx) error {
 	if err != nil || channel == nil {
 		return err
 	}
+	user := getCurUser(c)
+	actorUserID := ""
+	if user != nil {
+		actorUserID = user.ID
+	}
 	if err := model.DigestPushRuleDelete(model.DigestScopeTypeChannel, channel.ID); err != nil {
 		return wrapError(c, err, "删除未读提醒配置失败")
+	}
+	if err := syncDigestPullIntegrationForRule(model.DigestScopeTypeChannel, channel.ID, nil, actorUserID); err != nil {
+		return wrapError(c, err, "清理摘要拉取 BOT 失败")
 	}
 	return c.JSON(fiber.Map{"success": true})
 }
@@ -250,6 +261,9 @@ func WorldDigestPushSettingsUpsert(c *fiber.Ctx) error {
 		}
 		saved.LastProcessedWindowStart = 0
 	}
+	if err := syncDigestPullIntegrationForRule(model.DigestScopeTypeWorld, world.ID, saved, user.ID); err != nil {
+		return wrapError(c, err, "同步世界摘要拉取 BOT 失败")
+	}
 	resp, err := buildDigestPushSettingsResponse(model.DigestScopeTypeWorld, world.ID, saved)
 	if err != nil {
 		return wrapError(c, err, "构建世界未读提醒配置失败")
@@ -262,8 +276,16 @@ func WorldDigestPushSettingsDelete(c *fiber.Ctx) error {
 	if err != nil || world == nil {
 		return err
 	}
+	user := getCurUser(c)
+	actorUserID := ""
+	if user != nil {
+		actorUserID = user.ID
+	}
 	if err := model.DigestPushRuleDelete(model.DigestScopeTypeWorld, world.ID); err != nil {
 		return wrapError(c, err, "删除世界未读提醒配置失败")
+	}
+	if err := syncDigestPullIntegrationForRule(model.DigestScopeTypeWorld, world.ID, nil, actorUserID); err != nil {
+		return wrapError(c, err, "清理世界摘要拉取 BOT 失败")
 	}
 	return c.JSON(fiber.Map{"success": true})
 }

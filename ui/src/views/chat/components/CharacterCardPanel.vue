@@ -88,6 +88,13 @@ const badgeEnabled = computed({
   },
 });
 
+const badgeAutoContrastEnabled = computed({
+  get: () => displayStore.settings.characterCardBadgeAutoContrastEnabled,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardBadgeAutoContrastEnabled: value });
+  },
+});
+
 const badgeTemplate = ref('');
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const canSyncBadgeTemplate = computed(() => {
@@ -1023,6 +1030,16 @@ const openEditPanel = async (card: CharacterCard) => {
             <p class="settings-desc">开启后且可读到人物卡数据时，在昵称后显示简洁属性</p>
           </div>
           <n-switch v-model:value="badgeEnabled" :disabled="characterApiDisabled">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+        </div>
+        <div class="settings-row">
+          <div>
+            <p class="settings-title">自动提高可读性</p>
+            <p class="settings-desc">当徽标颜色与频道背景接近时，自动调整文字、底色与边框</p>
+          </div>
+          <n-switch v-model:value="badgeAutoContrastEnabled">
             <template #checked>已启用</template>
             <template #unchecked>已关闭</template>
           </n-switch>

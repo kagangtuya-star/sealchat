@@ -601,16 +601,18 @@ func webhookMessageUpdate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		UserId2ConnInfo: getUserConnInfoMap(),
 	}
 	data := &struct {
-		ChannelID         string  `json:"channel_id"`
-		MessageID         string  `json:"message_id"`
-		Content           string  `json:"content"`
-		ICMode            string  `json:"ic_mode"`
-		IdentityID        *string `json:"identity_id"`
-		IdentityVariantID *string `json:"identity_variant_id"`
+		ChannelID         string   `json:"channel_id"`
+		MessageID         string   `json:"message_id"`
+		Content           string   `json:"content"`
+		WhisperToIds      []string `json:"whisper_to_ids"`
+		ICMode            string   `json:"ic_mode"`
+		IdentityID        *string  `json:"identity_id"`
+		IdentityVariantID *string  `json:"identity_variant_id"`
 	}{
 		ChannelID:         channel.ID,
 		MessageID:         messageID,
 		Content:           req.Message.Content,
+		WhisperToIds:      nil,
 		ICMode:            req.Message.ICMode,
 		IdentityID:        identityID,
 		IdentityVariantID: nil,

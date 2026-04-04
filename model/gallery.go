@@ -79,7 +79,10 @@ func DeleteGalleryCollection(id string) error {
 
 func ListGalleryCollections(ownerType OwnerType, ownerID string) ([]*GalleryCollection, error) {
 	var cols []*GalleryCollection
-	err := db.Where("owner_type = ? AND owner_id = ?", ownerType, ownerID).Order("`order`").Find(&cols).Error
+	err := ApplyOrderBy(
+		db.Where("owner_type = ? AND owner_id = ?", ownerType, ownerID),
+		OrderField{Name: "order"},
+	).Find(&cols).Error
 	return cols, err
 }
 
@@ -116,7 +119,11 @@ func ListGalleryItems(collectionID string, keyword string, page, pageSize int) (
 		if keyword != "" {
 			q = q.Where("remark LIKE ?", "%"+keyword+"%")
 		}
-		return q.Order("`order` DESC, created_at DESC, id DESC")
+		return ApplyOrderBy(q,
+			OrderField{Name: "order", Desc: true},
+			OrderField{Name: "created_at", Desc: true},
+			OrderField{Name: "id", Desc: true},
+		)
 	})
 }
 
@@ -131,7 +138,11 @@ func SearchGalleryItems(ownerType OwnerType, ownerID, keyword string, limit int)
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	err := query.Order("gallery_items.`order` DESC, gallery_items.created_at DESC, gallery_items.id DESC").Find(&items).Error
+	err := ApplyOrderBy(query,
+		OrderField{Table: "gallery_items", Name: "order", Desc: true},
+		OrderField{Table: "gallery_items", Name: "created_at", Desc: true},
+		OrderField{Table: "gallery_items", Name: "id", Desc: true},
+	).Find(&items).Error
 	return items, err
 }
 

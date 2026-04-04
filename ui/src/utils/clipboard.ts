@@ -33,3 +33,22 @@ export const copyTextWithFallback = async (text: string): Promise<boolean> => {
     }
   }
 };
+
+export interface CopyTextResultOptions {
+  copy?: (text: string) => Promise<boolean>
+  onSuccess?: () => void
+  onFailure?: () => void
+}
+
+export const copyTextWithResult = async (
+  text: string,
+  options: CopyTextResultOptions = {},
+): Promise<boolean> => {
+  const copied = await (options.copy || copyTextWithFallback)(text)
+  if (copied) {
+    options.onSuccess?.()
+  } else {
+    options.onFailure?.()
+  }
+  return copied
+}

@@ -2,6 +2,7 @@
 import { computed, ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
+import { copyTextWithResult } from '@/utils/clipboard';
 import dayjs from 'dayjs';
 
 const props = defineProps<{ worldId: string }>();
@@ -178,24 +179,14 @@ const saveInvite = async () => {
 };
 
 const copySlug = async (slug: string) => {
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(slug);
-    } else {
-      const textarea = document.createElement('textarea');
-      textarea.value = slug;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-    }
-    message.success('已复制邀请码');
-  } catch (e) {
-    message.error('复制失败，请手动选择后复制');
-  }
+  await copyTextWithResult(slug, {
+    onSuccess: () => {
+      message.success('已复制邀请码');
+    },
+    onFailure: () => {
+      message.error('复制失败，请手动选择后复制');
+    },
+  });
 };
 
 const buildInviteLink = (slug: string) => {

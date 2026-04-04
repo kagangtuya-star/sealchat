@@ -1023,6 +1023,12 @@ func websocketWorks(app *fiber.App) {
 					case "character.badge.snapshot":
 						apiWrap(ctx, msg, apiCharacterBadgeSnapshot)
 						solved = true
+					case "character.remark.broadcast":
+						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)
+						solved = true
+					case "character.remark.snapshot":
+						apiWrap(ctx, msg, apiCharacterRemarkSnapshot)
+						solved = true
 					}
 				}
 			}
