@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,11 +39,18 @@ func mapAnnouncementErrorStatus(err error) int {
 }
 
 func parseAnnouncementListOptions(c *fiber.Ctx) service.AnnouncementListOptions {
+	var showInTicker *bool
+	if raw := strings.TrimSpace(c.Query("showInTicker")); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			showInTicker = &parsed
+		}
+	}
 	return service.AnnouncementListOptions{
 		Page:            parseQueryIntDefault(c, "page", 1),
 		PageSize:        parseQueryIntDefault(c, "pageSize", 20),
 		IncludeAll:      c.QueryBool("includeAll"),
 		IncludeArchived: c.QueryBool("includeArchived"),
+		ShowInTicker:    showInTicker,
 	}
 }
 

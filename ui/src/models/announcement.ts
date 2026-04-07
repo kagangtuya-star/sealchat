@@ -18,6 +18,7 @@ export interface AnnouncementItem {
   status: AnnouncementStatus
   isPinned: boolean
   pinOrder: number
+  showInTicker: boolean
   popupMode: AnnouncementPopupMode
   reminderScope: AnnouncementReminderScope
   requireAck: boolean
@@ -49,6 +50,7 @@ export interface AnnouncementPayload {
   status: AnnouncementStatus
   isPinned: boolean
   pinOrder: number
+  showInTicker: boolean
   popupMode: AnnouncementPopupMode
   reminderScope: AnnouncementReminderScope
   requireAck: boolean
@@ -88,7 +90,7 @@ export async function ackWorldAnnouncement(worldId: string, announcementId: stri
   return data.item
 }
 
-export async function fetchLobbyAnnouncements(params?: { page?: number; pageSize?: number; includeAll?: boolean; includeArchived?: boolean }) {
+export async function fetchLobbyAnnouncements(params?: { page?: number; pageSize?: number; includeAll?: boolean; includeArchived?: boolean; showInTicker?: boolean }) {
   const { data } = await api.get<AnnouncementListResponse>('/api/v1/lobby-announcements', { params })
   return data
 }

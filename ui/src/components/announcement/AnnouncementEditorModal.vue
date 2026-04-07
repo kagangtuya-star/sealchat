@@ -31,6 +31,7 @@ const form = ref<AnnouncementPayload>({
   status: 'published',
   isPinned: false,
   pinOrder: 0,
+  showInTicker: false,
   popupMode: 'none',
   reminderScope: 'lobby_only',
   requireAck: false,
@@ -40,6 +41,7 @@ const isEdit = computed(() => !!props.item?.id)
 const titleText = computed(() => isEdit.value ? '编辑公告' : '新建公告')
 const canRequireAck = computed(() => props.scopeType === 'world')
 const canChangeReminderScope = computed(() => props.scopeType === 'lobby')
+const canToggleTicker = computed(() => props.scopeType === 'lobby')
 const handleVisibleUpdate = (value: boolean) => emit('update:visible', value)
 const modalStyle = computed(() => (
   viewportWidth.value <= 640
@@ -78,6 +80,12 @@ const reminderScopeLabel = computed(() => {
   }
   return form.value.reminderScope === 'site_wide' ? '全站在线' : '仅大厅页'
 })
+const tickerLabel = computed(() => {
+  if (!canToggleTicker.value) {
+    return ''
+  }
+  return form.value.showInTicker ? '顶部广播' : '不进广播区'
+})
 const optionSummary = computed(() => {
   const parts = [
     `状态 ${statusLabel.value}`,
@@ -86,6 +94,9 @@ const optionSummary = computed(() => {
   ]
   if (canChangeReminderScope.value) {
     parts.push(`提醒 ${reminderScopeLabel.value}`)
+  }
+  if (canToggleTicker.value) {
+    parts.push(`广播 ${tickerLabel.value}`)
   }
   if (canRequireAck.value) {
     parts.push(form.value.requireAck ? '需成员确认' : '无需确认')
@@ -107,6 +118,7 @@ watch(
         status: item.status === 'archived' ? 'draft' : item.status,
         isPinned: item.isPinned,
         pinOrder: item.pinOrder || 0,
+        showInTicker: !!item.showInTicker,
         popupMode: item.popupMode || 'none',
         reminderScope: item.reminderScope || 'lobby_only',
         requireAck: item.requireAck,
@@ -120,6 +132,7 @@ watch(
       status: 'published',
       isPinned: false,
       pinOrder: 0,
+      showInTicker: false,
       popupMode: 'none',
       reminderScope: 'lobby_only',
       requireAck: false,
@@ -143,6 +156,7 @@ const handleSave = async () => {
   try {
     const payload: AnnouncementPayload = {
       ...form.value,
+      showInTicker: canToggleTicker.value ? form.value.showInTicker : false,
       reminderScope: canChangeReminderScope.value ? form.value.reminderScope : 'lobby_only',
       requireAck: canRequireAck.value ? form.value.requireAck : false,
     }
@@ -222,6 +236,10 @@ const handleSave = async () => {
               <n-radio-button value="lobby_only">仅大厅页</n-radio-button>
               <n-radio-button value="site_wide">全站在线</n-radio-button>
             </n-radio-group>
+          </div>
+          <div v-if="canToggleTicker" class="announcement-editor__tool announcement-editor__tool--switch">
+            <span class="announcement-editor__tool-label">顶部广播区</span>
+            <n-switch v-model:value="form.showInTicker" size="small" />
           </div>
           <div class="announcement-editor__tool announcement-editor__tool--switch">
             <span class="announcement-editor__tool-label">置顶</span>

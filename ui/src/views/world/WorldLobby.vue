@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component, type CSSProperties } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -10,6 +10,7 @@ import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -77,7 +78,7 @@ const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
-const inputStatsComponent = shallowRef<Component | null>(null);
+const inputStatsComponent = shallowRef<any>(null);
 const announcementVisible = ref(false);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
@@ -878,6 +879,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         </n-button>
       </div>
     </div>
+
+    <WorldLobbyAnnouncementTicker @open-announcements="openAnnouncementPanel" />
 
     <div class="world-toolbar-row">
       <n-input

@@ -26,6 +26,7 @@ type AnnouncementInput struct {
 	Status        string `json:"status"`
 	IsPinned      bool   `json:"isPinned"`
 	PinOrder      int    `json:"pinOrder"`
+	ShowInTicker  bool   `json:"showInTicker"`
 	PopupMode     string `json:"popupMode"`
 	ReminderScope string `json:"reminderScope"`
 	RequireAck    bool   `json:"requireAck"`
@@ -36,6 +37,7 @@ type AnnouncementListOptions struct {
 	PageSize        int
 	IncludeAll      bool
 	IncludeArchived bool
+	ShowInTicker    *bool
 }
 
 type AnnouncementPendingOptions struct {
@@ -161,6 +163,7 @@ func normalizeAnnouncementInput(scopeType model.AnnouncementScopeType, input *An
 		input.PinOrder = 0
 	}
 	if scopeType == model.AnnouncementScopeWorld {
+		input.ShowInTicker = false
 		input.ReminderScope = string(model.AnnouncementReminderScopeLobbyOnly)
 		return nil
 	}
@@ -324,6 +327,9 @@ func listAnnouncements(scopeType model.AnnouncementScopeType, scopeID string, us
 	}
 	query := model.GetDB().Model(&model.AnnouncementModel{}).
 		Where("scope_type = ? AND scope_id = ?", scopeType, scopeID)
+	if scopeType == model.AnnouncementScopeLobby && opts.ShowInTicker != nil {
+		query = query.Where("show_in_ticker = ?", *opts.ShowInTicker)
+	}
 	if opts.IncludeArchived {
 		if !canEdit {
 			return nil, 0, false, ErrAnnouncementPermission
@@ -394,6 +400,7 @@ func AnnouncementCreate(scopeType, scopeID, actorID string, input AnnouncementIn
 		Status:        model.AnnouncementStatus(input.Status),
 		IsPinned:      input.IsPinned,
 		PinOrder:      input.PinOrder,
+		ShowInTicker:  input.ShowInTicker,
 		PopupMode:     model.AnnouncementPopupMode(input.PopupMode),
 		ReminderScope: model.AnnouncementReminderScope(input.ReminderScope),
 		RequireAck:    input.RequireAck,
@@ -449,6 +456,7 @@ func AnnouncementUpdate(scopeType, scopeID, announcementID, actorID string, inpu
 		"status":         input.Status,
 		"is_pinned":      input.IsPinned,
 		"pin_order":      input.PinOrder,
+		"show_in_ticker": input.ShowInTicker,
 		"popup_mode":     input.PopupMode,
 		"reminder_scope": input.ReminderScope,
 		"require_ack":    input.RequireAck,

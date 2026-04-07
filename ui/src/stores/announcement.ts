@@ -21,7 +21,7 @@ export const useAnnouncementStore = defineStore('announcement', () => {
     return fetchWorldAnnouncements(worldId, params)
   }
 
-  async function fetchLobbyList(params?: { page?: number; pageSize?: number; includeAll?: boolean; includeArchived?: boolean }) {
+  async function fetchLobbyList(params?: { page?: number; pageSize?: number; includeAll?: boolean; includeArchived?: boolean; showInTicker?: boolean }) {
     return fetchLobbyAnnouncements(params)
   }
 

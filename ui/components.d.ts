@@ -118,5 +118,6 @@ declare module 'vue' {
     UserAvatarDecoration: typeof import('./src/components/user-avatar-decoration.vue')['default']
     UserLabel: typeof import('./src/components/UserLabel.vue')['default']
     UserLabelV: typeof import('./src/components/UserLabelV.vue')['default']
+    WorldLobbyAnnouncementTicker: typeof import('./src/components/announcement/WorldLobbyAnnouncementTicker.vue')['default']
   }
 }
