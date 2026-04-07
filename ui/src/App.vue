@@ -1851,28 +1851,35 @@ nav a:first-of-type {
 /* TransportBar 内部 Slider */
 :root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider {
-  --n-rail-color: var(--sc-bg-surface) !important;
-  --n-rail-color-hover: var(--sc-bg-surface) !important;
-  --n-fill-color: var(--sc-accent, #3388de) !important;
+  --n-rail-color: rgba(148, 163, 184, 0.2) !important;
+  --n-rail-color-hover: rgba(148, 163, 184, 0.28) !important;
+  --n-fill-color: rgba(203, 213, 225, 0.72) !important;
   --n-fill-color-hover: var(--sc-accent, #3388de) !important;
-  --n-handle-color: var(--sc-accent, #3388de) !important;
+  --n-handle-color: rgba(255, 255, 255, 0.92) !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-rail,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-rail {
-  background-color: var(--sc-bg-surface) !important;
+  background-color: rgba(148, 163, 184, 0.2) !important;
+  height: 4px !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-rail__fill,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-rail__fill {
-  background-color: var(--sc-accent, #3388de) !important;
+  background-color: rgba(203, 213, 225, 0.72) !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .transport-bar .n-slider-handle,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar .n-slider-handle {
   --n-handle-color: #fff !important;
   background-color: #fff !important;
-  border-color: var(--sc-accent, #3388de) !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+  transform: scale(0.82) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .transport-bar__volume-slider:hover .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .transport-bar__volume-slider:hover .n-slider-rail__fill {
+  background-color: var(--sc-accent, #3388de) !important;
 }
 
 /* TransportBar 内部 Select */
@@ -1939,28 +1946,78 @@ nav a:first-of-type {
 /* TrackMixerCard 内部 Slider */
 :root[data-custom-theme='true'] .audio-drawer .track-card .n-slider,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider {
-  --n-rail-color: var(--sc-bg-surface) !important;
-  --n-rail-color-hover: var(--sc-bg-surface) !important;
-  --n-fill-color: var(--sc-accent, #3388de) !important;
-  --n-fill-color-hover: var(--sc-accent, #3388de) !important;
-  --n-handle-color: var(--sc-accent, #3388de) !important;
+  --n-rail-color: rgba(148, 163, 184, 0.18) !important;
+  --n-rail-color-hover: rgba(148, 163, 184, 0.26) !important;
+  --n-fill-color: rgba(148, 163, 184, 0.72) !important;
+  --n-fill-color-hover: rgba(203, 213, 225, 0.84) !important;
+  --n-handle-color: rgba(255, 255, 255, 0.94) !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-rail,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-rail {
-  background-color: var(--sc-bg-surface) !important;
+  background-color: rgba(148, 163, 184, 0.18) !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-rail__fill,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-rail__fill {
-  background-color: var(--sc-accent, #3388de) !important;
+  background-color: rgba(148, 163, 184, 0.72) !important;
 }
 
 :root[data-custom-theme='true'] .audio-drawer .track-card .n-slider-handle,
 :root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .n-slider-handle {
   --n-handle-color: #fff !important;
   background-color: #fff !important;
-  border-color: var(--sc-accent, #3388de) !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__progress-slider--primary .n-slider-rail,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__progress-slider--primary .n-slider-rail {
+  background-color: rgba(51, 65, 85, 0.92) !important;
+  height: 12px !important;
+  border-radius: 999px !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__progress-slider--primary .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__progress-slider--primary .n-slider-rail__fill {
+  background-color: var(--sc-accent, #3388de) !important;
+  border-radius: 999px !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__progress-slider--primary .n-slider-handle,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__progress-slider--primary .n-slider-handle {
+  opacity: 0 !important;
+  transform: scale(0) !important;
+  border-width: 0 !important;
+  box-shadow: none !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__progress-slider--primary .n-slider-handle-wrapper,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__progress-slider--primary .n-slider-handle-wrapper {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__control-slider .n-slider-rail,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__control-slider .n-slider-rail {
+  background-color: rgba(148, 163, 184, 0.16) !important;
+  height: 4px !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__control-slider .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__control-slider .n-slider-rail__fill {
+  background-color: rgba(203, 213, 225, 0.7) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__control-slider .n-slider-handle,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__control-slider .n-slider-handle {
+  background-color: #fff !important;
+  border-color: rgba(148, 163, 184, 0.42) !important;
+  transform: scale(0.72) !important;
+}
+
+:root[data-custom-theme='true'] .audio-drawer .track-card .track-card__control-slider:hover .n-slider-rail__fill,
+:root[data-custom-theme='true'] .n-drawer.audio-drawer .track-card .track-card__control-slider:hover .n-slider-rail__fill {
+  background-color: rgba(148, 190, 255, 0.88) !important;
 }
 
 /* TrackMixerCard 内部 Select */
