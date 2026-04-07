@@ -1157,7 +1157,7 @@ const initCharacterCardBadge = (
 };
 
 const initCharacterRemark = (channelId?: string) => {
-  if (!channelId || chat.isObserver) return;
+  if (!channelId) return;
   void characterRemarkStore.requestRemarkSnapshot(channelId);
 };
 

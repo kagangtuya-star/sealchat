@@ -649,6 +649,7 @@ type CharacterRemarkEventPayload struct {
 	IdentityID string `json:"identityId,omitempty"`
 	UserID     string `json:"userId,omitempty"`
 	Content    string `json:"content,omitempty"`
+	Revision   int64  `json:"revision,omitempty"`
 	Action     string `json:"action,omitempty"` // update/clear
 }
 
