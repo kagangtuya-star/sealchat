@@ -3,6 +3,7 @@ import { useChatStore } from './chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamilyName } from '@/services/font/fontUtils'
 import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
+import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
@@ -110,6 +111,8 @@ export interface DisplaySettings {
   worldKeywordHighlightEnabled: boolean
   worldKeywordUnderlineOnly: boolean
   worldKeywordTooltipEnabled: boolean
+  worldKeywordTooltipHoverEnabled: boolean
+  worldKeywordTooltipClickEnabled: boolean
   worldKeywordDeduplicateEnabled: boolean
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
   worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
@@ -466,7 +469,9 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   favoriteChannelHotkeysByWorld: {},
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: true,
-  worldKeywordTooltipEnabled: true,
+  worldKeywordTooltipEnabled: DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.tooltipEnabled,
+  worldKeywordTooltipHoverEnabled: DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.hoverEnabled,
+  worldKeywordTooltipClickEnabled: DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.clickEnabled,
   worldKeywordDeduplicateEnabled: true,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   worldKeywordQuickInputEnabled: true,
@@ -683,7 +688,15 @@ const loadSettings = (): DisplaySettings => {
       favoriteChannelHotkeysByWorld,
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? true),
-      worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
+      worldKeywordTooltipEnabled: coerceBoolean(
+        (parsed as any)?.worldKeywordTooltipEnabled ?? DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.tooltipEnabled,
+      ),
+      worldKeywordTooltipHoverEnabled: coerceBoolean(
+        (parsed as any)?.worldKeywordTooltipHoverEnabled ?? DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.hoverEnabled,
+      ),
+      worldKeywordTooltipClickEnabled: coerceBoolean(
+        (parsed as any)?.worldKeywordTooltipClickEnabled ?? DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION.clickEnabled,
+      ),
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? true),
       worldKeywordTooltipTextIndent: coerceFloatInRange(
         (parsed as any)?.worldKeywordTooltipTextIndent,
@@ -890,6 +903,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipEnabled')
       ? coerceBoolean((patch as any).worldKeywordTooltipEnabled)
       : base.worldKeywordTooltipEnabled,
+  worldKeywordTooltipHoverEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipHoverEnabled')
+      ? coerceBoolean((patch as any).worldKeywordTooltipHoverEnabled)
+      : base.worldKeywordTooltipHoverEnabled,
+  worldKeywordTooltipClickEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipClickEnabled')
+      ? coerceBoolean((patch as any).worldKeywordTooltipClickEnabled)
+      : base.worldKeywordTooltipClickEnabled,
   worldKeywordDeduplicateEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordDeduplicateEnabled')
       ? coerceBoolean((patch as any).worldKeywordDeduplicateEnabled)

@@ -30,6 +30,7 @@ import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCandidates'
 import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
+import { resolveWorldKeywordTooltipInteractionPolicy } from '@/utils/worldKeywordTooltipInteraction'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
@@ -1797,7 +1798,21 @@ const compiledKeywords = computed(() => {
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
+const keywordTooltipHoverEnabled = computed(() => displayStore.settings.worldKeywordTooltipHoverEnabled !== false)
+const keywordTooltipClickEnabled = computed(() => displayStore.settings.worldKeywordTooltipClickEnabled !== false)
 const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
+const isFinePointerDevice = computed(() => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return true
+  }
+  return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+})
+const keywordTooltipInteractionPolicy = computed(() => resolveWorldKeywordTooltipInteractionPolicy({
+  tooltipEnabled: keywordTooltipEnabled.value,
+  hoverEnabled: keywordTooltipHoverEnabled.value,
+  clickEnabled: keywordTooltipClickEnabled.value,
+  finePointer: isFinePointerDevice.value,
+}))
 const hasExternalKeywordSource = computed(() => {
   const worldId = chat.currentWorldId
   if (!worldId) {
@@ -1859,6 +1874,7 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
   underlineOnly: keywordUnderlineOnly.value,
   textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+  interaction: keywordTooltipInteractionPolicy.value,
   candidateLoader: loadKeywordConflictCandidates,
 })
 
@@ -1892,6 +1908,8 @@ const applyKeywordHighlights = async () => {
     {
       underlineOnly: keywordUnderlineOnly.value,
       deduplicate: keywordDeduplicateEnabled.value,
+      allowHoverOpen: keywordTooltipInteractionPolicy.value.allowHoverOpen,
+      allowClickOpen: keywordTooltipInteractionPolicy.value.allowClickOpen,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
     },
     keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
@@ -2954,6 +2972,8 @@ watch(
     () => displayStore.settings.worldKeywordHighlightEnabled,
     () => displayStore.settings.worldKeywordUnderlineOnly,
     () => displayStore.settings.worldKeywordTooltipEnabled,
+    () => displayStore.settings.worldKeywordTooltipHoverEnabled,
+    () => displayStore.settings.worldKeywordTooltipClickEnabled,
     () => displayStore.settings.worldKeywordDeduplicateEnabled,
     () => displayStore.settings.worldKeywordTooltipTextIndent,
     () => displayContent.value,
@@ -2967,6 +2987,7 @@ watch(
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
       underlineOnly: keywordUnderlineOnly.value,
       textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+      interaction: keywordTooltipInteractionPolicy.value,
       candidateLoader: loadKeywordConflictCandidates,
     })
     void applyKeywordHighlights()
