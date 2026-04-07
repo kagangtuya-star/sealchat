@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -52,16 +53,16 @@ type MessageModel struct {
 	IsImported    bool       `json:"isImported" gorm:"default:false;index:idx_msg_imported"`
 	ImportJobID   string     `json:"importJobId" gorm:"size:100;index:idx_msg_import_job_id"`
 
-	SenderMemberName          string `json:"sender_member_name"` // 用户在当时的名字
-	SenderIdentityID          string `json:"sender_identity_id" gorm:"size:100"`
-	SenderIdentityVariantID   string `json:"sender_identity_variant_id" gorm:"size:100"`
-	SenderIdentityName        string `json:"sender_identity_name"`
-	SenderIdentityColor       string `json:"sender_identity_color"`
-	SenderIdentityAvatarID    string `json:"sender_identity_avatar_id"`
+	SenderMemberName          string                        `json:"sender_member_name"` // 用户在当时的名字
+	SenderIdentityID          string                        `json:"sender_identity_id" gorm:"size:100"`
+	SenderIdentityVariantID   string                        `json:"sender_identity_variant_id" gorm:"size:100"`
+	SenderIdentityName        string                        `json:"sender_identity_name"`
+	SenderIdentityColor       string                        `json:"sender_identity_color"`
+	SenderIdentityAvatarID    string                        `json:"sender_identity_avatar_id"`
 	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decorations,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
-	SenderIdentityIsTemporary bool   `json:"sender_identity_is_temporary" gorm:"default:false"`
-	SenderRoleID              string `json:"sender_role_id" gorm:"size:100"`
-	MergedMessages            int    `json:"-" gorm:"-"`
+	SenderIdentityIsTemporary bool                          `json:"sender_identity_is_temporary" gorm:"default:false"`
+	SenderRoleID              string                        `json:"sender_role_id" gorm:"size:100"`
+	MergedMessages            int                           `json:"-" gorm:"-"`
 
 	User   *UserModel    `json:"user"`           // 嵌套 User 结构体
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
@@ -76,6 +77,43 @@ type MessageModel struct {
 
 func (*MessageModel) TableName() string {
 	return "messages"
+}
+
+func MessageUpdate(id string, values map[string]any) error {
+	if len(values) == 0 {
+		return nil
+	}
+	if rawDecoration, ok := values["sender_identity_decoration"]; ok {
+		switch value := rawDecoration.(type) {
+		case nil:
+			values["sender_identity_decoration"] = nil
+		case protocol.AvatarDecorationList:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["sender_identity_decoration"] = string(encoded)
+		case []protocol.AvatarDecoration:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["sender_identity_decoration"] = string(encoded)
+		case *protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{*value})
+			if err != nil {
+				return err
+			}
+			values["sender_identity_decoration"] = string(encoded)
+		case protocol.AvatarDecoration:
+			encoded, err := json.Marshal(protocol.AvatarDecorationList{value})
+			if err != nil {
+				return err
+			}
+			values["sender_identity_decoration"] = string(encoded)
+		}
+	}
+	return db.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error
 }
 
 func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.Message {
