@@ -941,17 +941,15 @@ func AdminAudioAssetDeleteSafe(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
 	}
 	hard := c.QueryBool("hard")
-	if err := service.AudioSafeDeleteAsset(id, hard); err != nil {
-		var referencedErr *service.AudioAssetReferencedError
-		if errors.As(err, &referencedErr) {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"message": "素材仍被引用，无法安全删除",
-				"usage":   referencedErr.Summary,
-			})
+	impact, err := service.AdminAudioDeleteAsset(id, hard)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
 		}
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除素材失败")
 	}
-	return c.JSON(fiber.Map{"message": "已删除"})
+	broadcastAdminAudioDetachedScopes(getCurUser(c), impact)
+	return c.JSON(fiber.Map{"message": "已删除", "impact": impact})
 }
 
 func AdminAudioAssetBulkDeleteSafe(c *fiber.Ctx) error {
@@ -962,10 +960,11 @@ func AdminAudioAssetBulkDeleteSafe(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
 	}
-	result, err := service.AudioSafeDeleteAssets(req.IDs, req.Hard)
+	result, err := service.AdminAudioDeleteAssets(req.IDs, req.Hard)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "批量安全删除失败")
 	}
+	broadcastAdminAudioDetachedScopes(getCurUser(c), &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
 	return c.JSON(result)
 }
 
@@ -1030,7 +1029,29 @@ func AdminAudioAssetCleanupExecute(c *fiber.Ctx) error {
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "执行清理失败")
 	}
+	broadcastAdminAudioDetachedScopes(getCurUser(c), &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
 	return c.JSON(result)
+}
+
+func broadcastAdminAudioDetachedScopes(operator *model.UserModel, impact *service.AudioDeleteImpact) {
+	if operator == nil || impact == nil || len(impact.PlaybackScopeLabels) == 0 {
+		return
+	}
+	for _, scopeLabel := range impact.PlaybackScopeLabels {
+		label := strings.TrimSpace(scopeLabel)
+		if label == "" {
+			continue
+		}
+		state, err := service.AudioGetPlaybackState(label)
+		if err != nil {
+			log.Printf("[audio-admin] broadcast detached playback scope failed scope=%s err=%v", label, err)
+			continue
+		}
+		if state == nil {
+			continue
+		}
+		broadcastAudioPlaybackState(operator, state)
+	}
 }
 
 type audioSceneRequest struct {

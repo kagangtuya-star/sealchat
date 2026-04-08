@@ -59,7 +59,16 @@ export interface AdminAudioCleanupPreview {
   totalCandidates: number;
   safeCandidates: number;
   referencedSkipped: number;
+  directDeleteCandidates?: number;
+  detachThenDeleteCandidates?: number;
   items: AdminAudioAssetItem[];
+}
+
+export interface AudioDeleteImpact {
+  detachedSceneCount: number;
+  detachedPlaybackStateCount: number;
+  sceneNames?: string[];
+  playbackScopeLabels?: string[];
 }
 
 export interface AudioBulkDeleteFailure {
@@ -73,6 +82,10 @@ export interface AudioBulkDeleteResult {
   failed: AudioBulkDeleteFailure[];
   successCount: number;
   failedCount: number;
+  detachedSceneCount?: number;
+  detachedPlaybackStateCount?: number;
+  detachedReferencedAssetCount?: number;
+  playbackScopeLabels?: string[];
 }
 
 export interface AudioAssetMutationPayload {

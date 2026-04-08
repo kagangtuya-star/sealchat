@@ -8,6 +8,7 @@ import type {
   AudioAssetUsageSummary,
   AudioBulkDeleteFailure,
   AudioBulkDeleteResult,
+  AudioDeleteImpact,
 } from '@/types/audio';
 import { Search, Refresh, Trash } from '@vicons/tabler';
 import { NButton, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui';
@@ -53,7 +54,7 @@ const hasSelection = computed(() => selectionCount.value > 0);
 const cleanupThresholdText = computed(() => (cleanupPreview.value ? formatDate(cleanupPreview.value.thresholdBefore) : ''));
 const selectedSceneNames = computed(() => selectedAsset.value?.usageSummary?.sceneNames || []);
 const selectedPlaybackLabels = computed(() => selectedAsset.value?.usageSummary?.playbackScopeLabels || []);
-const canExecuteCleanup = computed(() => Boolean(cleanupPreview.value?.safeCandidates));
+const canExecuteCleanup = computed(() => Boolean(cleanupPreview.value?.totalCandidates));
 const searchFieldLabelMap: Record<AdminAudioSearchField, string> = {
   all: '全部字段',
   name: '名称',
@@ -118,7 +119,6 @@ function renderHeaderTrigger(label: string, field: AdminAudioSortField, searchFi
 const columns = computed<DataTableColumns<AdminAudioAssetItem>>(() => [
   {
     type: 'selection',
-    disabled: (row) => !row.safeToDelete,
   },
   {
     title: () => renderHeaderTrigger('名称', 'name', 'name'),
@@ -187,8 +187,8 @@ const columns = computed<DataTableColumns<AdminAudioAssetItem>>(() => [
     render: (row) => h('div', { class: 'admin-audio__usage-cell' }, [
       h(
         NTag,
-        { size: 'small', type: row.safeToDelete ? 'success' : 'error' },
-        { default: () => (row.safeToDelete ? '可安全删除' : '仍被引用') },
+        { size: 'small', type: row.safeToDelete ? 'success' : 'warning' },
+        { default: () => (row.safeToDelete ? '可直接删除' : '删除时将解除引用') },
       ),
     ]),
   },
@@ -212,7 +212,6 @@ const columns = computed<DataTableColumns<AdminAudioAssetItem>>(() => [
           size: 'small',
           tertiary: true,
           type: 'error',
-          disabled: !row.safeToDelete,
           onClick: () => confirmDelete(row),
         },
         { default: () => '删除' },
@@ -262,7 +261,7 @@ async function refresh() {
     total.value = resp.data.total || 0;
     worldOptions.value = resp.data.worldOptions || [];
     creatorOptions.value = resp.data.creatorOptions || [];
-    const validSelection = new Set(rows.value.filter((item) => item.safeToDelete).map((item) => item.id));
+    const validSelection = new Set(rows.value.map((item) => item.id));
     checkedRowKeys.value = checkedRowKeys.value.filter((item) => validSelection.has(item));
     if (selectedAssetId.value && rows.value.some((item) => item.id === selectedAssetId.value)) {
       return;
@@ -414,36 +413,49 @@ function openFailureDialog(title: string, failed: AudioBulkDeleteFailure[] = [])
   });
 }
 
-function openReferencedDialog(assetName: string, usage?: AudioAssetUsageSummary) {
-  dialog.warning({
-    title: '素材仍被引用',
-    content: `“${assetName}” 当前无法删除。${usage ? `引用情况：${resolveUsageSummaryText(usage)}` : ''}`,
-    positiveText: '知道了',
-  });
-}
-
 function extractErrorMessage(error: any, fallback: string) {
   return error?.response?.data?.message || error?.response?.data?.error || error?.message || fallback;
 }
 
+function describeDeleteImpact(impact?: AudioDeleteImpact | null) {
+  if (!impact) return '';
+  const sceneCount = impact.detachedSceneCount || 0;
+  const playbackCount = impact.detachedPlaybackStateCount || 0;
+  if (!sceneCount && !playbackCount) {
+    return '';
+  }
+  return `已解除 ${sceneCount} 个场景引用、${playbackCount} 个播放状态引用`;
+}
+
+function describeBulkImpact(result?: AudioBulkDeleteResult | null) {
+  if (!result) return '';
+  const detachedAssets = result.detachedReferencedAssetCount || 0;
+  const sceneCount = result.detachedSceneCount || 0;
+  const playbackCount = result.detachedPlaybackStateCount || 0;
+  if (!detachedAssets && !sceneCount && !playbackCount) {
+    return '';
+  }
+  return `其中 ${detachedAssets} 条素材触发自动解除引用，累计解除 ${sceneCount} 个场景引用、${playbackCount} 个播放状态引用`;
+}
+
 function confirmDelete(row: AdminAudioAssetItem) {
+  const usageText = resolveUsageSummaryText(row.usageSummary);
   dialog.warning({
     title: '安全删除音频素材',
-    content: `确定删除“${row.name}”吗？该操作会执行引用检查。`,
+    content: row.safeToDelete
+      ? `确定删除“${row.name}”吗？当前引用情况：${usageText}。`
+      : `确定删除“${row.name}”吗？该操作会自动解除场景与当前播放状态中的引用。当前引用情况：${usageText}。`,
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await api.delete(`/api/v1/admin/audio-assets/${row.id}`);
-        message.success('素材已删除');
+        const resp = await api.delete<{ message?: string; impact?: AudioDeleteImpact }>(`/api/v1/admin/audio-assets/${row.id}`);
+        const impactText = describeDeleteImpact(resp.data?.impact);
+        message.success(impactText ? `素材已删除，${impactText}` : '素材已删除');
         checkedRowKeys.value = checkedRowKeys.value.filter((item) => item !== row.id);
         await refresh();
       } catch (error) {
-        const requestError = error as any;
-        if (requestError?.response?.status === 409) {
-          openReferencedDialog(row.name, requestError?.response?.data?.usage);
-        }
-        message.error(extractErrorMessage(requestError, '删除失败'));
+        message.error(extractErrorMessage(error, '删除失败'));
       }
     },
   });
@@ -453,7 +465,7 @@ function confirmBulkDelete() {
   if (!checkedRowKeys.value.length) return;
   dialog.warning({
     title: '批量安全删除',
-    content: `确定删除选中的 ${checkedRowKeys.value.length} 条素材吗？`,
+    content: `确定删除选中的 ${checkedRowKeys.value.length} 条素材吗？若其中存在被引用素材，系统会自动解除场景与当前播放状态中的引用后再删除。`,
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -464,7 +476,8 @@ function confirmBulkDelete() {
         const successCount = resp.data?.successCount || 0;
         const failedCount = resp.data?.failedCount || 0;
         if (successCount) {
-          message.success(`已删除 ${successCount} 条素材`);
+          const impactText = describeBulkImpact(resp.data);
+          message.success(impactText ? `已删除 ${successCount} 条素材，${impactText}` : `已删除 ${successCount} 条素材`);
         }
         if (failedCount) {
           message.warning(`${failedCount} 条素材删除失败`);
@@ -518,7 +531,8 @@ async function executeCleanup() {
     const successCount = resp.data?.successCount || 0;
     const failedCount = resp.data?.failedCount || 0;
     if (successCount) {
-      message.success(`已清理 ${successCount} 条素材`);
+      const impactText = describeBulkImpact(resp.data);
+      message.success(impactText ? `已清理 ${successCount} 条素材，${impactText}` : `已清理 ${successCount} 条素材`);
     } else {
       message.info('没有可清理的素材');
     }
@@ -684,8 +698,8 @@ async function executeCleanup() {
             <h3>{{ selectedAsset.name }}</h3>
             <p>{{ selectedAsset.worldName || '全局素材' }}</p>
           </div>
-          <n-tag :type="selectedAsset.safeToDelete ? 'success' : 'error'">
-            {{ selectedAsset.safeToDelete ? '可安全删除' : '仍被引用' }}
+          <n-tag :type="selectedAsset.safeToDelete ? 'success' : 'warning'">
+            {{ selectedAsset.safeToDelete ? '可直接删除' : '删除时将解除引用' }}
           </n-tag>
         </div>
 
@@ -763,10 +777,10 @@ async function executeCleanup() {
 
         <template v-if="cleanupPreview">
           <n-alert type="info" :show-icon="false">
-            截止 {{ cleanupThresholdText }} 未访问的候选共 {{ cleanupPreview.totalCandidates }} 条，可安全清理 {{ cleanupPreview.safeCandidates }} 条，因引用跳过 {{ cleanupPreview.referencedSkipped }} 条。
+            截止 {{ cleanupThresholdText }} 未访问的候选共 {{ cleanupPreview.totalCandidates }} 条，可直接删除 {{ cleanupPreview.directDeleteCandidates || cleanupPreview.safeCandidates }} 条，需自动解除引用后删除 {{ cleanupPreview.detachThenDeleteCandidates || 0 }} 条。
           </n-alert>
-          <n-alert v-if="cleanupPreview.referencedSkipped" type="warning" :show-icon="false">
-            预览结果中仅展示可安全清理的素材；被场景或当前播放引用的素材已自动排除。
+          <n-alert v-if="cleanupPreview.detachThenDeleteCandidates" type="warning" :show-icon="false">
+            预览列表已包含被引用素材；执行清理时会自动解除场景与当前播放状态中的引用。
           </n-alert>
           <n-data-table
             :columns="cleanupColumns"
