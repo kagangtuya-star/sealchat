@@ -3,14 +3,14 @@
     <div class="transport-bar__controls">
       <n-button
         class="transport-bar__primary-action"
-        type="primary"
         size="small"
         circle
         @click="togglePlay"
         :disabled="isReadOnly"
-        :aria-label="audio.isPlaying ? '全部暂停' : '全部播放'"
+        :class="{ 'transport-bar__primary-action--active': isTransportPlaying }"
+        :aria-label="isTransportPlaying ? '全部暂停' : '全部播放'"
       >
-        <template #icon><n-icon :component="audio.isPlaying ? PlayerPause : PlayerPlay" /></template>
+        <template #icon><n-icon :component="isTransportPlaying ? PlayerPause : PlayerPlay" /></template>
       </n-button>
     </div>
 
@@ -35,10 +35,12 @@
 import { computed } from 'vue';
 import { PlayerPause, PlayerPlay } from '@vicons/tabler';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { hasAnyActivePlayback } from '@/stores/audioPlaybackState';
 
 const audio = useAudioStudioStore();
 const isReadOnly = computed(() => !audio.canManage);
 const masterVolumePercent = computed(() => Math.round(audio.masterVolume * 100));
+const isTransportPlaying = computed(() => hasAnyActivePlayback(Object.values(audio.tracks || {})));
 
 function togglePlay() {
   audio.togglePlay();
@@ -74,6 +76,34 @@ function handleVolumeChange(volume: number) {
 
 .transport-bar__primary-action {
   flex-shrink: 0;
+  --n-color: rgba(148, 163, 184, 0.12);
+  --n-color-hover: rgba(148, 163, 184, 0.18);
+  --n-color-pressed: rgba(148, 163, 184, 0.22);
+  --n-border: 1px solid rgba(148, 163, 184, 0.18);
+  --n-border-hover: 1px solid rgba(148, 163, 184, 0.28);
+  --n-border-pressed: 1px solid rgba(148, 163, 184, 0.32);
+  --n-text-color: rgba(226, 232, 240, 0.88);
+  --n-text-color-hover: rgba(248, 250, 252, 0.96);
+  --n-text-color-pressed: rgba(248, 250, 252, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.transport-bar__primary-action:hover {
+  transform: translateY(-1px);
+}
+
+.transport-bar__primary-action--active {
+  --n-color: rgba(20, 184, 166, 0.14);
+  --n-color-hover: rgba(20, 184, 166, 0.2);
+  --n-color-pressed: rgba(20, 184, 166, 0.24);
+  --n-border: 1px solid rgba(45, 212, 191, 0.32);
+  --n-border-hover: 1px solid rgba(94, 234, 212, 0.42);
+  --n-border-pressed: 1px solid rgba(94, 234, 212, 0.46);
+  --n-text-color: #ccfbf1;
+  --n-text-color-hover: #f0fdfa;
+  --n-text-color-pressed: #f0fdfa;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(45, 212, 191, 0.08), 0 0 18px rgba(20, 184, 166, 0.12);
 }
 
 .transport-bar__volume {

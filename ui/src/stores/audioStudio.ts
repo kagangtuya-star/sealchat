@@ -7,6 +7,7 @@ import { useUtilsStore } from './utils';
 import { chatEvent, useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
+import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import type {
   AudioAsset,
   AudioAssetMutationPayload,
@@ -1315,11 +1316,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     buildTrackStatePayload(): AudioTrackStatePayload[] {
       return DEFAULT_TRACK_TYPES.map((type) => {
         const track = this.tracks[type] || createEmptyTrack(type);
-        const trackIsPlaying = Boolean(
-          track.assetId &&
-            !track.muted &&
-            (track.status === 'playing' || (this.isPlaying && track.status !== 'paused')),
-        );
+        const trackIsPlaying = Boolean(track.assetId && !track.muted && isTrackPlaybackActive(track));
         const trackPosition = track.howl ? (track.howl.seek() as number) : 0;
         return {
           type,
@@ -1947,7 +1944,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         volume: track.volume,
         onplay: () => {
           track.status = 'playing';
-          // 仅启动进度监控，不更新全局 isPlaying（由 playAll/playTrack 显式控制）
+          this.isPlaying = true;
           if (!this.isApplyingRemoteState) {
             startProgressWatcher(this);
           }
@@ -1955,9 +1952,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         },
         onpause: () => {
           track.status = 'paused';
+          this.refreshPlaybackFlags();
         },
         onstop: () => {
           track.status = 'ready';
+          this.refreshPlaybackFlags();
         },
         onend: () => {
           track.status = 'ready';
@@ -1967,6 +1966,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             return;
           }
           // 仅当所有轨道都空闲时停止进度监控
+          this.refreshPlaybackFlags();
           if (!this.isApplyingRemoteState && this.allTracksIdle()) {
             stopProgressWatcher();
           }
@@ -1984,12 +1984,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         onloaderror: (_, err) => {
           track.status = 'error';
           track.error = String(err);
+          this.refreshPlaybackFlags();
         },
         onplayerror: (_, err) => {
           // 自动播放被阻止时，设置为暂停状态而非错误状态
           // 用户可以通过点击播放按钮手动触发
           console.warn('Play error (likely autoplay blocked):', err);
           track.status = 'paused';
+          this.refreshPlaybackFlags();
           if (!this.canManage && this.remoteState?.isPlaying) {
             this.pendingRemotePlay = true;
           }
@@ -2013,6 +2015,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           // 使用轨道级别的循环和倍速设置
           track.howl.loop(track.loopEnabled ?? true);
           track.howl.rate(track.playbackRate ?? 1);
+          track.status = 'playing';
           // 防止重复播放
           if (!track.howl.playing()) {
             track.howl.play();
@@ -2034,6 +2037,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (track?.howl && track.howl.playing()) {
           track.howl.pause();
         }
+        if (track?.assetId && isTrackPlaybackActive(track)) {
+          track.status = 'paused';
+        }
       });
       this.isPlaying = false;
       stopProgressWatcher();
@@ -2044,6 +2050,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     togglePlay() {
       if (!this.canManage) return;
+      this.refreshPlaybackFlags();
       if (this.isPlaying) {
         this.pauseAll();
       } else {
@@ -2103,10 +2110,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const track = this.tracks[type];
       if (!track?.howl || !track.assetId) return;
       // 防止重复播放：如果已经在播放，直接返回
-      if (track.howl.playing()) return;
+      if (isTrackPlaybackActive(track)) return;
       // 使用轨道级别的循环和倍速设置
       track.howl.loop(track.loopEnabled ?? true);
       track.howl.rate(track.playbackRate ?? 1);
+      track.status = 'playing';
+      this.isPlaying = true;
       track.howl.play();
       // 启动进度监控（如果未启动）
       startProgressWatcher(this);
@@ -2121,6 +2130,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (track.howl.playing()) {
         track.howl.pause();
       }
+      track.status = 'paused';
+      this.refreshPlaybackFlags();
       // 仅当所有轨道都空闲时才停止进度监控
       if (this.allTracksIdle()) {
         stopProgressWatcher();
@@ -2133,7 +2144,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     toggleTrackPlay(type: AudioTrackType) {
       const track = this.tracks[type];
       if (!track?.howl) return;
-      if (track.howl.playing()) {
+      if (isTrackPlaybackActive(track)) {
         this.pauseTrack(type);
       } else {
         this.playTrack(type);
@@ -2200,6 +2211,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         track.howl.unload();
       }
       this.tracks[type] = createEmptyTrack(type);
+      this.refreshPlaybackFlags();
       if (this.allTracksIdle()) {
         this.isPlaying = false;
         stopProgressWatcher();
@@ -2301,15 +2313,22 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     allTracksIdle() {
       return DEFAULT_TRACK_TYPES.every((type) => {
         const track = this.tracks[type];
-        return !track || track.status === 'idle' || track.status === 'ready' || track.status === 'paused';
+        const status = normalizeTrackStatus(track);
+        return !track || status === 'idle' || status === 'ready' || status === 'paused';
       });
     },
 
     anyTrackPlaying() {
-      return DEFAULT_TRACK_TYPES.some((type) => {
+      return hasAnyActivePlayback(DEFAULT_TRACK_TYPES.map((type) => this.tracks[type]));
+    },
+
+    refreshPlaybackFlags() {
+      DEFAULT_TRACK_TYPES.forEach((type) => {
         const track = this.tracks[type];
-        return track?.howl?.playing();
+        if (!track) return;
+        track.status = normalizeTrackStatus(track);
       });
+      this.isPlaying = this.anyTrackPlaying();
     },
 
     async applyFilters(filters: Partial<AudioSearchFilters>) {
