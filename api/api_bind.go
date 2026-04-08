@@ -619,6 +619,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/delete", ExternalGlossaryCategoryDeleteHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/priority", ExternalGlossaryCategoryPriorityUpdateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/priority/bulk", ExternalGlossaryCategoryPriorityBulkUpdateHandler)
+	v1AuthAdmin.Get("/admin/audio-assets", AdminAudioAssetList)
+	v1AuthAdmin.Get("/admin/audio-assets/:id/usage", AdminAudioAssetUsageGet)
+	v1AuthAdmin.Delete("/admin/audio-assets/:id", AdminAudioAssetDeleteSafe)
+	v1AuthAdmin.Post("/admin/audio-assets/bulk-delete", AdminAudioAssetBulkDeleteSafe)
+	v1AuthAdmin.Get("/admin/audio-assets/cleanup-preview", AdminAudioAssetCleanupPreview)
+	v1AuthAdmin.Post("/admin/audio-assets/cleanup", AdminAudioAssetCleanupExecute)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

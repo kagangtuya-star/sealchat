@@ -44,6 +44,80 @@ type AudioAssetUpdateInput struct {
 	Variants    []model.AudioAssetVariant
 }
 
+type AudioAssetUsageSummary struct {
+	SceneRefCount         int      `json:"sceneRefCount"`
+	PlaybackStateRefCount int      `json:"playbackStateRefCount"`
+	SceneNames            []string `json:"sceneNames,omitempty"`
+	PlaybackScopeLabels   []string `json:"playbackScopeLabels,omitempty"`
+	Referenced            bool     `json:"referenced"`
+}
+
+type AudioAssetReferencedError struct {
+	Summary AudioAssetUsageSummary
+}
+
+func (e *AudioAssetReferencedError) Error() string {
+	return "audio asset is still referenced"
+}
+
+type AdminAudioAssetFilters struct {
+	Query         string
+	QueryField    string
+	Scope         model.AudioAssetScope
+	WorldID       *string
+	CreatorID     *string
+	Referenced    *bool
+	NeverAccessed *bool
+	InactiveDays  int
+	SortBy        string
+	SortOrder     string
+	Page          int
+	PageSize      int
+}
+
+type AdminAudioAssetListItem struct {
+	*model.AudioAsset
+	WorldName    string                 `json:"worldName"`
+	CreatorName  string                 `json:"creatorName"`
+	UsageSummary AudioAssetUsageSummary `json:"usageSummary"`
+	SafeToDelete bool                   `json:"safeToDelete"`
+}
+
+type AudioBulkDeleteFailure struct {
+	AssetID      string                  `json:"assetId"`
+	Reason       string                  `json:"reason"`
+	UsageSummary *AudioAssetUsageSummary `json:"usageSummary,omitempty"`
+}
+
+type AudioBulkDeleteResult struct {
+	SuccessIDs   []string                 `json:"successIds"`
+	Failed       []AudioBulkDeleteFailure `json:"failed"`
+	SuccessCount int                      `json:"successCount"`
+	FailedCount  int                      `json:"failedCount"`
+}
+
+type AdminAudioFilterOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type AdminAudioAssetListResult struct {
+	Items          []AdminAudioAssetListItem `json:"items"`
+	Page           int                       `json:"page"`
+	PageSize       int                       `json:"pageSize"`
+	Total          int64                     `json:"total"`
+	WorldOptions   []AdminAudioFilterOption  `json:"worldOptions"`
+	CreatorOptions []AdminAudioFilterOption  `json:"creatorOptions"`
+}
+
+type AdminAudioCleanupPreview struct {
+	ThresholdBefore   time.Time                 `json:"thresholdBefore"`
+	TotalCandidates   int                       `json:"totalCandidates"`
+	SafeCandidates    int                       `json:"safeCandidates"`
+	ReferencedSkipped int                       `json:"referencedSkipped"`
+	Items             []AdminAudioAssetListItem `json:"items"`
+}
+
 type AudioImportPreviewItem struct {
 	Path     string `json:"path"`
 	Name     string `json:"name"`
@@ -201,6 +275,22 @@ func (f *AudioAssetFilters) normalize() {
 	}
 	if f.PageSize <= 0 || f.PageSize > 500 {
 		f.PageSize = 200
+	}
+}
+
+func (f *AdminAudioAssetFilters) normalize() {
+	f.Query = strings.TrimSpace(f.Query)
+	f.QueryField = normalizeAdminAudioQueryField(f.QueryField)
+	f.SortBy = normalizeAdminAudioSortField(f.SortBy)
+	f.SortOrder = normalizeAdminAudioSortOrder(f.SortOrder)
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.PageSize <= 0 || f.PageSize > 200 {
+		f.PageSize = 20
+	}
+	if f.InactiveDays < 0 {
+		f.InactiveDays = 0
 	}
 }
 
@@ -1200,6 +1290,576 @@ func AudioDeleteAsset(id string, hard bool) error {
 	return model.GetDB().Model(&model.AudioAsset{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{"deleted_at": time.Now()}).Error
+}
+
+func AudioTouchAssetAccess(assetID string) error {
+	trimmed := strings.TrimSpace(assetID)
+	if trimmed == "" {
+		return errors.New("asset id is empty")
+	}
+	now := time.Now()
+	return model.GetDB().Model(&model.AudioAsset{}).
+		Where("id = ? AND deleted_at IS NULL", trimmed).
+		Updates(map[string]interface{}{
+			"last_accessed_at": &now,
+			"access_count":     gorm.Expr("access_count + 1"),
+			"updated_at":       now,
+		}).Error
+}
+
+func AudioGetAssetUsageSummary(assetID string) (AudioAssetUsageSummary, error) {
+	trimmed := strings.TrimSpace(assetID)
+	if trimmed == "" {
+		return AudioAssetUsageSummary{}, errors.New("asset id is empty")
+	}
+
+	summary := AudioAssetUsageSummary{}
+	var scenes []*model.AudioScene
+	if err := model.GetDB().Find(&scenes).Error; err != nil {
+		return summary, err
+	}
+	for _, scene := range scenes {
+		if scene == nil {
+			continue
+		}
+		if !sceneReferencesAsset(scene.Tracks, trimmed) {
+			continue
+		}
+		summary.SceneRefCount++
+		if name := strings.TrimSpace(scene.Name); name != "" {
+			summary.SceneNames = append(summary.SceneNames, name)
+		}
+	}
+
+	var playbackStates []*model.AudioPlaybackState
+	if err := model.GetDB().Find(&playbackStates).Error; err != nil {
+		return summary, err
+	}
+	for _, state := range playbackStates {
+		if state == nil {
+			continue
+		}
+		if !playbackStateReferencesAsset(state.Tracks, trimmed) {
+			continue
+		}
+		summary.PlaybackStateRefCount++
+		label := strings.TrimSpace(state.ChannelID)
+		if label != "" {
+			summary.PlaybackScopeLabels = append(summary.PlaybackScopeLabels, label)
+		}
+	}
+
+	summary.Referenced = summary.SceneRefCount > 0 || summary.PlaybackStateRefCount > 0
+	return summary, nil
+}
+
+func AudioSafeDeleteAsset(id string, hard bool) error {
+	summary, err := AudioGetAssetUsageSummary(id)
+	if err != nil {
+		return err
+	}
+	if summary.Referenced {
+		return &AudioAssetReferencedError{Summary: summary}
+	}
+	return AudioDeleteAsset(id, hard)
+}
+
+func AudioSafeDeleteAssets(ids []string, hard bool) (*AudioBulkDeleteResult, error) {
+	result := &AudioBulkDeleteResult{
+		SuccessIDs: make([]string, 0, len(ids)),
+		Failed:     make([]AudioBulkDeleteFailure, 0),
+	}
+	seen := map[string]struct{}{}
+	for _, rawID := range ids {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if err := AudioSafeDeleteAsset(id, hard); err != nil {
+			failure := AudioBulkDeleteFailure{
+				AssetID: id,
+				Reason:  err.Error(),
+			}
+			var referencedErr *AudioAssetReferencedError
+			if errors.As(err, &referencedErr) {
+				summary := referencedErr.Summary
+				failure.UsageSummary = &summary
+				failure.Reason = "素材仍被引用，无法安全删除"
+			}
+			result.Failed = append(result.Failed, failure)
+			continue
+		}
+		result.SuccessIDs = append(result.SuccessIDs, id)
+	}
+	result.SuccessCount = len(result.SuccessIDs)
+	result.FailedCount = len(result.Failed)
+	return result, nil
+}
+
+func AdminAudioListAssets(filters AdminAudioAssetFilters) (*AdminAudioAssetListResult, error) {
+	filters.normalize()
+	db := model.GetDB()
+	q := db.Model(&model.AudioAsset{}).Where("deleted_at IS NULL")
+	if filters.Scope != "" {
+		q = q.Where("scope = ?", filters.Scope)
+	}
+	if filters.WorldID != nil && strings.TrimSpace(*filters.WorldID) != "" {
+		q = q.Where("world_id = ?", strings.TrimSpace(*filters.WorldID))
+	}
+	if filters.CreatorID != nil && strings.TrimSpace(*filters.CreatorID) != "" {
+		q = q.Where("created_by = ?", strings.TrimSpace(*filters.CreatorID))
+	}
+	if filters.NeverAccessed != nil {
+		if *filters.NeverAccessed {
+			q = q.Where("last_accessed_at IS NULL")
+		} else {
+			q = q.Where("last_accessed_at IS NOT NULL")
+		}
+	}
+	if filters.InactiveDays > 0 {
+		threshold := time.Now().Add(-time.Duration(filters.InactiveDays) * 24 * time.Hour)
+		q = q.Where("(last_accessed_at IS NULL OR last_accessed_at < ?)", threshold)
+	}
+
+	var assets []*model.AudioAsset
+	if err := q.Order("updated_at DESC").Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	items, err := buildAdminAudioAssetItems(assets)
+	if err != nil {
+		return nil, err
+	}
+	items = filterAdminAudioAssetItemsByQuery(items, filters.Query, filters.QueryField)
+	if filters.Referenced != nil {
+		filtered := make([]AdminAudioAssetListItem, 0, len(items))
+		for _, item := range items {
+			if item.UsageSummary.Referenced == *filters.Referenced {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	sortAdminAudioAssetItems(items, filters.SortBy, filters.SortOrder)
+	total := int64(len(items))
+	start := (filters.Page - 1) * filters.PageSize
+	if start > len(items) {
+		start = len(items)
+	}
+	end := start + filters.PageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	worldOptions, creatorOptions, err := buildAdminAudioFilterOptions(assets)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminAudioAssetListResult{
+		Items:          items[start:end],
+		Page:           filters.Page,
+		PageSize:       filters.PageSize,
+		Total:          total,
+		WorldOptions:   worldOptions,
+		CreatorOptions: creatorOptions,
+	}, nil
+}
+
+func normalizeAdminAudioQueryField(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "all":
+		return "all"
+	case "name", "worldName", "creatorName", "scope":
+		return strings.TrimSpace(value)
+	default:
+		return "all"
+	}
+}
+
+func normalizeAdminAudioSortField(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "updatedAt":
+		return "updatedAt"
+	case "name", "scope", "worldName", "creatorName", "size", "lastAccessedAt":
+		return strings.TrimSpace(value)
+	default:
+		return "updatedAt"
+	}
+}
+
+func normalizeAdminAudioSortOrder(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "asc":
+		return "asc"
+	case "desc", "":
+		return "desc"
+	default:
+		return "desc"
+	}
+}
+
+func filterAdminAudioAssetItemsByQuery(items []AdminAudioAssetListItem, query, queryField string) []AdminAudioAssetListItem {
+	keyword := strings.ToLower(strings.TrimSpace(query))
+	if keyword == "" {
+		return items
+	}
+	filtered := make([]AdminAudioAssetListItem, 0, len(items))
+	for _, item := range items {
+		if adminAudioItemMatchesQuery(item, keyword, queryField) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func adminAudioItemMatchesQuery(item AdminAudioAssetListItem, keyword, queryField string) bool {
+	values := adminAudioItemQueryValues(item, queryField)
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func adminAudioItemQueryValues(item AdminAudioAssetListItem, queryField string) []string {
+	switch queryField {
+	case "name":
+		return []string{item.Name, item.Description, strings.Join(item.Tags, " ")}
+	case "worldName":
+		return []string{item.WorldName, normalizeOptionalString(item.WorldID)}
+	case "creatorName":
+		return []string{item.CreatorName, item.CreatedBy}
+	case "scope":
+		return []string{string(item.Scope)}
+	default:
+		return []string{
+			item.Name,
+			item.Description,
+			strings.Join(item.Tags, " "),
+			item.WorldName,
+			normalizeOptionalString(item.WorldID),
+			item.CreatorName,
+			item.CreatedBy,
+			string(item.Scope),
+		}
+	}
+}
+
+func sortAdminAudioAssetItems(items []AdminAudioAssetListItem, sortBy, sortOrder string) {
+	desc := sortOrder != "asc"
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		var less bool
+		switch sortBy {
+		case "name":
+			less = strings.ToLower(left.Name) < strings.ToLower(right.Name)
+		case "scope":
+			less = strings.ToLower(string(left.Scope)) < strings.ToLower(string(right.Scope))
+		case "worldName":
+			less = strings.ToLower(left.WorldName) < strings.ToLower(right.WorldName)
+		case "creatorName":
+			less = strings.ToLower(left.CreatorName) < strings.ToLower(right.CreatorName)
+		case "size":
+			less = left.Size < right.Size
+		case "lastAccessedAt":
+			less = compareOptionalTime(left.LastAccessedAt, right.LastAccessedAt)
+		case "updatedAt":
+			fallthrough
+		default:
+			less = left.UpdatedAt.Before(right.UpdatedAt)
+		}
+		if desc {
+			return !less && !adminAudioItemEqualOnSort(left, right, sortBy)
+		}
+		return less && !adminAudioItemEqualOnSort(left, right, sortBy)
+	})
+}
+
+func adminAudioItemEqualOnSort(left, right AdminAudioAssetListItem, sortBy string) bool {
+	switch sortBy {
+	case "name":
+		return strings.EqualFold(left.Name, right.Name)
+	case "scope":
+		return strings.EqualFold(string(left.Scope), string(right.Scope))
+	case "worldName":
+		return strings.EqualFold(left.WorldName, right.WorldName)
+	case "creatorName":
+		return strings.EqualFold(left.CreatorName, right.CreatorName)
+	case "size":
+		return left.Size == right.Size
+	case "lastAccessedAt":
+		return optionalTimeEqual(left.LastAccessedAt, right.LastAccessedAt)
+	case "updatedAt":
+		fallthrough
+	default:
+		return left.UpdatedAt.Equal(right.UpdatedAt)
+	}
+}
+
+func compareOptionalTime(left, right *time.Time) bool {
+	if left == nil && right == nil {
+		return false
+	}
+	if left == nil {
+		return true
+	}
+	if right == nil {
+		return false
+	}
+	return left.Before(*right)
+}
+
+func optionalTimeEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func AdminAudioPreviewUnusedAssets(days int, filters AdminAudioAssetFilters) (*AdminAudioCleanupPreview, error) {
+	filters.InactiveDays = days
+	filters.Page = 1
+	if filters.PageSize <= 0 {
+		filters.PageSize = 100
+	}
+	list, err := AdminAudioListAssets(filters)
+	if err != nil {
+		return nil, err
+	}
+	preview := &AdminAudioCleanupPreview{
+		ThresholdBefore: time.Now().Add(-time.Duration(days) * 24 * time.Hour),
+		Items:           make([]AdminAudioAssetListItem, 0),
+	}
+	for _, item := range list.Items {
+		preview.TotalCandidates++
+		if item.SafeToDelete {
+			preview.SafeCandidates++
+			preview.Items = append(preview.Items, item)
+		} else {
+			preview.ReferencedSkipped++
+		}
+	}
+	return preview, nil
+}
+
+func AdminAudioCleanupUnusedAssets(days int, filters AdminAudioAssetFilters, hard bool) (*AudioBulkDeleteResult, error) {
+	filters.InactiveDays = days
+	filters.Page = 1
+	if filters.PageSize <= 0 {
+		filters.PageSize = 1000
+	}
+	list, err := AdminAudioListAssets(filters)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(list.Items))
+	for _, item := range list.Items {
+		if item.SafeToDelete {
+			ids = append(ids, item.ID)
+		}
+	}
+	return AudioSafeDeleteAssets(ids, hard)
+}
+
+func buildAdminAudioAssetItems(assets []*model.AudioAsset) ([]AdminAudioAssetListItem, error) {
+	if len(assets) == 0 {
+		return []AdminAudioAssetListItem{}, nil
+	}
+	worldIDs := make([]string, 0)
+	userIDs := make([]string, 0)
+	worldSeen := map[string]struct{}{}
+	userSeen := map[string]struct{}{}
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+		if asset.WorldID != nil {
+			worldID := strings.TrimSpace(*asset.WorldID)
+			if worldID != "" {
+				if _, ok := worldSeen[worldID]; !ok {
+					worldSeen[worldID] = struct{}{}
+					worldIDs = append(worldIDs, worldID)
+				}
+			}
+		}
+		userID := strings.TrimSpace(asset.CreatedBy)
+		if userID != "" {
+			if _, ok := userSeen[userID]; !ok {
+				userSeen[userID] = struct{}{}
+				userIDs = append(userIDs, userID)
+			}
+		}
+	}
+
+	worldNames := map[string]string{}
+	if len(worldIDs) > 0 {
+		var worlds []*model.WorldModel
+		if err := model.GetDB().Where("id IN ?", worldIDs).Find(&worlds).Error; err != nil {
+			return nil, err
+		}
+		for _, world := range worlds {
+			if world != nil {
+				worldNames[world.ID] = strings.TrimSpace(world.Name)
+			}
+		}
+	}
+
+	userNames := map[string]string{}
+	if len(userIDs) > 0 {
+		var users []*model.UserModel
+		if err := model.GetDB().Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+			return nil, err
+		}
+		for _, user := range users {
+			if user == nil {
+				continue
+			}
+			name := strings.TrimSpace(user.Nickname)
+			if name == "" {
+				name = strings.TrimSpace(user.Username)
+			}
+			if name == "" {
+				name = user.ID
+			}
+			userNames[user.ID] = name
+		}
+	}
+
+	items := make([]AdminAudioAssetListItem, 0, len(assets))
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+		usage, err := AudioGetAssetUsageSummary(asset.ID)
+		if err != nil {
+			return nil, err
+		}
+		worldName := ""
+		if asset.WorldID != nil {
+			worldName = worldNames[strings.TrimSpace(*asset.WorldID)]
+		}
+		items = append(items, AdminAudioAssetListItem{
+			AudioAsset:   asset,
+			WorldName:    worldName,
+			CreatorName:  userNames[strings.TrimSpace(asset.CreatedBy)],
+			UsageSummary: usage,
+			SafeToDelete: !usage.Referenced,
+		})
+	}
+	return items, nil
+}
+
+func buildAdminAudioFilterOptions(assets []*model.AudioAsset) ([]AdminAudioFilterOption, []AdminAudioFilterOption, error) {
+	worldOptionMap := map[string]string{}
+	creatorOptionMap := map[string]string{}
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+		if asset.WorldID != nil {
+			worldID := strings.TrimSpace(*asset.WorldID)
+			if worldID != "" {
+				worldOptionMap[worldID] = worldID
+			}
+		}
+		userID := strings.TrimSpace(asset.CreatedBy)
+		if userID != "" {
+			creatorOptionMap[userID] = userID
+		}
+	}
+
+	worldIDs := make([]string, 0, len(worldOptionMap))
+	for id := range worldOptionMap {
+		worldIDs = append(worldIDs, id)
+	}
+	sort.Strings(worldIDs)
+	worldOptions := make([]AdminAudioFilterOption, 0, len(worldIDs))
+	if len(worldIDs) > 0 {
+		var worlds []*model.WorldModel
+		if err := model.GetDB().Where("id IN ?", worldIDs).Find(&worlds).Error; err != nil {
+			return nil, nil, err
+		}
+		worldNames := map[string]string{}
+		for _, world := range worlds {
+			if world != nil {
+				worldNames[world.ID] = strings.TrimSpace(world.Name)
+			}
+		}
+		for _, id := range worldIDs {
+			label := worldNames[id]
+			if label == "" {
+				label = id
+			}
+			worldOptions = append(worldOptions, AdminAudioFilterOption{Label: label, Value: id})
+		}
+	}
+
+	creatorIDs := make([]string, 0, len(creatorOptionMap))
+	for id := range creatorOptionMap {
+		creatorIDs = append(creatorIDs, id)
+	}
+	sort.Strings(creatorIDs)
+	creatorOptions := make([]AdminAudioFilterOption, 0, len(creatorIDs))
+	if len(creatorIDs) > 0 {
+		var users []*model.UserModel
+		if err := model.GetDB().Where("id IN ?", creatorIDs).Find(&users).Error; err != nil {
+			return nil, nil, err
+		}
+		userNames := map[string]string{}
+		for _, user := range users {
+			if user == nil {
+				continue
+			}
+			label := strings.TrimSpace(user.Nickname)
+			if label == "" {
+				label = strings.TrimSpace(user.Username)
+			}
+			if label == "" {
+				label = user.ID
+			}
+			userNames[user.ID] = label
+		}
+		for _, id := range creatorIDs {
+			label := userNames[id]
+			if label == "" {
+				label = id
+			}
+			creatorOptions = append(creatorOptions, AdminAudioFilterOption{Label: label, Value: id})
+		}
+	}
+	return worldOptions, creatorOptions, nil
+}
+
+func sceneReferencesAsset(tracks model.JSONList[model.AudioSceneTrack], assetID string) bool {
+	for _, track := range tracks {
+		if track.AssetID != nil && strings.TrimSpace(*track.AssetID) == assetID {
+			return true
+		}
+		for _, playlistAssetID := range track.PlaylistAssetIDs {
+			if strings.TrimSpace(playlistAssetID) == assetID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func playbackStateReferencesAsset(tracks model.JSONList[model.AudioTrackState], assetID string) bool {
+	for _, track := range tracks {
+		if track.AssetID != nil && strings.TrimSpace(*track.AssetID) == assetID {
+			return true
+		}
+		for _, playlistAssetID := range track.PlaylistAssetIDs {
+			if strings.TrimSpace(playlistAssetID) == assetID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func AudioListFolders() ([]*AudioFolderNode, error) {

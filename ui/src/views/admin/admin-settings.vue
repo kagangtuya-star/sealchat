@@ -1,11 +1,12 @@
 <script setup lang="tsx">
 import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
+import AdminSettingsAudio from './admin-settings-audio.vue'
 import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'bot' | 'user' | 'external-glossary'
+type AdminTab = 'basic' | 'bot' | 'user' | 'external-glossary' | 'audio'
 
 type AdminSettingsBaseExpose = {
   save: () => Promise<void>
@@ -15,6 +16,8 @@ type AdminSettingsBaseExpose = {
 const emit = defineEmits(['close']);
 const activeTab = ref<AdminTab>('basic');
 const basicSettingsRef = ref<AdminSettingsBaseExpose | null>(null);
+const audioDrawerVisible = ref(false);
+const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
 const showSaveAction = computed(() => activeTab.value === 'basic');
 const basicSettingsModified = computed(() => {
@@ -22,8 +25,21 @@ const basicSettingsModified = computed(() => {
   return basicSettingsRef.value?.isModified() ?? false;
 });
 
+watch(activeTab, (value, previous) => {
+  if (value === 'audio') {
+    audioDrawerVisible.value = true;
+    activeTab.value = previous === 'audio' ? lastNonAudioTab.value : (previous as Exclude<AdminTab, 'audio'> | undefined) || 'basic';
+    return;
+  }
+  lastNonAudioTab.value = value as Exclude<AdminTab, 'audio'>;
+});
+
 const cancel = () => {
   emit('close');
+}
+
+const closeAudioDrawer = () => {
+  audioDrawerVisible.value = false;
 }
 
 const saveBasicSettings = async () => {
@@ -60,7 +76,27 @@ const saveBasicSettings = async () => {
       <n-tab-pane name="external-glossary" tab="外挂世界术语">
         <admin-settings-external-glossary />
       </n-tab-pane>
+      <n-tab-pane name="audio" tab="音频素材管理" />
     </n-tabs>
+
+    <n-drawer
+      v-model:show="audioDrawerVisible"
+      :width="'min(1280px, 96vw)'"
+      placement="right"
+      class="sc-admin-settings-audio-drawer"
+    >
+      <n-drawer-content closable body-content-style="padding: 0;">
+        <template #header>
+          <div class="sc-admin-settings-audio-drawer__header">
+            <span class="sc-admin-settings-audio-drawer__title">音频素材管理</span>
+            <n-button size="small" quaternary @click="closeAudioDrawer">退出</n-button>
+          </div>
+        </template>
+        <div class="sc-admin-settings-audio-drawer__body">
+          <admin-settings-audio />
+        </div>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
@@ -96,13 +132,45 @@ const saveBasicSettings = async () => {
 }
 
 .sc-admin-settings-tabs :deep(.n-tabs-pane-wrapper),
+.sc-admin-settings-tabs :deep(.n-tabs-content),
 .sc-admin-settings-tabs :deep(.n-tab-pane),
 .sc-admin-settings-tabs :deep(.n-tab-pane > *) {
   min-height: 0;
 }
 
+.sc-admin-settings-tabs :deep(.n-tabs-content),
+.sc-admin-settings-tabs :deep(.n-tabs-pane-wrapper) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 .sc-admin-settings-tabs :deep(.n-tab-pane) {
   height: 100%;
+  overflow: hidden;
+}
+
+.sc-admin-settings-audio-drawer__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sc-admin-settings-audio-drawer__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.sc-admin-settings-audio-drawer__body {
+  height: calc(100vh - 96px);
+  min-height: 0;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.sc-admin-settings-audio-drawer :deep(.n-drawer-content) {
   overflow: hidden;
 }
 
@@ -115,6 +183,11 @@ const saveBasicSettings = async () => {
   .sc-admin-settings-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .sc-admin-settings-audio-drawer__body {
+    height: calc(100vh - 88px);
+    padding: 12px;
   }
 }
 </style>
