@@ -22,7 +22,7 @@ type KeywordDisplayStyle = 'standard' | 'minimal' | 'inherit'
 
 const libraryQuery = ref('')
 const termQuery = ref('')
-const termCategoryFilter = ref('')
+const termCategoryFilter = ref<string | null>(null)
 const currentTermPage = ref(1)
 const selectedLibraryIds = ref<string[]>([])
 const selectedTermIds = ref<string[]>([])
@@ -615,7 +615,7 @@ async function handleExportTerms() {
   const library = selectedLibrary.value
   if (!library) return
   try {
-    const items = await store.exportTerms(library.id, termCategoryFilter.value || undefined)
+    const items = await store.exportTerms(library.id, termCategoryFilter.value ?? undefined)
     triggerBlobDownload(
       new Blob([JSON.stringify(items, null, 2)], { type: 'application/json;charset=utf-8' }),
       `external-glossary-terms-${library.name || library.id}.json`,
@@ -790,7 +790,7 @@ function handleCategoryPriorityDragEnd() {
 
 watch(() => store.activeLibraryId, () => {
   selectedTermIds.value = []
-  termCategoryFilter.value = ''
+  termCategoryFilter.value = null
   termQuery.value = ''
   currentTermPage.value = 1
 })
@@ -963,8 +963,8 @@ onMounted(async () => {
                   v-model:value="termCategoryFilter"
                   size="small"
                   clearable
-                  placeholder="分类"
-                  :options="[{ label: '全部分类', value: '' }, ...categoryOptions.map(item => ({ label: item, value: item }))]"
+                  placeholder="全部分类"
+                  :options="categoryOptions.map(item => ({ label: item, value: item }))"
                 />
                 <n-button size="small" :disabled="!selectedTermIds.length" @click="handleBulkTermsEnabled(true)">批量启用</n-button>
                 <n-button size="small" :disabled="!selectedTermIds.length" @click="handleBulkTermsEnabled(false)">批量停用</n-button>

@@ -300,7 +300,7 @@ const handleClose = () => {
   emit('update:visible', false);
 };
 
-const templateFilterSheetType = ref('');
+const templateFilterSheetType = ref<string | null>(null);
 const templateSearchKeyword = ref('');
 const cardSearchKeyword = ref('');
 const templateManagerVisible = ref(false);
@@ -315,7 +315,7 @@ const templateSheetDefault = ref(false);
 const templateSaving = ref(false);
 
 const managedTemplates = computed(() => {
-  const filter = templateFilterSheetType.value.trim().toLowerCase();
+  const filter = (templateFilterSheetType.value ?? '').trim().toLowerCase();
   return templateStore.templates.filter(item => {
     if (!filter) return true;
     return (item.sheetType || '').trim().toLowerCase() === filter;
@@ -1259,8 +1259,8 @@ const openEditPanel = async (card: CharacterCard) => {
       <div class="template-manager__toolbar">
         <n-select
           v-model:value="templateFilterSheetType"
-          :options="[{ label: '全部规制', value: '' }, ...sheetTypeOptions.filter(opt => opt.value !== 'custom')]"
-          placeholder="筛选规制"
+          :options="sheetTypeOptions.filter(opt => opt.value !== 'custom')"
+          placeholder="全部规制"
           size="small"
           clearable
           :disabled="characterApiDisabled"
