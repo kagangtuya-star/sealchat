@@ -1076,7 +1076,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
             :options="[
               { label: '公开', value: 'public' },
               { label: '私有', value: 'private' },
-              { label: '隐藏链接', value: 'unlisted' },
+              { label: '不公开访问链接', value: 'unlisted' },
             ]"
           />
         </n-form-item>

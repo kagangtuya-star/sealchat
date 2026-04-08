@@ -123,7 +123,7 @@ const confirmRemove = () => {
           <n-select v-model:value="form.visibility" :options="[
             { label: '公开', value: 'public' },
             { label: '私有', value: 'private' },
-            { label: '隐藏链接', value: 'unlisted' },
+            { label: '不公开访问链接', value: 'unlisted' },
           ]" />
         </n-form-item>
         <n-form-item label="管理权限">
