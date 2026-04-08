@@ -13,6 +13,12 @@ export interface CharacterCardTemplate {
   content: string;
   isGlobalDefault: boolean;
   isSheetDefault: boolean;
+  access?: 'owner' | 'world_shared';
+  readonly?: boolean;
+  isSharedToCurrentWorld?: boolean;
+  sharedWorldId?: string;
+  sharedByUserId?: string;
+  sharedByNickname?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -37,6 +43,11 @@ interface TemplatePayload {
   content: string;
   isGlobalDefault?: boolean;
   isSheetDefault?: boolean;
+}
+
+interface TemplateQueryOptions {
+  sheetType?: string;
+  worldId?: string;
 }
 
 interface BindingPayload {
@@ -82,6 +93,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const templatesLoaded = ref(false);
   const loading = ref(false);
   const migrating = ref(false);
+  const loadedWorldId = ref('');
 
   const templates = computed(() => Object.values(templateMap.value));
 
@@ -106,11 +118,11 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const getSheetDefaultTemplate = (sheetType?: string) => {
     const normalized = normalizeSheetType(sheetType);
     if (!normalized) return null;
-    return templates.value.find(item => item.isSheetDefault && normalizeSheetType(item.sheetType) === normalized) || null;
+    return templates.value.find(item => !item.readonly && item.isSheetDefault && normalizeSheetType(item.sheetType) === normalized) || null;
   };
 
   const getGlobalDefaultTemplate = () => {
-    return templates.value.find(item => item.isGlobalDefault) || null;
+    return templates.value.find(item => item.isGlobalDefault && !item.readonly) || null;
   };
 
   const resolveDefaultTemplate = (sheetType?: string, fallback = '') => {
@@ -138,11 +150,16 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     return resolveDefaultTemplate(sheetType, fallback);
   };
 
-  const loadTemplates = async (sheetType?: string) => {
+  const loadTemplates = async (options?: TemplateQueryOptions) => {
     loading.value = true;
     try {
+      const sheetType = options?.sheetType;
+      const worldId = String(options?.worldId ?? loadedWorldId.value ?? '').trim();
       const resp = await api.get('/api/v1/character-card-templates', {
-        params: sheetType ? { sheetType } : {},
+        params: {
+          ...(sheetType ? { sheetType } : {}),
+          ...(worldId ? { worldId } : {}),
+        },
       });
       const items = Array.isArray(resp.data?.items) ? resp.data.items as CharacterCardTemplate[] : [];
       const nextMap: Record<string, CharacterCardTemplate> = {};
@@ -153,15 +170,17 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       });
       templateMap.value = nextMap;
       templatesLoaded.value = true;
+      loadedWorldId.value = worldId;
       return items;
     } finally {
       loading.value = false;
     }
   };
 
-  const ensureTemplatesLoaded = async () => {
-    if (templatesLoaded.value) return;
-    await loadTemplates();
+  const ensureTemplatesLoaded = async (options?: TemplateQueryOptions) => {
+    const worldId = String(options?.worldId ?? loadedWorldId.value ?? '').trim();
+    if (templatesLoaded.value && loadedWorldId.value === worldId) return;
+    await loadTemplates({ ...options, worldId: worldId || undefined });
   };
 
   const createTemplate = async (payload: TemplatePayload) => {
@@ -201,6 +220,16 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     const item = resp.data?.item as CharacterCardTemplate | undefined;
     await loadTemplates();
     return item || null;
+  };
+
+  const shareTemplateToWorld = async (worldId: string, templateId: string) => {
+    await api.post(`/api/v1/worlds/${worldId}/character-card-templates/${templateId}/share`);
+    await loadTemplates({ worldId });
+  };
+
+  const unshareTemplateFromWorld = async (worldId: string, templateId: string) => {
+    await api.delete(`/api/v1/worlds/${worldId}/character-card-templates/${templateId}/share`);
+    await loadTemplates({ worldId });
   };
 
   const loadBindings = async (channelId: string) => {
@@ -442,6 +471,8 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     updateTemplate,
     deleteTemplate,
     setTemplateDefault,
+    shareTemplateToWorld,
+    unshareTemplateFromWorld,
     loadBindings,
     ensureBindingsLoaded,
     upsertBinding,

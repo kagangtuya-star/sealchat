@@ -370,6 +370,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Put("/character-card-templates/:id", CharacterCardTemplateUpdate)
 	v1Auth.Delete("/character-card-templates/:id", CharacterCardTemplateDelete)
 	v1Auth.Post("/character-card-templates/:id/set-default", CharacterCardTemplateSetDefault)
+	v1Auth.Post("/worlds/:worldId/character-card-templates/:templateId/share", WorldCharacterCardTemplateShareHandler)
+	v1Auth.Delete("/worlds/:worldId/character-card-templates/:templateId/share", WorldCharacterCardTemplateUnshareHandler)
 	v1Auth.Get("/character-card-template-bindings", CharacterCardTemplateBindingList)
 	v1Auth.Post("/character-card-template-bindings/upsert", CharacterCardTemplateBindingUpsert)
 	v1Auth.Get("/character-card-avatar-bindings", CharacterCardAvatarBindingList)

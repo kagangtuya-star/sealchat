@@ -151,6 +151,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&CharacterCardTemplateModel{})
 	db.AutoMigrate(&CharacterCardTemplateBindingModel{})
+	db.AutoMigrate(&WorldCharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})

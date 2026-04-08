@@ -150,7 +150,7 @@ const syncBadgeTemplateToWorld = async () => {
 
 const loadPanelData = async (channelId: string) => {
   await cardStore.loadCards(channelId);
-  await templateStore.ensureTemplatesLoaded();
+  await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
   await templateStore.loadBindings(channelId);
   await avatarStore.loadBindings(channelId);
   await avatarStore.migrateLegacyBindings(
@@ -322,6 +322,14 @@ const managedTemplates = computed(() => {
   });
 });
 
+const canManageWorldSharedTemplates = computed(() => canSyncBadgeTemplate.value && !!currentWorldId.value);
+
+const canEditTemplateItem = (item: CharacterCardTemplate) => !item.readonly;
+
+const canToggleWorldSharedTemplate = (item: CharacterCardTemplate) => {
+  return canManageWorldSharedTemplates.value && !item.readonly;
+};
+
 const filteredManagedTemplates = computed(() => {
   const keyword = templateSearchKeyword.value.trim().toLowerCase();
   if (!keyword) return managedTemplates.value;
@@ -425,7 +433,7 @@ const resolveTemplateSheetType = () => resolveSheetType(templateSheetTypePreset.
 
 const openTemplateManager = async () => {
   if (!ensureCharacterApiEnabled()) return;
-  await templateStore.ensureTemplatesLoaded();
+  await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
   templateManagerVisible.value = true;
 };
 
@@ -442,6 +450,7 @@ const openTemplateCreateModal = () => {
 
 const openTemplateEditModal = (item: CharacterCardTemplate) => {
   if (!ensureCharacterApiEnabled()) return;
+  if (item.readonly) return;
   templateEditingId.value = item.id;
   templateName.value = item.name;
   setTemplateSheetType(item.sheetType || '');
@@ -495,6 +504,7 @@ const handleSaveTemplate = async () => {
 
 const handleDeleteTemplate = async (item: CharacterCardTemplate) => {
   if (!ensureCharacterApiEnabled()) return;
+  if (item.readonly) return;
   try {
     await templateStore.deleteTemplate(item.id);
     message.success('模板已删除');
@@ -514,6 +524,23 @@ const handleCopyTemplate = async (item: CharacterCardTemplate) => {
     message.success('模板已复制');
   } catch (e: any) {
     message.error(e?.response?.data?.error || e?.message || '模板复制失败');
+  }
+};
+
+const toggleTemplateWorldShared = async (item: CharacterCardTemplate) => {
+  if (!ensureCharacterApiEnabled()) return;
+  const worldId = currentWorldId.value;
+  if (!worldId || item.readonly) return;
+  try {
+    if (item.isSharedToCurrentWorld) {
+      await templateStore.unshareTemplateFromWorld(worldId, item.id);
+      message.success('已取消世界共享');
+    } else {
+      await templateStore.shareTemplateToWorld(worldId, item.id);
+      message.success('已设为世界共享');
+    }
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || e?.response?.data?.error || e?.message || '设置失败');
   }
 };
 
@@ -873,7 +900,7 @@ const openCharacterSheetWindow = async (
       cardData = cardStore.activeCards[channelId];
     }
     const effectiveCardData = cardStore.getActiveCardId(channelId) === card.id ? cardData : undefined;
-    await templateStore.ensureTemplatesLoaded();
+    await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
     await templateStore.ensureBindingsLoaded(channelId);
     const resolvedSheetType = (effectiveCardData?.type || card.sheetType || '').trim();
     const fallbackTemplate = sheetStore.getTemplate(card.id, resolvedSheetType);
@@ -1282,18 +1309,31 @@ const openEditPanel = async (card: CharacterCard) => {
             <span>{{ tpl.name }}</span>
             <div class="template-manager__tags">
               <n-tag size="small" :bordered="false">{{ tpl.sheetType || '通用' }}</n-tag>
-              <n-tag v-if="tpl.isGlobalDefault" size="small" type="info" :bordered="false">全局默认</n-tag>
-              <n-tag v-if="tpl.isSheetDefault" size="small" type="success" :bordered="false">规制默认</n-tag>
+              <n-tag v-if="tpl.access === 'world_shared'" size="small" type="warning" :bordered="false">世界共享</n-tag>
+              <n-tag v-else size="small" type="default" :bordered="false">我的模板</n-tag>
+              <n-tag v-if="tpl.isSharedToCurrentWorld && tpl.access !== 'world_shared'" size="small" type="primary" :bordered="false">已共享</n-tag>
+              <n-tag v-if="tpl.isGlobalDefault && !tpl.readonly" size="small" type="info" :bordered="false">全局默认</n-tag>
+              <n-tag v-if="tpl.isSheetDefault && !tpl.readonly" size="small" type="success" :bordered="false">规制默认</n-tag>
             </div>
           </div>
         </template>
         <div class="template-manager__preview">{{ formatTemplatePreview(tpl.content) || '空模板' }}</div>
+        <div v-if="tpl.access === 'world_shared' && tpl.sharedByNickname" class="template-manager__meta">共享者：{{ tpl.sharedByNickname }}</div>
         <div class="template-manager__actions">
-          <n-button text size="small" :disabled="characterApiDisabled" @click="openTemplateEditModal(tpl)">编辑</n-button>
+          <n-button
+            v-if="canToggleWorldSharedTemplate(tpl)"
+            text
+            size="small"
+            :disabled="characterApiDisabled"
+            @click="toggleTemplateWorldShared(tpl)"
+          >
+            {{ tpl.isSharedToCurrentWorld ? '取消世界共享' : '设为世界共享' }}
+          </n-button>
+          <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="openTemplateEditModal(tpl)">编辑</n-button>
           <n-button text size="small" :disabled="characterApiDisabled" @click="handleCopyTemplate(tpl)">复制</n-button>
-          <n-button text size="small" :disabled="characterApiDisabled" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
-          <n-button text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
-          <n-popconfirm @positive-click="handleDeleteTemplate(tpl)">
+          <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
+          <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
+          <n-popconfirm v-if="canEditTemplateItem(tpl)" @positive-click="handleDeleteTemplate(tpl)">
             <template #trigger>
               <n-button text size="small" type="error" :disabled="characterApiDisabled">删除</n-button>
             </template>
@@ -1523,6 +1563,12 @@ const openEditPanel = async (card: CharacterCard) => {
   font-size: 0.78rem;
   color: var(--sc-text-secondary);
   line-height: 1.35;
+}
+
+.template-manager__meta {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary);
 }
 
 .template-manager__actions {
