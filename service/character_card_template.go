@@ -65,7 +65,7 @@ func normalizeCharacterCardTemplateInput(input *CharacterCardTemplateInput) erro
 		return errors.New("模板名称长度需在100个字符以内")
 	}
 	if input.SheetType != "" && len([]rune(input.SheetType)) > 32 {
-		return errors.New("模板规制类型长度需在32个字符以内")
+		return errors.New("模板规则类型长度需在32个字符以内")
 	}
 	if input.Content == "" {
 		return errors.New("模板内容不能为空")
@@ -90,7 +90,7 @@ func normalizeCharacterCardTemplateUpdateInput(input *CharacterCardTemplateUpdat
 	if input.SheetType != nil {
 		sheetType := strings.TrimSpace(*input.SheetType)
 		if sheetType != "" && len([]rune(sheetType)) > 32 {
-			return errors.New("模板规制类型长度需在32个字符以内")
+			return errors.New("模板规则类型长度需在32个字符以内")
 		}
 		input.SheetType = &sheetType
 	}
@@ -209,7 +209,7 @@ func CharacterCardTemplateCreate(userID string, input *CharacterCardTemplateInpu
 		}
 		if input.IsSheetDefault {
 			if item.SheetType == "" {
-				return errors.New("设置规制默认模板时，sheetType 不能为空")
+				return errors.New("设置规则默认模板时，sheetType 不能为空")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).
@@ -265,7 +265,7 @@ func CharacterCardTemplateUpdate(userID string, templateID string, input *Charac
 		}
 		if input.IsSheetDefault != nil && *input.IsSheetDefault {
 			if strings.TrimSpace(nextSheetType) == "" {
-				return errors.New("设置规制默认模板时，sheetType 不能为空")
+				return errors.New("设置规则默认模板时，sheetType 不能为空")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).
@@ -336,7 +336,7 @@ func CharacterCardTemplateSetDefault(userID string, templateID string, scope str
 			}).Error
 		case CharacterCardTemplateDefaultScopeSheet:
 			if strings.TrimSpace(template.SheetType) == "" {
-				return errors.New("当前模板缺少 sheetType，无法设为规制默认模板")
+				return errors.New("当前模板缺少 sheetType，无法设为规则默认模板")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).

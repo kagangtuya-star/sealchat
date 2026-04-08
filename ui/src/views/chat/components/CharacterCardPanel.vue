@@ -557,7 +557,7 @@ const setAsGlobalDefault = async (item: CharacterCardTemplate) => {
 const setAsSheetDefault = async (item: CharacterCardTemplate) => {
   if (!ensureCharacterApiEnabled()) return;
   if (!(item.sheetType || '').trim()) {
-    message.warning('该模板缺少规制类型，无法设为规制默认');
+    message.warning('该模板缺少规则类型，无法设为规则默认');
     return;
   }
   try {
@@ -612,7 +612,7 @@ const handleCreateCard = async () => {
   }
   const sheetType = resolveSheetType(newCardSheetTypePreset.value, newCardSheetTypeCustom.value);
   if (!sheetType) {
-    message.warning('请输入自定义规制类型');
+    message.warning('请输入自定义规则类型');
     return;
   }
   creating.value = true;
@@ -1104,7 +1104,7 @@ const openEditPanel = async (card: CharacterCard) => {
           size="small"
           clearable
           :disabled="characterApiDisabled"
-          placeholder="搜索人物卡（名称/规制/属性）"
+          placeholder="搜索人物卡（名称/规则/属性）"
         />
       </div>
 
@@ -1266,7 +1266,7 @@ const openEditPanel = async (card: CharacterCard) => {
         <n-input
           v-if="newCardSheetTypePreset === 'custom'"
           v-model:value="newCardSheetTypeCustom"
-          placeholder="输入自定义规制类型"
+          placeholder="输入自定义规则类型"
           class="sheet-type-custom-input"
           :disabled="characterApiDisabled"
         />
@@ -1287,7 +1287,7 @@ const openEditPanel = async (card: CharacterCard) => {
         <n-select
           v-model:value="templateFilterSheetType"
           :options="sheetTypeOptions.filter(opt => opt.value !== 'custom')"
-          placeholder="全部规制"
+          placeholder="全部规则"
           size="small"
           clearable
           :disabled="characterApiDisabled"
@@ -1313,7 +1313,7 @@ const openEditPanel = async (card: CharacterCard) => {
               <n-tag v-else size="small" type="default" :bordered="false">我的模板</n-tag>
               <n-tag v-if="tpl.isSharedToCurrentWorld && tpl.access !== 'world_shared'" size="small" type="primary" :bordered="false">已共享</n-tag>
               <n-tag v-if="tpl.isGlobalDefault && !tpl.readonly" size="small" type="info" :bordered="false">全局默认</n-tag>
-              <n-tag v-if="tpl.isSheetDefault && !tpl.readonly" size="small" type="success" :bordered="false">规制默认</n-tag>
+              <n-tag v-if="tpl.isSheetDefault && !tpl.readonly" size="small" type="success" :bordered="false">规则默认</n-tag>
             </div>
           </div>
         </template>
@@ -1332,7 +1332,7 @@ const openEditPanel = async (card: CharacterCard) => {
           <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="openTemplateEditModal(tpl)">编辑</n-button>
           <n-button text size="small" :disabled="characterApiDisabled" @click="handleCopyTemplate(tpl)">复制</n-button>
           <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
-          <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
+          <n-button v-if="canEditTemplateItem(tpl)" text size="small" :disabled="characterApiDisabled" @click="setAsSheetDefault(tpl)">设为规则默认</n-button>
           <n-popconfirm v-if="canEditTemplateItem(tpl)" @positive-click="handleDeleteTemplate(tpl)">
             <template #trigger>
               <n-button text size="small" type="error" :disabled="characterApiDisabled">删除</n-button>
@@ -1359,12 +1359,12 @@ const openEditPanel = async (card: CharacterCard) => {
       <n-form-item label="模板名称">
         <n-input v-model:value="templateName" maxlength="100" placeholder="输入模板名称" :disabled="characterApiDisabled" />
       </n-form-item>
-      <n-form-item label="规制类型">
+      <n-form-item label="规则类型">
         <n-select v-model:value="templateSheetTypePreset" :options="sheetTypeOptions" :disabled="characterApiDisabled" />
         <n-input
           v-if="templateSheetTypePreset === 'custom'"
           v-model:value="templateSheetTypeCustom"
-          placeholder="输入自定义规制类型"
+          placeholder="输入自定义规则类型"
           class="sheet-type-custom-input"
           :disabled="characterApiDisabled"
         />
@@ -1381,7 +1381,7 @@ const openEditPanel = async (card: CharacterCard) => {
       <n-form-item label="默认设置">
         <div class="template-manager__defaults">
           <n-checkbox v-model:checked="templateGlobalDefault" :disabled="characterApiDisabled">设为全局默认</n-checkbox>
-          <n-checkbox v-model:checked="templateSheetDefault" :disabled="characterApiDisabled">设为规制默认</n-checkbox>
+          <n-checkbox v-model:checked="templateSheetDefault" :disabled="characterApiDisabled">设为规则默认</n-checkbox>
         </div>
       </n-form-item>
     </n-form>
