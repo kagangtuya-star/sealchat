@@ -1,53 +1,57 @@
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Normalize text files to LF by default so Windows Git and WSL Git
+# see the same repository content.
+* text=auto eol=lf
 
-# Test binary, built with `go test -c`
-*.test
+# Windows-native scripts keep CRLF for better shell compatibility.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+# Common text sources kept explicit for readability.
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.xml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.vue text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
+*.dockerignore text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-info.db
-record.log
-go.sum
-.idea
-sealdice-core
-data/save.yaml
-configs/
-data/
-pegtest/
-temp/
-
-dist/
-config.yaml
-version.yaml
-assets/
-data.db
-chat.db
-static/
-/已经实现的需求
-/.cache
-/.gocache
-/.gomodcache
-/docs
-/plans
-/specs
-/.codanna
-/.serena
-.codannaignore
-.fastembed_cache
-/.gopath
-!bin/win-x64/*.exe
-/sealchat-data
-.ace-tool/
-/.claude
-api/CLAUDE.md
-CLAUDE.md
-backup_settings.patch
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.tgz binary
+*.7z binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.woff binary
+*.woff2 binary
