@@ -19669,10 +19669,24 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--sc-text-secondary);
   margin-right: 4px;
+  white-space: nowrap;
 }
 
 .whisper-pill-tag {
-  max-width: 100px;
+  flex: 0 1 auto;
+  max-width: clamp(96px, 22vw, 220px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.whisper-pill-tag :deep(.n-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whisper-pill-tag :deep(.n-tag__close) {
+  flex: 0 0 auto;
 }
 
 .identity-switcher-cell {
