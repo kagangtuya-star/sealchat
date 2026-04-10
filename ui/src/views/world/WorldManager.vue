@@ -3,6 +3,13 @@ import { computed, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
+import {
+  WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
+  WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
+  formatDisplayWidthAsCharCount,
+  getTextDisplayWidthUnits,
+  truncateTextByDisplayWidth,
+} from '@/utils/displayWidth';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
@@ -102,6 +109,15 @@ const confirmRemove = () => {
     onPositiveClick: remove,
   });
 };
+
+const updateDescription = (value: string) => {
+  form.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
+};
+
+const getDescriptionCountLabel = (value?: string) => {
+  const usedUnits = getTextDisplayWidthUnits(value || '');
+  return `${formatDisplayWidthAsCharCount(usedUnits)}/${WORLD_DESCRIPTION_MAX_DISPLAY_CHARS}`;
+};
 </script>
 
 <template>
@@ -112,12 +128,14 @@ const confirmRemove = () => {
           <n-input v-model:value="form.name" />
         </n-form-item>
         <n-form-item label="简介">
-          <n-input
-            type="textarea"
-            v-model:value="form.description"
-            maxlength="30"
-            show-count
-          />
+          <div class="world-manager__description-field">
+            <n-input
+              type="textarea"
+              :value="form.description"
+              @update:value="updateDescription"
+            />
+            <div class="world-manager__counter">{{ getDescriptionCountLabel(form.description) }}</div>
+          </div>
         </n-form-item>
         <n-form-item label="可见性">
           <n-select v-model:value="form.visibility" :options="[
@@ -209,6 +227,30 @@ const confirmRemove = () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.world-manager__description-field {
+  position: relative;
+  width: 100%;
+}
+
+.world-manager__description-field :deep(.n-input) {
+  width: 100%;
+}
+
+.world-manager__description-field :deep(textarea) {
+  padding-right: 4.75rem;
+  padding-bottom: 1.75rem;
+}
+
+.world-manager__counter {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--sc-text-secondary);
+  pointer-events: none;
 }
 
 .manager-permission-row {

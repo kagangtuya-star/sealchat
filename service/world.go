@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/text/width"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -23,7 +24,7 @@ var (
 	ErrWorldInviteInvalid         = errors.New("world invite invalid")
 	ErrWorldMemberInvalid         = errors.New("world member invalid")
 	ErrWorldOwnerImmutable        = errors.New("world owner immutable")
-	ErrWorldDescriptionTooLong    = errors.New("世界简介不能超过30字")
+	ErrWorldDescriptionTooLong    = errors.New("世界简介不能超过100字（中文按1字、英文按0.5字计算）")
 	ErrWorldSystemDefaultProtect  = errors.New("系统默认世界不可删除")
 	ErrWorldObserverSlugInvalid   = errors.New("world observer slug invalid")
 	ErrWorldObserverSlugConflict  = errors.New("world observer slug conflict")
@@ -33,7 +34,10 @@ var (
 	ErrWorldDefaultDiceBotInvalid = errors.New("world default dice bot invalid")
 )
 
-const worldDescriptionMaxLength = 30
+const (
+	worldDescriptionMaxLength     = 100
+	worldDescriptionMaxWidthUnits = worldDescriptionMaxLength * 2
+)
 
 var worldObserverSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{3,31}$`)
 
@@ -52,26 +56,39 @@ type WorldCreateParams struct {
 }
 
 type WorldUpdateParams struct {
-	Name                       string
-	Description                string
-	Visibility                 string
-	Avatar                     string
-	EnforceMembership          *bool
-	AllowAdminEditMessages     *bool
+	Name                                  string
+	Description                           string
+	Visibility                            string
+	Avatar                                string
+	EnforceMembership                     *bool
+	AllowAdminEditMessages                *bool
 	AllowManageOtherUserChannelIdentities *bool
-	AllowMemberEditKeywords    *bool
-	StrictWhisperPrivacy       *bool
-	ChannelDefaultDiceMode     *string
-	ChannelDefaultBotID        *string
-	CharacterCardBadgeTemplate *string
+	AllowMemberEditKeywords               *bool
+	StrictWhisperPrivacy                  *bool
+	ChannelDefaultDiceMode                *string
+	ChannelDefaultBotID                   *string
+	CharacterCardBadgeTemplate            *string
 }
 
 func normalizeWorldDescription(desc string) (string, error) {
 	desc = strings.TrimSpace(desc)
-	if utf8.RuneCountInString(desc) > worldDescriptionMaxLength {
+	if countDisplayWidthUnits(desc) > worldDescriptionMaxWidthUnits {
 		return "", ErrWorldDescriptionTooLong
 	}
 	return desc, nil
+}
+
+func countDisplayWidthUnits(text string) int {
+	total := 0
+	for _, r := range text {
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			total += 2
+		default:
+			total++
+		}
+	}
+	return total
 }
 
 func normalizeWorldBadgeTemplate(template string) (string, error) {
