@@ -181,6 +181,11 @@ const formatWorldDescription = (description?: string) => {
   return splitTextByDisplayWidth(limited, WORLD_DESCRIPTION_PREVIEW_LINE_WIDTH_UNITS).join('\n');
 };
 
+const formatWorldGridDescription = (description?: string) => {
+  const value = (description || '暂无简介').trim() || '暂无简介';
+  return value;
+};
+
 const updateCreateDescription = (value: string) => {
   createForm.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
 };
@@ -1005,7 +1010,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                 </div>
               </div>
             </div>
-            <div class="world-grid-card__desc">{{ formatWorldDescription(item.world.description) }}</div>
+            <div class="world-grid-card__desc">{{ formatWorldGridDescription(item.world.description) }}</div>
             <div class="world-grid-card__actions">
               <n-button
                 quaternary
@@ -1484,7 +1489,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   color: var(--sc-text-secondary);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-line;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .world-grid-card__tether-layer {
