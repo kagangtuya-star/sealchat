@@ -1119,7 +1119,7 @@ const fetchRibbonRoleOptions = async (channelId?: string | null) => {
     const items = Array.isArray(payload?.items) ? payload.items : [];
     const mapped = items
       .map((item) => ({
-        id: String(item.id || ''),
+        id: String(item.id || '').trim(),
         label: item.label || '未命名角色',
       }))
       .filter((item) => item.id);
