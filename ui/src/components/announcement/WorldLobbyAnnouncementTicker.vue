@@ -8,7 +8,7 @@ import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import type { AnnouncementItem } from '@/models/announcement'
 
 const emit = defineEmits<{
-  (event: 'open-announcements'): void
+  (event: 'open-announcement', item: AnnouncementItem): void
 }>()
 
 const announcementStore = useAnnouncementStore()
@@ -92,11 +92,12 @@ const handleLobbyAnnouncementUpdated = () => {
   void load()
 }
 
-const openAnnouncements = () => {
-  if (!activeItem.value) {
+const openAnnouncement = () => {
+  const item = activeItem.value
+  if (!item) {
     return
   }
-  emit('open-announcements')
+  emit('open-announcement', item)
 }
 
 watch(canLoad, (value) => {
@@ -132,7 +133,7 @@ onBeforeUnmount(() => {
     type="button"
     class="world-lobby-ticker"
     :disabled="loading"
-    @click="openAnnouncements"
+    @click="openAnnouncement"
   >
     <span class="world-lobby-ticker__icon" aria-hidden="true">
       <n-icon size="14">

@@ -10,7 +10,9 @@ import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
 import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
+import type { AnnouncementItem } from '@/models/announcement';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -88,6 +90,8 @@ const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
 const inputStatsComponent = shallowRef<any>(null);
 const announcementVisible = ref(false);
+const announcementPopupVisible = ref(false);
+const announcementPopupItem = ref<AnnouncementItem | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -308,6 +312,11 @@ const refreshCurrentMode = async () => {
 
 const openAnnouncementPanel = () => {
   announcementVisible.value = true;
+};
+
+const openTickerAnnouncementPopup = (item: AnnouncementItem) => {
+  announcementPopupItem.value = item;
+  announcementPopupVisible.value = true;
 };
 
 const resetAndFetchCurrentMode = async () => {
@@ -898,7 +907,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       </div>
     </div>
 
-    <WorldLobbyAnnouncementTicker @open-announcements="openAnnouncementPanel" />
+    <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
 
     <div class="world-toolbar-row">
       <n-input
@@ -1145,6 +1154,10 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       scope-type="lobby"
       title="大厅公告"
       :can-manage="canManageLobbyAnnouncements"
+    />
+    <AnnouncementPopupModal
+      v-model:visible="announcementPopupVisible"
+      :item="announcementPopupItem"
     />
   </div>
 </template>
