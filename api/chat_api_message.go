@@ -3138,7 +3138,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	updates["edited_by_user_name"] = editorUserName
 	msg.EditedByUserID = ctx.User.ID
 	msg.EditedByUserName = editorUserName
-	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(updates).Error
+	err = model.MessageUpdate(msg.ID, updates)
 	if err != nil {
 		return nil, err
 	}

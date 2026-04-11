@@ -18,6 +18,7 @@ import { useChannelImagesStore } from '@/stores/channelImages';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useIFormStore } from '@/stores/iform';
+import { sortObserverRoleOptions } from '@/utils/observerRoleOptions';
 
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
@@ -499,8 +500,16 @@ const loadObserverRoleOptions = async (channelId?: string | null) => {
     return;
   }
   const seq = ++observerRoleRequestSeq;
+  const identityScopeKey = chat.resolveChannelIdentityScopeKey(normalizedChannelId);
   try {
-    const payload = await chat.channelSpeakerOptions(normalizedChannelId);
+    const [payload, roleConfig] = await Promise.all([
+      chat.channelSpeakerOptions(normalizedChannelId),
+      (identityScopeKey && chat.channelIdentityLoadedAt[identityScopeKey]
+        ? Promise.resolve(chat.getChannelIcOocRoleConfig(normalizedChannelId))
+        : chat.loadChannelIdentities(normalizedChannelId, false)
+          .then(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))
+          .catch(() => chat.getChannelIcOocRoleConfig(normalizedChannelId))),
+    ]);
     if (seq !== observerRoleRequestSeq) {
       return;
     }
@@ -513,7 +522,7 @@ const loadObserverRoleOptions = async (channelId?: string | null) => {
     if (!mapped.some((item) => item.value === ROLELESS_FILTER_ID)) {
       mapped.push({ label: '其他', value: ROLELESS_FILTER_ID });
     }
-    observerRoleOptions.value = mapped;
+    observerRoleOptions.value = sortObserverRoleOptions(mapped, roleConfig, ROLELESS_FILTER_ID);
   } catch {
     if (seq === observerRoleRequestSeq) {
       observerRoleOptions.value = [];
@@ -909,7 +918,8 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 }
 
 .sc-actions--observer {
-  flex-wrap: wrap;
+  min-width: 0;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
@@ -927,9 +937,13 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 
 .sc-ob-filters {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 0.5rem;
   margin-right: 0.2rem;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-end;
 }
 
 .sc-ob-filter-button {
@@ -950,8 +964,33 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 }
 
 .sc-ob-role-select {
-  width: 160px;
-  min-width: 140px;
+  flex: 1 1 12rem;
+  width: auto;
+  min-width: 0;
+  max-width: min(24rem, 100%);
+}
+
+.sc-ob-role-select :deep(.n-base-selection),
+.sc-ob-role-select :deep(.n-base-selection-label),
+.sc-ob-role-select :deep(.n-base-selection-tags) {
+  min-width: 0;
+}
+
+.sc-ob-role-select :deep(.n-base-selection-tags) {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.sc-ob-role-select :deep(.n-tag) {
+  max-width: 100%;
+}
+
+.sc-ob-role-select :deep(.n-tag__content) {
+  display: block;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-user-button {
@@ -1063,6 +1102,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   }
 
   .sc-actions--observer {
+    flex-wrap: wrap;
     row-gap: 0.4rem;
   }
 
@@ -1073,8 +1113,8 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   }
 
   .sc-ob-role-select {
-    width: 130px;
-    min-width: 110px;
+    flex: 1 1 130px;
+    max-width: none;
   }
 
   .sc-user-button {

@@ -9,7 +9,7 @@ export interface CharacterRemarkEntry {
   channelId: string
   userId: string
   content: string
-  updatedAt: number
+  revision: number
 }
 
 const CHARACTER_REMARK_MAX_LENGTH = 80
@@ -85,20 +85,23 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     let changed = false
     Object.values(cached).forEach((entry) => {
       if (!entry || typeof entry !== 'object') return
-      const identityId = typeof entry.identityId === 'string' ? entry.identityId : ''
+      const rawEntry = entry as CharacterRemarkEntry & { updatedAt?: number }
+      const identityId = typeof rawEntry.identityId === 'string' ? rawEntry.identityId : ''
       if (!identityId) return
       const normalized: CharacterRemarkEntry = {
         identityId,
-        channelId: typeof entry.channelId === 'string' && entry.channelId ? entry.channelId : channelId,
-        userId: typeof entry.userId === 'string' ? entry.userId : '',
-        content: typeof entry.content === 'string' ? entry.content : '',
-        updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : 0,
+        channelId: typeof rawEntry.channelId === 'string' && rawEntry.channelId ? rawEntry.channelId : channelId,
+        userId: typeof rawEntry.userId === 'string' ? rawEntry.userId : '',
+        content: typeof rawEntry.content === 'string' ? rawEntry.content : '',
+        revision: typeof rawEntry.revision === 'number'
+          ? rawEntry.revision
+          : (typeof rawEntry.updatedAt === 'number' ? rawEntry.updatedAt : 0),
       }
       if (!normalized.content.trim()) {
         return
       }
       const existing = next[identityId]
-      if (!existing || normalized.updatedAt > existing.updatedAt) {
+      if (!existing || normalized.revision > existing.revision) {
         next[identityId] = normalized
         changed = true
       }
@@ -110,7 +113,7 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
 
   const upsertRemarkEntry = (entry: CharacterRemarkEntry) => {
     const existing = remarkByIdentity.value[entry.identityId]
-    if (existing && entry.updatedAt <= existing.updatedAt) {
+    if (existing && entry.revision <= existing.revision) {
       return
     }
     remarkByIdentity.value = { ...remarkByIdentity.value, [entry.identityId]: entry }
@@ -129,7 +132,7 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     if (!key) return
     const channelMap = { ...(remarkCacheByChannel.value[entry.channelId] || {}) }
     const existing = channelMap[entry.identityId]
-    if (existing && entry.updatedAt <= existing.updatedAt) {
+    if (existing && entry.revision <= existing.revision) {
       return
     }
     channelMap[entry.identityId] = entry
@@ -161,6 +164,33 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     persistCache()
   }
 
+  const removeRemarkEntriesByChannel = (channelId: string) => {
+    if (!channelId) return
+    const next = { ...remarkByIdentity.value }
+    let changed = false
+    Object.keys(next).forEach((identityId) => {
+      if (next[identityId]?.channelId === channelId) {
+        delete next[identityId]
+        changed = true
+      }
+    })
+    if (changed) {
+      remarkByIdentity.value = next
+    }
+  }
+
+  const clearRemarkCacheForChannel = (channelId: string) => {
+    if (!channelId) return
+    const key = ensureCacheLoaded()
+    if (!key) return
+    if (!Object.prototype.hasOwnProperty.call(remarkCacheByChannel.value, channelId)) {
+      return
+    }
+    const { [channelId]: _removed, ...rest } = remarkCacheByChannel.value
+    remarkCacheByChannel.value = rest
+    persistCache()
+  }
+
   const replaceRemarkCacheForChannel = (channelId: string, entries: Record<string, CharacterRemarkEntry>) => {
     if (!channelId) return
     const key = ensureCacheLoaded()
@@ -178,8 +208,15 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     if (!identityId) {
       return
     }
+    const revision = typeof payload?.revision === 'number'
+      ? payload.revision
+      : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now())
     const action = typeof payload?.action === 'string' ? payload.action : 'update'
     if (action === 'clear') {
+      const existing = remarkByIdentity.value[identityId]
+      if (existing && revision < existing.revision) {
+        return
+      }
       const channelId = typeof event?.channel?.id === 'string'
         ? event.channel.id
         : remarkByIdentity.value[identityId]?.channelId || ''
@@ -199,7 +236,7 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
       channelId,
       userId: typeof payload?.userId === 'string' ? payload.userId : '',
       content,
-      updatedAt: typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000),
+      revision,
     }
     upsertRemarkEntry(entry)
     upsertRemarkCacheEntry(entry)
@@ -214,10 +251,10 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
       ? event.characterRemarkSnapshot.items
       : []
     if (!items.length) {
-      loadRemarkCache(channelId)
+      removeRemarkEntriesByChannel(channelId)
+      clearRemarkCacheForChannel(channelId)
       return
     }
-    const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000)
     const next = { ...remarkByIdentity.value }
     const cacheNext: Record<string, CharacterRemarkEntry> = {}
     Object.keys(next).forEach((key) => {
@@ -236,7 +273,9 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
         channelId,
         userId: typeof item?.userId === 'string' ? item.userId : '',
         content,
-        updatedAt,
+        revision: typeof item?.revision === 'number'
+          ? item.revision
+          : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now()),
       }
       next[identityId] = entry
       cacheNext[identityId] = entry
@@ -290,7 +329,7 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
     loadRemarkCache(channelId)
     await chatStore.ensureConnectionReady()
     try {
-      await chatStore.sendAPI('character.remark.snapshot', { channel_id: channelId })
+      await chatStore.sendAPI('character.remark.snapshot', { channel_id: channelId } as any)
     } catch (error) {
       console.warn('Failed to request character remark snapshot', error)
     }
@@ -312,14 +351,14 @@ export const useCharacterRemarkStore = defineStore('characterRemark', () => {
           channel_id: channelId,
           identity_id: identityId,
           action: 'clear',
-        })
+        } as any)
       } else {
         await chatStore.sendAPI('character.remark.broadcast', {
           channel_id: channelId,
           identity_id: identityId,
           content: normalized,
           action: 'update',
-        })
+        } as any)
       }
       return { ok: true as const }
     } catch (error: any) {

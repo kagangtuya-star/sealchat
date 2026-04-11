@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Component, type CSSProperties } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
@@ -10,6 +10,19 @@ import { useUserStore } from '@/stores/user';
 import UserProfile from '@/views/components/user-profile.vue';
 import Avatar from '@/components/avatar.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
+import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
+import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
+import type { AnnouncementItem } from '@/models/announcement';
+import {
+  WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
+  WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
+  WORLD_DESCRIPTION_PREVIEW_LINE_WIDTH_UNITS,
+  WORLD_DESCRIPTION_PREVIEW_MAX_WIDTH_UNITS,
+  formatDisplayWidthAsCharCount,
+  getTextDisplayWidthUnits,
+  splitTextByDisplayWidth,
+  truncateTextByDisplayWidth,
+} from '@/utils/displayWidth';
 
 type LobbyMode = 'mine' | 'explore';
 type WorldLobbyViewMode = 'list' | 'grid';
@@ -38,8 +51,6 @@ interface GridTetherState {
 
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZES = [10, 20, 50];
-const MAX_DESCRIPTION_LENGTH = 30;
-const DESCRIPTION_LINE_LENGTH = 11;
 const WORLD_VIEW_MODE_STORAGE_KEY = 'sc.world-lobby.view-mode';
 const GRID_TETHER_MAX_DISTANCE = 260;
 const GRID_ENTER_PULSE_DELAY_MS = 40;
@@ -77,8 +88,10 @@ const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
 const inputStatsLoading = ref(false);
-const inputStatsComponent = shallowRef<Component | null>(null);
+const inputStatsComponent = shallowRef<any>(null);
 const announcementVisible = ref(false);
+const announcementPopupVisible = ref(false);
+const announcementPopupItem = ref<AnnouncementItem | null>(null);
 const viewMode = ref<WorldLobbyViewMode>(readStoredViewMode());
 const requestSeq = ref(0);
 const gridActionOpenWorldId = ref<string | null>(null);
@@ -168,12 +181,22 @@ const endRequest = (seq: number) => {
 
 const formatWorldDescription = (description?: string) => {
   const value = (description || '暂无简介').trim() || '暂无简介';
-  const limited = Array.from(value).slice(0, MAX_DESCRIPTION_LENGTH);
-  const segments: string[] = [];
-  for (let i = 0; i < limited.length; i += DESCRIPTION_LINE_LENGTH) {
-    segments.push(limited.slice(i, i + DESCRIPTION_LINE_LENGTH).join(''));
-  }
-  return segments.join('\n');
+  const limited = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_PREVIEW_MAX_WIDTH_UNITS);
+  return splitTextByDisplayWidth(limited, WORLD_DESCRIPTION_PREVIEW_LINE_WIDTH_UNITS).join('\n');
+};
+
+const formatWorldGridDescription = (description?: string) => {
+  const value = (description || '暂无简介').trim() || '暂无简介';
+  return value;
+};
+
+const updateCreateDescription = (value: string) => {
+  createForm.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
+};
+
+const getDescriptionCountLabel = (value?: string) => {
+  const usedUnits = getTextDisplayWidthUnits(value || '');
+  return `${formatDisplayWidthAsCharCount(usedUnits)}/${WORLD_DESCRIPTION_MAX_DISPLAY_CHARS}`;
 };
 
 const fetchList = async (options: FetchOptions = {}) => {
@@ -289,6 +312,11 @@ const refreshCurrentMode = async () => {
 
 const openAnnouncementPanel = () => {
   announcementVisible.value = true;
+};
+
+const openTickerAnnouncementPopup = (item: AnnouncementItem) => {
+  announcementPopupItem.value = item;
+  announcementPopupVisible.value = true;
 };
 
 const resetAndFetchCurrentMode = async () => {
@@ -879,6 +907,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       </div>
     </div>
 
+    <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
+
     <div class="world-toolbar-row">
       <n-input
         v-model:value="searchKeyword"
@@ -989,7 +1019,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                 </div>
               </div>
             </div>
-            <div class="world-grid-card__desc">{{ formatWorldDescription(item.world.description) }}</div>
+            <div class="world-grid-card__desc">{{ formatWorldGridDescription(item.world.description) }}</div>
             <div class="world-grid-card__actions">
               <n-button
                 quaternary
@@ -1059,13 +1089,15 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           <n-input v-model:value="createForm.name" placeholder="输入世界名称" />
         </n-form-item>
         <n-form-item label="简介">
-          <n-input
-            v-model:value="createForm.description"
-            type="textarea"
-            placeholder="简单介绍这个世界"
-            maxlength="30"
-            show-count
-          />
+          <div class="world-description-field">
+            <n-input
+              :value="createForm.description"
+              type="textarea"
+              placeholder="简单介绍这个世界"
+              @update:value="updateCreateDescription"
+            />
+            <div class="world-description-counter">{{ getDescriptionCountLabel(createForm.description) }}</div>
+          </div>
         </n-form-item>
         <n-form-item label="可见性">
           <n-select
@@ -1073,7 +1105,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
             :options="[
               { label: '公开', value: 'public' },
               { label: '私有', value: 'private' },
-              { label: '隐藏链接', value: 'unlisted' },
+              { label: '不公开访问链接', value: 'unlisted' },
             ]"
           />
         </n-form-item>
@@ -1122,6 +1154,10 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       scope-type="lobby"
       title="大厅公告"
       :can-manage="canManageLobbyAnnouncements"
+    />
+    <AnnouncementPopupModal
+      v-model:visible="announcementPopupVisible"
+      :item="announcementPopupItem"
     />
   </div>
 </template>
@@ -1325,6 +1361,30 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   color: var(--sc-text-secondary);
 }
 
+.world-description-field {
+  position: relative;
+  width: 100%;
+}
+
+.world-description-field :deep(.n-input) {
+  width: 100%;
+}
+
+.world-description-field :deep(textarea) {
+  padding-right: 4.75rem;
+  padding-bottom: 1.75rem;
+}
+
+.world-description-counter {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--sc-text-secondary);
+  pointer-events: none;
+}
+
 .world-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1442,7 +1502,8 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   color: var(--sc-text-secondary);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-line;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .world-grid-card__tether-layer {

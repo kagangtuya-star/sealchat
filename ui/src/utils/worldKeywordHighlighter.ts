@@ -6,6 +6,8 @@ import { applyKeywordTooltipSessionToElement } from './worldKeywordTooltipCandid
 interface HighlightOptions {
   underlineOnly: boolean
   deduplicate?: boolean
+  allowHoverOpen?: boolean
+  allowClickOpen?: boolean
   onKeywordDoubleInvoke?: (keywordId: string) => void
 }
 
@@ -232,131 +234,158 @@ function wrapRanges(
   node.replaceWith(fragment)
 }
 
+interface DelegatedContainerState {
+  options: HighlightOptions
+  tooltip?: KeywordTooltipController
+  currentHoveredSpan: HTMLElement | null
+}
+
 // WeakMap to track delegated event listeners per container
-const delegatedContainers = new WeakMap<HTMLElement, boolean>()
+const delegatedContainers = new WeakMap<HTMLElement, DelegatedContainerState>()
 
 function setupEventDelegation(
   root: HTMLElement,
   options: HighlightOptions,
   tooltip?: KeywordTooltipController,
 ) {
-  // Skip if already delegated
-  if (delegatedContainers.has(root)) {
+  const existingState = delegatedContainers.get(root)
+  if (existingState) {
+    existingState.options = options
+    existingState.tooltip = tooltip
+    if (!tooltip) {
+      existingState.currentHoveredSpan = null
+    }
     return
   }
-  delegatedContainers.set(root, true)
+
+  const state: DelegatedContainerState = {
+    options,
+    tooltip,
+    currentHoveredSpan: null,
+  }
+  delegatedContainers.set(root, state)
 
   // Hover events (using capture for mouseenter/leave)
-  if (tooltip) {
-    let currentHoveredSpan: HTMLElement | null = null
+  root.addEventListener('mouseover', (e) => {
+    const tooltipController = state.tooltip
+    if (!tooltipController || !state.options.allowHoverOpen) return
 
-    root.addEventListener('mouseover', (e) => {
-      const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-      if (span && root.contains(span)) {
-        currentHoveredSpan = span
-        const keywordId = span.dataset.keywordId
-        if (keywordId) {
-          tooltip.show(span, keywordId)
-        }
-      }
-    })
-
-    root.addEventListener('mouseout', (e) => {
-      const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-      if (!span || !root.contains(span)) return
-
-      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
-      if (!shouldKeepKeywordTooltipOpenOnTransition({
-        root,
-        relatedTarget,
-        hoverTooltip: tooltip.getHoverTooltipElement(),
-      })) {
-        tooltip.hide(span)
-        currentHoveredSpan = null
-      }
-    })
-
-    root.addEventListener('mouseleave', (e) => {
-      if (!currentHoveredSpan) {
-        return
-      }
-
-      const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
-      if (!shouldKeepKeywordTooltipOpenOnTransition({
-        root,
-        relatedTarget,
-        hoverTooltip: tooltip.getHoverTooltipElement(),
-      })) {
-        tooltip.hide(currentHoveredSpan)
-        currentHoveredSpan = null
-      }
-    })
-
-    // Click for pin (on highlight) or hide all (on non-highlight)
-    root.addEventListener('click', (e) => {
-      const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-
-      // If clicking outside highlight area, hide all tooltips as fallback
-      if (!span || !root.contains(span)) {
-        tooltip.hideAll()
-        return
-      }
-
+    const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
+    if (span && root.contains(span)) {
+      state.currentHoveredSpan = span
       const keywordId = span.dataset.keywordId
-      if (!keywordId) return
-
-      e.preventDefault()
-      e.stopPropagation()
-
-      // Handle double-click detection
-      if (clickState.timer && clickState.target === span && clickState.keywordId === keywordId) {
-        clearTimeout(clickState.timer)
-        clickState.timer = null
-        clickState.target = null
-        clickState.keywordId = null
-        if (options.onKeywordDoubleInvoke) {
-          options.onKeywordDoubleInvoke(keywordId)
-        }
-        return
+      if (keywordId) {
+        tooltipController.show(span, keywordId)
       }
+    }
+  })
 
-      if (clickState.timer) {
-        clearTimeout(clickState.timer)
+  root.addEventListener('mouseout', (e) => {
+    const tooltipController = state.tooltip
+    if (!tooltipController || !state.options.allowHoverOpen) return
+
+    const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
+    if (!span || !root.contains(span)) return
+
+    const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
+    if (!shouldKeepKeywordTooltipOpenOnTransition({
+      root,
+      relatedTarget,
+      hoverTooltip: tooltipController.getHoverTooltipElement(),
+    })) {
+      tooltipController.hide(span)
+      state.currentHoveredSpan = null
+    }
+  })
+
+  root.addEventListener('mouseleave', (e) => {
+    const tooltipController = state.tooltip
+    if (!tooltipController || !state.options.allowHoverOpen || !state.currentHoveredSpan) {
+      return
+    }
+
+    const relatedTarget = (e as MouseEvent).relatedTarget as HTMLElement | null
+    if (!shouldKeepKeywordTooltipOpenOnTransition({
+      root,
+      relatedTarget,
+      hoverTooltip: tooltipController.getHoverTooltipElement(),
+    })) {
+      tooltipController.hide(state.currentHoveredSpan)
+      state.currentHoveredSpan = null
+    }
+  })
+
+  // Click for pin (on highlight) or hide all (on non-highlight)
+  root.addEventListener('click', (e) => {
+    const tooltipController = state.tooltip
+    if (!tooltipController) return
+
+    const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
+
+    // If clicking outside highlight area, hide all tooltips as fallback
+    if (!span || !root.contains(span)) {
+      tooltipController.hideAll()
+      return
+    }
+
+    if (!state.options.allowClickOpen) {
+      return
+    }
+
+    const keywordId = span.dataset.keywordId
+    if (!keywordId) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Handle double-click detection
+    if (clickState.timer && clickState.target === span && clickState.keywordId === keywordId) {
+      clearTimeout(clickState.timer)
+      clickState.timer = null
+      clickState.target = null
+      clickState.keywordId = null
+      if (state.options.onKeywordDoubleInvoke) {
+        state.options.onKeywordDoubleInvoke(keywordId)
       }
+      return
+    }
 
-      clickState.target = span
-      clickState.keywordId = keywordId
-      clickState.timer = setTimeout(() => {
-        tooltip.pin(span, keywordId)
-        clickState.timer = null
-        clickState.target = null
-        clickState.keywordId = null
-      }, DOUBLE_CLICK_DELAY)
-    })
-  }
+    if (clickState.timer) {
+      clearTimeout(clickState.timer)
+    }
+
+    clickState.target = span
+    clickState.keywordId = keywordId
+    clickState.timer = setTimeout(() => {
+      tooltipController.pin(span, keywordId)
+      clickState.timer = null
+      clickState.target = null
+      clickState.keywordId = null
+    }, DOUBLE_CLICK_DELAY)
+  })
 
   // Double click for edit
-  if (options.onKeywordDoubleInvoke) {
-    root.addEventListener('dblclick', (e) => {
-      const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
-      if (!span || !root.contains(span)) return
+  root.addEventListener('dblclick', (e) => {
+    if (!state.options.onKeywordDoubleInvoke) return
 
-      const keywordId = span.dataset.keywordId
-      if (!keywordId) return
+    const span = (e.target as HTMLElement).closest<HTMLElement>(`span.${HIGHLIGHT_CLASS}`)
+    if (!span || !root.contains(span)) return
 
-      e.preventDefault()
-      e.stopPropagation()
+    const keywordId = span.dataset.keywordId
+    if (!keywordId) return
 
-      if (clickState.timer) {
-        clearTimeout(clickState.timer)
-        clickState.timer = null
-        clickState.target = null
-        clickState.keywordId = null
-      }
+    e.preventDefault()
+    e.stopPropagation()
 
-      options.onKeywordDoubleInvoke!(keywordId)
-    })
-  }
+    if (clickState.timer) {
+      clearTimeout(clickState.timer)
+      clickState.timer = null
+      clickState.target = null
+      clickState.keywordId = null
+    }
+
+    state.options.onKeywordDoubleInvoke(keywordId)
+  })
 }
 
 export function refreshWorldKeywordHighlights(
@@ -366,14 +395,12 @@ export function refreshWorldKeywordHighlights(
   tooltip?: KeywordTooltipController,
 ) {
   if (!root) return
+  setupEventDelegation(root, options, tooltip)
   if (!compiled?.length) {
     clearExistingHighlights(root)
     return
   }
   clearExistingHighlights(root)
-
-  // Setup event delegation once per container
-  setupEventDelegation(root, options, tooltip)
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   const nodes: Text[] = []

@@ -18,8 +18,74 @@ export interface AudioAsset {
   updatedBy?: string;
   createdAt: string;
   updatedAt: string;
+  lastAccessedAt?: string | null;
+  accessCount?: number;
   scope: AudioAssetScope;
   worldId?: string | null;
+}
+
+export interface AudioAssetUsageSummary {
+  sceneRefCount: number;
+  playbackStateRefCount: number;
+  sceneNames?: string[];
+  playbackScopeLabels?: string[];
+  referenced: boolean;
+}
+
+export interface AdminAudioFilterOption {
+  label: string;
+  value: string;
+}
+
+export interface AdminAudioAssetItem extends AudioAsset {
+  worldName?: string;
+  creatorName?: string;
+  accessCount: number;
+  usageSummary: AudioAssetUsageSummary;
+  safeToDelete: boolean;
+}
+
+export interface AdminAudioAssetListResult {
+  items: AdminAudioAssetItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  worldOptions: AdminAudioFilterOption[];
+  creatorOptions: AdminAudioFilterOption[];
+}
+
+export interface AdminAudioCleanupPreview {
+  thresholdBefore: string;
+  totalCandidates: number;
+  safeCandidates: number;
+  referencedSkipped: number;
+  directDeleteCandidates?: number;
+  detachThenDeleteCandidates?: number;
+  items: AdminAudioAssetItem[];
+}
+
+export interface AudioDeleteImpact {
+  detachedSceneCount: number;
+  detachedPlaybackStateCount: number;
+  sceneNames?: string[];
+  playbackScopeLabels?: string[];
+}
+
+export interface AudioBulkDeleteFailure {
+  assetId: string;
+  reason: string;
+  usageSummary?: AudioAssetUsageSummary;
+}
+
+export interface AudioBulkDeleteResult {
+  successIds: string[];
+  failed: AudioBulkDeleteFailure[];
+  successCount: number;
+  failedCount: number;
+  detachedSceneCount?: number;
+  detachedPlaybackStateCount?: number;
+  detachedReferencedAssetCount?: number;
+  playbackScopeLabels?: string[];
 }
 
 export interface AudioAssetMutationPayload {

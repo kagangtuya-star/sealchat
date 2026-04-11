@@ -97,10 +97,10 @@ const normalizeRule = (rule: BotWhisperForwardRule, index: number): BotWhisperFo
 const normalizeConfig = (cfg?: BotWhisperForwardConfig): BotWhisperForwardConfig => {
   const source = (cfg || {}) as any;
   const base = createDefaultConfig();
-  const rules = Array.isArray(source.rules) ? source.rules : [];
+  const rules: unknown[] = Array.isArray(source.rules) ? source.rules : [];
   const normalizedRules = rules
-    .map((rule, index) => normalizeRule(rule, index))
-    .filter((rule) => {
+    .map((rule, index) => normalizeRule(rule as BotWhisperForwardRule, index))
+    .filter((rule: BotWhisperForwardRule) => {
       if (rule.type === 'keyword') {
         return !!rule.keyword;
       }
@@ -276,7 +276,7 @@ const saveConfig = async (applyToWorld = false) => {
 
     <n-space vertical :size="16">
       <n-card size="small" title="基础设置">
-        <n-form label-placement="left" label-width="160" class="base-form">
+        <n-form label-placement="top" label-width="auto" class="base-form base-form--stacked">
           <n-form-item label="启用转发">
             <n-switch v-model:value="configModel.enabled" :disabled="readOnly" />
           </n-form-item>
@@ -290,10 +290,16 @@ const saveConfig = async (applyToWorld = false) => {
             />
           </n-form-item>
           <n-form-item label="规则逻辑">
-            <n-radio-group v-model:value="configModel.ruleLogic" :disabled="readOnly || !configModel.enabled">
-              <n-radio-button v-for="item in ruleLogicOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </n-radio-button>
+            <n-radio-group
+              v-model:value="configModel.ruleLogic"
+              class="rule-logic-group"
+              :disabled="readOnly || !configModel.enabled"
+            >
+              <n-space vertical :size="8" class="rule-logic-options">
+                <n-radio v-for="item in ruleLogicOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </n-radio>
+              </n-space>
             </n-radio-group>
           </n-form-item>
         </n-form>
@@ -383,6 +389,31 @@ const saveConfig = async (applyToWorld = false) => {
   padding-top: 8px;
 }
 
+.base-form--stacked :deep(.n-form-item) {
+  grid-template-columns: 1fr;
+}
+
+.base-form--stacked :deep(.n-form-item-label) {
+  margin-bottom: 6px;
+  padding-bottom: 0;
+}
+
+.base-form--stacked :deep(.n-form-item-blank) {
+  min-width: 0;
+}
+
+.rule-logic-group {
+  width: 100%;
+}
+
+.rule-logic-options {
+  width: 100%;
+}
+
+.rule-logic-options :deep(.n-radio) {
+  width: 100%;
+}
+
 .rule-item {
   width: 100%;
   border: 1px solid var(--n-border-color);
@@ -430,14 +461,6 @@ const saveConfig = async (applyToWorld = false) => {
 }
 
 @media (max-width: 768px) {
-  .base-form :deep(.n-form-item) {
-    grid-template-columns: 1fr;
-  }
-
-  .base-form :deep(.n-form-item-label) {
-    margin-bottom: 6px;
-  }
-
   .rule-header :deep(.n-space) {
     width: 100%;
   }

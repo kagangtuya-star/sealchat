@@ -370,6 +370,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Put("/character-card-templates/:id", CharacterCardTemplateUpdate)
 	v1Auth.Delete("/character-card-templates/:id", CharacterCardTemplateDelete)
 	v1Auth.Post("/character-card-templates/:id/set-default", CharacterCardTemplateSetDefault)
+	v1Auth.Post("/worlds/:worldId/character-card-templates/:templateId/share", WorldCharacterCardTemplateShareHandler)
+	v1Auth.Delete("/worlds/:worldId/character-card-templates/:templateId/share", WorldCharacterCardTemplateUnshareHandler)
 	v1Auth.Get("/character-card-template-bindings", CharacterCardTemplateBindingList)
 	v1Auth.Post("/character-card-template-bindings/upsert", CharacterCardTemplateBindingUpsert)
 	v1Auth.Get("/character-card-avatar-bindings", CharacterCardAvatarBindingList)
@@ -619,6 +621,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/delete", ExternalGlossaryCategoryDeleteHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/priority", ExternalGlossaryCategoryPriorityUpdateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/:libraryId/categories/priority/bulk", ExternalGlossaryCategoryPriorityBulkUpdateHandler)
+	v1AuthAdmin.Get("/admin/audio-assets", AdminAudioAssetList)
+	v1AuthAdmin.Get("/admin/audio-assets/:id/usage", AdminAudioAssetUsageGet)
+	v1AuthAdmin.Delete("/admin/audio-assets/:id", AdminAudioAssetDeleteSafe)
+	v1AuthAdmin.Post("/admin/audio-assets/bulk-delete", AdminAudioAssetBulkDeleteSafe)
+	v1AuthAdmin.Get("/admin/audio-assets/cleanup-preview", AdminAudioAssetCleanupPreview)
+	v1AuthAdmin.Post("/admin/audio-assets/cleanup", AdminAudioAssetCleanupExecute)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

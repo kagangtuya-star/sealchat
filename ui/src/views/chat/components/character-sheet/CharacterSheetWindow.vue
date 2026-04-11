@@ -129,7 +129,7 @@
                   </n-button>
                   <n-button
                     size="tiny"
-                    :disabled="selectedTemplateMode !== 'managed' || !selectedTemplateId"
+                    :disabled="!canSyncToSelectedTemplate"
                     @click="handleSyncToTemplate"
                   >
                     覆盖同步到模板库
@@ -155,6 +155,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NIcon, NTabs, NTabPane, NInput, NButton, NSelect, useMessage } from 'naive-ui';
 import { Close, Remove as Minus, Create as Edit, Eye, ChevronBack } from '@vicons/ionicons5';
 import { User } from '@vicons/tabler';
+import { useChatStore } from '@/stores/chat';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from '@/stores/characterCardTemplate';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
@@ -164,6 +165,7 @@ const props = defineProps<{
   windowId: string;
 }>();
 
+const chatStore = useChatStore();
 const sheetStore = useCharacterSheetStore();
 const templateStore = useCharacterCardTemplateStore();
 const message = useMessage();
@@ -186,9 +188,18 @@ const templateModeOptions = [
 const managedTemplateOptions = computed(() => {
   const sheetType = windowData.value?.sheetType || '';
   return templateStore.getTemplatesBySheetType(sheetType).map(item => ({
-    label: `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
+    label: item.access === 'world_shared'
+      ? `${item.name}${item.sharedByNickname ? ` [世界共享:${item.sharedByNickname}]` : ' [世界共享]'}`
+      : `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
     value: item.id,
   }));
+});
+
+const selectedTemplate = computed(() => templateStore.getTemplateById(selectedTemplateId.value));
+
+const canSyncToSelectedTemplate = computed(() => {
+  if (selectedTemplateMode.value !== 'managed' || !selectedTemplateId.value) return false;
+  return !selectedTemplate.value?.readonly;
 });
 
 const isMobile = ref(false);
@@ -394,6 +405,10 @@ const handleSyncToTemplate = async () => {
     message.warning('请先选择模板');
     return;
   }
+  if (selectedTemplate.value?.readonly) {
+    message.warning('世界共享模板不可直接覆盖，请先另存为新模板');
+    return;
+  }
   try {
     await sheetStore.syncCurrentTemplateToTemplate(props.windowId, selectedTemplateId.value);
     message.success('已同步到模板库');
@@ -461,7 +476,7 @@ watch(
 onMounted(() => {
   checkMobile();
   window.addEventListener('resize', checkMobile);
-  void templateStore.ensureTemplatesLoaded();
+  void templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
   syncJsonText();
   syncTemplateText();
   const win = windowData.value;

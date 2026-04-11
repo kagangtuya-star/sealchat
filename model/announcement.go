@@ -52,6 +52,7 @@ type AnnouncementModel struct {
 	Status        AnnouncementStatus        `json:"status" gorm:"size:16;default:'draft';index"`
 	IsPinned      bool                      `json:"isPinned" gorm:"default:false;index"`
 	PinOrder      int                       `json:"pinOrder" gorm:"default:0;index"`
+	ShowInTicker  bool                      `json:"showInTicker" gorm:"default:false;index"`
 	PopupMode     AnnouncementPopupMode     `json:"popupMode" gorm:"size:24;default:'none'"`
 	ReminderScope AnnouncementReminderScope `json:"reminderScope" gorm:"size:24;default:'lobby_only'"`
 	RequireAck    bool                      `json:"requireAck" gorm:"default:false"`

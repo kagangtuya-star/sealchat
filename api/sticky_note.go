@@ -159,6 +159,118 @@ func canViewStickyNote(note *model.StickyNoteModel, userID string) bool {
 	}
 }
 
+func listConnectedStickyNoteUserIDs(channelID string) []string {
+	if channelID == "" {
+		return nil
+	}
+	userConnMap := getUserConnInfoMap()
+	if userConnMap == nil {
+		return nil
+	}
+	userIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	userConnMap.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			return true
+		}
+		if _, exists := seen[userID]; exists {
+			return true
+		}
+		connected := false
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info != nil && info.ChannelId == channelID {
+				connected = true
+				return false
+			}
+			return true
+		})
+		if connected {
+			seen[userID] = struct{}{}
+			userIDs = append(userIDs, userID)
+		}
+		return true
+	})
+	return userIDs
+}
+
+func buildStickyNoteVisibilityTransitionRecipients(userIDs []string, previousNote, currentNote *model.StickyNoteModel) (visibleNow []string, removed []string) {
+	seen := make(map[string]struct{}, len(userIDs))
+	for _, rawUserID := range userIDs {
+		userID := strings.TrimSpace(rawUserID)
+		if userID == "" {
+			continue
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		wasVisible := canViewStickyNote(previousNote, userID)
+		isVisible := canViewStickyNote(currentNote, userID)
+		if isVisible {
+			visibleNow = append(visibleNow, userID)
+			continue
+		}
+		if wasVisible {
+			removed = append(removed, userID)
+		}
+	}
+	return visibleNow, removed
+}
+
+func buildStickyNoteDeletePayload(channelID string, previousNote, currentNote *model.StickyNoteModel) *protocol.StickyNoteEventPayload {
+	base := previousNote
+	if base == nil {
+		base = currentNote
+	}
+	note := &protocol.StickyNote{ChannelID: channelID}
+	if base != nil {
+		note.ID = base.ID
+		if base.ChannelID != "" {
+			note.ChannelID = base.ChannelID
+		}
+	}
+	return &protocol.StickyNoteEventPayload{
+		Note:   note,
+		Action: "delete",
+	}
+}
+
+func broadcastStickyNoteToVisibleUsers(channelID string, eventType protocol.EventName, action string, currentNote *model.StickyNoteModel) {
+	if currentNote == nil {
+		return
+	}
+	recipients, _ := buildStickyNoteVisibilityTransitionRecipients(listConnectedStickyNoteUserIDs(channelID), nil, currentNote)
+	if len(recipients) == 0 {
+		return
+	}
+	BroadcastStickyNoteToUsers(recipients, eventType, &protocol.StickyNoteEventPayload{
+		Note:   currentNote.ToProtocolType(),
+		Action: action,
+	})
+}
+
+func broadcastStickyNoteUpdateTransition(channelID string, previousNote, currentNote *model.StickyNoteModel) {
+	recipients, removed := buildStickyNoteVisibilityTransitionRecipients(listConnectedStickyNoteUserIDs(channelID), previousNote, currentNote)
+	if len(recipients) > 0 && currentNote != nil {
+		BroadcastStickyNoteToUsers(recipients, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
+			Note:   currentNote.ToProtocolType(),
+			Action: "update",
+		})
+	}
+	if len(removed) > 0 {
+		BroadcastStickyNoteToUsers(removed, protocol.EventStickyNoteDeleted, buildStickyNoteDeletePayload(channelID, previousNote, currentNote))
+	}
+}
+
+func broadcastStickyNoteDeleteToVisibleUsers(channelID string, previousNote *model.StickyNoteModel) {
+	_, removed := buildStickyNoteVisibilityTransitionRecipients(listConnectedStickyNoteUserIDs(channelID), previousNote, nil)
+	if len(removed) == 0 {
+		return
+	}
+	BroadcastStickyNoteToUsers(removed, protocol.EventStickyNoteDeleted, buildStickyNoteDeletePayload(channelID, previousNote, nil))
+}
+
 func loadStickyNoteForResponse(noteID string) (*model.StickyNoteModel, error) {
 	note, err := model.StickyNoteGet(noteID)
 	if err != nil {
@@ -298,10 +410,7 @@ func apiChannelStickyNoteCreate(c *fiber.Ctx) error {
 	note.Creator = user
 
 	// WebSocket 广播
-	go BroadcastStickyNoteToChannel(channelID, protocol.EventStickyNoteCreated, &protocol.StickyNoteEventPayload{
-		Note:   note.ToProtocolType(),
-		Action: "create",
-	})
+	go broadcastStickyNoteToVisibleUsers(channelID, protocol.EventStickyNoteCreated, "create", note)
 
 	return c.JSON(fiber.Map{"note": note.ToProtocolType()})
 }
@@ -488,19 +597,13 @@ func apiChannelStickyNoteMigrate(c *fiber.Ctx) error {
 	for targetID, cloned := range copiedByTarget {
 		for _, note := range cloned {
 			note.LoadCreator()
-			BroadcastStickyNoteToChannel(targetID, protocol.EventStickyNoteCreated, &protocol.StickyNoteEventPayload{
-				Note:   note.ToProtocolType(),
-				Action: "create",
-			})
+			broadcastStickyNoteToVisibleUsers(targetID, protocol.EventStickyNoteCreated, "create", note)
 		}
 	}
 
 	if mode == "move" {
 		for _, note := range selected {
-			BroadcastStickyNoteToChannel(channelID, protocol.EventStickyNoteDeleted, &protocol.StickyNoteEventPayload{
-				Note:   &protocol.StickyNote{ID: note.ID, ChannelID: channelID},
-				Action: "delete",
-			})
+			broadcastStickyNoteDeleteToVisibleUsers(channelID, note)
 		}
 	}
 
@@ -584,10 +687,7 @@ func apiStickyNoteEditLockAcquire(c *fiber.Ctx) error {
 		return c.Status(409).JSON(fiber.Map{"error": "note is being edited", "note": lockedNote.ToProtocolType()})
 	}
 
-	go BroadcastStickyNoteToChannel(lockedNote.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
-		Note:   lockedNote.ToProtocolType(),
-		Action: "update",
-	})
+	go broadcastStickyNoteToVisibleUsers(lockedNote.ChannelID, protocol.EventStickyNoteUpdated, "update", lockedNote)
 	return c.JSON(fiber.Map{"note": lockedNote.ToProtocolType()})
 }
 
@@ -638,10 +738,7 @@ func apiStickyNoteEditLockRelease(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
 	}
 	if result.RowsAffected > 0 {
-		go BroadcastStickyNoteToChannel(updatedNote.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
-			Note:   updatedNote.ToProtocolType(),
-			Action: "update",
-		})
+		go broadcastStickyNoteToVisibleUsers(updatedNote.ChannelID, protocol.EventStickyNoteUpdated, "update", updatedNote)
 	}
 	return c.JSON(fiber.Map{"note": updatedNote.ToProtocolType()})
 }
@@ -706,6 +803,7 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 			}
 		}
 	}
+	previousNote := *note
 
 	updates := map[string]interface{}{
 		"updated_at": now,
@@ -771,10 +869,7 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	note, _ = loadStickyNoteForResponse(noteID)
 
 	// 广播更新事件
-	go BroadcastStickyNoteToChannel(note.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
-		Note:   note.ToProtocolType(),
-		Action: "update",
-	})
+	go broadcastStickyNoteUpdateTransition(note.ChannelID, &previousNote, note)
 
 	return c.JSON(fiber.Map{"note": note.ToProtocolType()})
 }
@@ -819,10 +914,7 @@ func apiStickyNoteDeleteRest(c *fiber.Ctx) error {
 	}
 
 	// 广播删除事件
-	go BroadcastStickyNoteToChannel(channelID, protocol.EventStickyNoteDeleted, &protocol.StickyNoteEventPayload{
-		Note:   &protocol.StickyNote{ID: noteID, ChannelID: channelID},
-		Action: "delete",
-	})
+	go broadcastStickyNoteDeleteToVisibleUsers(channelID, note)
 
 	return c.JSON(fiber.Map{"success": true})
 }

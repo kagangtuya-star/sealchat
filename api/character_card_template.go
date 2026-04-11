@@ -51,7 +51,16 @@ func mapCharacterCardTemplateError(err error) (int, string) {
 func CharacterCardTemplateList(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	sheetType := c.Query("sheetType")
-	items, err := service.CharacterCardTemplateList(user.ID, sheetType)
+	worldID := strings.TrimSpace(c.Query("worldId"))
+	var (
+		items any
+		err error
+	)
+	if worldID != "" {
+		items, err = service.CharacterCardTemplateListWithWorld(user.ID, worldID, sheetType)
+	} else {
+		items, err = service.CharacterCardTemplateList(user.ID, sheetType)
+	}
 	if err != nil {
 		status, msg := mapCharacterCardTemplateError(err)
 		return c.Status(status).JSON(fiber.Map{"error": msg})

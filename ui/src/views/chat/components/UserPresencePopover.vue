@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { EyeOutline, EyeOffOutline } from '@vicons/ionicons5'
 import Avatar from '@/components/avatar.vue'
 
@@ -32,26 +32,12 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const activeTab = ref<'online' | 'offline'>('online')
-
 const onlineMembers = computed(() => {
   const now = Date.now()
   return props.members.filter(member => {
     const presence = props.presenceMap[member.id]
     return presence && (now - presence.lastPing) < 120000 // 2分钟内算在线
   })
-})
-
-const offlineMembers = computed(() => {
-  const now = Date.now()
-  return props.members.filter(member => {
-    const presence = props.presenceMap[member.id]
-    return !presence || (now - presence.lastPing) >= 120000
-  })
-})
-
-const currentMembers = computed(() => {
-  return activeTab.value === 'online' ? onlineMembers.value : offlineMembers.value
 })
 
 const getMemberDisplayName = (member: Member) => {
@@ -80,22 +66,18 @@ const handleRefresh = () => {
 <template>
   <div class="presence-popover">
     <div class="presence-header">
-      <n-radio-group
-        v-model:value="activeTab"
-        size="small"
-      >
-        <n-radio-button value="online">
-          在线 ({{ onlineMembers.length }})
-        </n-radio-button>
-        <n-radio-button value="offline">
-          离线 ({{ offlineMembers.length }})
-        </n-radio-button>
-      </n-radio-group>
+      <div class="presence-heading">
+        <span class="presence-title">在线成员</span>
+        <span class="presence-count">{{ onlineMembers.length }}</span>
+      </div>
+      <n-button size="tiny" secondary class="presence-refresh" @click="handleRefresh">
+        刷新状态
+      </n-button>
     </div>
 
     <div class="presence-list">
       <div
-        v-for="member in currentMembers"
+        v-for="member in onlineMembers"
         :key="member.id"
         class="presence-item"
       >
@@ -113,11 +95,10 @@ const handleRefresh = () => {
             </span>
           </div>
           <div class="presence-meta">
-            <span v-if="activeTab === 'online'" class="latency">
+            <span class="latency">
               {{ getLatency(member.id) }}ms
             </span>
             <n-icon
-              v-if="activeTab === 'online'"
               :component="isFocused(member.id) ? EyeOutline : EyeOffOutline"
               size="14"
               :class="{ 'focused': isFocused(member.id), 'unfocused': !isFocused(member.id) }"
@@ -126,15 +107,9 @@ const handleRefresh = () => {
         </div>
       </div>
 
-      <div v-if="currentMembers.length === 0" class="presence-empty">
-        {{ activeTab === 'online' ? '暂无在线成员' : '暂无离线成员' }}
+      <div v-if="onlineMembers.length === 0" class="presence-empty">
+        当前暂无在线成员
       </div>
-    </div>
-
-    <div class="presence-footer">
-      <n-button size="small" @click="handleRefresh">
-        刷新状态
-      </n-button>
     </div>
   </div>
 </template>
@@ -151,21 +126,40 @@ const handleRefresh = () => {
 
 .presence-header {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-:deep(.n-radio-group) {
+.presence-heading {
   display: inline-flex;
-  background: rgba(15, 23, 42, 0.04);
-  border-radius: 0.75rem;
-  padding: 0.125rem;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
-:deep(.n-radio-button) {
-  min-width: 6.5rem;
+.presence-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--sc-text-primary, #1f2937);
+}
+
+.presence-count {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  border-radius: 0.5rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  color: #2563eb;
   font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.presence-refresh {
+  flex-shrink: 0;
 }
 
 .presence-list {
@@ -208,6 +202,15 @@ const handleRefresh = () => {
   color: #fff;
 }
 
+:global([data-display-palette='night']) .presence-popover .presence-title {
+  color: #fff;
+}
+
+:global([data-display-palette='night']) .presence-popover .presence-count {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+
 .presence-meta {
   display: flex;
   align-items: center;
@@ -235,13 +238,6 @@ const handleRefresh = () => {
   text-align: center;
   color: #9ca3af;
   font-size: 0.875rem;
-  padding: 1rem;
-}
-
-.presence-footer {
-  display: flex;
-  justify-content: center;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  padding-top: 0.75rem;
+  padding: 1.5rem 1rem;
 }
 </style>

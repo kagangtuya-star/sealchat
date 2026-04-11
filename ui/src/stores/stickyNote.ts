@@ -836,6 +836,65 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
     }
 
+    function parseStickyNoteUserIdSet(raw?: string) {
+        const result = new Set<string>()
+        const normalized = typeof raw === 'string' ? raw.trim() : ''
+        if (!normalized) return result
+        try {
+            const parsed = JSON.parse(normalized)
+            if (Array.isArray(parsed)) {
+                parsed.forEach((id) => {
+                    if (typeof id === 'string' && id.trim()) {
+                        result.add(id.trim())
+                    }
+                })
+                return result
+            }
+        } catch {
+            // ignore
+        }
+        normalized.split(',').forEach((id) => {
+            const trimmed = id.trim()
+            if (trimmed) {
+                result.add(trimmed)
+            }
+        })
+        return result
+    }
+
+    function canCurrentUserViewNote(note?: StickyNote | null) {
+        if (!note) return false
+        if (!note.visibility || note.visibility === 'all') {
+            return true
+        }
+        const userId = userStore.info?.id
+        if (!userId) {
+            return false
+        }
+        if (note.creatorId === userId || note.creator?.id === userId) {
+            return true
+        }
+        const editorIds = parseStickyNoteUserIdSet(note.editorIds)
+        if (editorIds.has(userId)) {
+            return true
+        }
+        switch (note.visibility) {
+            case 'owner':
+            case 'editors':
+                return false
+            case 'viewers':
+                return parseStickyNoteUserIdSet(note.viewerIds).has(userId)
+            default:
+                return true
+        }
+    }
+
+    function removeNoteFromLocalState(noteId: string) {
+        delete notes.value[noteId]
+        delete userStates.value[noteId]
+        closeNoteLocal(noteId)
+    }
+
     // 处理WebSocket事件
     function handleStickyNoteEvent(event: any) {
         const payload = event.stickyNote
@@ -846,20 +905,27 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         switch (action) {
             case 'create':
                 if (note && note.channelId === currentChannelId.value) {
-                    notes.value[note.id] = note
-                    persistLocalCache()
+                    if (canCurrentUserViewNote(note)) {
+                        notes.value[note.id] = note
+                        persistLocalCache()
+                    } else {
+                        removeNoteFromLocalState(note.id)
+                    }
                 }
                 break
             case 'update':
-                if (note && notes.value[note.id]) {
-                    notes.value[note.id] = note
-                    persistLocalCache()
+                if (note && note.channelId === currentChannelId.value) {
+                    if (canCurrentUserViewNote(note)) {
+                        notes.value[note.id] = note
+                        persistLocalCache()
+                    } else {
+                        removeNoteFromLocalState(note.id)
+                    }
                 }
                 break
             case 'delete':
                 if (note) {
-                    delete notes.value[note.id]
-                    closeNoteLocal(note.id)
+                    removeNoteFromLocalState(note.id)
                 }
                 break
             case 'push':

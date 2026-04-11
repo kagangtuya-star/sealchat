@@ -2,6 +2,13 @@
 import { computed, watch, ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
+import {
+  WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
+  WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
+  formatDisplayWidthAsCharCount,
+  getTextDisplayWidthUnits,
+  truncateTextByDisplayWidth,
+} from '@/utils/displayWidth';
 
 const chat = useChatStore();
 const message = useMessage();
@@ -63,6 +70,15 @@ const handleWorldJump = async () => {
     message.error('进入世界失败');
   }
 };
+
+const updateWorldDescription = (value: string) => {
+  worldForm.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
+};
+
+const getDescriptionCountLabel = (value?: string) => {
+  const usedUnits = getTextDisplayWidthUnits(value || '');
+  return `${formatDisplayWidthAsCharCount(usedUnits)}/${WORLD_DESCRIPTION_MAX_DISPLAY_CHARS}`;
+};
 </script>
 
 <template>
@@ -102,13 +118,15 @@ const handleWorldJump = async () => {
         <n-input v-model:value="worldForm.name" placeholder="输入世界名称" />
       </n-form-item>
       <n-form-item label="简介">
-        <n-input
-          v-model:value="worldForm.description"
-          type="textarea"
-          placeholder="简单描述"
-          maxlength="30"
-          show-count
-        />
+        <div class="world-switcher__description-field">
+          <n-input
+            :value="worldForm.description"
+            type="textarea"
+            placeholder="简单描述"
+            @update:value="updateWorldDescription"
+          />
+          <div class="world-switcher__counter">{{ getDescriptionCountLabel(worldForm.description) }}</div>
+        </div>
       </n-form-item>
       <n-form-item label="可见性">
         <n-select
@@ -129,3 +147,29 @@ const handleWorldJump = async () => {
     </template>
   </n-modal>
 </template>
+
+<style scoped>
+.world-switcher__description-field {
+  position: relative;
+  width: 100%;
+}
+
+.world-switcher__description-field :deep(.n-input) {
+  width: 100%;
+}
+
+.world-switcher__description-field :deep(textarea) {
+  padding-right: 4.75rem;
+  padding-bottom: 1.75rem;
+}
+
+.world-switcher__counter {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--sc-text-secondary);
+  pointer-events: none;
+}
+</style>

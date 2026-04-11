@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia';
-import { markRaw, watch } from 'vue';
+import { markRaw, watch, type EffectScope } from 'vue';
 import { api } from './_config';
 import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import type { ChannelIForm, ChannelIFormEventPayload, ChannelIFormStatePayload } from '@/types/iform';
+import { ensureDetachedEffectScope } from './storeEffectScope';
 
 interface PanelState {
   windowId: string;
@@ -59,6 +60,7 @@ interface IFormStoreState {
 
 let gatewayBound = false;
 let gatewayHandler: ((event: any) => void) | null = null;
+let bootstrapScope: EffectScope | null = null;
 
 export const useIFormStore = defineStore('iform', {
   state: (): IFormStoreState => ({
@@ -139,31 +141,33 @@ export const useIFormStore = defineStore('iform', {
   },
   actions: {
     bootstrap() {
-      if (this.bootstrapped) {
+      if (this.bootstrapped && bootstrapScope?.active) {
         return;
       }
-      this.bootstrapped = true;
       const chat = useChatStore();
       const user = useUserStore();
-      watch(
-        () => chat.curChannel?.id,
-        (channelId) => {
-          this.setActiveChannel(channelId || null);
-          if (channelId) {
-            this.ensureForms(channelId);
-            this.refreshCapabilities(channelId);
-          }
-        },
-        { immediate: true },
-      );
-      watch(
-        () => user.info.id,
-        () => {
-          if (this.currentChannelId) {
-            this.refreshCapabilities(this.currentChannelId, true);
-          }
-        },
-      );
+      bootstrapScope = ensureDetachedEffectScope(bootstrapScope, () => {
+        watch(
+          () => chat.curChannel?.id,
+          (channelId) => {
+            this.setActiveChannel(channelId || null);
+            if (channelId) {
+              this.ensureForms(channelId);
+              this.refreshCapabilities(channelId);
+            }
+          },
+          { immediate: true },
+        );
+        watch(
+          () => user.info.id,
+          () => {
+            if (this.currentChannelId) {
+              this.refreshCapabilities(this.currentChannelId, true);
+            }
+          },
+        );
+      });
+      this.bootstrapped = true;
       if (!gatewayBound) {
         const store = this;
         gatewayHandler = (event: any) => store.handleGatewayEvent(event);

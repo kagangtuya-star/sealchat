@@ -301,6 +301,14 @@ const roleSelectOptions = computed(() => {
   }))
 })
 
+const selectedRoleCount = computed(() => props.filters.roleIds.length)
+const selectedRoleSummary = computed(() => (
+  selectedRoleCount.value > 0
+    ? `已选 ${selectedRoleCount.value} 人`
+    : '筛选角色'
+))
+const renderRoleTagSummary = () => selectedRoleSummary.value
+
 const activeFiltersCount = computed(() => {
   let count = 0
   if (props.filters.icFilter !== 'all') count++
@@ -367,11 +375,13 @@ const cycleIcFilter = () => {
           :value="filters.roleIds"
           @update:value="updateFilter('roleIds', $event)"
           :options="roleSelectOptions"
+          class="ribbon-role-select"
           multiple
           placeholder="筛选角色"
           size="small"
-          style="min-width: 120px"
           clearable
+          :max-tag-count="0"
+          :max-tag-placeholder="renderRoleTagSummary"
         />
       </div>
     </div>
@@ -437,7 +447,7 @@ const cycleIcFilter = () => {
 .action-ribbon {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 1rem;
   padding: 0.9rem 1.1rem;
   background: var(--sc-bg-elevated);
@@ -459,7 +469,7 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-section--filters {
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .ribbon-section--actions {
@@ -472,12 +482,47 @@ const cycleIcFilter = () => {
 .ribbon-section--summary {
   flex-shrink: 0;
   min-width: 120px;
+  margin-left: auto;
   justify-content: flex-end;
 }
 
 .filter-group {
   display: flex;
   align-items: center;
+  min-width: 0;
+}
+
+.filter-group:last-child {
+  flex: 0 0 auto;
+}
+
+.ribbon-role-select {
+  width: 10.5rem;
+  min-width: 10.5rem;
+  max-width: 10.5rem;
+}
+
+.ribbon-role-select :deep(.n-base-selection),
+.ribbon-role-select :deep(.n-base-selection-label),
+.ribbon-role-select :deep(.n-base-selection-tags) {
+  min-width: 0;
+}
+
+.ribbon-role-select :deep(.n-base-selection-tags) {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.ribbon-role-select :deep(.n-tag) {
+  max-width: 100%;
+}
+
+.ribbon-role-select :deep(.n-tag__content) {
+  display: block;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .filter-summary {
@@ -546,10 +591,21 @@ const cycleIcFilter = () => {
 
   .ribbon-section--filters {
     flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  .filter-group:last-child {
+    flex: 1 1 10rem;
   }
 
   .ribbon-section--actions {
     overflow: visible;
+  }
+
+  .ribbon-role-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
   }
 
   .ribbon-actions-grid {

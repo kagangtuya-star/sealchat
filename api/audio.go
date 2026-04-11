@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -394,7 +395,14 @@ func AudioAssetDelete(c *fiber.Ctx) error {
 		}
 	}
 	hard := c.QueryBool("hard")
-	if err := service.AudioDeleteAsset(id, hard); err != nil {
+	if err := service.AudioSafeDeleteAsset(id, hard); err != nil {
+		var referencedErr *service.AudioAssetReferencedError
+		if errors.As(err, &referencedErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"message": "素材仍被引用，无法安全删除",
+				"usage":   referencedErr.Summary,
+			})
+		}
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除素材失败")
 	}
 	return c.JSON(fiber.Map{"message": "已删除"})
@@ -781,6 +789,9 @@ func AudioAssetStream(c *fiber.Ctx) error {
 		if target == "" || !strings.HasPrefix(strings.ToLower(target), "http") {
 			return wrapErrorStatus(c, fiber.StatusNotFound, nil, "音频文件不存在或已失效")
 		}
+		if err := service.AudioTouchAssetAccess(asset.ID); err != nil {
+			log.Printf("[audio] update access stats failed for %s: %v", asset.ID, err)
+		}
 		return c.Redirect(target, fiber.StatusTemporaryRedirect)
 	}
 	file, info, resolved, err := service.AudioOpenLocalVariant(asset, variantLabel)
@@ -790,6 +801,9 @@ func AudioAssetStream(c *fiber.Ctx) error {
 
 	if resolved.ObjectKey != "" {
 		variant = resolved
+	}
+	if err := service.AudioTouchAssetAccess(asset.ID); err != nil {
+		log.Printf("[audio] update access stats failed for %s: %v", asset.ID, err)
 	}
 	contentType := guessContentType(variant.ObjectKey)
 	c.Set("X-Asset-Bitrate", strconv.Itoa(variant.BitrateKbps))
@@ -862,6 +876,182 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		broadcastAudioPlaybackState(user, state)
 	}
 	return c.JSON(fiber.Map{"state": buildAudioPlaybackResponse(state)})
+}
+
+func AdminAudioAssetList(c *fiber.Ctx) error {
+	filters := service.AdminAudioAssetFilters{
+		Query:      strings.TrimSpace(c.Query("query")),
+		QueryField: strings.TrimSpace(c.Query("queryField")),
+		SortBy:     strings.TrimSpace(c.Query("sortBy")),
+		SortOrder:  strings.TrimSpace(c.Query("sortOrder")),
+		Page:       c.QueryInt("page", 1),
+		PageSize:   c.QueryInt("pageSize", 20),
+	}
+	if scope := strings.TrimSpace(c.Query("scope")); scope != "" && scope != "all" {
+		filters.Scope = model.AudioAssetScope(scope)
+	}
+	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+		filters.WorldID = &worldID
+	}
+	if creatorID := strings.TrimSpace(c.Query("creatorId")); creatorID != "" {
+		filters.CreatorID = &creatorID
+	}
+	if referenced, ok := queryOptionalBool(c, "referenced"); ok {
+		filters.Referenced = &referenced
+	}
+	if neverAccessed, ok := queryOptionalBool(c, "neverAccessed"); ok {
+		filters.NeverAccessed = &neverAccessed
+	}
+	if inactiveDays := c.QueryInt("inactiveDays", 0); inactiveDays > 0 {
+		filters.InactiveDays = inactiveDays
+	}
+	result, err := service.AdminAudioListAssets(filters)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取平台音频素材失败")
+	}
+	return c.JSON(result)
+}
+
+func AdminAudioAssetUsageGet(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	asset, err := service.AudioGetAsset(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材失败")
+	}
+	usage, err := service.AudioGetAssetUsageSummary(id)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材引用信息失败")
+	}
+	return c.JSON(fiber.Map{
+		"item":         asset,
+		"usageSummary": usage,
+		"safeToDelete": !usage.Referenced,
+	})
+}
+
+func AdminAudioAssetDeleteSafe(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	hard := c.QueryBool("hard")
+	impact, err := service.AdminAudioDeleteAsset(id, hard)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除素材失败")
+	}
+	broadcastAdminAudioDetachedScopes(getCurUser(c), impact)
+	return c.JSON(fiber.Map{"message": "已删除", "impact": impact})
+}
+
+func AdminAudioAssetBulkDeleteSafe(c *fiber.Ctx) error {
+	var req struct {
+		IDs  []string `json:"ids"`
+		Hard bool     `json:"hard"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	result, err := service.AdminAudioDeleteAssets(req.IDs, req.Hard)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "批量安全删除失败")
+	}
+	broadcastAdminAudioDetachedScopes(getCurUser(c), &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
+	return c.JSON(result)
+}
+
+func AdminAudioAssetCleanupPreview(c *fiber.Ctx) error {
+	days := c.QueryInt("days", 30)
+	if days <= 0 {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "清理周期必须大于 0 天")
+	}
+	filters := service.AdminAudioAssetFilters{
+		Query:      strings.TrimSpace(c.Query("query")),
+		QueryField: strings.TrimSpace(c.Query("queryField")),
+		SortBy:     strings.TrimSpace(c.Query("sortBy")),
+		SortOrder:  strings.TrimSpace(c.Query("sortOrder")),
+		Page:       1,
+		PageSize:   c.QueryInt("pageSize", 100),
+	}
+	if scope := strings.TrimSpace(c.Query("scope")); scope != "" && scope != "all" {
+		filters.Scope = model.AudioAssetScope(scope)
+	}
+	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+		filters.WorldID = &worldID
+	}
+	if creatorID := strings.TrimSpace(c.Query("creatorId")); creatorID != "" {
+		filters.CreatorID = &creatorID
+	}
+	preview, err := service.AdminAudioPreviewUnusedAssets(days, filters)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取清理预览失败")
+	}
+	return c.JSON(preview)
+}
+
+func AdminAudioAssetCleanupExecute(c *fiber.Ctx) error {
+	var req struct {
+		Days       int                   `json:"days"`
+		Hard       bool                  `json:"hard"`
+		Query      string                `json:"query"`
+		QueryField string                `json:"queryField"`
+		SortBy     string                `json:"sortBy"`
+		SortOrder  string                `json:"sortOrder"`
+		Scope      model.AudioAssetScope `json:"scope"`
+		WorldID    *string               `json:"worldId"`
+		CreatorID  *string               `json:"creatorId"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	if req.Days <= 0 {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "清理周期必须大于 0 天")
+	}
+	result, err := service.AdminAudioCleanupUnusedAssets(req.Days, service.AdminAudioAssetFilters{
+		Query:      strings.TrimSpace(req.Query),
+		QueryField: strings.TrimSpace(req.QueryField),
+		SortBy:     strings.TrimSpace(req.SortBy),
+		SortOrder:  strings.TrimSpace(req.SortOrder),
+		Scope:      req.Scope,
+		WorldID:    req.WorldID,
+		CreatorID:  req.CreatorID,
+		Page:       1,
+		PageSize:   1000,
+	}, req.Hard)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "执行清理失败")
+	}
+	broadcastAdminAudioDetachedScopes(getCurUser(c), &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
+	return c.JSON(result)
+}
+
+func broadcastAdminAudioDetachedScopes(operator *model.UserModel, impact *service.AudioDeleteImpact) {
+	if operator == nil || impact == nil || len(impact.PlaybackScopeLabels) == 0 {
+		return
+	}
+	for _, scopeLabel := range impact.PlaybackScopeLabels {
+		label := strings.TrimSpace(scopeLabel)
+		if label == "" {
+			continue
+		}
+		state, err := service.AudioGetPlaybackState(label)
+		if err != nil {
+			log.Printf("[audio-admin] broadcast detached playback scope failed scope=%s err=%v", label, err)
+			continue
+		}
+		if state == nil {
+			continue
+		}
+		broadcastAudioPlaybackState(operator, state)
+	}
 }
 
 type audioSceneRequest struct {
@@ -973,6 +1163,21 @@ func queryFloatSlice(c *fiber.Ctx, keys ...string) []float64 {
 		}
 	}
 	return result
+}
+
+func queryOptionalBool(c *fiber.Ctx, key string) (bool, bool) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return false, false
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes":
+		return true, true
+	case "0", "false", "no":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func parseOptionalString(value string) *string {

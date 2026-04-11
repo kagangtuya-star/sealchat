@@ -30,6 +30,7 @@ import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCandidates'
 import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
+import { resolveWorldKeywordTooltipInteractionPolicy } from '@/utils/worldKeywordTooltipInteraction'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
@@ -1797,7 +1798,21 @@ const compiledKeywords = computed(() => {
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
+const keywordTooltipHoverEnabled = computed(() => displayStore.settings.worldKeywordTooltipHoverEnabled !== false)
+const keywordTooltipClickEnabled = computed(() => displayStore.settings.worldKeywordTooltipClickEnabled !== false)
 const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
+const isFinePointerDevice = computed(() => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return true
+  }
+  return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+})
+const keywordTooltipInteractionPolicy = computed(() => resolveWorldKeywordTooltipInteractionPolicy({
+  tooltipEnabled: keywordTooltipEnabled.value,
+  hoverEnabled: keywordTooltipHoverEnabled.value,
+  clickEnabled: keywordTooltipClickEnabled.value,
+  finePointer: isFinePointerDevice.value,
+}))
 const hasExternalKeywordSource = computed(() => {
   const worldId = chat.currentWorldId
   if (!worldId) {
@@ -1859,6 +1874,7 @@ let keywordTooltipInstance = createKeywordTooltip(keywordTooltipResolver, {
   onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
   underlineOnly: keywordUnderlineOnly.value,
   textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+  interaction: keywordTooltipInteractionPolicy.value,
   candidateLoader: loadKeywordConflictCandidates,
 })
 
@@ -1892,6 +1908,8 @@ const applyKeywordHighlights = async () => {
     {
       underlineOnly: keywordUnderlineOnly.value,
       deduplicate: keywordDeduplicateEnabled.value,
+      allowHoverOpen: keywordTooltipInteractionPolicy.value.allowHoverOpen,
+      allowClickOpen: keywordTooltipInteractionPolicy.value.allowClickOpen,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
     },
     keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
@@ -2954,6 +2972,8 @@ watch(
     () => displayStore.settings.worldKeywordHighlightEnabled,
     () => displayStore.settings.worldKeywordUnderlineOnly,
     () => displayStore.settings.worldKeywordTooltipEnabled,
+    () => displayStore.settings.worldKeywordTooltipHoverEnabled,
+    () => displayStore.settings.worldKeywordTooltipClickEnabled,
     () => displayStore.settings.worldKeywordDeduplicateEnabled,
     () => displayStore.settings.worldKeywordTooltipTextIndent,
     () => displayContent.value,
@@ -2967,6 +2987,7 @@ watch(
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
       underlineOnly: keywordUnderlineOnly.value,
       textIndent: displayStore.settings.worldKeywordTooltipTextIndent,
+      interaction: keywordTooltipInteractionPolicy.value,
       candidateLoader: loadKeywordConflictCandidates,
     })
     void applyKeywordHighlights()
@@ -3790,9 +3811,10 @@ const handleRetrySend = () => {
 }
 
 .chat-item > .right > .content.whisper-content {
-  background: var(--chat-whisper-bg, #eef2ff);
-  border: 1px solid var(--chat-whisper-border, rgba(99, 102, 241, 0.35));
+  background: var(--chat-whisper-surface, var(--chat-whisper-bg, #eef2ff));
   color: var(--chat-text-primary, #1f2937);
+  padding-left: calc(var(--chat-message-padding-x, 1.1rem) + 0.34rem);
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 72%, transparent), var(--chat-message-shadow, none);
 }
 
 .chat-item--layout-bubble > .right {
@@ -4406,45 +4428,47 @@ const handleRetrySend = () => {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.38rem;
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: #4c1d95;
-  background: rgba(99, 102, 241, 0.08);
-  border-radius: 0.65rem;
-  padding: 0.25rem 0.65rem;
-  margin-bottom: 0.55rem;
-  white-space: pre-line;
+  line-height: 1.35;
+  color: var(--chat-whisper-tag-fg, var(--chat-text-secondary, #475569));
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  margin-bottom: 0.48rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: none;
 }
 
 .whisper-label svg {
   color: inherit;
-  margin-right: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.whisper-label > span {
+  min-width: 0;
+  flex: 1;
 }
 
 .whisper-label--quote {
   font-size: 0.72rem;
-  color: #5b21b6;
+  color: color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 72%, var(--chat-text-secondary, #475569));
   margin-bottom: 0.25rem;
 }
 
-.whisper-content .whisper-label,
 .whisper-content .whisper-label--quote {
-  background: rgba(99, 102, 241, 0.12);
-  color: #4c1d95;
-}
-
-.whisper-content .whisper-label--quote {
-  color: #6d28d9;
+  color: color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 72%, var(--chat-text-secondary, #475569));
 }
 
 .whisper-content .whisper-label svg {
-  color: #4c1d95;
+  color: inherit;
 }
 
 .whisper-content .text-gray-400 {
-  color: #5b21b6;
+  color: color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 48%, var(--chat-text-secondary, #475569));
 }
 
 /* Tone 样式 */
@@ -4486,20 +4510,17 @@ const handleRetrySend = () => {
 }
 
 .chat--layout-compact .chat-item > .right > .content.whisper-content {
-  background: transparent;
+  background: var(--chat-whisper-surface, rgba(99, 102, 241, 0.02));
   border: none;
+  border-radius: 0.65rem;
   color: var(--chat-text-primary);
-  padding-left: 0;
-  padding-right: 0;
+  padding: 0.36rem 0.72rem 0.4rem 0.88rem;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 68%, transparent);
 }
 
 .chat--layout-compact .whisper-label,
 .chat--layout-compact .whisper-label--quote {
-  background: transparent;
-  padding-left: 0;
-  padding-right: 0;
-  border-radius: 0;
-  color: var(--chat-text-secondary);
+  margin-bottom: 0.32rem;
 }
 
 .chat--layout-compact .chat-item--ooc {

@@ -240,6 +240,13 @@ const shouldCollapseBody = (item: AnnouncementItem) => {
                   <n-space size="small" class="announcement-card__tags">
                     <n-tag v-if="item.status === 'draft'" size="small">草稿</n-tag>
                     <n-tag v-if="item.isPinned" size="small" type="warning">置顶</n-tag>
+                    <n-tag
+                      v-if="props.scopeType === 'lobby' && item.showInTicker"
+                      size="small"
+                      type="primary"
+                    >
+                      广播区
+                    </n-tag>
                     <n-tag v-if="item.popupMode === 'every_entry'" size="small" type="info">每次弹出</n-tag>
                     <n-tag v-else-if="item.popupMode === 'once_per_version'" size="small" type="info">每版本弹一次</n-tag>
                     <n-tag

@@ -161,7 +161,7 @@ const isRichMode = computed({
   },
 })
 
-const categoryFilter = ref('')
+const categoryFilter = ref<string | null>(null)
 const categoryOptions = ref<string[]>([])
 
 // Export modal state
@@ -928,7 +928,7 @@ watch(
     } else {
       clearSelection()
       currentPage.value = 1
-      categoryFilter.value = ''
+      categoryFilter.value = null
     }
   },
 )
@@ -941,6 +941,7 @@ watch(
     }
     clearSelection()
     currentPage.value = 1
+    categoryFilter.value = null
   },
 )
 
@@ -1111,7 +1112,7 @@ onUnmounted(() => {
             clearable
             size="small"
             style="width: 140px"
-            :options="[{ label: '全部分类', value: '' }, ...categoryOptions.map(c => ({ label: c, value: c }))]"
+            :options="categoryOptions.map(c => ({ label: c, value: c }))"
           />
         </div>
         <div v-if="canEdit" class="keyword-manager__toolbar">

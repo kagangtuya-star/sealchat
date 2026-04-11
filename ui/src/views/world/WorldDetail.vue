@@ -104,11 +104,16 @@ const handleLeaveWorld = () => {
 
 <template>
   <div class="world-detail-page p-4 space-y-4" v-if="detail?.world">
-    <n-card :title="detail.world.name">
-      <div class="flex items-center gap-2">
-        <p class="text-gray-600 flex-1">{{ detail.world.description }}</p>
-        <n-tag v-if="roleLabel" size="small" type="info">当前身份：{{ roleLabel }}</n-tag>
-      </div>
+    <n-card>
+      <template #header>
+        <div class="world-detail-header">
+          <div class="world-detail-title">{{ detail.world.name }}</div>
+          <n-tag v-if="roleLabel" size="tiny" type="info" class="world-detail-role-tag">
+            当前身份：{{ roleLabel }}
+          </n-tag>
+        </div>
+      </template>
+      <p class="world-detail-description">{{ detail.world.description }}</p>
       <div class="mt-3 world-action-grid">
         <div class="world-action-item">
           <n-button block type="primary" @click="enterWorld">进入</n-button>
@@ -191,6 +196,35 @@ const handleLeaveWorld = () => {
   gap: 12px;
 }
 
+.world-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.world-detail-title {
+  min-width: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.world-detail-role-tag {
+  flex: none;
+  margin-top: 8px;
+}
+
+.world-detail-description {
+  margin: 0;
+  color: var(--n-text-color-3);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .world-action-item :deep(.n-button) {
   height: 44px;
 }
@@ -237,6 +271,16 @@ const handleLeaveWorld = () => {
 .world-invite-card :deep(.n-card__content),
 .world-invite-card :deep(.n-card__footer) {
   background-color: var(--sc-invite-surface);
+}
+
+@media (max-width: 640px) {
+  .world-detail-header {
+    gap: 8px;
+  }
+
+  .world-detail-title {
+    font-size: 1.35rem;
+  }
 }
 
 </style>

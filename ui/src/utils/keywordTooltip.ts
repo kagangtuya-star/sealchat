@@ -13,6 +13,7 @@ import {
 import { isTargetWithinElement } from './keywordTooltipHoverBoundary'
 import { shouldReuseHoverTooltipForPin } from './keywordTooltipPinReuse'
 import { shouldHideTooltipBeforePositioning } from './keywordTooltipVisibility'
+import type { WorldKeywordTooltipInteractionPolicy } from './worldKeywordTooltipInteraction'
 
 interface TooltipContent {
   title: string
@@ -424,6 +425,7 @@ export interface KeywordTooltipOptions {
   onKeywordDoubleInvoke?: (keywordId: string) => void
   underlineOnly?: boolean
   textIndent?: number  // 多段首行缩进值（em），0 或未定义则不缩进
+  interaction?: WorldKeywordTooltipInteractionPolicy
   candidateLoader?: CandidateLoader
 }
 
@@ -458,6 +460,7 @@ export function createKeywordTooltip(
   const level = options?.level ?? 0
   const underlineOnly = options?.underlineOnly ?? false
   const textIndent = options?.textIndent ?? 0
+  const interaction = options?.interaction ?? { allowHoverOpen: true, allowClickOpen: true }
   let currentTooltip: TooltipInstance | null = null
   let currentSession: TooltipSession | null = null
   let hoverTooltipElement: HTMLDivElement | null = null
@@ -587,6 +590,7 @@ export function createKeywordTooltip(
         onKeywordDoubleInvoke: options?.onKeywordDoubleInvoke,
         underlineOnly: underlineOnly,
         textIndent: textIndent,
+        interaction,
       })
       nestedTooltipControllers.set(keywordId, controller)
     }
@@ -601,6 +605,10 @@ export function createKeywordTooltip(
 
     // Use event delegation on the tooltip element for nested keyword interactions
     tooltip.addEventListener('mouseover', (e) => {
+      if (!interaction.allowHoverOpen) {
+        return
+      }
+
       const target = e.target as HTMLElement
       const keywordSpan = target.closest('.keyword-highlight') as HTMLElement
       if (!keywordSpan) {
@@ -654,6 +662,10 @@ export function createKeywordTooltip(
 
       // If clicking on a nested keyword, handle it
       if (keywordSpan) {
+        if (!interaction.allowClickOpen) {
+          return
+        }
+
         const nestedKeywordId = keywordSpan.dataset.keywordId
         const currentKeywordId = getActiveKeywordId(currentSession)
         if (!nestedKeywordId || nestedKeywordId === currentKeywordId) return

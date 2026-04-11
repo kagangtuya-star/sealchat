@@ -1119,7 +1119,7 @@ const fetchRibbonRoleOptions = async (channelId?: string | null) => {
     const items = Array.isArray(payload?.items) ? payload.items : [];
     const mapped = items
       .map((item) => ({
-        id: String(item.id || ''),
+        id: String(item.id || '').trim(),
         label: item.label || '未命名角色',
       }))
       .filter((item) => item.id);
@@ -1157,7 +1157,7 @@ const initCharacterCardBadge = (
 };
 
 const initCharacterRemark = (channelId?: string) => {
-  if (!channelId || chat.isObserver) return;
+  if (!channelId) return;
   void characterRemarkStore.requestRemarkSnapshot(channelId);
 };
 
@@ -3322,7 +3322,7 @@ const maybePromptIdentitySync = async () => {
       resolve(value);
     };
     dialog.warning({
-      title: '同步其他频道角色？',
+      title: '从其他频道同步角色？',
       content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
       positiveText: '同步',
       negativeText: '暂不',
@@ -16273,7 +16273,7 @@ onBeforeUnmount(() => {
               <template #icon>
                 <n-icon :component="ArrowsVertical" size="14" />
               </template>
-              同步其他频道
+              从其他频道同步
             </n-button>
             <n-button
               v-if="canManageOtherUserIdentities"
@@ -16491,7 +16491,7 @@ onBeforeUnmount(() => {
   <n-modal
     :show="identitySyncDialogVisible"
     preset="card"
-    title="同步其他频道角色"
+    title="从其他频道同步角色"
     :style="{ width: 'min(520px, 92vw)' }"
     @update:show="identitySyncDialogVisible = $event"
   >
@@ -19669,10 +19669,24 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--sc-text-secondary);
   margin-right: 4px;
+  white-space: nowrap;
 }
 
 .whisper-pill-tag {
-  max-width: 100px;
+  flex: 0 1 auto;
+  max-width: clamp(96px, 22vw, 220px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.whisper-pill-tag :deep(.n-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whisper-pill-tag :deep(.n-tag__close) {
+  flex: 0 0 auto;
 }
 
 .identity-switcher-cell {

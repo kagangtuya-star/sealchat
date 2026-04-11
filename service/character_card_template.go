@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pm"
 )
 
 const (
@@ -40,6 +41,16 @@ type CharacterCardTemplateBindingInput struct {
 	TemplateSnapshot string
 }
 
+type CharacterCardTemplateView struct {
+	*model.CharacterCardTemplateModel
+	Access                 string `json:"access"`
+	Readonly               bool   `json:"readonly"`
+	IsSharedToCurrentWorld bool   `json:"isSharedToCurrentWorld"`
+	SharedWorldID          string `json:"sharedWorldId,omitempty"`
+	SharedByUserID         string `json:"sharedByUserId,omitempty"`
+	SharedByNickname       string `json:"sharedByNickname,omitempty"`
+}
+
 func normalizeCharacterCardTemplateInput(input *CharacterCardTemplateInput) error {
 	if input == nil {
 		return errors.New("参数错误")
@@ -54,7 +65,7 @@ func normalizeCharacterCardTemplateInput(input *CharacterCardTemplateInput) erro
 		return errors.New("模板名称长度需在100个字符以内")
 	}
 	if input.SheetType != "" && len([]rune(input.SheetType)) > 32 {
-		return errors.New("模板规制类型长度需在32个字符以内")
+		return errors.New("模板规则类型长度需在32个字符以内")
 	}
 	if input.Content == "" {
 		return errors.New("模板内容不能为空")
@@ -79,7 +90,7 @@ func normalizeCharacterCardTemplateUpdateInput(input *CharacterCardTemplateUpdat
 	if input.SheetType != nil {
 		sheetType := strings.TrimSpace(*input.SheetType)
 		if sheetType != "" && len([]rune(sheetType)) > 32 {
-			return errors.New("模板规制类型长度需在32个字符以内")
+			return errors.New("模板规则类型长度需在32个字符以内")
 		}
 		input.SheetType = &sheetType
 	}
@@ -98,6 +109,70 @@ func CharacterCardTemplateList(userID string, sheetType string) ([]*model.Charac
 		return nil, errors.New("缺少用户ID")
 	}
 	return model.CharacterCardTemplateList(userID, sheetType)
+}
+
+func CharacterCardTemplateListWithWorld(userID string, worldID string, sheetType string) ([]*CharacterCardTemplateView, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, errors.New("缺少用户ID")
+	}
+	if strings.TrimSpace(worldID) == "" {
+		items, err := model.CharacterCardTemplateList(userID, sheetType)
+		if err != nil {
+			return nil, err
+		}
+		return buildOwnerTemplateViews(items, worldID), nil
+	}
+	if !IsWorldMember(worldID, userID) && !pm.CanWithSystemRole(userID, pm.PermModAdmin) {
+		return nil, ErrWorldPermission
+	}
+
+	ownerItems, err := model.CharacterCardTemplateList(userID, sheetType)
+	if err != nil {
+		return nil, err
+	}
+	sharedItems, err := listSharedTemplatesByWorld(worldID, sheetType)
+	if err != nil {
+		return nil, err
+	}
+
+	viewMap := map[string]*CharacterCardTemplateView{}
+	result := make([]*CharacterCardTemplateView, 0, len(ownerItems)+len(sharedItems))
+	for _, item := range ownerItems {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		view := &CharacterCardTemplateView{
+			CharacterCardTemplateModel: item,
+			Access:                     "owner",
+			Readonly:                   false,
+		}
+		viewMap[item.ID] = view
+		result = append(result, view)
+	}
+	for _, item := range sharedItems {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		if existing := viewMap[item.ID]; existing != nil {
+			existing.IsSharedToCurrentWorld = true
+			existing.SharedWorldID = worldID
+			existing.SharedByUserID = item.UserID
+			existing.SharedByNickname = resolveTemplateOwnerNickname(item.UserID)
+			continue
+		}
+		view := &CharacterCardTemplateView{
+			CharacterCardTemplateModel: item,
+			Access:                     "world_shared",
+			Readonly:                   item.UserID != userID,
+			IsSharedToCurrentWorld:     true,
+			SharedWorldID:              worldID,
+			SharedByUserID:             item.UserID,
+			SharedByNickname:           resolveTemplateOwnerNickname(item.UserID),
+		}
+		viewMap[item.ID] = view
+		result = append(result, view)
+	}
+	return result, nil
 }
 
 func CharacterCardTemplateGet(userID string, templateID string) (*model.CharacterCardTemplateModel, error) {
@@ -134,7 +209,7 @@ func CharacterCardTemplateCreate(userID string, input *CharacterCardTemplateInpu
 		}
 		if input.IsSheetDefault {
 			if item.SheetType == "" {
-				return errors.New("设置规制默认模板时，sheetType 不能为空")
+				return errors.New("设置规则默认模板时，sheetType 不能为空")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).
@@ -190,7 +265,7 @@ func CharacterCardTemplateUpdate(userID string, templateID string, input *Charac
 		}
 		if input.IsSheetDefault != nil && *input.IsSheetDefault {
 			if strings.TrimSpace(nextSheetType) == "" {
-				return errors.New("设置规制默认模板时，sheetType 不能为空")
+				return errors.New("设置规则默认模板时，sheetType 不能为空")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).
@@ -224,7 +299,6 @@ func CharacterCardTemplateDelete(userID string, templateID string) error {
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.CharacterCardTemplateBindingModel{}).
-			Where("user_id = ?", userID).
 			Where("template_id = ?", template.ID).
 			Where("mode = ?", model.CharacterCardTemplateModeManaged).
 			Updates(map[string]any{
@@ -232,6 +306,10 @@ func CharacterCardTemplateDelete(userID string, templateID string) error {
 				"template_id":       "",
 				"template_snapshot": template.Content,
 			}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("template_id = ?", template.ID).
+			Delete(&model.WorldCharacterCardTemplateBindingModel{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", template.ID).Delete(&model.CharacterCardTemplateModel{}).Error
@@ -258,7 +336,7 @@ func CharacterCardTemplateSetDefault(userID string, templateID string, scope str
 			}).Error
 		case CharacterCardTemplateDefaultScopeSheet:
 			if strings.TrimSpace(template.SheetType) == "" {
-				return errors.New("当前模板缺少 sheetType，无法设为规制默认模板")
+				return errors.New("当前模板缺少 sheetType，无法设为规则默认模板")
 			}
 			if err := tx.Model(&model.CharacterCardTemplateModel{}).
 				Where("user_id = ?", userID).
@@ -344,7 +422,21 @@ func CharacterCardTemplateBindingUpsert(userID string, input *CharacterCardTempl
 			}
 			return nil, err
 		}
-		if template.UserID != userID {
+		allowed := template.UserID == userID
+		if !allowed {
+			channel, err := model.ChannelGet(input.ChannelID)
+			if err != nil {
+				return nil, err
+			}
+			if channel != nil && strings.TrimSpace(channel.WorldID) != "" {
+				shared, err := IsCharacterCardTemplateSharedToWorld(template.ID, channel.WorldID)
+				if err != nil {
+					return nil, err
+				}
+				allowed = shared
+			}
+		}
+		if !allowed {
 			return nil, errors.New("无权绑定该模板")
 		}
 		if input.SheetType == "" {
@@ -385,4 +477,67 @@ func CharacterCardTemplateBindingUpsert(userID string, input *CharacterCardTempl
 		return nil, err
 	}
 	return item, nil
+}
+
+func buildOwnerTemplateViews(items []*model.CharacterCardTemplateModel, worldID string) []*CharacterCardTemplateView {
+	result := make([]*CharacterCardTemplateView, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		isShared := false
+		if strings.TrimSpace(worldID) != "" {
+			shared, err := IsCharacterCardTemplateSharedToWorld(item.ID, worldID)
+			if err == nil {
+				isShared = shared
+			}
+		}
+		result = append(result, &CharacterCardTemplateView{
+			CharacterCardTemplateModel: item,
+			Access:                     "owner",
+			Readonly:                   false,
+			IsSharedToCurrentWorld:     isShared,
+			SharedWorldID:              worldID,
+			SharedByUserID:             item.UserID,
+			SharedByNickname:           resolveTemplateOwnerNickname(item.UserID),
+		})
+	}
+	return result
+}
+
+func listSharedTemplatesByWorld(worldID string, sheetType string) ([]*model.CharacterCardTemplateModel, error) {
+	templateIDs := []string{}
+	q := model.GetDB().Model(&model.WorldCharacterCardTemplateBindingModel{}).
+		Where("world_id = ?", strings.TrimSpace(worldID)).
+		Pluck("template_id", &templateIDs)
+	if q.Error != nil {
+		return nil, q.Error
+	}
+	if len(templateIDs) == 0 {
+		return []*model.CharacterCardTemplateModel{}, nil
+	}
+	var items []*model.CharacterCardTemplateModel
+	query := model.GetDB().Where("id IN ?", templateIDs)
+	if trimmed := strings.TrimSpace(sheetType); trimmed != "" {
+		query = query.Where("sheet_type = ?", trimmed)
+	}
+	if err := query.
+		Order("is_global_default desc").
+		Order("is_sheet_default desc").
+		Order("updated_at desc").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func resolveTemplateOwnerNickname(userID string) string {
+	user := model.UserGet(strings.TrimSpace(userID))
+	if user == nil {
+		return ""
+	}
+	if trimmed := strings.TrimSpace(user.Nickname); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(user.Username)
 }

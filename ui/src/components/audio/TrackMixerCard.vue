@@ -37,14 +37,18 @@
     <section class="track-card__body">
       <div class="track-card__transport">
         <n-button
+          class="track-card__primary-action"
           size="tiny"
-          :type="isTrackPlaying ? 'warning' : 'primary'"
+          circle
+          :class="{ 'track-card__primary-action--active': isTrackPlaying }"
           :disabled="!track.assetId || isReadOnly"
+          :aria-label="isTrackPlaying ? '暂停' : '播放'"
           @click="togglePlay"
         >
-          {{ isTrackPlaying ? '暂停' : '播放' }}
+          <template #icon><n-icon :component="isTrackPlaying ? PlayerPause : PlayerPlay" /></template>
         </n-button>
         <n-button
+          class="track-card__mode-action"
           size="tiny"
           :type="track.loopEnabled ? 'info' : 'default'"
           quaternary
@@ -73,35 +77,43 @@
       </div>
 
       <div class="track-card__progress">
-        <n-slider
-          :value="progressPercent"
-          :step="0.5"
-          :disabled="!track.assetId || isReadOnly"
-          :format-tooltip="formatProgressTooltip"
-          @update:value="handleSeek"
-        />
-        <div class="track-card__progress-meta">
-          <span>{{ formatTime(currentSeconds) }}</span>
-          <span>{{ formatTime(track.duration) }}</span>
+        <span class="track-card__section-label">播放进度</span>
+        <div class="track-card__progress-row">
+          <span class="track-card__progress-time">{{ formatTime(currentSeconds) }}</span>
+          <n-slider
+            class="track-card__progress-slider track-card__progress-slider--primary"
+            :value="progressPercent"
+            :step="0.5"
+            :disabled="!track.assetId || isReadOnly"
+            :format-tooltip="formatProgressTooltip"
+            @update:value="handleSeek"
+          />
+          <span class="track-card__progress-time">{{ formatTime(track.duration) }}</span>
         </div>
       </div>
 
-      <div class="track-card__volume">
-        <span>音量</span>
+      <div class="track-card__control track-card__control--volume">
+        <span class="track-card__control-icon" aria-hidden="true">🔉</span>
+        <span class="track-card__section-label">音量</span>
         <n-slider
+          class="track-card__control-slider track-card__volume-slider"
           :value="track.volume"
           :step="0.01"
           @update:value="setVolume"
           :min="0"
           :max="1"
           :disabled="isReadOnly"
-        ></n-slider>
+        />
+        <span class="track-card__control-icon track-card__control-icon--right" aria-hidden="true">🔊</span>
+        <span class="track-card__control-value">{{ Math.round(track.volume * 100) }}%</span>
       </div>
 
       <div class="track-card__fade">
-        <div class="track-card__fade-item">
-          <span>淡入</span>
+        <div class="track-card__control track-card__control--fade">
+          <span class="track-card__control-icon" aria-hidden="true">↘</span>
+          <span class="track-card__section-label">淡入</span>
           <n-slider
+            class="track-card__control-slider track-card__fade-slider"
             :value="track.fadeIn"
             :step="100"
             :min="0"
@@ -110,11 +122,13 @@
             :disabled="isReadOnly"
             @update:value="setFadeIn"
           />
-          <span class="track-card__fade-value">{{ (track.fadeIn / 1000).toFixed(1) }}s</span>
+          <span class="track-card__control-value">{{ (track.fadeIn / 1000).toFixed(1) }}s</span>
         </div>
-        <div class="track-card__fade-item">
-          <span>淡出</span>
+        <div class="track-card__control track-card__control--fade">
+          <span class="track-card__control-icon" aria-hidden="true">↗</span>
+          <span class="track-card__section-label">淡出</span>
           <n-slider
+            class="track-card__control-slider track-card__fade-slider"
             :value="track.fadeOut"
             :step="100"
             :min="0"
@@ -123,7 +137,7 @@
             :disabled="isReadOnly"
             @update:value="setFadeOut"
           />
-          <span class="track-card__fade-value">{{ (track.fadeOut / 1000).toFixed(1) }}s</span>
+          <span class="track-card__control-value">{{ (track.fadeOut / 1000).toFixed(1) }}s</span>
         </div>
       </div>
 
@@ -174,9 +188,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { PropType } from 'vue';
+import { PlayerPause, PlayerPlay } from '@vicons/tabler';
 import type { TrackRuntime } from '@/stores/audioStudio';
 import type { AudioAsset, PlaylistMode } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { isTrackPlaybackActive } from '@/stores/audioPlaybackState';
 
 const props = defineProps({
   track: {
@@ -208,7 +224,7 @@ const speedOptions = [
 
 const audio = useAudioStudioStore();
 const isReadOnly = computed(() => !audio.canManage);
-const isTrackPlaying = computed(() => props.track.status === 'playing');
+const isTrackPlaying = computed(() => isTrackPlaybackActive(props.track));
 const progressPercent = computed(() => Math.round(props.track.progress * 100));
 const currentSeconds = computed(() => {
   const duration = props.track.duration || 0;
@@ -330,6 +346,14 @@ function handleNext() {
 
 <style scoped lang="scss">
 .track-card {
+  --audio-control-rail: rgba(148, 163, 184, 0.2);
+  --audio-control-rail-hover: rgba(148, 163, 184, 0.28);
+  --audio-control-fill: rgba(148, 163, 184, 0.72);
+  --audio-control-fill-hover: rgba(203, 213, 225, 0.9);
+  --audio-control-handle: rgba(255, 255, 255, 0.96);
+  --audio-control-handle-border: rgba(148, 163, 184, 0.45);
+  --audio-progress-rail: rgba(51, 65, 85, 0.92);
+  --audio-progress-fill: linear-gradient(90deg, #34d399, #14b8a6);
   border: 1px solid var(--audio-card-border, var(--sc-border-mute));
   border-radius: 12px;
   padding: 1rem;
@@ -408,6 +432,42 @@ function handleNext() {
   flex-wrap: wrap;
 }
 
+.track-card__primary-action {
+  flex-shrink: 0;
+  --n-color: rgba(148, 163, 184, 0.12);
+  --n-color-hover: rgba(148, 163, 184, 0.18);
+  --n-color-pressed: rgba(148, 163, 184, 0.22);
+  --n-border: 1px solid rgba(148, 163, 184, 0.18);
+  --n-border-hover: 1px solid rgba(148, 163, 184, 0.26);
+  --n-border-pressed: 1px solid rgba(148, 163, 184, 0.32);
+  --n-text-color: rgba(226, 232, 240, 0.86);
+  --n-text-color-hover: rgba(248, 250, 252, 0.96);
+  --n-text-color-pressed: rgba(248, 250, 252, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.track-card__primary-action:hover {
+  transform: translateY(-1px);
+}
+
+.track-card__primary-action--active {
+  --n-color: rgba(20, 184, 166, 0.12);
+  --n-color-hover: rgba(20, 184, 166, 0.18);
+  --n-color-pressed: rgba(20, 184, 166, 0.22);
+  --n-border: 1px solid rgba(45, 212, 191, 0.3);
+  --n-border-hover: 1px solid rgba(94, 234, 212, 0.4);
+  --n-border-pressed: 1px solid rgba(94, 234, 212, 0.44);
+  --n-text-color: #ccfbf1;
+  --n-text-color-hover: #f0fdfa;
+  --n-text-color-pressed: #f0fdfa;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(45, 212, 191, 0.08), 0 0 16px rgba(20, 184, 166, 0.1);
+}
+
+.track-card__mode-action {
+  opacity: 0.92;
+}
+
 .track-card__speed {
   width: 96px;
   flex-shrink: 0;
@@ -416,50 +476,117 @@ function handleNext() {
 .track-card__progress {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.45rem;
 }
 
-.track-card__progress-meta {
-  display: flex;
-  justify-content: space-between;
+.track-card__progress-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.track-card__progress-time {
   font-size: 0.75rem;
+  color: var(--sc-text-secondary, #a0aec0);
+  font-variant-numeric: tabular-nums;
+}
+
+.track-card__progress-slider {
+  width: 100%;
+}
+
+.track-card__section-label {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary, #a0aec0);
+  white-space: nowrap;
+}
+
+.track-card__control {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
   color: var(--sc-text-secondary, #a0aec0);
 }
 
-.track-card__volume {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  color: var(--sc-text-secondary);
+.track-card__control-icon {
+  width: 1rem;
+  font-size: 0.88rem;
+  line-height: 1;
+  text-align: center;
+  color: rgba(148, 163, 184, 0.88);
+  flex-shrink: 0;
+}
+
+.track-card__control-icon--right {
+  color: rgba(203, 213, 225, 0.92);
+}
+
+.track-card__control-slider {
+  flex: 1;
+  min-width: 0;
+  --n-rail-height: 4px;
+  --n-rail-color: var(--audio-control-rail);
+  --n-rail-color-hover: var(--audio-control-rail-hover);
+  --n-fill-color: var(--audio-control-fill);
+  --n-fill-color-hover: var(--audio-control-fill-hover);
+  --n-handle-color: var(--audio-control-handle);
+  --n-handle-size: 12px;
+}
+
+.track-card__control-value {
+  width: 3rem;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: rgba(203, 213, 225, 0.92);
+  font-variant-numeric: tabular-nums;
 }
 
 .track-card__fade {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.55rem;
 }
 
-.track-card__fade-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--sc-text-secondary);
+.track-card__progress-slider--primary {
+  --n-rail-height: 12px;
+  --n-rail-color: var(--audio-progress-rail);
+  --n-rail-color-hover: var(--audio-progress-rail);
+  --n-fill-color: var(--audio-progress-fill);
+  --n-fill-color-hover: var(--audio-progress-fill);
+  --n-handle-size: 12px;
 }
 
-.track-card__fade-item > span:first-child {
-  width: 2rem;
-  flex-shrink: 0;
+:deep(.track-card__progress-slider--primary .n-slider-rail) {
+  height: 12px;
+  border-radius: 999px;
 }
 
-.track-card__fade-item .n-slider {
-  flex: 1;
+:deep(.track-card__progress-slider--primary .n-slider-rail__fill) {
+  border-radius: 999px;
 }
 
-.track-card__fade-value {
-  width: 3rem;
-  text-align: right;
-  flex-shrink: 0;
+:deep(.track-card__progress-slider--primary .n-slider-handles) {
+  pointer-events: none;
+}
+
+:deep(.track-card__progress-slider--primary .n-slider-handle-wrapper) {
+  opacity: 0;
+}
+
+:deep(.track-card__progress-slider--primary .n-slider-handle) {
+  display: none;
+}
+
+:deep(.track-card__control-slider .n-slider-rail) {
+  height: 4px;
+}
+
+:deep(.track-card__control-slider .n-slider-handle) {
+  background-color: var(--audio-control-handle);
+  border: 1px solid var(--audio-control-handle-border);
+  box-sizing: border-box;
 }
 
 .track-card__footer {

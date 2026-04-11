@@ -175,6 +175,8 @@ watch(
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
+  draft.worldKeywordTooltipHoverEnabled = value.worldKeywordTooltipHoverEnabled
+  draft.worldKeywordTooltipClickEnabled = value.worldKeywordTooltipClickEnabled
   draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
   draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
@@ -878,11 +880,26 @@ const handleOpenTutorialHub = () => {
             <template #checked>启用释义气泡</template>
             <template #unchecked>禁用释义气泡</template>
           </n-switch>
+          <n-switch
+            v-model:value="draft.worldKeywordTooltipHoverEnabled"
+            :disabled="!draft.worldKeywordHighlightEnabled || !draft.worldKeywordTooltipEnabled"
+          >
+            <template #checked>自动展开术语解释</template>
+            <template #unchecked>关闭自动展开</template>
+          </n-switch>
+          <n-switch
+            v-model:value="draft.worldKeywordTooltipClickEnabled"
+            :disabled="!draft.worldKeywordHighlightEnabled || !draft.worldKeywordTooltipEnabled"
+          >
+            <template #checked>点击关键词展开</template>
+            <template #unchecked>关闭点击展开</template>
+          </n-switch>
           <n-switch v-model:value="draft.worldKeywordDeduplicateEnabled" :disabled="!draft.worldKeywordHighlightEnabled">
             <template #checked>术语去重</template>
             <template #unchecked>允许重复</template>
           </n-switch>
         </div>
+        <p class="control-desc control-desc--hint">“自动展开术语解释”仅在桌面鼠标悬浮环境下生效</p>
         <div class="keyword-quick-input-row">
           <n-switch v-model:value="draft.worldKeywordQuickInputEnabled">
             <template #checked>术语快捷输入已开启</template>

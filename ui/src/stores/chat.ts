@@ -19,6 +19,7 @@ import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
+import { findChannelByIdFromTree, findFirstEnterableChannel } from './chatChannelSelection';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -76,6 +77,7 @@ const enqueueBotApi = async <T>(fn: () => Promise<T>): Promise<T> => {
     notifyBotIdle();
   }
 };
+
 const enqueueNormalApi = async <T>(fn: () => Promise<T>): Promise<T> => {
   await waitForBotIdle();
   normalApiInFlight += 1;
@@ -1267,7 +1269,7 @@ export const useChatStore = defineStore({
           targetChannel = readObserverSessionChannel(this.observerSlug, worldId);
         }
         const world = this.worldMap[worldId];
-        const fallbackChannel = world?.defaultChannelId || this.channelTreeByWorld[worldId]?.[0]?.id || this.channelTree[0]?.id || '';
+        const fallbackChannel = world?.defaultChannelId || findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
         if (!targetChannel) {
           targetChannel = fallbackChannel;
         }
@@ -2124,9 +2126,16 @@ export const useChatStore = defineStore({
         this.setCurrentWorld(worldId);
         await this.channelList(worldId, options?.force ?? true);
       }
-      const firstChannel = this.channelTree[0];
-      if (firstChannel) {
-        await this.channelSwitchTo(firstChannel.id);
+      const currentChannelId = this.curChannel?.id ? String(this.curChannel.id).trim() : '';
+      if (currentChannelId && !findChannelByIdFromTree(this.channelTree, currentChannelId)) {
+        this.clearCurrentChannelContext('switchWorld:currentChannelNotInTargetTree');
+      }
+      const world = this.worldMap[worldId];
+      const fallbackChannelId = String(
+        world?.defaultChannelId || findFirstEnterableChannel(this.channelTree)?.id || '',
+      ).trim();
+      if (fallbackChannelId) {
+        await this.channelSwitchTo(fallbackChannelId);
       }
     },
 
@@ -2196,13 +2205,12 @@ export const useChatStore = defineStore({
         ts: Date.now(),
       });
 
-      let nextChannel = this.channelTree.find(c => c.id === id) ||
-        this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
+      let nextChannel: SChannel | null = findChannelByIdFromTree(this.channelTree, id);
 
       let isFromArchive = false;
 
       if (!nextChannel) {
-        nextChannel = this.channelTreePrivate.find(c => c.id === id);
+        nextChannel = this.channelTreePrivate.find(c => c.id === id) || null;
       }
 
       // 如果本地找不到（可能是归档频道），尝试从 API 获取
@@ -3224,19 +3232,7 @@ export const useChatStore = defineStore({
     },
 
     findChannelById(channelId: string): SChannel | null {
-      const traverse = (nodes: SChannel[] = []): SChannel | null => {
-        for (const node of nodes) {
-          if (node.id === channelId) {
-            return node;
-          }
-          const found = traverse(((node as any).children || []) as SChannel[]);
-          if (found) {
-            return found;
-          }
-        }
-        return null;
-      };
-      return traverse(this.channelTree) || this.channelTreePrivate.find(item => item.id === channelId) || null;
+      return findChannelByIdFromTree(this.channelTree, channelId) || this.channelTreePrivate.find(item => item.id === channelId) || null;
     },
 
     getChannelOwnerId(channelId?: string) {
@@ -3598,20 +3594,29 @@ export const useChatStore = defineStore({
       const resp = await this.sendAPI('channel.list', { world_id: finalWorld, worldId: finalWorld }) as APIChannelListResp;
       const d = resp.data;
       const chns = d.data ?? [];
-
-      const curItem = chns.find(c => c.id === this.curChannel?.id);
-      this.curChannel = curItem || this.curChannel;
-
       const tree = this.applyChannelTree(finalWorld, chns);
+      const currentChannelId = this.curChannel?.id ? String(this.curChannel.id).trim() : '';
+      const curItem = currentChannelId ? findChannelByIdFromTree(tree as SChannel[], currentChannelId) : null;
+      const preserveDetachedChannel = currentChannelId
+        && (
+          this.temporaryArchivedChannel?.id === currentChannelId
+          || (this.curChannel as any)?.isPrivate === true
+        );
+      if (curItem) {
+        this.curChannel = curItem;
+      } else if (currentChannelId && !preserveDetachedChannel) {
+        this.clearCurrentChannelContext('channelList:currentChannelMissingInTree');
+      }
 
       if (!this.curChannel) {
         // 这是为了正确标记人数，有点屎但实现了
         const lastChannel = this._lastChannel;
-        const c = this.channelTree.find(c => c.id === lastChannel);
+        const c = findChannelByIdFromTree(tree as SChannel[], lastChannel);
         if (c) {
           this.channelSwitchTo(c.id);
         } else {
-          if (tree[0]) this.channelSwitchTo(tree[0].id);
+          const firstChannel = findFirstEnterableChannel(tree as SChannel[]);
+          if (firstChannel) this.channelSwitchTo(firstChannel.id);
         }
       }
 
@@ -4955,9 +4960,19 @@ export const useChatStore = defineStore({
         this.curChannel = null;
       }
       await this.channelList(this.currentWorldId, true);
-      if (wasCurrent && this.channelTree.length) {
-        await this.channelSwitchTo(this.channelTree[0].id);
+      const fallbackChannelId = findFirstEnterableChannel(this.channelTree)?.id || '';
+      if (wasCurrent && fallbackChannelId) {
+        await this.channelSwitchTo(fallbackChannelId);
       }
+    },
+
+    clearCurrentChannelContext(reason = '') {
+      this.curChannel = null;
+      this.curMember = null;
+      this.curChannelUsers = [];
+      this.whisperTargets = [];
+      this.firstUnreadInfo = null;
+      this.temporaryArchivedChannel = null;
     },
 
     // 频道归档

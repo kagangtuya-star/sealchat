@@ -316,7 +316,55 @@ func ChannelIdentityOptionListActive(channelID string) ([]*ChannelIdentityOption
 	if err != nil {
 		return nil, err
 	}
-	return append(options, extras...), nil
+	options = append(options, extras...)
+	sortChannelIdentityOptionsByMode(channelID, options)
+	return options, nil
+}
+
+func sortChannelIdentityOptionsByMode(channelID string, options []*ChannelIdentityOption) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" || len(options) <= 1 {
+		return
+	}
+
+	modeConfigs, err := ChannelIdentityModeConfigListByChannelTx(db, channelID)
+	if err != nil || len(modeConfigs) == 0 {
+		return
+	}
+
+	icIDs := make(map[string]struct{}, len(modeConfigs))
+	oocIDs := make(map[string]struct{}, len(modeConfigs))
+	for _, config := range modeConfigs {
+		if id := strings.TrimSpace(config.ICIdentityID); id != "" {
+			icIDs[id] = struct{}{}
+		}
+		if id := strings.TrimSpace(config.OOCIdentityID); id != "" {
+			oocIDs[id] = struct{}{}
+		}
+	}
+
+	weightOf := func(identityID string) int {
+		identityID = strings.TrimSpace(identityID)
+		if identityID == "" {
+			return 2
+		}
+		if _, ok := icIDs[identityID]; ok {
+			return 0
+		}
+		if _, ok := oocIDs[identityID]; ok {
+			return 1
+		}
+		return 2
+	}
+
+	sort.SliceStable(options, func(i, j int) bool {
+		leftWeight := weightOf(options[i].ID)
+		rightWeight := weightOf(options[j].ID)
+		if leftWeight != rightWeight {
+			return leftWeight < rightWeight
+		}
+		return false
+	})
 }
 
 func fetchChannelIdentityIDsFromMessages(channelID string) (map[string]struct{}, error) {
