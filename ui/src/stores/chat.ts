@@ -1854,7 +1854,14 @@ export const useChatStore = defineStore({
       return data;
     },
 
-    async createWorld(payload: { name: string; description?: string; visibility?: string; avatar?: string }) {
+    async createWorld(payload: {
+      name: string;
+      description?: string;
+      visibility?: string;
+      avatar?: string;
+      channelDefaultDiceMode?: 'builtin' | 'bot';
+      channelDefaultBotId?: string;
+    }) {
       const resp = await api.post('/api/v1/worlds', payload);
       const worldId = resp.data.world?.id;
       if (worldId) {

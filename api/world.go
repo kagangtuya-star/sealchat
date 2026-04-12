@@ -144,25 +144,37 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
 	}
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Visibility  string `json:"visibility"`
-		Avatar      string `json:"avatar"`
+		Name                   string `json:"name"`
+		Description            string `json:"description"`
+		Visibility             string `json:"visibility"`
+		Avatar                 string `json:"avatar"`
+		ChannelDefaultDiceMode string `json:"channelDefaultDiceMode"`
+		ChannelDefaultBotID    string `json:"channelDefaultBotId"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
 	}
 	world, channel, err := service.WorldCreate(user.ID, service.WorldCreateParams{
-		Name:        body.Name,
-		Description: body.Description,
-		Visibility:  body.Visibility,
-		Avatar:      body.Avatar,
+		Name:                   body.Name,
+		Description:            body.Description,
+		Visibility:             body.Visibility,
+		Avatar:                 body.Avatar,
+		ChannelDefaultDiceMode: body.ChannelDefaultDiceMode,
+		ChannelDefaultBotID:    body.ChannelDefaultBotID,
 	})
 	if err != nil {
-		if errors.Is(err, service.ErrWorldCreateForbidden) {
+		switch {
+		case errors.Is(err, service.ErrWorldCreateForbidden):
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": err.Error()})
+		case errors.Is(err, service.ErrWorldDefaultDiceMode):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认掷骰方式无效"})
+		case errors.Is(err, service.ErrWorldDefaultDiceBotEmpty):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "选择 BOT 掷骰时必须指定默认 BOT"})
+		case errors.Is(err, service.ErrWorldDefaultDiceBotInvalid):
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "默认 BOT 不存在或不是机器人"})
+		default:
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 	}
 	return c.JSON(fiber.Map{
 		"world":          world,
@@ -211,17 +223,17 @@ func WorldDetail(c *fiber.Ctx) error {
 	manageIdentityNoticeAcked := member.ManageIdentityNoticeAckedAt != nil
 
 	return c.JSON(fiber.Map{
-		"world":                               world,
-		"isMember":                            member.ID != "",
-		"memberRole":                          member.Role,
-		"memberCount":                         memberCount,
-		"allowAdminEditMessages":              world.AllowAdminEditMessages,
+		"world":                                 world,
+		"isMember":                              member.ID != "",
+		"memberRole":                            member.Role,
+		"memberCount":                           memberCount,
+		"allowAdminEditMessages":                world.AllowAdminEditMessages,
 		"allowManageOtherUserChannelIdentities": world.AllowManageOtherUserChannelIdentities,
-		"allowMemberEditKeywords":             world.AllowMemberEditKeywords,
-		"strictWhisperPrivacy":                world.StrictWhisperPrivacy,
-		"ownerNickname":                       ownerNickname,
-		"editNoticeAcked":                     editNoticeAcked,
-		"manageIdentityNoticeAcked":           manageIdentityNoticeAcked,
+		"allowMemberEditKeywords":               world.AllowMemberEditKeywords,
+		"strictWhisperPrivacy":                  world.StrictWhisperPrivacy,
+		"ownerNickname":                         ownerNickname,
+		"editNoticeAcked":                       editNoticeAcked,
+		"manageIdentityNoticeAcked":             manageIdentityNoticeAcked,
 	})
 }
 

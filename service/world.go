@@ -49,10 +49,12 @@ func worldObserverSlugValue(slug *string) string {
 }
 
 type WorldCreateParams struct {
-	Name        string
-	Description string
-	Visibility  string
-	Avatar      string
+	Name                   string
+	Description            string
+	Visibility             string
+	Avatar                 string
+	ChannelDefaultDiceMode string
+	ChannelDefaultBotID    string
 }
 
 type WorldUpdateParams struct {
@@ -484,6 +486,17 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 	if visibility == "" {
 		visibility = model.WorldVisibilityPublic
 	}
+	defaultDiceMode, err := normalizeWorldChannelDefaultDiceMode(params.ChannelDefaultDiceMode)
+	if err != nil {
+		return nil, nil, err
+	}
+	defaultBotID, err := validateWorldDefaultBotID(params.ChannelDefaultBotID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if defaultDiceMode == model.WorldChannelDefaultDiceModeBot && defaultBotID == "" {
+		return nil, nil, ErrWorldDefaultDiceBotEmpty
+	}
 	world := &model.WorldModel{
 		Name:                    name,
 		Description:             description,
@@ -493,6 +506,8 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 		EnforceMembership:       false,
 		AllowMemberEditKeywords: false,
 		StrictWhisperPrivacy:    true,
+		ChannelDefaultDiceMode:  defaultDiceMode,
+		ChannelDefaultBotID:     defaultBotID,
 		Status:                  "active",
 	}
 	db := model.GetDB()
@@ -517,6 +532,12 @@ func WorldCreate(ownerID string, params WorldCreateParams) (*model.WorldModel, *
 	channelName := fmt.Sprintf("%s大厅", name)
 	defaultChannel := ChannelNew(utils.NewID(), "public", channelName, world.ID, ownerID, "")
 	if defaultChannel != nil {
+		if defaultDiceMode == model.WorldChannelDefaultDiceModeBot {
+			if err := ApplyWorldChannelDefaultDiceConfig(defaultChannel.ID, defaultDiceMode, defaultBotID); err == nil {
+				defaultChannel.BuiltInDiceEnabled = false
+				defaultChannel.BotFeatureEnabled = true
+			}
+		}
 		_ = db.Model(&model.WorldModel{}).
 			Where("id = ?", world.ID).
 			Update("default_channel_id", defaultChannel.ID).Error

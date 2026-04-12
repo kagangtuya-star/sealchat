@@ -12,6 +12,7 @@ import Avatar from '@/components/avatar.vue';
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
 import WorldLobbyAnnouncementTicker from '@/components/announcement/WorldLobbyAnnouncementTicker.vue';
+import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
 import type { AnnouncementItem } from '@/models/announcement';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
@@ -114,11 +115,23 @@ const explorePagination = ref<PaginationState>({
   total: 0,
 });
 
-const createForm = ref({
+const botOptionsLoading = ref(false);
+const botList = ref<any[]>([]);
+
+const createInitialWorldForm = () => ({
   name: '',
   description: '',
   visibility: 'public',
+  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot',
+  channelDefaultBotId: '',
 });
+
+const createForm = ref(createInitialWorldForm());
+
+const botSelectOptions = computed(() => botList.value.map((item) => ({
+  label: item.nick || item.username || item.name || 'Bot',
+  value: item.id,
+})));
 
 const ensureInputStatsLoaded = async () => {
   if (inputStatsComponent.value || inputStatsLoading.value) {
@@ -192,6 +205,18 @@ const formatWorldGridDescription = (description?: string) => {
 
 const updateCreateDescription = (value: string) => {
   createForm.value.description = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_MAX_WIDTH_UNITS);
+};
+
+const loadBotOptions = async () => {
+  botOptionsLoading.value = true;
+  try {
+    const resp = await chat.botList();
+    botList.value = resp?.items || [];
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '加载 BOT 列表失败');
+  } finally {
+    botOptionsLoading.value = false;
+  }
 };
 
 const getDescriptionCountLabel = (value?: string) => {
@@ -704,16 +729,16 @@ const confirmLeaveWorld = (item: any) => {
 };
 
 const resetCreateForm = () => {
-  createForm.value = {
-    name: '',
-    description: '',
-    visibility: 'public',
-  };
+  createForm.value = createInitialWorldForm();
 };
 
 const handleCreateWorld = async () => {
   if (!createForm.value.name.trim()) {
     message.error('请输入世界名称');
+    return;
+  }
+  if (createForm.value.channelDefaultDiceMode === 'bot' && !createForm.value.channelDefaultBotId) {
+    message.error('选择 BOT 掷骰时必须指定默认 BOT');
     return;
   }
   creating.value = true;
@@ -722,6 +747,8 @@ const handleCreateWorld = async () => {
       name: createForm.value.name,
       description: createForm.value.description,
       visibility: createForm.value.visibility,
+      channelDefaultDiceMode: createForm.value.channelDefaultDiceMode,
+      channelDefaultBotId: createForm.value.channelDefaultBotId,
     });
     message.success('创建世界成功');
     createVisible.value = false;
@@ -735,6 +762,12 @@ const handleCreateWorld = async () => {
     creating.value = false;
   }
 };
+
+watch(createVisible, async (visible) => {
+  if (visible) {
+    await loadBotOptions();
+  }
+});
 
 const switchLobbyMode = async () => {
   if (lobbyMode.value === 'mine') {
@@ -1107,6 +1140,14 @@ const handleExplorePageSizeChange = (pageSize: number) => {
               { label: '私有', value: 'private' },
               { label: '不公开访问链接', value: 'unlisted' },
             ]"
+          />
+        </n-form-item>
+        <n-form-item label="掷骰默认">
+          <WorldDiceDefaultsFields
+            v-model:mode="createForm.channelDefaultDiceMode"
+            v-model:bot-id="createForm.channelDefaultBotId"
+            :bot-select-options="botSelectOptions"
+            :bot-options-loading="botOptionsLoading"
           />
         </n-form-item>
       </n-form>
