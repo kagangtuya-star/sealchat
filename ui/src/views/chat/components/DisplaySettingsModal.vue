@@ -56,10 +56,10 @@ const transferMenuOptions = [
   { label: '导入 JSON / ZIP', key: 'import' },
 ]
 const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
-  { label: '继承平台默认', value: 'inherit' },
-  { label: '指定平台主题', value: 'platform' },
-  { label: '使用个人主题', value: 'personal' },
-  { label: '关闭覆盖', value: 'none' },
+  { label: '平台预设主题', value: 'inherit' },
+  { label: '选择平台主题', value: 'platform' },
+  { label: '选择个人主题', value: 'personal' },
+  { label: '关闭额外主题', value: 'none' },
 ]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
@@ -412,12 +412,6 @@ const handleOpenTutorialHub = () => {
   emit('update:visible', false)
 }
 
-const platformThemeOptions = computed(() =>
-  display.platformThemes.map((theme) => ({
-    label: display.defaultPlatformThemeId === theme.id ? `${theme.name}（默认）` : theme.name,
-    value: theme.id,
-  })),
-)
 const resolvedThemeSelection = computed(() => display.getResolvedThemeSelection())
 const resolvedThemeLabel = computed(() => {
   const resolvedTheme = resolvedThemeSelection.value.theme
@@ -437,7 +431,7 @@ const resolvedThemeLabel = computed(() => {
   }
   return `当前使用个人主题：${resolvedTheme.name}`
 })
-const activePersonalThemeLabel = computed(() => display.getActiveCustomTheme()?.name || '')
+const themeManagerMetaLabel = computed(() => `平台主题 ${display.platformThemes.length} · 个人主题 ${display.settings.customThemes.length}`)
 const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   if (mode === 'platform' && display.platformThemes.length === 0) {
     message.warning('平台暂无可选主题')
@@ -449,13 +443,6 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
     return
   }
   display.setThemeSelectionMode(mode)
-}
-const handlePlatformThemeChange = (themeId: string | null) => {
-  if (!themeId) {
-    display.setThemeSelectionMode('inherit')
-    return
-  }
-  display.setActivePlatformTheme(themeId)
 }
 </script>
 
@@ -499,47 +486,32 @@ const handlePlatformThemeChange = (themeId: string | null) => {
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">平台主题</p>
-            <p class="section-desc">继承平台默认主题，或切换到平台共享主题</p>
+            <p class="section-title">主题管理</p>
+            <p class="section-desc">管理平台与个人主题</p>
           </div>
         </header>
-        <n-radio-group
-          :value="display.settings.themeSelectionMode"
-          size="small"
-          class="platform-theme-mode-group"
-          @update:value="handleThemeSelectionModeUpdate"
-        >
-          <n-radio-button
+        <div class="theme-management-mode-grid">
+          <n-button
             v-for="option in themeSelectionModeOptions"
             :key="option.value"
-            :value="option.value"
+            size="small"
+            block
+            class="theme-mode-button"
+            :type="display.settings.themeSelectionMode === option.value ? 'primary' : 'default'"
+            :secondary="display.settings.themeSelectionMode !== option.value"
+            :aria-pressed="display.settings.themeSelectionMode === option.value"
+            @click="handleThemeSelectionModeUpdate(option.value)"
           >
-            {{ option.label }}
-          </n-radio-button>
-        </n-radio-group>
-        <div class="platform-theme-row">
-          <n-select
-            :value="display.settings.activePlatformThemeId"
-            :options="platformThemeOptions"
-            placeholder="选择平台主题"
-            clearable
-            :disabled="display.settings.themeSelectionMode !== 'platform' || platformThemeOptions.length === 0"
-            @update:value="handlePlatformThemeChange"
-          />
-          <span class="active-theme-name">{{ resolvedThemeLabel }}</span>
+            <span class="theme-mode-button__label">{{ option.label }}</span>
+          </n-button>
         </div>
-      </section>
-
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">个人主题</p>
-            <p class="section-desc">创建、编辑和管理你的本地主题库</p>
+        <div class="theme-management-row">
+          <div class="theme-management-summary">
+            <span class="active-theme-name">{{ resolvedThemeLabel }}</span>
+            <span class="theme-management-meta">{{ themeManagerMetaLabel }}</span>
           </div>
-        </header>
-        <div class="custom-theme-row">
           <n-button secondary size="small" @click="customThemePanelVisible = true">
-            管理个人主题
+            打开主题管理
           </n-button>
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -571,14 +543,8 @@ const handlePlatformThemeChange = (themeId: string | null) => {
                 </template>
               </n-button>
             </template>
-            打开个人主题编辑器
+            打开主题管理抽屉
           </n-tooltip>
-          <span v-if="activePersonalThemeLabel" class="active-theme-name">
-            当前个人主题：{{ activePersonalThemeLabel }}
-          </span>
-          <span v-else class="active-theme-name">
-            暂无个人主题
-          </span>
         </div>
       </section>
 
@@ -1602,26 +1568,40 @@ const handlePlatformThemeChange = (themeId: string | null) => {
   opacity: 0.5;
 }
 
-.custom-theme-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.platform-theme-row {
+.theme-management-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
 }
 
-.platform-theme-row :deep(.n-select) {
-  min-width: min(320px, 100%);
-  flex: 1 1 280px;
+.theme-management-mode-grid {
+  margin-bottom: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
 }
 
-.platform-theme-mode-group {
-  margin-bottom: 0.75rem;
+.theme-mode-button {
+  min-height: 40px;
+}
+
+.theme-mode-button__label {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.theme-management-summary {
+  display: flex;
+  flex: 1 1 320px;
+  min-width: min(320px, 100%);
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .avatar-display-row {
@@ -1645,6 +1625,11 @@ const handlePlatformThemeChange = (themeId: string | null) => {
   border-radius: 4px;
 }
 
+.theme-management-meta {
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+}
+
 .display-settings__footer {
   margin-top: 0.5rem;
   width: 100%;
@@ -1659,8 +1644,7 @@ const handlePlatformThemeChange = (themeId: string | null) => {
     flex-direction: column;
   }
 
-  .custom-theme-row,
-  .platform-theme-row,
+  .theme-management-row,
   .avatar-display-row {
     align-items: flex-start;
     flex-direction: column;
