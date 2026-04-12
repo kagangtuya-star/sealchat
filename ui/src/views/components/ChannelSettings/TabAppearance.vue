@@ -436,7 +436,7 @@ onUnmounted(() => {
       <h4 class="section-title">常规设置</h4>
       <div class="settings-grid">
         <div class="setting-row">
-          <span class="setting-label">显示模式</span>
+          <span class="setting-label">常规设置</span>
           <NRadioGroup v-model:value="settings.mode" size="small">
             <NRadio value="cover">铺满</NRadio>
             <NRadio value="contain">适应</NRadio>

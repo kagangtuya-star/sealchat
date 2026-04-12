@@ -754,7 +754,7 @@ const loadSettings = (): DisplaySettings => {
       showOthersIdentityRemark: coerceBoolean((parsed as any)?.showOthersIdentityRemark ?? true),
     }
   } catch (error) {
-    console.warn('加载显示模式设置失败，使用默认值', error)
+    console.warn('加载常规设置设置失败，使用默认值', error)
     return defaultSettings()
   }
 }
@@ -1283,7 +1283,7 @@ export const useDisplayStore = defineStore('display', {
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings))
       } catch (error) {
-        console.warn('显示模式设置写入失败', error)
+        console.warn('常规设置设置写入失败', error)
       }
     },
     syncPlatformThemeManagement(payload?: { platformThemes?: PlatformTheme[]; defaultPlatformThemeId?: string | null } | null) {

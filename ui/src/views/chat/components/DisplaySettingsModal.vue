@@ -451,7 +451,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
     class="display-settings-modal"
     preset="card"
     :show="props.visible"
-    title="显示模式"
+    title="常规设置"
     :style="{ width: 'min(880px, 96vw)' }"
     @update:show="emit('update:visible', $event)"
   >

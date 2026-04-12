@@ -530,7 +530,7 @@ defineExpose<AdminThemeStyleExpose>({
           </n-form-item>
 
           <template v-if="loginBgAttachmentId">
-            <n-form-item label="显示模式">
+            <n-form-item label="常规设置">
               <n-select v-model:value="loginBgMode" :options="loginBgModeOptions" class="settings-input-inline" />
             </n-form-item>
             <n-form-item label="透明度">
