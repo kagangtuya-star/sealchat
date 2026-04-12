@@ -248,6 +248,7 @@ type AppConfig struct {
 	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
 	AuthSession               AuthSessionConfig       `json:"authSession" yaml:"authSession"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
+	ThemeManagement           ThemeManagementConfig   `json:"themeManagement" yaml:"themeManagement"`
 }
 
 type ExportConfig struct {
@@ -419,6 +420,10 @@ func ReadConfig() *AppConfig {
 			PanelBorderOpacity:  18,
 			PanelShadowStrength: 22,
 		},
+		ThemeManagement: ThemeManagementConfig{
+			PlatformThemes:         []PlatformThemeConfig{},
+			DefaultPlatformThemeID: "",
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -491,6 +496,7 @@ func ReadConfig() *AppConfig {
 	applyUpdateCheckDefaults(&config.UpdateCheck)
 	applyBackupDefaults(&config.Backup)
 	applyAuthSessionDefaults(&config.AuthSession)
+	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 
 	k.Print()
 	currentConfig = &config
@@ -964,6 +970,9 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("loginBackground.panelContrast", config.LoginBackground.PanelContrast)
 		_ = k.Set("loginBackground.panelBorderOpacity", config.LoginBackground.PanelBorderOpacity)
 		_ = k.Set("loginBackground.panelShadowStrength", config.LoginBackground.PanelShadowStrength)
+		config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+		_ = k.Set("themeManagement.platformThemes", config.ThemeManagement.PlatformThemes)
+		_ = k.Set("themeManagement.defaultPlatformThemeId", config.ThemeManagement.DefaultPlatformThemeID)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

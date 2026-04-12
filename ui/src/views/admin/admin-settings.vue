@@ -3,26 +3,37 @@ import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
 import AdminSettingsAudio from './admin-settings-audio.vue'
 import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vue'
+import AdminSettingsThemeStyle from './admin-settings-theme-style.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'bot' | 'user' | 'external-glossary' | 'audio'
+type AdminTab = 'basic' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style'
 
-type AdminSettingsBaseExpose = {
+type AdminSettingsTabExpose = {
   save: () => Promise<void>
   isModified: () => boolean
 }
 
 const emit = defineEmits(['close']);
 const activeTab = ref<AdminTab>('basic');
-const basicSettingsRef = ref<AdminSettingsBaseExpose | null>(null);
+const basicSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const audioDrawerVisible = ref(false);
 const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
-const showSaveAction = computed(() => activeTab.value === 'basic');
-const basicSettingsModified = computed(() => {
+const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
+  if (activeTab.value === 'basic') {
+    return basicSettingsRef.value;
+  }
+  if (activeTab.value === 'theme-style') {
+    return themeStyleSettingsRef.value;
+  }
+  return null;
+});
+const showSaveAction = computed(() => !!currentSettingsRef.value);
+const currentTabModified = computed(() => {
   if (!showSaveAction.value) return false;
-  return basicSettingsRef.value?.isModified() ?? false;
+  return currentSettingsRef.value?.isModified() ?? false;
 });
 
 watch(activeTab, (value, previous) => {
@@ -42,8 +53,8 @@ const closeAudioDrawer = () => {
   audioDrawerVisible.value = false;
 }
 
-const saveBasicSettings = async () => {
-  await basicSettingsRef.value?.save();
+const saveCurrentTab = async () => {
+  await currentSettingsRef.value?.save();
 }
 </script>
 
@@ -56,8 +67,8 @@ const saveBasicSettings = async () => {
         <n-button
           v-if="showSaveAction"
           type="primary"
-          :disabled="!basicSettingsModified"
-          @click="saveBasicSettings"
+          :disabled="!currentTabModified"
+          @click="saveCurrentTab"
         >
           保存
         </n-button>
@@ -75,6 +86,9 @@ const saveBasicSettings = async () => {
       </n-tab-pane>
       <n-tab-pane name="external-glossary" tab="外挂世界术语">
         <admin-settings-external-glossary />
+      </n-tab-pane>
+      <n-tab-pane name="theme-style" tab="主题与样式管理">
+        <admin-settings-theme-style ref="themeStyleSettingsRef" />
       </n-tab-pane>
       <n-tab-pane name="audio" tab="音频素材管理" />
     </n-tabs>

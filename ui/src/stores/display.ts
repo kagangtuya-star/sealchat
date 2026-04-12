@@ -3,10 +3,21 @@ import { useChatStore } from './chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamilyName } from '@/services/font/fontUtils'
 import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
+import {
+  migrateLegacyThemeSelection,
+  resolveEffectiveThemeSelection,
+} from '@/services/theme/themeSelection'
+import type {
+  CustomTheme,
+  CustomThemeColors,
+  PlatformTheme,
+  ThemeSelectionMode,
+} from '@/services/theme/themeTypes'
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
+export type { CustomTheme, CustomThemeColors, PlatformTheme, ThemeSelectionMode } from '@/services/theme/themeTypes'
 
 export interface FavoriteHotkey {
   combo: string
@@ -34,44 +45,6 @@ export type ToolbarHotkeyKey =
   | 'diceTray'
 
 export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSeconds'
-
-// 自定义主题颜色配置
-export interface CustomThemeColors {
-  // 背景色
-  bgSurface?: string        // 主背景
-  bgElevated?: string       // 卡片/弹窗背景
-  bgInput?: string          // 输入框背景
-  bgHeader?: string         // 顶栏背景
-  // 文字色
-  textPrimary?: string      // 主文字
-  textSecondary?: string    // 次要文字
-  // 聊天区域
-  chatIcBg?: string         // 场内消息背景
-  chatOocBg?: string        // 场外消息背景
-  chatStageBg?: string      // 聊天舞台背景
-  chatPreviewBg?: string    // 预览区背景
-  chatPreviewDot?: string   // 预览区圆点
-  // 边框
-  borderMute?: string       // 淡边框
-  borderStrong?: string     // 强边框
-  // 强调色
-  primaryColor?: string     // 主题强调色
-  primaryColorHover?: string
-  // 术语高亮
-  keywordBg?: string        // 术语高亮背景
-  keywordBorder?: string    // 术语高亮下划线
-  inlineCodeBg?: string     // 行内代码背景
-  inlineCodeFg?: string     // 行内代码文字
-  inlineCodeBorder?: string // 行内代码边框
-}
-
-export interface CustomTheme {
-  id: string
-  name: string
-  colors: CustomThemeColors
-  createdAt: number
-  updatedAt: number
-}
 
 export interface DisplaySettings {
   layout: DisplayLayout
@@ -125,6 +98,8 @@ export interface DisplaySettings {
   showDragIndicator: boolean  // 拖拽时显示蓝色指示线
   mobileMessageDragLongPressEnabled: boolean  // 移动端长按左侧拖动控件后才开始拖动消息
   highlightNewlySentMessage: boolean  // 新到达消息短暂弱高亮（兼容旧键名）
+  themeSelectionMode: ThemeSelectionMode
+  activePlatformThemeId: string | null
   // 自定义主题
   customThemeEnabled: boolean
   customThemes: CustomTheme[]
@@ -483,6 +458,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showDragIndicator: false,  // 默认隐藏拖拽指示线
   mobileMessageDragLongPressEnabled: false,
   highlightNewlySentMessage: true,
+  themeSelectionMode: 'inherit',
+  activePlatformThemeId: null,
   customThemeEnabled: false,
   customThemes: [],
   activeCustomThemeId: null,
@@ -537,7 +514,8 @@ const normalizeCustomThemeColors = (value: any): CustomThemeColors => {
     'chatIcBg', 'chatOocBg', 'chatStageBg', 'chatPreviewBg', 'chatPreviewDot',
     'borderMute', 'borderStrong',
     'primaryColor', 'primaryColorHover',
-    'keywordBg', 'keywordBorder'
+    'keywordBg', 'keywordBorder',
+    'inlineCodeBg', 'inlineCodeFg', 'inlineCodeBorder',
   ]
   colorKeys.forEach(key => {
     if (typeof value[key] === 'string' && value[key].trim()) {
@@ -574,6 +552,33 @@ const normalizeCustomThemes = (value: any): CustomTheme[] => {
   }
   return result
 }
+
+const normalizeThemeSelectionMode = (value: unknown): ThemeSelectionMode => {
+  if (value === 'platform' || value === 'personal' || value === 'none') {
+    return value
+  }
+  return 'inherit'
+}
+
+const normalizePlatformTheme = (value: any): PlatformTheme | null => {
+  const normalized = normalizeCustomTheme(value)
+  if (!normalized) return null
+  return normalized
+}
+
+const normalizePlatformThemes = (value: any): PlatformTheme[] => {
+  if (!Array.isArray(value)) return []
+  const result: PlatformTheme[] = []
+  const seenIds = new Set<string>()
+  for (const item of value) {
+    const normalized = normalizePlatformTheme(item)
+    if (normalized && !seenIds.has(normalized.id)) {
+      result.push(normalized)
+      seenIds.add(normalized.id)
+    }
+  }
+  return result
+}
 const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
     return defaultSettings()
@@ -601,6 +606,17 @@ const loadSettings = (): DisplaySettings => {
         favoriteChannelIdsByWorld[WORLD_FALLBACK_KEY] = legacyIds.slice(0, FAVORITE_CHANNEL_LIMIT)
       }
     }
+    const themeSelectionMode = normalizeThemeSelectionMode((parsed as any)?.themeSelectionMode)
+    const activePlatformThemeId = typeof (parsed as any)?.activePlatformThemeId === 'string'
+      ? (parsed as any).activePlatformThemeId.trim() || null
+      : null
+    const migratedSelection = migrateLegacyThemeSelection({
+      customThemeEnabled: (parsed as any)?.customThemeEnabled,
+      activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string'
+        ? (parsed as any).activeCustomThemeId
+        : null,
+    })
+
     return {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
@@ -713,6 +729,14 @@ const loadSettings = (): DisplaySettings => {
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
       mobileMessageDragLongPressEnabled: coerceBoolean((parsed as any)?.mobileMessageDragLongPressEnabled ?? false),
       highlightNewlySentMessage: coerceBoolean((parsed as any)?.highlightNewlySentMessage ?? true),
+      themeSelectionMode:
+        Object.prototype.hasOwnProperty.call(parsed as any, 'themeSelectionMode')
+          ? themeSelectionMode
+          : migratedSelection.themeSelectionMode,
+      activePlatformThemeId:
+        Object.prototype.hasOwnProperty.call(parsed as any, 'activePlatformThemeId')
+          ? activePlatformThemeId
+          : migratedSelection.activePlatformThemeId,
       customThemeEnabled: coerceBoolean((parsed as any)?.customThemeEnabled ?? false),
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
@@ -960,6 +984,16 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'highlightNewlySentMessage')
       ? coerceBoolean((patch as any).highlightNewlySentMessage)
       : base.highlightNewlySentMessage,
+  themeSelectionMode:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'themeSelectionMode')
+      ? normalizeThemeSelectionMode((patch as any).themeSelectionMode)
+      : base.themeSelectionMode,
+  activePlatformThemeId:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'activePlatformThemeId')
+      ? (typeof (patch as any).activePlatformThemeId === 'string'
+          ? ((patch as any).activePlatformThemeId.trim() || null)
+          : null)
+      : base.activePlatformThemeId,
   customThemeEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'customThemeEnabled')
       ? coerceBoolean((patch as any).customThemeEnabled)
@@ -1019,6 +1053,8 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
 export const useDisplayStore = defineStore('display', {
   state: () => ({
     settings: loadSettings(),
+    platformThemes: [] as PlatformTheme[],
+    defaultPlatformThemeId: '',
     customThemePreviewEnabled: false,
     customThemePreviewColors: {} as CustomThemeColors,
   }),
@@ -1250,6 +1286,38 @@ export const useDisplayStore = defineStore('display', {
         console.warn('显示模式设置写入失败', error)
       }
     },
+    syncPlatformThemeManagement(payload?: { platformThemes?: PlatformTheme[]; defaultPlatformThemeId?: string | null } | null) {
+      const normalizedThemes = normalizePlatformThemes(payload?.platformThemes)
+      const normalizedDefaultId = typeof payload?.defaultPlatformThemeId === 'string'
+        ? payload.defaultPlatformThemeId.trim()
+        : ''
+      this.platformThemes = normalizedThemes
+      this.defaultPlatformThemeId = normalizedThemes.some((item) => item.id === normalizedDefaultId)
+        ? normalizedDefaultId
+        : ''
+
+      if (
+        this.settings.themeSelectionMode === 'platform'
+        && this.settings.activePlatformThemeId
+        && !this.platformThemes.some((item) => item.id === this.settings.activePlatformThemeId)
+      ) {
+        this.settings.themeSelectionMode = 'inherit'
+        this.settings.activePlatformThemeId = null
+        this.persist()
+      }
+
+      this.applyTheme()
+    },
+    getResolvedThemeSelection(target?: DisplaySettings) {
+      return resolveEffectiveThemeSelection({
+        selectionMode: (target || this.settings).themeSelectionMode,
+        activePlatformThemeId: (target || this.settings).activePlatformThemeId,
+        activePersonalThemeId: (target || this.settings).activeCustomThemeId,
+        platformThemes: this.platformThemes,
+        defaultPlatformThemeId: this.defaultPlatformThemeId,
+        personalThemes: (target || this.settings).customThemes,
+      })
+    },
     applyTheme(target?: DisplaySettings) {
       if (typeof document === 'undefined') return
       const effective = target || this.settings
@@ -1301,11 +1369,8 @@ export const useDisplayStore = defineStore('display', {
       // Clear previous custom colors first
       customColorVars.forEach(v => removeVar(v))
 
-      const activeThemeColors =
-        effective.customThemeEnabled && effective.activeCustomThemeId
-          ? effective.customThemes.find(t => t.id === effective.activeCustomThemeId)?.colors
-          : null
-
+      const resolvedSelection = this.getResolvedThemeSelection(effective)
+      const activeThemeColors = resolvedSelection.theme?.colors || null
       const previewColors = this.customThemePreviewEnabled ? this.customThemePreviewColors : null
       const sourceColors = previewColors || activeThemeColors
 
@@ -1372,8 +1437,31 @@ export const useDisplayStore = defineStore('display', {
     },
     // Custom theme management
     getActiveCustomTheme(): CustomTheme | null {
-      if (!this.settings.customThemeEnabled || !this.settings.activeCustomThemeId) return null
+      if (!this.settings.activeCustomThemeId) return null
       return this.settings.customThemes.find(t => t.id === this.settings.activeCustomThemeId) || null
+    },
+    setThemeSelectionMode(mode: ThemeSelectionMode) {
+      this.settings.themeSelectionMode = mode
+      if (mode === 'platform' && !this.settings.activePlatformThemeId) {
+        this.settings.activePlatformThemeId = this.defaultPlatformThemeId || this.platformThemes[0]?.id || null
+      }
+      if (mode !== 'platform') {
+        this.settings.activePlatformThemeId = mode === 'inherit' ? null : this.settings.activePlatformThemeId
+      }
+      if (mode === 'personal') {
+        this.settings.customThemeEnabled = true
+      }
+      if (mode === 'none') {
+        this.settings.activePlatformThemeId = null
+      }
+      this.persist()
+      this.applyTheme()
+    },
+    setActivePlatformTheme(id: string | null) {
+      this.settings.activePlatformThemeId = id
+      this.settings.themeSelectionMode = id ? 'platform' : 'inherit'
+      this.persist()
+      this.applyTheme()
     },
     saveCustomTheme(theme: CustomTheme) {
       const normalized = normalizeCustomTheme(theme)
@@ -1391,6 +1479,7 @@ export const useDisplayStore = defineStore('display', {
         normalized.updatedAt = Date.now()
         this.settings.customThemes = [...this.settings.customThemes, normalized]
       }
+      this.settings.customThemeEnabled = true
       this.persist()
       this.applyTheme()
     },
@@ -1404,16 +1493,28 @@ export const useDisplayStore = defineStore('display', {
       if (this.settings.activeCustomThemeId === id) {
         this.settings.activeCustomThemeId = this.settings.customThemes[0]?.id || null
       }
+      if (this.settings.themeSelectionMode === 'personal' && !this.settings.activeCustomThemeId) {
+        this.settings.themeSelectionMode = 'inherit'
+      }
       this.persist()
       this.applyTheme()
     },
     activateCustomTheme(id: string | null) {
       this.settings.activeCustomThemeId = id
+      if (id) {
+        this.settings.customThemeEnabled = true
+        this.settings.themeSelectionMode = 'personal'
+      } else if (this.settings.themeSelectionMode === 'personal') {
+        this.settings.themeSelectionMode = 'inherit'
+      }
       this.persist()
       this.applyTheme()
     },
     setCustomThemeEnabled(enabled: boolean) {
       this.settings.customThemeEnabled = enabled
+      if (!enabled && this.settings.themeSelectionMode === 'personal') {
+        this.settings.themeSelectionMode = 'inherit'
+      }
       this.persist()
       this.applyTheme()
     },

@@ -119,6 +119,8 @@ export interface MessageReactionEvent {
   timestamp: number;
 }
 
+import type { PlatformTheme } from '@/services/theme/themeTypes';
+
 export interface LogUploadConfig {
   enabled?: boolean;
   endpoint?: string;
@@ -219,6 +221,11 @@ export interface BackupInfo {
   createdAt: number;
 }
 
+export interface ThemeManagementConfig {
+  platformThemes?: PlatformTheme[];
+  defaultPlatformThemeId?: string;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -248,6 +255,7 @@ export interface ServerConfig {
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
+  themeManagement?: ThemeManagementConfig;
 }
 
 export interface UserInfo {

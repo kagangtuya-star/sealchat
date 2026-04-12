@@ -9,6 +9,7 @@ import { useWindowSize } from '@vueuse/core'
 import type { AxiosResponse } from "axios";
 import { api } from "./_config";
 import { useChatStore } from "./chat";
+import { useDisplayStore } from "./display";
 import { useUserStore } from "./user";
 
 const resolveDefaultPageTitle = () => {
@@ -112,11 +113,13 @@ export const useUtilsStore = defineStore({
 
     async configGet() {
       const user = useUserStore();
+      const display = useDisplayStore();
       const resp = await api.get('api/v1/config', {
         headers: { 'Authorization': user.token }
       })
       this.config = resp.data as ServerConfig;
       applyPageTitle(this.config?.pageTitle);
+      display.syncPlatformThemeManagement(this.config?.themeManagement);
       return resp
     },
 
@@ -173,11 +176,13 @@ export const useUtilsStore = defineStore({
 
     async configSet(data: ServerConfig) {
       const user = useUserStore();
+      const display = useDisplayStore();
       const resp = await api.put('api/v1/config', data, {
         headers: { 'Authorization': user.token }
       })
       this.config = cloneDeep(data);
       applyPageTitle(this.config?.pageTitle);
+      display.syncPlatformThemeManagement(this.config?.themeManagement);
       return resp
     },
 

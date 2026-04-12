@@ -5,7 +5,8 @@ import {
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
   useDisplayStore,
-  type DisplaySettings
+  type DisplaySettings,
+  type ThemeSelectionMode,
 } from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
 import {
@@ -53,6 +54,12 @@ const timestampFormatOptions = [
 const transferMenuOptions = [
   { label: '导出当前配置', key: 'export' },
   { label: '导入 JSON / ZIP', key: 'import' },
+]
+const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
+  { label: '继承平台默认', value: 'inherit' },
+  { label: '指定平台主题', value: 'platform' },
+  { label: '使用个人主题', value: 'personal' },
+  { label: '关闭覆盖', value: 'none' },
 ]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
@@ -249,6 +256,7 @@ const handleRestoreDefaults = () => {
   Object.assign(draft, defaults)
   syncTriggerDrafts(defaults)
   syncFavoriteBar(props.settings)
+  display.setThemeSelectionMode('inherit')
 }
 
 const handleClose = () => emit('update:visible', false)
@@ -256,7 +264,14 @@ const handleClose = () => emit('update:visible', false)
 const stripCustomThemeFields = (value: DisplaySettings) => {
   // Custom theme fields are managed directly by store actions, not by this draft.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = value as any
+  const {
+    themeSelectionMode,
+    activePlatformThemeId,
+    customThemeEnabled,
+    customThemes,
+    activeCustomThemeId,
+    ...rest
+  } = value as any
   return rest as DisplaySettings
 }
 
@@ -396,6 +411,52 @@ const handleOpenTutorialHub = () => {
   onboarding.restart()
   emit('update:visible', false)
 }
+
+const platformThemeOptions = computed(() =>
+  display.platformThemes.map((theme) => ({
+    label: display.defaultPlatformThemeId === theme.id ? `${theme.name}（默认）` : theme.name,
+    value: theme.id,
+  })),
+)
+const resolvedThemeSelection = computed(() => display.getResolvedThemeSelection())
+const resolvedThemeLabel = computed(() => {
+  const resolvedTheme = resolvedThemeSelection.value.theme
+  if (!resolvedTheme) {
+    if (display.settings.themeSelectionMode === 'inherit') {
+      return '当前未设置平台默认主题，将回退到日间/夜间基础配色'
+    }
+    if (display.settings.themeSelectionMode === 'none') {
+      return '当前仅使用日间/夜间基础配色'
+    }
+    return '当前无可用主题，已回退到安全模式'
+  }
+  if (resolvedThemeSelection.value.source === 'platform') {
+    return resolvedThemeSelection.value.resolvedMode === 'inherit'
+      ? `当前继承平台默认主题：${resolvedTheme.name}`
+      : `当前使用平台主题：${resolvedTheme.name}`
+  }
+  return `当前使用个人主题：${resolvedTheme.name}`
+})
+const activePersonalThemeLabel = computed(() => display.getActiveCustomTheme()?.name || '')
+const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
+  if (mode === 'platform' && display.platformThemes.length === 0) {
+    message.warning('平台暂无可选主题')
+    return
+  }
+  if (mode === 'personal' && display.settings.customThemes.length === 0) {
+    customThemePanelVisible.value = true
+    message.info('先创建一个个人主题')
+    return
+  }
+  display.setThemeSelectionMode(mode)
+}
+const handlePlatformThemeChange = (themeId: string | null) => {
+  if (!themeId) {
+    display.setThemeSelectionMode('inherit')
+    return
+  }
+  display.setActivePlatformTheme(themeId)
+}
 </script>
 
 <template>
@@ -438,24 +499,54 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">自定义主题</p>
-            <p class="section-desc">创建个性化配色方案，覆盖系统日夜主题</p>
+            <p class="section-title">平台主题</p>
+            <p class="section-desc">继承平台默认主题，或切换到平台共享主题</p>
+          </div>
+        </header>
+        <n-radio-group
+          :value="display.settings.themeSelectionMode"
+          size="small"
+          class="platform-theme-mode-group"
+          @update:value="handleThemeSelectionModeUpdate"
+        >
+          <n-radio-button
+            v-for="option in themeSelectionModeOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </n-radio-button>
+        </n-radio-group>
+        <div class="platform-theme-row">
+          <n-select
+            :value="display.settings.activePlatformThemeId"
+            :options="platformThemeOptions"
+            placeholder="选择平台主题"
+            clearable
+            :disabled="display.settings.themeSelectionMode !== 'platform' || platformThemeOptions.length === 0"
+            @update:value="handlePlatformThemeChange"
+          />
+          <span class="active-theme-name">{{ resolvedThemeLabel }}</span>
+        </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">个人主题</p>
+            <p class="section-desc">创建、编辑和管理你的本地主题库</p>
           </div>
         </header>
         <div class="custom-theme-row">
-          <n-switch
-            :value="display.settings.customThemeEnabled"
-            @update:value="display.setCustomThemeEnabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
+          <n-button secondary size="small" @click="customThemePanelVisible = true">
+            管理个人主题
+          </n-button>
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button
                 circle
                 size="tiny"
                 quaternary
-                :disabled="!display.settings.customThemeEnabled"
                 @click="customThemePanelVisible = true"
               >
                 <template #icon>
@@ -480,10 +571,13 @@ const handleOpenTutorialHub = () => {
                 </template>
               </n-button>
             </template>
-            配置自定义主题颜色
+            打开个人主题编辑器
           </n-tooltip>
-          <span v-if="display.settings.customThemeEnabled && display.getActiveCustomTheme()" class="active-theme-name">
-            当前：{{ display.getActiveCustomTheme()?.name }}
+          <span v-if="activePersonalThemeLabel" class="active-theme-name">
+            当前个人主题：{{ activePersonalThemeLabel }}
+          </span>
+          <span v-else class="active-theme-name">
+            暂无个人主题
           </span>
         </div>
       </section>
@@ -1514,6 +1608,22 @@ const handleOpenTutorialHub = () => {
   gap: 0.75rem;
 }
 
+.platform-theme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.platform-theme-row :deep(.n-select) {
+  min-width: min(320px, 100%);
+  flex: 1 1 280px;
+}
+
+.platform-theme-mode-group {
+  margin-bottom: 0.75rem;
+}
+
 .avatar-display-row {
   display: flex;
   align-items: center;
@@ -1546,6 +1656,13 @@ const handleOpenTutorialHub = () => {
 
 @media (max-width: 720px) {
   .control-field {
+    flex-direction: column;
+  }
+
+  .custom-theme-row,
+  .platform-theme-row,
+  .avatar-display-row {
+    align-items: flex-start;
     flex-direction: column;
   }
 

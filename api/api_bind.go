@@ -665,6 +665,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		} else if payload.AllowWorldAudioWorkbench != nil {
 			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
 		}
+		newConfig.ThemeManagement = utils.NormalizeThemeManagementConfig(newConfig.ThemeManagement)
+		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)

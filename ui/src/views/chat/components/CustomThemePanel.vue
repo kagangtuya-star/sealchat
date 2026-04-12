@@ -4,6 +4,7 @@ import { useWindowSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
 import { presetThemes, dayBaseTheme, nightBaseTheme } from '@/config/presetThemes'
+import { themeColorFields } from '@/services/theme/themeColorFields'
 import ThemeLivePreviewFloating from './ThemeLivePreviewFloating.vue'
 
 interface Props {
@@ -43,36 +44,9 @@ const editingThemeId = ref<string | null>(null)
 const themeName = ref('')
 const themeColors = ref<CustomThemeColors>({})
 
-// 颜色配置项定义
-const colorFields: { key: keyof CustomThemeColors; label: string; group: string }[] = [
-  // 背景
-  { key: 'bgSurface', label: '主背景', group: '背景' },
-  { key: 'bgElevated', label: '卡片/弹窗', group: '背景' },
-  { key: 'bgInput', label: '输入框', group: '背景' },
-  { key: 'bgHeader', label: '顶栏', group: '背景' },
-  // 文字
-  { key: 'textPrimary', label: '主文字', group: '文字' },
-  { key: 'textSecondary', label: '次要文字', group: '文字' },
-  // 聊天
-  { key: 'chatIcBg', label: '气泡（场内）', group: '气泡颜色' },
-  { key: 'chatOocBg', label: '气泡（场外）', group: '气泡颜色' },
-  { key: 'chatStageBg', label: '聊天舞台', group: '聊天区域' },
-  { key: 'chatPreviewBg', label: '预览背景', group: '聊天区域' },
-  { key: 'chatPreviewDot', label: '预览圆点', group: '聊天区域' },
-  // 边框
-  { key: 'borderMute', label: '淡边框', group: '边框' },
-  { key: 'borderStrong', label: '强边框', group: '边框' },
-  // 强调色
-  { key: 'primaryColor', label: '主题色', group: '强调色' },
-  { key: 'primaryColorHover', label: '悬停色', group: '强调色' },
-  // 术语高亮
-  { key: 'keywordBg', label: '高亮背景', group: '术语高亮' },
-  { key: 'keywordBorder', label: '下划线色', group: '术语高亮' },
-]
-
 const colorGroups = computed(() => {
-  const groups: Record<string, typeof colorFields> = {}
-  colorFields.forEach(f => {
+  const groups: Record<string, typeof themeColorFields> = {}
+  themeColorFields.forEach(f => {
     if (!groups[f.group]) groups[f.group] = []
     groups[f.group].push(f)
   })
@@ -293,6 +267,7 @@ const previewCssVars = [
   '--sc-border-mute', '--sc-border-strong',
   '--primary-color', '--primary-color-hover',
   '--custom-keyword-bg', '--custom-keyword-border',
+  '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border',
 ]
 
 const clearPreviewThemeVars = () => {
@@ -338,6 +313,9 @@ const applyPreviewColorsToRoot = (colors: CustomThemeColors) => {
 
   setVar('--custom-keyword-bg', colors.keywordBg)
   setVar('--custom-keyword-border', colors.keywordBorder)
+  setVar('--chat-inline-code-bg', colors.inlineCodeBg)
+  setVar('--chat-inline-code-fg', colors.inlineCodeFg)
+  setVar('--chat-inline-code-border', colors.inlineCodeBorder)
 
   root.dataset.customTheme = 'true'
 }
@@ -360,6 +338,9 @@ const previewColorVarMap: Record<keyof CustomThemeColors, string[]> = {
   primaryColorHover: ['--primary-color-hover'],
   keywordBg: ['--custom-keyword-bg'],
   keywordBorder: ['--custom-keyword-border'],
+  inlineCodeBg: ['--chat-inline-code-bg'],
+  inlineCodeFg: ['--chat-inline-code-fg'],
+  inlineCodeBorder: ['--chat-inline-code-border'],
 }
 
 const readCurrentThemeColorsFromCss = (): CustomThemeColors => {
@@ -726,7 +707,7 @@ const handleImportFile = (event: Event) => {
   </n-drawer>
   <ThemeLivePreviewFloating
     :show="livePreviewFloatingVisible"
-    :color-fields="colorFields"
+    :color-fields="themeColorFields"
     :theme-colors="themeColors"
     @update:show="handleLivePreviewFloatingShowUpdate"
     @update:theme-color="handleLivePreviewFloatingColorUpdate"
