@@ -55,6 +55,18 @@ const transferMenuOptions = [
   { label: '导出当前配置', key: 'export' },
   { label: '导入 JSON / ZIP', key: 'import' },
 ]
+const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout'] }> = [
+  { label: '气泡模式', value: 'bubble' },
+  { label: '紧凑模式', value: 'compact' },
+]
+const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette'] }> = [
+  { label: '日间模式', value: 'day' },
+  { label: '夜间模式', value: 'night' },
+]
+const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendShortcut'] }> = [
+  { label: 'Enter 直接发送', value: 'enter' },
+  { label: 'Ctrl / Cmd + Enter 发送', value: 'ctrlEnter' },
+]
 const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
   { label: '平台预设主题', value: 'inherit' },
   { label: '选择平台主题', value: 'platform' },
@@ -464,10 +476,21 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             <p class="section-desc">气泡模式强调对话气泡，紧凑模式更接近论坛流</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.layout" size="large">
-          <n-radio-button value="bubble">气泡模式</n-radio-button>
-          <n-radio-button value="compact">紧凑模式</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid layout-mode-grid">
+          <n-button
+            v-for="option in layoutModeOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.layout === option.value ? 'primary' : 'default'"
+            :secondary="draft.layout !== option.value"
+            :aria-pressed="draft.layout === option.value"
+            @click="draft.layout = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -477,10 +500,21 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             <p class="section-desc">在日间/夜间之间切换沉浸背景</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.palette" size="large">
-          <n-radio-button value="day">日间模式</n-radio-button>
-          <n-radio-button value="night">夜间模式</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid palette-mode-grid">
+          <n-button
+            v-for="option in paletteModeOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.palette === option.value ? 'primary' : 'default'"
+            :secondary="draft.palette !== option.value"
+            :aria-pressed="draft.palette === option.value"
+            @click="draft.palette = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -816,10 +850,21 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             <p class="section-desc">选择回车发送方式，另一组合则换行</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.sendShortcut" size="large">
-          <n-radio-button value="enter">Enter 直接发送</n-radio-button>
-          <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid sendShortcut-mode-grid">
+          <n-button
+            v-for="option in sendShortcutOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.sendShortcut === option.value ? 'primary' : 'default'"
+            :secondary="draft.sendShortcut !== option.value"
+            :aria-pressed="draft.sendShortcut === option.value"
+            @click="draft.sendShortcut = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
       </section>
 
@@ -1367,21 +1412,6 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   margin-bottom: 0.45rem;
 }
 
-.display-settings :deep(.n-radio-group),
-.display-settings :deep(.n-radio-button-group) {
-  --n-button-color: transparent !important;
-  --n-button-color-active: var(--sc-bg-elevated) !important;
-  background-color: transparent !important;
-}
-
-.display-settings :deep(.n-radio-button) {
-  background-color: transparent !important;
-}
-
-.display-settings :deep(.n-radio-button--checked) {
-  background-color: var(--sc-bg-elevated) !important;
-}
-
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -1575,6 +1605,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   flex-wrap: wrap;
 }
 
+.setting-mode-grid,
 .theme-management-mode-grid {
   margin-bottom: 0.75rem;
   display: grid;
@@ -1582,10 +1613,12 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   gap: 0.5rem;
 }
 
+.setting-mode-button,
 .theme-mode-button {
   min-height: 40px;
 }
 
+.setting-mode-button__label,
 .theme-mode-button__label {
   display: inline-flex;
   width: 100%;
