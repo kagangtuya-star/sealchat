@@ -232,6 +232,7 @@ export interface ServerConfig {
   registerOpen: boolean;
   webUrl: string;
   pageTitle?: string;
+  faviconAttachmentId?: string;
   chatHistoryPersistentDays: number;
   messageSortBasis?: 'typing_start' | 'send_time';
   imageSizeLimit: number;

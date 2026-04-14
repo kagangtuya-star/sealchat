@@ -186,6 +186,15 @@ func applyPageTitleToIndex(htmlSource string, title string) string {
 	return htmlSource[:start+len("<title>")] + escapedTitle + htmlSource[end:]
 }
 
+func applyFaviconToIndex(htmlSource string, attachmentID string) string {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(attachmentID), "id:")
+	if trimmed == "" {
+		return htmlSource
+	}
+	iconURL := "/api/v1/attachment/" + url.PathEscape(trimmed) + "?v=" + url.QueryEscape(trimmed)
+	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
+}
+
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
@@ -688,6 +697,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	} else {
 		renderIndex := func(c *fiber.Ctx) error {
 			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
+			page = applyFaviconToIndex(page, appConfig.FaviconAttachmentID)
 			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
 			return c.Status(http.StatusOK).SendString(page)
 		}

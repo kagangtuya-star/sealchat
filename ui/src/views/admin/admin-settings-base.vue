@@ -1,6 +1,8 @@
 <script setup lang="tsx">
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { cloneDeep } from 'lodash-es';
 import { useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
@@ -15,6 +17,7 @@ const model = ref<ServerConfig>({
   // VisitorOpen: true,
   webUrl: '/',
   pageTitle: '海豹尬聊 SealChat',
+  faviconAttachmentId: '',
   chatHistoryPersistentDays: 0,
   messageSortBasis: 'typing_start',
   imageSizeLimit: 2 * 1024,
@@ -189,6 +192,7 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
   payload.registerOpen = model.value.registerOpen;
   payload.webUrl = model.value.webUrl;
   payload.pageTitle = model.value.pageTitle;
+  payload.faviconAttachmentId = (model.value.faviconAttachmentId || '').trim();
   payload.chatHistoryPersistentDays = model.value.chatHistoryPersistentDays;
   payload.messageSortBasis = model.value.messageSortBasis;
   payload.imageSizeLimit = model.value.imageSizeLimit;
@@ -374,6 +378,64 @@ const link = computed(() => {
 
 const feedbackAdminShow = ref(false)
 const feedbackWeburlShow = ref(false)
+const faviconUploading = ref(false)
+const faviconFileInputRef = ref<HTMLInputElement | null>(null)
+
+const faviconAttachmentId = computed({
+  get: () => (model.value.faviconAttachmentId || '').trim().replace(/^id:/, ''),
+  set: (value: string) => {
+    model.value.faviconAttachmentId = value.trim().replace(/^id:/, '')
+  },
+})
+
+const faviconPreviewUrl = computed(() => {
+  const id = faviconAttachmentId.value
+  if (!id) {
+    return '/favicon.ico?v=default'
+  }
+  return resolveAttachmentUrl(`id:${id}`)
+})
+
+const triggerFaviconUpload = () => {
+  faviconFileInputRef.value?.click()
+}
+
+const clearFavicon = () => {
+  faviconAttachmentId.value = ''
+}
+
+const handleFaviconFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  input.value = ''
+
+  if (file.type && !file.type.startsWith('image/')) {
+    message.error('请上传图片文件')
+    return
+  }
+
+  const sizeLimit = utils.fileSizeLimit
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1)
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
+    return
+  }
+
+  faviconUploading.value = true
+  try {
+    const result = await uploadImageAttachment(file, {
+      channelId: 'platform-favicon',
+      skipCompression: true,
+    })
+    faviconAttachmentId.value = (result.attachmentId || '').replace(/^id:/, '')
+    message.success('网页图标上传成功')
+  } catch (error: any) {
+    message.error(error?.message || '上传失败')
+  } finally {
+    faviconUploading.value = false
+  }
+}
 
 // SMTP test state
 const smtpTestEmail = ref('')
@@ -432,6 +494,15 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item label="网页标题" feedback="留空将回退至「海豹尬聊 SealChat」">
         <n-input v-model:value="model.pageTitle" />
+      </n-form-item>
+      <n-form-item label="网页图标" feedback="建议使用 64x64 或 128x128 的正方形 PNG/ICO。">
+        <div class="flex items-center gap-3 flex-wrap">
+          <img :src="faviconPreviewUrl" alt="favicon preview" class="w-8 h-8 rounded border bg-white object-contain p-1" />
+          <input ref="faviconFileInputRef" type="file" accept="image/*,.ico" class="hidden" @change="handleFaviconFileChange" />
+          <n-button :loading="faviconUploading" @click="triggerFaviconUpload">上传图标</n-button>
+          <n-button quaternary :disabled="!faviconAttachmentId" @click="clearFavicon">恢复默认</n-button>
+          <span class="text-xs text-gray-500">{{ faviconAttachmentId ? `附件ID: ${faviconAttachmentId}` : '当前使用默认图标' }}</span>
+        </div>
       </n-form-item>
       <n-form-item label="可翻阅聊天记录">
         <n-input-number v-model:value="model.chatHistoryPersistentDays" type="number">

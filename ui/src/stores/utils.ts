@@ -7,7 +7,7 @@ import { cloneDeep } from "lodash-es";
 import { useWindowSize } from '@vueuse/core'
 
 import type { AxiosResponse } from "axios";
-import { api } from "./_config";
+import { api, urlBase } from "./_config";
 import { useChatStore } from "./chat";
 import { useDisplayStore } from "./display";
 import { useUserStore } from "./user";
@@ -25,6 +25,35 @@ export const applyPageTitle = (title?: string | null) => {
   if (typeof document === 'undefined') return;
   const trimmed = title?.trim() || '';
   document.title = trimmed.length > 0 ? trimmed : DEFAULT_PAGE_TITLE;
+};
+
+const DEFAULT_FAVICON_HREF = `${urlBase}/favicon.ico?v=default`;
+
+const normalizeFaviconAttachmentId = (attachmentId?: string | null) => {
+  const trimmed = attachmentId?.trim() || '';
+  if (!trimmed) return '';
+  return trimmed.startsWith('id:') ? trimmed.slice(3) : trimmed;
+};
+
+const upsertFaviconLink = (rel: string, href: string) => {
+  if (typeof document === 'undefined') return;
+  let link = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`);
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = rel;
+    document.head.appendChild(link);
+  }
+  link.href = href;
+};
+
+export const applyPageFavicon = (attachmentId?: string | null) => {
+  if (typeof document === 'undefined') return;
+  const normalized = normalizeFaviconAttachmentId(attachmentId);
+  const href = normalized
+    ? `${urlBase}/api/v1/attachment/${encodeURIComponent(normalized)}?v=${encodeURIComponent(normalized)}`
+    : DEFAULT_FAVICON_HREF;
+  upsertFaviconLink('icon', href);
+  upsertFaviconLink('shortcut icon', href);
 };
 
 // 未读消息数量标题通知
@@ -119,6 +148,7 @@ export const useUtilsStore = defineStore({
       })
       this.config = resp.data as ServerConfig;
       applyPageTitle(this.config?.pageTitle);
+      applyPageFavicon(this.config?.faviconAttachmentId);
       display.syncPlatformThemeManagement(this.config?.themeManagement);
       return resp
     },
@@ -182,6 +212,7 @@ export const useUtilsStore = defineStore({
       })
       this.config = cloneDeep(data);
       applyPageTitle(this.config?.pageTitle);
+      applyPageFavicon(this.config?.faviconAttachmentId);
       display.syncPlatformThemeManagement(this.config?.themeManagement);
       return resp
     },

@@ -225,6 +225,7 @@ type AppConfig struct {
 	RegisterOpen              bool                    `json:"registerOpen" yaml:"registerOpen"`
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
+	FaviconAttachmentID       string                  `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
 	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
 	MessageSortBasis          MessageSortBasis        `json:"messageSortBasis" yaml:"messageSortBasis"`
 	TypingOrderWindowMs       int64                   `json:"typingOrderWindowMs" yaml:"typingOrderWindowMs"`
@@ -856,6 +857,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("registerOpen", config.RegisterOpen)
 		_ = k.Set("webUrl", config.WebUrl)
 		_ = k.Set("pageTitle", config.PageTitle)
+		_ = k.Set("faviconAttachmentId", config.FaviconAttachmentID)
 		_ = k.Set("chatHistoryPersistentDays", config.ChatHistoryPersistentDays)
 		_ = k.Set("messageSortBasis", string(config.MessageSortBasis))
 		_ = k.Set("imageSizeLimit", config.ImageSizeLimit)
