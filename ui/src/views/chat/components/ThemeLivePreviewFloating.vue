@@ -206,7 +206,9 @@ onBeforeUnmount(() => {
 .theme-live-preview-floating {
   position: fixed;
   width: min(380px, calc(100vw - 1.5rem));
-  max-height: min(78vh, 760px);
+  max-height: min(78dvh, 760px);
+  display: flex;
+  flex-direction: column;
   border-radius: 12px;
   border: 1px solid var(--sc-border-strong);
   background: color-mix(in srgb, var(--sc-bg-elevated) 94%, transparent);
@@ -214,6 +216,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 40px color-mix(in srgb, #000 28%, transparent);
   backdrop-filter: blur(10px);
   overflow: hidden;
+  box-sizing: border-box;
   user-select: none;
 }
 
@@ -290,7 +293,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.65rem;
   padding: 0.75rem 0.85rem 0.9rem;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .theme-live-preview-floating__tips {
@@ -361,7 +367,7 @@ onBeforeUnmount(() => {
 @media (max-width: 600px) {
   .theme-live-preview-floating {
     width: calc(100vw - 1rem);
-    max-height: 70vh;
+    max-height: calc(100dvh - 1rem);
   }
 }
 </style>
