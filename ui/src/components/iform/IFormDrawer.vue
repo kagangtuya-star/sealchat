@@ -65,14 +65,16 @@
                   />
                   <div>
                     <strong>{{ form.name || '未命名控件' }}</strong>
-                    <p class="iform-card__meta">
-                      默认 {{ form.defaultWidth }} × {{ form.defaultHeight }} · {{ form.defaultCollapsed ? '折叠' : '展开' }} ·
-                      {{ form.defaultFloating ? '弹出' : '面板' }}
-                    </p>
-                    <div class="iform-card__tags">
-                      <n-tag v-if="!form.sharedRef" size="small">本频道</n-tag>
-                      <n-tag v-if="form.worldShared && !form.sharedRef" size="small" type="success">世界共享</n-tag>
-                      <n-tag v-if="form.sharedRef" size="small" type="warning">世界引用</n-tag>
+                    <div class="iform-card__meta-row">
+                      <p class="iform-card__meta">
+                        默认 {{ form.defaultWidth }} × {{ form.defaultHeight }} · {{ form.defaultCollapsed ? '折叠' : '展开' }} ·
+                        {{ form.defaultFloating ? '弹出' : '面板' }}
+                      </p>
+                      <div class="iform-card__tags">
+                        <n-tag v-if="!form.sharedRef" size="small">本频道</n-tag>
+                        <n-tag v-if="form.worldShared && !form.sharedRef" size="small" type="success">世界共享</n-tag>
+                        <n-tag v-if="form.sharedRef" size="small" type="warning">世界引用</n-tag>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -593,11 +595,18 @@ const handleMigration = async () => {
   color: var(--sc-text-secondary, rgba(100, 116, 139, 0.9));
 }
 
+.iform-card__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+
 .iform-card__tags {
   display: flex;
   gap: 0.35rem;
   flex-wrap: wrap;
-  margin-top: 0.35rem;
 }
 
 .iform-card__actions {
