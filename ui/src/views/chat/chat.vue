@@ -206,7 +206,7 @@ const defaultIFormEmbedLink = computed(() => {
   return generateIFormEmbedLink(
     {
       worldId,
-      channelId,
+      channelId: firstForm.sourceChannelId || firstForm.channelId,
       formId: firstForm.id,
       width: firstForm.defaultWidth,
       height: firstForm.defaultHeight,

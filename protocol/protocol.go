@@ -249,6 +249,7 @@ type AudioPlaybackStatePayload struct {
 type ChannelIForm struct {
 	ID               string                    `json:"id"`
 	ChannelID        string                    `json:"channelId"`
+	SourceChannelID  string                    `json:"sourceChannelId,omitempty"`
 	Name             string                    `json:"name"`
 	Url              string                    `json:"url"`
 	EmbedCode        string                    `json:"embedCode"`
@@ -263,6 +264,10 @@ type ChannelIForm struct {
 	UpdatedBy        string                    `json:"updatedBy,omitempty"`
 	CreatedAt        int64                     `json:"createdAt,omitempty"`
 	UpdatedAt        int64                     `json:"updatedAt,omitempty"`
+	WorldShared      bool                      `json:"worldShared,omitempty"`
+	SharedRef        bool                      `json:"sharedRef,omitempty"`
+	SharedWorldID    string                    `json:"sharedWorldId,omitempty"`
+	Readonly         bool                      `json:"readonly,omitempty"`
 }
 
 type ChannelIFormMediaOptions struct {

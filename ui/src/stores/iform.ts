@@ -117,6 +117,31 @@ export const useIFormStore = defineStore('iform', {
       if (!channelId) return false;
       return !!state.capabilities[channelId]?.broadcast;
     },
+    canManageWorldShared(): boolean {
+      const user = useUserStore();
+      if (user.checkPerm?.('mod_admin')) {
+        return true;
+      }
+      const chat = useChatStore();
+      const worldId = chat.currentWorldId;
+      if (!worldId) {
+        return false;
+      }
+      const worldDetail = chat.worldDetailMap?.[worldId];
+      const memberRole = worldDetail?.memberRole;
+      const ownerId = worldDetail?.world?.ownerId || chat.worldMap?.[worldId]?.ownerId;
+      return memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    },
+    selectedWorldShareEligibleForms(): ChannelIForm[] {
+      if (!this.selectedFormIds.length) {
+        return [];
+      }
+      return this.currentForms.filter((form) => this.selectedFormIds.includes(form.id) && !(form.readonly || form.sharedRef));
+    },
+    selectedWorldShareAllShared(): boolean {
+      return this.selectedWorldShareEligibleForms.length > 0
+        && this.selectedWorldShareEligibleForms.every((form) => !!form.worldShared);
+    },
     hasAttention(state): boolean {
       const channelId = state.currentChannelId;
       if (!channelId) {
@@ -277,6 +302,9 @@ export const useIFormStore = defineStore('iform', {
       } else {
         this.selectedFormIds = [...this.selectedFormIds, formId];
       }
+    },
+    isReadonlyForm(form: ChannelIForm) {
+      return !!form?.readonly;
     },
     getForm(channelId: string | null, formId: string) {
       if (!channelId) {
@@ -597,6 +625,28 @@ export const useIFormStore = defineStore('iform', {
         force: options?.force,
         targetUserIds: options?.targetUserIds,
       });
+    },
+    async toggleWorldShare(formIds: string[], enabled: boolean) {
+      const channelId = this.currentChannelId;
+      if (!channelId) {
+        throw new Error('未选择频道');
+      }
+      if (!this.canManageWorldShared) {
+        throw new Error('没有权限管理世界共享 iForm');
+      }
+      const normalizedFormIds = [...new Set(
+        formIds
+          .map((item) => String(item || '').trim())
+          .filter((item) => !!item),
+      )];
+      if (!normalizedFormIds.length) {
+        throw new Error('至少选择一个可共享控件');
+      }
+      await api.post(`api/v1/channels/${channelId}/iforms/world-share`, {
+        formIds: normalizedFormIds,
+        enabled,
+      });
+      await this.ensureForms(channelId, true);
     },
     async migrateForms(targetIds: string[], formIds: string[], mode: 'copy' | 'move') {
       const channelId = this.currentChannelId;

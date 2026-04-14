@@ -162,6 +162,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
+	db.AutoMigrate(&WorldIFormBindingModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
 	db.AutoMigrate(&ExternalGlossaryLibraryModel{}, &ExternalGlossaryTermModel{}, &ExternalGlossaryCategoryModel{}, &WorldExternalGlossaryBindingModel{})
 	db.AutoMigrate(&AnnouncementModel{}, &AnnouncementUserStateModel{})

@@ -567,6 +567,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	iform.Delete("/:formId", ChannelIFormDelete)
 	iform.Post("/push", ChannelIFormPush)
 	iform.Post("/migrate", ChannelIFormMigrate)
+	iform.Post("/world-share", ChannelIFormWorldShare)
 
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)
