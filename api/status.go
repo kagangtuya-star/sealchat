@@ -28,6 +28,11 @@ type statusSummary struct {
 	ChannelCount          int64 `json:"channelCount"`
 	PrivateChannelCount   int64 `json:"privateChannelCount"`
 	MessageCount          int64 `json:"messageCount"`
+	MessageCountIC        int64 `json:"messageCountIc"`
+	MessageCountOOC       int64 `json:"messageCountOoc"`
+	MessageCharCount      int64 `json:"messageCharCount"`
+	MessageCharCountIC    int64 `json:"messageCharCountIc"`
+	MessageCharCountOOC   int64 `json:"messageCharCountOoc"`
 	AttachmentCount       int64 `json:"attachmentCount"`
 	AttachmentBytes       int64 `json:"attachmentBytes"`
 	IntervalSeconds       int   `json:"intervalSeconds"`
@@ -164,6 +169,11 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 		ChannelCount:          sample.ChannelCount,
 		PrivateChannelCount:   sample.PrivateChannelCount,
 		MessageCount:          sample.MessageCount,
+		MessageCountIC:        sample.MessageCountIC,
+		MessageCountOOC:       sample.MessageCountOOC,
+		MessageCharCount:      sample.MessageCharCount,
+		MessageCharCountIC:    sample.MessageCharCountIC,
+		MessageCharCountOOC:   sample.MessageCharCountOOC,
 		AttachmentCount:       sample.AttachmentCount,
 		AttachmentBytes:       sample.AttachmentBytes,
 		IntervalSeconds:       intervalSeconds,

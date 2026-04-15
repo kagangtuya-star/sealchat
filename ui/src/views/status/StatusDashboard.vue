@@ -30,6 +30,11 @@ interface StatusSummary {
   channelCount: number;
   privateChannelCount: number;
   messageCount: number;
+  messageCountIc: number;
+  messageCountOoc: number;
+  messageCharCount: number;
+  messageCharCountIc: number;
+  messageCharCountOoc: number;
   attachmentCount: number;
   attachmentBytes: number;
   intervalSeconds: number;
@@ -99,7 +104,16 @@ const lastUpdatedText = computed(() => {
   return dayjs(summary.value.timestamp).format('YYYY-MM-DD HH:mm:ss');
 });
 
-const summaryCards = computed(() => {
+type StatusCard = {
+  label: string;
+  value: string;
+  hint: string;
+  variant?: 'default' | 'metric';
+  compactValue?: boolean;
+  breakdowns?: { label: string; value: string }[];
+};
+
+const summaryCards = computed<StatusCard[]>(() => {
   if (!summary.value) {
     return [];
   }
@@ -118,7 +132,27 @@ const summaryCards = computed(() => {
     { label: '世界总数', value: formatNumber(data.worldCount), hint: '状态正常的世界' },
     { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
     { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
-    { label: '消息总数', value: formatNumber(data.messageCount), hint: '未被删除的历史消息' },
+    {
+      label: '消息总数',
+      value: formatNumber(data.messageCount),
+      hint: '未被删除的历史消息',
+      variant: 'metric',
+      breakdowns: [
+        { label: '内', value: formatNumber(data.messageCountIc) },
+        { label: '外', value: formatNumber(data.messageCountOoc) },
+      ],
+    },
+    {
+      label: '消息总字数',
+      value: formatNumber(data.messageCharCount),
+      hint: '未被删除历史消息的字符总数',
+      variant: 'metric',
+      compactValue: true,
+      breakdowns: [
+        { label: '内', value: formatNumber(data.messageCharCountIc) },
+        { label: '外', value: formatNumber(data.messageCharCountOoc) },
+      ],
+    },
     { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '附件目录内文件数量' },
     { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '附件目录占用空间' },
   ];
@@ -253,10 +287,41 @@ onBeforeUnmount(() => {
     <n-spin :show="loading">
       <n-grid cols="1 768:2 1160:3" :x-gap="18" :y-gap="18">
         <n-grid-item v-for="card in summaryCards" :key="card.label">
-          <n-card class="status-card" size="small">
-            <div class="status-card__label">{{ card.label }}</div>
-            <div class="status-card__value">{{ card.value }}</div>
-            <div class="status-card__hint">{{ card.hint }}</div>
+          <n-card
+            class="status-card"
+            :class="{
+              'status-card--metric': card.variant === 'metric',
+              'status-card--metric-compact': card.compactValue,
+            }"
+            size="small"
+          >
+            <div v-if="card.variant === 'metric'" class="status-card__metric">
+              <div class="status-card__label">{{ card.label }}</div>
+              <div
+                class="status-card__value status-card__value--metric"
+                :class="{ 'status-card__value--compact': card.compactValue }"
+              >
+                {{ card.value }}
+              </div>
+              <div class="status-card__metric-footer">
+                <div class="status-card__hint status-card__hint--metric">{{ card.hint }}</div>
+                <div v-if="card.breakdowns?.length" class="status-card__mini-stats" aria-label="场内场外拆分">
+                  <div
+                    v-for="item in card.breakdowns"
+                    :key="`${card.label}-${item.label}`"
+                    class="status-card__mini-stat"
+                  >
+                    <span class="status-card__mini-stat-label">{{ item.label }}</span>
+                    <span class="status-card__mini-stat-value">{{ item.value }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="status-card__main">
+              <div class="status-card__label">{{ card.label }}</div>
+              <div class="status-card__value">{{ card.value }}</div>
+              <div class="status-card__hint">{{ card.hint }}</div>
+            </div>
           </n-card>
         </n-grid-item>
       </n-grid>
@@ -351,6 +416,34 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 30px color-mix(in srgb, var(--sc-border-strong) 18%, transparent);
 }
 
+.status-card :deep(.n-card__content) {
+  height: 100%;
+}
+
+.status-card__main {
+  min-width: 0;
+}
+
+.status-card__metric {
+  display: flex;
+  flex-direction: column;
+  min-height: 9.75rem;
+  gap: 0.65rem;
+}
+
+.status-card--metric {
+  border-color: color-mix(in srgb, var(--sc-border-mute) 82%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sc-bg-elevated) 82%, var(--sc-bg-surface) 18%) 0%,
+      color-mix(in srgb, var(--sc-bg-elevated) 64%, var(--sc-bg-surface) 36%) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary) 7%, transparent),
+    0 10px 24px color-mix(in srgb, var(--sc-border-strong) 10%, transparent);
+}
+
 .status-card__label {
   font-size: 0.85rem;
   color: var(--sc-text-secondary);
@@ -366,6 +459,67 @@ onBeforeUnmount(() => {
 .status-card__hint {
   font-size: 0.75rem;
   color: var(--sc-text-secondary);
+}
+
+.status-card__value--metric {
+  margin-top: 0.1rem;
+  font-size: 1.8rem;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+.status-card__value--compact {
+  font-size: 1.68rem;
+  letter-spacing: -0.045em;
+}
+
+.status-card__metric-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.9rem 1.2rem;
+  margin-top: auto;
+  padding-top: 0.9rem;
+  border-top: 1px solid color-mix(in srgb, var(--sc-border-mute) 76%, transparent);
+}
+
+.status-card__hint--metric {
+  max-width: 14rem;
+  line-height: 1.45;
+}
+
+.status-card__mini-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem 0.6rem;
+}
+
+.status-card__mini-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 1.9rem;
+  padding: 0.18rem 0.58rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 34%, transparent);
+  background: color-mix(in srgb, var(--sc-bg-surface) 34%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary) 5%, transparent);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.status-card__mini-stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--sc-text-secondary) 88%, transparent);
+}
+
+.status-card__mini-stat-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--sc-text-primary) 84%, var(--sc-text-secondary) 16%);
 }
 
 .status-chart-card {
@@ -454,5 +608,20 @@ svg {
 
 .status-history-card thead {
   background-color: color-mix(in srgb, var(--sc-bg-elevated) 75%, var(--sc-border-mute) 25%);
+}
+
+@media (max-width: 900px) {
+  .status-card__metric-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .status-card__hint--metric {
+    max-width: none;
+  }
+
+  .status-card__mini-stats {
+    justify-content: flex-start;
+  }
 }
 </style>
