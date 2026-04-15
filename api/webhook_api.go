@@ -476,9 +476,6 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	if err := db.Create(msg).Error; err != nil {
 		return wrapError(c, err, "创建消息失败")
 	}
-	if renderResult != nil {
-		_ = model.MessageDiceRollReplace(msg.ID, renderResult.Rolls)
-	}
 
 	if source != "" && externalID != "" {
 		_, _ = model.MessageExternalRefUpsert(channel.ID, source, externalID, msg.ID, integration.ID, externalActorID)

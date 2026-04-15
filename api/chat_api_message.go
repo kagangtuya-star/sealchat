@@ -2281,11 +2281,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			log.Printf("创建悄悄话收件人记录失败: %v", err)
 		}
 	}
-	if renderResult != nil {
-		if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
-			return nil, err
-		}
-	}
 	rows := createResult.RowsAffected
 
 	if rows > 0 {
@@ -3022,19 +3017,18 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		}
 	}
 
-	existingRolls, err := model.MessageDiceRollListByMessageID(msg.ID)
-	if err != nil {
-		return nil, err
-	}
 	newContent := data.Content
 	if ctx.User.IsBot {
 		newContent = service.ConvertCQToSatori(newContent)
 		newContent = fillBotMentionNames(data.ChannelID, newContent)
 		newContent = protocol.EscapeSatoriText(newContent)
 	}
-	var renderResult *service.DiceRenderResult
 	if effectiveBuiltInDiceEnabled {
-		renderResult, err = service.RenderDiceContent(newContent, channel.DefaultDiceExpr, existingRolls)
+		replayCacheKey := ""
+		if msg.ID != "" {
+			replayCacheKey = fmt.Sprintf("%s:%d", msg.ID, msg.UpdatedAt.UnixMilli())
+		}
+		renderResult, err := service.RenderDiceContentWithPreviousMessage(newContent, channel.DefaultDiceExpr, msg.Content, replayCacheKey, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -3138,14 +3132,9 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	updates["edited_by_user_name"] = editorUserName
 	msg.EditedByUserID = ctx.User.ID
 	msg.EditedByUserName = editorUserName
-	err = model.MessageUpdate(msg.ID, updates)
+	err := model.MessageUpdate(msg.ID, updates)
 	if err != nil {
 		return nil, err
-	}
-	if renderResult != nil {
-		if err := model.MessageDiceRollReplace(msg.ID, renderResult.Rolls); err != nil {
-			return nil, err
-		}
 	}
 
 	messageData := buildMessage()

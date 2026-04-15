@@ -23,6 +23,8 @@ var (
 	incompleteDicePattern = regexp.MustCompile(`(?i)(\b\d*)d\b`)
 	hiddenDicePattern     = regexp.MustCompile(`(?i)[\.。．｡]rh`)
 	multiDicePattern      = regexp.MustCompile(`^\s*(\d+)\s*#\s*(.*)$`)
+	replayDetailPattern   = regexp.MustCompile(`\[(\d+)d(\d+)=(\d+(?:\+\d+)*)\]`)
+	replayFormulaPattern  = regexp.MustCompile(`^\s*(\d+)d(\d+)(?:([+-])(\d+))?\s*$`)
 )
 
 const (
@@ -100,6 +102,39 @@ func RenderDiceContent(content string, defaultDiceExpr string, existing []*model
 	return &DiceRenderResult{Content: buf.String(), Rolls: renderer.rolls, IsHidden: isHidden}, nil
 }
 
+func RenderDiceContentWithPreviousMessage(content string, defaultDiceExpr string, previousContent string, cacheKey string, rollMore func(string) []int) (*DiceRenderResult, error) {
+	snapshot, err := loadDiceReplaySnapshot(previousContent, cacheKey)
+	if err != nil {
+		return nil, err
+	}
+	if LooksLikeTipTapJSON(content) {
+		return &DiceRenderResult{Content: content, Rolls: nil, IsHidden: false}, nil
+	}
+	wrapper := &htmlparser.Node{Type: htmlparser.ElementNode, DataAtom: htmlatom.Div, Data: "div"}
+	nodes, err := htmlparser.ParseFragment(strings.NewReader(content), wrapper)
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range nodes {
+		wrapper.AppendChild(node)
+	}
+	renderer := newDiceReplayRenderer(defaultDiceExpr, snapshot, rollMore)
+	renderer.walk(wrapper)
+	isHidden := containsHiddenDiceCommand(content)
+
+	if !renderer.modified {
+		return &DiceRenderResult{Content: content, Rolls: renderer.rolls, IsHidden: isHidden}, nil
+	}
+
+	var buf bytes.Buffer
+	for child := wrapper.FirstChild; child != nil; child = child.NextSibling {
+		if err := htmlparser.Render(&buf, child); err != nil {
+			return nil, err
+		}
+	}
+	return &DiceRenderResult{Content: buf.String(), Rolls: renderer.rolls, IsHidden: isHidden}, nil
+}
+
 func newDiceRenderer(defaultDiceExpr string, existing []*model.MessageDiceRollModel) *diceRenderer {
 	normalized, err := NormalizeDefaultDiceExpr(defaultDiceExpr)
 	if err != nil || normalized == "" {
@@ -121,14 +156,28 @@ func newDiceRenderer(defaultDiceExpr string, existing []*model.MessageDiceRollMo
 		defaultDiceExpr:  normalized,
 		defaultDiceSides: sides,
 		existing:         existingMap,
+		replayEntries:    map[int]DiceReplayEntry{},
 		rolls:            []*model.MessageDiceRollModel{},
 	}
+}
+
+func newDiceReplayRenderer(defaultDiceExpr string, snapshot *DiceReplaySnapshot, rollMore func(string) []int) *diceRenderer {
+	renderer := newDiceRenderer(defaultDiceExpr, nil)
+	if snapshot != nil {
+		for _, entry := range snapshot.Entries {
+			renderer.replayEntries[entry.RollIndex] = entry
+		}
+	}
+	renderer.rollMore = rollMore
+	return renderer
 }
 
 type diceRenderer struct {
 	defaultDiceExpr  string
 	defaultDiceSides string
 	existing         map[string]*model.MessageDiceRollModel
+	replayEntries    map[int]DiceReplayEntry
+	rollMore         func(string) []int
 	rolls            []*model.MessageDiceRollModel
 	modified         bool
 }
@@ -330,6 +379,9 @@ func (r *diceRenderer) buildSingleRoll(sourceText string, formula string) *model
 		roll.IsError = prev.IsError
 		return roll
 	}
+	if replayed, ok := r.tryReplayRoll(index, sourceText, formula); ok {
+		return replayed
+	}
 	computed := r.evaluateFormula(formula)
 	roll.ResultDetail = computed.ResultDetail
 	roll.ResultValueText = computed.ResultValueText
@@ -400,6 +452,227 @@ func (r *diceRenderer) normalizeFormula(match diceTextMatch) (string, error) {
 		normalized = r.defaultDiceExpr
 	}
 	return normalized, nil
+}
+
+func loadDiceReplaySnapshot(previousContent string, cacheKey string) (*DiceReplaySnapshot, error) {
+	if cacheKey != "" {
+		if cached, ok := globalDiceReplayCache.Get(cacheKey); ok {
+			return cached, nil
+		}
+	}
+	snapshot, err := ParseDiceReplaySnapshotFromContent(previousContent)
+	if err != nil {
+		return nil, err
+	}
+	if cacheKey != "" && snapshot != nil {
+		globalDiceReplayCache.Set(cacheKey, snapshot)
+	}
+	return snapshot, nil
+}
+
+func ParseDiceReplaySnapshotFromContent(content string) (*DiceReplaySnapshot, error) {
+	if strings.TrimSpace(content) == "" || !strings.Contains(content, "dice-chip") {
+		return &DiceReplaySnapshot{}, nil
+	}
+	wrapper := &htmlparser.Node{Type: htmlparser.ElementNode, DataAtom: htmlatom.Div, Data: "div"}
+	nodes, err := htmlparser.ParseFragment(strings.NewReader(content), wrapper)
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range nodes {
+		wrapper.AppendChild(node)
+	}
+	entries := make([]DiceReplayEntry, 0)
+	var walk func(node *htmlparser.Node)
+	walk = func(node *htmlparser.Node) {
+		if node == nil {
+			return
+		}
+		if entry, ok := parseDiceReplayEntry(node); ok {
+			entries = append(entries, entry)
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(wrapper)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].RollIndex < entries[j].RollIndex
+	})
+	return &DiceReplaySnapshot{Entries: entries}, nil
+}
+
+func parseDiceReplayEntry(node *htmlparser.Node) (DiceReplayEntry, bool) {
+	if node == nil || node.Type != htmlparser.ElementNode || !strings.EqualFold(node.Data, "span") {
+		return DiceReplayEntry{}, false
+	}
+	className := ""
+	entry := DiceReplayEntry{RollIndex: -1}
+	for _, attr := range node.Attr {
+		key := strings.ToLower(strings.TrimSpace(attr.Key))
+		switch key {
+		case "class":
+			className = attr.Val
+		case "data-dice-roll-index":
+			if value, err := strconv.Atoi(strings.TrimSpace(attr.Val)); err == nil {
+				entry.RollIndex = value
+			}
+		case "data-dice-source":
+			entry.SourceText = html.UnescapeString(attr.Val)
+		case "data-dice-formula":
+			entry.Formula = html.UnescapeString(attr.Val)
+		case "data-dice-result-detail":
+			entry.DetailText = html.UnescapeString(attr.Val)
+		case "data-dice-result-value":
+			entry.ValueText = html.UnescapeString(attr.Val)
+		case "data-dice-result-text":
+			entry.ResultText = html.UnescapeString(attr.Val)
+		}
+	}
+	if !strings.Contains(className, "dice-chip") || entry.RollIndex < 0 || strings.TrimSpace(entry.Formula) == "" {
+		return DiceReplayEntry{}, false
+	}
+	entry.Samples = parseReplaySamples(entry.DetailText)
+	return entry, true
+}
+
+func parseReplaySamples(detail string) []DiceReplaySample {
+	matches := replayDetailPattern.FindStringSubmatch(strings.TrimSpace(detail))
+	if len(matches) != 4 {
+		return nil
+	}
+	parts := strings.Split(matches[3], "+")
+	samples := make([]DiceReplaySample, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			return nil
+		}
+		samples = append(samples, DiceReplaySample{Value: value})
+	}
+	return samples
+}
+
+type replayableFormula struct {
+	DiceCount int
+	DiceSides int
+	Modifier  int
+}
+
+func parseReplayableFormula(expr string) (replayableFormula, bool) {
+	matches := replayFormulaPattern.FindStringSubmatch(strings.TrimSpace(expr))
+	if len(matches) != 5 {
+		return replayableFormula{}, false
+	}
+	diceCount, err := strconv.Atoi(matches[1])
+	if err != nil || diceCount <= 0 {
+		return replayableFormula{}, false
+	}
+	diceSides, err := strconv.Atoi(matches[2])
+	if err != nil || diceSides <= 0 {
+		return replayableFormula{}, false
+	}
+	modifier := 0
+	if matches[4] != "" {
+		value, err := strconv.Atoi(matches[4])
+		if err != nil {
+			return replayableFormula{}, false
+		}
+		modifier = value
+		if matches[3] == "-" {
+			modifier = -modifier
+		}
+	}
+	return replayableFormula{DiceCount: diceCount, DiceSides: diceSides, Modifier: modifier}, true
+}
+
+func formatReplayableFormula(item replayableFormula) string {
+	base := fmt.Sprintf("%dd%d", item.DiceCount, item.DiceSides)
+	switch {
+	case item.Modifier > 0:
+		return fmt.Sprintf("%s+%d", base, item.Modifier)
+	case item.Modifier < 0:
+		return fmt.Sprintf("%s%d", base, item.Modifier)
+	default:
+		return base
+	}
+}
+
+func (r *diceRenderer) tryReplayRoll(index int, sourceText string, formula string) (*model.MessageDiceRollModel, bool) {
+	entry, ok := r.replayEntries[index]
+	if !ok {
+		return nil, false
+	}
+	oldFormula, ok := parseReplayableFormula(entry.Formula)
+	if !ok || len(entry.Samples) < oldFormula.DiceCount {
+		return nil, false
+	}
+	newFormula, ok := parseReplayableFormula(formula)
+	if !ok || oldFormula.DiceSides != newFormula.DiceSides {
+		return nil, false
+	}
+	values := make([]int, 0, newFormula.DiceCount)
+	reuseCount := oldFormula.DiceCount
+	if newFormula.DiceCount < reuseCount {
+		reuseCount = newFormula.DiceCount
+	}
+	for i := 0; i < reuseCount; i++ {
+		values = append(values, entry.Samples[i].Value)
+	}
+	if newFormula.DiceCount > len(values) {
+		appended, ok := r.rollAdditionalDice(newFormula.DiceCount-len(values), newFormula.DiceSides)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, appended...)
+	}
+	total := newFormula.Modifier
+	baseTotal := 0
+	valueParts := make([]string, 0, len(values))
+	for _, value := range values {
+		baseTotal += value
+		total += value
+		valueParts = append(valueParts, strconv.Itoa(value))
+	}
+	detailText := fmt.Sprintf("%d[%dd%d=%s]", baseTotal, newFormula.DiceCount, newFormula.DiceSides, strings.Join(valueParts, "+"))
+	switch {
+	case newFormula.Modifier > 0:
+		detailText = fmt.Sprintf("%s+%d", detailText, newFormula.Modifier)
+	case newFormula.Modifier < 0:
+		detailText = fmt.Sprintf("%s%d", detailText, newFormula.Modifier)
+	}
+	roll := &model.MessageDiceRollModel{
+		RollIndex:       index,
+		SourceText:      sourceText,
+		Formula:         formatReplayableFormula(newFormula),
+		ResultDetail:    detailText,
+		ResultValueText: strconv.Itoa(total),
+		ResultText:      fmt.Sprintf("%s = %d", formatReplayableFormula(newFormula), total),
+	}
+	return roll, true
+}
+
+func (r *diceRenderer) rollAdditionalDice(count int, sides int) ([]int, bool) {
+	if count <= 0 || sides <= 0 {
+		return []int{}, true
+	}
+	if r.rollMore != nil {
+		expr := fmt.Sprintf("%dd%d", count, sides)
+		values := r.rollMore(expr)
+		if len(values) >= count {
+			return append([]int(nil), values[:count]...), true
+		}
+	}
+	values := make([]int, 0, count)
+	for i := 0; i < count; i++ {
+		rolled := r.evaluateFormula(fmt.Sprintf("1d%d", sides))
+		value, err := strconv.Atoi(strings.TrimSpace(rolled.ResultValueText))
+		if err != nil {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
 }
 
 func (r *diceRenderer) evaluateFormula(expr string) *model.MessageDiceRollModel {
