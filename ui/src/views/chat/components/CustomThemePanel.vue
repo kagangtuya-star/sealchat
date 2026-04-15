@@ -336,7 +336,7 @@ const previewCssVars = [
   '--chat-text-primary', '--chat-text-secondary',
   '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
   '--sc-border-mute', '--sc-border-strong',
-  '--primary-color', '--primary-color-hover',
+  '--primary-color', '--primary-color-hover', '--sc-action-ribbon-hover-text',
   '--custom-keyword-bg', '--custom-keyword-border',
   '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border',
 ]
@@ -381,6 +381,7 @@ const applyPreviewColorsToRoot = (colors: CustomThemeColors) => {
 
   setVar('--primary-color', colors.primaryColor)
   setVar('--primary-color-hover', colors.primaryColorHover)
+  setVar('--sc-action-ribbon-hover-text', colors.actionRibbonHoverText)
 
   setVar('--custom-keyword-bg', colors.keywordBg)
   setVar('--custom-keyword-border', colors.keywordBorder)
@@ -407,6 +408,7 @@ const previewColorVarMap: Record<keyof CustomThemeColors, string[]> = {
   borderStrong: ['--sc-border-strong'],
   primaryColor: ['--primary-color'],
   primaryColorHover: ['--primary-color-hover'],
+  actionRibbonHoverText: ['--sc-action-ribbon-hover-text'],
   keywordBg: ['--custom-keyword-bg'],
   keywordBorder: ['--custom-keyword-border'],
   inlineCodeBg: ['--chat-inline-code-bg'],

@@ -513,7 +513,7 @@ const normalizeCustomThemeColors = (value: any): CustomThemeColors => {
     'textPrimary', 'textSecondary',
     'chatIcBg', 'chatOocBg', 'chatStageBg', 'chatPreviewBg', 'chatPreviewDot',
     'borderMute', 'borderStrong',
-    'primaryColor', 'primaryColorHover',
+    'primaryColor', 'primaryColorHover', 'actionRibbonHoverText',
     'keywordBg', 'keywordBorder',
     'inlineCodeBg', 'inlineCodeFg', 'inlineCodeBorder',
   ]
@@ -1362,7 +1362,7 @@ export const useDisplayStore = defineStore('display', {
         '--chat-text-primary', '--chat-text-secondary',
         '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
         '--sc-border-mute', '--sc-border-strong',
-        '--primary-color', '--primary-color-hover',
+        '--primary-color', '--primary-color-hover', '--sc-action-ribbon-hover-text',
         '--custom-keyword-bg', '--custom-keyword-border',
         '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border'
       ]
@@ -1401,6 +1401,7 @@ export const useDisplayStore = defineStore('display', {
         if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
         if (c.primaryColor) setVar('--primary-color', c.primaryColor)
         if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
+        if (c.actionRibbonHoverText) setVar('--sc-action-ribbon-hover-text', c.actionRibbonHoverText)
         // Keyword highlight colors
         if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
         if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)

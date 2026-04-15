@@ -14,6 +14,7 @@ export interface CustomThemeColors {
   borderStrong?: string
   primaryColor?: string
   primaryColorHover?: string
+  actionRibbonHoverText?: string
   keywordBg?: string
   keywordBorder?: string
   inlineCodeBg?: string

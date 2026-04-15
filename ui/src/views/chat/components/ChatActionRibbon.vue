@@ -536,6 +536,8 @@ const cycleIcFilter = () => {
   transition: background-color 0.2s ease, color 0.2s ease;
   border-radius: 999px;
   padding: 0 0.85rem;
+  --n-text-color: var(--sc-text-primary);
+  --n-text-color-hover: var(--sc-action-ribbon-hover-text, var(--sc-text-primary));
   color: var(--sc-text-primary);
   border: 1px solid transparent;
   display: inline-flex;
@@ -546,6 +548,15 @@ const cycleIcFilter = () => {
 
 .ribbon-action-button:hover {
   background-color: var(--sc-chip-bg);
+  color: var(--sc-action-ribbon-hover-text, var(--sc-text-primary));
+}
+
+.ribbon-action-button:hover :deep(.n-icon) {
+  color: var(--sc-action-ribbon-hover-text, var(--sc-text-primary));
+}
+
+.ribbon-action-button:hover :deep(.n-button__content) {
+  color: var(--sc-action-ribbon-hover-text, var(--sc-text-primary)) !important;
 }
 
 .ribbon-actions-grid {
@@ -559,6 +570,8 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-action-button.is-active {
+  --n-text-color: #1d4ed8;
+  --n-text-color-hover: #1d4ed8;
   background-color: rgba(59, 130, 246, 0.18);
   color: #1d4ed8;
   border-color: rgba(37, 99, 235, 0.35);
@@ -568,7 +581,13 @@ const cycleIcFilter = () => {
   color: #2563eb;
 }
 
+.ribbon-action-button.is-active :deep(.n-button__content) {
+  color: #1d4ed8 !important;
+}
+
 :root[data-display-palette='night'] .ribbon-action-button.is-active {
+  --n-text-color: #cfe0ff;
+  --n-text-color-hover: #cfe0ff;
   background-color: rgba(96, 165, 250, 0.25);
   color: #cfe0ff;
   border-color: rgba(147, 197, 253, 0.45);
@@ -576,6 +595,10 @@ const cycleIcFilter = () => {
 
 :root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-icon) {
   color: #e0edff;
+}
+
+:root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-button__content) {
+  color: #cfe0ff !important;
 }
 
 @media (max-width: 768px) {

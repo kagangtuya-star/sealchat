@@ -497,7 +497,9 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item label="网页图标" feedback="建议使用 64x64 或 128x128 的正方形 PNG/ICO。">
         <div class="flex items-center gap-3 flex-wrap">
-          <img :src="faviconPreviewUrl" alt="favicon preview" class="w-8 h-8 rounded border bg-white object-contain p-1" />
+          <div class="favicon-preview-grid">
+            <img :src="faviconPreviewUrl" alt="favicon preview" class="favicon-preview-image" />
+          </div>
           <input ref="faviconFileInputRef" type="file" accept="image/*,.ico" class="hidden" @change="handleFaviconFileChange" />
           <n-button :loading="faviconUploading" @click="triggerFaviconUpload">上传图标</n-button>
           <n-button quaternary :disabled="!faviconAttachmentId" @click="clearFavicon">恢复默认</n-button>
@@ -610,6 +612,29 @@ const sendSmtpTestEmail = async () => {
 </template>
 
 <style scoped>
+.favicon-preview-grid {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.25rem;
+  border: 1px solid rgb(212 212 216);
+  border-radius: 0.375rem;
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(45deg, #d4d4d8 25%, transparent 25%),
+    linear-gradient(-45deg, #d4d4d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d4d4d8 75%),
+    linear-gradient(-45deg, transparent 75%, #d4d4d8 75%);
+  background-position: 0 0, 0 0.25rem, 0.25rem -0.25rem, -0.25rem 0;
+  background-size: 0.5rem 0.5rem;
+}
+
+.favicon-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
 .update-check-body.is-collapsed {
   max-height: 8rem;
   overflow: hidden;

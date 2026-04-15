@@ -22,6 +22,7 @@ export const themeColorFields: ThemeColorField[] = [
   { key: 'borderStrong', label: '强边框', group: '边框' },
   { key: 'primaryColor', label: '主题色', group: '强调色' },
   { key: 'primaryColorHover', label: '悬停主题色', group: '强调色' },
+  { key: 'actionRibbonHoverText', label: '按钮悬停文字', group: '多功能区' },
   { key: 'keywordBg', label: '术语高亮背景', group: '术语高亮' },
   { key: 'keywordBorder', label: '术语下划线', group: '术语高亮' },
   { key: 'inlineCodeBg', label: '行内代码背景', group: '代码' },

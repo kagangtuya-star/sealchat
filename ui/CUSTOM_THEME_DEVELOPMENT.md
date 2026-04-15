@@ -80,6 +80,7 @@ interface CustomThemeColors {
   // 强调色
   primaryColor?: string     // 主题强调色
   primaryColorHover?: string // 悬停态强调色
+  actionRibbonHoverText?: string // 多功能区按钮悬停文字色
   
   // 术语高亮
   keywordBg?: string        // 术语高亮背景
@@ -138,6 +139,7 @@ interface CustomTheme {
 |--------|------|----------|
 | `primaryColor` | 主题强调色 | 主要按钮、链接、高亮 |
 | `primaryColorHover` | 悬停态强调色 | 鼠标悬停时的强调色 |
+| `actionRibbonHoverText` | 多功能区按钮悬停文字色 | 聊天页/分屏页多功能区按钮 hover 文字和图标 |
 
 ### 术语高亮 (Keyword)
 
@@ -251,6 +253,7 @@ export const presetThemes: PresetTheme[] = [
 | `borderStrong` | `--sc-border-strong` |
 | `primaryColor` | `--primary-color` |
 | `primaryColorHover` | `--primary-color-hover` |
+| `actionRibbonHoverText` | `--sc-action-ribbon-hover-text` |
 | `keywordBg` | `--custom-keyword-bg` |
 | `keywordBorder` | `--custom-keyword-border` |
 
@@ -281,6 +284,7 @@ export const presetThemes: PresetTheme[] = [
     "borderStrong": "#a8c494",
     "primaryColor": "#6d9255",
     "primaryColorHover": "#8bae72",
+    "actionRibbonHoverText": "#5f7f49",
     "keywordBg": "rgba(139, 174, 114, 0.2)",
     "keywordBorder": "#8bae72"
   },
@@ -305,7 +309,8 @@ export const presetThemes: PresetTheme[] = [
     "borderMute": "#e8e0d4",
     "borderStrong": "#c9b99a",
     "primaryColor": "#8b7355",
-    "primaryColorHover": "#a08870"
+    "primaryColorHover": "#a08870",
+    "actionRibbonHoverText": "#6f5b42"
   },
   "version": "1.0"
 }
