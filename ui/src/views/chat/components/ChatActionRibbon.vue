@@ -191,12 +191,12 @@ const handleButtonClick = (button: ActionButton) => {
 }
 
 // Constants for button sizing (conservative estimates to avoid cutoff)
-const BUTTON_BASE_WIDTH = 48 // icon + padding + border
-const CHAR_WIDTH = 16 // approximate width per Chinese character
+const BUTTON_BASE_WIDTH = 44 // icon + padding + border
+const CHAR_WIDTH = 14 // approximate width per Chinese character
 const BUTTON_GAP = 8 // gap between buttons (0.5rem)
-const MORE_BUTTON_WIDTH = 75 // width of "更多" button
+const MORE_BUTTON_WIDTH = 66 // width of "更多" button
 const MOBILE_BREAKPOINT = 768 // mobile breakpoint in px
-const SAFETY_MARGIN = 10 // extra margin to prevent partial cutoff
+const SAFETY_MARGIN = 4 // extra margin to prevent partial cutoff
 
 // Check if current viewport is mobile
 const isMobile = () => window.innerWidth <= MOBILE_BREAKPOINT
@@ -305,7 +305,7 @@ const selectedRoleCount = computed(() => props.filters.roleIds.length)
 const selectedRoleSummary = computed(() => (
   selectedRoleCount.value > 0
     ? `已选 ${selectedRoleCount.value} 人`
-    : '筛选角色'
+    : '角色'
 ))
 const renderRoleTagSummary = () => selectedRoleSummary.value
 
@@ -377,7 +377,7 @@ const cycleIcFilter = () => {
           :options="roleSelectOptions"
           class="ribbon-role-select"
           multiple
-          placeholder="筛选角色"
+          placeholder="角色"
           size="small"
           clearable
           :max-tag-count="0"
@@ -430,14 +430,14 @@ const cycleIcFilter = () => {
     <div class="ribbon-section ribbon-section--summary">
       <div v-if="activeFiltersCount > 0" class="filter-summary">
         <n-tag size="small" type="info">
-          {{ activeFiltersCount }} 个筛选条件
+          {{ activeFiltersCount }}个筛选
         </n-tag>
         <n-button text size="tiny" @click="clearAllFilters">
-          清除全部
+          清除
         </n-button>
       </div>
       <div v-else class="filter-summary">
-        <span class="text-gray-400 text-sm">无筛选条件</span>
+        <span class="text-gray-400 text-sm">无筛选</span>
       </div>
     </div>
   </div>
@@ -481,7 +481,7 @@ const cycleIcFilter = () => {
 
 .ribbon-section--summary {
   flex-shrink: 0;
-  min-width: 120px;
+  min-width: 0;
   margin-left: auto;
   justify-content: flex-end;
 }
@@ -497,9 +497,9 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-role-select {
-  width: 10.5rem;
-  min-width: 10.5rem;
-  max-width: 10.5rem;
+  width: 7.25rem;
+  min-width: 7.25rem;
+  max-width: 7.25rem;
 }
 
 .ribbon-role-select :deep(.n-base-selection),
@@ -528,7 +528,7 @@ const cycleIcFilter = () => {
 .filter-summary {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
   color: var(--sc-text-secondary);
 }
 
