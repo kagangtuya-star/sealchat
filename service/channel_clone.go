@@ -588,6 +588,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			DisplayName:        identity.DisplayName,
 			Color:              identity.Color,
 			AvatarAttachmentID: identity.AvatarAttachmentID,
+			AvatarDecorations:  identity.AvatarDecorations,
 			IsDefault:          identity.IsDefault,
 			IsHidden:           identity.IsHidden,
 			SortOrder:          identity.SortOrder,
@@ -703,6 +704,43 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			continue
 		}
 		if _, err := model.ChannelIdentityModeConfigUpsertTx(tx, cfg.UserID, targetID, mappedICIdentityID, mappedOOCIdentityID); err != nil {
+			return nil, err
+		}
+	}
+
+	var variants []model.ChannelIdentityVariantModel
+	if err := tx.Where("channel_id = ?", sourceID).Order("identity_id asc, sort_order asc, created_at asc").Find(&variants).Error; err != nil {
+		return nil, err
+	}
+	for _, variant := range variants {
+		if variant.UserID == "" {
+			continue
+		}
+		if allowedUserIDs != nil {
+			if _, ok := allowedUserIDs[variant.UserID]; !ok {
+				continue
+			}
+		}
+		newIdentityID := identityMap[variant.IdentityID]
+		if newIdentityID == "" {
+			continue
+		}
+		clone := model.ChannelIdentityVariantModel{
+			StringPKBaseModel:  model.StringPKBaseModel{ID: utils.NewID()},
+			IdentityID:         newIdentityID,
+			ChannelID:          targetID,
+			UserID:             variant.UserID,
+			SelectorEmoji:      variant.SelectorEmoji,
+			Keyword:            variant.Keyword,
+			Note:               variant.Note,
+			AvatarAttachmentID: variant.AvatarAttachmentID,
+			DisplayName:        variant.DisplayName,
+			Color:              variant.Color,
+			AppearanceJSON:     variant.AppearanceJSON,
+			SortOrder:          variant.SortOrder,
+			Enabled:            variant.Enabled,
+		}
+		if err := tx.Create(&clone).Error; err != nil {
 			return nil, err
 		}
 	}
