@@ -127,9 +127,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
-	if err := BackfillMessageVisibleCharCount(); err != nil {
-		log.Printf("回填消息可见字数失败: %v", err)
-	}
+	db.AutoMigrate(&MessageVisibleCharCountBackfillState{})
+	StartMessageVisibleCharCountBackfillWorker()
 	db.AutoMigrate(&MessageWhisperRecipientModel{})
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})

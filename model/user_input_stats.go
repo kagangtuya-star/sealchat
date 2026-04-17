@@ -144,7 +144,7 @@ type inputStatsMessageRow struct {
 }
 
 func visibleCharCountExpr(colAlias string) string {
-	return "COALESCE(" + colAlias + ", 0)"
+	return "CASE WHEN COALESCE(" + colAlias + ", 0) < 0 THEN 0 ELSE COALESCE(" + colAlias + ", 0) END"
 }
 
 func scanInputStatsMessages(userID string, f InputStatsFilter, handle func([]inputStatsMessageRow) error) error {

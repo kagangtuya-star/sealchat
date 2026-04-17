@@ -6,7 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"sealchat/pkg/contentstats"
 	"sealchat/protocol"
+
+	"gorm.io/gorm"
 )
 
 const displayOrderBaseGap = 1024.0
@@ -78,6 +81,19 @@ type MessageModel struct {
 
 func (*MessageModel) TableName() string {
 	return "messages"
+}
+
+func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
+	if err := m.StringPKBaseModel.BeforeCreate(tx); err != nil {
+		return err
+	}
+	if m.VisibleCharCount == 0 {
+		m.VisibleCharCount = contentstats.CountVisibleTextChars(m.Content)
+		if tx != nil {
+			tx.Statement.SetColumn("VisibleCharCount", m.VisibleCharCount)
+		}
+	}
+	return nil
 }
 
 func MessageUpdate(id string, values map[string]any) error {
