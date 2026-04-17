@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pkg/contentstats"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
@@ -447,6 +448,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		MemberID:          member.ID,
 		QuoteID:           quoteID,
 		Content:           content,
+		VisibleCharCount:  contentstats.CountVisibleTextChars(content),
 		DisplayOrder:      displayOrder,
 		ICMode:            icMode,
 		SenderMemberName:  member.Nickname,

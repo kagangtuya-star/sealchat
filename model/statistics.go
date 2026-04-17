@@ -57,7 +57,7 @@ func CountMessageStatusStats() (*MessageStatusStats, error) {
 		OOCChars      int64 `gorm:"column:ooc_chars"`
 	}
 
-	lenExpr := charLengthExpr("content")
+	lenExpr := visibleCharCountExpr("visible_char_count")
 	modeExpr := "LOWER(COALESCE(NULLIF(ic_mode, ''), 'ic'))"
 
 	var result rawResult

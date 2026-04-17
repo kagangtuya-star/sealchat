@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"sealchat/pkg/contentstats"
 	"sealchat/service"
 	"sealchat/service/metrics"
 	"sort"
@@ -2217,6 +2218,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		MemberID:     member.ID,
 		QuoteID:      data.QuoteID,
 		Content:      content,
+		VisibleCharCount: contentstats.CountVisibleTextChars(content),
 		WidgetData:   widgetData,
 		DisplayOrder: displayOrder,
 		ICMode:       icMode,
@@ -3103,9 +3105,11 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 	if prevContent != newContent {
 		updates["content"] = msg.Content
+		updates["visible_char_count"] = contentstats.CountVisibleTextChars(msg.Content)
 		rebuiltWidgetData := service.BuildStateWidgetDataFromContentWithPrevious(msg.Content, msg.WidgetData)
 		updates["widget_data"] = rebuiltWidgetData
 		msg.WidgetData = rebuiltWidgetData
+		msg.VisibleCharCount = updates["visible_char_count"].(int)
 	}
 	if icModeChanged {
 		updates["ic_mode"] = msg.ICMode
@@ -3728,6 +3732,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			ChannelID: data.ChannelID,
 			MemberID:  "BOT:1000",
 			Content:   botText,
+			VisibleCharCount: contentstats.CountVisibleTextChars(botText),
 			ICMode:    msgICMode,
 		}
 		if isHiddenDice && len(data.ChannelID) < 30 {
@@ -3815,6 +3820,7 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		ChannelID: ch.ID,
 		MemberID:  botID,
 		Content:   content,
+		VisibleCharCount: contentstats.CountVisibleTextChars(content),
 		ICMode:    msgICMode,
 	}
 	model.GetDB().Create(&m)
@@ -3908,6 +3914,7 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 		ChannelID:        targetChannelID,
 		MemberID:         member.ID,
 		Content:          msg.Content,
+		VisibleCharCount: contentstats.CountVisibleTextChars(msg.Content),
 		DisplayOrder:     float64(now.UnixMilli()),
 		ICMode:           msgICMode,
 		SenderMemberName: member.Nickname,

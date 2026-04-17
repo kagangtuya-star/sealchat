@@ -143,8 +143,12 @@ type inputStatsMessageRow struct {
 	ChannelID string    `gorm:"column:channel_id"`
 }
 
+func visibleCharCountExpr(colAlias string) string {
+	return "COALESCE(" + colAlias + ", 0)"
+}
+
 func scanInputStatsMessages(userID string, f InputStatsFilter, handle func([]inputStatsMessageRow) error) error {
-	lenExpr := charLengthExpr("m.content")
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
 	selectClause := strings.Join([]string{
 		"m.id",
 		"m.created_at",
@@ -196,7 +200,7 @@ func UserInputStatsOverall(userID string, f InputStatsFilter) (*InputStatsOvervi
 	}
 
 	var result rawResult
-	lenExpr := charLengthExpr("m.content")
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
 
 	q := db.Table("messages AS m").
 		Select("COALESCE(SUM(" + lenExpr + "), 0) AS total_chars, COUNT(*) AS total_messages")
@@ -278,7 +282,7 @@ func UserInputStatsByWorld(userID string, f InputStatsFilter) ([]InputStatsWorld
 		TotalMessages int64  `gorm:"column:total_messages"`
 	}
 
-	lenExpr := charLengthExpr("m.content")
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
 
 	q := db.Table("messages AS m").
 		Select("c.world_id AS world_id, w.name AS world_name, COALESCE(SUM(" + lenExpr + "), 0) AS total_chars, COUNT(*) AS total_messages").
@@ -320,7 +324,7 @@ func UserInputStatsByChannel(userID, worldID string, f InputStatsFilter) ([]Inpu
 		TotalMessages int64  `gorm:"column:total_messages"`
 	}
 
-	lenExpr := charLengthExpr("m.content")
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
 
 	q := db.Table("messages AS m").
 		Select("m.channel_id AS channel_id, c.name AS channel_name, COALESCE(SUM("+lenExpr+"), 0) AS total_chars, COUNT(*) AS total_messages").
@@ -355,7 +359,7 @@ func UserInputStatsByChannel(userID, worldID string, f InputStatsFilter) ([]Inpu
 
 // UserInputStatsTimeline 按时间粒度统计（用于曲线图）
 func UserInputStatsTimeline(userID string, f InputStatsFilter, granularity string) ([]InputStatsTimelinePoint, error) {
-	lenExpr := charLengthExpr("m.content")
+	lenExpr := visibleCharCountExpr("m.visible_char_count")
 
 	var dateExpr string
 	if IsSQLite() {

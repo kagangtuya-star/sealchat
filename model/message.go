@@ -22,6 +22,7 @@ type MessageModel struct {
 	QuoteID          string  `json:"quote_id" gorm:"null;size:100"`
 	DisplayOrder     float64 `json:"display_order" gorm:"type:decimal(24,8);index:idx_msg_channel_order,priority:2"`
 	ClientID         *string `json:"client_id,omitempty" gorm:"size:100;uniqueIndex:idx_msg_client_dedupe,priority:3"`
+	VisibleCharCount int     `json:"visible_char_count" gorm:"default:0;index:idx_msg_visible_char_count"`
 	IsRevoked        bool    `json:"is_revoked" gorm:"null"` // 被撤回。这样实现可能不很严肃，但是能填补窗口中空白
 	IsWhisper        bool    `json:"is_whisper" gorm:"default:false"`
 	WhisperTo        string  `json:"whisper_to" gorm:"size:100"`
