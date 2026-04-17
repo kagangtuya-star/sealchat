@@ -608,6 +608,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
 	v1AuthAdmin.Get("/admin/sqlite/vacuum/status", AdminSQLiteVacuumStatus)
 	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
+	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
+	v1AuthAdmin.Post("/admin/message-visible-char-count/rebuild", AdminMessageVisibleCharCountRebuild)
 	v1AuthAdmin.Get("/admin/external-glossaries", ExternalGlossaryLibraryListHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries", ExternalGlossaryLibraryCreateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/import", ExternalGlossaryLibraryImportHandler)

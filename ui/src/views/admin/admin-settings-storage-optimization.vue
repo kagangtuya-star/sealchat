@@ -17,6 +17,17 @@ type StorageOptimizationModel = {
   sqlite: SQLiteConfig
 }
 
+type MessageVisibleCharCountRepairState = {
+  status?: string
+  mode?: string
+  phase?: string
+  processed_count?: number
+  last_error?: string
+  heartbeat_at?: string
+  completed_at?: string
+  updated_at?: string
+}
+
 const utils = useUtilsStore()
 const message = useMessage()
 
@@ -119,6 +130,9 @@ const sqliteDbSizeError = ref('')
 const sqliteLastBeforeSizeBytes = ref<number | null>(null)
 const sqliteLastAfterSizeBytes = ref<number | null>(null)
 const sqliteLastReclaimedBytes = ref<number | null>(null)
+const messageVisibleCharCountRepairLoading = ref(false)
+const messageVisibleCharCountRepairExecuting = ref(false)
+const messageVisibleCharCountRepairState = ref<MessageVisibleCharCountRepairState | null>(null)
 
 const toNullableNumber = (value: unknown): number | null => {
   const num = Number(value)
@@ -193,6 +207,53 @@ const executeSQLiteVacuum = async () => {
     message.error('执行空间整理失败: ' + (error?.response?.data?.message || '未知错误'))
   } finally {
     sqliteVacuumExecuting.value = false
+  }
+}
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '未知'
+  const date = dayjs(value)
+  return date.isValid() ? date.format('YYYY-MM-DD HH:mm:ss') : value
+}
+
+const messageVisibleCharCountRepairStatusText = computed(() => {
+  const status = (messageVisibleCharCountRepairState.value?.status || '').trim()
+  switch (status) {
+    case 'running':
+      return '运行中'
+    case 'done':
+      return '最近一次完成'
+    case 'failed':
+      return '最近一次失败'
+    default:
+      return '未执行'
+  }
+})
+
+const fetchMessageVisibleCharCountRepairStatus = async () => {
+  messageVisibleCharCountRepairLoading.value = true
+  try {
+    const resp = await utils.adminMessageVisibleCharCountStatus()
+    messageVisibleCharCountRepairState.value = (resp.data?.state || null) as MessageVisibleCharCountRepairState | null
+  } catch (error: any) {
+    message.error('获取消息字数修复状态失败: ' + (error?.response?.data?.message || '未知错误'))
+  } finally {
+    messageVisibleCharCountRepairLoading.value = false
+  }
+}
+
+const executeMessageVisibleCharCountRepair = async () => {
+  messageVisibleCharCountRepairExecuting.value = true
+  try {
+    const resp = await utils.adminMessageVisibleCharCountRebuild()
+    messageVisibleCharCountRepairState.value = (resp.data?.state || null) as MessageVisibleCharCountRepairState | null
+    const processed = Number(resp.data?.state?.processed_count || 0)
+    message.success(`消息可见字数重算完成，本次处理 ${processed} 条消息`)
+  } catch (error: any) {
+    message.error('执行消息字数重算失败: ' + (error?.response?.data?.message || '未知错误'))
+    await fetchMessageVisibleCharCountRepairStatus()
+  } finally {
+    messageVisibleCharCountRepairExecuting.value = false
   }
 }
 
@@ -329,7 +390,7 @@ const executeS3Migration = async (dryRun: boolean = false) => {
 
 onMounted(async () => {
   await resetFromConfig()
-  await Promise.all([fetchBackupList(), fetchSQLiteVacuumStatus()])
+  await Promise.all([fetchBackupList(), fetchSQLiteVacuumStatus(), fetchMessageVisibleCharCountRepairStatus()])
 })
 </script>
 
@@ -395,6 +456,50 @@ onMounted(async () => {
               >
                 整理前 {{ formatBytes(sqliteLastBeforeSizeBytes) }}，整理后 {{ formatBytes(sqliteLastAfterSizeBytes) }}，
                 回收 {{ formatBytes(Math.max(0, sqliteLastReclaimedBytes ?? 0)) }}
+              </span>
+            </div>
+          </n-form-item>
+        </n-collapse-item>
+
+        <n-collapse-item title="输入统计字数修复" name="message-visible-char-count-repair">
+          <n-form-item label="最近状态">
+            <div class="flex flex-col gap-1">
+              <span v-if="messageVisibleCharCountRepairLoading">读取中...</span>
+              <template v-else>
+                <span>{{ messageVisibleCharCountRepairStatusText }}</span>
+                <span class="text-xs text-gray-600 dark:text-gray-400">
+                  模式: {{ messageVisibleCharCountRepairState?.mode || '未知' }}，
+                  已处理 {{ Number(messageVisibleCharCountRepairState?.processed_count || 0) }} 条
+                </span>
+                <span v-if="messageVisibleCharCountRepairState?.completed_at" class="text-xs text-gray-600 dark:text-gray-400">
+                  完成时间：{{ formatDateTime(messageVisibleCharCountRepairState?.completed_at) }}
+                </span>
+                <span v-if="messageVisibleCharCountRepairState?.last_error" class="text-xs text-orange-500">
+                  最近错误：{{ messageVisibleCharCountRepairState?.last_error }}
+                </span>
+              </template>
+            </div>
+          </n-form-item>
+          <n-form-item
+            label="强制重算"
+            feedback="全库重算 messages.visible_char_count，仅用于修复消息总字数明显偏低。纯图片消息仍会是 0。"
+          >
+            <div class="flex flex-col gap-1">
+              <div class="flex gap-2">
+                <n-button size="small" @click="fetchMessageVisibleCharCountRepairStatus" :loading="messageVisibleCharCountRepairLoading">
+                  刷新状态
+                </n-button>
+                <n-popconfirm @positive-click="executeMessageVisibleCharCountRepair">
+                  <template #trigger>
+                    <n-button size="small" type="warning" :loading="messageVisibleCharCountRepairExecuting">
+                      立即重算
+                    </n-button>
+                  </template>
+                  确定要全库重算消息可见字数吗？数据量较大时可能耗时较久。
+                </n-popconfirm>
+              </div>
+              <span v-if="messageVisibleCharCountRepairState?.updated_at" class="text-xs text-gray-600 dark:text-gray-400">
+                最近心跳：{{ formatDateTime(messageVisibleCharCountRepairState?.updated_at) }}
               </span>
             </div>
           </n-form-item>

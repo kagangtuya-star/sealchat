@@ -13,13 +13,17 @@ const (
 	messageVisibleCharCountBackfillStatusRunning            = "running"
 	messageVisibleCharCountBackfillStatusDone               = "done"
 	messageVisibleCharCountBackfillStatusFailed             = "failed"
+	messageVisibleCharCountBackfillModeBackfillMissing      = "backfill_missing"
+	messageVisibleCharCountBackfillModeRebuildAll           = "rebuild_all"
 	messageVisibleCharCountBackfillPhaseLegacyZeroMigration = "legacy_zero_migration"
 	messageVisibleCharCountBackfillPhaseSentinel            = "sentinel"
+	messageVisibleCharCountBackfillPhaseFullRebuild         = "full_rebuild"
 )
 
 type MessageVisibleCharCountBackfillState struct {
 	StringPKBaseModel
 	Status                     string     `json:"status" gorm:"size:32;index"`
+	Mode                       string     `json:"mode" gorm:"size:32"`
 	Phase                      string     `json:"phase" gorm:"size:64"`
 	LastID                     string     `json:"last_id" gorm:"size:100"`
 	ProcessedCount             int64      `json:"processed_count" gorm:"not null;default:0"`
@@ -43,6 +47,7 @@ func ensureMessageVisibleCharCountBackfillState(conn *gorm.DB) error {
 			UpdatedAt: now,
 		},
 		Status:         messageVisibleCharCountBackfillStatusIdle,
+		Mode:           messageVisibleCharCountBackfillModeBackfillMissing,
 		Phase:          messageVisibleCharCountBackfillPhaseLegacyZeroMigration,
 		ProcessedCount: 0,
 	}).Error

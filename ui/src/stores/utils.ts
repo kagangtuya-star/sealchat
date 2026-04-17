@@ -383,6 +383,23 @@ export const useUtilsStore = defineStore({
       return resp
     },
 
+    async adminMessageVisibleCharCountStatus() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/message-visible-char-count/status', {
+        headers: { 'Authorization': user.token }
+      })
+      return resp
+    },
+
+    async adminMessageVisibleCharCountRebuild() {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/message-visible-char-count/rebuild', {}, {
+        headers: { 'Authorization': user.token },
+        timeout: 0,
+      })
+      return resp
+    },
+
     async commandsRefresh() {
       const user = useUserStore();
       const resp = await api.get(`api/v1/commands`, {
