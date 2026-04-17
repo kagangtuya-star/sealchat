@@ -1294,7 +1294,7 @@ const handleOpenDisplaySettings = () => {
   displaySettingsVisible.value = true;
 };
 
-const handleDisplaySettingsSave = (settings: DisplaySettings) => {
+const handleDisplaySettingsSave = (settings: Partial<DisplaySettings>) => {
   display.updateSettings(settings);
 };
 

@@ -19,6 +19,10 @@ import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
 import AvatarStylePanel from './AvatarStylePanel.vue'
 import FontSettingsPanel from './FontSettingsPanel.vue'
+import {
+  buildDisplaySettingsDraftSavePayload,
+  syncDisplaySettingsDraft,
+} from './displaySettingsDraft'
 
 interface Props {
   visible: boolean
@@ -28,7 +32,7 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
-  (e: 'save', value: DisplaySettings): void
+  (e: 'save', value: Partial<DisplaySettings>): void
 }>()
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
@@ -163,58 +167,7 @@ watch(
   (value) => {
     if (!value) return
     syncTriggerDrafts(value)
-    draft.layout = value.layout
-    draft.palette = value.palette
-    draft.showAvatar = value.showAvatar
-    draft.preferStaticAvatarDecoration = value.preferStaticAvatarDecoration
-    draft.showInputPreview = value.showInputPreview
-    draft.autoScrollTypingPreview = value.autoScrollTypingPreview
-    draft.mergeNeighbors = value.mergeNeighbors
-    draft.showPinnedMessages = value.showPinnedMessages
-    draft.alwaysShowTimestamp = value.alwaysShowTimestamp
-    draft.timestampFormat = value.timestampFormat
-    draft.maxExportMessages = value.maxExportMessages
-    draft.maxExportConcurrency = value.maxExportConcurrency
-    draft.fontSize = value.fontSize
-    draft.lineHeight = value.lineHeight
-    draft.letterSpacing = value.letterSpacing
-    draft.globalFontFamily = value.globalFontFamily
-    draft.globalFontSourceType = value.globalFontSourceType
-    draft.globalFontAssetId = value.globalFontAssetId
-    draft.fontEnhancedCoverageEnabled = value.fontEnhancedCoverageEnabled
-    draft.bubbleGap = value.bubbleGap
-    draft.compactBubbleGap = value.compactBubbleGap
-    draft.paragraphSpacing = value.paragraphSpacing
-  draft.messagePaddingX = value.messagePaddingX
-  draft.messagePaddingY = value.messagePaddingY
-  draft.sendShortcut = value.sendShortcut
-  draft.mobileMinimalInputEnabled = value.mobileMinimalInputEnabled
-  draft.enableIcToggleHotkey = value.enableIcToggleHotkey
-  syncFavoriteBar(value)
-  draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
-  draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
-  draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
-  draft.worldKeywordTooltipHoverEnabled = value.worldKeywordTooltipHoverEnabled
-  draft.worldKeywordTooltipClickEnabled = value.worldKeywordTooltipClickEnabled
-  draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
-  draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
-  draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
-  draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
-  draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
-  draft.toolbarHotkeys = value.toolbarHotkeys
-  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-  draft.showDragIndicator = value.showDragIndicator
-  draft.mobileMessageDragLongPressEnabled = value.mobileMessageDragLongPressEnabled
-  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-  draft.disableContextMenu = value.disableContextMenu
-  draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
-  draft.quickGalleryPageSize = value.quickGalleryPageSize
-  draft.avatarSize = value.avatarSize
-  draft.avatarBorderRadius = value.avatarBorderRadius
-  draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
-  draft.characterCardBadgeAutoContrastEnabled = value.characterCardBadgeAutoContrastEnabled
-  draft.identityRemarkAutoContrastEnabled = value.identityRemarkAutoContrastEnabled
-  // Custom theme fields are managed directly by store actions, not by draft
+    syncDisplaySettingsDraft(draft, value)
   },
   { deep: true, immediate: true },
 )
@@ -273,20 +226,6 @@ const handleRestoreDefaults = () => {
 
 const handleClose = () => emit('update:visible', false)
 
-const stripCustomThemeFields = (value: DisplaySettings) => {
-  // Custom theme fields are managed directly by store actions, not by this draft.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const {
-    themeSelectionMode,
-    activePlatformThemeId,
-    customThemeEnabled,
-    customThemes,
-    activeCustomThemeId,
-    ...rest
-  } = value as any
-  return rest as DisplaySettings
-}
-
 const deepEqual = (a: any, b: any): boolean => {
   if (a === b) return true
   if (a === null || b === null) return a === b
@@ -328,18 +267,18 @@ const scheduleAutoSave = () => {
   clearAutoSaveTimer()
 
   autoSaveTimer = window.setTimeout(() => {
-    const next = stripCustomThemeFields(draft as any)
-    const cur = stripCustomThemeFields(props.settings as any)
+    const next = buildDisplaySettingsDraftSavePayload(draft)
+    const cur = buildDisplaySettingsDraftSavePayload(props.settings)
     if (deepEqual(next, cur)) return
-    emit('save', next as any)
+    emit('save', next)
   }, AUTO_SAVE_DEBOUNCE_MS)
 }
 
 const flushAutoSave = () => {
-  const next = stripCustomThemeFields(draft as any)
-  const cur = stripCustomThemeFields(props.settings as any)
+  const next = buildDisplaySettingsDraftSavePayload(draft)
+  const cur = buildDisplaySettingsDraftSavePayload(props.settings)
   if (deepEqual(next, cur)) return
-  emit('save', next as any)
+  emit('save', next)
 }
 
 const handleExportSettings = async () => {
