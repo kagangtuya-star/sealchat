@@ -538,6 +538,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Post("/:worldId/keywords", WorldKeywordCreateHandler)
 	worldGroup.Patch("/:worldId/keywords/:keywordId", WorldKeywordUpdateHandler)
 	worldGroup.Delete("/:worldId/keywords/:keywordId", WorldKeywordDeleteHandler)
+	worldGroup.Post("/:worldId/keywords/bulk-update", WorldKeywordBulkUpdateHandler)
 	worldGroup.Post("/:worldId/keywords/bulk-delete", WorldKeywordBulkDeleteHandler)
 	worldGroup.Post("/:worldId/keywords/reorder", WorldKeywordReorderHandler)
 	worldGroup.Post("/:worldId/keywords/import", WorldKeywordImportHandler)

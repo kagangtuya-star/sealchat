@@ -97,8 +97,16 @@ const visibleSelectionCount = computed(() =>
   pagedKeywords.value.filter((item) => selectedIds.value.includes(item.id)).length,
 )
 
+const filteredSelectionCount = computed(() =>
+  filteredKeywords.value.filter((item) => selectedIds.value.includes(item.id)).length,
+)
+
 const isAllVisibleSelected = computed(
   () => pagedKeywords.value.length > 0 && visibleSelectionCount.value === pagedKeywords.value.length,
+)
+
+const isAllFilteredSelected = computed(
+  () => filteredKeywords.value.length > 0 && filteredSelectionCount.value === filteredKeywords.value.length,
 )
 
 const isSelectionIndeterminate = computed(
@@ -703,19 +711,7 @@ async function handleBulkModifyCategoryToTarget(targetCategory: string, targetId
   const worldId = currentWorldId.value
   if (!worldId || !targetCategory.trim()) return
   const effectiveIds = targetIds && targetIds.length ? targetIds : selectedIds.value
-  const items = keywordItems.value.filter((item) => effectiveIds.includes(item.id))
-  for (const item of items) {
-    await glossary.editKeyword(worldId, item.id, {
-      keyword: item.keyword,
-      category: targetCategory.trim(),
-      aliases: item.aliases,
-      matchMode: item.matchMode,
-      description: item.description,
-      descriptionFormat: item.descriptionFormat || 'plain',
-      display: item.display,
-      isEnabled: item.isEnabled,
-    })
-  }
+  await glossary.setKeywordCategoryBulk(worldId, effectiveIds, targetCategory.trim())
 }
 
 async function handleBulkModifyCategory() {
@@ -838,6 +834,12 @@ const handleFileImport = async (event: Event) => {
 
 const clearSelection = () => {
   selectedIds.value = []
+}
+
+const selectAllFiltered = () => {
+  const next = new Set(selectedIds.value)
+  filteredKeywords.value.forEach((item) => next.add(item.id))
+  selectedIds.value = Array.from(next)
 }
 
 const handleRowSelection = (keywordId: string, checked: boolean | undefined) => {
@@ -1120,6 +1122,16 @@ onUnmounted(() => {
             已选 {{ selectedIds.length }} / {{ filteredKeywords.length }}
             <n-button v-if="hasSelection" size="tiny" text class="ml-1" @click="clearSelection">
               清除选择
+            </n-button>
+            <n-button
+              v-if="canEdit && filteredKeywords.length"
+              size="tiny"
+              text
+              class="ml-1"
+              :disabled="isAllFilteredSelected"
+              @click="selectAllFiltered"
+            >
+              全选
             </n-button>
           </div>
           <div class="keyword-manager__actions">

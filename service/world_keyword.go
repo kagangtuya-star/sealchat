@@ -35,6 +35,12 @@ type WorldKeywordReorderItem struct {
 	SortOrder int    `json:"sortOrder"`
 }
 
+type WorldKeywordBulkUpdateInput struct {
+	Category *string `json:"category"`
+	Display  *string `json:"display"`
+	Enabled  *bool   `json:"isEnabled"`
+}
+
 // WorldKeywordListOptions 查询参数。
 type WorldKeywordListOptions struct {
 	Page            int
@@ -156,6 +162,38 @@ func normalizeWorldKeywordCategoryName(name string) (string, error) {
 		trimmed = string([]rune(trimmed)[:100])
 	}
 	return trimmed, nil
+}
+
+func normalizeWorldKeywordBulkUpdateInput(input *WorldKeywordBulkUpdateInput) error {
+	if input == nil {
+		return errors.New("批量更新内容不能为空")
+	}
+	hasPatch := false
+	if input.Category != nil {
+		category := strings.TrimSpace(*input.Category)
+		if utf8.RuneCountInString(category) > 100 {
+			category = string([]rune(category)[:100])
+		}
+		input.Category = &category
+		hasPatch = true
+	}
+	if input.Display != nil {
+		display := strings.ToLower(strings.TrimSpace(*input.Display))
+		switch display {
+		case string(model.WorldKeywordDisplayMinimal), string(model.WorldKeywordDisplayStandard), string(model.WorldKeywordDisplayInherit):
+			input.Display = &display
+		default:
+			return errors.New("显示模式无效")
+		}
+		hasPatch = true
+	}
+	if input.Enabled != nil {
+		hasPatch = true
+	}
+	if !hasPatch {
+		return errors.New("至少指定一个批量更新字段")
+	}
+	return nil
 }
 
 func upsertWorldKeywordCategory(tx *gorm.DB, worldID, categoryName, actorID string) error {
@@ -471,6 +509,85 @@ func WorldKeywordBulkDelete(worldID string, ids []string, actorID string) (int64
 		for categoryName := range categorySet {
 			if err := cleanupWorldKeywordCategoryIfUnused(tx, worldID, categoryName); err != nil {
 				return err
+			}
+		}
+		return nil
+	})
+	return affected, err
+}
+
+// WorldKeywordBulkUpdate 批量更新。
+func WorldKeywordBulkUpdate(worldID string, ids []string, actorID string, input WorldKeywordBulkUpdateInput) (int64, error) {
+	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
+		return 0, err
+	}
+	if err := normalizeWorldKeywordBulkUpdateInput(&input); err != nil {
+		return 0, err
+	}
+	seen := make(map[string]struct{}, len(ids))
+	cleaned := make([]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		cleaned = append(cleaned, trimmed)
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	db := model.GetDB()
+	var affected int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var records []model.WorldKeywordModel
+		if err := tx.Where("world_id = ? AND id IN ?", worldID, cleaned).Find(&records).Error; err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			affected = 0
+			return nil
+		}
+		updates := map[string]interface{}{
+			"updated_by": actorID,
+		}
+		targetCategory := ""
+		if input.Category != nil {
+			targetCategory = strings.TrimSpace(*input.Category)
+			updates["category"] = targetCategory
+			if err := upsertWorldKeywordCategory(tx, worldID, targetCategory, actorID); err != nil {
+				return err
+			}
+		}
+		if input.Display != nil {
+			updates["display"] = model.WorldKeywordDisplayStyle(*input.Display)
+		}
+		if input.Enabled != nil {
+			updates["is_enabled"] = *input.Enabled
+		}
+		res := tx.Model(&model.WorldKeywordModel{}).
+			Where("world_id = ? AND id IN ?", worldID, cleaned).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		affected = res.RowsAffected
+		if input.Category != nil {
+			oldCategories := make(map[string]struct{})
+			for _, record := range records {
+				category := strings.TrimSpace(record.Category)
+				if category == "" || category == targetCategory {
+					continue
+				}
+				oldCategories[category] = struct{}{}
+			}
+			for category := range oldCategories {
+				if err := cleanupWorldKeywordCategoryIfUnused(tx, worldID, category); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

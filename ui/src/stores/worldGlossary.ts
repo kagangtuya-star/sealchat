@@ -5,6 +5,7 @@ import { useUserStore } from './user'
 import type {
   EffectiveWorldKeywordItem,
   KeywordCategoryInfo,
+  WorldKeywordBulkUpdatePatch,
   WorldKeywordItem,
   WorldKeywordPayload,
   WorldKeywordReorderItem,
@@ -19,6 +20,7 @@ import {
   fetchWorldKeywordCategoryInfos,
   updateWorldKeyword,
   deleteWorldKeyword,
+  bulkUpdateWorldKeywords,
   bulkDeleteWorldKeywords,
   reorderWorldKeywords,
   importWorldKeywords,
@@ -506,69 +508,26 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
   }
 
-  async function setKeywordEnabledBulk(worldId: string, ids: string[], enabled: boolean) {
-    if (!worldId || !ids?.length) return
-    const pageItems = pages.value[worldId]?.items || []
-    const targetMap = new Map(pageItems.map((item) => [item.id, item]))
-    const tasks = ids
-      .map((id) => {
-        const current = targetMap.get(id)
-        if (!current || current.isEnabled === enabled) return null
-        const payload: WorldKeywordPayload = {
-          keyword: current.keyword,
-          category: current.category,
-          aliases: current.aliases,
-          matchMode: current.matchMode,
-          description: current.description,
-          descriptionFormat: current.descriptionFormat,
-          display: current.display,
-          isEnabled: enabled,
-        }
-        return updateWorldKeyword(worldId, id, payload)
-      })
-      .filter((task): task is Promise<WorldKeywordItem> => Boolean(task))
-    if (!tasks.length) {
-      return
+  async function updateKeywordBulk(worldId: string, ids: string[], patch: WorldKeywordBulkUpdatePatch) {
+    if (!worldId || !ids?.length) return 0
+    const updated = await bulkUpdateWorldKeywords(worldId, ids, patch)
+    if (updated > 0) {
+      await ensureKeywords(worldId, { force: true })
+      await ensureEffectiveKeywords(worldId, { force: true })
     }
-    const updatedItems = await Promise.all(tasks)
-    const normalizedUpdates = updatedItems.map((item) => normalizeKeywordItem(item))
-    const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
-    const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
-    updateKeywordCache(worldId, nextList)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    return updated
+  }
+
+  async function setKeywordEnabledBulk(worldId: string, ids: string[], enabled: boolean) {
+    return updateKeywordBulk(worldId, ids, { isEnabled: enabled })
   }
 
   async function setKeywordDisplayBulk(worldId: string, ids: string[], display: 'standard' | 'minimal' | 'inherit') {
-    if (!worldId || !ids?.length) return
-    const pageItems = pages.value[worldId]?.items || []
-    const targetMap = new Map(pageItems.map((item) => [item.id, item]))
-    const tasks = ids
-      .map((id) => {
-        const current = targetMap.get(id)
-        const currentDisplay = current?.display || 'inherit'
-        if (!current || currentDisplay === display) return null
-        const payload: WorldKeywordPayload = {
-          keyword: current.keyword,
-          category: current.category,
-          aliases: current.aliases,
-          matchMode: current.matchMode,
-          description: current.description,
-          descriptionFormat: current.descriptionFormat,
-          display,
-          isEnabled: current.isEnabled,
-        }
-        return updateWorldKeyword(worldId, id, payload)
-      })
-      .filter((task): task is Promise<WorldKeywordItem> => Boolean(task))
-    if (!tasks.length) {
-      return
-    }
-    const updatedItems = await Promise.all(tasks)
-    const normalizedUpdates = updatedItems.map((item) => normalizeKeywordItem(item))
-    const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
-    const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
-    updateKeywordCache(worldId, nextList)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    return updateKeywordBulk(worldId, ids, { display })
+  }
+
+  async function setKeywordCategoryBulk(worldId: string, ids: string[], category: string) {
+    return updateKeywordBulk(worldId, ids, { category })
   }
 
   async function importKeywords(worldId: string, items: WorldKeywordPayload[], replace = false) {
@@ -706,6 +665,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     reorderKeywords,
     setKeywordEnabledBulk,
     setKeywordDisplayBulk,
+    setKeywordCategoryBulk,
     setManagerVisible,
     openEditor,
     setQuickPrefill,
