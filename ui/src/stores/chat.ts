@@ -1854,7 +1854,14 @@ export const useChatStore = defineStore({
       return data;
     },
 
-    async createWorld(payload: { name: string; description?: string; visibility?: string; avatar?: string }) {
+    async createWorld(payload: {
+      name: string;
+      description?: string;
+      visibility?: string;
+      avatar?: string;
+      channelDefaultDiceMode?: 'builtin' | 'bot';
+      channelDefaultBotId?: string;
+    }) {
       const resp = await api.post('/api/v1/worlds', payload);
       const worldId = resp.data.world?.id;
       if (worldId) {
@@ -3948,6 +3955,19 @@ export const useChatStore = defineStore({
     async messageRemove(channel_id: string, message_id: string) {
       const resp = await this.sendAPI('message.remove', { channel_id, message_id });
       return resp.data;
+    },
+
+    async removeMessages(messageIds: string[]) {
+      if (!this.curChannel?.id || messageIds.length === 0) return;
+      const resp = await this.sendAPI('message.remove', {
+        channel_id: this.curChannel.id,
+        message_ids: messageIds,
+      });
+      const payload = resp?.data as { message_ids?: string[] } | undefined;
+      if (!payload || !Array.isArray(payload.message_ids) || payload.message_ids.length === 0) {
+        throw new Error('删除失败：未找到目标消息或无权限操作');
+      }
+      return payload;
     },
 
     pruneRevokedDrafts(now = Date.now()) {

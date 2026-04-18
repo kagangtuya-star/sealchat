@@ -68,6 +68,12 @@ export interface WorldKeywordImportPayload {
   replace?: boolean
 }
 
+export interface WorldKeywordBulkUpdatePatch {
+  category?: string
+  display?: 'standard' | 'minimal' | 'inherit'
+  isEnabled?: boolean
+}
+
 export async function fetchWorldKeywords(worldId: string, params?: { page?: number; pageSize?: number; q?: string; includeDisabled?: boolean }) {
   if (!worldId) throw new Error('worldId is required')
   const { data } = await api.get<WorldKeywordListResponse>(`/api/v1/worlds/${worldId}/keywords`, { params })
@@ -115,6 +121,11 @@ export async function deleteWorldKeyword(worldId: string, keywordId: string) {
 export async function bulkDeleteWorldKeywords(worldId: string, ids: string[]) {
   const { data } = await api.post<{ deleted: number }>(`/api/v1/worlds/${worldId}/keywords/bulk-delete`, { ids })
   return data.deleted
+}
+
+export async function bulkUpdateWorldKeywords(worldId: string, ids: string[], patch: WorldKeywordBulkUpdatePatch) {
+  const { data } = await api.post<{ updated: number }>(`/api/v1/worlds/${worldId}/keywords/bulk-update`, { ids, patch })
+  return data.updated
 }
 
 export async function reorderWorldKeywords(worldId: string, items: WorldKeywordReorderItem[]) {

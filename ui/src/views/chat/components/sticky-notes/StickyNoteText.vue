@@ -58,7 +58,7 @@ const defaultIFormEmbedLink = computed(() => {
   return generateIFormEmbedLink(
     {
       worldId,
-      channelId,
+      channelId: firstForm.sourceChannelId || firstForm.channelId,
       formId: firstForm.id,
       width: firstForm.defaultWidth,
       height: firstForm.defaultHeight,
@@ -143,17 +143,36 @@ const singleIFormLink = computed(() => {
   return null
 })
 
+const resolveMatchedIForm = () => {
+  if (!singleIFormLink.value) {
+    return undefined
+  }
+  const directMatch = (iFormStore.formsByChannel[singleIFormLink.value.channelId] || [])
+    .find((item) => item.id === singleIFormLink.value?.formId)
+  if (directMatch) {
+    return directMatch
+  }
+  const currentChannelId = String(props.note?.channelId || '').trim()
+  if (!currentChannelId) {
+    return undefined
+  }
+  return (iFormStore.formsByChannel[currentChannelId] || []).find((item) => (
+    item.id === singleIFormLink.value?.formId
+    && (item.sourceChannelId || item.channelId) === singleIFormLink.value.channelId
+  ))
+}
+
 const stickyIFormNode = computed(() => {
   if (!singleIFormLink.value) {
     return null
   }
-  const matchedForm = (iFormStore.formsByChannel[singleIFormLink.value.channelId] || [])
-    .find((item) => item.id === singleIFormLink.value?.formId)
+  const matchedForm = resolveMatchedIForm()
   const width = Math.max(120, Math.min(1920, Math.round(singleIFormLink.value.width || 640)))
   const height = Math.max(72, Math.min(1200, Math.round(singleIFormLink.value.height || 360)))
   const runtimeForm: ChannelIForm = {
     id: singleIFormLink.value.formId,
-    channelId: singleIFormLink.value.channelId,
+    channelId: matchedForm?.channelId || singleIFormLink.value.channelId,
+    sourceChannelId: matchedForm?.sourceChannelId,
     name: matchedForm?.name || '便签嵌入窗',
     url: matchedForm?.url,
     embedCode: matchedForm?.embedCode,
@@ -163,6 +182,11 @@ const stickyIFormNode = computed(() => {
     defaultFloating: false,
     allowPopout: false,
     orderIndex: 0,
+    worldShared: matchedForm?.worldShared,
+    sharedRef: matchedForm?.sharedRef,
+    sharedWorldId: matchedForm?.sharedWorldId,
+    readonly: matchedForm?.readonly,
+    mediaOptions: matchedForm?.mediaOptions,
   }
   return h(
     'div',

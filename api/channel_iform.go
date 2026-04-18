@@ -62,6 +62,11 @@ type channelIFormMigrateRequest struct {
 	Mode             string   `json:"mode"`
 }
 
+type channelIFormWorldShareRequest struct {
+	FormIDs []string `json:"formIds"`
+	Enabled bool     `json:"enabled"`
+}
+
 func canManageIForm(userID, channelID string) bool {
 	if pm.CanWithChannelRole(userID, channelID, pm.PermFuncChannelIFormManage) {
 		return true
@@ -92,12 +97,12 @@ func ChannelIFormList(c *fiber.Ctx) error {
 	if !service.CanReadChannelByUserId(user.ID, channelID) {
 		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "没有权限访问该频道")
 	}
-	forms, err := model.ChannelIFormList(channelID)
+	forms, err := service.ListEffectiveChannelIForms(channelID)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "获取嵌入窗失败")
 	}
 	return c.JSON(fiber.Map{
-		"items": forms,
+		"items": convertIFormViewListToProtocol(forms),
 		"total": len(forms),
 	})
 }
@@ -121,7 +126,7 @@ func ChannelIFormCreate(c *fiber.Ctx) error {
 	if err := model.ChannelIFormCreate(form); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "创建嵌入窗失败")
 	}
-	if err := broadcastIFormSnapshot(user, channelID); err != nil {
+	if err := broadcastIFormSnapshotsForFormIDs(user, []string{form.ID}); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
 	}
 	return c.JSON(fiber.Map{
@@ -142,7 +147,7 @@ func ChannelIFormUpdate(c *fiber.Ctx) error {
 	if formID == "" {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少控件ID")
 	}
-	form, err := model.ChannelIFormGet(channelID, formID)
+	form, sourceChannelID, err := resolveEffectiveIFormForMutation(channelID, formID)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "获取控件失败")
 	}
@@ -161,13 +166,13 @@ func ChannelIFormUpdate(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"item": form, "message": "未检测到需要更新的字段"})
 	}
 	updates["updated_by"] = user.ID
-	if err := model.ChannelIFormUpdate(channelID, formID, updates); err != nil {
+	if err := model.ChannelIFormUpdate(sourceChannelID, formID, updates); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新控件失败")
 	}
-	if err := broadcastIFormSnapshot(user, channelID); err != nil {
+	if err := broadcastIFormSnapshotsForFormIDs(user, []string{formID}); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
 	}
-	form, _ = model.ChannelIFormGet(channelID, formID)
+	form, _ = model.ChannelIFormGet(sourceChannelID, formID)
 	return c.JSON(fiber.Map{
 		"item":    form,
 		"message": "更新成功",
@@ -193,10 +198,15 @@ func ChannelIFormDelete(c *fiber.Ctx) error {
 	if form == nil {
 		return wrapErrorStatus(c, fiber.StatusNotFound, nil, "控件不存在")
 	}
+	affectedChannels, err := collectAffectedChannelsForForms([]string{formID})
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "计算受影响频道失败")
+	}
 	if err := model.ChannelIFormDelete(channelID, formID); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除控件失败")
 	}
-	if err := broadcastIFormSnapshot(user, channelID); err != nil {
+	_ = model.GetDB().Where("form_id = ?", formID).Delete(&model.WorldIFormBindingModel{}).Error
+	if err := broadcastIFormSnapshotsForChannels(user, affectedChannels); err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
 	}
 	return c.JSON(fiber.Map{"message": "删除成功"})
@@ -224,11 +234,11 @@ func ChannelIFormPush(c *fiber.Ctx) error {
 	if len(states) == 0 {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少推送内容")
 	}
-	forms, err := model.ChannelIFormList(channelID)
+	forms, err := service.ListEffectiveChannelIForms(channelID)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载控件失败")
 	}
-	formMap := lo.KeyBy(forms, func(item *model.ChannelIFormModel) string { return item.ID })
+	formMap := lo.KeyBy(forms, func(item *service.ChannelIFormView) string { return item.ID })
 	normalized := make([]protocol.ChannelIFormStatePayload, 0, len(states))
 	for _, state := range states {
 		if state.FormID == "" {
@@ -238,7 +248,7 @@ func ChannelIFormPush(c *fiber.Ctx) error {
 		if form == nil {
 			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, fmt.Sprintf("控件 %s 不存在", state.FormID))
 		}
-		normalized = append(normalized, normalizeStatePayload(state, form, payload.Force))
+		normalized = append(normalized, normalizeStatePayload(state, form.ChannelIFormModel, payload.Force))
 	}
 	trimmedUserTargets := lo.Map(payload.TargetUserIDs, func(item string, _ int) string {
 		return strings.TrimSpace(item)
@@ -255,13 +265,49 @@ func ChannelIFormPush(c *fiber.Ctx) error {
 		}(),
 		IForm: &protocol.ChannelIFormEventPayload{
 			States:        normalized,
-			Forms:         convertIFormListToProtocol(filteredForms(formMap, normalized)),
+			Forms:         convertIFormViewListToProtocol(filteredFormViews(formMap, normalized)),
 			TargetUserIDs: targets,
 			Action:        "push",
 		},
 	}
 	dispatchIFormEvent(channelID, event, targets)
 	return c.JSON(fiber.Map{"message": "推送成功", "count": len(normalized)})
+}
+
+func ChannelIFormWorldShare(c *fiber.Ctx) error {
+	channelID, user, err := resolveIFormContext(c)
+	if err != nil {
+		return err
+	}
+	var payload channelIFormWorldShareRequest
+	if err := c.BodyParser(&payload); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体解析失败")
+	}
+	if len(payload.FormIDs) == 0 {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "请至少选择一个控件")
+	}
+	affectedBefore, err := collectAffectedChannelsForForms(payload.FormIDs)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "计算受影响频道失败")
+	}
+	if err := service.SetWorldSharedChannelIForms(channelID, user.ID, payload.FormIDs, payload.Enabled); err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldPermission):
+			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "没有权限管理世界共享 iForm")
+		case errors.Is(err, service.ErrWorldNotFound):
+			return wrapErrorStatus(c, fiber.StatusNotFound, nil, "所属世界不存在")
+		default:
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		}
+	}
+	affectedAfter, err := collectAffectedChannelsForForms(payload.FormIDs)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "计算受影响频道失败")
+	}
+	if err := broadcastIFormSnapshotsForChannels(user, mergeChannelIDs(affectedBefore, affectedAfter)); err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "广播更新失败")
+	}
+	return c.JSON(fiber.Map{"message": "操作成功", "enabled": payload.Enabled, "count": len(payload.FormIDs)})
 }
 
 func ChannelIFormMigrate(c *fiber.Ctx) error {
@@ -371,6 +417,35 @@ func resolveIFormContext(c *fiber.Ctx) (string, *model.UserModel, error) {
 		return "", nil, wrapErrorStatus(c, fiber.StatusNotFound, nil, "频道不存在")
 	}
 	return channelID, user, nil
+}
+
+func resolveEffectiveIFormForMutation(channelID, formID string) (*model.ChannelIFormModel, string, error) {
+	form, err := model.ChannelIFormGet(channelID, formID)
+	if err != nil {
+		return nil, "", err
+	}
+	if form != nil {
+		return form, channelID, nil
+	}
+
+	forms, err := service.ListEffectiveChannelIForms(channelID)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, item := range forms {
+		if item == nil || item.ChannelIFormModel == nil || strings.TrimSpace(item.ID) != formID {
+			continue
+		}
+		sourceChannelID := strings.TrimSpace(item.ChannelIFormModel.ChannelID)
+		if sourceChannelID == "" {
+			sourceChannelID = strings.TrimSpace(item.SourceChannelID)
+		}
+		if sourceChannelID == "" {
+			return nil, "", nil
+		}
+		return item.ChannelIFormModel, sourceChannelID, nil
+	}
+	return nil, "", nil
 }
 
 func buildIFormModelFromCreate(payload *channelIFormCreateRequest, channelID, actor string) (*model.ChannelIFormModel, error) {
@@ -513,12 +588,12 @@ func normalizeMediaOptions(opts model.ChannelIFormMediaOptions) model.ChannelIFo
 }
 
 func broadcastIFormSnapshot(user *model.UserModel, channelID string) error {
-	forms, err := model.ChannelIFormList(channelID)
+	forms, err := service.ListEffectiveChannelIForms(channelID)
 	if err != nil {
 		return err
 	}
 	payload := &protocol.ChannelIFormEventPayload{
-		Forms:  convertIFormListToProtocol(forms),
+		Forms:  convertIFormViewListToProtocol(forms),
 		Action: "snapshot",
 	}
 	event := &protocol.Event{
@@ -534,6 +609,90 @@ func broadcastIFormSnapshot(user *model.UserModel, channelID string) error {
 	}
 	dispatchIFormEvent(channelID, event, nil)
 	return nil
+}
+
+func broadcastIFormSnapshotsForFormIDs(user *model.UserModel, formIDs []string) error {
+	channelSet := map[string]struct{}{}
+	for _, raw := range formIDs {
+		formID := strings.TrimSpace(raw)
+		if formID == "" {
+			continue
+		}
+		channelIDs, err := service.ListChannelsAffectedByIForm(formID)
+		if err != nil {
+			return err
+		}
+		for _, channelID := range channelIDs {
+			channelID = strings.TrimSpace(channelID)
+			if channelID == "" {
+				continue
+			}
+			channelSet[channelID] = struct{}{}
+		}
+	}
+	channelIDs := make([]string, 0, len(channelSet))
+	for channelID := range channelSet {
+		channelIDs = append(channelIDs, channelID)
+	}
+	return broadcastIFormSnapshotsForChannels(user, channelIDs)
+}
+
+func broadcastIFormSnapshotsForChannels(user *model.UserModel, channelIDs []string) error {
+	for _, channelID := range channelIDs {
+		channelID = strings.TrimSpace(channelID)
+		if channelID == "" {
+			continue
+		}
+		if err := broadcastIFormSnapshot(user, channelID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func collectAffectedChannelsForForms(formIDs []string) ([]string, error) {
+	channelSet := map[string]struct{}{}
+	for _, raw := range formIDs {
+		formID := strings.TrimSpace(raw)
+		if formID == "" {
+			continue
+		}
+		channelIDs, err := service.ListChannelsAffectedByIForm(formID)
+		if err != nil {
+			return nil, err
+		}
+		for _, channelID := range channelIDs {
+			channelID = strings.TrimSpace(channelID)
+			if channelID == "" {
+				continue
+			}
+			channelSet[channelID] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(channelSet))
+	for channelID := range channelSet {
+		result = append(result, channelID)
+	}
+	return result, nil
+}
+
+func mergeChannelIDs(chunks ...[]string) []string {
+	seen := map[string]struct{}{}
+	result := []string{}
+	for _, chunk := range chunks {
+		for _, raw := range chunk {
+			channelID := strings.TrimSpace(raw)
+			if channelID == "" {
+				continue
+			}
+			if _, ok := seen[channelID]; ok {
+				continue
+			}
+			seen[channelID] = struct{}{}
+			result = append(result, channelID)
+		}
+	}
+	return result
 }
 
 func convertIFormListToProtocol(items []*model.ChannelIFormModel) []*protocol.ChannelIForm {
@@ -579,6 +738,33 @@ func convertIFormToProtocol(item *model.ChannelIFormModel) *protocol.ChannelIFor
 	}
 }
 
+func convertIFormViewListToProtocol(items []*service.ChannelIFormView) []*protocol.ChannelIForm {
+	result := make([]*protocol.ChannelIForm, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		result = append(result, convertIFormViewToProtocol(item))
+	}
+	return result
+}
+
+func convertIFormViewToProtocol(item *service.ChannelIFormView) *protocol.ChannelIForm {
+	if item == nil || item.ChannelIFormModel == nil {
+		return nil
+	}
+	protoItem := convertIFormToProtocol(item.ChannelIFormModel)
+	if protoItem == nil {
+		return nil
+	}
+	protoItem.SourceChannelID = item.SourceChannelID
+	protoItem.WorldShared = item.WorldShared
+	protoItem.SharedRef = item.SharedRef
+	protoItem.SharedWorldID = item.SharedWorldID
+	protoItem.Readonly = item.Readonly
+	return protoItem
+}
+
 func dispatchIFormEvent(channelID string, event *protocol.Event, targets []string) {
 	if event == nil || channelUsersMapGlobal == nil || userId2ConnInfoGlobal == nil {
 		return
@@ -609,6 +795,21 @@ func normalizeStatePayload(state protocol.ChannelIFormStatePayload, form *model.
 func filteredForms(formMap map[string]*model.ChannelIFormModel, states []protocol.ChannelIFormStatePayload) []*model.ChannelIFormModel {
 	seen := map[string]struct{}{}
 	result := make([]*model.ChannelIFormModel, 0, len(states))
+	for _, state := range states {
+		if _, exists := seen[state.FormID]; exists {
+			continue
+		}
+		if form := formMap[state.FormID]; form != nil {
+			result = append(result, form)
+			seen[state.FormID] = struct{}{}
+		}
+	}
+	return result
+}
+
+func filteredFormViews(formMap map[string]*service.ChannelIFormView, states []protocol.ChannelIFormStatePayload) []*service.ChannelIFormView {
+	seen := map[string]struct{}{}
+	result := make([]*service.ChannelIFormView, 0, len(states))
 	for _, state := range states {
 		if _, exists := seen[state.FormID]; exists {
 			continue

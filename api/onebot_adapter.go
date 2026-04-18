@@ -491,10 +491,7 @@ func oneBotActionDeleteMessage(session *oneBotSession, raw json.RawMessage) (any
 	if err != nil {
 		return nil, err
 	}
-	_, err = apiMessageDelete(oneBotChatContext(session), &struct {
-		ChannelID string `json:"channel_id"`
-		MessageID string `json:"message_id"`
-	}{
+	_, err = apiMessageDelete(oneBotChatContext(session), &messageDeletePayload{
 		ChannelID: msg.ChannelID,
 		MessageID: msg.ID,
 	})

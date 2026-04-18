@@ -571,9 +571,9 @@ async function handleBulkTermsDisplay(display: KeywordDisplayStyle) {
   if (!library || !selectedTermIds.value.length) return
   try {
     await store.setTermsDisplay(library.id, [...selectedTermIds.value], display)
-    message.success('已批量更新显示模式')
+    message.success('已批量更新常规设置')
   } catch (error) {
-    message.error(resolveErrorMessage(error, '批量更新显示模式失败'))
+    message.error(resolveErrorMessage(error, '批量更新常规设置失败'))
   }
 }
 
@@ -1074,7 +1074,7 @@ onMounted(async () => {
           <n-dynamic-tags v-model:value="termForm.aliases" :max="10" />
         </n-form-item>
         <div class="external-glossary-admin__modal-row">
-          <n-form-item label="显示模式" class="external-glossary-admin__modal-field">
+          <n-form-item label="常规设置" class="external-glossary-admin__modal-field">
             <n-select v-model:value="termForm.display" :options="displayOptions" />
           </n-form-item>
           <n-form-item label="排序" class="external-glossary-admin__modal-field">

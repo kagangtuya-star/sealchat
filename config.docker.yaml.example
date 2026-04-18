@@ -6,6 +6,7 @@ domain: localhost:3212                       # 对外访问域名（影响图片
 serveAt: :3212                               # 监听端口
 webUrl: /                                    # 前端路径
 pageTitle: "海豹尬聊 SealChat"
+faviconAttachmentId: ""                      # 可选：平台管理-基本设置上传网页图标后会写入此处
 
 # 数据库配置
 # SQLite (默认)

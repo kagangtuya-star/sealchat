@@ -197,9 +197,10 @@ func EffectiveWorldKeywordListPublic(worldID string, opts EffectiveWorldKeywordL
 		return nil, ErrWorldPermission
 	}
 	return buildEffectiveWorldKeywordList(worldID, EffectiveWorldKeywordListOptions{
-		Query:           opts.Query,
-		Category:        opts.Category,
-		IncludeDisabled: false,
+		Query:             opts.Query,
+		Category:          opts.Category,
+		IncludeDisabled:   false,
+		IncludeAllMatches: opts.IncludeAllMatches,
 	})
 }
 

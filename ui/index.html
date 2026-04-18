@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <link rel="icon" href="/favicon.ico">
+  <link rel="shortcut icon" href="/favicon.ico">
   <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0"> -->
   <meta name=viewport
     content="width=device-width, initial-scale=1.0, minimum-scale=1.0 maximum-scale=1.0, user-scalable=no">
@@ -16,6 +17,25 @@
         if (!trimmed) return;
         document.title = trimmed;
         window.__SEALCHAT_PAGE_TITLE__ = trimmed;
+      };
+      var applyFavicon = function (attachmentId, baseOrigin) {
+        var href = '/favicon.ico';
+        var trimmed = typeof attachmentId === 'string' ? attachmentId.trim().replace(/^id:/, '') : '';
+        if (trimmed) {
+          var origin = (baseOrigin || window.location.origin).replace(/\/$/, '');
+          href = origin + '/api/v1/attachment/' + encodeURIComponent(trimmed) + '?v=' + encodeURIComponent(trimmed);
+        }
+        var links = document.querySelectorAll('link[rel~="icon"]');
+        if (!links.length) {
+          var link = document.createElement('link');
+          link.rel = 'icon';
+          document.head.appendChild(link);
+          links = [link];
+        }
+        Array.prototype.forEach.call(links, function (link) {
+          link.href = href;
+        });
+        window.__SEALCHAT_PAGE_FAVICON__ = href;
       };
       var requestConfig = function (base) {
         return fetch(base.replace(/\/$/, '') + '/api/v1/config', { credentials: 'include' }).then(function (resp) {
@@ -34,6 +54,9 @@
         requestConfig(origins[idx]).then(function (config) {
           if (config && typeof config.pageTitle === 'string') {
             applyTitle(config.pageTitle);
+          }
+          if (config) {
+            applyFavicon(config.faviconAttachmentId, origins[idx]);
           }
         }).catch(function () {
           idx += 1;

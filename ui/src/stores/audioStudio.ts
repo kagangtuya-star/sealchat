@@ -8,6 +8,7 @@ import { chatEvent, useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
+import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import type {
   AudioAsset,
   AudioAssetMutationPayload,
@@ -2400,20 +2401,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     upsertAssetLocally(asset: AudioAsset) {
       const normalizedAsset = normalizeAudioAsset(asset);
-      const updateList = (list: AudioAsset[]) => {
-        const index = list.findIndex((item) => item.id === normalizedAsset.id);
-        if (index >= 0) {
-          list[index] = { ...list[index], ...normalizedAsset };
-        } else {
-          list.unshift(normalizedAsset);
-        }
-      };
-      updateList(this.assets);
-      updateList(this.filteredAssets);
-      updateList(this.trackSelectableAssets);
-      if (!this.selectedAssetId) {
-        this.selectedAssetId = normalizedAsset.id;
-      }
+      const next = upsertAudioAssetCollections(
+        {
+          assets: this.assets,
+          filteredAssets: this.filteredAssets,
+          trackSelectableAssets: this.trackSelectableAssets,
+          selectedAssetId: this.selectedAssetId,
+        },
+        normalizedAsset,
+      );
+      this.assets = next.assets;
+      this.filteredAssets = next.filteredAssets;
+      this.trackSelectableAssets = next.trackSelectableAssets;
+      this.selectedAssetId = next.selectedAssetId;
     },
 
     removeAssetLocally(assetId: string) {
@@ -2592,10 +2592,15 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
       }
       await Promise.all(running);
-      try {
-        await this.fetchAssets();
-      } catch (err) {
-        console.warn('refresh assets after upload failed', err);
+      const results = await Promise.allSettled([
+        this.fetchAssets(),
+        this.fetchTrackSelectableAssets(),
+      ]);
+      if (results[0]?.status === 'rejected') {
+        console.warn('refresh assets after upload failed', results[0].reason);
+      }
+      if (results[1]?.status === 'rejected') {
+        console.warn('refresh selectable assets after upload failed', results[1].reason);
       }
     },
 
@@ -2625,9 +2630,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           const serverStatus = resp.data?.status;
+          const uploadedAsset = resp.data?.item as AudioAsset | undefined;
           const assetId = resp.data?.item?.id;
           if (assetId) {
             task.assetId = assetId;
+          }
+          if (uploadedAsset) {
+            this.upsertAssetLocally(uploadedAsset);
           }
           if (serverStatus === 'processing') {
             task.status = 'transcoding';

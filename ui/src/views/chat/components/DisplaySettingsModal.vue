@@ -5,7 +5,8 @@ import {
   QUICK_GALLERY_PAGE_SIZE_LIMITS,
   createDefaultDisplaySettings,
   useDisplayStore,
-  type DisplaySettings
+  type DisplaySettings,
+  type ThemeSelectionMode,
 } from '@/stores/display'
 import { useOnboardingStore } from '@/stores/onboarding'
 import {
@@ -18,6 +19,10 @@ import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
 import AvatarStylePanel from './AvatarStylePanel.vue'
 import FontSettingsPanel from './FontSettingsPanel.vue'
+import {
+  buildDisplaySettingsDraftSavePayload,
+  syncDisplaySettingsDraft,
+} from './displaySettingsDraft'
 
 interface Props {
   visible: boolean
@@ -27,7 +32,7 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
-  (e: 'save', value: DisplaySettings): void
+  (e: 'save', value: Partial<DisplaySettings>): void
 }>()
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
@@ -53,6 +58,24 @@ const timestampFormatOptions = [
 const transferMenuOptions = [
   { label: '导出当前配置', key: 'export' },
   { label: '导入 JSON / ZIP', key: 'import' },
+]
+const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout'] }> = [
+  { label: '气泡模式', value: 'bubble' },
+  { label: '紧凑模式', value: 'compact' },
+]
+const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette'] }> = [
+  { label: '日间模式', value: 'day' },
+  { label: '夜间模式', value: 'night' },
+]
+const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendShortcut'] }> = [
+  { label: 'Enter 直接发送', value: 'enter' },
+  { label: 'Ctrl / Cmd + Enter 发送', value: 'ctrlEnter' },
+]
+const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
+  { label: '平台预设主题', value: 'inherit' },
+  { label: '选择平台主题', value: 'platform' },
+  { label: '选择个人主题', value: 'personal' },
+  { label: '关闭额外主题', value: 'none' },
 ]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
@@ -144,58 +167,7 @@ watch(
   (value) => {
     if (!value) return
     syncTriggerDrafts(value)
-    draft.layout = value.layout
-    draft.palette = value.palette
-    draft.showAvatar = value.showAvatar
-    draft.preferStaticAvatarDecoration = value.preferStaticAvatarDecoration
-    draft.showInputPreview = value.showInputPreview
-    draft.autoScrollTypingPreview = value.autoScrollTypingPreview
-    draft.mergeNeighbors = value.mergeNeighbors
-    draft.showPinnedMessages = value.showPinnedMessages
-    draft.alwaysShowTimestamp = value.alwaysShowTimestamp
-    draft.timestampFormat = value.timestampFormat
-    draft.maxExportMessages = value.maxExportMessages
-    draft.maxExportConcurrency = value.maxExportConcurrency
-    draft.fontSize = value.fontSize
-    draft.lineHeight = value.lineHeight
-    draft.letterSpacing = value.letterSpacing
-    draft.globalFontFamily = value.globalFontFamily
-    draft.globalFontSourceType = value.globalFontSourceType
-    draft.globalFontAssetId = value.globalFontAssetId
-    draft.fontEnhancedCoverageEnabled = value.fontEnhancedCoverageEnabled
-    draft.bubbleGap = value.bubbleGap
-    draft.compactBubbleGap = value.compactBubbleGap
-    draft.paragraphSpacing = value.paragraphSpacing
-  draft.messagePaddingX = value.messagePaddingX
-  draft.messagePaddingY = value.messagePaddingY
-  draft.sendShortcut = value.sendShortcut
-  draft.mobileMinimalInputEnabled = value.mobileMinimalInputEnabled
-  draft.enableIcToggleHotkey = value.enableIcToggleHotkey
-  syncFavoriteBar(value)
-  draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
-  draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
-  draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
-  draft.worldKeywordTooltipHoverEnabled = value.worldKeywordTooltipHoverEnabled
-  draft.worldKeywordTooltipClickEnabled = value.worldKeywordTooltipClickEnabled
-  draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
-  draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
-  draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
-  draft.identityQuickSwitchTrigger = value.identityQuickSwitchTrigger
-  draft.identityVariantQuickSwitchTrigger = value.identityVariantQuickSwitchTrigger
-  draft.toolbarHotkeys = value.toolbarHotkeys
-  draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
-  draft.showDragIndicator = value.showDragIndicator
-  draft.mobileMessageDragLongPressEnabled = value.mobileMessageDragLongPressEnabled
-  draft.highlightNewlySentMessage = value.highlightNewlySentMessage
-  draft.disableContextMenu = value.disableContextMenu
-  draft.quickGalleryLinkedEmojiSendDirectly = value.quickGalleryLinkedEmojiSendDirectly
-  draft.quickGalleryPageSize = value.quickGalleryPageSize
-  draft.avatarSize = value.avatarSize
-  draft.avatarBorderRadius = value.avatarBorderRadius
-  draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
-  draft.characterCardBadgeAutoContrastEnabled = value.characterCardBadgeAutoContrastEnabled
-  draft.identityRemarkAutoContrastEnabled = value.identityRemarkAutoContrastEnabled
-  // Custom theme fields are managed directly by store actions, not by draft
+    syncDisplaySettingsDraft(draft, value)
   },
   { deep: true, immediate: true },
 )
@@ -249,16 +221,10 @@ const handleRestoreDefaults = () => {
   Object.assign(draft, defaults)
   syncTriggerDrafts(defaults)
   syncFavoriteBar(props.settings)
+  display.setThemeSelectionMode('inherit')
 }
 
 const handleClose = () => emit('update:visible', false)
-
-const stripCustomThemeFields = (value: DisplaySettings) => {
-  // Custom theme fields are managed directly by store actions, not by this draft.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = value as any
-  return rest as DisplaySettings
-}
 
 const deepEqual = (a: any, b: any): boolean => {
   if (a === b) return true
@@ -301,18 +267,18 @@ const scheduleAutoSave = () => {
   clearAutoSaveTimer()
 
   autoSaveTimer = window.setTimeout(() => {
-    const next = stripCustomThemeFields(draft as any)
-    const cur = stripCustomThemeFields(props.settings as any)
+    const next = buildDisplaySettingsDraftSavePayload(draft)
+    const cur = buildDisplaySettingsDraftSavePayload(props.settings)
     if (deepEqual(next, cur)) return
-    emit('save', next as any)
+    emit('save', next)
   }, AUTO_SAVE_DEBOUNCE_MS)
 }
 
 const flushAutoSave = () => {
-  const next = stripCustomThemeFields(draft as any)
-  const cur = stripCustomThemeFields(props.settings as any)
+  const next = buildDisplaySettingsDraftSavePayload(draft)
+  const cur = buildDisplaySettingsDraftSavePayload(props.settings)
   if (deepEqual(next, cur)) return
-  emit('save', next as any)
+  emit('save', next)
 }
 
 const handleExportSettings = async () => {
@@ -396,6 +362,39 @@ const handleOpenTutorialHub = () => {
   onboarding.restart()
   emit('update:visible', false)
 }
+
+const resolvedThemeSelection = computed(() => display.getResolvedThemeSelection())
+const resolvedThemeLabel = computed(() => {
+  const resolvedTheme = resolvedThemeSelection.value.theme
+  if (!resolvedTheme) {
+    if (display.settings.themeSelectionMode === 'inherit') {
+      return '当前未设置平台默认主题，将回退到日间/夜间基础配色'
+    }
+    if (display.settings.themeSelectionMode === 'none') {
+      return '当前仅使用日间/夜间基础配色'
+    }
+    return '当前无可用主题，已回退到安全模式'
+  }
+  if (resolvedThemeSelection.value.source === 'platform') {
+    return resolvedThemeSelection.value.resolvedMode === 'inherit'
+      ? `当前继承平台默认主题：${resolvedTheme.name}`
+      : `当前使用平台主题：${resolvedTheme.name}`
+  }
+  return `当前使用个人主题：${resolvedTheme.name}`
+})
+const themeManagerMetaLabel = computed(() => `平台主题 ${display.platformThemes.length} · 个人主题 ${display.settings.customThemes.length}`)
+const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
+  if (mode === 'platform' && display.platformThemes.length === 0) {
+    message.warning('平台暂无可选主题')
+    return
+  }
+  if (mode === 'personal' && display.settings.customThemes.length === 0) {
+    customThemePanelVisible.value = true
+    message.info('先创建一个个人主题')
+    return
+  }
+  display.setThemeSelectionMode(mode)
+}
 </script>
 
 <template>
@@ -403,7 +402,7 @@ const handleOpenTutorialHub = () => {
     class="display-settings-modal"
     preset="card"
     :show="props.visible"
-    title="显示模式"
+    title="常规设置"
     :style="{ width: 'min(880px, 96vw)' }"
     @update:show="emit('update:visible', $event)"
   >
@@ -416,10 +415,21 @@ const handleOpenTutorialHub = () => {
             <p class="section-desc">气泡模式强调对话气泡，紧凑模式更接近论坛流</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.layout" size="large">
-          <n-radio-button value="bubble">气泡模式</n-radio-button>
-          <n-radio-button value="compact">紧凑模式</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid layout-mode-grid">
+          <n-button
+            v-for="option in layoutModeOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.layout === option.value ? 'primary' : 'default'"
+            :secondary="draft.layout !== option.value"
+            :aria-pressed="draft.layout === option.value"
+            @click="draft.layout = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -429,33 +439,59 @@ const handleOpenTutorialHub = () => {
             <p class="section-desc">在日间/夜间之间切换沉浸背景</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.palette" size="large">
-          <n-radio-button value="day">日间模式</n-radio-button>
-          <n-radio-button value="night">夜间模式</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid palette-mode-grid">
+          <n-button
+            v-for="option in paletteModeOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.palette === option.value ? 'primary' : 'default'"
+            :secondary="draft.palette !== option.value"
+            :aria-pressed="draft.palette === option.value"
+            @click="draft.palette = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">自定义主题</p>
-            <p class="section-desc">创建个性化配色方案，覆盖系统日夜主题</p>
+            <p class="section-title">主题管理</p>
+            <p class="section-desc">管理平台与个人主题</p>
           </div>
         </header>
-        <div class="custom-theme-row">
-          <n-switch
-            :value="display.settings.customThemeEnabled"
-            @update:value="display.setCustomThemeEnabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
+        <div class="theme-management-mode-grid">
+          <n-button
+            v-for="option in themeSelectionModeOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="theme-mode-button"
+            :type="display.settings.themeSelectionMode === option.value ? 'primary' : 'default'"
+            :secondary="display.settings.themeSelectionMode !== option.value"
+            :aria-pressed="display.settings.themeSelectionMode === option.value"
+            @click="handleThemeSelectionModeUpdate(option.value)"
+          >
+            <span class="theme-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
+        <div class="theme-management-row">
+          <div class="theme-management-summary">
+            <span class="active-theme-name">{{ resolvedThemeLabel }}</span>
+            <span class="theme-management-meta">{{ themeManagerMetaLabel }}</span>
+          </div>
+          <n-button secondary size="small" @click="customThemePanelVisible = true">
+            打开主题管理
+          </n-button>
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button
                 circle
                 size="tiny"
                 quaternary
-                :disabled="!display.settings.customThemeEnabled"
                 @click="customThemePanelVisible = true"
               >
                 <template #icon>
@@ -480,11 +516,8 @@ const handleOpenTutorialHub = () => {
                 </template>
               </n-button>
             </template>
-            配置自定义主题颜色
+            打开主题管理抽屉
           </n-tooltip>
-          <span v-if="display.settings.customThemeEnabled && display.getActiveCustomTheme()" class="active-theme-name">
-            当前：{{ display.getActiveCustomTheme()?.name }}
-          </span>
         </div>
       </section>
 
@@ -756,10 +789,21 @@ const handleOpenTutorialHub = () => {
             <p class="section-desc">选择回车发送方式，另一组合则换行</p>
           </div>
         </header>
-        <n-radio-group v-model:value="draft.sendShortcut" size="large">
-          <n-radio-button value="enter">Enter 直接发送</n-radio-button>
-          <n-radio-button value="ctrlEnter">Ctrl / Cmd + Enter 发送</n-radio-button>
-        </n-radio-group>
+        <div class="setting-mode-grid sendShortcut-mode-grid">
+          <n-button
+            v-for="option in sendShortcutOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.sendShortcut === option.value ? 'primary' : 'default'"
+            :secondary="draft.sendShortcut !== option.value"
+            :aria-pressed="draft.sendShortcut === option.value"
+            @click="draft.sendShortcut = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
       </section>
 
@@ -1307,21 +1351,6 @@ const handleOpenTutorialHub = () => {
   margin-bottom: 0.45rem;
 }
 
-.display-settings :deep(.n-radio-group),
-.display-settings :deep(.n-radio-button-group) {
-  --n-button-color: transparent !important;
-  --n-button-color-active: var(--sc-bg-elevated) !important;
-  background-color: transparent !important;
-}
-
-.display-settings :deep(.n-radio-button) {
-  background-color: transparent !important;
-}
-
-.display-settings :deep(.n-radio-button--checked) {
-  background-color: var(--sc-bg-elevated) !important;
-}
-
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -1508,10 +1537,43 @@ const handleOpenTutorialHub = () => {
   opacity: 0.5;
 }
 
-.custom-theme-row {
+.theme-management-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.setting-mode-grid,
+.theme-management-mode-grid {
+  margin-bottom: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.setting-mode-button,
+.theme-mode-button {
+  min-height: 40px;
+}
+
+.setting-mode-button__label,
+.theme-mode-button__label {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.theme-management-summary {
+  display: flex;
+  flex: 1 1 320px;
+  min-width: min(320px, 100%);
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .avatar-display-row {
@@ -1535,6 +1597,11 @@ const handleOpenTutorialHub = () => {
   border-radius: 4px;
 }
 
+.theme-management-meta {
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+}
+
 .display-settings__footer {
   margin-top: 0.5rem;
   width: 100%;
@@ -1546,6 +1613,12 @@ const handleOpenTutorialHub = () => {
 
 @media (max-width: 720px) {
   .control-field {
+    flex-direction: column;
+  }
+
+  .theme-management-row,
+  .avatar-display-row {
+    align-items: flex-start;
     flex-direction: column;
   }
 

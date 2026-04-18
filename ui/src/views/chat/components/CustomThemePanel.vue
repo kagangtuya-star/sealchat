@@ -2,8 +2,9 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
-import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
+import { useDisplayStore, type CustomTheme, type CustomThemeColors, type ThemeSelectionMode } from '@/stores/display'
 import { presetThemes, dayBaseTheme, nightBaseTheme } from '@/config/presetThemes'
+import { themeColorFields } from '@/services/theme/themeColorFields'
 import ThemeLivePreviewFloating from './ThemeLivePreviewFloating.vue'
 
 interface Props {
@@ -21,6 +22,12 @@ const livePreviewFloatingVisible = ref(false)
 const livePreviewBaseColors = ref<CustomThemeColors | null>(null)
 const selectedImportSource = ref<string | null>(null)
 const selectedThemeId = ref<string | null>(null)
+const themeSelectionModeOptions: Array<{ label: string; value: ThemeSelectionMode }> = [
+  { label: '平台预设主题', value: 'inherit' },
+  { label: '选择平台主题', value: 'platform' },
+  { label: '选择个人主题', value: 'personal' },
+  { label: '关闭额外主题', value: 'none' },
+]
 
 // 响应式 drawer 宽度
 const { width: windowWidth } = useWindowSize()
@@ -43,36 +50,9 @@ const editingThemeId = ref<string | null>(null)
 const themeName = ref('')
 const themeColors = ref<CustomThemeColors>({})
 
-// 颜色配置项定义
-const colorFields: { key: keyof CustomThemeColors; label: string; group: string }[] = [
-  // 背景
-  { key: 'bgSurface', label: '主背景', group: '背景' },
-  { key: 'bgElevated', label: '卡片/弹窗', group: '背景' },
-  { key: 'bgInput', label: '输入框', group: '背景' },
-  { key: 'bgHeader', label: '顶栏', group: '背景' },
-  // 文字
-  { key: 'textPrimary', label: '主文字', group: '文字' },
-  { key: 'textSecondary', label: '次要文字', group: '文字' },
-  // 聊天
-  { key: 'chatIcBg', label: '气泡（场内）', group: '气泡颜色' },
-  { key: 'chatOocBg', label: '气泡（场外）', group: '气泡颜色' },
-  { key: 'chatStageBg', label: '聊天舞台', group: '聊天区域' },
-  { key: 'chatPreviewBg', label: '预览背景', group: '聊天区域' },
-  { key: 'chatPreviewDot', label: '预览圆点', group: '聊天区域' },
-  // 边框
-  { key: 'borderMute', label: '淡边框', group: '边框' },
-  { key: 'borderStrong', label: '强边框', group: '边框' },
-  // 强调色
-  { key: 'primaryColor', label: '主题色', group: '强调色' },
-  { key: 'primaryColorHover', label: '悬停色', group: '强调色' },
-  // 术语高亮
-  { key: 'keywordBg', label: '高亮背景', group: '术语高亮' },
-  { key: 'keywordBorder', label: '下划线色', group: '术语高亮' },
-]
-
 const colorGroups = computed(() => {
-  const groups: Record<string, typeof colorFields> = {}
-  colorFields.forEach(f => {
+  const groups: Record<string, typeof themeColorFields> = {}
+  themeColorFields.forEach(f => {
     if (!groups[f.group]) groups[f.group] = []
     groups[f.group].push(f)
   })
@@ -92,6 +72,47 @@ const savedThemeOptions = computed(() =>
     value: theme.id,
   })),
 )
+const platformThemeOptions = computed(() =>
+  display.platformThemes.map((theme) => ({
+    label: display.defaultPlatformThemeId === theme.id ? `${theme.name}（默认）` : theme.name,
+    value: theme.id,
+  })),
+)
+const resolvedThemeSelection = computed(() => display.getResolvedThemeSelection())
+const resolvedThemeLabel = computed(() => {
+  const resolvedTheme = resolvedThemeSelection.value.theme
+  if (!resolvedTheme) {
+    if (display.settings.themeSelectionMode === 'inherit') {
+      return '当前未设置平台默认主题，将回退到日间/夜间基础配色'
+    }
+    if (display.settings.themeSelectionMode === 'none') {
+      return '当前仅使用日间/夜间基础配色'
+    }
+    return '当前无可用主题，已回退到安全模式'
+  }
+  if (resolvedThemeSelection.value.source === 'platform') {
+    return resolvedThemeSelection.value.resolvedMode === 'inherit'
+      ? `当前继承平台默认主题：${resolvedTheme.name}`
+      : `当前使用平台主题：${resolvedTheme.name}`
+  }
+  return `当前使用个人主题：${resolvedTheme.name}`
+})
+const platformThemeSectionDisabled = computed(() => display.settings.themeSelectionMode !== 'platform')
+const platformThemeSectionHint = computed(() => {
+  if (display.platformThemes.length === 0) {
+    return '平台暂无可选共享主题'
+  }
+  if (display.settings.themeSelectionMode === 'inherit') {
+    return '当前将自动跟随平台默认主题；如需指定某个共享主题，请先切换到“指定平台主题”。'
+  }
+  if (display.settings.themeSelectionMode === 'personal') {
+    return '当前正在使用个人主题；若要改用平台共享主题，请先切换上方来源。'
+  }
+  if (display.settings.themeSelectionMode === 'none') {
+    return '当前已关闭主题覆盖；若要启用平台共享主题，请先切换上方来源。'
+  }
+  return '选择一个平台共享主题后会立即生效。'
+})
 
 // 初始化表单
 const resetForm = () => {
@@ -200,8 +221,11 @@ const importThemeFromSource = (sourceValue: string | null) => {
 
 const handleThemeSelect = (themeId: string | null) => {
   selectedThemeId.value = themeId
-  if (!themeId) return
-  handleActivate(themeId)
+}
+
+const handleApplySelectedTheme = () => {
+  if (!selectedSavedTheme.value) return
+  handleActivate(selectedSavedTheme.value.id)
 }
 
 const handleEditSelectedTheme = () => {
@@ -217,6 +241,27 @@ const handleExportSelectedTheme = () => {
 const handleDeleteSelectedTheme = () => {
   if (!selectedSavedTheme.value) return
   handleDelete(selectedSavedTheme.value.id)
+}
+
+const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
+  if (mode === 'platform' && display.platformThemes.length === 0) {
+    message.warning('平台暂无可选主题')
+    return
+  }
+  if (mode === 'personal' && themes.value.length === 0) {
+    startCreate()
+    message.info('先创建一个个人主题')
+    return
+  }
+  display.setThemeSelectionMode(mode)
+}
+
+const handlePlatformThemeChange = (themeId: string | null) => {
+  if (!themeId) {
+    display.setThemeSelectionMode('inherit')
+    return
+  }
+  display.setActivePlatformTheme(themeId)
 }
 
 const saveCurrentTheme = (options?: { keepEditing?: boolean }) => {
@@ -291,8 +336,9 @@ const previewCssVars = [
   '--chat-text-primary', '--chat-text-secondary',
   '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
   '--sc-border-mute', '--sc-border-strong',
-  '--primary-color', '--primary-color-hover',
+  '--primary-color', '--primary-color-hover', '--sc-action-ribbon-hover-text',
   '--custom-keyword-bg', '--custom-keyword-border',
+  '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border',
 ]
 
 const clearPreviewThemeVars = () => {
@@ -335,9 +381,13 @@ const applyPreviewColorsToRoot = (colors: CustomThemeColors) => {
 
   setVar('--primary-color', colors.primaryColor)
   setVar('--primary-color-hover', colors.primaryColorHover)
+  setVar('--sc-action-ribbon-hover-text', colors.actionRibbonHoverText)
 
   setVar('--custom-keyword-bg', colors.keywordBg)
   setVar('--custom-keyword-border', colors.keywordBorder)
+  setVar('--chat-inline-code-bg', colors.inlineCodeBg)
+  setVar('--chat-inline-code-fg', colors.inlineCodeFg)
+  setVar('--chat-inline-code-border', colors.inlineCodeBorder)
 
   root.dataset.customTheme = 'true'
 }
@@ -358,8 +408,12 @@ const previewColorVarMap: Record<keyof CustomThemeColors, string[]> = {
   borderStrong: ['--sc-border-strong'],
   primaryColor: ['--primary-color'],
   primaryColorHover: ['--primary-color-hover'],
+  actionRibbonHoverText: ['--sc-action-ribbon-hover-text'],
   keywordBg: ['--custom-keyword-bg'],
   keywordBorder: ['--custom-keyword-border'],
+  inlineCodeBg: ['--chat-inline-code-bg'],
+  inlineCodeFg: ['--chat-inline-code-fg'],
+  inlineCodeBorder: ['--chat-inline-code-border'],
 }
 
 const readCurrentThemeColorsFromCss = (): CustomThemeColors => {
@@ -492,10 +546,6 @@ const updateColor = (key: keyof CustomThemeColors, value: string | null) => {
   }
 }
 
-const getColorValue = (key: keyof CustomThemeColors): string | null => {
-  return themeColors.value[key] || null
-}
-
 // JSON 导出主题
 const exportTheme = (theme: CustomTheme) => {
   const exportData = {
@@ -582,11 +632,60 @@ const handleImportFile = (event: Event) => {
 
 <template>
   <n-drawer :show="props.show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
-    <n-drawer-content closable title="自定义主题">
+    <n-drawer-content closable title="主题管理">
       <div class="custom-theme-panel">
+        <section class="theme-section">
+          <p class="section-title">主题来源</p>
+          <p class="section-desc">先确认当前使用哪一种主题来源，再在下方调整具体细节。</p>
+          <div class="theme-source-mode-grid">
+            <n-button
+              v-for="option in themeSelectionModeOptions"
+              :key="option.value"
+              size="small"
+              block
+              class="theme-mode-button"
+              :type="display.settings.themeSelectionMode === option.value ? 'primary' : 'default'"
+              :secondary="display.settings.themeSelectionMode !== option.value"
+              :aria-pressed="display.settings.themeSelectionMode === option.value"
+              @click="handleThemeSelectionModeUpdate(option.value)"
+            >
+              <span class="theme-mode-button__label">{{ option.label }}</span>
+            </n-button>
+          </div>
+          <div class="theme-status-card">
+            <span class="theme-status-badge">{{ resolvedThemeLabel }}</span>
+            <span class="theme-status-meta">平台主题 {{ display.platformThemes.length }} · 个人主题 {{ themes.length }}</span>
+          </div>
+        </section>
+
+        <n-divider />
+
+        <section class="theme-section">
+          <div class="section-header">
+            <p class="section-title">平台共享主题</p>
+            <span class="section-chip">平台</span>
+          </div>
+          <p class="section-desc">当主题来源切换为“指定平台主题”时，在这里选择具体的共享主题。</p>
+          <n-select
+            :value="display.settings.activePlatformThemeId"
+            :options="platformThemeOptions"
+            placeholder="选择平台主题"
+            clearable
+            :disabled="platformThemeSectionDisabled || platformThemeOptions.length === 0"
+            @update:value="handlePlatformThemeChange"
+          />
+          <p class="section-hint">{{ platformThemeSectionHint }}</p>
+        </section>
+
+        <n-divider />
+
         <!-- 主题选择 -->
         <section class="theme-section" v-if="themes.length > 0">
-          <p class="section-title">已保存的主题</p>
+          <div class="section-header">
+            <p class="section-title">个人主题库</p>
+            <span class="section-chip">个人</span>
+          </div>
+          <p class="section-desc">本地保存、编辑和分享你的主题模板；需要应用时请显式设为当前主题。</p>
           <div class="theme-selector-row">
             <n-select
               v-model:value="selectedThemeId"
@@ -599,6 +698,14 @@ const handleImportFile = (event: Event) => {
               @update:value="handleThemeSelect"
             />
             <div class="theme-selector-actions">
+              <n-button
+                text
+                size="small"
+                :disabled="!selectedSavedTheme || activeThemeId === selectedSavedTheme?.id && display.settings.themeSelectionMode === 'personal'"
+                @click="handleApplySelectedTheme"
+              >
+                设为当前
+              </n-button>
               <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleExportSelectedTheme">导出</n-button>
               <n-button text size="small" :disabled="!selectedSavedTheme" @click="handleEditSelectedTheme">编辑</n-button>
               <n-button text size="small" type="error" :disabled="!selectedSavedTheme" @click="handleDeleteSelectedTheme">删除</n-button>
@@ -611,6 +718,7 @@ const handleImportFile = (event: Event) => {
         <!-- 导入/导出 JSON -->
         <section class="theme-section">
           <p class="section-title">导入/导出</p>
+          <p class="section-desc">导入 JSON 主题文件，或在个人主题列表中导出当前选中项。</p>
           <div class="import-export-section">
             <input
               ref="importFileInput"
@@ -629,6 +737,7 @@ const handleImportFile = (event: Event) => {
         <!-- 导入主题模板 -->
         <section class="theme-section">
           <p class="section-title">导入主题模板</p>
+          <p class="section-desc">将预设主题或已保存主题填充到编辑器，确认保存后才会写入个人主题库。</p>
           <div class="preset-import">
             <n-select
               v-model:value="selectedImportSource"
@@ -649,9 +758,10 @@ const handleImportFile = (event: Event) => {
         <!-- 编辑/新建表单 -->
         <section class="theme-section">
           <div class="section-header">
-            <p class="section-title">{{ editMode === 'edit' ? '编辑主题' : '新建主题' }}</p>
+            <p class="section-title">{{ editMode === 'edit' ? '编辑个人主题' : '新建个人主题' }}</p>
             <n-button v-if="editMode === 'edit'" text size="small" @click="startCreate">取消编辑</n-button>
           </div>
+          <p class="section-desc">保存后会写入个人主题库；新建或保存时会自动应用为当前个人主题。</p>
 
           <div class="theme-live-preview-row">
             <n-button
@@ -726,7 +836,7 @@ const handleImportFile = (event: Event) => {
   </n-drawer>
   <ThemeLivePreviewFloating
     :show="livePreviewFloatingVisible"
-    :color-fields="colorFields"
+    :color-fields="themeColorFields"
     :theme-colors="themeColors"
     @update:show="handleLivePreviewFloatingShowUpdate"
     @update:theme-color="handleLivePreviewFloatingColorUpdate"
@@ -757,6 +867,71 @@ const handleImportFile = (event: Event) => {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--sc-text-primary);
+}
+
+.section-desc {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--sc-text-secondary);
+}
+
+.section-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(51, 136, 222, 0.12);
+  color: var(--sc-text-secondary);
+  font-size: 0.72rem;
+}
+
+.theme-source-mode-grid {
+  margin-top: 0.25rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.theme-mode-button {
+  min-height: 40px;
+}
+
+.theme-mode-button__label {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.theme-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.8rem;
+  border-radius: 0.8rem;
+  border: 1px solid var(--sc-border-mute);
+  background: linear-gradient(135deg, var(--sc-bg-surface), var(--sc-bg-elevated));
+}
+
+.theme-status-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(51, 136, 222, 0.12);
+  color: var(--sc-text-primary);
+  font-size: 0.78rem;
+}
+
+.theme-status-meta {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
 }
 
 .theme-selector-row {
@@ -803,6 +978,13 @@ const handleImportFile = (event: Event) => {
   font-size: 0.75rem;
   color: var(--sc-text-secondary);
   margin: 0;
+}
+
+.section-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--sc-text-secondary);
 }
 
 .import-export-section {

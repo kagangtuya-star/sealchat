@@ -9,6 +9,7 @@ export interface ChannelIFormMediaOptions {
 export interface ChannelIForm {
   id: string;
   channelId: string;
+  sourceChannelId?: string;
   name: string;
   url?: string;
   embedCode?: string;
@@ -22,6 +23,10 @@ export interface ChannelIForm {
   updatedBy?: string;
   createdAt?: number;
   updatedAt?: number;
+  worldShared?: boolean;
+  sharedRef?: boolean;
+  sharedWorldId?: string;
+  readonly?: boolean;
   mediaOptions?: ChannelIFormMediaOptions;
 }
 

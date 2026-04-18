@@ -36,6 +36,14 @@
           <n-button size="small" :disabled="!iform.canBroadcast || !iform.selectedFormIds.length" @click="pushSelected">
             推送选中
           </n-button>
+          <n-button
+            size="small"
+            tertiary
+            :disabled="!iform.canManageWorldShared || !iform.selectedWorldShareEligibleForms.length"
+            @click="toggleWorldShareSelected"
+          >
+            {{ iform.selectedWorldShareAllShared ? '取消世界共享' : '推送到世界' }}
+          </n-button>
           <n-button size="small" tertiary :disabled="!iform.canManage || !forms.length" @click="migrationModalVisible = true">
             迁移/复制
           </n-button>
@@ -57,10 +65,17 @@
                   />
                   <div>
                     <strong>{{ form.name || '未命名控件' }}</strong>
-                    <p class="iform-card__meta">
-                      默认 {{ form.defaultWidth }} × {{ form.defaultHeight }} · {{ form.defaultCollapsed ? '折叠' : '展开' }} ·
-                      {{ form.defaultFloating ? '弹出' : '面板' }}
-                    </p>
+                    <div class="iform-card__meta-row">
+                      <p class="iform-card__meta">
+                        默认 {{ form.defaultWidth }} × {{ form.defaultHeight }} · {{ form.defaultCollapsed ? '折叠' : '展开' }} ·
+                        {{ form.defaultFloating ? '弹出' : '面板' }}
+                      </p>
+                      <div class="iform-card__tags">
+                        <n-tag v-if="!form.sharedRef" size="small">本频道</n-tag>
+                        <n-tag v-if="form.worldShared && !form.sharedRef" size="small" type="success">世界共享</n-tag>
+                        <n-tag v-if="form.sharedRef" size="small" type="warning">世界引用</n-tag>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div class="iform-card__actions">
@@ -68,8 +83,8 @@
                   <n-button quaternary size="tiny" @click="openFloating(form.id)">弹出</n-button>
                   <n-button quaternary size="tiny" @click="copyEmbedLink(form)">复制嵌入</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canBroadcast" @click="pushSingle(form)">推送</n-button>
-                  <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="openFormModal(form)">编辑</n-button>
-                  <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="confirmDelete(form)">
+                  <n-button quaternary size="tiny" :disabled="!iform.canManage || !canEditForm(form)" @click="openFormModal(form)">编辑</n-button>
+                  <n-button quaternary size="tiny" :disabled="!iform.canManage || !canDeleteForm(form)" @click="confirmDelete(form)">
                     <template #icon>
                       <n-icon :component="TrashOutline" />
                     </template>
@@ -87,18 +102,18 @@
                   <span>默认行为：</span>
                   <n-switch
                     size="small"
-                    :disabled="!iform.canManage"
+                    :disabled="!iform.canManage || !canEditForm(form)"
                     :value="form.defaultCollapsed"
-                    @update:value="updateForm(form.id, { defaultCollapsed: $event })"
+                    @update:value="updateForm(form, { defaultCollapsed: $event })"
                   >
                     <template #checked>折叠</template>
                     <template #unchecked>展开</template>
                   </n-switch>
                   <n-switch
                     size="small"
-                    :disabled="!iform.canManage"
+                    :disabled="!iform.canManage || !canEditForm(form)"
                     :value="form.defaultFloating"
-                    @update:value="updateForm(form.id, { defaultFloating: $event })"
+                    @update:value="updateForm(form, { defaultFloating: $event })"
                   >
                     <template #checked>弹出</template>
                     <template #unchecked>面板</template>
@@ -265,6 +280,9 @@ const openFormModal = (form?: ChannelIForm) => {
   if (!iform.canManage) {
     return;
   }
+  if (form && !canEditForm(form)) {
+    return;
+  }
   if (form) {
     editingForm.value = form;
     Object.assign(formModel, {
@@ -335,16 +353,19 @@ const handleCancel = () => {
   return true;
 };
 
-const updateForm = async (formId: string, payload: Record<string, unknown>) => {
+const updateForm = async (form: ChannelIForm, payload: Record<string, unknown>) => {
+  if (!canEditForm(form)) {
+    return;
+  }
   try {
-    await iform.updateForm(formId, payload);
+    await iform.updateForm(form.id, payload);
   } catch (error: any) {
     message.error(error?.response?.data?.message || '更新失败');
   }
 };
 
 const confirmDelete = (form: ChannelIForm) => {
-  if (!iform.canManage) {
+  if (!iform.canManage || !canDeleteForm(form)) {
     return;
   }
   dialog.warning({
@@ -397,7 +418,7 @@ const copyEmbedLink = async (form: ChannelIForm) => {
   const link = generateIFormEmbedLink(
     {
       worldId,
-      channelId,
+      channelId: form.sourceChannelId || form.channelId,
       formId: form.id,
       width: form.defaultWidth,
       height: form.defaultHeight,
@@ -454,6 +475,28 @@ const pushSelected = async () => {
     message.success('已推送选中控件');
   } catch (error: any) {
     message.error(error?.response?.data?.message || '推送失败');
+  }
+};
+
+const canEditForm = (form: ChannelIForm) => !iform.isReadonlyForm(form);
+
+const canDeleteForm = (form: ChannelIForm) => !form.sharedRef && !iform.isReadonlyForm(form);
+
+const toggleWorldShareSelected = async () => {
+  if (!iform.canManageWorldShared) {
+    return;
+  }
+  const formIds = iform.selectedWorldShareEligibleForms.map((form) => form.id);
+  if (!formIds.length) {
+    message.warning('未选择可共享控件');
+    return;
+  }
+  const enabled = !iform.selectedWorldShareAllShared;
+  try {
+    await iform.toggleWorldShare(formIds, enabled);
+    message.success(enabled ? '已推送到世界' : '已取消世界共享');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '世界共享切换失败');
   }
 };
 
@@ -550,6 +593,20 @@ const handleMigration = async () => {
   margin: 0;
   font-size: 0.8rem;
   color: var(--sc-text-secondary, rgba(100, 116, 139, 0.9));
+}
+
+.iform-card__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+
+.iform-card__tags {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 .iform-card__actions {

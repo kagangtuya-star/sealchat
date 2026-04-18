@@ -264,6 +264,27 @@ const resolveSingleIFormLinkFromContent = (content: string) => {
   return singleIFormLink;
 };
 
+const resolveMatchedIFormFromLink = (singleIFormLink: ReturnType<typeof resolveSingleIFormLinkFromContent>) => {
+  if (!singleIFormLink) {
+    return undefined;
+  }
+  const directMatch = singleIFormLink.channelId
+    ? (iFormStore.formsByChannel[singleIFormLink.channelId] || [])
+      .find((item) => item.id === singleIFormLink.formId)
+    : undefined;
+  if (directMatch) {
+    return directMatch;
+  }
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (!currentChannelId) {
+    return undefined;
+  }
+  return (iFormStore.formsByChannel[currentChannelId] || []).find((item) => (
+    item.id === singleIFormLink.formId
+    && (item.sourceChannelId || item.channelId) === singleIFormLink.channelId
+  ));
+};
+
 const resolveSingleStickyNoteLinkFromContent = (content: string) => {
   let singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(content);
   if (!singleStickyNoteLink && isTipTapJson(content)) {
@@ -433,10 +454,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
 
   const singleIFormLink = resolveSingleIFormLinkFromContent(content);
   if (singleIFormLink) {
-    const targetChannelForms = singleIFormLink.channelId
-      ? (iFormStore.formsByChannel[singleIFormLink.channelId] || [])
-      : [];
-    const matchedForm = targetChannelForms.find((item) => item.id === singleIFormLink.formId);
+    const matchedForm = resolveMatchedIFormFromLink(singleIFormLink);
     const width = Math.max(
       MESSAGE_IFORM_MIN_WIDTH,
       Math.round(singleIFormLink.width || matchedForm?.defaultWidth || 640),
@@ -447,7 +465,8 @@ const parseContent = (payload: any, overrideContent?: string) => {
     );
     const runtimeForm: ChannelIForm = {
       id: singleIFormLink.formId,
-      channelId: singleIFormLink.channelId,
+      channelId: matchedForm?.channelId || singleIFormLink.channelId,
+      sourceChannelId: matchedForm?.sourceChannelId,
       name: matchedForm?.name || '消息嵌入窗',
       url: matchedForm?.url,
       embedCode: matchedForm?.embedCode,
@@ -457,6 +476,10 @@ const parseContent = (payload: any, overrideContent?: string) => {
       defaultFloating: false,
       allowPopout: false,
       orderIndex: 0,
+      worldShared: matchedForm?.worldShared,
+      sharedRef: matchedForm?.sharedRef,
+      sharedWorldId: matchedForm?.sharedWorldId,
+      readonly: matchedForm?.readonly,
       mediaOptions: matchedForm?.mediaOptions,
     };
     return h(

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pkg/contentstats"
 	"sealchat/utils"
 )
 
@@ -407,6 +408,7 @@ func batchInsertImportedMessages(importJobID string, channelID string, entries [
 				UpdatedAt: createdAt,
 			},
 			Content:             strings.TrimSpace(entry.Content),
+			VisibleCharCount:    contentstats.CountVisibleTextChars(strings.TrimSpace(entry.Content)),
 			ChannelID:           channelID,
 			UserID:              identity.UserID,
 			DisplayOrder:        displayOrder,

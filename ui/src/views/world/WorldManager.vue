@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { DEFAULT_CARD_TEMPLATE } from '@/utils/characterCardTemplate';
+import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -20,11 +21,6 @@ const form = ref<any>({});
 const loading = ref(false);
 const botOptionsLoading = ref(false);
 const botList = ref<any[]>([]);
-
-const diceModeOptions = [
-  { label: '内置掷骰', value: 'builtin' },
-  { label: 'BOT掷骰', value: 'bot' },
-];
 
 const botSelectOptions = computed(() => botList.value.map((item) => ({
   label: item.nick || item.username || item.name || 'Bot',
@@ -162,36 +158,14 @@ const getDescriptionCountLabel = (value?: string) => {
               <n-switch v-model:value="form.strictWhisperPrivacy" />
               <span class="manager-permission-text">不允许管理员查看所有的悄悄话</span>
             </div>
-            <div class="manager-permission-block">
-              <div class="manager-permission-title">新频道默认掷骰方式</div>
-              <n-radio-group v-model:value="form.channelDefaultDiceMode">
-                <n-space>
-                  <n-radio
-                    v-for="item in diceModeOptions"
-                    :key="item.value"
-                    :value="item.value"
-                  >
-                    {{ item.label }}
-                  </n-radio>
-                </n-space>
-              </n-radio-group>
-            </div>
-            <div
-              v-if="form.channelDefaultDiceMode === 'bot'"
-              class="manager-permission-block"
-            >
-              <div class="manager-permission-title">默认 BOT</div>
-              <n-select
-                v-model:value="form.channelDefaultBotId"
-                :options="botSelectOptions"
-                :loading="botOptionsLoading"
-                placeholder="选择当前已添加的 BOT"
-                clearable
-              />
-            </div>
-            <div class="manager-permission-hint">
-              仅影响后续新建频道，不修改现有频道。
-            </div>
+            <WorldDiceDefaultsFields
+              v-model:mode="form.channelDefaultDiceMode"
+              v-model:bot-id="form.channelDefaultBotId"
+              :bot-select-options="botSelectOptions"
+              :bot-options-loading="botOptionsLoading"
+              title="新频道默认掷骰方式"
+              hint="仅影响后续新建频道，不修改现有频道。"
+            />
           </div>
         </n-form-item>
         <n-form-item label="徽章模板">
@@ -259,24 +233,8 @@ const getDescriptionCountLabel = (value?: string) => {
   gap: 8px;
 }
 
-.manager-permission-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.manager-permission-title {
-  color: var(--sc-text-primary);
-  font-size: 13px;
-}
-
 .manager-permission-text {
   color: var(--sc-text-secondary);
   font-size: 13px;
-}
-
-.manager-permission-hint {
-  color: var(--sc-text-secondary);
-  font-size: 12px;
 }
 </style>

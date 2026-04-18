@@ -1,21 +1,14 @@
 <script setup lang="tsx">
-import { useChatStore } from '@/stores/chat';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useUtilsStore } from '@/stores/utils';
-import type { ServerConfig, BackupInfo } from '@/types';
-import { Message } from '@vicons/tabler';
-import { Photo as ImageIcon, X } from '@vicons/tabler';
+import type { ServerConfig } from '@/types';
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { cloneDeep } from 'lodash-es';
-import { NIcon, useMessage, NButton, NPopconfirm } from 'naive-ui';
+import { useMessage } from 'naive-ui';
 import { computed, nextTick } from 'vue';
-import { onMounted, ref, watch, h } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { api } from '@/stores/_config';
 import dayjs from 'dayjs';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
-import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { useImageCompressor } from '@/composables/useImageCompressor';
-import { useLoginGlass } from '@/composables/useLoginGlass';
-
-const chat = useChatStore();
 
 const model = ref<ServerConfig>({
   serveAt: ':3212',
@@ -24,6 +17,7 @@ const model = ref<ServerConfig>({
   // VisitorOpen: true,
   webUrl: '/',
   pageTitle: '海豹尬聊 SealChat',
+  faviconAttachmentId: '',
   chatHistoryPersistentDays: 0,
   messageSortBasis: 'typing_start',
   imageSizeLimit: 2 * 1024,
@@ -31,7 +25,6 @@ const model = ref<ServerConfig>({
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
   emailNotification: { enabled: false },
-  sqlite: { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 },
   audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true },
 })
 
@@ -174,23 +167,11 @@ watch([serveAtHost, serveAtPort], ([host, port]) => {
 onMounted(async () => {
   const resp = await utils.configGet();
   model.value = cloneDeep(resp.data);
-  if (!model.value.backup) {
-    model.value.backup = { enabled: true, intervalHours: 12, retentionCount: 5, path: './backups' };
-  }
   if (!model.value.audio) {
     model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
   }
   if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
     model.value.messageSortBasis = 'typing_start';
-  }
-  if (!model.value.sqlite) {
-    model.value.sqlite = { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 };
-  }
-  if (model.value.sqlite.autoVacuumEnabled === undefined) {
-    model.value.sqlite.autoVacuumEnabled = true;
-  }
-  if (!model.value.sqlite.autoVacuumIntervalHours || model.value.sqlite.autoVacuumIntervalHours <= 0) {
-    model.value.sqlite.autoVacuumIntervalHours = 168;
   }
   if (model.value.audio.allowNonAdminCreateWorld === undefined) {
     model.value.audio.allowNonAdminCreateWorld = true;
@@ -199,31 +180,55 @@ onMounted(async () => {
     modified.value = false;
   })
   await fetchUpdateStatus();
-  fetchBackupList();
-  fetchSQLiteVacuumStatus();
 })
 
 watch(model, (v) => {
   modified.value = true;
 }, { deep: true })
 
-const reset = async () => {
-  // 重置
-  // model.value = {
-  //   serveAt: ':3212',
-  //   domain: '127.0.0.1:3212',
-  //   registerOpen: true,
-  //   webUrl: '/test',
-  //   chatHistoryPersistentDays: 60,
-  //   imageSizeLimit: 2048,
-  //   imageCompress: true,
-  // }
-  // modified.value = true;
+const applyBasicSettingsToPayload = (payload: ServerConfig) => {
+  payload.serveAt = model.value.serveAt;
+  payload.domain = model.value.domain;
+  payload.registerOpen = model.value.registerOpen;
+  payload.webUrl = model.value.webUrl;
+  payload.pageTitle = model.value.pageTitle;
+  payload.faviconAttachmentId = (model.value.faviconAttachmentId || '').trim();
+  payload.chatHistoryPersistentDays = model.value.chatHistoryPersistentDays;
+  payload.messageSortBasis = model.value.messageSortBasis;
+  payload.imageSizeLimit = model.value.imageSizeLimit;
+  payload.imageCompress = model.value.imageCompress;
+  payload.imageCompressQuality = model.value.imageCompressQuality;
+  payload.builtInSealBotEnable = model.value.builtInSealBotEnable;
+  payload.keywordMaxLength = model.value.keywordMaxLength;
+  payload.emailNotification = {
+    ...(payload.emailNotification || {}),
+    ...(model.value.emailNotification || {}),
+    enabled: model.value.emailNotification?.enabled ?? false,
+  };
+  payload.audio = {
+    ...(payload.audio || {}),
+    ...(model.value.audio || {}),
+    allowWorldAudioWorkbench: model.value.audio?.allowWorldAudioWorkbench ?? false,
+    allowNonAdminCreateWorld: model.value.audio?.allowNonAdminCreateWorld ?? true,
+  };
 }
 
 const save = async () => {
   try {
-    await utils.configSet(model.value);
+    const resp = await utils.configGet();
+    const payload = cloneDeep(resp.data as ServerConfig);
+    applyBasicSettingsToPayload(payload);
+    await utils.configSet(payload);
+    model.value = cloneDeep(payload);
+    if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
+      model.value.messageSortBasis = 'typing_start';
+    }
+    if (!model.value.audio) {
+      model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
+    }
+    if (model.value.audio.allowNonAdminCreateWorld === undefined) {
+      model.value.audio.allowNonAdminCreateWorld = true;
+    }
     modified.value = false;
     message.success('保存成功');
   } catch (error) {
@@ -373,257 +378,63 @@ const link = computed(() => {
 
 const feedbackAdminShow = ref(false)
 const feedbackWeburlShow = ref(false)
+const faviconUploading = ref(false)
+const faviconFileInputRef = ref<HTMLInputElement | null>(null)
 
-// Backup state
-const backupList = ref<BackupInfo[]>([]);
-const backupListLoading = ref(false);
-const backupExecuting = ref(false);
-const sqliteVacuumExecuting = ref(false);
-const sqliteVacuumStatusLoading = ref(false);
-const sqliteDbSizeBytes = ref<number | null>(null);
-const sqliteDbSizeError = ref('');
-const sqliteLastBeforeSizeBytes = ref<number | null>(null);
-const sqliteLastAfterSizeBytes = ref<number | null>(null);
-const sqliteLastReclaimedBytes = ref<number | null>(null);
-
-const toNullableNumber = (value: unknown): number | null => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) {
-    return null;
-  }
-  return num;
-};
-
-const sqliteMaintenanceConfig = computed({
-  get: () => {
-    if (!model.value.sqlite) {
-      model.value.sqlite = { autoVacuumEnabled: true, autoVacuumIntervalHours: 168 };
-    }
-    if (model.value.sqlite.autoVacuumEnabled === undefined) {
-      model.value.sqlite.autoVacuumEnabled = true;
-    }
-    if (!model.value.sqlite.autoVacuumIntervalHours || model.value.sqlite.autoVacuumIntervalHours <= 0) {
-      model.value.sqlite.autoVacuumIntervalHours = 168;
-    }
-    return model.value.sqlite;
+const faviconAttachmentId = computed({
+  get: () => (model.value.faviconAttachmentId || '').trim().replace(/^id:/, ''),
+  set: (value: string) => {
+    model.value.faviconAttachmentId = value.trim().replace(/^id:/, '')
   },
-  set: (val) => {
-    model.value.sqlite = val;
-  }
-});
-
-const backupConfig = computed({
-  get: () => {
-    if (!model.value.backup) {
-      model.value.backup = { enabled: true, intervalHours: 12, retentionCount: 5, path: './backups' };
-    }
-    return model.value.backup;
-  },
-  set: (val) => {
-    model.value.backup = val;
-  }
-});
-
-const fetchBackupList = async () => {
-  backupListLoading.value = true;
-  try {
-    const resp = await utils.adminBackupList();
-    backupList.value = resp.data;
-  } catch (error) {
-    message.error('获取备份列表失败');
-  } finally {
-    backupListLoading.value = false;
-  }
-}
-
-const executeBackup = async () => {
-  backupExecuting.value = true;
-  try {
-    await utils.adminBackupExecute();
-    message.success('备份任务已提交');
-    setTimeout(fetchBackupList, 1000);
-  } catch (error) {
-    message.error('执行备份失败: ' + ((error as any)?.response?.data?.message || '未知错误'));
-  } finally {
-    backupExecuting.value = false;
-  }
-}
-
-const fetchSQLiteVacuumStatus = async () => {
-  sqliteVacuumStatusLoading.value = true;
-  try {
-    const resp = await utils.adminSQLiteVacuumStatus();
-    sqliteDbSizeBytes.value = toNullableNumber(resp.data?.dbSizeBytes);
-    sqliteDbSizeError.value = (resp.data?.dbSizeError || '').toString();
-  } catch (error) {
-    sqliteDbSizeError.value = (error as any)?.response?.data?.message || '获取 SQLite 大小失败';
-  } finally {
-    sqliteVacuumStatusLoading.value = false;
-  }
-}
-
-const executeSQLiteVacuum = async () => {
-  sqliteVacuumExecuting.value = true;
-  try {
-    const resp = await utils.adminSQLiteVacuumExecute();
-    sqliteLastBeforeSizeBytes.value = toNullableNumber(resp.data?.beforeSizeBytes);
-    sqliteLastAfterSizeBytes.value = toNullableNumber(resp.data?.afterSizeBytes);
-    sqliteLastReclaimedBytes.value = toNullableNumber(resp.data?.reclaimedBytes);
-    sqliteDbSizeBytes.value = sqliteLastAfterSizeBytes.value;
-    sqliteDbSizeError.value = (resp.data?.afterSizeError || '').toString();
-    const reclaimed = sqliteLastReclaimedBytes.value;
-    if (reclaimed !== null) {
-      message.success(`数据库空间整理已完成，本次回收 ${formatBytes(Math.max(0, reclaimed))}`);
-    } else {
-      message.success('数据库空间整理已完成');
-    }
-  } catch (error) {
-    message.error('执行空间整理失败: ' + ((error as any)?.response?.data?.message || '未知错误'));
-  } finally {
-    sqliteVacuumExecuting.value = false;
-  }
-}
-
-const deleteBackup = async (row: BackupInfo) => {
-  try {
-    await utils.adminBackupDelete(row.filename);
-    message.success('删除成功');
-    await fetchBackupList();
-  } catch (error) {
-    message.error('删除失败');
-  }
-}
-
-const backupColumns = [
-  { title: '文件名', key: 'filename' },
-  { title: '大小', key: 'size', render: (row: BackupInfo) => formatBytes(row.size) },
-  { title: '创建时间', key: 'createdAt', render: (row: BackupInfo) => dayjs(row.createdAt * 1000).format('YYYY-MM-DD HH:mm:ss') },
-  {
-    title: '操作',
-    key: 'actions',
-    render(row: BackupInfo) {
-      return h(
-        NButton,
-        {
-          size: 'tiny',
-          type: 'error',
-          onClick: () => deleteBackup(row)
-        },
-        { default: () => '删除' }
-      )
-    }
-  }
-]
-
-// Image migration state
-const migrationStats = ref<{
-  total: number;
-  pending: number;
-  completed: number;
-  failed: number;
-  skipped: number;
-  spaceSaved: number;
-} | null>(null)
-const migrationLoading = ref(false)
-const migrationExecuting = ref(false)
-const migrationBatchSize = ref(100)
-
-const fetchMigrationPreview = async () => {
-  migrationLoading.value = true
-  try {
-    const resp = await api.get('/api/v1/admin/image-migration/preview')
-    migrationStats.value = resp.data.stats
-  } catch (error) {
-    message.error('获取迁移预览失败')
-  } finally {
-    migrationLoading.value = false
-  }
-}
-
-const executeMigration = async (dryRun: boolean = false) => {
-  migrationExecuting.value = true
-  try {
-    const resp = await api.post('/api/v1/admin/image-migration/execute', {
-      batchSize: migrationBatchSize.value,
-      dryRun: dryRun
-    })
-    const stats = resp.data.stats
-    if (dryRun) {
-      message.success(`模拟迁移完成: ${stats.completed} 张图片可被迁移，预计节省 ${formatBytes(stats.spaceSaved)}`)
-    } else {
-      message.success(`迁移完成: ${stats.completed} 成功, ${stats.failed} 失败, ${stats.skipped} 跳过，节省 ${formatBytes(stats.spaceSaved)}`)
-    }
-    // Refresh preview
-    await fetchMigrationPreview()
-  } catch (error) {
-    message.error('执行迁移失败: ' + ((error as any)?.response?.data?.message || '未知错误'))
-  } finally {
-    migrationExecuting.value = false
-  }
-}
-
-// S3 migration state
-const s3MigrationType = ref<'images' | 'audio'>('images')
-const s3MigrationStats = ref<{
-  total: number;
-  pending: number;
-  completed: number;
-  failed: number;
-  skipped: number;
-} | null>(null)
-const s3MigrationLoading = ref(false)
-const s3MigrationExecuting = ref(false)
-const s3MigrationBatchSize = ref(100)
-const s3MigrationDeleteSource = ref(true)
-
-watch(s3MigrationType, (v) => {
-  s3MigrationDeleteSource.value = v === 'images'
-  s3MigrationStats.value = null
 })
 
-const fetchS3MigrationPreview = async () => {
-  s3MigrationLoading.value = true
-  try {
-    const resp = await api.get('/api/v1/admin/s3-migration/preview', {
-      params: { type: s3MigrationType.value }
-    })
-    s3MigrationStats.value = resp.data.stats
-  } catch (error) {
-    message.error('获取迁移预览失败')
-  } finally {
-    s3MigrationLoading.value = false
+const faviconPreviewUrl = computed(() => {
+  const id = faviconAttachmentId.value
+  if (!id) {
+    return '/favicon.ico?v=default'
   }
+  return resolveAttachmentUrl(`id:${id}`)
+})
+
+const triggerFaviconUpload = () => {
+  faviconFileInputRef.value?.click()
 }
 
-const executeS3Migration = async (dryRun: boolean = false) => {
-  s3MigrationExecuting.value = true
-  try {
-    const resp = await api.post('/api/v1/admin/s3-migration/execute', {
-      type: s3MigrationType.value,
-      batchSize: s3MigrationBatchSize.value,
-      dryRun,
-      deleteSource: s3MigrationDeleteSource.value,
-    })
-    const stats = resp.data.stats
-    if (dryRun) {
-      message.success(`模拟迁移完成：可迁移 ${stats.completed} 项，跳过 ${stats.skipped} 项`)
-    } else {
-      message.success(`迁移完成：成功 ${stats.completed} 项，失败 ${stats.failed} 项`)
-    }
-    await fetchS3MigrationPreview()
-  } catch (error) {
-    message.error('执行迁移失败: ' + ((error as any)?.response?.data?.message || '未知错误'))
-  } finally {
-    s3MigrationExecuting.value = false
-  }
+const clearFavicon = () => {
+  faviconAttachmentId.value = ''
 }
 
-const formatBytes = (bytes: number) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+const handleFaviconFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input?.files?.[0]
+  if (!file) return
+  input.value = ''
+
+  if (file.type && !file.type.startsWith('image/')) {
+    message.error('请上传图片文件')
+    return
+  }
+
+  const sizeLimit = utils.fileSizeLimit
+  if (file.size > sizeLimit) {
+    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1)
+    message.error(`文件大小超过限制（最大 ${limitMB} MB）`)
+    return
+  }
+
+  faviconUploading.value = true
+  try {
+    const result = await uploadImageAttachment(file, {
+      channelId: 'platform-favicon',
+      skipCompression: true,
+    })
+    faviconAttachmentId.value = (result.attachmentId || '').replace(/^id:/, '')
+    message.success('网页图标上传成功')
+  } catch (error: any) {
+    message.error(error?.message || '上传失败')
+  } finally {
+    faviconUploading.value = false
+  }
 }
 
 // SMTP test state
@@ -645,260 +456,6 @@ const sendSmtpTestEmail = async () => {
   }
 }
 
-// Login background state
-const { compress: compressImage } = useImageCompressor();
-const loginBgUploading = ref(false);
-const loginBgFileInput = ref<HTMLInputElement | null>(null);
-
-const loginBgAttachmentId = computed({
-  get: () => model.value.loginBackground?.attachmentId || '',
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.attachmentId = val;
-  },
-});
-
-const loginBgMode = computed({
-  get: () => model.value.loginBackground?.mode || 'cover',
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.mode = val;
-  },
-});
-
-const loginBgOpacity = computed({
-  get: () => model.value.loginBackground?.opacity ?? 30,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.opacity = val;
-  },
-});
-
-const loginBgBlur = computed({
-  get: () => model.value.loginBackground?.blur ?? 0,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.blur = val;
-  },
-});
-
-const loginBgBrightness = computed({
-  get: () => model.value.loginBackground?.brightness ?? 100,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.brightness = val;
-  },
-});
-
-const loginBgOverlayColor = computed({
-  get: () => model.value.loginBackground?.overlayColor || '',
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.overlayColor = val;
-  },
-});
-
-const loginBgOverlayOpacity = computed({
-  get: () => model.value.loginBackground?.overlayOpacity ?? 0,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.overlayOpacity = val;
-  },
-});
-
-const loginPanelAutoTint = computed({
-  get: () => model.value.loginBackground?.panelAutoTint ?? true,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelAutoTint = val;
-  },
-});
-
-const loginPanelTintColor = computed({
-  get: () => model.value.loginBackground?.panelTintColor || '',
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelTintColor = val;
-  },
-});
-
-const loginPanelTintOpacity = computed({
-  get: () => model.value.loginBackground?.panelTintOpacity ?? 72,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelTintOpacity = val;
-  },
-});
-
-const loginPanelBlur = computed({
-  get: () => model.value.loginBackground?.panelBlur ?? 14,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelBlur = val;
-  },
-});
-
-const loginPanelSaturate = computed({
-  get: () => model.value.loginBackground?.panelSaturate ?? 120,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelSaturate = val;
-  },
-});
-
-const loginPanelContrast = computed({
-  get: () => model.value.loginBackground?.panelContrast ?? 105,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelContrast = val;
-  },
-});
-
-const loginPanelBorderOpacity = computed({
-  get: () => model.value.loginBackground?.panelBorderOpacity ?? 18,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelBorderOpacity = val;
-  },
-});
-
-const loginPanelShadowStrength = computed({
-  get: () => model.value.loginBackground?.panelShadowStrength ?? 22,
-  set: (val) => {
-    if (!model.value.loginBackground) {
-      model.value.loginBackground = {};
-    }
-    model.value.loginBackground.panelShadowStrength = val;
-  },
-});
-
-const loginBgUrl = computed(() => {
-  const id = loginBgAttachmentId.value;
-  if (!id) return '';
-  return resolveAttachmentUrl(id.startsWith('id:') ? id : `id:${id}`);
-});
-
-const loginBgModeOptions = [
-  { label: '铺满 (Cover)', value: 'cover' },
-  { label: '适应 (Contain)', value: 'contain' },
-  { label: '平铺 (Tile)', value: 'tile' },
-  { label: '居中 (Center)', value: 'center' },
-];
-
-const loginBgPreviewStyle = computed(() => {
-  if (!loginBgUrl.value) return {};
-  const mode = loginBgMode.value;
-  let bgSize = 'cover';
-  let bgRepeat = 'no-repeat';
-  let bgPosition = 'center';
-  switch (mode) {
-    case 'contain':
-      bgSize = 'contain';
-      break;
-    case 'tile':
-      bgSize = 'auto';
-      bgRepeat = 'repeat';
-      break;
-    case 'center':
-      bgSize = 'auto';
-      bgPosition = 'center';
-      break;
-  }
-  return {
-    backgroundImage: `url(${loginBgUrl.value})`,
-    backgroundSize: bgSize,
-    backgroundRepeat: bgRepeat,
-    backgroundPosition: bgPosition,
-    opacity: loginBgOpacity.value / 100,
-    filter: `blur(${loginBgBlur.value}px) brightness(${loginBgBrightness.value}%)`,
-  };
-});
-
-const loginBgOverlayStyle = computed(() => {
-  if (!loginBgOverlayColor.value || !loginBgOverlayOpacity.value) return null;
-  return {
-    backgroundColor: loginBgOverlayColor.value,
-    opacity: loginBgOverlayOpacity.value / 100,
-  };
-});
-
-const { glassStyle: loginGlassStyle } = useLoginGlass({
-  imageUrl: loginBgUrl,
-  config: computed(() => model.value.loginBackground),
-  enabled: computed(() => !!loginBgUrl.value),
-  radius: '8px',
-});
-
-const loginGlassPreviewStyle = computed(() => ({
-  ...loginGlassStyle.value,
-  '--sc-glass-radius': '8px',
-}));
-
-const triggerLoginBgUpload = () => {
-  loginBgFileInput.value?.click();
-};
-
-const handleLoginBgFileChange = async (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  const file = input?.files?.[0];
-  if (!file) return;
-  input.value = '';
-
-  const sizeLimit = utils.fileSizeLimit;
-  if (file.size > sizeLimit) {
-    const limitMB = (sizeLimit / 1024 / 1024).toFixed(1);
-    message.error(`文件大小超过限制（最大 ${limitMB} MB）`);
-    return;
-  }
-
-  loginBgUploading.value = true;
-  try {
-    const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080 });
-    const result = await uploadImageAttachment(compressed, { channelId: 'login-background', skipCompression: true });
-    let attachId = result.attachmentId || '';
-    if (attachId.startsWith('id:')) {
-      attachId = attachId.slice(3);
-    }
-    loginBgAttachmentId.value = attachId;
-    message.success('背景图片上传成功');
-  } catch (err: any) {
-    message.error(err?.message || '上传失败');
-  } finally {
-    loginBgUploading.value = false;
-  }
-};
-
-const clearLoginBg = () => {
-  loginBgAttachmentId.value = '';
-};
 </script>
 
 <template>
@@ -937,6 +494,17 @@ const clearLoginBg = () => {
       </n-form-item>
       <n-form-item label="网页标题" feedback="留空将回退至「海豹尬聊 SealChat」">
         <n-input v-model:value="model.pageTitle" />
+      </n-form-item>
+      <n-form-item label="网页图标" feedback="建议使用 64x64 或 128x128 的正方形 PNG/ICO。">
+        <div class="flex items-center gap-3 flex-wrap">
+          <div class="favicon-preview-grid">
+            <img :src="faviconPreviewUrl" alt="favicon preview" class="favicon-preview-image" />
+          </div>
+          <input ref="faviconFileInputRef" type="file" accept="image/*,.ico" class="hidden" @change="handleFaviconFileChange" />
+          <n-button :loading="faviconUploading" @click="triggerFaviconUpload">上传图标</n-button>
+          <n-button quaternary :disabled="!faviconAttachmentId" @click="clearFavicon">恢复默认</n-button>
+          <span class="text-xs text-gray-500">{{ faviconAttachmentId ? `附件ID: ${faviconAttachmentId}` : '当前使用默认图标' }}</span>
+        </div>
       </n-form-item>
       <n-form-item label="可翻阅聊天记录">
         <n-input-number v-model:value="model.chatHistoryPersistentDays" type="number">
@@ -984,230 +552,6 @@ const clearLoginBg = () => {
       <n-form-item label="术语最大字数" feedback="单条术语内容的最大字符数（100-10000）">
         <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />
       </n-form-item>
-
-      <!-- Login Background Section -->
-      <n-collapse class="settings-collapse" :default-expanded-names="[]">
-        <n-collapse-item title="登录页背景" name="login-bg">
-          <input ref="loginBgFileInput" type="file" accept="image/*" class="hidden" @change="handleLoginBgFileChange">
-          <n-form-item label="背景图片">
-            <div class="flex gap-3 items-center">
-              <div
-                class="login-bg-no-option"
-                :class="{ active: !loginBgAttachmentId }"
-                @click="clearLoginBg"
-              >
-                <NIcon :component="X" :size="16" />
-                <span>无</span>
-              </div>
-              <div v-if="loginBgUrl" class="login-bg-thumb-wrapper">
-                <img :src="loginBgUrl" alt="登录背景" class="login-bg-thumb" />
-              </div>
-              <n-button size="small" :loading="loginBgUploading" @click="triggerLoginBgUpload">
-                <template #icon><NIcon :component="ImageIcon" /></template>
-                {{ loginBgUrl ? '更换' : '上传' }}
-              </n-button>
-            </div>
-          </n-form-item>
-
-          <template v-if="loginBgAttachmentId">
-            <n-form-item label="显示模式">
-              <n-select v-model:value="loginBgMode" :options="loginBgModeOptions" style="width: 180px;" />
-            </n-form-item>
-            <n-form-item label="透明度">
-              <div class="login-bg-control-row">
-                <n-slider class="login-bg-slider" v-model:value="loginBgOpacity" :min="0" :max="100" :step="1" :tooltip="false" />
-                <span class="login-bg-value">{{ loginBgOpacity }}%</span>
-              </div>
-            </n-form-item>
-            <n-form-item label="模糊度">
-              <div class="login-bg-control-row">
-                <n-slider class="login-bg-slider" v-model:value="loginBgBlur" :min="0" :max="20" :step="1" :tooltip="false" />
-                <span class="login-bg-value">{{ loginBgBlur }}px</span>
-              </div>
-            </n-form-item>
-            <n-form-item label="亮度">
-              <div class="login-bg-control-row">
-                <n-slider class="login-bg-slider" v-model:value="loginBgBrightness" :min="50" :max="150" :step="1" :tooltip="false" />
-                <span class="login-bg-value">{{ loginBgBrightness }}%</span>
-              </div>
-            </n-form-item>
-            <n-form-item label="叠加层颜色">
-              <n-color-picker v-model:value="loginBgOverlayColor" :show-alpha="false" style="width: 100px;" />
-              <n-button v-if="loginBgOverlayColor" size="tiny" quaternary class="ml-2" @click="loginBgOverlayColor = ''">清除</n-button>
-            </n-form-item>
-            <n-form-item v-if="loginBgOverlayColor" label="叠加层透明度">
-              <div class="login-bg-control-row">
-                <n-slider class="login-bg-slider" v-model:value="loginBgOverlayOpacity" :min="0" :max="100" :step="1" :tooltip="false" />
-                <span class="login-bg-value">{{ loginBgOverlayOpacity }}%</span>
-              </div>
-            </n-form-item>
-          </template>
-        </n-collapse-item>
-
-        <n-collapse-item v-if="loginBgAttachmentId" title="玻璃卡片" name="login-glass">
-          <n-form-item label="自动色调">
-            <n-switch v-model:value="loginPanelAutoTint" />
-          </n-form-item>
-          <n-form-item label="玻璃色">
-            <n-color-picker v-model:value="loginPanelTintColor" :show-alpha="false" style="width: 100px;" />
-            <n-button v-if="loginPanelTintColor" size="tiny" quaternary class="ml-2" @click="loginPanelTintColor = ''">清除</n-button>
-          </n-form-item>
-          <n-form-item label="玻璃透明度">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelTintOpacity" :min="30" :max="95" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelTintOpacity }}%</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="玻璃模糊">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelBlur" :min="0" :max="30" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelBlur }}px</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="饱和度">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelSaturate" :min="80" :max="180" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelSaturate }}%</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="对比度">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelContrast" :min="90" :max="140" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelContrast }}%</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="边框强度">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelBorderOpacity" :min="0" :max="60" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelBorderOpacity }}%</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="阴影强度">
-            <div class="login-bg-control-row">
-              <n-slider class="login-bg-slider" v-model:value="loginPanelShadowStrength" :min="0" :max="60" :step="1" :tooltip="false" />
-              <span class="login-bg-value">{{ loginPanelShadowStrength }}%</span>
-            </div>
-          </n-form-item>
-          <n-form-item label="预览">
-            <div class="login-bg-preview">
-              <div class="login-bg-preview-layer" :style="loginBgPreviewStyle"></div>
-              <div v-if="loginBgOverlayStyle" class="login-bg-preview-overlay" :style="loginBgOverlayStyle"></div>
-              <div class="login-bg-preview-card sc-glass-panel" :style="loginGlassPreviewStyle">
-                <div class="login-bg-preview-input"></div>
-                <div class="login-bg-preview-input"></div>
-                <div class="login-bg-preview-btn"></div>
-              </div>
-            </div>
-          </n-form-item>
-        </n-collapse-item>
-        <n-collapse-item title="SQLite空间压缩" name="sqlite-space-compress">
-            <n-form-item label="当前数据库大小">
-              <div class="flex flex-col gap-1">
-                <span v-if="sqliteDbSizeBytes !== null">{{ formatBytes(sqliteDbSizeBytes) }}</span>
-                <span v-else-if="sqliteVacuumStatusLoading">读取中...</span>
-                <span v-else>未知</span>
-                <span v-if="sqliteDbSizeError" class="text-xs text-orange-500">{{ sqliteDbSizeError }}</span>
-              </div>
-            </n-form-item>
-            <n-form-item label="启用自动整理" feedback="仅 SQLite 生效：空闲时按周期自动执行 VACUUM">
-              <n-switch v-model:value="sqliteMaintenanceConfig.autoVacuumEnabled" />
-            </n-form-item>
-            <n-form-item label="整理周期">
-              <n-input-number v-model:value="sqliteMaintenanceConfig.autoVacuumIntervalHours" :min="1">
-                <template #suffix>小时</template>
-              </n-input-number>
-            </n-form-item>
-            <n-form-item label="手动整理" feedback="立即触发一次 VACUUM 空间整理">
-              <div class="flex flex-col gap-1">
-                <n-button size="small" @click="executeSQLiteVacuum" :loading="sqliteVacuumExecuting">立即整理</n-button>
-                <span v-if="sqliteLastBeforeSizeBytes !== null && sqliteLastAfterSizeBytes !== null" class="text-xs text-gray-600 dark:text-gray-400">
-                  整理前 {{ formatBytes(sqliteLastBeforeSizeBytes) }}，整理后 {{ formatBytes(sqliteLastAfterSizeBytes) }}，
-                  回收 {{ formatBytes(Math.max(0, sqliteLastReclaimedBytes ?? 0)) }}
-                </span>
-              </div>
-            </n-form-item>
-          </n-collapse-item>
-
-          <n-collapse-item title="迁移到 S3" name="migrate-to-s3">
-            <n-form-item label="迁移类型">
-              <n-select
-                v-model:value="s3MigrationType"
-                :options="[
-                  { label: '图片附件', value: 'images' },
-                  { label: '音频', value: 'audio' },
-                ]"
-                class="w-52"
-              />
-            </n-form-item>
-            <n-form-item label="迁移状态">
-              <div class="flex flex-col gap-2 w-full">
-                <div v-if="s3MigrationStats" class="text-sm text-gray-600 dark:text-gray-400">
-                  待迁移: {{ s3MigrationStats.pending }} 项
-                </div>
-                <div class="flex gap-2 items-center">
-                  <n-button size="small" @click="fetchS3MigrationPreview" :loading="s3MigrationLoading">
-                    刷新预览
-                  </n-button>
-                </div>
-              </div>
-            </n-form-item>
-            <n-form-item label="批量大小">
-              <n-input-number v-model:value="s3MigrationBatchSize" :min="1" :max="1000" />
-            </n-form-item>
-            <n-form-item label="删除源文件" :feedback="s3MigrationType === 'images' ? '仅在确认上传成功且可访问后删除本地源文件' : ''">
-              <n-switch v-model:value="s3MigrationDeleteSource" />
-            </n-form-item>
-            <n-form-item label="执行迁移">
-              <div class="flex gap-2">
-                <n-button size="small" @click="executeS3Migration(true)" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
-                  模拟运行
-                </n-button>
-                <n-popconfirm @positive-click="executeS3Migration(false)">
-                  <template #trigger>
-                    <n-button size="small" type="warning" :loading="s3MigrationExecuting" :disabled="!s3MigrationStats || s3MigrationStats.pending === 0">
-                      执行迁移
-                    </n-button>
-                  </template>
-                  确定要执行迁移吗？此操作会将当前类型的本地资源迁移到 S3。
-                  <span v-if="s3MigrationDeleteSource">迁移成功且可访问后将删除本地源文件。</span>
-                </n-popconfirm>
-              </div>
-            </n-form-item>
-          </n-collapse-item>
-
-          <n-collapse-item title="图片压缩" name="image-migrate-webp">
-            <n-form-item label="迁移状态">
-              <div class="flex flex-col gap-2 w-full">
-                <div v-if="migrationStats" class="text-sm text-gray-600 dark:text-gray-400">
-                  待迁移（非Webp的图片）: {{ migrationStats.pending }} 张 (不含 GIF 和 S3 图片)
-                </div>
-                <div class="flex gap-2 items-center">
-                  <n-button size="small" @click="fetchMigrationPreview" :loading="migrationLoading">
-                    刷新预览
-                  </n-button>
-                </div>
-              </div>
-            </n-form-item>
-            <n-form-item label="批量大小">
-              <n-input-number v-model:value="migrationBatchSize" :min="1" :max="1000" />
-            </n-form-item>
-            <n-form-item label="执行迁移">
-              <div class="flex gap-2">
-                <n-button size="small" @click="executeMigration(true)" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
-                  模拟运行
-                </n-button>
-                <n-popconfirm @positive-click="executeMigration(false)">
-                  <template #trigger>
-                    <n-button size="small" type="warning" :loading="migrationExecuting" :disabled="!migrationStats || migrationStats.pending === 0">
-                      执行迁移
-                    </n-button>
-                  </template>
-                  确定要执行迁移吗？此操作会将 {{ migrationBatchSize }} 张图片转换为 WebP 格式，原文件将被删除。
-                </n-popconfirm>
-              </div>
-            </n-form-item>
-          </n-collapse-item>
-      </n-collapse>
 
       <n-divider>版本检测</n-divider>
       <n-form-item label="更新状态">
@@ -1263,45 +607,34 @@ const clearLoginBg = () => {
         </div>
       </n-form-item>
 
-      <!-- Backup Section -->
-      <n-divider>数据备份</n-divider>
-      <n-form-item label="启用自动备份">
-        <n-switch v-model:value="backupConfig.enabled" />
-      </n-form-item>
-      <n-form-item label="备份间隔">
-         <n-input-number v-model:value="backupConfig.intervalHours" :min="1">
-            <template #suffix>小时</template>
-         </n-input-number>
-      </n-form-item>
-      <n-form-item label="保留数量" feedback="超过此数量的旧备份将被自动删除">
-         <n-input-number v-model:value="backupConfig.retentionCount" :min="1" />
-      </n-form-item>
-      <n-form-item label="备份路径" feedback="服务端存储备份文件的绝对路径">
-        <n-input v-model:value="backupConfig.path" placeholder="./backups" />
-      </n-form-item>
-      
-      <n-form-item label="手动备份">
-        <div class="flex flex-col gap-2 w-full">
-           <div class="flex gap-2">
-             <n-button size="small" @click="executeBackup" :loading="backupExecuting">立即备份</n-button>
-             <n-button size="small" @click="fetchBackupList" :loading="backupListLoading">刷新列表</n-button>
-           </div>
-           
-           <n-data-table
-             :columns="backupColumns"
-             :data="backupList"
-             :loading="backupListLoading"
-             size="small"
-             :max-height="250"
-           />
-        </div>
-      </n-form-item>
-
     </n-form>
   </div>
 </template>
 
 <style scoped>
+.favicon-preview-grid {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.25rem;
+  border: 1px solid rgb(212 212 216);
+  border-radius: 0.375rem;
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(45deg, #d4d4d8 25%, transparent 25%),
+    linear-gradient(-45deg, #d4d4d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d4d4d8 75%),
+    linear-gradient(-45deg, transparent 75%, #d4d4d8 75%);
+  background-position: 0 0, 0 0.25rem, 0.25rem -0.25rem, -0.25rem 0;
+  background-size: 0.5rem 0.5rem;
+}
+
+.favicon-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
 .update-check-body.is-collapsed {
   max-height: 8rem;
   overflow: hidden;
@@ -1328,140 +661,5 @@ const clearLoginBg = () => {
   overflow-x: hidden;
   overflow-y: scroll;
   scrollbar-gutter: stable;
-}
-
-.settings-collapse {
-  width: 100%;
-}
-
-/* Login Background Styles */
-.login-bg-no-option {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border: 2px dashed #d1d5db;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 12px;
-  color: #9ca3af;
-}
-.login-bg-no-option:hover {
-  border-color: #9ca3af;
-  color: #6b7280;
-}
-.login-bg-no-option.active {
-  border-color: #3b82f6;
-  background-color: #eff6ff;
-  color: #3b82f6;
-}
-.dark .login-bg-no-option {
-  border-color: #4b5563;
-  color: #6b7280;
-}
-.dark .login-bg-no-option:hover {
-  border-color: #6b7280;
-  color: #9ca3af;
-}
-.dark .login-bg-no-option.active {
-  border-color: #3b82f6;
-  background-color: #1e3a5f;
-  color: #60a5fa;
-}
-
-.login-bg-thumb-wrapper {
-  width: 48px;
-  height: 48px;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 2px solid #3b82f6;
-}
-.login-bg-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.login-bg-preview {
-  position: relative;
-  width: 240px;
-  height: 160px;
-  border-radius: 8px;
-  overflow: hidden;
-  background-color: #f3f4f6;
-}
-.dark .login-bg-preview {
-  background-color: #1f2937;
-}
-
-.login-bg-preview-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-
-.login-bg-preview-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-
-.login-bg-preview-card {
-  position: absolute;
-  inset: 18px 24px;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px;
-}
-
-.login-bg-preview-input {
-  width: 100%;
-  height: 18px;
-  background: rgba(255, 255, 255, 0.65);
-  border-radius: 4px;
-}
-.dark .login-bg-preview-input {
-  background: rgba(15, 23, 42, 0.6);
-}
-
-.login-bg-preview-btn {
-  width: 60%;
-  height: 20px;
-  background: rgba(59, 130, 246, 0.9);
-  border-radius: 4px;
-  margin-top: 4px;
-}
-
-.login-bg-control-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  width: 100%;
-}
-
-.login-bg-slider {
-  flex: 1;
-  min-width: 200px;
-}
-
-.login-bg-value {
-  display: inline-block;
-  width: 56px;
-  margin-left: 8px;
-  font-size: 12px;
-  color: #6b7280;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.dark .login-bg-value {
-  color: #9ca3af;
 }
 </style>

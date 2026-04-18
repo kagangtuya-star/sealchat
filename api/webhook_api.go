@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"sealchat/model"
+	"sealchat/pkg/contentstats"
 	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
@@ -447,6 +448,7 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		MemberID:          member.ID,
 		QuoteID:           quoteID,
 		Content:           content,
+		VisibleCharCount:  contentstats.CountVisibleTextChars(content),
 		DisplayOrder:      displayOrder,
 		ICMode:            icMode,
 		SenderMemberName:  member.Nickname,
@@ -475,9 +477,6 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	db := model.GetDB()
 	if err := db.Create(msg).Error; err != nil {
 		return wrapError(c, err, "创建消息失败")
-	}
-	if renderResult != nil {
-		_ = model.MessageDiceRollReplace(msg.ID, renderResult.Rolls)
 	}
 
 	if source != "" && externalID != "" {
@@ -671,10 +670,7 @@ func webhookMessageDelete(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		ChannelUsersMap: getChannelUsersMap(),
 		UserId2ConnInfo: getUserConnInfoMap(),
 	}
-	data := &struct {
-		ChannelID string `json:"channel_id"`
-		MessageID string `json:"message_id"`
-	}{
+	data := &messageRemovePayload{
 		ChannelID: channel.ID,
 		MessageID: messageID,
 	}

@@ -42,6 +42,7 @@ interface EmbedHostEntry {
 
 interface IFormStoreState {
   currentChannelId: string | null;
+  pendingSharedWindowCarryFromChannelId: string | null;
   drawerVisible: boolean;
   loading: boolean;
   saving: boolean;
@@ -65,6 +66,7 @@ let bootstrapScope: EffectScope | null = null;
 export const useIFormStore = defineStore('iform', {
   state: (): IFormStoreState => ({
     currentChannelId: null,
+    pendingSharedWindowCarryFromChannelId: null,
     drawerVisible: false,
     loading: false,
     saving: false,
@@ -117,6 +119,31 @@ export const useIFormStore = defineStore('iform', {
       if (!channelId) return false;
       return !!state.capabilities[channelId]?.broadcast;
     },
+    canManageWorldShared(): boolean {
+      const user = useUserStore();
+      if (user.checkPerm?.('mod_admin')) {
+        return true;
+      }
+      const chat = useChatStore();
+      const worldId = chat.currentWorldId;
+      if (!worldId) {
+        return false;
+      }
+      const worldDetail = chat.worldDetailMap?.[worldId];
+      const memberRole = worldDetail?.memberRole;
+      const ownerId = worldDetail?.world?.ownerId || chat.worldMap?.[worldId]?.ownerId;
+      return memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    },
+    selectedWorldShareEligibleForms(): ChannelIForm[] {
+      if (!this.selectedFormIds.length) {
+        return [];
+      }
+      return this.currentForms.filter((form) => this.selectedFormIds.includes(form.id) && !(form.readonly || form.sharedRef));
+    },
+    selectedWorldShareAllShared(): boolean {
+      return this.selectedWorldShareEligibleForms.length > 0
+        && this.selectedWorldShareEligibleForms.every((form) => !!form.worldShared);
+    },
     hasAttention(state): boolean {
       const channelId = state.currentChannelId;
       if (!channelId) {
@@ -140,6 +167,12 @@ export const useIFormStore = defineStore('iform', {
     },
   },
   actions: {
+    hasLoadedForms(channelId: string) {
+      return Object.prototype.hasOwnProperty.call(this.formsByChannel, channelId);
+    },
+    isWorldSharedForm(form: ChannelIForm | null | undefined) {
+      return !!(form?.worldShared || form?.sharedRef);
+    },
     bootstrap() {
       if (this.bootstrapped && bootstrapScope?.active) {
         return;
@@ -191,6 +224,7 @@ export const useIFormStore = defineStore('iform', {
           [channelId]: data?.items || [],
         };
         this.cleanRuntimeState(channelId);
+        this.consumePendingSharedWindowCarry(channelId);
       } finally {
         this.loading = false;
       }
@@ -227,12 +261,93 @@ export const useIFormStore = defineStore('iform', {
       if (this.currentChannelId === channelId) {
         return;
       }
+      const previousChannelId = this.currentChannelId;
       this.currentChannelId = channelId;
       this.drawerVisible = false;
       this.selectedFormIds = [];
+      this.pendingSharedWindowCarryFromChannelId = null;
+      if (channelId && previousChannelId && previousChannelId !== channelId) {
+        if (this.hasLoadedForms(channelId)) {
+          this.carrySharedRuntimeState(previousChannelId, channelId);
+        } else {
+          this.pendingSharedWindowCarryFromChannelId = previousChannelId;
+        }
+      }
       if (channelId) {
         this.markAttention(channelId, false);
       }
+    },
+    carrySharedRuntimeState(fromChannelId: string, toChannelId: string) {
+      if (!fromChannelId || !toChannelId || fromChannelId === toChannelId) {
+        return;
+      }
+      const sourceForms = this.formsByChannel[fromChannelId] || [];
+      const targetForms = this.formsByChannel[toChannelId] || [];
+      if (!sourceForms.length || !targetForms.length) {
+        return;
+      }
+      const sharedFormIds = new Set(
+        sourceForms
+          .filter((form) => this.isWorldSharedForm(form))
+          .map((form) => form.id),
+      );
+      if (!sharedFormIds.size) {
+        return;
+      }
+      const targetFormIds = new Set(
+        targetForms
+          .filter((form) => sharedFormIds.has(form.id))
+          .map((form) => form.id),
+      );
+      if (!targetFormIds.size) {
+        return;
+      }
+
+      const sourcePanels = this.panelsByChannel[fromChannelId] || {};
+      const nextPanels = { ...(this.panelsByChannel[toChannelId] || {}) };
+      let panelsChanged = false;
+      Object.entries(sourcePanels).forEach(([windowId, state]) => {
+        if (!targetFormIds.has(state.formId) || nextPanels[windowId]) {
+          return;
+        }
+        nextPanels[windowId] = { ...state };
+        panelsChanged = true;
+      });
+      if (panelsChanged) {
+        this.panelsByChannel = {
+          ...this.panelsByChannel,
+          [toChannelId]: nextPanels,
+        };
+      }
+
+      const sourceFloating = this.floatingByChannel[fromChannelId] || {};
+      const nextFloating = { ...(this.floatingByChannel[toChannelId] || {}) };
+      let floatingChanged = false;
+      Object.entries(sourceFloating).forEach(([windowId, state]) => {
+        if (!targetFormIds.has(state.formId) || nextFloating[windowId]) {
+          return;
+        }
+        nextFloating[windowId] = { ...state };
+        this.zCounter = Math.max(this.zCounter, state.zIndex);
+        floatingChanged = true;
+      });
+      if (floatingChanged) {
+        this.floatingByChannel = {
+          ...this.floatingByChannel,
+          [toChannelId]: nextFloating,
+        };
+      }
+    },
+    consumePendingSharedWindowCarry(channelId: string) {
+      if (!channelId || this.currentChannelId !== channelId) {
+        return;
+      }
+      const fromChannelId = this.pendingSharedWindowCarryFromChannelId;
+      if (!fromChannelId || fromChannelId === channelId) {
+        return;
+      }
+      this.carrySharedRuntimeState(fromChannelId, channelId);
+      this.pendingSharedWindowCarryFromChannelId = null;
     },
     openDrawer() {
       this.drawerVisible = true;
@@ -277,6 +392,9 @@ export const useIFormStore = defineStore('iform', {
       } else {
         this.selectedFormIds = [...this.selectedFormIds, formId];
       }
+    },
+    isReadonlyForm(form: ChannelIForm) {
+      return !!form?.readonly;
     },
     getForm(channelId: string | null, formId: string) {
       if (!channelId) {
@@ -597,6 +715,28 @@ export const useIFormStore = defineStore('iform', {
         force: options?.force,
         targetUserIds: options?.targetUserIds,
       });
+    },
+    async toggleWorldShare(formIds: string[], enabled: boolean) {
+      const channelId = this.currentChannelId;
+      if (!channelId) {
+        throw new Error('未选择频道');
+      }
+      if (!this.canManageWorldShared) {
+        throw new Error('没有权限管理世界共享 iForm');
+      }
+      const normalizedFormIds = [...new Set(
+        formIds
+          .map((item) => String(item || '').trim())
+          .filter((item) => !!item),
+      )];
+      if (!normalizedFormIds.length) {
+        throw new Error('至少选择一个可共享控件');
+      }
+      await api.post(`api/v1/channels/${channelId}/iforms/world-share`, {
+        formIds: normalizedFormIds,
+        enabled,
+      });
+      await this.ensureForms(channelId, true);
     },
     async migrateForms(targetIds: string[], formIds: string[], mode: 'copy' | 'move') {
       const channelId = this.currentChannelId;

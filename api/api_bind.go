@@ -186,6 +186,15 @@ func applyPageTitleToIndex(htmlSource string, title string) string {
 	return htmlSource[:start+len("<title>")] + escapedTitle + htmlSource[end:]
 }
 
+func applyFaviconToIndex(htmlSource string, attachmentID string) string {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(attachmentID), "id:")
+	if trimmed == "" {
+		return htmlSource
+	}
+	iconURL := "/api/v1/attachment/" + url.PathEscape(trimmed) + "?v=" + url.QueryEscape(trimmed)
+	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
+}
+
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
@@ -529,6 +538,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Post("/:worldId/keywords", WorldKeywordCreateHandler)
 	worldGroup.Patch("/:worldId/keywords/:keywordId", WorldKeywordUpdateHandler)
 	worldGroup.Delete("/:worldId/keywords/:keywordId", WorldKeywordDeleteHandler)
+	worldGroup.Post("/:worldId/keywords/bulk-update", WorldKeywordBulkUpdateHandler)
 	worldGroup.Post("/:worldId/keywords/bulk-delete", WorldKeywordBulkDeleteHandler)
 	worldGroup.Post("/:worldId/keywords/reorder", WorldKeywordReorderHandler)
 	worldGroup.Post("/:worldId/keywords/import", WorldKeywordImportHandler)
@@ -567,6 +577,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	iform.Delete("/:formId", ChannelIFormDelete)
 	iform.Post("/push", ChannelIFormPush)
 	iform.Post("/migrate", ChannelIFormMigrate)
+	iform.Post("/world-share", ChannelIFormWorldShare)
 
 	v1Auth.Post("/user-role-link", UserRoleLink)
 	v1Auth.Post("/user-role-unlink", UserRoleUnlink)
@@ -598,6 +609,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
 	v1AuthAdmin.Get("/admin/sqlite/vacuum/status", AdminSQLiteVacuumStatus)
 	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
+	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
+	v1AuthAdmin.Post("/admin/message-visible-char-count/rebuild", AdminMessageVisibleCharCountRebuild)
 	v1AuthAdmin.Get("/admin/external-glossaries", ExternalGlossaryLibraryListHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries", ExternalGlossaryLibraryCreateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/import", ExternalGlossaryLibraryImportHandler)
@@ -665,6 +678,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		} else if payload.AllowWorldAudioWorkbench != nil {
 			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
 		}
+		newConfig.ThemeManagement = utils.NormalizeThemeManagementConfig(newConfig.ThemeManagement)
+		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
@@ -683,6 +700,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	} else {
 		renderIndex := func(c *fiber.Ctx) error {
 			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
+			page = applyFaviconToIndex(page, appConfig.FaviconAttachmentID)
 			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
 			return c.Status(http.StatusOK).SendString(page)
 		}

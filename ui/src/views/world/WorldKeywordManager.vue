@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useChatStore } from '@/stores/chat'
 import { useUtilsStore } from '@/stores/utils'
@@ -9,7 +9,7 @@ import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
 import { matchText } from '@/utils/pinyinMatch'
-import type { KeywordCategoryInfo, WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
+import type { EffectiveWorldKeywordItem, KeywordCategoryInfo, WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import {
   createWorldKeywordCategory,
   renameWorldKeywordCategory,
@@ -20,6 +20,13 @@ import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
 import KeywordRichEditor from './KeywordRichEditor.vue'
 import WorldExternalGlossaryManager from './WorldExternalGlossaryManager.vue'
+import {
+  buildDisplayCategoryKey,
+  buildDisplayCategoryLabel,
+  buildKeywordManagerItems,
+  MANAGER_UNCATEGORIZED_KEY,
+  type KeywordManagerListItem,
+} from './worldKeywordManagerReadonlyExternal'
 import { useWorldExternalGlossaryStore } from '@/stores/worldExternalGlossary'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
@@ -40,18 +47,24 @@ const drawerVisible = computed({
 })
 
 const currentWorldId = computed(() => chat.currentWorldId)
-const keywordItems = computed(() => {
+const worldKeywordItems = computed(() => {
   const worldId = currentWorldId.value
   if (!worldId) return []
   const page = glossary.pages[worldId]
   return page?.items || []
 })
+const externalReadonlyKeywordItems = computed<EffectiveWorldKeywordItem[]>(() => {
+  const worldId = currentWorldId.value
+  if (!worldId) return []
+  return glossary.managerExternalPages[worldId]?.items || []
+})
+const managerItems = computed(() => buildKeywordManagerItems(worldKeywordItems.value, externalReadonlyKeywordItems.value))
 const filterValue = computed({
   get: () => glossary.searchQuery,
   set: (value: string) => glossary.setSearchQuery(value),
 })
 
-const getDescriptionPlainText = (item: WorldKeywordItem) => {
+const getDescriptionPlainText = (item: Pick<KeywordManagerListItem, 'description' | 'descriptionFormat'>) => {
   if (!item?.description) return ''
   if (item.descriptionFormat === 'rich' && isTipTapJson(item.description)) {
     return tiptapJsonToPlainText(item.description)
@@ -59,28 +72,25 @@ const getDescriptionPlainText = (item: WorldKeywordItem) => {
   return item.description
 }
 
-const getDescriptionPreview = (item: WorldKeywordItem) => {
+const getDescriptionPreview = (item: KeywordManagerListItem) => {
   const text = getDescriptionPlainText(item)
   return text ? clampText(text) : ''
 }
 
 const filteredKeywords = computed(() => {
-  let items = keywordItems.value
-  
-  // Filter by category first
+  let items = managerItems.value
   if (categoryFilter.value) {
-    items = items.filter((item) => item.category === categoryFilter.value)
+    items = items.filter((item) => buildDisplayCategoryKey(item) === categoryFilter.value)
   }
-  
-  // Then filter by search query
   const q = filterValue.value.trim()
   if (!q) return items
   return items.filter((item) => {
     const description = getDescriptionPlainText(item)
-    const targets = [item.keyword, ...(item.aliases || []), description]
+    const targets = [item.keyword, ...(item.aliases || []), item.category, item.sourceName, description]
     return targets.some((target) => matchText(q, target || ''))
   })
 })
+const selectableFilteredKeywords = computed(() => filteredKeywords.value.filter((item) => !item.isReadonly))
 
 const PAGE_SIZE = 10
 const selectedIds = ref<string[]>([])
@@ -92,13 +102,22 @@ const pagedKeywords = computed(() => {
   const start = (currentPage.value - 1) * PAGE_SIZE
   return filteredKeywords.value.slice(start, start + PAGE_SIZE)
 })
+const selectablePagedKeywords = computed(() => pagedKeywords.value.filter((item) => !item.isReadonly))
 
 const visibleSelectionCount = computed(() =>
-  pagedKeywords.value.filter((item) => selectedIds.value.includes(item.id)).length,
+  selectablePagedKeywords.value.filter((item) => selectedIds.value.includes(item.id)).length,
+)
+
+const filteredSelectionCount = computed(() =>
+  selectableFilteredKeywords.value.filter((item) => selectedIds.value.includes(item.id)).length,
 )
 
 const isAllVisibleSelected = computed(
-  () => pagedKeywords.value.length > 0 && visibleSelectionCount.value === pagedKeywords.value.length,
+  () => selectablePagedKeywords.value.length > 0 && visibleSelectionCount.value === selectablePagedKeywords.value.length,
+)
+
+const isAllFilteredSelected = computed(
+  () => selectableFilteredKeywords.value.length > 0 && filteredSelectionCount.value === selectableFilteredKeywords.value.length,
 )
 
 const isSelectionIndeterminate = computed(
@@ -162,7 +181,28 @@ const isRichMode = computed({
 })
 
 const categoryFilter = ref<string | null>(null)
-const categoryOptions = ref<string[]>([])
+const editableCategoryOptions = ref<string[]>([])
+const displayCategoryOptions = computed(() => {
+  const options: Array<{ label: string; value: string }> = []
+  const seen = new Set<string>()
+  editableCategoryOptions.value.forEach((category) => {
+    const value = `world:${category || MANAGER_UNCATEGORIZED_KEY}`
+    if (seen.has(value)) return
+    seen.add(value)
+    options.push({ label: category || '(未分类)', value })
+  })
+  managerItems.value.forEach((item) => {
+    const value = buildDisplayCategoryKey(item)
+    if (seen.has(value)) return
+    seen.add(value)
+    options.push({ label: buildDisplayCategoryLabel(item), value })
+  })
+  return options
+})
+const tableLoading = computed(() => {
+  const worldId = currentWorldId.value || ''
+  return Boolean(glossary.loadingMap[worldId] || glossary.managerExternalLoadingMap[worldId])
+})
 
 // Export modal state
 const exportModalVisible = ref(false)
@@ -332,8 +372,8 @@ const parseStructuredImport = (raw: string): WorldKeywordPayload[] => {
 }
 
 // Drag and drop handlers
-function handleDragStart(e: DragEvent, item: WorldKeywordItem) {
-  if (!canEdit.value) return
+function handleDragStart(e: DragEvent, item: KeywordManagerListItem) {
+  if (!canEdit.value || item.isReadonly) return
   dragSourceId.value = item.id
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
@@ -341,7 +381,8 @@ function handleDragStart(e: DragEvent, item: WorldKeywordItem) {
   }
 }
 
-function handleDragEnter(item: WorldKeywordItem) {
+function handleDragEnter(item: KeywordManagerListItem) {
+  if (item.isReadonly) return
   if (!dragSourceId.value || dragSourceId.value === item.id) return
   dragTargetId.value = item.id
 }
@@ -354,18 +395,18 @@ function handleDragLeave() {
   // Optional: clear target on leave
 }
 
-async function handleDrop(targetItem: WorldKeywordItem) {
+async function handleDrop(targetItem: KeywordManagerListItem) {
   const sourceId = dragSourceId.value
   const targetId = targetItem.id
   dragSourceId.value = null
   dragTargetId.value = null
 
-  if (!sourceId || sourceId === targetId) return
+  if (!sourceId || sourceId === targetId || targetItem.isReadonly) return
 
   const worldId = currentWorldId.value
   if (!worldId) return
 
-  const items = [...keywordItems.value]
+  const items = [...worldKeywordItems.value]
   const sourceIndex = items.findIndex((item) => item.id === sourceId)
   const targetIndex = items.findIndex((item) => item.id === targetId)
   if (sourceIndex === -1 || targetIndex === -1) return
@@ -422,9 +463,13 @@ function openImportModal() {
   glossary.openImport(worldId)
 }
 
-function openEdit(item: any) {
+function openEdit(item: KeywordManagerListItem) {
   const worldId = currentWorldId.value
   if (!worldId) return
+  if (item.isReadonly) {
+    message.info('外挂术语仅可查看，请前往平台外挂术语库管理')
+    return
+  }
   formModel.keyword = clampText(item.keyword)
   formModel.category = item.category || ''
   formModel.aliases = (item.aliases || []).map((alias: string) => clampText(alias)).join(', ')
@@ -474,7 +519,7 @@ async function submitEditor() {
       await glossary.createKeyword(worldId, payload)
       message.success('已创建术语')
     }
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     glossary.closeEditor()
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '保存失败'))
@@ -486,7 +531,7 @@ async function handleDelete(itemId: string) {
   if (!worldId) return
   try {
     await glossary.removeKeyword(worldId, itemId)
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     message.success('已删除')
     selectedIds.value = selectedIds.value.filter((id) => id !== itemId)
   } catch (error: any) {
@@ -494,9 +539,13 @@ async function handleDelete(itemId: string) {
   }
 }
 
-async function handleToggle(item: WorldKeywordItem) {
+async function handleToggle(item: KeywordManagerListItem) {
   const worldId = currentWorldId.value
   if (!worldId) return
+  if (item.isReadonly) {
+    message.info('外挂术语仅可查看，请前往平台外挂术语库管理')
+    return
+  }
   try {
     await glossary.editKeyword(worldId, item.id, {
       keyword: item.keyword,
@@ -553,13 +602,13 @@ async function openCategoryManager() {
   const worldId = currentWorldId.value
   if (!worldId) return
   // Compute category stats from current keywords + managed categories
-  const items = keywordItems.value
+  const items = worldKeywordItems.value
   const statsMap = new Map<string, number>()
   items.forEach((item) => {
     const cat = item.category || '(未分类)'
     statsMap.set(cat, (statsMap.get(cat) || 0) + 1)
   })
-  categoryOptions.value.forEach((name) => {
+  editableCategoryOptions.value.forEach((name) => {
     if (!statsMap.has(name)) {
       statsMap.set(name, 0)
     }
@@ -576,13 +625,13 @@ async function handleBulkRenameCategory(oldName: string, newName: string) {
   if (!worldId || !targetName) return
   try {
     if (oldName === '(未分类)') {
-      const uncategorizedIds = keywordItems.value.filter((item) => !item.category).map((item) => item.id)
+      const uncategorizedIds = worldKeywordItems.value.filter((item) => !item.category).map((item) => item.id)
       await handleBulkModifyCategoryToTarget(targetName, uncategorizedIds)
     } else {
       await renameWorldKeywordCategory(worldId, oldName, targetName)
       await glossary.ensureKeywords(worldId, { force: true })
     }
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     message.success(`已将分类 "${oldName}" 重命名为 "${targetName}"`)
     await openCategoryManager()
   } catch (error: any) {
@@ -596,7 +645,7 @@ async function handleCreateCategory() {
   const catName = newCategoryName.value.trim()
   try {
     await createWorldKeywordCategory(worldId, catName)
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     message.success(`已创建分类 "${catName}"`)
     newCategoryName.value = ''
     await openCategoryManager()
@@ -629,7 +678,7 @@ async function handleSaveCategoryPriority(name: string) {
     await glossary.setCategoryPriority(worldId, name, priority)
     const latest = await glossary.ensureCategoryInfos(worldId, { force: true })
     categoryPriorityItems.value = [...latest]
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     message.success(`已更新分类 "${name}" 的优先级`)
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '更新分类优先级失败'))
@@ -702,20 +751,10 @@ function handleCategoryPriorityDragEnd() {
 async function handleBulkModifyCategoryToTarget(targetCategory: string, targetIds?: string[]) {
   const worldId = currentWorldId.value
   if (!worldId || !targetCategory.trim()) return
-  const effectiveIds = targetIds && targetIds.length ? targetIds : selectedIds.value
-  const items = keywordItems.value.filter((item) => effectiveIds.includes(item.id))
-  for (const item of items) {
-    await glossary.editKeyword(worldId, item.id, {
-      keyword: item.keyword,
-      category: targetCategory.trim(),
-      aliases: item.aliases,
-      matchMode: item.matchMode,
-      description: item.description,
-      descriptionFormat: item.descriptionFormat || 'plain',
-      display: item.display,
-      isEnabled: item.isEnabled,
-    })
-  }
+  const effectiveIds = (targetIds && targetIds.length ? targetIds : selectedIds.value).filter((id) =>
+    worldKeywordItems.value.some((item) => item.id === id),
+  )
+  await glossary.setKeywordCategoryBulk(worldId, effectiveIds, targetCategory.trim())
 }
 
 async function handleBulkModifyCategory() {
@@ -724,7 +763,7 @@ async function handleBulkModifyCategory() {
   try {
     await handleBulkModifyCategoryToTarget(bulkTargetCategory.value)
     message.success(`已将 ${selectedIds.value.length} 个术语的分类修改为 "${bulkTargetCategory.value}"`)
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     bulkCategoryModalVisible.value = false
     bulkTargetCategory.value = ''
     clearSelection()
@@ -735,7 +774,7 @@ async function handleBulkModifyCategory() {
 
 const openBulkDisplayModal = () => {
   if (!hasSelection.value) return
-  const first = keywordItems.value.find((item) => selectedIds.value.includes(item.id))
+  const first = worldKeywordItems.value.find((item) => selectedIds.value.includes(item.id))
   bulkTargetDisplay.value = (first?.display || 'inherit') as KeywordDisplayStyle
   bulkDisplayModalVisible.value = true
 }
@@ -758,7 +797,7 @@ async function handleBulkModifyDisplay() {
 async function handleDeleteCategory(categoryName: string) {
   const worldId = currentWorldId.value
   if (!worldId) return
-  const items = keywordItems.value.filter((item) =>
+  const items = worldKeywordItems.value.filter((item) =>
     (categoryName === '(未分类)' ? !item.category : item.category === categoryName)
   )
   if (categoryName === '(未分类)') {
@@ -775,7 +814,7 @@ async function handleDeleteCategory(categoryName: string) {
       try {
         await deleteWorldKeywordCategory(worldId, categoryName)
         await glossary.ensureKeywords(worldId, { force: true })
-        categoryOptions.value = await glossary.fetchCategories(worldId)
+        editableCategoryOptions.value = await glossary.fetchCategories(worldId)
         message.success(`已删除分类 "${categoryName}"，${items.length} 个术语已设为未分类`)
         await openCategoryManager()
       } catch (error: any) {
@@ -803,7 +842,7 @@ async function handleImport(replace = false) {
     await glossary.importKeywords(worldId, payloads, replace)
     message.success('导入完成')
     // Refresh categories
-    categoryOptions.value = await glossary.fetchCategories(worldId)
+    editableCategoryOptions.value = await glossary.fetchCategories(worldId)
     importTargetCategory.value = ''
   } catch (error: any) {
     message.error(resolveErrorMessage(error, '导入失败'))
@@ -840,7 +879,16 @@ const clearSelection = () => {
   selectedIds.value = []
 }
 
+const selectAllFiltered = () => {
+  const next = new Set(selectedIds.value)
+  selectableFilteredKeywords.value.forEach((item) => next.add(item.id))
+  selectedIds.value = Array.from(next)
+}
+
 const handleRowSelection = (keywordId: string, checked: boolean | undefined) => {
+  if (!worldKeywordItems.value.some((item) => item.id === keywordId)) {
+    return
+  }
   const next = new Set(selectedIds.value)
   if (checked) {
     next.add(keywordId)
@@ -853,7 +901,7 @@ const handleRowSelection = (keywordId: string, checked: boolean | undefined) => 
 const handleSelectAllVisible = (checked: boolean | undefined) => {
   const next = new Set(selectedIds.value)
   const shouldSelect = !!checked
-  pagedKeywords.value.forEach((item) => {
+  selectablePagedKeywords.value.forEach((item) => {
     if (shouldSelect) {
       next.add(item.id)
     } else {
@@ -910,18 +958,27 @@ const handleBulkToggle = async (enabled: boolean) => {
   }
 }
 
+async function handleRefresh() {
+  const worldId = currentWorldId.value
+  if (!worldId) return
+  await Promise.all([
+    glossary.ensureKeywords(worldId, { force: true }),
+    glossary.ensureManagerExternalReadonlyKeywords(worldId, { force: true }),
+  ])
+}
+
 watch(
   () => drawerVisible.value,
   async (visible) => {
     if (visible) {
       if (currentWorldId.value) {
-        glossary.ensureKeywords(currentWorldId.value, { force: true })
+        void handleRefresh()
         chat.worldDetail(currentWorldId.value)
         // Load categories
         try {
-          categoryOptions.value = await glossary.fetchCategories(currentWorldId.value)
+          editableCategoryOptions.value = await glossary.fetchCategories(currentWorldId.value)
         } catch (e) {
-          categoryOptions.value = []
+          editableCategoryOptions.value = []
         }
       }
       currentPage.value = 1
@@ -937,7 +994,7 @@ watch(
   () => currentWorldId.value,
   (worldId) => {
     if (worldId && drawerVisible.value) {
-      glossary.ensureKeywords(worldId, { force: true })
+      void handleRefresh()
     }
     clearSelection()
     currentPage.value = 1
@@ -951,8 +1008,8 @@ onMounted(() => {
   }
 })
 
-watch(keywordItems, (items) => {
-  const validIds = new Set(items.map((item) => item.id))
+watch(managerItems, (items) => {
+  const validIds = new Set(items.filter((item) => !item.isReadonly).map((item) => item.id))
   selectedIds.value = selectedIds.value.filter((id) => validIds.has(id))
 })
 
@@ -1093,7 +1150,7 @@ onUnmounted(() => {
             >
               外挂术语
             </n-button>
-            <n-button size="tiny" @click="currentWorldId && glossary.ensureKeywords(currentWorldId, { force: true })">刷新</n-button>
+            <n-button size="tiny" @click="handleRefresh">刷新</n-button>
           </div>
         </div>
       </template>
@@ -1111,15 +1168,25 @@ onUnmounted(() => {
             placeholder="全部分类"
             clearable
             size="small"
-            style="width: 140px"
-            :options="categoryOptions.map(c => ({ label: c, value: c }))"
+            style="width: 240px"
+            :options="displayCategoryOptions"
           />
         </div>
         <div v-if="canEdit" class="keyword-manager__toolbar">
           <div class="keyword-manager__selection">
-            已选 {{ selectedIds.length }} / {{ filteredKeywords.length }}
+            已选 {{ selectedIds.length }} / {{ selectableFilteredKeywords.length }}
             <n-button v-if="hasSelection" size="tiny" text class="ml-1" @click="clearSelection">
               清除选择
+            </n-button>
+            <n-button
+              v-if="canEdit && filteredKeywords.length"
+              size="tiny"
+              text
+              class="ml-1"
+              :disabled="isAllFilteredSelected"
+              @click="selectAllFiltered"
+            >
+              全选
             </n-button>
           </div>
           <div class="keyword-manager__actions">
@@ -1195,7 +1262,7 @@ onUnmounted(() => {
         <n-alert v-if="!canEdit" type="info" title="仅可查看">
           该世界仅管理员可编辑术语，您当前没有编辑权限。
         </n-alert>
-        <n-spin :show="glossary.loadingMap[currentWorldId || '']">
+        <n-spin :show="tableLoading">
           <template v-if="!isMobileLayout">
             <n-table :single-line="false" size="small">
               <thead>
@@ -1204,7 +1271,7 @@ onUnmounted(() => {
                     <n-checkbox
                       :checked="isAllVisibleSelected"
                       :indeterminate="isSelectionIndeterminate"
-                      :disabled="!canEdit || !pagedKeywords.length"
+                      :disabled="!canEdit || !selectablePagedKeywords.length"
                       @update:checked="handleSelectAllVisible"
                     />
                   </th>
@@ -1213,6 +1280,7 @@ onUnmounted(() => {
                   <th>匹配</th>
                   <th>显示</th>
                   <th>状态</th>
+                  <th>来源</th>
                   <th style="width: 120px;">操作</th>
                 </tr>
               </thead>
@@ -1220,7 +1288,7 @@ onUnmounted(() => {
                 <tr
                   v-for="item in pagedKeywords"
                   :key="item.id"
-                  :draggable="canEdit"
+                  :draggable="canEdit && !item.isReadonly"
                   :class="{ 'keyword-drop-target': dragTargetId === item.id, 'keyword-dragging': dragSourceId === item.id }"
                   @dragstart="handleDragStart($event, item)"
                   @dragenter="handleDragEnter(item)"
@@ -1232,7 +1300,7 @@ onUnmounted(() => {
                   <td>
                     <n-checkbox
                       :checked="selectedIds.includes(item.id)"
-                      :disabled="!canEdit"
+                      :disabled="!canEdit || item.isReadonly"
                       @update:checked="(checked: boolean) => handleRowSelection(item.id, checked)"
                     />
                   </td>
@@ -1261,7 +1329,12 @@ onUnmounted(() => {
                     </n-tag>
                   </td>
                   <td>
-                    <n-space size="small">
+                    <n-tag size="small" :type="item.sourceType === 'world' ? 'info' : 'default'" :bordered="false">
+                      {{ item.sourceName }}
+                    </n-tag>
+                  </td>
+                  <td>
+                    <n-space size="small" v-if="!item.isReadonly">
                       <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
                       <n-button size="tiny" text :disabled="!canEdit" @click="handleToggle(item)">
                         {{ item.isEnabled ? '停用' : '启用' }}
@@ -1273,10 +1346,11 @@ onUnmounted(() => {
                         确认删除该术语？
                       </n-popconfirm>
                     </n-space>
+                    <n-tag v-else size="small" :bordered="false">外挂只读</n-tag>
                   </td>
                 </tr>
                 <tr v-if="!filteredKeywords.length">
-                  <td colspan="7" class="text-center text-gray-400">暂无数据</td>
+                  <td colspan="8" class="text-center text-gray-400">暂无数据</td>
                 </tr>
               </tbody>
             </n-table>
@@ -1287,19 +1361,22 @@ onUnmounted(() => {
                 <div class="keyword-mobile-simple-main">
                   <n-checkbox
                     :checked="selectedIds.includes(item.id)"
-                    :disabled="!canEdit"
+                    :disabled="!canEdit || item.isReadonly"
                     @update:checked="(checked: boolean) => handleRowSelection(item.id, checked)"
                   />
                   <span class="keyword-mobile-simple-text">{{ item.keyword }}</span>
                 </div>
                 <div class="keyword-mobile-simple-actions">
-                  <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
-                  <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
-                    <template #trigger>
-                      <n-button size="tiny" text type="error">删除</n-button>
-                    </template>
-                    确认删除该术语？
-                  </n-popconfirm>
+                  <template v-if="!item.isReadonly">
+                    <n-button size="tiny" text :disabled="!canEdit" @click="openEdit(item)">编辑</n-button>
+                    <n-popconfirm v-if="canEdit" @positive-click="handleDelete(item.id)">
+                      <template #trigger>
+                        <n-button size="tiny" text type="error">删除</n-button>
+                      </template>
+                      确认删除该术语？
+                    </n-popconfirm>
+                  </template>
+                  <n-tag v-else size="small" :bordered="false">{{ item.sourceName }}</n-tag>
                 </div>
               </div>
               <div v-if="!filteredKeywords.length" class="keyword-mobile-empty">暂无数据</div>
@@ -1340,7 +1417,7 @@ onUnmounted(() => {
         <n-form-item label="分类" class="keyword-editor__field keyword-editor__field--category" :show-feedback="false">
           <n-select
             v-model:value="formModel.category"
-            :options="categoryOptions.map(c => ({ label: c, value: c }))"
+            :options="editableCategoryOptions.map(c => ({ label: c, value: c }))"
             placeholder="选择或输入分类（可选）"
             clearable
             filterable
@@ -1464,7 +1541,7 @@ onUnmounted(() => {
       <n-form-item label="导入到分类（可选）" :show-feedback="false">
         <n-select
           v-model:value="importTargetCategory"
-          :options="[{ label: '保持原分类', value: '' }, ...categoryOptions.map(c => ({ label: c, value: c }))]"
+          :options="[{ label: '保持原分类', value: '' }, ...editableCategoryOptions.map(c => ({ label: c, value: c }))]"
           placeholder="保持原分类或指定目标分类"
           clearable
           filterable
@@ -1489,7 +1566,7 @@ onUnmounted(() => {
     <n-form-item label="选择要导出的分类" :show-feedback="false">
       <n-select
         v-model:value="exportCategoryFilter"
-        :options="categoryOptions.map(c => ({ label: c, value: c }))"
+        :options="editableCategoryOptions.map(c => ({ label: c, value: c }))"
         placeholder="全部分类（留空导出全部）"
         multiple
         clearable
@@ -1596,7 +1673,7 @@ onUnmounted(() => {
     <n-form-item label="目标分类" :show-feedback="false">
       <n-select
         v-model:value="bulkTargetCategory"
-        :options="categoryOptions.map(c => ({ label: c, value: c }))"
+        :options="editableCategoryOptions.map(c => ({ label: c, value: c }))"
         placeholder="选择或输入目标分类"
         filterable
         tag

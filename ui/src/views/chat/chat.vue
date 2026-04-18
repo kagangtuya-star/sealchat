@@ -87,6 +87,20 @@ import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
+import {
+  buildIdentityAssetKey,
+  remapDecorationsForImport,
+  resolveIdentityMatchByName,
+  resolveIdentityAssetFetchUrl,
+  shouldIgnoreIdentityAssetFetchStatus,
+  type IdentityAssetPayload,
+  type IdentityAvatarPayload,
+  type IdentityExportDecorationItem,
+  type IdentityExportFile,
+  type IdentityExportFolder,
+  type IdentityExportItem,
+  type IdentityExportVariantItem,
+} from '@/utils/channelIdentityMigration'
 import AnnouncementManagerModal from '@/components/announcement/AnnouncementManagerModal.vue';
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
@@ -206,7 +220,7 @@ const defaultIFormEmbedLink = computed(() => {
   return generateIFormEmbedLink(
     {
       worldId,
-      channelId,
+      channelId: firstForm.sourceChannelId || firstForm.channelId,
       formId: firstForm.id,
       width: firstForm.defaultWidth,
       height: firstForm.defaultHeight,
@@ -1280,7 +1294,7 @@ const handleOpenDisplaySettings = () => {
   displaySettingsVisible.value = true;
 };
 
-const handleDisplaySettingsSave = (settings: DisplaySettings) => {
+const handleDisplaySettingsSave = (settings: Partial<DisplaySettings>) => {
   display.updateSettings(settings);
 };
 
@@ -3350,165 +3364,135 @@ const maybePromptIdentitySync = async () => {
   await openIdentitySyncDialog();
 };
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v2';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v3';
+const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
+  'sealchat.channel-identity/v1',
+  'sealchat.channel-identity/v2',
+  'sealchat.channel-identity/v3',
+];
 
-interface IdentityAvatarPayload {
-  attachmentId?: string;
-  hash: string;
-  size: number;
-  filename?: string;
-  mimeType?: string;
-  data: string;
-}
-
-interface IdentityExportItem {
-  sourceId: string;
-  displayName: string;
-  color: string;
-  isDefault: boolean;
-  sortOrder: number;
-  folderIds?: string[];
-  avatar?: IdentityAvatarPayload;
-}
-
-interface IdentityExportFolder {
-  sourceId: string;
-  name: string;
-  sortOrder: number;
-  isFavorite?: boolean;
-}
-
-interface IdentityExportFile {
-  version: string;
-  generatedAt: string;
-  source?: {
-    channelId?: string;
-    channelName?: string;
-    guildId?: string;
-  };
-  items: IdentityExportItem[];
-  folders?: IdentityExportFolder[];
-  icOocConfig?: {
-    icRoleId?: string | null;
-    oocRoleId?: string | null;
-  };
+interface IdentityAssetExportIssueState {
+  missingAssets: number;
 }
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
 
-const handleIdentityExport = async () => {
-  if (identityExporting.value) {
-    return;
+const downloadAttachmentAsPayload = async (
+  attachmentId: string,
+  fallbackFilename: string,
+  issueState?: IdentityAssetExportIssueState,
+): Promise<IdentityAvatarPayload | null> => {
+  const normalizedId = normalizeAttachmentId(attachmentId);
+  if (!normalizedId) {
+    return null;
   }
-  if (!chat.curChannel?.id) {
-    message.warning('请先选择频道');
-    return;
+  const meta = await fetchAttachmentMetaById(normalizedId);
+  if (!meta) {
+    return null;
   }
-  const identities = currentChannelIdentities.value;
-  if (!identities.length) {
-    message.warning('当前频道暂无可导出的角色');
-    return;
-  }
-  const membershipMap = identityFolderMembership.value;
-  const folderList = identityFolders.value;
-  const favoriteSet = new Set(identityFavoriteFolderIds.value);
-  const scopedIcOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id, currentIdentityTargetUserId.value);
-  identityExporting.value = true;
-  try {
-    const items: IdentityExportItem[] = [];
-    for (const identity of identities) {
-      const item: IdentityExportItem = {
-        sourceId: identity.id,
-        displayName: identity.displayName,
-        color: identity.color,
-        isDefault: identity.isDefault,
-        sortOrder: identity.sortOrder,
-      };
-      const folderIds = identity.folderIds?.length ? identity.folderIds : (membershipMap[identity.id] || []);
-      if (folderIds.length) {
-        item.folderIds = [...folderIds];
-      }
-      if (identity.avatarAttachmentId) {
-        const normalizedId = normalizeAttachmentId(identity.avatarAttachmentId);
-        if (normalizedId) {
-          const meta = await fetchAttachmentMetaById(identity.avatarAttachmentId);
-          if (meta) {
-            const resp = await fetch(`${urlBase}/api/v1/attachment/${normalizedId}`, {
-              headers: { Authorization: user.token || '' },
-            });
-            if (!resp.ok) {
-              throw new Error(`下载身份头像失败：${resp.status} ${resp.statusText}`);
-            }
-            const buffer = await resp.arrayBuffer();
-            item.avatar = {
-              attachmentId: normalizedId,
-              hash: meta.hash,
-              size: meta.size ?? buffer.byteLength,
-              filename: meta.filename || `${safeFilename(identity.displayName || 'identity')}.png`,
-              mimeType: resp.headers.get('content-type') || 'application/octet-stream',
-              data: arrayBufferToBase64(buffer),
-            };
-          }
-        }
-      }
-      items.push(item);
+  const downloadUrl = resolveIdentityAssetFetchUrl({
+    normalizedId,
+    externalUrl: meta.externalUrl,
+    publicUrl: meta.publicUrl,
+    urlBase,
+  });
+  const resp = await fetch(downloadUrl, {
+    headers: { Authorization: user.token || '' },
+  });
+  if (!resp.ok) {
+    if (shouldIgnoreIdentityAssetFetchStatus(resp.status)) {
+      issueState && (issueState.missingAssets += 1);
+      console.warn('导出角色素材时发现缺失附件，已跳过', {
+        attachmentId: normalizedId,
+        status: resp.status,
+      });
+      return null;
     }
-
-    const payload: IdentityExportFile = {
-      version: IDENTITY_EXPORT_VERSION,
-      generatedAt: new Date().toISOString(),
-      source: {
-        channelId: chat.curChannel.id,
-        channelName: chat.curChannel?.name || '',
-        guildId: (chat.curChannel as any)?.guildId || '',
-      },
-      items,
-      folders: folderList.map(folder => ({
-        sourceId: folder.id,
-        name: folder.name,
-        sortOrder: folder.sortOrder,
-        isFavorite: favoriteSet.has(folder.id),
-      })),
-      icOocConfig: scopedIcOocConfig.icRoleId || scopedIcOocConfig.oocRoleId
-        ? {
-            icRoleId: scopedIcOocConfig.icRoleId,
-            oocRoleId: scopedIcOocConfig.oocRoleId,
-          }
-        : undefined,
-    };
-
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const timestamp = payload.generatedAt.replace(/[:.]/g, '-');
-    const filename = `channel-identities-${safeFilename(chat.curChannel?.name || chat.curChannel?.id || 'channel')}-${timestamp}.json`;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    message.success('频道角色导出完成');
-  } catch (error: any) {
-    console.error('导出频道角色失败', error);
-    message.error(error?.message || '导出失败，请稍后重试');
-  } finally {
-    identityExporting.value = false;
+    throw new Error(`下载附件失败：${resp.status} ${resp.statusText}`);
   }
+  const buffer = await resp.arrayBuffer();
+  return {
+    attachmentId: normalizedId,
+    hash: meta.hash || '',
+    size: meta.size ?? buffer.byteLength,
+    filename: meta.filename || fallbackFilename,
+    mimeType: resp.headers.get('content-type') || meta.mimeType || 'application/octet-stream',
+    data: arrayBufferToBase64(buffer),
+  };
 };
 
-const triggerIdentityImport = () => {
-  if (!chat.curChannel?.id) {
-    message.warning('请先选择频道');
-    return;
+const registerIdentityAsset = async (
+  assetMap: Map<string, IdentityAssetPayload>,
+  attachmentId?: string | null,
+  fallbackFilename = 'identity-asset',
+  issueState?: IdentityAssetExportIssueState,
+) => {
+  const normalizedId = normalizeAttachmentId(String(attachmentId || ''));
+  if (!normalizedId) {
+    return '';
   }
-  if (identityImporting.value) {
-    return;
+  const meta = await fetchAttachmentMetaById(normalizedId);
+  const payload = await downloadAttachmentAsPayload(normalizedId, fallbackFilename, issueState);
+  if (!payload) {
+    return '';
   }
-  identityImportInputRef.value?.click();
+  const assetKey = buildIdentityAssetKey({
+    hash: payload.hash || meta?.hash || '',
+    size: payload.size || meta?.size || 0,
+  }, normalizedId);
+  if (!assetMap.has(assetKey)) {
+    assetMap.set(assetKey, {
+      assetKey,
+      ...payload,
+    });
+  }
+  return assetKey;
 };
 
-const ensureImportAttachment = async (avatar?: IdentityAvatarPayload | null): Promise<string> => {
+const mapDecorationsForExport = async (
+  decorations: AvatarDecoration[] | null | undefined,
+  assetMap: Map<string, IdentityAssetPayload>,
+  fallbackPrefix: string,
+  issueState?: IdentityAssetExportIssueState,
+): Promise<IdentityExportDecorationItem[]> => {
+  const normalized = cloneAvatarDecorations(decorations);
+  const result: IdentityExportDecorationItem[] = [];
+  for (const item of normalized) {
+    const resourceAssetKey = await registerIdentityAsset(
+      assetMap,
+      item.resourceAttachmentId,
+      `${fallbackPrefix}-resource`,
+      issueState,
+    );
+    const fallbackAssetKey = await registerIdentityAsset(
+      assetMap,
+      item.fallbackAttachmentId,
+      `${fallbackPrefix}-fallback`,
+      issueState,
+    );
+    result.push({
+      ...item,
+      resourceAssetKey: resourceAssetKey || undefined,
+      fallbackAssetKey: fallbackAssetKey || undefined,
+    });
+  }
+  return result;
+};
+
+const normalizeExportItemDecorations = (item: IdentityExportItem) => {
+  if (Array.isArray(item.avatarDecorations) && item.avatarDecorations.length > 0) {
+    return item.avatarDecorations;
+  }
+  if (item.avatarDecoration) {
+    return [item.avatarDecoration];
+  }
+  return [] as IdentityExportDecorationItem[];
+};
+
+const ensureImportAttachment = async (
+  avatar?: IdentityAvatarPayload | null,
+  options?: { channelId?: string },
+): Promise<string> => {
   if (!avatar) {
     return '';
   }
@@ -3537,12 +3521,436 @@ const ensureImportAttachment = async (avatar?: IdentityAvatarPayload | null): Pr
     const blob = new Blob([bytes], { type: avatar.mimeType || 'application/octet-stream' });
     const fileName = avatar.filename || `identity-avatar-${avatar.hash.slice(0, 8)}`;
     const file = new File([blob], fileName, { type: avatar.mimeType || 'application/octet-stream' });
-    const uploadResult = await uploadImageAttachment(file, { channelId: chat.curChannel?.id });
+    const uploadResult = await uploadImageAttachment(file, { channelId: options?.channelId || chat.curChannel?.id });
     return normalizeAttachmentId(uploadResult.attachmentId);
   } catch (error) {
     console.error('上传身份头像失败', error);
     throw error;
   }
+};
+
+const ensureImportAssets = async (
+  assets?: IdentityAssetPayload[],
+  options?: { channelId?: string },
+) => {
+  const result = new Map<string, string>();
+  for (const asset of assets || []) {
+    if (!asset?.assetKey) {
+      continue;
+    }
+    const attachmentId = await ensureImportAttachment({
+      attachmentId: asset.attachmentId,
+      hash: asset.hash,
+      size: asset.size,
+      filename: asset.filename,
+      mimeType: asset.mimeType,
+      data: asset.data,
+    }, options);
+    if (attachmentId) {
+      result.set(asset.assetKey, attachmentId);
+    }
+  }
+  return result;
+};
+
+const buildIdentityExportSnapshot = async (options: {
+  channelId: string;
+  channelName?: string;
+  guildId?: string;
+  identities: ChannelIdentity[];
+  folders: ChannelIdentityFolder[];
+  favoriteSet: Set<string>;
+  membershipMap: Record<string, string[]>;
+  variantsByIdentity: Record<string, ChannelIdentityVariant[]>;
+  icOocConfig: {
+    icRoleId?: string | null;
+    oocRoleId?: string | null;
+  };
+}) => {
+  const assetMap = new Map<string, IdentityAssetPayload>();
+  const issueState: IdentityAssetExportIssueState = { missingAssets: 0 };
+  const items: IdentityExportItem[] = [];
+  const variants: IdentityExportVariantItem[] = [];
+
+  for (const identity of options.identities) {
+    const displayName = identity.displayName || '';
+    const folderIds = identity.folderIds?.length ? identity.folderIds : (options.membershipMap[identity.id] || []);
+    const avatarAssetKey = await registerIdentityAsset(
+      assetMap,
+      identity.avatarAttachmentId,
+      `${safeFilename(displayName || 'identity')}.png`,
+      issueState,
+    );
+    const avatarDecorations = await mapDecorationsForExport(
+      cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
+      assetMap,
+      safeFilename(displayName || identity.id || 'identity-decoration'),
+      issueState,
+    );
+    items.push({
+      sourceId: identity.id,
+      displayName,
+      color: identity.color,
+      isDefault: identity.isDefault,
+      sortOrder: identity.sortOrder,
+      folderIds: folderIds.length ? [...folderIds] : undefined,
+      avatarAssetKey: avatarAssetKey || undefined,
+      avatarDecorations,
+    });
+
+    const identityVariants = (options.variantsByIdentity[identity.id] || [])
+      .slice()
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    for (const variant of identityVariants) {
+      const avatarVariantAssetKey = await registerIdentityAsset(
+        assetMap,
+        variant.avatarAttachmentId,
+        `${safeFilename(variant.keyword || variant.displayName || displayName || 'variant')}.png`,
+        issueState,
+      );
+      variants.push({
+        sourceId: variant.id,
+        identitySourceId: identity.id,
+        selectorEmoji: variant.selectorEmoji,
+        keyword: variant.keyword,
+        note: variant.note,
+        avatarAssetKey: avatarVariantAssetKey || undefined,
+        displayName: variant.displayName,
+        color: variant.color,
+        appearance: variant.appearance || {},
+        sortOrder: variant.sortOrder,
+        enabled: variant.enabled !== false,
+      });
+    }
+  }
+
+  return {
+    payload: {
+      version: IDENTITY_EXPORT_VERSION,
+      generatedAt: new Date().toISOString(),
+      source: {
+        channelId: options.channelId,
+        channelName: options.channelName || '',
+        guildId: options.guildId || '',
+      },
+      items,
+      folders: options.folders.map(folder => ({
+        sourceId: folder.id,
+        name: folder.name,
+        sortOrder: folder.sortOrder,
+        isFavorite: options.favoriteSet.has(folder.id),
+      })) as IdentityExportFolder[],
+      variants,
+      icOocConfig: options.icOocConfig.icRoleId || options.icOocConfig.oocRoleId
+        ? {
+            icRoleId: options.icOocConfig.icRoleId,
+            oocRoleId: options.icOocConfig.oocRoleId,
+          }
+        : undefined,
+      assets: Array.from(assetMap.values()),
+    } as IdentityExportFile,
+    missingAssetCount: issueState.missingAssets,
+  };
+};
+
+const clearIdentityVariants = async (channelId: string, identityId: string, targetUserId?: string | null) => {
+  const variants = chat.getIdentityVariants(channelId, identityId, targetUserId).slice();
+  for (const variant of variants) {
+    await chat.channelIdentityVariantDelete(channelId, variant.id, targetUserId);
+  }
+};
+
+const buildIdentityMigrationSnapshotFromChannel = async (
+  sourceChannelId: string,
+  targetUserId?: string | null,
+) => {
+  const identities = await chat.loadChannelIdentities(sourceChannelId, true, targetUserId);
+  const variantsByIdentity = await chat.loadChannelIdentityVariants(sourceChannelId, true, targetUserId);
+  const scopedIdentities = Array.isArray(identities) ? identities : [];
+  const sourceFolders = chat.getScopedChannelIdentityFolders(sourceChannelId, targetUserId);
+  const sourceFavorites = new Set(chat.getScopedChannelIdentityFavorites(sourceChannelId, targetUserId));
+  const sourceMembership = chat.getScopedChannelIdentityMembership(sourceChannelId, targetUserId);
+  const sourceChannel = chat.findChannelById(sourceChannelId);
+  return await buildIdentityExportSnapshot({
+    channelId: sourceChannelId,
+    channelName: sourceChannel?.name || '',
+    guildId: (sourceChannel as any)?.guildId || '',
+    identities: scopedIdentities,
+    folders: sourceFolders,
+    favoriteSet: sourceFavorites,
+    membershipMap: sourceMembership,
+    variantsByIdentity,
+    icOocConfig: chat.getChannelIcOocRoleConfig(sourceChannelId, targetUserId),
+  });
+};
+
+const handleIdentityExport = async () => {
+  if (identityExporting.value) {
+    return;
+  }
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const identities = currentChannelIdentities.value;
+  if (!identities.length) {
+    message.warning('当前频道暂无可导出的角色');
+    return;
+  }
+  const membershipMap = identityFolderMembership.value;
+  const folderList = identityFolders.value;
+  const favoriteSet = new Set(identityFavoriteFolderIds.value);
+  const scopedIcOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id, currentIdentityTargetUserId.value);
+  identityExporting.value = true;
+  try {
+    const variantsByIdentity = await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
+    const snapshot = await buildIdentityExportSnapshot({
+      channelId: chat.curChannel.id,
+      channelName: chat.curChannel?.name || '',
+      guildId: (chat.curChannel as any)?.guildId || '',
+      identities,
+      folders: folderList,
+      favoriteSet,
+      membershipMap,
+      variantsByIdentity,
+      icOocConfig: scopedIcOocConfig,
+    });
+    const payload = snapshot.payload;
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const timestamp = payload.generatedAt.replace(/[:.]/g, '-');
+    const filename = `channel-identities-${safeFilename(chat.curChannel?.name || chat.curChannel?.id || 'channel')}-${timestamp}.json`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    message.success('频道角色导出完成');
+    if (snapshot.missingAssetCount > 0) {
+      message.warning(`有 ${snapshot.missingAssetCount} 个缺失素材已跳过`);
+    }
+  } catch (error: any) {
+    console.error('导出频道角色失败', error);
+    message.error(error?.message || '导出失败，请稍后重试');
+  } finally {
+    identityExporting.value = false;
+  }
+};
+
+const triggerIdentityImport = () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (identityImporting.value) {
+    return;
+  }
+  identityImportInputRef.value?.click();
+};
+
+const importIdentityMigrationSnapshot = async (
+  payload: IdentityExportFile,
+  options: {
+    targetChannelId: string;
+    mode: 'append' | 'overwrite';
+    targetUserId?: string | null;
+  },
+) => {
+  const targetChannelId = options.targetChannelId;
+  const targetUserId = options.targetUserId;
+  const items = payload.items || [];
+  const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId });
+  const folderIdMap = new Map<string, string>();
+
+  if (Array.isArray(payload.folders) && payload.folders.length) {
+    const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    for (const folder of sortedFolders) {
+      if (!folder?.name) continue;
+      try {
+        const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, targetUserId);
+        if (folder.sourceId) {
+          folderIdMap.set(folder.sourceId, created.id);
+        }
+        if (folder.isFavorite) {
+          await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true, targetUserId);
+        }
+      } catch (error) {
+        console.warn('导入文件夹失败', error);
+      }
+    }
+  }
+
+  const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, targetUserId);
+  await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
+  const targetList = Array.isArray(targetIdentities) ? [...targetIdentities] : [];
+  const duplicateTargetNames = new Set<string>();
+  const seenTargetNames = new Set<string>();
+  for (const identity of targetList) {
+    const normalizedName = String(identity.displayName || '').trim().toLowerCase();
+    if (!normalizedName) continue;
+    if (seenTargetNames.has(normalizedName)) {
+      duplicateTargetNames.add(normalizedName);
+      continue;
+    }
+    seenTargetNames.add(normalizedName);
+  }
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+  let emptyNameCount = 0;
+  let mappingChanged = false;
+  const identityIdMap = new Map<string, string>();
+  const overwriteIdentityIds = new Set<string>();
+
+  for (const item of items) {
+    const displayName = String(item.displayName || '').trim();
+    if (!displayName) {
+      emptyNameCount += 1;
+      continue;
+    }
+    const matchedIdentity = resolveIdentityMatchByName(targetList, displayName);
+    const mappedFolderIds = (item.folderIds || [])
+      .map(id => folderIdMap.get(id) || '')
+      .filter((id): id is string => !!id);
+    const avatarId = item.avatarAssetKey
+      ? (assetIdMap.get(item.avatarAssetKey) || '')
+      : await ensureImportAttachment(item.avatar, { channelId: targetChannelId });
+    const avatarDecorations = remapDecorationsForImport(normalizeExportItemDecorations(item), assetIdMap) as AvatarDecoration[];
+
+    try {
+      if (matchedIdentity && options.mode === 'append') {
+        identityIdMap.set(item.sourceId, matchedIdentity.id);
+        skippedCount += 1;
+        continue;
+      }
+
+      if (matchedIdentity && options.mode === 'overwrite') {
+        const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
+          channelId: targetChannelId,
+          targetUserId,
+          displayName,
+          color: item.color || '',
+          avatarAttachmentId: avatarId,
+          avatarDecorations,
+          isDefault: !!item.isDefault,
+          folderIds: mappedFolderIds,
+        });
+        identityIdMap.set(item.sourceId, updated.id);
+        overwriteIdentityIds.add(updated.id);
+        const targetIndex = targetList.findIndex(existing => existing.id === updated.id);
+        if (targetIndex >= 0) {
+          targetList.splice(targetIndex, 1, updated);
+        }
+        updatedCount += 1;
+        continue;
+      }
+
+      const created = await chat.channelIdentityCreate({
+        channelId: targetChannelId,
+        targetUserId,
+        displayName,
+        color: item.color || '',
+        avatarAttachmentId: avatarId,
+        avatarDecorations,
+        isDefault: !!item.isDefault,
+        folderIds: mappedFolderIds,
+      });
+      identityIdMap.set(item.sourceId, created.id);
+      targetList.push(created);
+      createdCount += 1;
+    } catch (error) {
+      failedCount += 1;
+      console.warn('导入单个角色失败', error);
+    }
+  }
+
+  const variantsByIdentity = new Map<string, IdentityExportVariantItem[]>();
+  for (const variant of payload.variants || []) {
+    const sourceIdentityId = String(variant.identitySourceId || '').trim();
+    if (!sourceIdentityId) {
+      continue;
+    }
+    const list = variantsByIdentity.get(sourceIdentityId) || [];
+    list.push(variant);
+    variantsByIdentity.set(sourceIdentityId, list);
+  }
+
+  const clearedVariantIdentityIds = new Set<string>();
+  if (options.mode === 'overwrite') {
+    for (const targetIdentityId of overwriteIdentityIds) {
+      if (!targetIdentityId || clearedVariantIdentityIds.has(targetIdentityId)) {
+        continue;
+      }
+      await clearIdentityVariants(targetChannelId, targetIdentityId, targetUserId);
+      clearedVariantIdentityIds.add(targetIdentityId);
+    }
+  }
+  for (const [sourceIdentityId, variants] of variantsByIdentity.entries()) {
+    const targetIdentityId = identityIdMap.get(sourceIdentityId);
+    if (!targetIdentityId) {
+      continue;
+    }
+
+    const sortedVariants = variants.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    for (const variant of sortedVariants) {
+      try {
+        await chat.channelIdentityVariantCreate({
+          channelId: targetChannelId,
+          targetUserId,
+          identityId: targetIdentityId,
+          selectorEmoji: variant.selectorEmoji,
+          keyword: variant.keyword,
+          note: variant.note || '',
+          avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
+          displayName: variant.displayName || '',
+          color: variant.color || '',
+          appearance: variant.appearance || {},
+          enabled: variant.enabled !== false,
+        });
+      } catch (error) {
+        failedCount += 1;
+        console.warn('导入单个差分失败', error);
+      }
+    }
+  }
+
+  if (payload.icOocConfig) {
+    const currentConfig = chat.getChannelIcOocRoleConfig(targetChannelId, targetUserId);
+    const importedConfig = {
+      icRoleId: payload.icOocConfig.icRoleId ? (identityIdMap.get(payload.icOocConfig.icRoleId) || null) : null,
+      oocRoleId: payload.icOocConfig.oocRoleId ? (identityIdMap.get(payload.icOocConfig.oocRoleId) || null) : null,
+    };
+    const nextConfig = options.mode === 'overwrite'
+      ? importedConfig
+      : {
+          icRoleId: currentConfig.icRoleId || importedConfig.icRoleId,
+          oocRoleId: currentConfig.oocRoleId || importedConfig.oocRoleId,
+        };
+    mappingChanged = nextConfig.icRoleId !== currentConfig.icRoleId || nextConfig.oocRoleId !== currentConfig.oocRoleId;
+    if (mappingChanged && (nextConfig.icRoleId || nextConfig.oocRoleId || currentConfig.icRoleId || currentConfig.oocRoleId)) {
+      await chat.setChannelIcOocRoleConfig(targetChannelId, nextConfig, targetUserId);
+    }
+  }
+
+  await Promise.all([
+    chat.loadChannelIdentities(targetChannelId, true, targetUserId),
+    chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId),
+  ]);
+
+  return {
+    createdCount,
+    updatedCount,
+    skippedCount,
+    failedCount,
+    emptyNameCount,
+    mappingChanged,
+    duplicateTargetNames,
+  };
 };
 
 const handleIdentityImportChange = async (event: Event) => {
@@ -3562,8 +3970,7 @@ const handleIdentityImportChange = async (event: Event) => {
   try {
     const text = await file.text();
     const payload = JSON.parse(text) as IdentityExportFile;
-    const compatibleVersions = [IDENTITY_EXPORT_VERSION, 'sealchat.channel-identity/v1'];
-    if (!compatibleVersions.includes(payload.version)) {
+    if (!IDENTITY_EXPORT_COMPATIBLE_VERSIONS.includes(payload.version)) {
       throw new Error('无法识别的导入文件版本');
     }
     const items = payload.items || [];
@@ -3580,68 +3987,28 @@ const handleIdentityImportChange = async (event: Event) => {
     }
 
     identityImporting.value = true;
-    const folderIdMap = new Map<string, string>();
-    const identityIdMap = new Map<string, string>();
-    if (Array.isArray(payload.folders) && payload.folders.length && chat.curChannel?.id) {
-      const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-      for (const folder of sortedFolders) {
-        if (!folder?.name) continue;
-        try {
-          const created = await chat.createChannelIdentityFolder(chat.curChannel.id, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
-          if (folder.sourceId) {
-            folderIdMap.set(folder.sourceId, created.id);
-          }
-          if (folder.isFavorite) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, chat.curChannel.id, true, currentIdentityTargetUserId.value);
-          }
-        } catch (error) {
-          console.warn('导入文件夹失败', error);
-        }
-      }
-    }
-
-    let successCount = 0;
-    for (const item of items) {
-      try {
-        const avatarId = await ensureImportAttachment(item.avatar);
-        const mappedFolderIds = (item.folderIds || [])
-          .map(id => folderIdMap.get(id) || '')
-          .filter((id): id is string => !!id);
-        const created = await chat.channelIdentityCreate({
-          channelId: chat.curChannel.id,
-          targetUserId: currentIdentityTargetUserId.value,
-          displayName: item.displayName || '',
-          color: item.color || '',
-          avatarAttachmentId: avatarId,
-          avatarDecorations: [],
-          isDefault: !!item.isDefault,
-          folderIds: mappedFolderIds,
-        });
-        if (item.sourceId && created?.id) {
-          identityIdMap.set(item.sourceId, created.id);
-        }
-        successCount += 1;
-      } catch (error) {
-        console.warn('单个角色导入失败', error);
-      }
-    }
-
-    const importedConfig = payload.icOocConfig;
-    if (importedConfig && chat.curChannel?.id) {
-      const mappedConfig = {
-        icRoleId: importedConfig.icRoleId ? (identityIdMap.get(importedConfig.icRoleId) || null) : null,
-        oocRoleId: importedConfig.oocRoleId ? (identityIdMap.get(importedConfig.oocRoleId) || null) : null,
-      };
-      if (mappedConfig.icRoleId || mappedConfig.oocRoleId) {
-        await chat.setChannelIcOocRoleConfig(chat.curChannel.id, mappedConfig, currentIdentityTargetUserId.value);
-      }
-    }
-
-    await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
-    if (successCount > 0) {
-      message.success(`成功导入 ${successCount} 个频道角色`);
+    const result = await importIdentityMigrationSnapshot(payload, {
+      targetChannelId: chat.curChannel.id,
+      mode: 'append',
+      targetUserId: currentIdentityTargetUserId.value,
+    });
+    const importedCount = result.createdCount + result.updatedCount;
+    const details: string[] = [];
+    if (result.createdCount) details.push(`新增 ${result.createdCount}`);
+    if (result.updatedCount) details.push(`覆盖 ${result.updatedCount}`);
+    if (result.skippedCount) details.push(`跳过 ${result.skippedCount}`);
+    if (result.failedCount) details.push(`失败 ${result.failedCount}`);
+    if (result.emptyNameCount) details.push(`忽略 ${result.emptyNameCount} 个无名角色`);
+    const detailNote = details.length ? `（${details.join('，')}）` : '';
+    if (importedCount > 0) {
+      message.success(`已导入 ${importedCount} 个频道角色${detailNote}`);
+    } else if (result.skippedCount > 0) {
+      message.warning(`未新增频道角色${detailNote}`);
     } else {
       message.warning('未导入任何角色，请检查文件内容');
+    }
+    if (result.duplicateTargetNames.size > 0) {
+      message.warning(`目标频道存在 ${result.duplicateTargetNames.size} 个重名角色，导入时按第一个匹配处理`);
     }
   } catch (error: any) {
     console.error('导入频道角色失败', error);
@@ -3686,186 +4053,39 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
 
   identitySyncing.value = true;
   try {
-    const sourceIdentities = await chat.loadChannelIdentities(sourceChannelId, true, currentIdentityTargetUserId.value);
-    const sourceList = Array.isArray(sourceIdentities) ? sourceIdentities : [];
-
-    if (!sourceList.length) {
+    const snapshot = await buildIdentityMigrationSnapshotFromChannel(sourceChannelId, currentIdentityTargetUserId.value);
+    if (!(snapshot.payload.items || []).length) {
       message.warning('所选频道暂无可同步的角色');
       return;
     }
-
-    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
-    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
-    const normalizeIdentityName = (name: string) => name.trim().toLowerCase();
-    const targetIdentityByName = new Map<string, (typeof targetList)[number]>();
-    const duplicateTargetNames = new Set<string>();
-    for (const identity of targetList) {
-      const key = normalizeIdentityName(identity.displayName || '');
-      if (!key) continue;
-      if (targetIdentityByName.has(key)) {
-        duplicateTargetNames.add(key);
-        continue;
-      }
-      targetIdentityByName.set(key, identity);
-    }
-
-    const sourceFolders = chat.getScopedChannelIdentityFolders(sourceChannelId, currentIdentityTargetUserId.value);
-    const sourceFavorites = new Set(chat.getScopedChannelIdentityFavorites(sourceChannelId, currentIdentityTargetUserId.value));
-    const sourceMembership = chat.getScopedChannelIdentityMembership(sourceChannelId, currentIdentityTargetUserId.value);
-    const folderIdMap = new Map<string, string>();
-
-    if (sourceFolders.length > 0) {
-      const sortedFolders = sourceFolders
-        .slice()
-        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-      for (const folder of sortedFolders) {
-        if (!folder?.name) continue;
-        try {
-          const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, currentIdentityTargetUserId.value);
-          if (folder.id) {
-            folderIdMap.set(folder.id, created.id);
-          }
-          if (folder.id && sourceFavorites.has(folder.id)) {
-            await chat.toggleChannelIdentityFolderFavorite(created.id, targetChannelId, true, currentIdentityTargetUserId.value);
-          }
-        } catch (error) {
-          console.warn('同步文件夹失败', error);
-        }
-      }
-    }
-
-    let createdCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
-    let failedCount = 0;
-    let emptyNameCount = 0;
-    const processedIdentityByName = new Map<string, string>();
-
-    for (const identity of sourceList) {
-      const displayName = (identity.displayName || '').trim();
-      if (!displayName) {
-        emptyNameCount += 1;
-        continue;
-      }
-      const nameKey = normalizeIdentityName(displayName);
-      const matchedIdentity = nameKey ? targetIdentityByName.get(nameKey) : undefined;
-      const avatarPayload = identity.avatarAttachmentId
-        ? {
-            attachmentId: normalizeAttachmentId(identity.avatarAttachmentId),
-            hash: '',
-            size: 0,
-            data: '',
-          }
-        : null;
-      const folderIds = identity.folderIds?.length
-        ? identity.folderIds
-        : (sourceMembership[identity.id] || []);
-      const mappedFolderIds = folderIds
-        .map(id => folderIdMap.get(id) || '')
-        .filter((id): id is string => !!id);
-      try {
-        const avatarId = await ensureImportAttachment(avatarPayload);
-        if (matchedIdentity) {
-          if (mode === 'append') {
-            skippedCount += 1;
-            continue;
-          }
-          const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
-            channelId: targetChannelId,
-            targetUserId: currentIdentityTargetUserId.value,
-            displayName,
-            color: identity.color || '',
-            avatarAttachmentId: avatarId,
-            avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
-            isDefault: !!identity.isDefault,
-            folderIds: mappedFolderIds,
-          });
-          if (nameKey) {
-            processedIdentityByName.set(nameKey, updated.id);
-          }
-          updatedCount += 1;
-          continue;
-        }
-        const created = await chat.channelIdentityCreate({
-          channelId: targetChannelId,
-          targetUserId: currentIdentityTargetUserId.value,
-          displayName,
-          color: identity.color || '',
-          avatarAttachmentId: avatarId,
-          avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
-          isDefault: !!identity.isDefault,
-          folderIds: mappedFolderIds,
-        });
-        if (nameKey && !targetIdentityByName.has(nameKey)) {
-          targetIdentityByName.set(nameKey, created);
-        }
-        if (nameKey) {
-          processedIdentityByName.set(nameKey, created.id);
-        }
-        createdCount += 1;
-      } catch (error) {
-        failedCount += 1;
-        console.warn('同步单个角色失败', error);
-      }
-    }
-
-    const resolveMappedIdentityId = (sourceId?: string | null) => {
-      if (!sourceId) return null;
-      const sourceIdentity = sourceList.find(item => item.id === sourceId);
-      if (!sourceIdentity) return null;
-      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
-      if (!nameKey) return null;
-      return processedIdentityByName.get(nameKey) || targetIdentityByName.get(nameKey)?.id || null;
-    };
-
-    const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId, currentIdentityTargetUserId.value);
-    const targetConfig = chat.getChannelIcOocRoleConfig(targetChannelId, currentIdentityTargetUserId.value);
-    const mappedIcRoleId = resolveMappedIdentityId(sourceConfig.icRoleId);
-    const mappedOocRoleId = resolveMappedIdentityId(sourceConfig.oocRoleId);
-    let nextIcRoleId = targetConfig.icRoleId;
-    let nextOocRoleId = targetConfig.oocRoleId;
-    if (mode === 'overwrite') {
-      nextIcRoleId = mappedIcRoleId;
-      nextOocRoleId = mappedOocRoleId;
-    } else {
-      if (!nextIcRoleId && mappedIcRoleId) {
-        nextIcRoleId = mappedIcRoleId;
-      }
-      if (!nextOocRoleId && mappedOocRoleId) {
-        nextOocRoleId = mappedOocRoleId;
-      }
-    }
-    const mappingChanged =
-      nextIcRoleId !== targetConfig.icRoleId ||
-      nextOocRoleId !== targetConfig.oocRoleId;
-    if (mappingChanged) {
-      await chat.setChannelIcOocRoleConfig(targetChannelId, {
-        icRoleId: nextIcRoleId,
-        oocRoleId: nextOocRoleId,
-      }, currentIdentityTargetUserId.value);
-    }
-
-    await chat.loadChannelIdentities(targetChannelId, true, currentIdentityTargetUserId.value);
+    const result = await importIdentityMigrationSnapshot(snapshot.payload, {
+      targetChannelId,
+      mode,
+      targetUserId: currentIdentityTargetUserId.value,
+    });
     identitySyncDialogVisible.value = false;
 
-    const syncedCount = createdCount + updatedCount;
-    const hasAnyWork = syncedCount > 0 || skippedCount > 0 || mappingChanged;
+    const syncedCount = result.createdCount + result.updatedCount;
+    const hasAnyWork = syncedCount > 0 || result.skippedCount > 0 || result.mappingChanged;
     if (!hasAnyWork) {
       message.warning('没有可同步的角色或映射');
       return;
     }
     const details: string[] = [];
-    if (createdCount) details.push(`新增 ${createdCount}`);
-    if (updatedCount) details.push(`覆盖 ${updatedCount}`);
-    if (skippedCount) details.push(`跳过 ${skippedCount}`);
-    if (failedCount) details.push(`失败 ${failedCount}`);
-    if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
-    const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
+    if (result.createdCount) details.push(`新增 ${result.createdCount}`);
+    if (result.updatedCount) details.push(`覆盖 ${result.updatedCount}`);
+    if (result.skippedCount) details.push(`跳过 ${result.skippedCount}`);
+    if (result.failedCount) details.push(`失败 ${result.failedCount}`);
+    if (result.emptyNameCount) details.push(`忽略 ${result.emptyNameCount} 个无名角色`);
+    const mappingNote = result.mappingChanged ? '，已同步场内/场外映射' : '';
     const detailNote = details.length ? `（${details.join('，')}）` : '';
     const summaryText = syncedCount > 0 ? `已同步 ${syncedCount} 个角色` : '没有新增角色';
     message.success(`${summaryText}${detailNote}${mappingNote}`);
-    if (duplicateTargetNames.size > 0) {
-      message.warning(`目标频道存在 ${duplicateTargetNames.size} 个重名角色，同步时按第一个匹配处理`);
+    if (snapshot.missingAssetCount > 0) {
+      message.warning(`同步时有 ${snapshot.missingAssetCount} 个缺失素材已跳过`);
+    }
+    if (result.duplicateTargetNames.size > 0) {
+      message.warning(`目标频道存在 ${result.duplicateTargetNames.size} 个重名角色，同步时按第一个匹配处理`);
     }
   } catch (error) {
     console.error('同步频道角色失败', error);
@@ -13421,9 +13641,7 @@ const handleMultiSelectDelete = async () => {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        for (const id of ids) {
-          await chat.messageRemove(channelId, id);
-        }
+        await chat.removeMessages(ids);
         message.success(`已删除 ${ids.length} 条消息`);
         chat.exitMultiSelectMode();
       } catch (e) {
@@ -13739,7 +13957,7 @@ onBeforeUnmount(() => {
           :identity-active="identityDialogVisible"
           :gallery-active="galleryPanelVisible"
           :display-active="displaySettingsVisible"
-          :favorite-active="display.favoriteBarEnabled"
+          :favorite-active="channelFavoritesVisible"
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
           :can-import="canManageWorldKeywords"

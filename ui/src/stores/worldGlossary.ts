@@ -5,6 +5,7 @@ import { useUserStore } from './user'
 import type {
   EffectiveWorldKeywordItem,
   KeywordCategoryInfo,
+  WorldKeywordBulkUpdatePatch,
   WorldKeywordItem,
   WorldKeywordPayload,
   WorldKeywordReorderItem,
@@ -19,6 +20,7 @@ import {
   fetchWorldKeywordCategoryInfos,
   updateWorldKeyword,
   deleteWorldKeyword,
+  bulkUpdateWorldKeywords,
   bulkDeleteWorldKeywords,
   reorderWorldKeywords,
   importWorldKeywords,
@@ -46,6 +48,12 @@ interface KeywordPageState {
 }
 
 interface EffectiveKeywordPageState {
+  items: EffectiveWorldKeywordItem[]
+  total: number
+  fetchedAt: number
+}
+
+interface ManagerExternalKeywordPageState {
   items: EffectiveWorldKeywordItem[]
   total: number
   fetchedAt: number
@@ -169,6 +177,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const effectiveKeywordById = ref<Record<string, EffectiveWorldKeywordItem>>({})
   const effectiveLoadingMap = ref<Record<string, boolean>>({})
   const effectiveVersionMap = ref<Record<string, number>>({})
+  const managerExternalPages = ref<Record<string, ManagerExternalKeywordPageState>>({})
+  const managerExternalLoadingMap = ref<Record<string, boolean>>({})
   const managerVisible = ref(false)
   const editorState = ref<KeywordEditorState>({ visible: false, worldId: null, keyword: null, prefill: null })
   const quickPrefill = ref<string | null>(null)
@@ -429,6 +439,37 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
   }
 
+  async function ensureManagerExternalReadonlyKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
+    if (!worldId) return
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) return
+    const page = managerExternalPages.value[worldId]
+    if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000 && !opts?.query) {
+      return
+    }
+    managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: true }
+    try {
+      const data = chat.isObserver
+        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query, includeAllMatches: true })
+        : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query, includeAllMatches: true })
+      const normalizedList = data.items
+        .map(normalizeEffectiveKeywordItem)
+        .filter((item) => item.sourceType === 'external_library')
+      normalizedList.sort(compareEffectiveKeywordPriority)
+      managerExternalPages.value = {
+        ...managerExternalPages.value,
+        [worldId]: {
+          items: normalizedList,
+          total: normalizedList.length,
+          fetchedAt: Date.now(),
+        },
+      }
+    } finally {
+      managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: false }
+    }
+  }
+
   async function ensureEffectiveKeywordConflictCandidates(worldId: string, matchedText: string) {
     const normalizedMatchedText = String(matchedText || '').trim().toLowerCase()
     if (!worldId || !normalizedMatchedText) {
@@ -506,69 +547,26 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
   }
 
-  async function setKeywordEnabledBulk(worldId: string, ids: string[], enabled: boolean) {
-    if (!worldId || !ids?.length) return
-    const pageItems = pages.value[worldId]?.items || []
-    const targetMap = new Map(pageItems.map((item) => [item.id, item]))
-    const tasks = ids
-      .map((id) => {
-        const current = targetMap.get(id)
-        if (!current || current.isEnabled === enabled) return null
-        const payload: WorldKeywordPayload = {
-          keyword: current.keyword,
-          category: current.category,
-          aliases: current.aliases,
-          matchMode: current.matchMode,
-          description: current.description,
-          descriptionFormat: current.descriptionFormat,
-          display: current.display,
-          isEnabled: enabled,
-        }
-        return updateWorldKeyword(worldId, id, payload)
-      })
-      .filter((task): task is Promise<WorldKeywordItem> => Boolean(task))
-    if (!tasks.length) {
-      return
+  async function updateKeywordBulk(worldId: string, ids: string[], patch: WorldKeywordBulkUpdatePatch) {
+    if (!worldId || !ids?.length) return 0
+    const updated = await bulkUpdateWorldKeywords(worldId, ids, patch)
+    if (updated > 0) {
+      await ensureKeywords(worldId, { force: true })
+      await ensureEffectiveKeywords(worldId, { force: true })
     }
-    const updatedItems = await Promise.all(tasks)
-    const normalizedUpdates = updatedItems.map((item) => normalizeKeywordItem(item))
-    const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
-    const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
-    updateKeywordCache(worldId, nextList)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    return updated
+  }
+
+  async function setKeywordEnabledBulk(worldId: string, ids: string[], enabled: boolean) {
+    return updateKeywordBulk(worldId, ids, { isEnabled: enabled })
   }
 
   async function setKeywordDisplayBulk(worldId: string, ids: string[], display: 'standard' | 'minimal' | 'inherit') {
-    if (!worldId || !ids?.length) return
-    const pageItems = pages.value[worldId]?.items || []
-    const targetMap = new Map(pageItems.map((item) => [item.id, item]))
-    const tasks = ids
-      .map((id) => {
-        const current = targetMap.get(id)
-        const currentDisplay = current?.display || 'inherit'
-        if (!current || currentDisplay === display) return null
-        const payload: WorldKeywordPayload = {
-          keyword: current.keyword,
-          category: current.category,
-          aliases: current.aliases,
-          matchMode: current.matchMode,
-          description: current.description,
-          descriptionFormat: current.descriptionFormat,
-          display,
-          isEnabled: current.isEnabled,
-        }
-        return updateWorldKeyword(worldId, id, payload)
-      })
-      .filter((task): task is Promise<WorldKeywordItem> => Boolean(task))
-    if (!tasks.length) {
-      return
-    }
-    const updatedItems = await Promise.all(tasks)
-    const normalizedUpdates = updatedItems.map((item) => normalizeKeywordItem(item))
-    const updatedMap = new Map(normalizedUpdates.map((item) => [item.id, item]))
-    const nextList = pageItems.map((item) => updatedMap.get(item.id) || item)
-    updateKeywordCache(worldId, nextList)
-    await ensureEffectiveKeywords(worldId, { force: true })
+    return updateKeywordBulk(worldId, ids, { display })
+  }
+
+  async function setKeywordCategoryBulk(worldId: string, ids: string[], category: string) {
+    return updateKeywordBulk(worldId, ids, { category })
   }
 
   async function importKeywords(worldId: string, items: WorldKeywordPayload[], replace = false) {
@@ -660,6 +658,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
     effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: revision }
     void ensureEffectiveKeywords(worldId, { force: true })
+    void ensureManagerExternalReadonlyKeywords(worldId, { force: true })
   }
 
   function ensureGateway() {
@@ -682,6 +681,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     effectiveKeywordById,
     effectiveLoadingMap,
     effectiveVersionMap,
+    managerExternalPages,
+    managerExternalLoadingMap,
     managerVisible,
     editorState,
     quickPrefill,
@@ -692,6 +693,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     loadingMap,
     ensureKeywords,
     ensureEffectiveKeywords,
+    ensureManagerExternalReadonlyKeywords,
     ensureEffectiveKeywordConflictCandidates,
     createKeyword,
     editKeyword,
@@ -706,6 +708,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     reorderKeywords,
     setKeywordEnabledBulk,
     setKeywordDisplayBulk,
+    setKeywordCategoryBulk,
     setManagerVisible,
     openEditor,
     setQuickPrefill,

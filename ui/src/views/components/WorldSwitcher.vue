@@ -2,6 +2,7 @@
 import { computed, watch, ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
+import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
 import {
   WORLD_DESCRIPTION_MAX_DISPLAY_CHARS,
   WORLD_DESCRIPTION_MAX_WIDTH_UNITS,
@@ -14,9 +15,20 @@ const chat = useChatStore();
 const message = useMessage();
 
 const drawerVisible = defineModel<boolean>('visible', { default: false });
-const worldForm = ref({ name: '', description: '', visibility: 'public' as string });
+const botOptionsLoading = ref(false);
+const botList = ref<any[]>([]);
 const showCreate = ref(false);
 const worldJumpId = ref('');
+
+const createInitialWorldForm = () => ({
+  name: '',
+  description: '',
+  visibility: 'public' as string,
+  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot',
+  channelDefaultBotId: '',
+});
+
+const worldForm = ref(createInitialWorldForm());
 
 const joinedWorldItems = computed(() =>
   chat.joinedWorldIds
@@ -24,9 +36,36 @@ const joinedWorldItems = computed(() =>
     .filter((world): world is { id: string; name?: string; description?: string } => Boolean(world?.id))
 );
 
+const botSelectOptions = computed(() => botList.value.map((item) => ({
+  label: item.nick || item.username || item.name || 'Bot',
+  value: item.id,
+})));
+
+const loadBotOptions = async () => {
+  botOptionsLoading.value = true;
+  try {
+    const resp = await chat.botList();
+    botList.value = resp?.items || [];
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '加载 BOT 列表失败');
+  } finally {
+    botOptionsLoading.value = false;
+  }
+};
+
+const resetWorldForm = () => {
+  worldForm.value = createInitialWorldForm();
+};
+
 watch(drawerVisible, async (visible) => {
   if (visible) {
     await chat.refreshJoinedWorldState();
+  }
+});
+
+watch(showCreate, async (visible) => {
+  if (visible) {
+    await loadBotOptions();
   }
 });
 
@@ -48,11 +87,15 @@ const handleWorldCreate = async () => {
     message.error('请输入世界名称');
     return;
   }
+  if (worldForm.value.channelDefaultDiceMode === 'bot' && !worldForm.value.channelDefaultBotId) {
+    message.error('选择 BOT 掷骰时必须指定默认 BOT');
+    return;
+  }
   try {
     await chat.createWorld({ ...worldForm.value });
     showCreate.value = false;
     drawerVisible.value = false;
-    worldForm.value = { name: '', description: '', visibility: 'public' };
+    resetWorldForm();
     message.success('创建世界成功');
   } catch (e: any) {
     message.error(e?.response?.data?.message || '创建失败');
@@ -138,10 +181,26 @@ const getDescriptionCountLabel = (value?: string) => {
           ]"
         />
       </n-form-item>
+      <n-form-item label="掷骰默认">
+        <WorldDiceDefaultsFields
+          v-model:mode="worldForm.channelDefaultDiceMode"
+          v-model:bot-id="worldForm.channelDefaultBotId"
+          :bot-select-options="botSelectOptions"
+          :bot-options-loading="botOptionsLoading"
+        />
+      </n-form-item>
     </n-form>
     <template #action>
       <n-space>
-        <n-button quaternary @click="showCreate = false">取消</n-button>
+        <n-button
+          quaternary
+          @click="() => {
+            showCreate = false;
+            resetWorldForm();
+          }"
+        >
+          取消
+        </n-button>
         <n-button type="primary" @click="handleWorldCreate">创建</n-button>
       </n-space>
     </template>

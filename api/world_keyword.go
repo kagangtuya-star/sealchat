@@ -226,6 +226,47 @@ func WorldKeywordBulkDeleteHandler(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"deleted": count, "requestId": requestID})
 }
 
+func WorldKeywordBulkUpdateHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	worldID := c.Params("worldId")
+	var payload struct {
+		IDs   []string                            `json:"ids"`
+		Patch service.WorldKeywordBulkUpdateInput `json:"patch"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
+	}
+	cleaned := make([]string, 0, len(payload.IDs))
+	for _, raw := range payload.IDs {
+		if trimmed := strings.TrimSpace(raw); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	count, err := service.WorldKeywordBulkUpdate(worldID, payload.IDs, user.ID, payload.Patch)
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if err == service.ErrWorldPermission {
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	if count == 0 {
+		return c.JSON(fiber.Map{"updated": count})
+	}
+	requestID := utils.NewID()
+	broadcastWorldKeywordEvent(&worldKeywordEventPayload{
+		WorldID:     worldID,
+		Operation:   "bulk-updated",
+		RequestID:   requestID,
+		KeywordIDs:  cleaned,
+		ForceReload: true,
+	})
+	return c.JSON(fiber.Map{"updated": count, "requestId": requestID})
+}
+
 func WorldKeywordReorderHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
