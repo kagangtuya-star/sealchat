@@ -3957,6 +3957,19 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async removeMessages(messageIds: string[]) {
+      if (!this.curChannel?.id || messageIds.length === 0) return;
+      const resp = await this.sendAPI('message.remove', {
+        channel_id: this.curChannel.id,
+        message_ids: messageIds,
+      });
+      const payload = resp?.data as { message_ids?: string[] } | undefined;
+      if (!payload || !Array.isArray(payload.message_ids) || payload.message_ids.length === 0) {
+        throw new Error('删除失败：未找到目标消息或无权限操作');
+      }
+      return payload;
+    },
+
     pruneRevokedDrafts(now = Date.now()) {
       const entries = Object.entries(this.revokedDrafts);
       if (!entries.length) {

@@ -777,10 +777,23 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}, nil
 }
 
-func apiMessageDelete(ctx *ChatContext, data *struct {
+type messageDeletePayload struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`
-}) (any, error) {
+}
+
+type messageRemovePayload struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageID  string   `json:"message_id"`
+	MessageIDs []string `json:"message_ids"`
+}
+
+type messageRemoveResult struct {
+	Success    bool     `json:"success"`
+	MessageIDs []string `json:"message_ids,omitempty"`
+}
+
+func apiMessageDelete(ctx *ChatContext, data *messageDeletePayload) (any, error) {
 	db := model.GetDB()
 	item := model.MessageModel{}
 	db.Where("channel_id = ? and id = ?", data.ChannelID, data.MessageID).Limit(1).Find(&item)
@@ -820,41 +833,46 @@ func apiMessageDelete(ctx *ChatContext, data *struct {
 	return nil, nil
 }
 
-func apiMessageRemove(ctx *ChatContext, data *struct {
-	ChannelID string `json:"channel_id"`
-	MessageID string `json:"message_id"`
-}) (any, error) {
+func apiMessageRemove(ctx *ChatContext, data *messageRemovePayload) (any, error) {
 	channelID := strings.TrimSpace(data.ChannelID)
-	messageID := strings.TrimSpace(data.MessageID)
-	if channelID == "" || messageID == "" {
-		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	ids := make([]string, 0, len(data.MessageIDs)+1)
+	if trimmed := strings.TrimSpace(data.MessageID); trimmed != "" {
+		ids = append(ids, trimmed)
+	}
+	ids = append(ids, collectMessageIDs(data.MessageIDs)...)
+	ids = lo.Uniq(ids)
+	if channelID == "" || len(ids) == 0 {
+		return nil, fmt.Errorf("channel_id 和 message_id/message_ids 不能为空")
 	}
 
-	db := model.GetDB()
-	var msg model.MessageModel
-	query := db.Preload("User", func(db *gorm.DB) *gorm.DB {
-		return db.Select("id, username, nickname, avatar, is_bot")
-	}).Preload("Member", func(db *gorm.DB) *gorm.DB {
-		return db.Select("id, nickname, user_id, channel_id")
-	}).Where("channel_id = ? AND id = ?", channelID, messageID)
-	result := query.Limit(1).Find(&msg)
-	if result.Error != nil {
-		return nil, result.Error
+	channel, messages, err := loadArchiveContext(channelID, ids)
+	if err != nil {
+		return nil, err
 	}
-	if msg.ID == "" || msg.IsDeleted {
+	if channel == nil || channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	if len(messages) == 0 {
 		return nil, fmt.Errorf("消息不存在或已删除")
 	}
-
-	channel, err := model.ChannelGet(channelID)
-	if err != nil || channel.ID == "" {
-		return nil, fmt.Errorf("频道不存在")
+	if len(messages) != len(ids) {
+		return nil, fmt.Errorf("部分消息不存在或已删除")
 	}
 
 	operatorID := ctx.User.ID
-	targetUserID := msg.UserID
-	if targetUserID != operatorID {
-		operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
-		operatorIsSystemAdmin := pm.CanWithSystemRole(operatorID, pm.PermModAdmin)
+	operatorCheckedAdmin := false
+	operatorIsSystemAdmin := false
+	operatorRank := channelMemberRoleRankNone
+	for _, msg := range messages {
+		targetUserID := msg.UserID
+		if targetUserID == operatorID {
+			continue
+		}
+		if !operatorCheckedAdmin {
+			operatorCheckedAdmin = true
+			operatorIsSystemAdmin = pm.CanWithSystemRole(operatorID, pm.PermModAdmin)
+			operatorRank = getChannelMemberRoleRank(channel, channelID, operatorID)
+		}
 		if operatorRank < channelMemberRoleRankAdmin && !operatorIsSystemAdmin {
 			return nil, fmt.Errorf("无权限删除该消息")
 		}
@@ -870,59 +888,65 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 		"deleted_by": operatorID,
 		"content":    "",
 	}
-	if err := db.Model(&model.MessageModel{}).
-		Where("id = ? AND channel_id = ? AND is_deleted = ?", msg.ID, channelID, false).
-		Updates(updateData).Error; err != nil {
-		return nil, err
+	db := model.GetDB()
+	result := db.Model(&model.MessageModel{}).
+		Where("id IN ? AND channel_id = ? AND is_deleted = ?", ids, channelID, false).
+		Updates(updateData)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, fmt.Errorf("消息不存在或已删除")
 	}
 
-	msg.IsDeleted = true
-	msg.DeletedBy = operatorID
-	msg.Content = ""
-	msg.DeletedAt = &now
-	if msg.WhisperTo != "" {
-		msg.WhisperTarget = loadWhisperTargetForChannel(channelID, msg.WhisperTo)
+	for _, msg := range messages {
+		msg.IsDeleted = true
+		msg.DeletedBy = operatorID
+		msg.Content = ""
+		msg.DeletedAt = &now
 	}
-	if msg.IsWhisper {
-		msg.WhisperTargets = loadWhisperTargetsForMessage(channelID, msg.ID, msg.WhisperTarget)
-	}
-	msg.EnsureWhisperMeta()
+	hydrateMessagesForBroadcast(messages)
 
 	channelData := channel.ToProtocolType()
-	messageData := buildProtocolMessage(&msg, channelData)
-	messageData.User = msg.User.ToProtocolType()
+	operator := ctx.User.ToProtocolType()
+	for _, msg := range messages {
+		messageData := buildProtocolMessage(msg, channelData)
+		if msg.User != nil {
+			messageData.User = msg.User.ToProtocolType()
+		}
+		ev := &protocol.Event{
+			Type:    protocol.EventMessageRemoved,
+			Message: messageData,
+			Channel: channelData,
+			User:    operator,
+		}
 
-	ev := &protocol.Event{
-		Type:    protocol.EventMessageRemoved,
-		Message: messageData,
-		Channel: channelData,
-		User:    ctx.User.ToProtocolType(),
+		if msg.IsWhisper {
+			recipients := []string{ctx.User.ID}
+			if msg.UserID != "" {
+				recipients = append(recipients, msg.UserID)
+			}
+			if msg.WhisperTo != "" {
+				recipients = append(recipients, msg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(channelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(channelID, ev)
+			ctx.BroadcastEventInChannelForBot(channelID, ev)
+		}
+
+		_ = model.WebhookEventLogAppendForMessage(channelID, "message-removed", msg.ID)
 	}
 
-	if msg.IsWhisper {
-		recipients := []string{ctx.User.ID}
-		if msg.UserID != "" {
-			recipients = append(recipients, msg.UserID)
-		}
-		if msg.WhisperTo != "" {
-			recipients = append(recipients, msg.WhisperTo)
-		}
-		recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
-		if len(recipientIDs) > 0 {
-			recipients = append(recipients, recipientIDs...)
-		}
-		recipients = lo.Uniq(recipients)
-		ctx.BroadcastEventInChannelToUsers(channelID, recipients, ev)
-	} else {
-		ctx.BroadcastEventInChannel(channelID, ev)
-		ctx.BroadcastEventInChannelForBot(channelID, ev)
-	}
-
-	_ = model.WebhookEventLogAppendForMessage(channelID, "message-removed", msg.ID)
-
-	return &struct {
-		Success bool `json:"success"`
-	}{Success: true}, nil
+	return &messageRemoveResult{
+		Success:    true,
+		MessageIDs: ids,
+	}, nil
 }
 
 func hydrateMessagesForBroadcast(messages []*model.MessageModel) {

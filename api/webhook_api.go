@@ -670,10 +670,7 @@ func webhookMessageDelete(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 		ChannelUsersMap: getChannelUsersMap(),
 		UserId2ConnInfo: getUserConnInfoMap(),
 	}
-	data := &struct {
-		ChannelID string `json:"channel_id"`
-		MessageID string `json:"message_id"`
-	}{
+	data := &messageRemovePayload{
 		ChannelID: channel.ID,
 		MessageID: messageID,
 	}

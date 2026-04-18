@@ -13641,9 +13641,7 @@ const handleMultiSelectDelete = async () => {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        for (const id of ids) {
-          await chat.messageRemove(channelId, id);
-        }
+        await chat.removeMessages(ids);
         message.success(`已删除 ${ids.length} 条消息`);
         chat.exitMultiSelectMode();
       } catch (e) {
