@@ -53,6 +53,12 @@ interface EffectiveKeywordPageState {
   fetchedAt: number
 }
 
+interface ManagerExternalKeywordPageState {
+  items: EffectiveWorldKeywordItem[]
+  total: number
+  fetchedAt: number
+}
+
 const DEFAULT_CATEGORY_PRIORITY = 0
 
 export interface CompiledKeywordSpan {
@@ -171,6 +177,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   const effectiveKeywordById = ref<Record<string, EffectiveWorldKeywordItem>>({})
   const effectiveLoadingMap = ref<Record<string, boolean>>({})
   const effectiveVersionMap = ref<Record<string, number>>({})
+  const managerExternalPages = ref<Record<string, ManagerExternalKeywordPageState>>({})
+  const managerExternalLoadingMap = ref<Record<string, boolean>>({})
   const managerVisible = ref(false)
   const editorState = ref<KeywordEditorState>({ visible: false, worldId: null, keyword: null, prefill: null })
   const quickPrefill = ref<string | null>(null)
@@ -431,6 +439,37 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
   }
 
+  async function ensureManagerExternalReadonlyKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
+    if (!worldId) return
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) return
+    const page = managerExternalPages.value[worldId]
+    if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000 && !opts?.query) {
+      return
+    }
+    managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: true }
+    try {
+      const data = chat.isObserver
+        ? await fetchEffectiveWorldKeywordsPublic(worldId, { q: opts?.query, includeAllMatches: true })
+        : await fetchEffectiveWorldKeywords(worldId, { q: opts?.query, includeAllMatches: true })
+      const normalizedList = data.items
+        .map(normalizeEffectiveKeywordItem)
+        .filter((item) => item.sourceType === 'external_library')
+      normalizedList.sort(compareEffectiveKeywordPriority)
+      managerExternalPages.value = {
+        ...managerExternalPages.value,
+        [worldId]: {
+          items: normalizedList,
+          total: normalizedList.length,
+          fetchedAt: Date.now(),
+        },
+      }
+    } finally {
+      managerExternalLoadingMap.value = { ...managerExternalLoadingMap.value, [worldId]: false }
+    }
+  }
+
   async function ensureEffectiveKeywordConflictCandidates(worldId: string, matchedText: string) {
     const normalizedMatchedText = String(matchedText || '').trim().toLowerCase()
     if (!worldId || !normalizedMatchedText) {
@@ -619,6 +658,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     }
     effectiveVersionMap.value = { ...effectiveVersionMap.value, [worldId]: revision }
     void ensureEffectiveKeywords(worldId, { force: true })
+    void ensureManagerExternalReadonlyKeywords(worldId, { force: true })
   }
 
   function ensureGateway() {
@@ -641,6 +681,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     effectiveKeywordById,
     effectiveLoadingMap,
     effectiveVersionMap,
+    managerExternalPages,
+    managerExternalLoadingMap,
     managerVisible,
     editorState,
     quickPrefill,
@@ -651,6 +693,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     loadingMap,
     ensureKeywords,
     ensureEffectiveKeywords,
+    ensureManagerExternalReadonlyKeywords,
     ensureEffectiveKeywordConflictCandidates,
     createKeyword,
     editKeyword,
