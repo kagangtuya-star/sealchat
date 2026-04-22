@@ -80,6 +80,7 @@ const emit = defineEmits<Emits>()
 
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
+const roleSelectExpanded = ref(false)
 
 // Number of visible buttons (dynamically calculated)
 const visibleCount = ref(7)
@@ -194,7 +195,7 @@ const handleButtonClick = (button: ActionButton) => {
 const BUTTON_BASE_WIDTH = 44 // icon + padding + border
 const CHAR_WIDTH = 14 // approximate width per Chinese character
 const BUTTON_GAP = 8 // gap between buttons (0.5rem)
-const MORE_BUTTON_WIDTH = 66 // width of "更多" button
+const MORE_BUTTON_WIDTH = 78 // conservative width of "更多" button, avoids right-edge crowding
 const MOBILE_BREAKPOINT = 768 // mobile breakpoint in px
 const SAFETY_MARGIN = 4 // extra margin to prevent partial cutoff
 
@@ -294,6 +295,14 @@ watch(
   }
 )
 
+watch(() => props.filters.roleIds.length, () => {
+  nextTick(calculateVisibleCount)
+})
+
+watch(roleSelectExpanded, () => {
+  nextTick(calculateVisibleCount)
+})
+
 const roleSelectOptions = computed(() => {
   return props.roles.map(role => ({
     label: role.label || role.name || '未命名角色',
@@ -302,6 +311,7 @@ const roleSelectOptions = computed(() => {
 })
 
 const selectedRoleCount = computed(() => props.filters.roleIds.length)
+const isRoleSelectCompact = computed(() => selectedRoleCount.value === 0 && !roleSelectExpanded.value)
 const selectedRoleSummary = computed(() => (
   selectedRoleCount.value > 0
     ? `已选 ${selectedRoleCount.value} 人`
@@ -374,8 +384,9 @@ const cycleIcFilter = () => {
         <n-select
           :value="filters.roleIds"
           @update:value="updateFilter('roleIds', $event)"
+          @update:show="roleSelectExpanded = $event"
           :options="roleSelectOptions"
-          class="ribbon-role-select"
+          :class="['ribbon-role-select', { 'ribbon-role-select--compact': isRoleSelectCompact }]"
           multiple
           placeholder="角色"
           size="small"
@@ -502,6 +513,12 @@ const cycleIcFilter = () => {
   max-width: 7.25rem;
 }
 
+.ribbon-role-select--compact {
+  width: 4.5rem;
+  min-width: 4.5rem;
+  max-width: 4.5rem;
+}
+
 .ribbon-role-select :deep(.n-base-selection),
 .ribbon-role-select :deep(.n-base-selection-label),
 .ribbon-role-select :deep(.n-base-selection-tags) {
@@ -530,6 +547,7 @@ const cycleIcFilter = () => {
   align-items: center;
   gap: 0.375rem;
   color: var(--sc-text-secondary);
+  white-space: nowrap;
 }
 
 .ribbon-action-button {
