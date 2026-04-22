@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -447,6 +448,13 @@ func oneBotActionSendIntoChannel(session *oneBotSession, channel *model.ChannelM
 	if err != nil {
 		return nil, oneBotBadRequest(err.Error())
 	}
+	if shouldSuppressBotNicknameSyncAck(session, channel.ID, decoded.Content) {
+		messageID, err := service.GetOrCreateOneBotID(service.OneBotEntityMessage, "suppressed-bot-nickname-sync:"+utils.NewID())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"message_id": messageID}, nil
+	}
 	resp, err := apiMessageCreate(oneBotChatContext(session), &struct {
 		ChannelID         string   `json:"channel_id"`
 		QuoteID           string   `json:"quote_id"`
@@ -478,6 +486,35 @@ func oneBotActionSendIntoChannel(session *oneBotSession, channel *model.ChannelM
 		return nil, err
 	}
 	return map[string]any{"message_id": messageID}, nil
+}
+
+func shouldSuppressBotNicknameSyncAck(session *oneBotSession, channelID, content string) bool {
+	if session == nil || session.ConnInfo == nil || channelID == "" {
+		return false
+	}
+	pendingMap := session.ConnInfo.BotNicknameSyncPending
+	if pendingMap == nil {
+		return false
+	}
+	pending, ok := pendingMap.Load(channelID)
+	if !ok || pending == nil {
+		return false
+	}
+	if time.Now().UnixMilli()-pending.CreatedAt > 3_000 {
+		pendingMap.Delete(channelID)
+		return false
+	}
+	pendingMap.Delete(channelID)
+	return isBotNicknameSyncAckContent(content, pending.TargetName)
+}
+
+func isBotNicknameSyncAckContent(content, targetName string) bool {
+	content = strings.TrimSpace(content)
+	targetName = strings.TrimSpace(targetName)
+	if content == "" || targetName == "" {
+		return false
+	}
+	return strings.Contains(content, targetName)
 }
 
 func oneBotActionDeleteMessage(session *oneBotSession, raw json.RawMessage) (any, error) {

@@ -4931,6 +4931,27 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    async botCommandDispatch(channelId: string, command: string, options?: { silent?: boolean; reason?: string }) {
+      const normalizedChannelId = String(channelId || '').trim();
+      const normalizedCommand = String(command || '').trim();
+      if (!normalizedChannelId) {
+        throw new Error('缺少频道 ID');
+      }
+      if (!normalizedCommand) {
+        throw new Error('缺少指令内容');
+      }
+      const resp = await this.sendAPI<{ data?: { ok?: boolean; error?: string } }>('bot.command.dispatch', {
+        channel_id: normalizedChannelId,
+        command: normalizedCommand,
+        silent: options?.silent !== false,
+        reason: String(options?.reason || '').trim(),
+      });
+      if (resp?.data?.ok !== true) {
+        throw new Error(resp?.data?.error || 'BOT 指令转发失败');
+      }
+      return resp.data;
+    },
+
     invalidateBotListCache() {
       this.botListCache = null;
       this.botListCacheUpdatedAt = 0;

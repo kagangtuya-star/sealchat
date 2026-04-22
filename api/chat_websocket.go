@@ -63,6 +63,7 @@ type ConnInfo struct {
 	BotLastMessageContext   *utils.SyncMap[string, *protocol.MessageContext]
 	BotLastWhisperTargets   *utils.SyncMap[string, []string]
 	BotHiddenDicePending    *utils.SyncMap[string, *BotHiddenDicePending]
+	BotNicknameSyncPending  *utils.SyncMap[string, *BotNicknameSyncPending]
 	BotCharacterSupport     BotCharacterSupportState
 	BotCharacterProbeOn     bool
 	BotCharacterProbeFail   int
@@ -73,6 +74,12 @@ type BotHiddenDicePending struct {
 	TargetUserIDs []string
 	Count         int
 	CreatedAt     int64
+}
+
+type BotNicknameSyncPending struct {
+	TargetName   string
+	SenderUserID string
+	CreatedAt    int64
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -981,6 +988,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "bot.command.register":
 						apiBotCommandRegister(ctx, msg)
+						solved = true
+					case "bot.command.dispatch":
+						apiBotCommandDispatch(ctx, msg)
 						solved = true
 					case "bot.channel_member.set_name":
 						apiBotChannelMemberSetName(ctx, msg)

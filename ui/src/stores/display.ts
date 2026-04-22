@@ -113,6 +113,7 @@ export interface DisplaySettings {
   // 人物卡
   characterCardBadgeEnabled: boolean
   characterCardBadgeAutoContrastEnabled: boolean
+  characterCardAutoSyncBotNickname: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
   identityRemarkAutoContrastEnabled: boolean
   showOwnIdentityRemark: boolean
@@ -469,6 +470,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeAutoContrastEnabled: true,
+  characterCardAutoSyncBotNickname: true,
   characterCardBadgeTemplateByWorld: {},
   identityRemarkAutoContrastEnabled: true,
   showOwnIdentityRemark: true,
@@ -746,6 +748,7 @@ const loadSettings = (): DisplaySettings => {
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
+      characterCardAutoSyncBotNickname: coerceBoolean((parsed as any)?.characterCardAutoSyncBotNickname ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
         ? (parsed as any).characterCardBadgeTemplateByWorld
         : {},
@@ -1030,6 +1033,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeAutoContrastEnabled')
       ? coerceBoolean((patch as any).characterCardBadgeAutoContrastEnabled)
       : base.characterCardBadgeAutoContrastEnabled,
+  characterCardAutoSyncBotNickname:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardAutoSyncBotNickname')
+      ? coerceBoolean((patch as any).characterCardAutoSyncBotNickname)
+      : base.characterCardAutoSyncBotNickname,
   characterCardBadgeTemplateByWorld:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeTemplateByWorld')
       ? (isPlainObject((patch as any).characterCardBadgeTemplateByWorld)
