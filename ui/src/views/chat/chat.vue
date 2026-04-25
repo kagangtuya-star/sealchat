@@ -1915,24 +1915,23 @@ const resizeStartY = ref(0);
 const resizeStartHeight = ref(0);
 const resizePointerId = ref<number | null>(null);
 const shouldExitWideInput = ref(false);
-const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
-const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
+let resizeEventTarget: HTMLElement | null = null;
 
 const handleInputBorderPointerDown = (e: PointerEvent) => {
   if (isMobileWideInput.value) return;
-  const container = e.currentTarget as HTMLElement;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const container = inputContainerRef.value;
+  const target = e.currentTarget as HTMLElement | null;
   if (!container) return;
-  const rect = container.getBoundingClientRect();
-  const offsetY = e.clientY - rect.top;
-  const threshold = e.pointerType === 'touch' ? RESIZE_BORDER_THRESHOLD_MOBILE : RESIZE_BORDER_THRESHOLD_DESKTOP;
-  if (offsetY > threshold) return;
+  if (!target) return;
 
   e.preventDefault();
   e.stopPropagation();
 
-  // 在容器上捕获指针
+  // 在真实拖拽热区上捕获指针，避免移动端手势在容器本体上被浏览器接管。
   resizePointerId.value = e.pointerId;
-  container.setPointerCapture(e.pointerId);
+  resizeEventTarget = target;
+  target.setPointerCapture(e.pointerId);
 
   isResizingInput.value = true;
   resizeStartY.value = e.clientY;
@@ -1942,10 +1941,10 @@ const handleInputBorderPointerDown = (e: PointerEvent) => {
     : (inputEditor?.offsetHeight || INPUT_AREA_HEIGHT_LIMITS.MIN);
   inputAreaHeightPreview.value = resizeStartHeight.value;
 
-  container.addEventListener('pointermove', handleInputResizeMove as EventListener);
-  container.addEventListener('pointerup', handleInputResizeEnd as EventListener);
-  container.addEventListener('pointercancel', handleInputResizeEnd as EventListener);
-  container.addEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+  target.addEventListener('pointermove', handleInputResizeMove as EventListener);
+  target.addEventListener('pointerup', handleInputResizeEnd as EventListener);
+  target.addEventListener('pointercancel', handleInputResizeEnd as EventListener);
+  target.addEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
   document.body.style.cursor = 'row-resize';
   document.body.style.userSelect = 'none';
 };
@@ -1974,23 +1973,24 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   if (!isResizingInput.value) return;
   isResizingInput.value = false;
 
-  const container = inputContainerRef.value;
+  const eventTarget = resizeEventTarget;
   const exitWideInput = shouldExitWideInput.value && wideInputMode.value;
   shouldExitWideInput.value = false;
   const finalHeight = inputAreaHeightPreview.value ?? display.settings.inputAreaHeight;
   inputAreaHeightPreview.value = null;
-  if (container) {
+  if (eventTarget) {
     if (resizePointerId.value !== null) {
       try {
-        container.releasePointerCapture(resizePointerId.value);
+        eventTarget.releasePointerCapture(resizePointerId.value);
       } catch (_) { /* ignore */ }
     }
-    container.removeEventListener('pointermove', handleInputResizeMove as EventListener);
-    container.removeEventListener('pointerup', handleInputResizeEnd as EventListener);
-    container.removeEventListener('pointercancel', handleInputResizeEnd as EventListener);
-    container.removeEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+    eventTarget.removeEventListener('pointermove', handleInputResizeMove as EventListener);
+    eventTarget.removeEventListener('pointerup', handleInputResizeEnd as EventListener);
+    eventTarget.removeEventListener('pointercancel', handleInputResizeEnd as EventListener);
+    eventTarget.removeEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
   }
 
+  resizeEventTarget = null;
   resizePointerId.value = null;
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
@@ -14933,8 +14933,13 @@ onBeforeUnmount(() => {
           ref="inputContainerRef"
           class="chat-input-container flex flex-col w-full relative"
           :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
-          @pointerdown="handleInputBorderPointerDown"
         >
+          <div
+            v-if="!isMobileWideInput"
+            class="chat-input-resize-handle"
+            aria-hidden="true"
+            @pointerdown="handleInputBorderPointerDown"
+          />
           <div v-if="activeMessageInsertTarget" class="message-insert-banner">
             <div class="message-insert-banner__main">
               <span class="message-insert-banner__badge">插入到上方</span>
@@ -18795,19 +18800,6 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
   position: relative;
 
-  // 上边框拖拽热区
-  &::before {
-    content: '';
-    position: absolute;
-    top: -4px;
-    left: 0;
-    right: 0;
-    height: 12px;
-    cursor: row-resize;
-    z-index: 1;
-    touch-action: none;
-  }
-
   // 可见的分隔线
   &::after {
     content: '';
@@ -18831,19 +18823,28 @@ onBeforeUnmount(() => {
 
   &.chat-input-container--resizing {
     overscroll-behavior: contain;
+    touch-action: none;
   }
+}
+
+.chat-input-resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  cursor: row-resize;
+  z-index: 1;
+  touch-action: none;
 }
 
 // 移动端增大热区
 @media (max-width: 768px), (pointer: coarse) {
-  .chat-input-container::before {
+  .chat-input-resize-handle {
     top: -8px;
     height: 20px;
   }
 
-  .chat-input-container {
-    touch-action: none;
-  }
 }
 
 .chat-input-container--spectator-hidden {

@@ -59,7 +59,7 @@ watch(i18n.global.locale, (newVal) => {
 const handleContextMenu = (e: MouseEvent) => {
   if (display.settings.disableContextMenu) {
     const target = e.target as HTMLElement | null
-    if (target?.closest('.viewer-container')) {
+    if (target?.closest('.viewer-container, input, textarea, [contenteditable]')) {
       return
     }
     e.preventDefault()
