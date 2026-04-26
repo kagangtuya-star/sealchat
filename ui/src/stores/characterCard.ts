@@ -4,6 +4,11 @@ import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
 import { extractTemplateKeys, getWorldCardTemplate } from '@/utils/characterCardTemplate';
+import {
+  buildBotNicknameSyncCommand,
+  resolveBotNicknameSyncName,
+  shouldEnableBotNicknameSyncForChannel,
+} from '@/utils/botNicknameSync';
 
 // Character card type for UI (matching old API format)
 export interface CharacterCard {
@@ -75,6 +80,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const badgeByIdentity = ref<Record<string, CharacterCardBadgeEntry>>({});
   // Local identity bindings (cached for UI convenience)
   const identityBindings = ref<Record<string, string>>({});
+  const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
   const botCharacterDisabledByChannel = ref<Record<string, boolean>>({});
 
@@ -862,6 +868,85 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Backwards compatibility: getBoundCardId
   const getBoundCardId = (identityId: string) => identityBindings.value[identityId];
 
+  const getIdentityDisplayName = (channelId: string, identityId: string) => {
+    if (!channelId || !identityId) {
+      return '';
+    }
+    const identity = (chatStore.channelIdentities[channelId] || []).find(item => item.id === identityId);
+    return String(identity?.displayName || '').trim();
+  };
+
+  const canSyncBotNickname = (channelId: string) => {
+    if (!displayStore.settings.characterCardAutoSyncBotNickname) {
+      return false;
+    }
+    if (!channelId || chatStore.isObserver || chatStore.observerMode || !!chatStore.observerWorldId) {
+      return false;
+    }
+    const channel = chatStore.findChannelById(channelId) as any;
+    return shouldEnableBotNicknameSyncForChannel(channel);
+  };
+
+  const dispatchBotNicknameSync = async (channelId: string, targetName: string, reason: string, force = false) => {
+    if (!canSyncBotNickname(channelId)) {
+      return false;
+    }
+    const channel = chatStore.findChannelById(channelId) as any;
+    const command = buildBotNicknameSyncCommand(targetName, channel?.botCommandPrefixes);
+    if (!command) {
+      return false;
+    }
+    if (!force && lastBotNicknameSyncByChannel.value[channelId] === command) {
+      return false;
+    }
+    try {
+      await chatStore.botCommandDispatch(channelId, command, {
+        silent: true,
+        reason,
+      });
+      lastBotNicknameSyncByChannel.value = {
+        ...lastBotNicknameSyncByChannel.value,
+        [channelId]: command,
+      };
+      return true;
+    } catch (e) {
+      console.warn('[CharacterCard] Failed to sync bot nickname', { channelId, reason, command, error: e });
+      return false;
+    }
+  };
+
+  const syncBotNicknameForIdentity = async (
+    channelId: string,
+    identityId: string,
+    options?: { reason?: string; explicitCardName?: string; force?: boolean },
+  ) => {
+    if (!channelId || !identityId) {
+      return false;
+    }
+    loadIdentityBindings();
+    let boundCardName = '';
+    const boundCardId = identityBindings.value[identityId];
+    if (boundCardId) {
+      boundCardName = String(getCardById(boundCardId)?.name || '').trim();
+      if (!boundCardName) {
+        await loadCardList(channelId);
+        boundCardName = String(getCardById(boundCardId)?.name || '').trim();
+      }
+    }
+    const targetName = resolveBotNicknameSyncName({
+      identityName: getIdentityDisplayName(channelId, identityId),
+      boundCardName,
+      explicitCardName: options?.explicitCardName,
+    });
+    return dispatchBotNicknameSync(channelId, targetName, options?.reason || 'identity-sync', !!options?.force);
+  };
+
+  const syncBotNicknameForCard = async (
+    channelId: string,
+    cardName: string,
+    options?: { reason?: string; force?: boolean },
+  ) => dispatchBotNicknameSync(channelId, cardName, options?.reason || 'card-switch', !!options?.force);
+
   const syncCardForIdentity = async (
     channelId: string,
     identityId: string,
@@ -878,6 +963,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const boundCardId = identityBindings.value[identityId];
     const preserveWhenUnbound = options.preserveWhenUnbound !== false;
     const reloadAfterSwitch = options.reloadAfterSwitch !== false;
+    const nicknameSyncReason = boundCardId ? 'identity-switch-bound' : 'identity-switch-unbound';
+
+    void syncBotNicknameForIdentity(channelId, identityId, {
+      reason: nicknameSyncReason,
+    });
 
     if (!boundCardId) {
       if (preserveWhenUnbound) {
@@ -1061,6 +1151,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getBadgeByIdentity,
     getBoundCardId,
     syncCardForIdentity,
+    syncBotNicknameForIdentity,
+    syncBotNicknameForCard,
     bindIdentity,
     unbindIdentity,
     requestBadgeSnapshot,

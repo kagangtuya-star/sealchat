@@ -1931,6 +1931,16 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			// 不包含 Satori 标签的纯文本，保持原样
 			// 前端的 @satorijs/element toString() 会进行必要的 HTML 转义
 		}
+		if shouldSuppressBotNicknameSyncMessageCreate(ctx, channelId, content) {
+			return &protocol.Message{
+				ID:        "suppressed-bot-nickname-sync:" + utils.NewID(),
+				Channel:   &protocol.Channel{ID: channelId},
+				Content:   "",
+				Timestamp: time.Now().Unix(),
+				CreatedAt: time.Now().UnixMilli(),
+				UpdatedAt: time.Now().UnixMilli(),
+			}, nil
+		}
 	}
 
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
@@ -2237,15 +2247,15 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
 		},
-		UserID:       ctx.User.ID,
-		ChannelID:    data.ChannelID,
-		MemberID:     member.ID,
-		QuoteID:      data.QuoteID,
-		Content:      content,
+		UserID:           ctx.User.ID,
+		ChannelID:        data.ChannelID,
+		MemberID:         member.ID,
+		QuoteID:          data.QuoteID,
+		Content:          content,
 		VisibleCharCount: contentstats.CountVisibleTextChars(content),
-		WidgetData:   widgetData,
-		DisplayOrder: displayOrder,
-		ICMode:       icMode,
+		WidgetData:       widgetData,
+		DisplayOrder:     displayOrder,
+		ICMode:           icMode,
 
 		SenderMemberName: member.Nickname,
 		IsWhisper:        whisperUser != nil,
@@ -3705,6 +3715,30 @@ func resolveBotHiddenDicePending(ctx *ChatContext, channelId string) *BotHiddenD
 	return pending
 }
 
+func shouldSuppressBotNicknameSyncMessageCreate(ctx *ChatContext, channelId, content string) bool {
+	if ctx == nil || ctx.User == nil || !ctx.User.IsBot {
+		return false
+	}
+	if ctx.ConnInfo == nil {
+		return false
+	}
+	if ctx.ConnInfo.BotNicknameSyncPending == nil {
+		return false
+	}
+	pending, ok := ctx.ConnInfo.BotNicknameSyncPending.Load(channelId)
+	if !ok || pending == nil {
+		return false
+	}
+	ageMs := time.Now().UnixMilli() - pending.CreatedAt
+	if ageMs > 3_000 {
+		ctx.ConnInfo.BotNicknameSyncPending.Delete(channelId)
+		return false
+	}
+	matched := strings.Contains(content, strings.TrimSpace(pending.TargetName))
+	ctx.ConnInfo.BotNicknameSyncPending.Delete(channelId)
+	return matched
+}
+
 func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	QuoteID   string `json:"quote_id"`
@@ -3752,12 +3786,12 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			StringPKBaseModel: model.StringPKBaseModel{
 				ID: utils.NewID(),
 			},
-			UserID:    "BOT:1000",
-			ChannelID: data.ChannelID,
-			MemberID:  "BOT:1000",
-			Content:   botText,
+			UserID:           "BOT:1000",
+			ChannelID:        data.ChannelID,
+			MemberID:         "BOT:1000",
+			Content:          botText,
 			VisibleCharCount: contentstats.CountVisibleTextChars(botText),
-			ICMode:    msgICMode,
+			ICMode:           msgICMode,
 		}
 		if isHiddenDice && len(data.ChannelID) < 30 {
 			m.IsWhisper = true
@@ -3840,12 +3874,12 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		StringPKBaseModel: model.StringPKBaseModel{
 			ID: utils.NewID(),
 		},
-		UserID:    botID,
-		ChannelID: ch.ID,
-		MemberID:  botID,
-		Content:   content,
+		UserID:           botID,
+		ChannelID:        ch.ID,
+		MemberID:         botID,
+		Content:          content,
 		VisibleCharCount: contentstats.CountVisibleTextChars(content),
-		ICMode:    msgICMode,
+		ICMode:           msgICMode,
 	}
 	model.GetDB().Create(&m)
 	botNick := strings.TrimSpace(botUser.Nickname)

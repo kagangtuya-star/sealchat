@@ -326,7 +326,7 @@ const roleSave = async () => {
     </div>
 
     <div class=" overflow-x-hidden overflow-y-auto" style="height: 58vh;;">
-      <span class="text-gray-500 text-sm pl-2 mb-2">请注意，并不是所有权限都实装了，慢慢更新中</span>
+      <span class="text-gray-500 text-sm pl-2 mb-2">请注意，这个管理UI为半废弃，许多权限不可用</span>
       <n-table :bordered="true" :single-line="false">
         <thead>
           <tr>

@@ -16,6 +16,8 @@ var (
 	botCommandTailCleanupPattern = regexp.MustCompile(`(?i)(?:\s|&nbsp;|<br\s*/?>)+$`)
 )
 
+const botCommandDispatchMessageIDPrefix = "bot-command-dispatch:"
+
 type ChatContext struct {
 	Conn            *WsSyncConn
 	User            *model.UserModel
@@ -199,6 +201,7 @@ func cacheBotEventContext(info *ConnInfo, channelId string, data *protocol.Event
 		info.BotLastMessageContext = &utils.SyncMap[string, *protocol.MessageContext]{}
 	}
 	info.BotLastMessageContext.Store(channelId, data.MessageContext)
+	storeBotNicknameSyncPending(info, channelId, data)
 	if !data.MessageContext.IsHiddenDice || data.MessageContext.SenderUserID == "" {
 		return
 	}
@@ -224,6 +227,54 @@ func cacheBotEventContext(info *ConnInfo, channelId string, data *protocol.Event
 		Count:         0,
 		CreatedAt:     time.Now().UnixMilli(),
 	})
+}
+
+func storeBotNicknameSyncPending(info *ConnInfo, channelId string, data *protocol.Event) {
+	if info == nil || channelId == "" || data == nil || data.Message == nil {
+		return
+	}
+	if !strings.HasPrefix(strings.TrimSpace(data.Message.ID), botCommandDispatchMessageIDPrefix) {
+		return
+	}
+	targetName, ok := extractBotNicknameSyncTarget(data.Message.Content)
+	if !ok {
+		return
+	}
+	if info.BotNicknameSyncPending == nil {
+		info.BotNicknameSyncPending = &utils.SyncMap[string, *BotNicknameSyncPending]{}
+	}
+	senderUserID := ""
+	if data.MessageContext != nil {
+		senderUserID = strings.TrimSpace(data.MessageContext.SenderUserID)
+	}
+	info.BotNicknameSyncPending.Store(channelId, &BotNicknameSyncPending{
+		TargetName:   targetName,
+		SenderUserID: senderUserID,
+		CreatedAt:    time.Now().UnixMilli(),
+	})
+}
+
+func extractBotNicknameSyncTarget(content string) (string, bool) {
+	leading := strings.TrimLeft(content, " \t\r\n")
+	if leading == "" {
+		return "", false
+	}
+	for _, prefix := range resolveBotCommandPrefixes() {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" || !strings.HasPrefix(leading, prefix) {
+			continue
+		}
+		remainder := strings.TrimSpace(leading[len(prefix):])
+		if len(remainder) < 3 || !strings.EqualFold(remainder[:2], "nn") {
+			return "", false
+		}
+		targetName := strings.TrimSpace(remainder[2:])
+		if targetName == "" {
+			return "", false
+		}
+		return targetName, true
+	}
+	return "", false
 }
 
 func normalizeEventForBot(event *protocol.Event) *protocol.Event {

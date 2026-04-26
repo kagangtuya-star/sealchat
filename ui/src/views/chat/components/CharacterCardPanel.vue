@@ -95,6 +95,13 @@ const badgeAutoContrastEnabled = computed({
   },
 });
 
+const autoSyncBotNicknameEnabled = computed({
+  get: () => displayStore.settings.characterCardAutoSyncBotNickname,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardAutoSyncBotNickname: value });
+  },
+});
+
 const badgeTemplate = ref('');
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
 const canSyncBadgeTemplate = computed(() => {
@@ -770,6 +777,12 @@ const restoreBoundCardAfterSheetClose = async (channelId: string) => {
   try {
     if (boundCardId && cardStore.getActiveCardId(channelId) !== boundCardId) {
       await cardStore.tagCard(channelId, undefined, boundCardId);
+      const boundCardName = String(cardStore.getCardById(boundCardId)?.name || '').trim();
+      if (boundCardName) {
+        await cardStore.syncBotNicknameForCard(channelId, boundCardName, {
+          reason: 'character-sheet-restore-bound-card',
+        });
+      }
     }
   } catch (e) {
     console.warn('Failed to restore bound character card after sheet close', e);
@@ -991,6 +1004,9 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       if (!switched) {
         throw new Error('切换人物卡失败');
       }
+      await cardStore.syncBotNicknameForCard(channelId, card.name, {
+        reason: 'character-sheet-open-preview',
+      });
     }
     await openCharacterSheetWindow(card, mode, { restoreToCurrentBinding });
   } catch (e: any) {
@@ -1067,6 +1083,16 @@ const openEditPanel = async (card: CharacterCard) => {
             <p class="settings-desc">当徽标颜色与频道背景接近时，自动调整文字、底色与边框</p>
           </div>
           <n-switch v-model:value="badgeAutoContrastEnabled">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+        </div>
+        <div class="settings-row">
+          <div>
+            <p class="settings-title">自动同步 BOT 昵称</p>
+            <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
+          </div>
+          <n-switch v-model:value="autoSyncBotNicknameEnabled">
             <template #checked>已启用</template>
             <template #unchecked>已关闭</template>
           </n-switch>

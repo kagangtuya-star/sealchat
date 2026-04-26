@@ -9,6 +9,28 @@ import router from './router'
 import { useDisplayStore } from './stores/display'
 import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 
+const installMobileViewportGuards = () => {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const preventMultiTouchZoom = (event: TouchEvent) => {
+    if (event.touches.length > 1 && event.cancelable) {
+      event.preventDefault()
+    }
+  }
+
+  const preventGestureZoom = (event: Event) => {
+    if (event.cancelable) {
+      event.preventDefault()
+    }
+  }
+
+  document.addEventListener('touchmove', preventMultiTouchZoom, { passive: false })
+  document.addEventListener('gesturestart', preventGestureZoom as EventListener, { passive: false })
+  document.addEventListener('gesturechange', preventGestureZoom as EventListener, { passive: false })
+}
+
 const app = createApp(App)
 const pinia = createPinia()
 
@@ -129,6 +151,8 @@ displayStore.restoreGlobalFontAsset()
     console.warn('恢复缓存字体失败，继续使用默认字体链', error)
     displayStore.applyTheme()
   })
+
+installMobileViewportGuards()
 
 app.mount('#app')
 startFontSurfaceAutoMarking()
