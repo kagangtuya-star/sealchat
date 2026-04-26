@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NIcon } from 'naive-ui'
+import { calculateVisibleActionCount } from './chatActionRibbonLayout'
 import {
   Archive as ArchiveIcon,
   Download as DownloadIcon,
@@ -80,6 +81,7 @@ const emit = defineEmits<Emits>()
 
 // Ref for measuring container width
 const actionsContainerRef = ref<HTMLElement | null>(null)
+const actionMeasureRef = ref<HTMLElement | null>(null)
 const roleSelectExpanded = ref(false)
 
 // Number of visible buttons (dynamically calculated)
@@ -161,8 +163,7 @@ const hasActiveOverflowAction = computed(() => {
   return overflowButtons.value.some(btn => props[btn.activeKey])
 })
 
-// Show more button only if there are overflow buttons
-const showMoreButton = computed(() => {
+const hasOverflowButtons = computed(() => {
   return overflowButtons.value.length > 0
 })
 
@@ -191,93 +192,84 @@ const handleButtonClick = (button: ActionButton) => {
   emit(button.emitEvent as any)
 }
 
-// Constants for button sizing (conservative estimates to avoid cutoff)
-const BUTTON_BASE_WIDTH = 44 // icon + padding + border
-const CHAR_WIDTH = 14 // approximate width per Chinese character
 const BUTTON_GAP = 8 // gap between buttons (0.5rem)
-const MORE_BUTTON_WIDTH = 78 // conservative width of "更多" button, avoids right-edge crowding
 const MOBILE_BREAKPOINT = 768 // mobile breakpoint in px
-const SAFETY_MARGIN = 4 // extra margin to prevent partial cutoff
+const FALLBACK_MORE_BUTTON_WIDTH = 78
 
 // Check if current viewport is mobile
 const isMobile = () => window.innerWidth <= MOBILE_BREAKPOINT
 
-// Calculate button width based on label (with safety margin)
-const getButtonWidth = (label: string) => {
-  return BUTTON_BASE_WIDTH + label.length * CHAR_WIDTH + SAFETY_MARGIN
+const getMeasurementElement = (key: string) => {
+  return actionMeasureRef.value?.querySelector<HTMLElement>(`[data-action-key="${key}"]`) ?? null
 }
 
-// Get all button widths (precomputed)
-const allButtonWidths = computed(() => {
-  return allActionButtons.value.map(btn => getButtonWidth(btn.label))
-})
+const measureActionButtonWidths = () => {
+  return allActionButtons.value.map(button => Math.ceil(getMeasurementElement(button.key)?.offsetWidth ?? 0))
+}
 
-// Total width needed to display all buttons
-const totalButtonsWidth = computed(() => {
-  const widths = allButtonWidths.value
-  return widths.reduce((sum, w) => sum + w, 0) + (widths.length - 1) * BUTTON_GAP
-})
+const measureMoreButtonWidth = () => {
+  return Math.ceil(getMeasurementElement('__more')?.offsetWidth ?? FALLBACK_MORE_BUTTON_WIDTH)
+}
 
 // Calculate how many buttons can fit
 const calculateVisibleCount = () => {
-  const totalButtons = allActionButtons.value.length
-  
-  // On mobile, show all buttons (CSS will handle wrapping)
-  if (isMobile()) {
-    visibleCount.value = totalButtons
-    return
-  }
-  
   if (!actionsContainerRef.value) return
-  
+
   const containerWidth = actionsContainerRef.value.offsetWidth
-  const widths = allButtonWidths.value
-  
-  // Check if all buttons fit without "more" button
-  if (totalButtonsWidth.value <= containerWidth) {
-    visibleCount.value = totalButtons
+  const buttonWidths = measureActionButtonWidths()
+  const moreButtonWidth = measureMoreButtonWidth()
+
+  if (buttonWidths.length !== allActionButtons.value.length || buttonWidths.some(width => width <= 0) || moreButtonWidth <= 0) {
     return
   }
-  
-  // Need to calculate how many fit with "more" button
-  // Available width = container - more button - gap before more button
-  const availableWidth = containerWidth - MORE_BUTTON_WIDTH - BUTTON_GAP
-  
-  let usedWidth = 0
-  let count = 0
-  
-  for (let i = 0; i < totalButtons; i++) {
-    const btnWidth = widths[i]
-    const gapWidth = count > 0 ? BUTTON_GAP : 0
-    const neededWidth = usedWidth + gapWidth + btnWidth
-    
-    if (neededWidth <= availableWidth) {
-      usedWidth = neededWidth
-      count++
-    } else {
-      break
-    }
-  }
-  
-  // Ensure at least 1 button is visible
-  visibleCount.value = Math.max(count, 1)
+
+  visibleCount.value = calculateVisibleActionCount({
+    isMobile: isMobile(),
+    containerWidth,
+    moreButtonWidth,
+    buttonGap: BUTTON_GAP,
+    buttonWidths,
+  })
 }
 
 // ResizeObserver for container
 let resizeObserver: ResizeObserver | null = null
+let layoutFrameId: number | null = null
+
+const scheduleVisibleCountCalculation = () => {
+  if (layoutFrameId !== null) {
+    cancelAnimationFrame(layoutFrameId)
+  }
+  layoutFrameId = requestAnimationFrame(() => {
+    layoutFrameId = null
+    calculateVisibleCount()
+  })
+}
+
+const handleViewportResize = () => {
+  scheduleVisibleCountCalculation()
+}
 
 onMounted(() => {
   nextTick(() => {
-    calculateVisibleCount()
-    
-    // Setup ResizeObserver
+    scheduleVisibleCountCalculation()
+
     if (actionsContainerRef.value) {
       resizeObserver = new ResizeObserver(() => {
-        calculateVisibleCount()
+        scheduleVisibleCountCalculation()
       })
       resizeObserver.observe(actionsContainerRef.value)
     }
+    if (actionMeasureRef.value) {
+      resizeObserver ??= new ResizeObserver(() => {
+        scheduleVisibleCountCalculation()
+      })
+      resizeObserver.observe(actionMeasureRef.value)
+    }
   })
+
+  window.addEventListener('resize', handleViewportResize)
+  window.visualViewport?.addEventListener('resize', handleViewportResize)
 })
 
 onBeforeUnmount(() => {
@@ -285,22 +277,27 @@ onBeforeUnmount(() => {
     resizeObserver.disconnect()
     resizeObserver = null
   }
+  if (layoutFrameId !== null) {
+    cancelAnimationFrame(layoutFrameId)
+    layoutFrameId = null
+  }
+  window.removeEventListener('resize', handleViewportResize)
+  window.visualViewport?.removeEventListener('resize', handleViewportResize)
 })
 
-// Re-calculate when canImport changes (button list changes)
 watch(
-  () => [props.canImport, props.splitEnabled, props.stickyNoteEnabled, props.webhookEnabled, props.emailNotificationEnabled, props.characterCardEnabled, props.characterRemarkActive],
+  () => allActionButtons.value.map(button => button.key).join('|'),
   () => {
-    nextTick(calculateVisibleCount)
+    nextTick(scheduleVisibleCountCalculation)
   }
 )
 
 watch(() => props.filters.roleIds.length, () => {
-  nextTick(calculateVisibleCount)
+  nextTick(scheduleVisibleCountCalculation)
 })
 
 watch(roleSelectExpanded, () => {
-  nextTick(calculateVisibleCount)
+  nextTick(scheduleVisibleCountCalculation)
 })
 
 const roleSelectOptions = computed(() => {
@@ -399,26 +396,27 @@ const cycleIcFilter = () => {
 
     <!-- 功能入口区域 -->
     <div class="ribbon-section ribbon-section--actions" ref="actionsContainerRef">
-      <div class="ribbon-actions-grid">
-        <!-- 动态渲染可见按钮 -->
-        <n-button
-          v-for="button in visibleButtons"
-          :key="button.key"
-          type="tertiary"
-          class="ribbon-action-button"
-          :class="{ 'is-active': props[button.activeKey] }"
-          :disabled="button.disabled?.() === true"
-          @click="handleButtonClick(button)"
-        >
-          <template #icon>
-            <n-icon :component="button.icon" />
-          </template>
-          {{ button.label }}
-        </n-button>
+      <div class="ribbon-actions-viewport">
+        <div class="ribbon-actions-grid">
+          <n-button
+            v-for="button in visibleButtons"
+            :key="button.key"
+            type="tertiary"
+            class="ribbon-action-button"
+            :class="{ 'is-active': props[button.activeKey] }"
+            :disabled="button.disabled?.() === true"
+            @click="handleButtonClick(button)"
+          >
+            <template #icon>
+              <n-icon :component="button.icon" />
+            </template>
+            {{ button.label }}
+          </n-button>
+        </div>
+      </div>
 
-        <!-- 更多功能 - 下拉菜单 (仅在有溢出按钮时显示) -->
+      <div v-if="hasOverflowButtons" class="ribbon-actions-anchor">
         <n-dropdown
-          v-if="showMoreButton"
           :options="moreMenuOptions"
           trigger="click"
           @select="handleMoreMenuSelect"
@@ -434,6 +432,30 @@ const cycleIcFilter = () => {
             更多
           </n-button>
         </n-dropdown>
+      </div>
+
+      <div ref="actionMeasureRef" class="ribbon-action-measurements" aria-hidden="true">
+        <div
+          v-for="button in allActionButtons"
+          :key="`measure-${button.key}`"
+          class="ribbon-action-measurement-item"
+          :data-action-key="button.key"
+        >
+          <n-button type="tertiary" class="ribbon-action-button">
+            <template #icon>
+              <n-icon :component="button.icon" />
+            </template>
+            {{ button.label }}
+          </n-button>
+        </div>
+        <div class="ribbon-action-measurement-item" data-action-key="__more">
+          <n-button type="tertiary" class="ribbon-action-button ribbon-more-button">
+            <template #icon>
+              <n-icon :component="MoreIcon" />
+            </template>
+            更多
+          </n-button>
+        </div>
       </div>
     </div>
 
@@ -488,6 +510,9 @@ const cycleIcFilter = () => {
   min-width: 0;
   overflow: hidden;
   justify-content: flex-start;
+  position: relative;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
 }
 
 .ribbon-section--summary {
@@ -562,6 +587,7 @@ const cycleIcFilter = () => {
   align-items: center;
   gap: 0.35rem;
   background-color: transparent;
+  flex-shrink: 0;
 }
 
 .ribbon-action-button:hover {
@@ -581,6 +607,35 @@ const cycleIcFilter = () => {
   display: flex;
   flex-wrap: nowrap;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.ribbon-actions-viewport {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ribbon-actions-anchor {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.ribbon-action-measurements {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ribbon-action-measurement-item {
+  display: inline-flex;
+  margin-right: 0.5rem;
 }
 
 :root[data-display-palette='night'] .ribbon-action-button:hover {
@@ -640,6 +695,8 @@ const cycleIcFilter = () => {
   }
 
   .ribbon-section--actions {
+    flex-direction: column;
+    align-items: stretch;
     overflow: visible;
   }
 
@@ -652,13 +709,21 @@ const cycleIcFilter = () => {
   .ribbon-actions-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    flex-wrap: wrap;
     gap: 0.5rem;
   }
 
   .ribbon-actions-grid :deep(.n-button) {
     width: 100%;
     justify-content: center;
+  }
+
+  .ribbon-actions-anchor :deep(.n-button) {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ribbon-action-measurements {
+    left: -9999px;
   }
 
   .ribbon-section--summary {
