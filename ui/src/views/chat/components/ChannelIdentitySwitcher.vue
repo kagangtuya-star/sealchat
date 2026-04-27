@@ -227,7 +227,7 @@ const displayedButtonLabel = computed(() => {
 });
 
 const isCompactButton = computed(() => props.iconOnly || (props.compact && isMobile.value));
-const avatarSize = computed(() => (isCompactButton.value ? 22 : 28));
+const avatarSize = computed(() => (isCompactButton.value ? 24 : 28));
 
 const avatarSrc = computed(() => {
   const resolved = buildAttachmentUrl(
