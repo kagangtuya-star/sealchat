@@ -532,8 +532,8 @@ onBeforeUnmount(() => {
               </NFormItem>
 
               <NFormItem v-else-if="captchaMode === 'cap'" label="验证码验证">
-                <div class="w-full rounded border border-gray-200 dark:border-gray-600 py-2 flex items-center justify-center min-h-[90px]">
-                  <div ref="capContainer" class="w-full flex items-center justify-center px-2"></div>
+                <div class="w-full">
+                  <div ref="capContainer" class="w-full"></div>
                 </div>
                 <div class="flex justify-end mt-1">
                   <NButton text size="tiny" :loading="capLoading" @click.prevent="resetCapWidget">刷新</NButton>

@@ -141,6 +141,38 @@
   --chat-whisper-tag-fg: color-mix(in srgb, var(--chat-whisper-accent) 78%, var(--chat-text-secondary, #475569));
 }
 
+:root {
+  --sc-cap-checkmark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cstyle%3E%40keyframes anim%7B0%25%7Bstroke-dashoffset%3A23.21320343017578px%7Dto%7Bstroke-dashoffset%3A0%7D%7D%3C/style%3E%3Cpath fill='none' stroke='%2314b8a6' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.2' d='m5 12 5 5L20 7' style='stroke-dashoffset%3A0%3Bstroke-dasharray%3A23.21320343017578px%3Banimation%3Aanim .5s ease'/%3E%3C/svg%3E");
+  --sc-cap-shell-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-surface)) 18%, transparent),
+      color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-input)) 8%, transparent)
+    );
+  --sc-cap-shell-border: color-mix(in srgb, var(--sc-glass-border, var(--sc-border-mute)) 72%, transparent);
+  --sc-cap-shell-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary, #0f172a) 4%, transparent),
+    0 10px 24px rgba(15, 23, 42, 0.05);
+  --sc-cap-widget-bg: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-input)) 68%, transparent);
+  --sc-cap-widget-border: color-mix(in srgb, var(--sc-glass-border, var(--sc-border-mute)) 38%, transparent);
+  --sc-cap-checkbox-bg: color-mix(in srgb, var(--sc-bg-elevated) 82%, transparent);
+  --sc-cap-checkbox-border: color-mix(in srgb, var(--sc-border-strong) 100%, transparent);
+  --sc-cap-spinner: color-mix(in srgb, var(--primary-color, #3b82f6) 58%, var(--sc-text-primary, #0f172a) 42%);
+  --sc-cap-spinner-track: color-mix(in srgb, var(--sc-border-strong) 42%, transparent);
+}
+
+:root[data-display-palette='night'] {
+  --sc-cap-checkmark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cstyle%3E%40keyframes anim%7B0%25%7Bstroke-dashoffset%3A23.21320343017578px%7Dto%7Bstroke-dashoffset%3A0%7D%7D%3C/style%3E%3Cpath fill='none' stroke='%235eead4' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.2' d='m5 12 5 5L20 7' style='stroke-dashoffset%3A0%3Bstroke-dasharray%3A23.21320343017578px%3Banimation%3Aanim .5s ease'/%3E%3C/svg%3E");
+  --sc-cap-shell-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 5%, transparent),
+    0 14px 28px rgba(0, 0, 0, 0.22);
+  --sc-cap-widget-bg: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-input)) 54%, transparent);
+  --sc-cap-widget-border: color-mix(in srgb, var(--sc-glass-border, var(--sc-border-mute)) 58%, transparent);
+  --sc-cap-checkbox-bg: color-mix(in srgb, var(--sc-bg-elevated) 72%, transparent);
+  --sc-cap-checkbox-border: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 20%, var(--sc-border-strong) 80%);
+  --sc-cap-spinner-track: color-mix(in srgb, var(--sc-border-strong) 56%, transparent);
+}
+
 :root[data-display-layout='compact'] {
   --chat-message-radius: 0.65rem;
   --chat-message-padding-y: 0.55rem;
@@ -624,5 +656,68 @@ img.emoji {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background-color: var(--sc-glass-solid, #ffffff);
+  }
+}
+
+.sc-cap-slot[data-sc-cap-container='true'] {
+  width: 100%;
+  border-radius: 20px;
+  padding: 0.35rem;
+  background: var(--sc-cap-shell-bg);
+  border: 1px solid var(--sc-cap-shell-border);
+  box-shadow: var(--sc-cap-shell-shadow);
+  -webkit-backdrop-filter: blur(calc(var(--sc-glass-blur, 8px) * 0.55)) saturate(120%);
+  backdrop-filter: blur(calc(var(--sc-glass-blur, 8px) * 0.55)) saturate(120%);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+.sc-cap-slot[data-sc-cap-container='true'] > cap-widget.sc-cap-widget {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  --cap-background: var(--sc-cap-widget-bg);
+  --cap-border-color: var(--sc-cap-widget-border);
+  --cap-border-radius: 16px;
+  --cap-widget-height: 56px;
+  --cap-widget-width: 100%;
+  --cap-widget-padding: 14px;
+  --cap-gap: 13px;
+  --cap-color: var(--sc-text-primary, #0f172a);
+  --cap-checkbox-size: 24px;
+  --cap-checkbox-border: 1.5px solid var(--sc-cap-checkbox-border);
+  --cap-checkbox-border-radius: 8px;
+  --cap-checkbox-background: var(--sc-cap-checkbox-bg);
+  --cap-checkbox-margin: 1px;
+  --cap-font: var(--sc-font-family);
+  --cap-spinner-color: var(--sc-cap-spinner);
+  --cap-spinner-background-color: var(--sc-cap-spinner-track);
+  --cap-spinner-thickness: 3.5px;
+  --cap-checkmark: var(--sc-cap-checkmark);
+}
+
+.sc-cap-slot[data-sc-cap-container='true'] > cap-widget.sc-cap-widget::part(checkbox) {
+  box-shadow:
+    inset 0 0 0 1.5px var(--sc-cap-checkbox-border),
+    0 1px 0 color-mix(in srgb, var(--sc-text-primary, #0f172a) 6%, transparent);
+}
+
+.sc-glass-panel .sc-cap-slot[data-sc-cap-container='true'] > cap-widget.sc-cap-widget {
+  --cap-background: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-input)) 84%, transparent);
+  --cap-border-color: color-mix(in srgb, var(--sc-glass-border, var(--sc-border-strong)) 72%, transparent);
+  --cap-color: color-mix(in srgb, var(--sc-text-primary, #0f172a) 92%, #000 8%);
+  --cap-checkbox-background: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-elevated)) 90%, transparent);
+}
+
+:root[data-display-palette='night'] .sc-glass-panel .sc-cap-slot[data-sc-cap-container='true'] > cap-widget.sc-cap-widget {
+  --cap-background: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-input)) 78%, transparent);
+  --cap-color: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 96%, #fff 4%);
+  --cap-checkbox-background: color-mix(in srgb, var(--sc-glass-solid, var(--sc-bg-elevated)) 82%, transparent);
+}
+
+@media (max-width: 640px) {
+  .sc-cap-slot[data-sc-cap-container='true'] > cap-widget.sc-cap-widget {
+    --cap-widget-height: 54px;
+    --cap-widget-padding: 12px;
+    --cap-gap: 11px;
   }
 }

@@ -91,14 +91,25 @@ export const useCapWidget = (scene: CapScene) => {
         error.value = 'Cap 初始化失败';
         return;
       }
+      container.value.dataset.scCapContainer = 'true';
+      container.value.classList.add('sc-cap-slot');
       destroy();
       const el = document.createElement('cap-widget') as CapWidgetElement;
+      el.classList.add('sc-cap-widget');
       el.setAttribute('data-cap-api-endpoint', `${urlBase}/api/v1/captcha/cap/${resolveCapScenePath(scene)}/`);
       el.setAttribute('data-cap-disable-haptics', 'true');
+      el.setAttribute('data-cap-i18n-initial-state', '点击完成验证');
+      el.setAttribute('data-cap-i18n-verifying-label', '验证中...');
+      el.setAttribute('data-cap-i18n-solved-label', '验证成功');
+      el.setAttribute('data-cap-i18n-error-label', '验证失败，请重试');
+      el.setAttribute('data-cap-i18n-required-label', '请完成验证码验证');
+      el.setAttribute('data-cap-i18n-verify-aria-label', '点击完成验证码验证');
+      el.setAttribute('data-cap-i18n-verifying-aria-label', '验证码验证中，请稍候');
+      el.setAttribute('data-cap-i18n-verified-aria-label', '验证码验证成功');
+      el.setAttribute('data-cap-worker-count', '4');
       el.style.display = 'block';
       el.style.width = '100%';
       el.style.setProperty('--cap-widget-width', '100%');
-      el.style.setProperty('--cap-widget-height', '58px');
       el.addEventListener('solve', (event: Event) => {
         token.value = ((event as CustomEvent<{ token?: string }>).detail?.token || '').trim();
         error.value = '';

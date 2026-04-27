@@ -602,8 +602,8 @@ onBeforeUnmount(() => {
 
             <div class="w-full mt-4" v-else-if="captchaMode === 'cap' && !captchaVerified">
               <label class="block text-xs text-gray-500 dark:text-gray-300">验证码验证</label>
-              <div class="mt-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
-                <div ref="capContainer" class="flex items-center justify-center min-h-[90px] py-2 px-2"></div>
+              <div class="mt-2">
+                <div ref="capContainer" class="w-full"></div>
               </div>
               <div class="flex justify-end mt-2">
                 <button type="button" class="text-xs text-blue-500" :disabled="capLoading"
@@ -670,8 +670,8 @@ onBeforeUnmount(() => {
 
           <div class="w-full mt-4" v-else-if="captchaMode === 'cap'">
             <label class="block text-xs text-gray-500 dark:text-gray-300">验证码验证</label>
-            <div class="mt-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
-              <div ref="capContainer" class="flex items-center justify-center min-h-[90px] py-2 px-2"></div>
+            <div class="mt-2">
+              <div ref="capContainer" class="w-full"></div>
             </div>
             <div class="flex justify-end mt-2">
               <button type="button" class="text-xs text-blue-500" :disabled="capLoading"
