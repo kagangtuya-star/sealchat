@@ -240,6 +240,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/captcha/new", CaptchaNew)
 	v1.Get("/captcha/:id.png", CaptchaImage)
 	v1.Get("/captcha/:id/reload", CaptchaReload)
+	v1.Post("/captcha/cap/:scene/challenge", CaptchaCapChallenge)
+	v1.Post("/captcha/cap/:scene/redeem", CaptchaCapRedeem)
 
 	// Email auth routes (public)
 	v1.Post("/email-auth/signup-code", EmailAuthSignupCodeSend)

@@ -82,6 +82,7 @@ const (
 	CaptchaModeOff       CaptchaMode = "off"
 	CaptchaModeLocal     CaptchaMode = "local"
 	CaptchaModeTurnstile CaptchaMode = "turnstile"
+	CaptchaModeCap       CaptchaMode = "cap"
 )
 
 type TurnstileConfig struct {
@@ -89,9 +90,18 @@ type TurnstileConfig struct {
 	SecretKey string `json:"secretKey" yaml:"secretKey"`
 }
 
+type CaptchaCapConfig struct {
+	ChallengeCount          int `json:"challengeCount" yaml:"challengeCount"`
+	ChallengeSize           int `json:"challengeSize" yaml:"challengeSize"`
+	ChallengeDifficulty     int `json:"challengeDifficulty" yaml:"challengeDifficulty"`
+	ChallengeExpiresSeconds int `json:"challengeExpiresSeconds" yaml:"challengeExpiresSeconds"`
+	TokenTTLSeconds         int `json:"tokenTTLSeconds" yaml:"tokenTTLSeconds"`
+}
+
 type CaptchaTargetConfig struct {
-	Mode      CaptchaMode     `json:"mode" yaml:"mode"`
-	Turnstile TurnstileConfig `json:"turnstile" yaml:"turnstile"`
+	Mode      CaptchaMode      `json:"mode" yaml:"mode"`
+	Turnstile TurnstileConfig  `json:"turnstile" yaml:"turnstile"`
+	Cap       CaptchaCapConfig `json:"cap" yaml:"cap"`
 }
 
 type CaptchaScene string
@@ -105,6 +115,7 @@ const (
 type CaptchaConfig struct {
 	Mode          CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Turnstile     TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
+	Cap           CaptchaCapConfig    `json:"cap,omitempty" yaml:"cap,omitempty"`
 	Signup        CaptchaTargetConfig `json:"signup" yaml:"signup"`
 	Signin        CaptchaTargetConfig `json:"signin" yaml:"signin"`
 	PasswordReset CaptchaTargetConfig `json:"passwordReset" yaml:"passwordReset"`
@@ -786,12 +797,34 @@ func (cfg *CaptchaConfig) normalize() {
 	if cfg == nil {
 		return
 	}
-	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
-	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile)
-	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
+	normalizeCaptchaCapConfig(&cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile, cfg.Cap)
 }
 
-func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig) {
+func normalizeCaptchaCapConfig(cfg *CaptchaCapConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.ChallengeCount <= 0 {
+		cfg.ChallengeCount = 50
+	}
+	if cfg.ChallengeSize <= 0 {
+		cfg.ChallengeSize = 32
+	}
+	if cfg.ChallengeDifficulty <= 0 {
+		cfg.ChallengeDifficulty = 4
+	}
+	if cfg.ChallengeExpiresSeconds <= 0 {
+		cfg.ChallengeExpiresSeconds = 600
+	}
+	if cfg.TokenTTLSeconds <= 0 {
+		cfg.TokenTTLSeconds = 1200
+	}
+}
+
+func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig, fallbackCap CaptchaCapConfig) {
 	if target == nil {
 		return
 	}
@@ -807,6 +840,21 @@ func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbac
 	}
 	if target.Turnstile.SecretKey == "" {
 		target.Turnstile.SecretKey = fallbackTurnstile.SecretKey
+	}
+	if target.Cap.ChallengeCount <= 0 {
+		target.Cap.ChallengeCount = fallbackCap.ChallengeCount
+	}
+	if target.Cap.ChallengeSize <= 0 {
+		target.Cap.ChallengeSize = fallbackCap.ChallengeSize
+	}
+	if target.Cap.ChallengeDifficulty <= 0 {
+		target.Cap.ChallengeDifficulty = fallbackCap.ChallengeDifficulty
+	}
+	if target.Cap.ChallengeExpiresSeconds <= 0 {
+		target.Cap.ChallengeExpiresSeconds = fallbackCap.ChallengeExpiresSeconds
+	}
+	if target.Cap.TokenTTLSeconds <= 0 {
+		target.Cap.TokenTTLSeconds = fallbackCap.TokenTTLSeconds
 	}
 }
 
@@ -934,12 +982,35 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("captcha.mode", string(config.Captcha.Mode))
 		_ = k.Set("captcha.turnstile.siteKey", config.Captcha.Turnstile.SiteKey)
 		_ = k.Set("captcha.turnstile.secretKey", config.Captcha.Turnstile.SecretKey)
+		_ = k.Set("captcha.cap.challengeCount", config.Captcha.Cap.ChallengeCount)
+		_ = k.Set("captcha.cap.challengeSize", config.Captcha.Cap.ChallengeSize)
+		_ = k.Set("captcha.cap.challengeDifficulty", config.Captcha.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.cap.challengeExpiresSeconds", config.Captcha.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.cap.tokenTTLSeconds", config.Captcha.Cap.TokenTTLSeconds)
 		_ = k.Set("captcha.signup.mode", string(config.Captcha.Signup.Mode))
 		_ = k.Set("captcha.signup.turnstile.siteKey", config.Captcha.Signup.Turnstile.SiteKey)
 		_ = k.Set("captcha.signup.turnstile.secretKey", config.Captcha.Signup.Turnstile.SecretKey)
+		_ = k.Set("captcha.signup.cap.challengeCount", config.Captcha.Signup.Cap.ChallengeCount)
+		_ = k.Set("captcha.signup.cap.challengeSize", config.Captcha.Signup.Cap.ChallengeSize)
+		_ = k.Set("captcha.signup.cap.challengeDifficulty", config.Captcha.Signup.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.signup.cap.challengeExpiresSeconds", config.Captcha.Signup.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.signup.cap.tokenTTLSeconds", config.Captcha.Signup.Cap.TokenTTLSeconds)
 		_ = k.Set("captcha.signin.mode", string(config.Captcha.Signin.Mode))
 		_ = k.Set("captcha.signin.turnstile.siteKey", config.Captcha.Signin.Turnstile.SiteKey)
 		_ = k.Set("captcha.signin.turnstile.secretKey", config.Captcha.Signin.Turnstile.SecretKey)
+		_ = k.Set("captcha.signin.cap.challengeCount", config.Captcha.Signin.Cap.ChallengeCount)
+		_ = k.Set("captcha.signin.cap.challengeSize", config.Captcha.Signin.Cap.ChallengeSize)
+		_ = k.Set("captcha.signin.cap.challengeDifficulty", config.Captcha.Signin.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.signin.cap.challengeExpiresSeconds", config.Captcha.Signin.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.signin.cap.tokenTTLSeconds", config.Captcha.Signin.Cap.TokenTTLSeconds)
+		_ = k.Set("captcha.passwordReset.mode", string(config.Captcha.PasswordReset.Mode))
+		_ = k.Set("captcha.passwordReset.turnstile.siteKey", config.Captcha.PasswordReset.Turnstile.SiteKey)
+		_ = k.Set("captcha.passwordReset.turnstile.secretKey", config.Captcha.PasswordReset.Turnstile.SecretKey)
+		_ = k.Set("captcha.passwordReset.cap.challengeCount", config.Captcha.PasswordReset.Cap.ChallengeCount)
+		_ = k.Set("captcha.passwordReset.cap.challengeSize", config.Captcha.PasswordReset.Cap.ChallengeSize)
+		_ = k.Set("captcha.passwordReset.cap.challengeDifficulty", config.Captcha.PasswordReset.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.passwordReset.cap.challengeExpiresSeconds", config.Captcha.PasswordReset.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.passwordReset.cap.tokenTTLSeconds", config.Captcha.PasswordReset.Cap.TokenTTLSeconds)
 
 		// 邮件通知配置
 		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)

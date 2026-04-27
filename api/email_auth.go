@@ -54,6 +54,7 @@ func EmailAuthSignupCodeSend(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId"`
 		CaptchaValue   string `json:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken"`
+		CapToken       string `json:"capToken"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
@@ -66,7 +67,7 @@ func EmailAuthSignupCodeSend(c *fiber.Ctx) error {
 
 	cfg := utils.GetConfig()
 	captchaCfg := cfg.Captcha.Target(utils.CaptchaSceneSignup)
-	if err := verifyCaptchaByMode(captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken); err != nil {
+	if err := verifyCaptchaByMode(utils.CaptchaSceneSignup, captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken, req.CapToken); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -109,6 +110,7 @@ func EmailAuthPasswordResetVerify(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId"`
 		CaptchaValue   string `json:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken"`
+		CapToken       string `json:"capToken"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
@@ -122,7 +124,7 @@ func EmailAuthPasswordResetVerify(c *fiber.Ctx) error {
 	cfg := utils.GetConfig()
 	captchaCfg := cfg.Captcha.Target(utils.CaptchaScenePasswordReset)
 	if captchaCfg.Mode != utils.CaptchaModeOff {
-		if err := verifyCaptchaByMode(captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken); err != nil {
+		if err := verifyCaptchaByMode(utils.CaptchaScenePasswordReset, captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken, req.CapToken); err != nil {
 			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
@@ -172,6 +174,7 @@ func EmailAuthPasswordResetRequest(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId"`
 		CaptchaValue   string `json:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken"`
+		CapToken       string `json:"capToken"`
 		Verified       bool   `json:"verified"` // 是否已通过身份验证（步骤1）
 	}
 	if err := c.BodyParser(&req); err != nil {
@@ -188,7 +191,7 @@ func EmailAuthPasswordResetRequest(c *fiber.Ctx) error {
 		cfg := utils.GetConfig()
 		captchaCfg := cfg.Captcha.Target(utils.CaptchaScenePasswordReset)
 		if captchaCfg.Mode != utils.CaptchaModeOff {
-			if err := verifyCaptchaByMode(captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken); err != nil {
+			if err := verifyCaptchaByMode(utils.CaptchaScenePasswordReset, captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken, req.CapToken); err != nil {
 				return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 			}
 		}
@@ -259,6 +262,7 @@ func EmailAuthBindCodeSend(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId"`
 		CaptchaValue   string `json:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken"`
+		CapToken       string `json:"capToken"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
@@ -271,7 +275,7 @@ func EmailAuthBindCodeSend(c *fiber.Ctx) error {
 
 	cfg := utils.GetConfig()
 	captchaCfg := cfg.Captcha.Target(utils.CaptchaSceneSignup)
-	if err := verifyCaptchaByMode(captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken); err != nil {
+	if err := verifyCaptchaByMode(utils.CaptchaSceneSignup, captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken, req.CapToken); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -435,7 +439,7 @@ func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 	})
 }
 
-func verifyCaptchaByMode(cfg utils.CaptchaTargetConfig, captchaId, captchaValue, turnstileToken string) error {
+func verifyCaptchaByMode(scene utils.CaptchaScene, cfg utils.CaptchaTargetConfig, captchaId, captchaValue, turnstileToken, capToken string) error {
 	switch cfg.Mode {
 	case utils.CaptchaModeLocal:
 		if captchaId == "" || captchaValue == "" {
@@ -451,6 +455,17 @@ func verifyCaptchaByMode(cfg utils.CaptchaTargetConfig, captchaId, captchaValue,
 		ok, _ := model.TurnstileVerify(turnstileToken, cfg.Turnstile.SecretKey, "")
 		if !ok {
 			return fiber.NewError(http.StatusBadRequest, "人机验证失败")
+		}
+	case utils.CaptchaModeCap:
+		if strings.TrimSpace(capToken) == "" {
+			return fiber.NewError(http.StatusBadRequest, "请完成验证码验证")
+		}
+		ok, err := model.CaptchaCapValidateToken(scene, strings.TrimSpace(capToken))
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, "验证码验证失败")
+		}
+		if !ok {
+			return fiber.NewError(http.StatusBadRequest, "验证码验证失败")
 		}
 	}
 	return nil

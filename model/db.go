@@ -176,6 +176,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{}, &StickyNoteFolderModel{})
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
 	db.AutoMigrate(&EmailVerificationCodeModel{})
+	db.AutoMigrate(&CaptchaCapChallengeModel{}, &CaptchaCapTokenModel{})
 	db.AutoMigrate(&UpdateCheckState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})

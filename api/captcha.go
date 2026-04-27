@@ -15,6 +15,9 @@ func captchaSceneFromCtx(c *fiber.Ctx) utils.CaptchaScene {
 	if scene == string(utils.CaptchaSceneSignin) {
 		return utils.CaptchaSceneSignin
 	}
+	if scene == strings.ToLower(string(utils.CaptchaScenePasswordReset)) || scene == "password_reset" {
+		return utils.CaptchaScenePasswordReset
+	}
 	return utils.CaptchaSceneSignup
 }
 

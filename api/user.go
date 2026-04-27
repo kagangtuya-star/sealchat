@@ -21,7 +21,7 @@ func getCurUser(c *fiber.Ctx) *model.UserModel {
 	return c.Locals("user").(*model.UserModel)
 }
 
-func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, token, remoteIP string) (bool, string) {
+func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, turnstileToken, capToken, remoteIP string) (bool, string) {
 	conf := appConfig.Captcha.Target(scene)
 	switch conf.Mode {
 	case utils.CaptchaModeLocal:
@@ -29,7 +29,7 @@ func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, 
 			return false, "验证码错误或已过期"
 		}
 	case utils.CaptchaModeTurnstile:
-		trimmed := strings.TrimSpace(token)
+		trimmed := strings.TrimSpace(turnstileToken)
 		if trimmed == "" {
 			return false, "请完成人机验证"
 		}
@@ -39,6 +39,19 @@ func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, 
 		}
 		if !ok {
 			return false, "人机验证失败"
+		}
+	case utils.CaptchaModeCap:
+		trimmed := strings.TrimSpace(capToken)
+		if trimmed == "" {
+			return false, "请完成验证码验证"
+		}
+		ok, err := model.CaptchaCapValidateToken(scene, trimmed)
+		if err != nil {
+			log.Printf("Cap captcha verify failed: %v", err)
+			return false, "验证码验证失败"
+		}
+		if !ok {
+			return false, "验证码验证失败"
 		}
 	}
 	return true, ""
@@ -53,6 +66,7 @@ func UserSignup(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId" form:"captchaId"`
 		CaptchaValue   string `json:"captchaValue" form:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
+		CapToken       string `json:"capToken" form:"capToken"`
 	}
 
 	var requestBody RequestBody
@@ -96,7 +110,7 @@ func UserSignup(c *fiber.Ctx) error {
 		})
 	}
 
-	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignup, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, c.IP()); !ok {
+	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignup, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, requestBody.CapToken, c.IP()); !ok {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": msg,
 		})
@@ -147,6 +161,7 @@ func UserSignin(c *fiber.Ctx) error {
 		CaptchaId      string `json:"captchaId" form:"captchaId"`
 		CaptchaValue   string `json:"captchaValue" form:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
+		CapToken       string `json:"capToken" form:"capToken"`
 	}
 
 	var requestBody RequestBody
@@ -170,7 +185,7 @@ func UserSignin(c *fiber.Ctx) error {
 		})
 	}
 
-	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignin, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, c.IP()); !ok {
+	if ok, msg := validateCaptchaForScene(utils.CaptchaSceneSignin, requestBody.CaptchaId, requestBody.CaptchaValue, requestBody.TurnstileToken, requestBody.CapToken, c.IP()); !ok {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": msg,
 		})
