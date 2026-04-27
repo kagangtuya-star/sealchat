@@ -589,6 +589,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
       <section class="display-settings__section">
         <header>
           <div>
+            <p class="section-title">简洁输入框</p>
+            <p class="section-desc">开启后底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.mobileMinimalInputEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
             <p class="section-title">头像装饰性能</p>
             <p class="section-desc">低性能模式下优先使用静态兜底资源；若动效装饰未配置兜底图，则直接隐藏动效层</p>
           </div>
@@ -805,19 +818,6 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           </n-button>
         </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
-      </section>
-
-      <section class="display-settings__section">
-        <header>
-          <div>
-            <p class="section-title">简洁输入框</p>
-            <p class="section-desc">开启后底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
-          </div>
-        </header>
-        <n-switch v-model:value="draft.mobileMinimalInputEnabled">
-          <template #checked>已启用</template>
-          <template #unchecked>已关闭</template>
-        </n-switch>
       </section>
 
       <section class="display-settings__section">
