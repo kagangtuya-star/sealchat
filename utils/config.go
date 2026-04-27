@@ -382,8 +382,9 @@ func ReadConfig() *AppConfig {
 			AutoVacuumIntervalHours: 168,
 		},
 		Captcha: CaptchaConfig{
-			Signup: CaptchaTargetConfig{Mode: CaptchaModeLocal},
-			Signin: CaptchaTargetConfig{Mode: CaptchaModeOff},
+			Signup:        CaptchaTargetConfig{Mode: CaptchaModeCap},
+			Signin:        CaptchaTargetConfig{Mode: CaptchaModeOff},
+			PasswordReset: CaptchaTargetConfig{Mode: CaptchaModeCap},
 		},
 		EmailNotification: EmailNotificationConfig{
 			Enabled:          false,
@@ -798,9 +799,9 @@ func (cfg *CaptchaConfig) normalize() {
 		return
 	}
 	normalizeCaptchaCapConfig(&cfg.Cap)
-	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeCap, cfg.Turnstile, cfg.Cap)
 	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile, cfg.Cap)
-	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeCap, cfg.Turnstile, cfg.Cap)
 }
 
 func normalizeCaptchaCapConfig(cfg *CaptchaCapConfig) {

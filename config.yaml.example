@@ -35,7 +35,7 @@
       challengeExpiresSeconds: 600
       tokenTTLSeconds: 1200
     signup:
-      mode: local
+      mode: cap
       turnstile:
         siteKey: ""
         secretKey: ""
@@ -57,7 +57,7 @@
         challengeExpiresSeconds: 600
         tokenTTLSeconds: 1200
     passwordReset:
-      mode: local
+      mode: cap
       turnstile:
         siteKey: ""
         secretKey: ""

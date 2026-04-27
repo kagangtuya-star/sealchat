@@ -49,7 +49,7 @@ captcha:
     challengeExpiresSeconds: 600
     tokenTTLSeconds: 1200
   signup:
-    mode: local                              # off / local / turnstile / cap
+    mode: cap                                # off / local / turnstile / cap
     turnstile:
       siteKey: ""
       secretKey: ""
@@ -71,7 +71,7 @@ captcha:
       challengeExpiresSeconds: 600
       tokenTTLSeconds: 1200
   passwordReset:
-    mode: local                              # 密码重置验证码
+    mode: cap                                # 密码重置验证码
     turnstile:
       siteKey: ""
       secretKey: ""
