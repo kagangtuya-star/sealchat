@@ -22,6 +22,7 @@ const props = withDefaults(defineProps<{
   channelId?: string;
   disabled?: boolean;
   compact?: boolean;
+  iconOnly?: boolean;
   previewAppearance?: {
     identityId?: string;
     displayName?: string;
@@ -34,6 +35,7 @@ const props = withDefaults(defineProps<{
   channelId: undefined,
   disabled: false,
   compact: false,
+  iconOnly: false,
   previewAppearance: null,
 });
 
@@ -214,7 +216,7 @@ const updateIsMobile = () => {
 
 // Displayed name: on mobile, if name exceeds 4 characters, show "切换" instead
 const displayedButtonLabel = computed(() => {
-  if (props.compact && isMobile.value) {
+  if (props.iconOnly || (props.compact && isMobile.value)) {
     return '';
   }
   const name = displayName.value;
@@ -224,7 +226,8 @@ const displayedButtonLabel = computed(() => {
   return name;
 });
 
-const avatarSize = computed(() => (props.compact && isMobile.value ? 22 : 28));
+const isCompactButton = computed(() => props.iconOnly || (props.compact && isMobile.value));
+const avatarSize = computed(() => (isCompactButton.value ? 22 : 28));
 
 const avatarSrc = computed(() => {
   const resolved = buildAttachmentUrl(
@@ -783,7 +786,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
         tertiary
         size="small"
         class="identity-switcher"
-        :class="{ 'identity-switcher--compact': props.compact && isMobile }"
+        :class="{ 'identity-switcher--compact': isCompactButton }"
         :disabled="!resolvedChannelId || disabled"
         :title="displayName"
       >
@@ -796,7 +799,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
           class="identity-switcher__avatar"
         />
         <span
-          v-if="displayColor && (!props.compact || !isMobile)"
+          v-if="displayColor && (props.iconOnly || !isCompactButton)"
           class="identity-switcher__color"
           :style="{ backgroundColor: displayColor }"
         />
@@ -808,7 +811,7 @@ watch([dropdownVisible, sortedIdentitySignature, () => canManageIdentities.value
           {{ displayedButtonLabel }}
         </span>
         <n-icon
-          v-if="showFavoriteBadge && (!props.compact || !isMobile)"
+          v-if="showFavoriteBadge && !isCompactButton"
           :component="Star"
           size="12"
           class="identity-switcher__favorite"

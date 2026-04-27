@@ -810,8 +810,8 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">移动端简洁输入框</p>
-            <p class="section-desc">仅移动端生效，底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
+            <p class="section-title">简洁输入框</p>
+            <p class="section-desc">开启后底部只保留精简主栏，完整按钮通过加号显示到顶部工具栏区域</p>
           </div>
         </header>
         <n-switch v-model:value="draft.mobileMinimalInputEnabled">

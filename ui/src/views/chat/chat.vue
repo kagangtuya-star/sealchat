@@ -1782,20 +1782,19 @@ const isMobileInteractionMode = computed(() => {
   return width > 0 && width <= 768 && isCoarsePointerDevice && hasTouchPoints;
 });
 const isMobileWideInput = computed(() => wideInputMode.value && isMobileInteractionMode.value);
-const isMobileMinimalInputActive = computed(() => (
+const isMinimalInputActive = computed(() => (
   display.settings.mobileMinimalInputEnabled
-  && isMobileInteractionMode.value
   && !isMobileWideInput.value
   && !isEmbedMode.value
 ));
 const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
-  if (!isMobileMinimalInputActive.value || !minimalInputToolbarVisible.value) {
+  if (!isMinimalInputActive.value || !minimalInputToolbarVisible.value) {
     return null;
   }
   return minimalInputActionsHostRef.value;
 });
 const showMinimalStackedSideControls = computed(() => (
-  isMobileMinimalInputActive.value
+  isMinimalInputActive.value
   && !isEditing.value
   && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_STACKED_THRESHOLD
 ));
@@ -9508,7 +9507,7 @@ const closeInputExtraOverlays = () => {
 };
 
 watch(
-  () => isMobileMinimalInputActive.value,
+  () => isMinimalInputActive.value,
   (active) => {
     if (!active) {
       minimalInputToolbarVisible.value = false;
@@ -13995,7 +13994,7 @@ onBeforeUnmount(() => {
     <Teleport v-if="inputExtraActionsTeleportTarget" :to="inputExtraActionsTeleportTarget">
       <div
         class="chat-input-actions__teleport-content"
-        :class="{ 'chat-input-actions__teleport-content--compact-toolbar': isMobileMinimalInputActive }"
+        :class="{ 'chat-input-actions__teleport-content--compact-toolbar': isMinimalInputActive }"
       >
         <div class="chat-input-actions__group chat-input-actions__group--leading chat-input-actions__group--leading-extras">
           <div class="chat-input-actions__cell">
@@ -14297,6 +14296,21 @@ onBeforeUnmount(() => {
           <div class="chat-input-actions__cell">
             <n-tooltip trigger="hover">
               <template #trigger>
+                <n-button quaternary circle class="typing-toggle" :class="typingToggleClass"
+                  @click="toggleTypingPreview">
+                  <n-icon
+                    class="chat-input-actions__icon"
+                    :component="IconBuildingBroadcastTower"
+                    size="18"
+                  />
+                </n-button>
+              </template>
+              {{ typingPreviewTooltip }}
+            </n-tooltip>
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
                 <n-button quaternary circle @click="doUpload">
                   <template #icon>
                     <n-icon :component="Upload" size="18" />
@@ -14395,6 +14409,47 @@ onBeforeUnmount(() => {
                   <p class="history-panel__hint">输入内容并点击「保存当前」即可添加</p>
                 </div>
               </div>
+            </n-popover>
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-popover
+              trigger="manual"
+              :placement="isDiceTrayEdgeAnchored ? 'top-end' : 'top'"
+              :show="isDiceTrayEdgeAnchored ? diceTrayMobileVisible : diceTrayDesktopVisible"
+              :show-arrow="false"
+              :overlay-class="isDiceTrayEdgeAnchored ? DICE_TRAY_EDGE_OVERLAY_CLASS : undefined"
+            >
+              <template #trigger>
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button
+                      class="chat-dice-button"
+                      quaternary
+                      circle
+                      :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating"
+                      @click="toggleDiceTray"
+                    >
+                      <template #icon>
+                        <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
+                          <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
+                          <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
+                        </svg>
+                      </template>
+                    </n-button>
+                  </template>
+                  掷骰
+                </n-tooltip>
+              </template>
+              <DiceTray
+                :default-dice="defaultDiceExpr"
+                :can-edit-default="canEditDefaultDice"
+                :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
+                :bot-feature-enabled="effectiveBotFeatureEnabled"
+                @insert="handleDiceInsert"
+                @roll="handleDiceRollNow"
+                @update-default="handleDiceDefaultUpdate"
+                @close="isDiceTrayEdgeAnchored ? (diceTrayMobileVisible = false) : (diceTrayDesktopVisible = false)"
+              />
             </n-popover>
           </div>
         </div>
@@ -14966,12 +15021,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="chat-input-area relative flex-1">
             <div
-              v-if="isMobileMinimalInputActive && minimalInputToolbarVisible"
+              v-if="isMinimalInputActive && minimalInputToolbarVisible"
               ref="minimalInputActionsHostRef"
               class="chat-input-inline-toolbar-host"
             />
             <div
-              v-if="!isMobileMinimalInputActive"
+              v-if="!isMinimalInputActive"
               :class="[
                 'chat-input-actions',
                 'input-floating-toolbar',
@@ -15759,7 +15814,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div
-              v-if="isMobileMinimalInputActive"
+              v-if="isMinimalInputActive"
               class="chat-input-editor-row chat-input-editor-row--minimal"
               :class="{ 'chat-input-editor-row--side-stacked': showMinimalStackedSideControls }"
               :style="chatInputStyle"
@@ -15769,6 +15824,7 @@ onBeforeUnmount(() => {
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
                     compact
+                    icon-only
                     :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
                     @edit-temporary="openActiveTemporaryIdentityEdit"
@@ -19002,6 +19058,11 @@ onBeforeUnmount(() => {
 
 .chat-input-minimal-actions {
   align-self: center;
+}
+
+.chat-input-editor-row--minimal:not(.chat-input-editor-row--side-stacked) .chat-input-minimal-side {
+  align-self: center;
+  justify-content: center;
 }
 
 .chat-input-minimal-actions--draft,
