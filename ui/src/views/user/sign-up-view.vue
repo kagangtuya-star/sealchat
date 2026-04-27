@@ -8,6 +8,7 @@ import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
+import { useCapWidget } from '@/composables/useCapWidget';
 
 declare global {
   interface Window {
@@ -45,6 +46,15 @@ const turnstileContainer = ref<HTMLDivElement | null>(null);
 const turnstileWidgetId = ref<string | null>(null);
 const turnstileError = ref('');
 const turnstileLoading = ref(false);
+const {
+  container: capContainer,
+  token: capToken,
+  error: capError,
+  loading: capLoading,
+  render: renderCapWidget,
+  reset: resetCapWidget,
+  destroy: destroyCapWidget,
+} = useCapWidget(CAPTCHA_SCENE);
 
 const message = useMessage();
 
@@ -77,7 +87,7 @@ const shouldForceCaptchaRetry = (errMsg: string) => {
   if (!errMsg) {
     return false;
   }
-  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误'].some((keyword) => errMsg.includes(keyword));
+  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误', '验证码验证失败'].some((keyword) => errMsg.includes(keyword));
 };
 
 const sendEmailCode = async () => {
@@ -99,6 +109,10 @@ const sendEmailCode = async () => {
       message.error('请先完成人机验证');
       return;
     }
+    if (captchaMode.value === 'cap' && !capToken.value) {
+      message.error('请先完成验证码验证');
+      return;
+    }
   }
 
   emailCodeSending.value = true;
@@ -108,6 +122,7 @@ const sendEmailCode = async () => {
       captchaId: captchaVerified.value ? '' : captchaId.value,
       captchaValue: captchaVerified.value ? '' : captchaInput.value.trim(),
       turnstileToken: captchaVerified.value ? '' : turnstileToken.value,
+      capToken: captchaVerified.value ? '' : capToken.value,
     });
     message.success('验证码已发送到您的邮箱');
     captchaVerified.value = true; // 标记验证码已通过
@@ -132,6 +147,8 @@ const sendEmailCode = async () => {
         turnstileToken.value = '';
         await nextTick();
         await renderTurnstileWidget();
+      } else if (captchaMode.value === 'cap') {
+        await resetCapWidget();
       }
       return;
     }
@@ -143,6 +160,8 @@ const sendEmailCode = async () => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
     }
   } finally {
@@ -347,15 +366,22 @@ watch(
   (mode) => {
     if (!mode || mode === 'off') {
       resetLocalCaptchaState();
+      destroyCapWidget();
       destroyTurnstile();
       return;
     }
     if (mode === 'local') {
+      destroyCapWidget();
       destroyTurnstile();
       fetchCaptcha();
     } else if (mode === 'turnstile') {
+      destroyCapWidget();
       resetLocalCaptchaState();
       renderTurnstileWidget();
+    } else if (mode === 'cap') {
+      destroyTurnstile();
+      resetLocalCaptchaState();
+      renderCapWidget();
     }
   },
   { immediate: true },
@@ -415,6 +441,9 @@ const signUp = async () => {
   } else if (captchaMode.value === 'turnstile' && !turnstileToken.value) {
     message.error('请完成人机验证');
     return;
+  } else if (captchaMode.value === 'cap' && !capToken.value) {
+    message.error('请先完成验证码验证');
+    return;
   }
 
   const captchaValue = captchaInput.value.trim();
@@ -425,6 +454,7 @@ const signUp = async () => {
     captchaId: captchaId.value,
     captchaValue,
     turnstileToken: turnstileToken.value,
+    capToken: capToken.value,
   });
 
   if (captchaMode.value === 'local') {
@@ -432,6 +462,8 @@ const signUp = async () => {
   } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
     window.turnstile.reset(turnstileWidgetId.value);
     turnstileToken.value = '';
+  } else if (captchaMode.value === 'cap') {
+    resetCapWidget();
   }
 
   if (ret) {
@@ -465,6 +497,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  destroyCapWidget();
   destroyTurnstile();
   if (emailCodeTimer) {
     clearInterval(emailCodeTimer);
@@ -567,6 +600,20 @@ onBeforeUnmount(() => {
               <p v-if="turnstileError" class="mt-1 text-xs text-red-500">{{ turnstileError }}</p>
             </div>
 
+            <div class="w-full mt-4" v-else-if="captchaMode === 'cap' && !captchaVerified">
+              <label class="block text-xs text-gray-500 dark:text-gray-300">验证码验证</label>
+              <div class="mt-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+                <div ref="capContainer" class="flex items-center justify-center min-h-[90px] py-2 px-2"></div>
+              </div>
+              <div class="flex justify-end mt-2">
+                <button type="button" class="text-xs text-blue-500" :disabled="capLoading"
+                  @click.prevent="resetCapWidget">
+                  {{ capLoading ? '加载中' : '刷新' }}
+                </button>
+              </div>
+              <p v-if="capError" class="mt-1 text-xs text-red-500">{{ capError }}</p>
+            </div>
+
             <div class="w-full mt-4">
               <label class="block text-xs text-gray-500 dark:text-gray-300">邮箱验证码</label>
               <div class="flex items-center gap-3 mt-2">
@@ -619,6 +666,20 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p v-if="turnstileError" class="mt-1 text-xs text-red-500">{{ turnstileError }}</p>
+          </div>
+
+          <div class="w-full mt-4" v-else-if="captchaMode === 'cap'">
+            <label class="block text-xs text-gray-500 dark:text-gray-300">验证码验证</label>
+            <div class="mt-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+              <div ref="capContainer" class="flex items-center justify-center min-h-[90px] py-2 px-2"></div>
+            </div>
+            <div class="flex justify-end mt-2">
+              <button type="button" class="text-xs text-blue-500" :disabled="capLoading"
+                @click.prevent="resetCapWidget">
+                {{ capLoading ? '加载中' : '刷新' }}
+              </button>
+            </div>
+            <p v-if="capError" class="mt-1 text-xs text-red-500">{{ capError }}</p>
           </div>
           </template>
 

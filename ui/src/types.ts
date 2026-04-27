@@ -136,17 +136,27 @@ export interface TurnstileConfig {
   secretKey?: string;
 }
 
+export interface CaptchaCapConfig {
+  challengeCount?: number;
+  challengeSize?: number;
+  challengeDifficulty?: number;
+  challengeExpiresSeconds?: number;
+  tokenTTLSeconds?: number;
+}
+
 export interface CaptchaTargetConfig {
-  mode?: 'off' | 'local' | 'turnstile';
+  mode?: 'off' | 'local' | 'turnstile' | 'cap';
   turnstile?: TurnstileConfig;
+  cap?: CaptchaCapConfig;
 }
 
 export interface CaptchaConfig {
   signup?: CaptchaTargetConfig;
   signin?: CaptchaTargetConfig;
   passwordReset?: CaptchaTargetConfig;
-  mode?: 'off' | 'local' | 'turnstile';
+  mode?: 'off' | 'local' | 'turnstile' | 'cap';
   turnstile?: TurnstileConfig;
+  cap?: CaptchaCapConfig;
 }
 
 export interface LoginBackgroundConfig {

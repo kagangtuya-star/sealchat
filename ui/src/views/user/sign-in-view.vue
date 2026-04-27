@@ -9,6 +9,7 @@ import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
+import { useCapWidget } from '@/composables/useCapWidget';
 
 declare global {
   interface Window {
@@ -42,6 +43,15 @@ const turnstileToken = ref('');
 const turnstileWidgetId = ref<string | null>(null);
 const turnstileError = ref('');
 const turnstileLoading = ref(false);
+const {
+  container: capContainer,
+  token: capToken,
+  error: capError,
+  loading: capLoading,
+  render: renderCapWidget,
+  reset: resetCapWidget,
+  destroy: destroyCapWidget,
+} = useCapWidget(CAPTCHA_SCENE);
 
 const userStore = useUserStore();
 const utils = useUtilsStore();
@@ -247,13 +257,21 @@ watch(
   () => captchaMode.value,
   (mode) => {
     if (mode === 'local') {
+      destroyCapWidget();
       destroyTurnstile();
       fetchCaptcha();
     } else if (mode === 'turnstile') {
+      destroyCapWidget();
       captchaId.value = '';
       captchaInput.value = '';
       renderTurnstileWidget();
+    } else if (mode === 'cap') {
+      destroyTurnstile();
+      captchaId.value = '';
+      captchaInput.value = '';
+      renderCapWidget();
     } else {
+      destroyCapWidget();
       destroyTurnstile();
       captchaId.value = '';
       captchaInput.value = '';
@@ -289,6 +307,9 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
     } else if (captchaMode.value === 'turnstile' && !turnstileToken.value) {
       message.error('请完成人机验证');
       return;
+    } else if (captchaMode.value === 'cap' && !capToken.value) {
+      message.error('请先完成验证码验证');
+      return;
     }
 
     try {
@@ -298,6 +319,7 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
         captchaId: captchaId.value,
         captchaValue: captchaInput.value.trim(),
         turnstileToken: turnstileToken.value,
+        capToken: capToken.value,
       });
       const ret = resp.data;
       if (captchaMode.value === 'local') {
@@ -305,6 +327,8 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
       message.success('验证成功，即将返回首页');
       if (ret.token) {
@@ -317,6 +341,8 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
     }
   });
@@ -333,6 +359,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   destroyTurnstile();
+  destroyCapWidget();
 });
 </script>
 
@@ -381,6 +408,16 @@ onBeforeUnmount(() => {
             <n-button text size="tiny" :loading="turnstileLoading" @click.prevent="renderTurnstileWidget">刷新</n-button>
           </div>
           <div v-if="turnstileError" class="text-xs text-red-500 mt-1">{{ turnstileError }}</div>
+        </n-form-item>
+
+        <n-form-item v-else-if="captchaMode === 'cap'" label="验证码验证">
+          <div class="w-full rounded border border-gray-200 dark:border-gray-600 py-2 flex items-center justify-center min-h-[90px]">
+            <div ref="capContainer" class="w-full flex items-center justify-center px-2"></div>
+          </div>
+          <div class="flex justify-end mt-1">
+            <n-button text size="tiny" :loading="capLoading" @click.prevent="resetCapWidget">刷新</n-button>
+          </div>
+          <div v-if="capError" class="text-xs text-red-500 mt-1">{{ capError }}</div>
         </n-form-item>
 
         <n-row :gutter="[0, 24]">

@@ -9,6 +9,7 @@ import { useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
 import router from '@/router';
 import type { ServerConfig } from '@/types';
+import { useCapWidget } from '@/composables/useCapWidget';
 
 declare global {
   interface Window {
@@ -63,6 +64,15 @@ const turnstileContainer = ref<HTMLDivElement | null>(null);
 const turnstileWidgetId = ref<string | null>(null);
 const turnstileError = ref('');
 const turnstileLoading = ref(false);
+const {
+  container: capContainer,
+  token: capToken,
+  error: capError,
+  loading: capLoading,
+  render: renderCapWidget,
+  reset: resetCapWidget,
+  destroy: destroyCapWidget,
+} = useCapWidget(CAPTCHA_SCENE);
 
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) return '';
@@ -74,7 +84,7 @@ const shouldForceCaptchaRetry = (errMsg: string) => {
   if (!errMsg) {
     return false;
   }
-  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误'].some((keyword) => errMsg.includes(keyword));
+  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误', '验证码验证失败'].some((keyword) => errMsg.includes(keyword));
 };
 
 onMounted(async () => {
@@ -319,6 +329,7 @@ const resetCaptchaState = () => {
   captchaError.value = '';
   captchaLoading.value = false;
   captchaVerified.value = false;
+  destroyCapWidget();
   destroyTurnstile();
 };
 
@@ -342,6 +353,8 @@ const openEmailBind = () => {
     fetchCaptcha();
   } else if (captchaMode.value === 'turnstile') {
     nextTick().then(() => renderTurnstileWidget());
+  } else if (captchaMode.value === 'cap') {
+    nextTick().then(() => renderCapWidget());
   }
 };
 
@@ -371,6 +384,9 @@ const sendBindEmailCode = async () => {
   } else if (!captchaVerified.value && captchaMode.value === 'turnstile' && !turnstileToken.value) {
     message.error('请先完成人机验证');
     return;
+  } else if (!captchaVerified.value && captchaMode.value === 'cap' && !capToken.value) {
+    message.error('请先完成验证码验证');
+    return;
   }
 
   emailCodeSending.value = true;
@@ -380,6 +396,7 @@ const sendBindEmailCode = async () => {
       captchaId: captchaVerified.value ? '' : captchaId.value,
       captchaValue: captchaVerified.value ? '' : captchaInput.value.trim(),
       turnstileToken: captchaVerified.value ? '' : turnstileToken.value,
+      capToken: captchaVerified.value ? '' : capToken.value,
     });
     message.success('验证码已发送到您的邮箱');
     captchaVerified.value = true;
@@ -405,6 +422,8 @@ const sendBindEmailCode = async () => {
         turnstileToken.value = '';
         await nextTick();
         await renderTurnstileWidget();
+      } else if (captchaMode.value === 'cap') {
+        await resetCapWidget();
       }
       return;
     }
@@ -415,6 +434,8 @@ const sendBindEmailCode = async () => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
     }
   } finally {
@@ -463,6 +484,7 @@ onBeforeUnmount(() => {
     clearInterval(emailCodeTimer);
     emailCodeTimer = null;
   }
+  destroyCapWidget();
   destroyTurnstile();
 });
 </script>
@@ -537,6 +559,15 @@ onBeforeUnmount(() => {
             <n-button text size="tiny" :loading="turnstileLoading" @click.prevent="renderTurnstileWidget">刷新</n-button>
           </div>
           <div v-if="turnstileError" class="text-xs text-red-500 dark:text-red-400 mt-1">{{ turnstileError }}</div>
+        </n-form-item>
+        <n-form-item v-else-if="captchaMode === 'cap' && !captchaVerified" label="验证码验证">
+          <div class="w-full rounded border border-gray-200 dark:border-gray-600 py-2 flex items-center justify-center min-h-[90px]">
+            <div ref="capContainer" class="w-full flex items-center justify-center px-2"></div>
+          </div>
+          <div class="flex justify-end mt-1">
+            <n-button text size="tiny" :loading="capLoading" @click.prevent="resetCapWidget">刷新</n-button>
+          </div>
+          <div v-if="capError" class="text-xs text-red-500 dark:text-red-400 mt-1">{{ capError }}</div>
         </n-form-item>
         <n-form-item label="邮箱验证码">
           <div class="flex w-full items-center gap-2">
