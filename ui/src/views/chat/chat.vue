@@ -1499,17 +1499,17 @@ const resolveEmojiAnchorElement = () => {
   if (current && document.body.contains(current)) {
     return current;
   }
-  emojiAnchorElement.value = document.querySelector<HTMLElement>('.identity-switcher__avatar');
-  return emojiAnchorElement.value;
+  return null;
 };
 
 const EMOJI_POPOVER_VERTICAL_OFFSET = 10; // 让弹层靠近头像顶部，避免遮挡
 
-const syncEmojiPopoverPosition = () => {
-  const anchor = resolveEmojiAnchorElement() || emojiTriggerButtonRef.value;
+const syncEmojiPopoverPosition = (trigger?: HTMLElement | null) => {
+  const anchor = trigger || resolveEmojiAnchorElement() || emojiTriggerButtonRef.value;
   if (!anchor) {
     return false;
   }
+  emojiAnchorElement.value = anchor;
   const rect = anchor.getBoundingClientRect();
   emojiPopoverX.value = rect.left;
   emojiPopoverY.value = rect.top + EMOJI_POPOVER_VERTICAL_OFFSET;
@@ -2343,13 +2343,13 @@ const handleEmojiManageClick = async () => {
   }
 };
 
-const handleEmojiTriggerClick = () => {
+const handleEmojiTriggerClick = (event?: MouseEvent) => {
   if (emojiPopoverShow.value) {
     emojiPopoverShow.value = false;
     return;
   }
   emojiPanelTab.value = 'gallery';
-  syncEmojiPopoverPosition();
+  syncEmojiPopoverPosition(event?.currentTarget as HTMLElement | null);
   emojiPopoverShow.value = true;
 };
 
@@ -14005,7 +14005,7 @@ onBeforeUnmount(() => {
                     quaternary
                     circle
                     ref="emojiTriggerButtonRef"
-                    @click="handleEmojiTriggerClick"
+                    @click="handleEmojiTriggerClick($event)"
                   >
                     <template #icon>
                       <n-icon :component="Plus" size="18" />
@@ -15057,7 +15057,7 @@ onBeforeUnmount(() => {
                           quaternary
                           circle
                           ref="emojiTriggerButtonRef"
-                          @click="handleEmojiTriggerClick"
+                          @click="handleEmojiTriggerClick($event)"
                         >
                           <template #icon>
                             <n-icon :component="Plus" size="18" />
