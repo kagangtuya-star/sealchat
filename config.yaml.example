@@ -27,22 +27,46 @@
   pageTitle: "海豹尬聊 SealChat"
   faviconAttachmentId: "" # 可选：平台管理-基本设置上传网页图标后会写入此处
   captcha:
-    # 验证码：off 关闭/local 本地生成/turnstile 启动cloudflare turnstile盾，需要配置对应的key
+    # 验证码：off 关闭/local 本地图形码/turnstile Cloudflare Turnstile/cap 本地托管 Cap PoW 验证码
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
     signup:
       mode: local
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
     signin:
       mode: off
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
     passwordReset:
       mode: local
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
 
   sqlite:
     # 是否启用 WAL 日志，提高读写并发

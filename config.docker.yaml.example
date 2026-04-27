@@ -42,21 +42,45 @@ logUpload:
 
 # 验证码配置
 captcha:
+  cap:
+    challengeCount: 50
+    challengeSize: 32
+    challengeDifficulty: 4
+    challengeExpiresSeconds: 600
+    tokenTTLSeconds: 1200
   signup:
-    mode: local                              # off / local / turnstile
+    mode: local                              # off / local / turnstile / cap
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
   signin:
     mode: off
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
   passwordReset:
     mode: local                              # 密码重置验证码
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
 
 # SQLite 优化配置 (使用 SQLite 时生效)
 sqlite:
