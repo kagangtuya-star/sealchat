@@ -1,5 +1,11 @@
 import { defineStore } from 'pinia'
 import { api } from './_config'
+import {
+    nextChannelImagesIcModeFilter,
+    readChannelImagesIcModeFilter,
+    writeChannelImagesIcModeFilter,
+    type ChannelImagesIcModeFilter,
+} from './channelImagesFilter'
 
 export interface ChannelImageItem {
     id: string
@@ -26,6 +32,7 @@ interface ChannelImagesState {
     hasMore: boolean
     previewIndex: number | null
     thumbnailMode: 'small' | 'large'  // 小图/大图模式
+    icModeFilter: ChannelImagesIcModeFilter
 }
 
 interface ChannelImagesApiResponse {
@@ -60,6 +67,7 @@ export const useChannelImagesStore = defineStore('channelImages', {
         hasMore: false,
         previewIndex: null,
         thumbnailMode: 'large',  // 默认大图模式
+        icModeFilter: readChannelImagesIcModeFilter(),
     }),
 
     getters: {
@@ -126,6 +134,24 @@ export const useChannelImagesStore = defineStore('channelImages', {
             this.thumbnailMode = this.thumbnailMode === 'large' ? 'small' : 'large'
         },
 
+        setIcModeFilter(mode: ChannelImagesIcModeFilter) {
+            if (this.icModeFilter === mode) return
+            this.icModeFilter = mode
+            writeChannelImagesIcModeFilter(mode)
+            this.page = 1
+            this.items = []
+            this.total = 0
+            this.hasMore = false
+            this.previewIndex = null
+            if (this.panelVisible && this.channelId) {
+                void this.loadImages(true)
+            }
+        },
+
+        cycleIcModeFilter() {
+            this.setIcModeFilter(nextChannelImagesIcModeFilter(this.icModeFilter))
+        },
+
         // 刷新图片列表（用于实时更新）
         async refresh() {
             if (!this.channelId || this.loading) return
@@ -148,6 +174,7 @@ export const useChannelImagesStore = defineStore('channelImages', {
                         params: {
                             page: this.page,
                             page_size: this.pageSize,
+                            ic_mode: this.icModeFilter,
                         },
                     }
                 )
@@ -206,6 +233,7 @@ export const useChannelImagesStore = defineStore('channelImages', {
             this.hasMore = false
             this.previewIndex = null
             this.thumbnailMode = 'large'
+            this.icModeFilter = readChannelImagesIcModeFilter()
         },
     },
 })

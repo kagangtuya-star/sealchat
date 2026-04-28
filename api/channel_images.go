@@ -83,6 +83,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 	if pageSize > 100 {
 		pageSize = 100
 	}
+	icModeFilter := strings.ToLower(strings.TrimSpace(c.Query("ic_mode", "all")))
 
 	db := model.GetDB()
 
@@ -95,6 +96,12 @@ func ChannelImagesList(c *fiber.Ctx) error {
 			Where("is_deleted = ?", false).
 			Where("content LIKE ?", "%id:%") // Only get messages that might have images
 		q = applyWhisperVisibilityFilter(q, user.ID, channelID)
+		switch icModeFilter {
+		case "ic":
+			q = q.Where("(ic_mode = ? OR ic_mode = '' OR ic_mode IS NULL)", "ic")
+		case "ooc":
+			q = q.Where("ic_mode = ?", "ooc")
+		}
 		return q
 	}
 

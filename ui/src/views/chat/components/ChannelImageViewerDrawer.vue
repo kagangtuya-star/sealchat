@@ -24,7 +24,7 @@ const emit = defineEmits<{
 
 const channelImages = useChannelImagesStore()
 const chat = useChatStore()
-const { panelVisible, items, loading, loadingMore, hasMore, total, thumbnailMode } = storeToRefs(channelImages)
+const { panelVisible, items, loading, loadingMore, hasMore, total, thumbnailMode, icModeFilter } = storeToRefs(channelImages)
 
 const { width: viewportWidth } = useWindowSize()
 const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 768)
@@ -40,6 +40,17 @@ const gridColumns = computed(() => {
     return isMobileLayout.value ? 'repeat(4, 1fr)' : 'repeat(5, 1fr)'
   }
   return isMobileLayout.value ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)'
+})
+
+const icModeFilterLabel = computed(() => {
+  switch (icModeFilter.value) {
+    case 'ic':
+      return '场内'
+    case 'ooc':
+      return '场外'
+    default:
+      return '全部'
+  }
 })
 
 // Infinite scroll
@@ -230,6 +241,21 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
           <div class="images-header__toolbar">
             <n-tooltip trigger="hover">
               <template #trigger>
+              <n-button
+                class="images-header__filter"
+                type="primary"
+                quaternary
+                size="small"
+                @click="channelImages.cycleIcModeFilter()"
+              >
+                {{ icModeFilterLabel }}
+              </n-button>
+              </template>
+              点击切换全部 / 场内 / 场外
+            </n-tooltip>
+
+            <n-tooltip trigger="hover">
+              <template #trigger>
                 <n-button quaternary size="small" @click="handleRefresh" :loading="loading">
                   <template #icon>
                     <n-icon :component="RefreshOutline" />
@@ -411,6 +437,10 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
   margin-left: auto;
 }
 
+.images-header__filter {
+  margin-right: 0.25rem;
+}
+
 .images-content {
   height: calc(100% - 2rem);
   overflow-y: auto;
@@ -575,8 +605,18 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
 }
 
 @media (max-width: 768px) {
+  .images-header {
+    flex-wrap: wrap;
+  }
+
   .images-header__toolbar {
+    width: 100%;
+    justify-content: flex-end;
     gap: 0.15rem;
+  }
+
+  .images-header__filter {
+    margin-right: auto;
   }
 
   .image-card {
