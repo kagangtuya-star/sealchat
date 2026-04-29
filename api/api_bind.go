@@ -195,7 +195,7 @@ func applyFaviconToIndex(htmlSource string, attachmentID string) string {
 	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
 }
 
-func Init(config *utils.AppConfig, uiStatic fs.FS) {
+func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
@@ -757,10 +757,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		ln6, err := net.Listen("tcp6", actualAddr)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		log.Printf("IPv6 listening at %s", actualAddr)
-		log.Fatal(app.Listener(ln6))
+		return app.Listener(ln6)
 	case listenDual:
 		listenAddr4 := utils.FormatListenHostPort(host, port)
 		actualAddr4, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr4)
@@ -791,12 +791,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 				}()
 			}
 			log.Printf("IPv4 listening at %s", actualAddr4)
-			log.Fatal(app.Listener(ln4))
+			return app.Listener(ln4)
 		}
 		if ln6 != nil {
-			log.Fatal(app.Listener(ln6))
+			return app.Listener(ln6)
 		}
-		log.Fatal(err4)
+		return err4
 	default:
 		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr)
 		if usedFallback {
@@ -804,9 +804,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		ln4, err := net.Listen("tcp4", actualAddr)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		log.Printf("IPv4 listening at %s", actualAddr)
-		log.Fatal(app.Listener(ln4))
+		return app.Listener(ln4)
 	}
 }

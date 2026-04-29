@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/jessevdk/go-flags"
@@ -133,13 +136,34 @@ func main() {
 		return
 	}
 
+	startupLock, err := utils.AcquireBinaryDirStartupLock(utils.BuildVersion)
+	if err != nil {
+		if errors.Is(err, utils.ErrStartupLockExists) {
+			log.Fatalf("SealChat 已在运行或上次异常退出: %v。若确认没有运行实例，请删除二进制目录下的 sealchat.lock 后重试", err)
+		}
+		log.Fatalf("创建启动锁失败: %v", err)
+	}
+	var releaseStartupLockOnce sync.Once
+	releaseStartupLock := func() {
+		releaseStartupLockOnce.Do(func() {
+			if err := startupLock.Release(); err != nil {
+				log.Printf("删除启动锁失败: %v", err)
+			}
+		})
+	}
+	defer releaseStartupLock()
+	fatalWithStartupLock := func(format string, args ...any) {
+		releaseStartupLock()
+		log.Fatalf(format, args...)
+	}
+
 	lo.Must0(os.MkdirAll("./data", 0755))
 	configInit := initConfigWithDB()
 	config := configInit.Config
 	utils.EnsureDataDirs(config)
 
 	if err := utils.VerifyBundledWebPToolsWithLog(log.Printf); err != nil {
-		log.Fatalf("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）：%v", err)
+		fatalWithStartupLock("启动自检失败：WebP 编码工具不可用（请检查 bin/ 目录是否完整、与当前平台匹配且可执行）：%v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -157,11 +181,12 @@ func main() {
 		}
 	}
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		_ = <-c
 		cancel()
 		cleanUp()
+		releaseStartupLock()
 		os.Exit(0)
 	}()
 
@@ -180,11 +205,11 @@ func main() {
 
 	storageManager, err := service.InitStorageManager(config.Storage)
 	if err != nil {
-		log.Fatalf("初始化存储系统失败: %v", err)
+		fatalWithStartupLock("初始化存储系统失败: %v", err)
 	}
 
 	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
-		log.Fatalf("初始化音频子系统失败: %v", err)
+		fatalWithStartupLock("初始化音频子系统失败: %v", err)
 	}
 
 	// 输出 FFmpeg 检测结果
@@ -286,5 +311,7 @@ func main() {
 	}
 	go autoSave()
 
-	api.Init(config, embedDirStatic)
+	if err := api.Init(config, embedDirStatic); err != nil {
+		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)
+	}
 }
