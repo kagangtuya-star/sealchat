@@ -19,7 +19,7 @@ import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
-import { findChannelByIdFromTree, findFirstEnterableChannel } from './chatChannelSelection';
+import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -2232,7 +2232,7 @@ export const useChatStore = defineStore({
             return true;
           }
           // 确保返回的频道有有效的 id
-          if (channelResp?.item && channelResp.item.id) {
+          if (channelResp?.item && channelResp.item.id && !isDeletedChannelForAccess(channelResp.item)) {
             nextChannel = channelResp.item as SChannel;
             // 标记为从归档获取的频道
             if ((nextChannel as any).status === 'archived') {
@@ -2246,7 +2246,11 @@ export const useChatStore = defineStore({
 
       if (!nextChannel) {
         alert('频道不存在');
-        return;
+        return false;
+      }
+      if (isDeletedChannelForAccess(nextChannel)) {
+        alert('频道已被解散');
+        return false;
       }
 
       // 如果切换到的不是归档频道，清除之前的临时归档频道
@@ -3575,7 +3579,7 @@ export const useChatStore = defineStore({
       this.channelCollapseState = next;
     },
 
-    async channelList(worldId?: string, force = false) {
+    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean }) {
       let targetWorld = worldId || this.currentWorldId;
       if (!targetWorld && this.observerMode && this.observerWorldId) {
         targetWorld = this.observerWorldId;
@@ -3615,15 +3619,15 @@ export const useChatStore = defineStore({
         this.clearCurrentChannelContext('channelList:currentChannelMissingInTree');
       }
 
-      if (!this.curChannel) {
+      if (!this.curChannel && options?.autoSwitch !== false) {
         // 这是为了正确标记人数，有点屎但实现了
         const lastChannel = this._lastChannel;
         const c = findChannelByIdFromTree(tree as SChannel[], lastChannel);
         if (c) {
-          this.channelSwitchTo(c.id);
+          await this.channelSwitchTo(c.id);
         } else {
           const firstChannel = findFirstEnterableChannel(tree as SChannel[]);
-          if (firstChannel) this.channelSwitchTo(firstChannel.id);
+          if (firstChannel) await this.channelSwitchTo(firstChannel.id);
         }
       }
 
@@ -4995,12 +4999,13 @@ export const useChatStore = defineStore({
       if (!channelId) {
         throw new Error('缺少频道ID');
       }
-      await api.delete(`api/v1/channels/${channelId}`);
       const wasCurrent = this.curChannel?.id === channelId;
+      const worldId = this.currentWorldId;
+      await api.delete(`api/v1/channels/${channelId}`);
       if (wasCurrent) {
-        this.curChannel = null;
+        this.clearCurrentChannelContext('channelDissolve:currentChannelDeleted');
       }
-      await this.channelList(this.currentWorldId, true);
+      await this.channelList(worldId, true, { autoSwitch: !wasCurrent });
       const fallbackChannelId = findFirstEnterableChannel(this.channelTree)?.id || '';
       if (wasCurrent && fallbackChannelId) {
         await this.channelSwitchTo(fallbackChannelId);
@@ -5008,12 +5013,17 @@ export const useChatStore = defineStore({
     },
 
     clearCurrentChannelContext(reason = '') {
+      const previousChannelId = this.curChannel?.id || '';
       this.curChannel = null;
       this.curMember = null;
       this.curChannelUsers = [];
       this.whisperTargets = [];
       this.firstUnreadInfo = null;
       this.temporaryArchivedChannel = null;
+      chatEvent.emit('channel-context-cleared', {
+        type: 'channel-context-cleared',
+        argv: { previousChannelId, reason },
+      } as any);
     },
 
     // 频道归档

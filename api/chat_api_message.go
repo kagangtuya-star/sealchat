@@ -2522,6 +2522,13 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		}
 	} else if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
+		if ch, err := model.ChannelGet(channelId); err != nil {
+			return nil, err
+		} else if ch == nil || strings.TrimSpace(ch.ID) == "" {
+			return nil, fmt.Errorf("频道不存在")
+		} else if service.IsChannelDeletedForAccess(ch) {
+			return nil, fmt.Errorf("频道已被解散")
+		}
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
 			return nil, nil
 		}

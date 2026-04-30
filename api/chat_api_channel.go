@@ -293,14 +293,19 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	}
 	if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
-		if ch, err := model.ChannelGet(channelId); err == nil && ch != nil {
-			if ch.ID == "" {
-				return nil, fmt.Errorf("频道不存在")
-			}
-			channelWorldID = ch.WorldID
-			if ch.WorldID != "" && !service.IsWorldMember(ch.WorldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
-				return nil, fmt.Errorf("尚未加入该世界")
-			}
+		ch, err := model.ChannelGet(channelId)
+		if err != nil {
+			return nil, err
+		}
+		if ch == nil || ch.ID == "" {
+			return nil, fmt.Errorf("频道不存在")
+		}
+		if service.IsChannelDeletedForAccess(ch) {
+			return nil, fmt.Errorf("频道已被解散")
+		}
+		channelWorldID = ch.WorldID
+		if ch.WorldID != "" && !service.IsWorldMember(ch.WorldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+			return nil, fmt.Errorf("尚未加入该世界")
 		}
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
 			return nil, nil

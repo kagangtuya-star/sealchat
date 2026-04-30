@@ -30,6 +30,7 @@ import AnnouncementManagerModal from '@/components/announcement/AnnouncementMana
 import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupModal.vue';
 import { useAnnouncementStore } from '@/stores/announcement';
 import type { AnnouncementItem } from '@/models/announcement';
+import { shouldRenderChannelSidebarList } from '@/stores/chatChannelSelection';
 
 const { t } = useI18n()
 
@@ -421,6 +422,12 @@ const currentMainChannelId = computed(() => {
   return resolveMainChannelId(current) || '';
 });
 
+const shouldRenderPublicChannelList = computed(() => shouldRenderChannelSidebarList({
+  currentWorldId: chat.currentWorldId,
+  channelTree: chat.channelTree as SChannel[],
+  channelTreeReady: chat.channelTreeReady,
+}));
+
 const shouldRenderChildren = (channel: SChannel) => {
   if (!(channel.children?.length)) {
     return false;
@@ -619,10 +626,10 @@ const handleAckWorldAnnouncement = async () => {
 
         <!-- 频道列表内容将在这里显示 -->
         <div class="space-y-1 flex flex-col px-2" :class="{ 'channel-wrap-enabled': channelNameWrapEnabled }">
-          <template v-if="chat.curChannel">
+          <template v-if="shouldRenderPublicChannelList">
             <!-- 临时显示的归档频道 -->
             <div
-              v-if="chat.temporaryArchivedChannel"
+              v-if="chat.curChannel && chat.temporaryArchivedChannel"
               class="sider-item archived-channel"
               :class="chat.temporaryArchivedChannel.id === chat.curChannel?.id ? ['active'] : []"
               @click="doChannelSwitch(chat.temporaryArchivedChannel)"

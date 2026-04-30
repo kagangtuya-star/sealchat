@@ -417,6 +417,11 @@ func ChannelInfoGet(c *fiber.Ctx) error {
 			"error": "频道不存在",
 		})
 	}
+	if service.IsChannelDeletedForAccess(channel) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "频道已被解散",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"item": channel,

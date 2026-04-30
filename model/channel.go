@@ -13,6 +13,7 @@ import (
 const (
 	ChannelStatusActive   = "active"   // 正常状态
 	ChannelStatusArchived = "archived" // 归档状态
+	ChannelStatusDeleted  = "deleted"  // 已解散/删除
 )
 
 type ChannelModel struct {

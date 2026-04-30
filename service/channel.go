@@ -241,6 +241,9 @@ func CanGuestAccessChannel(channelID string) (*model.ChannelModel, error) {
 	if channel == nil || strings.TrimSpace(channel.ID) == "" {
 		return nil, errors.New("频道不存在")
 	}
+	if IsChannelDeletedForAccess(channel) {
+		return nil, errors.New("频道已被解散")
+	}
 	if channel.IsPrivate || strings.ToLower(strings.TrimSpace(channel.PermType)) != "public" {
 		return nil, errors.New("频道不可公开访问")
 	}
@@ -266,6 +269,13 @@ func CanGuestAccessChannel(channelID string) (*model.ChannelModel, error) {
 		}
 	}
 	return channel, nil
+}
+
+func IsChannelDeletedForAccess(channel *model.ChannelModel) bool {
+	if channel == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(channel.Status), model.ChannelStatusDeleted)
 }
 
 // CanObserverAccessChannel 用于 OB 链接授权后的旁观访问校验。

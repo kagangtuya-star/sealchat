@@ -112,6 +112,7 @@ import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -11979,6 +11980,23 @@ const handleChannelSwitchEvent = (e: any) => {
   });
 };
 
+const handleChannelContextCleared = () => {
+  persistOwnedSessionDraft();
+  stopTypingPreviewNow();
+  resetTypingPreview();
+  stopEditingPreviewNow();
+  cancelEditingSession();
+  textToSend.value = '';
+  draftOwnerChannelKey.value = currentChannelKey.value;
+  clearInputModeCache();
+  resetWindowState('live');
+  pinnedRows.value = [];
+  chat.clearMessageInsertTarget();
+  resetDragState();
+  localReorderOps.clear();
+  showButton.value = false;
+};
+
 onMounted(async () => {
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -12479,10 +12497,22 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 });
 
   chatEvent.off('channel-deleted', '*');
-  chatEvent.on('channel-deleted', (e) => {
-    if (e) {
-      // 当前频道没了，直接进行重载
-      chat.channelSwitchTo(chat.channelTree[0].id);
+  chatEvent.on('channel-deleted', async (e) => {
+    const deletedChannelId = String(e?.channel?.id || '').trim();
+    const currentChannelId = String(chat.curChannel?.id || '').trim();
+    if (!deletedChannelId || deletedChannelId !== currentChannelId) {
+      return;
+    }
+    await chat.channelList(chat.currentWorldId, true, { autoSwitch: false });
+    const fallbackChannelId = resolveDeletedChannelFallbackId({
+      deletedChannelId,
+      currentChannelId,
+      channelTree: chat.channelTree,
+    });
+    if (fallbackChannelId) {
+      await chat.channelSwitchTo(fallbackChannelId);
+    } else {
+      chat.clearCurrentChannelContext('channel-deleted:noFallbackChannel');
     }
   })
 
@@ -12555,6 +12585,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     });
   });
 
+  chatEvent.off('channel-context-cleared', '*');
+  chatEvent.on('channel-context-cleared', handleChannelContextCleared as any);
   chatEvent.on('channel-switch-to', handleChannelSwitchEvent as any)
 
   await fetchLatestMessages();
@@ -13929,6 +13961,7 @@ onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
+  chatEvent.off('channel-context-cleared', handleChannelContextCleared as any);
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
   revokeIdentityObjectURL();
   revokeIdentityVariantObjectURL();
