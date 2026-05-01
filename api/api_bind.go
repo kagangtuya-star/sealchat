@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"html"
 	"io/fs"
@@ -132,21 +134,12 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 }
 
 func buildIndexPaths(webURL string) []string {
-	webRoot := strings.TrimSpace(webURL)
-	if webRoot == "" {
+	webRoot := normalizeWebRoot(webURL)
+	if webRoot == "/" {
 		return []string{"/", "/index.html"}
 	}
-	if !strings.HasPrefix(webRoot, "/") {
-		webRoot = "/" + webRoot
-	}
-	webRoot = strings.TrimRight(webRoot, "/")
-	if webRoot == "" {
-		webRoot = "/"
-	}
 	paths := []string{webRoot}
-	if webRoot != "/" {
-		paths = append(paths, webRoot+"/")
-	}
+	paths = append(paths, webRoot+"/")
 	paths = append(paths, path.Join(webRoot, "index.html"))
 	return paths
 }
@@ -166,6 +159,30 @@ func buildObserverPrintPaths(webURL string) []string {
 	}
 	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
 	return paths
+}
+
+func normalizeWebRoot(webURL string) string {
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" {
+		return "/"
+	}
+	return webRoot
+}
+
+func joinWebPath(webURL string, elem ...string) string {
+	parts := append([]string{normalizeWebRoot(webURL)}, elem...)
+	joined := path.Join(parts...)
+	if !strings.HasPrefix(joined, "/") {
+		return "/" + joined
+	}
+	return joined
 }
 
 func applyPageTitleToIndex(htmlSource string, title string) string {
@@ -193,6 +210,89 @@ func applyFaviconToIndex(htmlSource string, attachmentID string) string {
 	}
 	iconURL := "/api/v1/attachment/" + url.PathEscape(trimmed) + "?v=" + url.QueryEscape(trimmed)
 	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
+}
+
+const (
+	frontendIndexCacheControl = "no-cache"
+	frontendAssetCacheControl = "public, max-age=31536000, immutable"
+	frontendShortCacheControl = "public, max-age=300"
+)
+
+func frontendCompressMiddleware() fiber.Handler {
+	return compress.New(compress.Config{
+		Level: compress.LevelBestSpeed,
+		Next: func(c *fiber.Ctx) bool {
+			p := c.Path()
+			return strings.HasPrefix(p, "/api/v1/audio/stream") ||
+				strings.HasPrefix(p, "/api/v1/attachment/") ||
+				strings.HasPrefix(p, "/api/v1/attachments") ||
+				strings.HasPrefix(p, "/api/v1/gallery/thumbs")
+		},
+	})
+}
+
+func frontendCacheControl(value string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if err := c.Next(); err != nil {
+			return err
+		}
+		if c.Response().StatusCode() < fiber.StatusBadRequest {
+			c.Set(fiber.HeaderCacheControl, value)
+		}
+		return nil
+	}
+}
+
+func strongETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
+
+func matchETag(headerValue string, etagValue string) bool {
+	for _, item := range strings.Split(headerValue, ",") {
+		token := strings.TrimSpace(item)
+		if token == "*" || token == etagValue || strings.TrimPrefix(token, "W/") == etagValue {
+			return true
+		}
+	}
+	return false
+}
+
+func renderIndexHTML(c *fiber.Ctx, indexHTML []byte, config *utils.AppConfig) error {
+	page := string(indexHTML)
+	if config != nil {
+		page = applyPageTitleToIndex(page, config.PageTitle)
+		page = applyFaviconToIndex(page, config.FaviconAttachmentID)
+	}
+	body := []byte(page)
+	etagValue := strongETag(body)
+
+	c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+	c.Set(fiber.HeaderCacheControl, frontendIndexCacheControl)
+	c.Set(fiber.HeaderETag, etagValue)
+	c.Set(fiber.HeaderVary, fiber.HeaderAcceptEncoding)
+	if matchETag(c.Get(fiber.HeaderIfNoneMatch), etagValue) {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+	return c.Status(http.StatusOK).Send(body)
+}
+
+func registerFrontendStaticRoutes(app *fiber.App, webURL string, uiStatic fs.FS, indexHandler fiber.Handler) {
+	if indexHandler != nil {
+		for _, routePath := range buildIndexPaths(webURL) {
+			app.Get(routePath, indexHandler)
+		}
+	}
+
+	app.Use(joinWebPath(webURL, "assets"), frontendCacheControl(frontendAssetCacheControl), filesystem.New(filesystem.Config{
+		Root:       http.FS(uiStatic),
+		PathPrefix: "ui/dist/assets",
+	}))
+
+	app.Use(normalizeWebRoot(webURL), frontendCacheControl(frontendShortCacheControl), filesystem.New(filesystem.Config{
+		Root:       http.FS(uiStatic),
+		PathPrefix: "ui/dist",
+	}))
 }
 
 func Init(config *utils.AppConfig, uiStatic fs.FS) error {
@@ -228,12 +328,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(compress.New(compress.Config{
-		Next: func(c *fiber.Ctx) bool {
-			path := c.Path()
-			return strings.HasPrefix(path, "/api/v1/audio/stream")
-		},
-	}))
+	app.Use(frontendCompressMiddleware())
 
 	v1 := app.Group("/api/v1")
 	v1.Post("/user-signup", UserSignup)
@@ -703,27 +798,17 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	oneBotHTTPWorks(app)
 
 	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
+	var renderIndex fiber.Handler
 	if indexErr != nil {
 		log.Printf("读取内置 index.html 失败: %v", indexErr)
 	} else {
-		renderIndex := func(c *fiber.Ctx) error {
-			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
-			page = applyFaviconToIndex(page, appConfig.FaviconAttachmentID)
-			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
-			return c.Status(http.StatusOK).SendString(page)
-		}
-		for _, routePath := range buildIndexPaths(config.WebUrl) {
-			pathCopy := routePath
-			app.Get(pathCopy, renderIndex)
+		indexHTMLCopy := append([]byte(nil), indexHTML...)
+		renderIndex = func(c *fiber.Ctx) error {
+			return renderIndexHTML(c, indexHTMLCopy, appConfig)
 		}
 	}
 
-	// Default /test
-	app.Use(config.WebUrl, filesystem.New(filesystem.Config{
-		Root:       http.FS(uiStatic),
-		PathPrefix: "ui/dist",
-		MaxAge:     5 * 60,
-	}))
+	registerFrontendStaticRoutes(app, config.WebUrl, uiStatic, renderIndex)
 
 	websocketWorks(app)
 	oneBotWSWorks(app)
