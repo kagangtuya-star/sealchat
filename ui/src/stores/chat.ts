@@ -20,6 +20,7 @@ import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
+import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -612,7 +613,7 @@ const resolveEmbedPaneId = (): string | null => {
 const resolveScopedStorageKey = (baseKey: string) => {
   const paneId = resolveEmbedPaneId();
   if (!paneId) return baseKey;
-  if (baseKey !== 'currentWorldId' && baseKey !== 'lastChannel') return baseKey;
+  if (baseKey !== 'currentWorldId' && baseKey !== 'lastChannel' && baseKey !== 'lastChannelByWorld') return baseKey;
   return `sc:embed:${paneId}:${baseKey}`;
 };
 
@@ -630,6 +631,36 @@ const writeScopedLocalStorage = (baseKey: string, value: string) => {
   } catch {
     // ignore
   }
+};
+
+const readLastChannelByWorldMapFromStorage = () => (
+  parseLastChannelByWorldMap(readScopedLocalStorage('lastChannelByWorld'))
+);
+
+const writeLastChannelByWorldMapToStorage = (value: Record<string, string>) => {
+  try {
+    localStorage.setItem(resolveScopedStorageKey('lastChannelByWorld'), JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+};
+
+const persistLastChannelForWorld = (worldId: string, channelId: string) => {
+  const normalizedWorldId = String(worldId || '').trim();
+  const normalizedChannelId = String(channelId || '').trim();
+  if (!normalizedChannelId) {
+    return;
+  }
+  writeScopedLocalStorage('lastChannel', normalizedChannelId);
+  if (!normalizedWorldId) {
+    return;
+  }
+  const nextMap = updateLastChannelByWorldMap(
+    readLastChannelByWorldMapFromStorage(),
+    normalizedWorldId,
+    normalizedChannelId,
+  );
+  writeLastChannelByWorldMapToStorage(nextMap);
 };
 
 interface ObserverSessionEntry {
@@ -1095,6 +1126,9 @@ export const useChatStore = defineStore({
   getters: {
     _lastChannel: (state) => {
       return readScopedLocalStorage('lastChannel') || '';
+    },
+    _lastChannelByWorld: () => {
+      return readLastChannelByWorldMapFromStorage();
     },
     isObserver: (state) => {
       return state.observerMode;
@@ -2131,18 +2165,21 @@ export const useChatStore = defineStore({
         await this.joinWorld(worldId);
       } else {
         this.setCurrentWorld(worldId);
-        await this.channelList(worldId, options?.force ?? true);
+        await this.channelList(worldId, options?.force ?? true, { autoSwitch: false });
       }
       const currentChannelId = this.curChannel?.id ? String(this.curChannel.id).trim() : '';
       if (currentChannelId && !findChannelByIdFromTree(this.channelTree, currentChannelId)) {
         this.clearCurrentChannelContext('switchWorld:currentChannelNotInTargetTree');
       }
-      const world = this.worldMap[worldId];
-      const fallbackChannelId = String(
-        world?.defaultChannelId || findFirstEnterableChannel(this.channelTree)?.id || '',
-      ).trim();
-      if (fallbackChannelId) {
-        await this.channelSwitchTo(fallbackChannelId);
+      const targetChannelId = resolvePreferredChannelForWorld({
+        worldId,
+        tree: this.channelTree,
+        defaultChannelId: this.worldMap[worldId]?.defaultChannelId,
+        lastChannelByWorld: this._lastChannelByWorld,
+        fallbackLastChannel: this._lastChannel,
+      });
+      if (targetChannelId) {
+        await this.channelSwitchTo(targetChannelId);
       }
     },
 
@@ -2291,7 +2328,7 @@ export const useChatStore = defineStore({
           this.whisperTargets = [];
           this.observerChannelId = id;
           writeObserverSessionChannel(this.observerSlug, this.observerWorldId || this.currentWorldId, id);
-          writeScopedLocalStorage('lastChannel', id);
+          persistLastChannelForWorld(this.observerWorldId || this.currentWorldId, id);
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
             return true;
@@ -2347,7 +2384,7 @@ export const useChatStore = defineStore({
         this.firstUnreadInfo = null;
       }
 
-      writeScopedLocalStorage('lastChannel', id);
+      persistLastChannelForWorld(this.currentWorldId, id);
       this.setChannelUnreadCount(id, 0);
       this.curChannelUsers = [];
       this.whisperTargets = [];
@@ -3620,14 +3657,15 @@ export const useChatStore = defineStore({
       }
 
       if (!this.curChannel && options?.autoSwitch !== false) {
-        // 这是为了正确标记人数，有点屎但实现了
-        const lastChannel = this._lastChannel;
-        const c = findChannelByIdFromTree(tree as SChannel[], lastChannel);
-        if (c) {
-          await this.channelSwitchTo(c.id);
-        } else {
-          const firstChannel = findFirstEnterableChannel(tree as SChannel[]);
-          if (firstChannel) await this.channelSwitchTo(firstChannel.id);
+        const targetChannelId = resolvePreferredChannelForWorld({
+          worldId: finalWorld,
+          tree: tree as SChannel[],
+          defaultChannelId: this.worldMap[finalWorld]?.defaultChannelId,
+          lastChannelByWorld: this._lastChannelByWorld,
+          fallbackLastChannel: this._lastChannel,
+        });
+        if (targetChannelId) {
+          await this.channelSwitchTo(targetChannelId);
         }
       }
 
