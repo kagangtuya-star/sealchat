@@ -1,4 +1,4 @@
-import { Mark, mergeAttributes } from '@tiptap/core';
+type TiptapCoreModule = typeof import('@tiptap/core');
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -12,7 +12,10 @@ export interface SpoilerOptions {
   HTMLAttributes: Record<string, unknown>;
 }
 
-export const Spoiler = Mark.create<SpoilerOptions>({
+export const createSpoilerExtension = ({
+  Mark,
+  mergeAttributes,
+}: Pick<TiptapCoreModule, 'Mark' | 'mergeAttributes'>) => Mark.create<SpoilerOptions>({
   name: 'spoiler',
 
   addOptions() {

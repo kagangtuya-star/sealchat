@@ -3,7 +3,7 @@ import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef, reactive }
 import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
-import { Spoiler } from '@/utils/tiptap-spoiler';
+import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { useChatStore } from '@/stores/chat';
 import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
@@ -706,25 +706,20 @@ const initEditor = async () => {
   try {
     isInitializing.value = true;
 
-    const [
-      { Editor: EditorClass, Node: TiptapNodeClass, mergeAttributes },
-      { EditorContent: EditorContentComp, BubbleMenu: BubbleMenuComp },
-      { default: StarterKit },
-      { default: TextStyle },
-      { default: Color },
-      { default: Image },
-      { default: Highlight },
-      { default: TextAlign },
-    ] = await Promise.all([
-      import('@tiptap/core'),
-      import('@tiptap/vue-3'),
-      import('@tiptap/starter-kit'),
-      import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
-      import('@tiptap/extension-color').then(m => ({ default: m.Color })),
-      import('@tiptap/extension-image'),
-      import('@tiptap/extension-highlight'),
-      import('@tiptap/extension-text-align'),
-    ]);
+    const {
+      Editor: EditorClass,
+      Node: TiptapNodeClass,
+      mergeAttributes,
+      EditorContent: EditorContentComp,
+      BubbleMenu: BubbleMenuComp,
+      StarterKit,
+      TextStyle,
+      Color,
+      Image,
+      Highlight,
+      TextAlign,
+      Spoiler,
+    } = await loadTipTapBundle();
 
     EditorContent = EditorContentComp;
     BubbleMenu = BubbleMenuComp;

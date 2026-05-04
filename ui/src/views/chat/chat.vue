@@ -34,7 +34,6 @@ import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
-import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
@@ -115,6 +114,8 @@ import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
+
+const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any

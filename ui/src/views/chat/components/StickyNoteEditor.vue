@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue';
 import type { Editor } from '@tiptap/vue-3';
-import { Spoiler } from '@/utils/tiptap-spoiler';
+import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useMessage } from 'naive-ui';
 import { useChatStore } from '@/stores/chat';
@@ -129,23 +129,16 @@ const initEditor = async () => {
   try {
     isInitializing.value = true;
 
-    const [
-      { Editor: EditorClass },
-      { EditorContent: EditorContentComp },
-      { default: StarterKit },
-      { default: TextStyle },
-      { default: Color },
-      { default: Image },
-      { default: Highlight },
-    ] = await Promise.all([
-      import('@tiptap/core'),
-      import('@tiptap/vue-3'),
-      import('@tiptap/starter-kit'),
-      import('@tiptap/extension-text-style').then(m => ({ default: m.TextStyle })),
-      import('@tiptap/extension-color').then(m => ({ default: m.Color })),
-      import('@tiptap/extension-image'),
-      import('@tiptap/extension-highlight'),
-    ]);
+    const {
+      Editor: EditorClass,
+      EditorContent: EditorContentComp,
+      StarterKit,
+      TextStyle,
+      Color,
+      Image,
+      Highlight,
+      Spoiler,
+    } = await loadTipTapBundle();
 
     EditorContent = EditorContentComp;
 
