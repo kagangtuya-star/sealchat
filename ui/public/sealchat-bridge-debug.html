@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SealChat Bridge Debug</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        background: #eef2f7;
+        color: #0f172a;
+      }
+
+      aside {
+        min-width: 0;
+        padding: 16px;
+        border-right: 1px solid #d8dee9;
+        background: #ffffff;
+        overflow: auto;
+      }
+
+      main {
+        min-width: 0;
+        min-height: 0;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #ffffff;
+      }
+
+      h1,
+      h2 {
+        margin: 0 0 12px;
+      }
+
+      h1 {
+        font-size: 20px;
+      }
+
+      h2 {
+        font-size: 14px;
+        margin-top: 18px;
+      }
+
+      .hint {
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: #475569;
+      }
+
+      .muted {
+        margin: 8px 0 0;
+        font-size: 12px;
+        color: #64748b;
+      }
+
+      .field-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      label {
+        font-size: 12px;
+        color: #475569;
+      }
+
+      input,
+      button {
+        font: inherit;
+      }
+
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #ffffff;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #2563eb;
+        color: #ffffff;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: #475569;
+      }
+
+      button.warn {
+        background: #b45309;
+      }
+
+      .status {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .status.is-error {
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+
+      .status.is-warn {
+        background: #fff7ed;
+        color: #b45309;
+      }
+
+      .section {
+        margin-top: 18px;
+      }
+
+      .section-card {
+        border: 1px solid #d8dee9;
+        border-radius: 14px;
+        background: #f8fafc;
+        overflow: hidden;
+      }
+
+      .roles-box {
+        max-height: 240px;
+        overflow: auto;
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .role-item {
+        display: grid;
+        gap: 6px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+      }
+
+      .role-line {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .role-name {
+        font-weight: 700;
+      }
+
+      .role-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #334155;
+        font-size: 12px;
+      }
+
+      .role-meta {
+        font-size: 12px;
+        color: #475569;
+        word-break: break-all;
+      }
+
+      .log-list {
+        max-height: 360px;
+        overflow: auto;
+        padding: 12px;
+        display: grid;
+        gap: 8px;
+        background: #0f172a;
+      }
+
+      details.log-item {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.75);
+        color: #e2e8f0;
+        overflow: hidden;
+      }
+
+      details.log-item[open] {
+        background: rgba(15, 23, 42, 0.92);
+      }
+
+      .log-summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .log-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .log-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #93c5fd;
+      }
+
+      .log-subtitle {
+        font-size: 11px;
+        color: #94a3b8;
+        word-break: break-all;
+      }
+
+      .log-body {
+        margin: 0;
+        padding: 0 12px 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 11px;
+        line-height: 1.55;
+        color: #e2e8f0;
+      }
+
+      .empty {
+        padding: 14px 12px;
+        color: #64748b;
+        font-size: 12px;
+      }
+
+      @media (max-width: 1080px) {
+        body {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 60vh;
+        }
+
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid #d8dee9;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <h1>SealChat Bridge Debug</h1>
+      <p class="hint">要测角色快照和消息流，iframe 必须进入完整频道页：`/#/世界id/频道id`。</p>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="baseUrl">站点根地址</label>
+          <input id="baseUrl" type="text" />
+        </div>
+        <div class="field">
+          <label for="worldId">世界 ID</label>
+          <input id="worldId" type="text" placeholder="world-id" />
+        </div>
+        <div class="field">
+          <label for="channelId">频道 ID</label>
+          <input id="channelId" type="text" placeholder="channel-id" />
+        </div>
+        <div class="field">
+          <label for="targetUrl">最终 iframe URL</label>
+          <input id="targetUrl" type="text" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top: 12px;">
+        <button id="buildBtn" class="secondary">生成频道 URL</button>
+        <button id="mountBtn">加载 iframe</button>
+      </div>
+
+      <div class="row" style="margin-top: 8px;">
+        <button id="handshakeBtn">发送握手</button>
+        <button id="unsubscribeBtn" class="warn">停止订阅</button>
+      </div>
+
+      <div id="statusBox" class="status">等待加载 iframe</div>
+
+      <div class="section">
+        <h2>角色列表</h2>
+        <div class="section-card">
+          <div id="rolesBox" class="roles-box">
+            <div class="empty">尚未收到角色快照</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>消息日志</h2>
+        <p id="ignoredBox" class="muted">已忽略非 bridge 日志: 0</p>
+        <div class="section-card">
+          <div id="logBox" class="log-list">
+            <div class="empty">尚未收到日志</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <iframe id="appFrame" title="SealChat App"></iframe>
+    </main>
+
+    <script>
+      const frame = document.getElementById('appFrame')
+      const baseUrlInput = document.getElementById('baseUrl')
+      const worldIdInput = document.getElementById('worldId')
+      const channelIdInput = document.getElementById('channelId')
+      const targetUrlInput = document.getElementById('targetUrl')
+      const rolesBox = document.getElementById('rolesBox')
+      const logBox = document.getElementById('logBox')
+      const ignoredBox = document.getElementById('ignoredBox')
+      const statusBox = document.getElementById('statusBox')
+
+      const logs = []
+      const maxLogs = 40
+      let ignoredLogCount = 0
+
+      baseUrlInput.value = /^https?:\/\//.test(window.location.origin || '')
+        ? window.location.origin
+        : 'http://127.0.0.1:5173'
+
+      const setStatus = (text, level = 'info') => {
+        statusBox.textContent = text
+        statusBox.className = `status${level === 'error' ? ' is-error' : level === 'warn' ? ' is-warn' : ''}`
+      }
+
+      const buildRouteUrl = () => {
+        const baseUrl = baseUrlInput.value.trim().replace(/\/+$/, '')
+        const worldId = worldIdInput.value.trim()
+        const channelId = channelIdInput.value.trim()
+        if (!baseUrl) {
+          return ''
+        }
+        if (!worldId) {
+          return `${baseUrl}/`
+        }
+        if (!channelId) {
+          return `${baseUrl}/#/${encodeURIComponent(worldId)}`
+        }
+        return `${baseUrl}/#/${encodeURIComponent(worldId)}/${encodeURIComponent(channelId)}`
+      }
+
+      const syncTargetUrl = () => {
+        targetUrlInput.value = buildRouteUrl()
+      }
+
+      const fillIdsFromTargetUrl = () => {
+        const url = targetUrlInput.value.trim()
+        const match = url.match(/#\/([^/?#]+)(?:\/([^/?#]+))?/)
+        if (!match) {
+          return
+        }
+        const [, worldId, channelId] = match
+        if (worldId) {
+          worldIdInput.value = decodeURIComponent(worldId)
+        }
+        if (channelId) {
+          channelIdInput.value = decodeURIComponent(channelId)
+        }
+      }
+
+      const renderRoles = (roles) => {
+        if (!Array.isArray(roles) || roles.length === 0) {
+          rolesBox.innerHTML = '<div class="empty">角色快照为空。若当前 iframe 不是频道页，这是正常现象。</div>'
+          return
+        }
+
+        rolesBox.innerHTML = roles.map((role) => {
+          const color = role.color || '#64748b'
+          const variantLabel = role.activeVariantId ? `差分: ${role.activeVariantId}` : '差分: 无'
+          return `
+            <div class="role-item">
+              <div class="role-line">
+                <span class="role-name" style="color:${color}">${escapeHtml(role.displayName || role.identityId || '未命名角色')}</span>
+                <span class="role-chip">${escapeHtml(role.identityId || '-')}</span>
+                ${role.isTemporary ? '<span class="role-chip">临时</span>' : ''}
+              </div>
+              <div class="role-meta">${escapeHtml(variantLabel)}</div>
+              <div class="role-meta">头像: ${escapeHtml(role.avatarUrl || '(空)')}</div>
+            </div>
+          `
+        }).join('')
+      }
+
+      const escapeHtml = (value) =>
+        String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+
+      const renderLogs = () => {
+        if (!logs.length) {
+          logBox.innerHTML = '<div class="empty">尚未收到日志</div>'
+          ignoredBox.textContent = `已忽略非 bridge 日志: ${ignoredLogCount}`
+          return
+        }
+
+        ignoredBox.textContent = `已忽略非 bridge 日志: ${ignoredLogCount}`
+        logBox.innerHTML = logs.map((entry, index) => {
+          const type = entry?.data?.type || 'unknown'
+          const summary = type === 'sealchat.bridge.message'
+            ? `${type} / ${entry.data.event || '-'} / ${entry.data.messageId || '-'}`
+            : type
+          return `
+            <details class="log-item"${index === 0 ? '' : ''}>
+              <summary class="log-summary">
+                <div class="log-title">${escapeHtml(summary)}</div>
+                <div class="log-subtitle">${escapeHtml(entry.at)} | ${escapeHtml(entry.origin)}</div>
+              </summary>
+              <pre class="log-body">${escapeHtml(JSON.stringify(entry.data, null, 2))}</pre>
+            </details>
+          `
+        }).join('')
+      }
+
+      const pushLog = (entry) => {
+        logs.unshift(entry)
+        if (logs.length > maxLogs) {
+          logs.length = maxLogs
+        }
+        renderLogs()
+      }
+
+      const mountIframe = () => {
+        const url = targetUrlInput.value.trim()
+        if (!url) {
+          setStatus('请先生成或填写 iframe URL', 'error')
+          return
+        }
+        fillIdsFromTargetUrl()
+        frame.src = url
+        setStatus(`iframe 已加载: ${url}`)
+      }
+
+      const sendHandshake = () => {
+        if (!frame.contentWindow) {
+          setStatus('iframe 尚未就绪', 'error')
+          return
+        }
+        const url = targetUrlInput.value.trim()
+        if (!/#\/.+\/.+/.test(url)) {
+          setStatus('当前 URL 不是 `/#/世界id/频道id`，角色和消息流很可能为空', 'warn')
+        }
+        const nonce = `debug-${Date.now()}`
+        frame.contentWindow.postMessage({
+          type: 'sealchat.bridge.handshake',
+          version: 1,
+          nonce,
+          want: ['roles', 'messages'],
+          currentChannelOnly: true,
+        }, '*')
+        setStatus(`已发送握手: ${nonce}`)
+      }
+
+      const sendUnsubscribe = () => {
+        if (!frame.contentWindow) {
+          setStatus('iframe 尚未就绪', 'error')
+          return
+        }
+        frame.contentWindow.postMessage({ type: 'sealchat.bridge.unsubscribe' }, '*')
+        setStatus('已发送停止订阅')
+      }
+
+      document.getElementById('buildBtn').addEventListener('click', syncTargetUrl)
+      document.getElementById('mountBtn').addEventListener('click', mountIframe)
+      document.getElementById('handshakeBtn').addEventListener('click', sendHandshake)
+      document.getElementById('unsubscribeBtn').addEventListener('click', sendUnsubscribe)
+
+      baseUrlInput.addEventListener('input', syncTargetUrl)
+      worldIdInput.addEventListener('input', syncTargetUrl)
+      channelIdInput.addEventListener('input', syncTargetUrl)
+
+      window.addEventListener('message', (event) => {
+        const data = event.data
+        if (!data || typeof data !== 'object') {
+          return
+        }
+
+        const type = typeof data.type === 'string' ? data.type : ''
+        if (!type.startsWith('sealchat.bridge.')) {
+          ignoredLogCount += 1
+          ignoredBox.textContent = `已忽略非 bridge 日志: ${ignoredLogCount}`
+          return
+        }
+
+        pushLog({
+          at: new Date().toISOString(),
+          origin: event.origin,
+          data,
+        })
+
+        if (data.type === 'sealchat.bridge.handshake.ack') {
+          if (!data.channelId) {
+            setStatus('握手成功，但当前 iframe 不是频道页；请改成 `/#/世界id/频道id` 后再测', 'warn')
+          } else {
+            setStatus(`握手成功: ${data.worldId || '-'} / ${data.channelId || '-'}`)
+          }
+          return
+        }
+
+        if (data.type === 'sealchat.bridge.roles.snapshot') {
+          renderRoles(data.roles || [])
+          if (!data.channelId) {
+            setStatus('收到空频道角色快照。当前 iframe 很可能不在频道页。', 'warn')
+          } else {
+            setStatus(`收到角色快照: ${(data.roles || []).length} 个角色`)
+          }
+          return
+        }
+
+        if (data.type === 'sealchat.bridge.message') {
+          setStatus(`收到消息事件: ${data.event} / ${data.messageId || '-'}`)
+        }
+      })
+
+      syncTargetUrl()
+      fillIdsFromTargetUrl()
+      renderLogs()
+      renderRoles([])
+    </script>
+  </body>
+</html>

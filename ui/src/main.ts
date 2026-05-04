@@ -6,6 +6,7 @@ import { i18n, setLocale, setLocaleByNavigatorWithStorage } from './lang'
 
 import App from './App.vue'
 import router from './router'
+import { installSealChatBridgeRuntime } from './bridge/sealchatBridgeInstaller'
 import { useDisplayStore } from './stores/display'
 import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
 
@@ -37,6 +38,8 @@ const pinia = createPinia()
 app.use(i18n)
 app.use(pinia)
 app.use(router)
+
+installSealChatBridgeRuntime({ pinia, router })
 
 import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
 import ContextMenu from '@imengyu/vue3-context-menu'
