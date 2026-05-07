@@ -3,9 +3,8 @@ name: Test Build & Prerelease
 on:
   push:
     branches:
-      # 按需修改为你的开发分支
-      - develop
-      - dev
+      # 修改为你的开发分支
+      - stable-dev
   workflow_dispatch:
 
 permissions:
@@ -18,7 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  COMMIT_ID: ${{ github.sha }}
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/sealchat
   PRERELEASE_TAG: dev-prerelease
 
@@ -45,16 +43,122 @@ jobs:
           yarn install
           yarn build-only
 
-      - name: Upload UI artifact
+      - name: Upload UI resources
         uses: actions/upload-artifact@v4
         with:
           name: ui
           path: ./ui/dist
 
+  prepare-prerelease:
+    name: Prepare Prerelease Page
+    runs-on: ubuntu-latest
+
+    outputs:
+      date: ${{ steps.build_info.outputs.DATE }}
+      short_sha: ${{ steps.build_info.outputs.SHORT_SHA }}
+      version: ${{ steps.build_info.outputs.VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set build info
+        id: build_info
+        run: |
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate prerelease notes
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.build_info.outputs.VERSION }}"
+
+          cat > RELEASE_BODY.md <<EOF
+          # SealChat 自动测试构建
+
+          > 这是开发分支的自动构建版本，可能不稳定，不建议用于生产环境。
+
+          ## 构建信息
+
+          - 分支：\`${{ github.ref_name }}\`
+          - Commit：\`${{ github.sha }}\`
+          - 构建版本：\`${VERSION}\`
+          - Workflow：[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ## Docker 镜像
+
+          \`\`\`bash
+          docker pull ${{ env.IMAGE_NAME }}:dev
+          docker pull ${{ env.IMAGE_NAME }}:prerelease
+          docker pull ${{ env.IMAGE_NAME }}:${VERSION}
+          docker pull ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          \`\`\`
+
+          ## 下载
+
+          请在本页面底部 Assets 中下载对应平台的测试包。
+          EOF
+
+      - name: Move prerelease tag to current commit
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -f "${{ env.PRERELEASE_TAG }}" "${{ github.sha }}"
+          git push -f origin "refs/tags/${{ env.PRERELEASE_TAG }}"
+
+      - name: Create or update prerelease page and clean old assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="${{ env.PRERELEASE_TAG }}"
+          TITLE="SealChat 自动测试构建 ${{ steps.build_info.outputs.VERSION }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing prerelease found, updating..."
+
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file RELEASE_BODY.md \
+              --prerelease \
+              --latest=false
+
+            echo "Deleting old assets..."
+
+            ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+
+            if [ -n "$ASSETS" ]; then
+              while IFS= read -r asset; do
+                if [ -n "$asset" ]; then
+                  gh release delete-asset "$TAG" "$asset" -y
+                fi
+              done <<< "$ASSETS"
+            fi
+          else
+            echo "Prerelease does not exist, creating..."
+
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file RELEASE_BODY.md \
+              --prerelease \
+              --latest=false \
+              --target "${{ github.sha }}"
+          fi
+
   backend-build:
     name: Build Server
     runs-on: ubuntu-latest
-    needs: ui-build
+    needs:
+      - ui-build
+      - prepare-prerelease
 
     strategy:
       fail-fast: false
@@ -82,7 +186,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Download UI artifact
+      - name: Download UI resources
         uses: actions/download-artifact@v4
         with:
           name: ui
@@ -93,20 +197,15 @@ jobs:
         with:
           version: 0.11.0
 
-      - name: Set build info
-        id: build_info
-        run: |
-          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "VERSION=$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          BUILD_VERSION: ${{ steps.build_info.outputs.VERSION }}
+          BUILD_VERSION: ${{ needs.prepare-prerelease.outputs.version }}
         run: |
+          set -euo pipefail
+
           mkdir -p output
 
           if [ "${{ matrix.goos }}" = "linux" ]; then
@@ -144,8 +243,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          rm -rf package
-          mkdir -p package/bin
+          rm -rf package release
+          mkdir -p package/bin release
 
           if [ "${{ matrix.goos }}" = "linux" ]; then
             cp output/sealchat-server package/
@@ -173,54 +272,49 @@ jobs:
           cp config.yaml.example package/
           cp config.docker.yaml.example package/
 
-      - name: Upload unpacked package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sealchat_test_${{ github.sha }}_${{ matrix.name }}
-          path: ./package
-
       - name: Compress package
         run: |
-          mkdir -p release
+          set -euo pipefail
+
+          VERSION="${{ needs.prepare-prerelease.outputs.version }}"
 
           if [ "${{ matrix.goos }}" = "linux" ]; then
             tar -czvf \
-              "release/sealchat_test_${{ steps.build_info.outputs.VERSION }}_${{ matrix.name }}.tar.gz" \
+              "release/sealchat_test_${VERSION}_${{ matrix.name }}.tar.gz" \
               -C package .
           elif [ "${{ matrix.goos }}" = "windows" ]; then
             cd package
             zip -r \
-              "../release/sealchat_test_${{ steps.build_info.outputs.VERSION }}_${{ matrix.name }}.zip" \
+              "../release/sealchat_test_${VERSION}_${{ matrix.name }}.zip" \
               .
           fi
 
-      - name: Upload compressed release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.name }}
-          path: ./release/*
+      - name: Upload package to prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          gh release upload "${{ env.PRERELEASE_TAG }}" \
+            ./release/* \
+            --clobber
 
   docker-build:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: ui-build
+    needs:
+      - ui-build
+      - prepare-prerelease
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download UI artifact
+      - name: Download UI resources
         uses: actions/download-artifact@v4
         with:
           name: ui
           path: ./ui/dist
-
-      - name: Set build info
-        id: build_info
-        run: |
-          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "VERSION=$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         run: |
@@ -232,11 +326,11 @@ jobs:
       - name: Build test image
         run: |
           docker build \
-            --build-arg BUILD_VERSION="${{ steps.build_info.outputs.VERSION }}" \
+            --build-arg BUILD_VERSION="${{ needs.prepare-prerelease.outputs.version }}" \
             -t "${{ env.IMAGE_NAME }}:dev" \
             -t "${{ env.IMAGE_NAME }}:prerelease" \
             -t "${{ env.IMAGE_NAME }}:sha-${{ github.sha }}" \
-            -t "${{ env.IMAGE_NAME }}:${{ steps.build_info.outputs.VERSION }}" \
+            -t "${{ env.IMAGE_NAME }}:${{ needs.prepare-prerelease.outputs.version }}" \
             -f Dockerfile \
             .
 
@@ -245,132 +339,4 @@ jobs:
           docker push "${{ env.IMAGE_NAME }}:dev"
           docker push "${{ env.IMAGE_NAME }}:prerelease"
           docker push "${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-          docker push "${{ env.IMAGE_NAME }}:${{ steps.build_info.outputs.VERSION }}"
-
-  update-prerelease:
-    name: Update Prerelease Page
-    runs-on: ubuntu-latest
-    needs:
-      - backend-build
-      - docker-build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download compressed artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: ./release
-          merge-multiple: true
-
-      - name: Set build info
-        id: build_info
-        run: |
-          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "VERSION=$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
-          echo "BRANCH_NAME=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate prerelease notes
-        run: |
-          set -euo pipefail
-
-          VERSION="${{ steps.build_info.outputs.VERSION }}"
-          BRANCH_NAME="${{ steps.build_info.outputs.BRANCH_NAME }}"
-
-          {
-            echo "# SealChat 自动测试构建"
-            echo
-            echo "> 这是开发分支的自动构建版本，可能不稳定，不建议用于生产环境。"
-            echo
-            echo "## 构建信息"
-            echo
-            echo "- 分支：\`${BRANCH_NAME}\`"
-            echo "- Commit：\`${{ github.sha }}\`"
-            echo "- 短 Commit：\`${{ steps.build_info.outputs.SHORT_SHA }}\`"
-            echo "- 构建版本：\`${VERSION}\`"
-            echo "- Workflow：[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-            echo
-            echo "## Docker 镜像"
-            echo
-            echo "\`\`\`bash"
-            echo "docker pull ${{ env.IMAGE_NAME }}:dev"
-            echo "docker pull ${{ env.IMAGE_NAME }}:prerelease"
-            echo "docker pull ${{ env.IMAGE_NAME }}:${VERSION}"
-            echo "docker pull ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
-            echo "\`\`\`"
-            echo
-            echo "## 最近提交"
-            echo
-          } > RELEASE_BODY.md
-
-          LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-
-          if [ -n "$LAST_TAG" ]; then
-            git log --format='- %s `%h`' "${LAST_TAG}..HEAD" >> RELEASE_BODY.md
-          else
-            git log --format='- %s `%h`' -20 >> RELEASE_BODY.md
-          fi
-
-          echo >> RELEASE_BODY.md
-          echo "## 下载" >> RELEASE_BODY.md
-          echo >> RELEASE_BODY.md
-          echo "请在本页面底部 Assets 中下载对应平台的测试包。" >> RELEASE_BODY.md
-
-      - name: Move prerelease tag to current commit
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag -f "${{ env.PRERELEASE_TAG }}" "${{ github.sha }}"
-          git push -f origin "refs/tags/${{ env.PRERELEASE_TAG }}"
-
-      - name: Create or update prerelease
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          TAG="${{ env.PRERELEASE_TAG }}"
-          TITLE="SealChat 自动测试构建 ${{ steps.build_info.outputs.VERSION }}"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Existing prerelease found, updating..."
-
-            gh release edit "$TAG" \
-              --title "$TITLE" \
-              --notes-file RELEASE_BODY.md \
-              --prerelease \
-              --latest=false
-
-            echo "Deleting old assets..."
-
-            ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
-
-            if [ -n "$ASSETS" ]; then
-              while IFS= read -r asset; do
-                if [ -n "$asset" ]; then
-                  gh release delete-asset "$TAG" "$asset" -y
-                fi
-              done <<< "$ASSETS"
-            fi
-
-            gh release upload "$TAG" ./release/* --clobber
-          else
-            echo "Prerelease does not exist, creating..."
-
-            gh release create "$TAG" ./release/* \
-              --title "$TITLE" \
-              --notes-file RELEASE_BODY.md \
-              --prerelease \
-              --latest=false \
-              --target "${{ github.sha }}"
-          fi
+          docker push "${{ env.IMAGE_NAME }}:${{ needs.prepare-prerelease.outputs.version }}"
