@@ -639,6 +639,13 @@ body[data-hide-ooc='true'] .viewer-message[data-ic-mode='ooc'] {
   font-weight: 700;
 }
 
+.viewer-message__whisper-meta {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+
 .viewer-message__time {
   white-space: nowrap;
   opacity: 0.95;
@@ -920,6 +927,10 @@ body[data-colorize='body'] .viewer-message__body {
     font-size: 0.96rem;
   }
 
+  .viewer-message__whisper-meta {
+    font-size: 0.75rem;
+  }
+
   body[data-layout='bubble'] .viewer-message__title {
     width: auto;
   }
@@ -1120,6 +1131,7 @@ body[data-colorize='body'] .viewer-message__body {
   .viewer-message__body,
   .viewer-message__header,
   .viewer-message__sender,
+  .viewer-message__whisper-meta,
   .viewer-message__time {
     color: inherit;
   }

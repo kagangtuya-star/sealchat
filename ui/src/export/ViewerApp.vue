@@ -145,6 +145,19 @@ function resolveMessageHtml(msg: ExportMessage) {
   return msg.content_html || msg.content || ''
 }
 
+function resolveWhisperMeta(msg: ExportMessage) {
+  if (!msg.is_whisper || !Array.isArray(msg.whisper_targets)) {
+    return ''
+  }
+  const targets = msg.whisper_targets
+    .map((target) => String(target || '').trim())
+    .filter((target) => target)
+  if (!targets.length) {
+    return ''
+  }
+  return `发送给 ${targets.join('、')}`
+}
+
 const manifestParts = computed(() => manifest?.parts ?? [])
 </script>
 
@@ -208,7 +221,10 @@ const manifestParts = computed(() => manifest?.parts ?? [])
           </div>
           <div class="viewer-message__main">
             <div class="viewer-message__header">
-              <strong :style="msg.sender_color ? { color: msg.sender_color } : undefined">{{ msg.sender_name || '匿名' }}</strong>
+              <div class="viewer-message__title">
+                <strong :style="msg.sender_color ? { color: msg.sender_color } : undefined">{{ msg.sender_name || '匿名' }}</strong>
+                <span v-if="resolveWhisperMeta(msg)" class="viewer-message__whisper-meta">{{ resolveWhisperMeta(msg) }}</span>
+              </div>
               <span>{{ formatTime(msg.created_at as string) }}</span>
             </div>
             <div class="viewer-message__body" v-html="resolveMessageHtml(msg)"></div>

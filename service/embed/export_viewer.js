@@ -104,6 +104,21 @@
     }
   }
 
+  function resolveWhisperTargets(msg) {
+    if (!msg || !msg.is_whisper || !Array.isArray(msg.whisper_targets)) {
+      return []
+    }
+    return msg.whisper_targets
+      .map((target) => String(target || '').trim())
+      .filter((target) => target)
+  }
+
+  function formatWhisperMetaText(msg) {
+    const targets = resolveWhisperTargets(msg)
+    if (!targets.length) return ''
+    return `发送给 ${targets.join('、')}`
+  }
+
   function stripHTML(html) {
     if (!html) return ''
     const tmp = document.createElement('div')
@@ -569,7 +584,8 @@
     }
     // 使用 content_html 进行渲染，fallback 到 content
     const displayContent = msg.content_html || msg.content || ''
-    article.dataset.searchText = stripHTML(displayContent) + ' ' + name
+    const whisperMetaText = formatWhisperMetaText(msg)
+    article.dataset.searchText = stripHTML(displayContent) + ' ' + name + ' ' + whisperMetaText
 
     const avatar = document.createElement('div')
     avatar.className = 'viewer-message__avatar'
@@ -601,6 +617,12 @@
     sender.className = 'viewer-message__sender'
     sender.textContent = name
     title.appendChild(sender)
+    if (whisperMetaText) {
+      const whisperMeta = document.createElement('span')
+      whisperMeta.className = 'viewer-message__whisper-meta'
+      whisperMeta.textContent = whisperMetaText
+      title.appendChild(whisperMeta)
+    }
     const time = document.createElement('span')
     time.className = 'viewer-message__time'
     time.textContent = formatTime(msg.created_at)

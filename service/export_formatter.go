@@ -2225,6 +2225,13 @@ func formatWhisperTargets(targets []string) string {
 	return fmt.Sprintf("[对%s]", strings.Join(targets, "、"))
 }
 
+func formatWhisperMetaText(targets []string) string {
+	if len(targets) == 0 {
+		return ""
+	}
+	return "发送给 " + strings.Join(targets, "、")
+}
+
 var diceRollPattern = regexp.MustCompile(`(?i)\b(\d+d\d+(?:[+\-x×*/]\d+)?[^=]*)=\s*([^\s]+.*)`)
 
 func detectDiceCommand(msg *ExportMessage) (bool, *diceCommandInfo) {
@@ -2449,6 +2456,9 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
 		}
 		return t.Format("2006-01-02 15:04:05")
 	},
+	"formatWhisperMeta": func(targets []string) string {
+		return formatWhisperMetaText(targets)
+	},
 	"safeHTML": func(s string) htmltemplate.HTML {
 		return htmltemplate.HTML(s)
 	},
@@ -2462,6 +2472,7 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .meta { margin-bottom: 1.5rem; color: #555; }
     .message { padding: 12px 16px; margin-bottom: 8px; background: #fff; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
     .sender { font-weight: 600; color: #222; margin-right: 4px; }
+    .whisper-meta { margin-left: 4px; color: #666; font-size: 0.82rem; }
     .timestamp { color: #888; font-size: 0.9rem; }
     .timestamp.hidden { visibility: hidden; height: 0; margin: 0; }
     .ooc { border-left: 3px solid #eab308; }
@@ -2492,7 +2503,7 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
   {{range .Messages}}
     <article class="message {{if eq .IcMode "ooc"}}ooc{{end}} {{if .IsWhisper}}whisper{{end}}">
       {{if not $.WithoutTimestamp}}<div class="timestamp">{{formatTime .CreatedAt}}</div>{{end}}
-      <div class="content"><span class="sender">&lt;{{.SenderName}}&gt;</span>{{if .ContentHTML}}{{safeHTML .ContentHTML}}{{else}}{{.Content}}{{end}}</div>
+      <div class="content"><span class="sender">&lt;{{.SenderName}}&gt;</span>{{if and .IsWhisper .WhisperTargets}}<span class="whisper-meta">{{formatWhisperMeta .WhisperTargets}}</span>{{end}}{{if .ContentHTML}}{{safeHTML .ContentHTML}}{{else}}{{.Content}}{{end}}</div>
     </article>
   {{end}}
 </body>

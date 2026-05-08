@@ -100,6 +100,19 @@
   color: rgba(203, 213, 225, 0.9);
 }
 
+.viewer-message__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.viewer-message__whisper-meta {
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 0.78rem;
+}
+
 .viewer-message__avatar {
   width: 2.5rem;
   height: 2.5rem;
