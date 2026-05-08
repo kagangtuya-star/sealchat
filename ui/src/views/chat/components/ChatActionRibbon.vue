@@ -94,7 +94,6 @@ interface ActionButton {
   icon: any
   emitEvent: string
   activeKey: keyof Props
-  condition?: () => boolean
   disabled?: () => boolean
 }
 

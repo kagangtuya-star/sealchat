@@ -75,6 +75,7 @@ import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/bot
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
+import { shouldPlayMessageSound } from '@/utils/messageSoundMode';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -12123,6 +12124,14 @@ const handleChannelContextCleared = () => {
   showButton.value = false;
 };
 
+const currentWorldChannelTree = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) {
+    return [] as SChannel[];
+  }
+  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
+});
+
 onMounted(async () => {
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -12210,12 +12219,28 @@ chatEvent.on('message-removed', (e?: Event) => {
 
 chatEvent.off('message-created', '*');
 chatEvent.on('message-created', (e?: Event) => {
-  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+  if (!e?.message) {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || (incoming as any)?.channel_id || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
+  const isSelf = incoming.user?.id === user.info.id;
+  if (!isSelf && shouldPlayMessageSound({
+    mode: display.settings.messageSoundMode,
+    isSelf,
+    isAppFocused: chat.isAppFocused,
+    messageChannelId: incomingChannelId,
+    currentChannelId,
+    currentWorldChannels: currentWorldChannelTree.value,
+  })) {
+    sound.play();
+  }
+  if (!isCurrentChannelMessage) {
+    return;
+  }
   const incomingIdentityId = resolveMessageIdentityId(incoming);
-  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || '').trim();
   if (incomingChannelId && incomingIdentityId) {
     chat.recordIdentitySpoken(
       incomingChannelId,
@@ -12226,7 +12251,6 @@ chatEvent.on('message-created', (e?: Event) => {
   if (hasCardRefreshCommand(incoming.content || '')) {
     scheduleCharacterSheetRefresh();
   }
-  const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
     let matchedPending: Message | undefined;
     const clientId = (incoming as any).clientId;
@@ -12259,8 +12283,6 @@ chatEvent.on('message-created', (e?: Event) => {
       return;
     }
   } else {
-    sound.play();
-
     // 检测是否被 @ 了（包括 @all）
     const content = incoming.content || '';
     const currentUserId = user.info.id;

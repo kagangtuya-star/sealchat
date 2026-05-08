@@ -15,6 +15,7 @@ import type {
   PlatformTheme,
   ThemeSelectionMode,
 } from '@/services/theme/themeTypes'
+import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messageSoundMode'
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
@@ -111,6 +112,7 @@ export interface DisplaySettings {
   disableContextMenu: boolean
   quickGalleryLinkedEmojiSendDirectly: boolean
   quickGalleryPageSize: number
+  messageSoundMode: MessageSoundMode
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
@@ -225,6 +227,12 @@ const QUICK_INPUT_TRIGGER_DEFAULT = '/'
 const coerceQuickInputTrigger = (value?: string): string => {
   if (typeof value === 'string' && value.length === 1) return value
   return QUICK_INPUT_TRIGGER_DEFAULT
+}
+const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
+  if (typeof value === 'string' && (MESSAGE_SOUND_MODE_VALUES as readonly string[]).includes(value)) {
+    return value as MessageSoundMode
+  }
+  return 'away'
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
@@ -471,6 +479,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
   quickGalleryLinkedEmojiSendDirectly: false,
   quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+  messageSoundMode: 'away',
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
   characterCardBadgeEnabled: true,
   characterCardBadgeAutoContrastEnabled: true,
@@ -1030,6 +1039,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryPageSize')
       ? normalizeQuickGalleryPageSize((patch as any).quickGalleryPageSize)
       : base.quickGalleryPageSize,
+  messageSoundMode:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'messageSoundMode')
+      ? coerceMessageSoundMode((patch as any).messageSoundMode)
+      : base.messageSoundMode,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)

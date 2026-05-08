@@ -5,7 +5,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, Notifications, NotificationsOff } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
@@ -31,6 +31,7 @@ import AnnouncementPopupModal from '@/components/announcement/AnnouncementPopupM
 import { useAnnouncementStore } from '@/stores/announcement';
 import type { AnnouncementItem } from '@/models/announcement';
 import { shouldRenderChannelSidebarList } from '@/stores/chatChannelSelection';
+import { MESSAGE_SOUND_MODE_LABELS, type MessageSoundMode } from '@/utils/messageSoundMode';
 
 const { t } = useI18n()
 
@@ -56,6 +57,37 @@ const emit = defineEmits<{
 const handleToggleSidebarWidthResize = () => {
   emit('toggle-sidebar-width-resize');
 };
+
+const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel'];
+
+const cycleMessageSoundMode = () => {
+  const current = display.settings.messageSoundMode;
+  const currentIndex = MESSAGE_SOUND_MODE_ORDER.indexOf(current);
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % MESSAGE_SOUND_MODE_ORDER.length : 0;
+  display.updateSettings({ messageSoundMode: MESSAGE_SOUND_MODE_ORDER[nextIndex] });
+};
+
+const messageSoundButtonLabel = computed(() => `提示音 ${MESSAGE_SOUND_MODE_LABELS[display.settings.messageSoundMode] || '离页时'}`);
+
+const messageSoundButtonIcon = computed(() => {
+  if (display.settings.messageSoundMode === 'off') {
+    return VolumeMuteOutline;
+  }
+  if (display.settings.messageSoundMode === 'away') {
+    return VolumeMediumOutline;
+  }
+  return VolumeHighOutline;
+});
+
+const messageSoundTooltip = computed(() => {
+  if (display.settings.messageSoundMode === 'off') {
+    return '关闭所有新消息提示音';
+  }
+  if (display.settings.messageSoundMode === 'away') {
+    return '仅当前频道在离开页面时播放提示音';
+  }
+  return '仅当前世界内的其他频道来新消息时播放提示音';
+});
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -818,6 +850,24 @@ const handleAckWorldAnnouncement = async () => {
               </template>
               <span v-if="pushStore.supported">开启后，切换标签页或最小化时可收到新消息通知</span>
               <span v-else>您的浏览器不支持通知功能</span>
+            </n-tooltip>
+
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  block
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': display.settings.messageSoundMode !== 'off' }"
+                  @click="cycleMessageSoundMode"
+                >
+                  <template #icon>
+                    <n-icon :component="messageSoundButtonIcon" />
+                  </template>
+                  {{ messageSoundButtonLabel }}
+                </n-button>
+              </template>
+              <span>{{ messageSoundTooltip }}</span>
             </n-tooltip>
 
             <n-tooltip placement="top" trigger="hover">
