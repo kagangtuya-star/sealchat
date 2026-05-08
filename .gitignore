@@ -59,3 +59,4 @@ backup_settings.patch
 /.superpowers
 /cap
 .codex
+ui/tsconfig.app.tsbuildinfo
