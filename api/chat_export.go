@@ -148,6 +148,34 @@ func canExportByWorldRole(role string) bool {
 	}
 }
 
+func canViewExportTask(userID string, job *model.MessageExportJobModel) bool {
+	if strings.TrimSpace(userID) == "" || job == nil {
+		return false
+	}
+	if job.UserID == userID {
+		return true
+	}
+	return validateExportChannel(userID, job.ChannelID) == nil
+}
+
+func canDeleteExportTask(userID string, job *model.MessageExportJobModel) bool {
+	if strings.TrimSpace(userID) == "" || job == nil {
+		return false
+	}
+	if job.UserID == userID {
+		return true
+	}
+	channel, err := model.ChannelGet(strings.TrimSpace(job.ChannelID))
+	if err != nil || channel == nil || strings.TrimSpace(channel.ID) == "" {
+		return false
+	}
+	worldID := strings.TrimSpace(channel.WorldID)
+	if worldID == "" {
+		return false
+	}
+	return service.IsWorldAdmin(worldID, userID)
+}
+
 func execChatExportCreate(userID string, req *chatExportRequest) (*chatExportResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("请求参数不能为空")
@@ -345,7 +373,7 @@ func ChatExportGet(c *fiber.Ctx) error {
 		}
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	if job.UserID != user.ID {
+	if !canViewExportTask(user.ID, job) {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
 	}
 
@@ -478,7 +506,7 @@ func ChatExportDelete(c *fiber.Ctx) error {
 		}
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	if job.UserID != user.ID {
+	if !canDeleteExportTask(user.ID, job) {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "无权限访问该任务"})
 	}
 	if job.Status == model.MessageExportStatusPending || job.Status == model.MessageExportStatusProcessing {
