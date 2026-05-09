@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, NRadioGroup, NRadioButton, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh } from '@vicons/tabler';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, useMessage } from 'naive-ui';
+import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh, ChevronDown, ChevronRight } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
@@ -88,6 +88,21 @@ const badgeEnabled = computed({
     displayStore.updateSettings({ characterCardBadgeEnabled: value });
   },
 });
+
+const badgeSettingsExpanded = computed({
+  get: () => displayStore.settings.characterCardBadgeSettingsExpanded,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardBadgeSettingsExpanded: value });
+  },
+});
+
+const badgeSettingsToggleIcon = computed(() => (
+  badgeSettingsExpanded.value ? ChevronDown : ChevronRight
+));
+
+const toggleBadgeSettingsExpanded = () => {
+  badgeSettingsExpanded.value = !badgeSettingsExpanded.value;
+};
 
 const badgeAutoContrastEnabled = computed({
   get: () => displayStore.settings.characterCardBadgeAutoContrastEnabled,
@@ -1081,78 +1096,96 @@ const openEditPanel = async (card: CharacterCard) => {
       </div>
 
       <div class="character-card-settings">
-        <div class="settings-row">
-          <div>
-            <p class="settings-title">聊天角色徽章</p>
-            <p class="settings-desc">开启后且可读到人物卡数据时，在昵称后显示简洁属性</p>
+        <button
+          type="button"
+          class="settings-group-toggle"
+          :aria-expanded="badgeSettingsExpanded"
+          @click="toggleBadgeSettingsExpanded"
+        >
+          <span class="settings-group-toggle__title-wrap">
+            <n-icon size="18" class="settings-group-toggle__icon">
+              <component :is="badgeSettingsToggleIcon" />
+            </n-icon>
+            <span class="settings-group-toggle__title">角色徽标设置</span>
+          </span>
+          <span class="settings-group-toggle__state">{{ badgeSettingsExpanded ? '收起' : '展开' }}</span>
+        </button>
+        <n-collapse-transition :show="badgeSettingsExpanded">
+          <div class="character-card-settings__body">
+            <div class="settings-row">
+              <div>
+                <p class="settings-title">聊天角色徽章</p>
+                <p class="settings-desc">开启后且可读到人物卡数据时，在昵称后显示简洁属性</p>
+              </div>
+              <n-switch v-model:value="badgeEnabled" :disabled="characterApiDisabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row">
+              <div>
+                <p class="settings-title">自动提高可读性</p>
+                <p class="settings-desc">当徽标颜色与频道背景接近时，自动调整文字、底色与边框</p>
+              </div>
+              <n-switch v-model:value="badgeAutoContrastEnabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row settings-row--stacked">
+              <div>
+                <p class="settings-title">徽章显示范围</p>
+                <p class="settings-desc">控制角色徽章在场内或场外消息中的可见性</p>
+              </div>
+              <n-radio-group
+                v-model:value="badgeVisibilityScope"
+                size="small"
+                :disabled="characterApiDisabled || !badgeEnabled"
+              >
+                <n-radio-button
+                  v-for="option in badgeVisibilityScopeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </n-radio-button>
+              </n-radio-group>
+            </div>
+            <div class="settings-row">
+              <div>
+                <p class="settings-title">自动同步 BOT 昵称</p>
+                <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
+              </div>
+              <n-switch v-model:value="autoSyncBotNicknameEnabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row settings-row--template">
+              <div>
+                <p class="settings-title">徽章模板</p>
+                <p class="settings-desc">使用 {属性名} 占位，例如：HP{生命值} SAN{理智} 闪避{闪避}</p>
+              </div>
+              <div class="settings-template-input">
+                <n-input
+                  v-model:value="badgeTemplate"
+                  size="small"
+                  :disabled="characterApiDisabled"
+                  placeholder="HP{生命值} SAN{理智} 闪避{闪避}"
+                  @blur="persistBadgeTemplate"
+                />
+                <n-button size="small" quaternary :disabled="characterApiDisabled" @click="resetBadgeTemplate">恢复默认</n-button>
+                <n-button
+                  v-if="canSyncBadgeTemplate"
+                  size="small"
+                  tertiary
+                  :disabled="characterApiDisabled"
+                  @click="syncBadgeTemplateToWorld"
+                >模板同步</n-button>
+              </div>
+            </div>
           </div>
-          <n-switch v-model:value="badgeEnabled" :disabled="characterApiDisabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
-        </div>
-        <div class="settings-row">
-          <div>
-            <p class="settings-title">自动提高可读性</p>
-            <p class="settings-desc">当徽标颜色与频道背景接近时，自动调整文字、底色与边框</p>
-          </div>
-          <n-switch v-model:value="badgeAutoContrastEnabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
-        </div>
-        <div class="settings-row settings-row--stacked">
-          <div>
-            <p class="settings-title">徽章显示范围</p>
-            <p class="settings-desc">控制角色徽章在场内或场外消息中的可见性</p>
-          </div>
-          <n-radio-group
-            v-model:value="badgeVisibilityScope"
-            size="small"
-            :disabled="characterApiDisabled || !badgeEnabled"
-          >
-            <n-radio-button
-              v-for="option in badgeVisibilityScopeOptions"
-              :key="option.value"
-              :value="option.value"
-            >
-              {{ option.label }}
-            </n-radio-button>
-          </n-radio-group>
-        </div>
-        <div class="settings-row">
-          <div>
-            <p class="settings-title">自动同步 BOT 昵称</p>
-            <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
-          </div>
-          <n-switch v-model:value="autoSyncBotNicknameEnabled">
-            <template #checked>已启用</template>
-            <template #unchecked>已关闭</template>
-          </n-switch>
-        </div>
-        <div class="settings-row settings-row--template">
-          <div>
-            <p class="settings-title">徽章模板</p>
-            <p class="settings-desc">使用 {属性名} 占位，例如：HP{生命值} SAN{理智} 闪避{闪避}</p>
-          </div>
-          <div class="settings-template-input">
-            <n-input
-              v-model:value="badgeTemplate"
-              size="small"
-              :disabled="characterApiDisabled"
-              placeholder="HP{生命值} SAN{理智} 闪避{闪避}"
-              @blur="persistBadgeTemplate"
-            />
-            <n-button size="small" quaternary :disabled="characterApiDisabled" @click="resetBadgeTemplate">恢复默认</n-button>
-            <n-button
-              v-if="canSyncBadgeTemplate"
-              size="small"
-              tertiary
-              :disabled="characterApiDisabled"
-              @click="syncBadgeTemplateToWorld"
-            >模板同步</n-button>
-          </div>
-        </div>
+        </n-collapse-transition>
       </div>
 
       <n-divider style="margin: 8px 0 12px;" />
@@ -1519,10 +1552,17 @@ const openEditPanel = async (card: CharacterCard) => {
 .character-card-settings {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   padding: 0.25rem 0 1rem;
   border-bottom: 1px solid var(--sc-border-color);
   margin-bottom: 1rem;
+}
+
+.character-card-settings__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
 }
 
 .character-api-unavailable {
@@ -1559,6 +1599,42 @@ const openEditPanel = async (card: CharacterCard) => {
 .settings-row--stacked {
   align-items: flex-start;
   flex-direction: column;
+}
+
+.settings-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.35rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-group-toggle__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.settings-group-toggle__icon {
+  color: var(--sc-text-secondary);
+  flex-shrink: 0;
+}
+
+.settings-group-toggle__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.settings-group-toggle__state {
+  color: var(--sc-text-secondary);
+  font-size: 0.78rem;
+  flex-shrink: 0;
 }
 
 .settings-title {

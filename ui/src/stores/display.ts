@@ -9,6 +9,7 @@ import {
   type AvatarVisibilityScope,
   type MessageVisibilityScope,
 } from './displayAvatarVisibility'
+import { normalizeCharacterCardBadgeSettingsExpanded } from './displayCharacterCardSettings'
 import {
   migrateLegacyThemeSelection,
   resolveCustomThemeEnabledUpdate,
@@ -121,6 +122,7 @@ export interface DisplaySettings {
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
+  characterCardBadgeSettingsExpanded: boolean
   characterCardBadgeEnabled: boolean
   characterCardBadgeVisibilityScope: MessageVisibilityScope
   characterCardBadgeAutoContrastEnabled: boolean
@@ -487,6 +489,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
   messageSoundMode: 'away',
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
+  characterCardBadgeSettingsExpanded: true,
   characterCardBadgeEnabled: true,
   characterCardBadgeVisibilityScope: 'ic',
   characterCardBadgeAutoContrastEnabled: true,
@@ -768,6 +771,9 @@ const loadSettings = (): DisplaySettings => {
       quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
       messageSoundMode: coerceMessageSoundMode((parsed as any)?.messageSoundMode),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
+      characterCardBadgeSettingsExpanded: normalizeCharacterCardBadgeSettingsExpanded(
+        (parsed as any)?.characterCardBadgeSettingsExpanded,
+      ),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
       characterCardBadgeVisibilityScope: normalizeMessageVisibilityScope((parsed as any)?.characterCardBadgeVisibilityScope),
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
@@ -1056,6 +1062,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)
       : base.inputAreaHeight,
+  characterCardBadgeSettingsExpanded:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeSettingsExpanded')
+      ? normalizeCharacterCardBadgeSettingsExpanded((patch as any).characterCardBadgeSettingsExpanded)
+      : base.characterCardBadgeSettingsExpanded,
   characterCardBadgeEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeEnabled')
       ? coerceBoolean((patch as any).characterCardBadgeEnabled)
