@@ -59,7 +59,7 @@ import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
-import { useGalleryStore } from '@/stores/gallery';
+import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
@@ -1423,6 +1423,8 @@ const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
 const emojiPanelTab = ref<'gallery' | 'utf' | 'variant'>('gallery');
+const emojiPanelContentRef = ref<HTMLElement | null>(null);
+const emojiPanelLoadMoreSentinelRef = ref<HTMLElement | null>(null);
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
 const activeIdentityForEmojiPanel = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
@@ -1510,6 +1512,27 @@ const emojiTabOptions = computed(() => {
   });
 });
 const hasMultipleTabs = computed(() => emojiTabOptions.value.length > 1);
+const emojiPanelPagination = computed(() => {
+  const tabId = activeEmojiTab.value;
+  if (!tabId) {
+    return { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: emojiItems.value.length };
+  }
+  return gallery.getItemPagination(tabId);
+});
+const emojiPanelLoading = computed(() => {
+  const tabId = activeEmojiTab.value;
+  return tabId ? gallery.isCollectionLoading(tabId) : false;
+});
+const emojiPanelLoadingMore = computed(() => {
+  const tabId = activeEmojiTab.value;
+  return tabId ? gallery.isCollectionLoadingMore(tabId) : false;
+});
+const emojiPanelHasMore = computed(() => {
+  const tabId = activeEmojiTab.value;
+  if (!tabId) return false;
+  return emojiPanelPagination.value.total > gallery.getItemsByCollection(tabId).length;
+});
+const emojiPanelAutoFillPending = ref(false);
 
 const toggleEmojiRemarkVisible = () => {
   const userId = user.info?.id;
@@ -1563,6 +1586,21 @@ if (typeof window !== 'undefined') {
   );
 }
 
+useIntersectionObserver(
+  emojiPanelLoadMoreSentinelRef,
+  ([entry]) => {
+    if (!entry?.isIntersecting || emojiPanelTab.value !== 'gallery') {
+      return;
+    }
+    void loadMoreEmojiPanelItems();
+  },
+  {
+    root: emojiPanelContentRef,
+    rootMargin: '0px 0px 80px 0px',
+    threshold: 0.01,
+  }
+);
+
 const allGalleryItems = computed(() =>
   Object.values(gallery.items).flatMap((entry) => entry?.items ?? [])
 );
@@ -1579,6 +1617,38 @@ const ensureEmojiCollectionLoaded = async () => {
     await gallery.ensureEmojiCollection(ownerId);
   } catch {
     // ignore load errors for emoji collections
+  }
+};
+
+const loadMoreEmojiPanelItems = async () => {
+  const tabId = activeEmojiTab.value;
+  if (!tabId || emojiPanelLoading.value || emojiPanelLoadingMore.value || !emojiPanelHasMore.value) {
+    return;
+  }
+  const current = gallery.getItemPagination(tabId);
+  await gallery.loadItems(tabId, {
+    page: current.page + 1,
+    pageSize: current.pageSize,
+    append: true,
+  });
+};
+
+const maybeLoadMoreEmojiPanelForShortContent = async () => {
+  await nextTick();
+  const container = emojiPanelContentRef.value;
+  if (!container || emojiPanelTab.value !== 'gallery') {
+    return;
+  }
+  const shouldFill = container.scrollHeight <= container.clientHeight + 40;
+  if (
+    shouldFill &&
+    emojiPanelHasMore.value &&
+    !emojiPanelLoading.value &&
+    !emojiPanelLoadingMore.value &&
+    !emojiPanelAutoFillPending.value
+  ) {
+    emojiPanelAutoFillPending.value = true;
+    await loadMoreEmojiPanelItems();
   }
 };
 
@@ -2376,6 +2446,25 @@ watch(isManagingEmoji, (val) => {
     void ensureEmojiCollectionLoaded();
   }
 });
+
+watch(
+  () => [
+    emojiPanelTab.value,
+    activeEmojiTab.value,
+    filteredEmojiItems.value.length,
+    emojiPanelLoading.value,
+    emojiPanelLoadingMore.value,
+  ],
+  async () => {
+    if (emojiPanelLoadingMore.value) {
+      emojiPanelAutoFillPending.value = false;
+      return;
+    }
+    emojiPanelAutoFillPending.value = false;
+    await maybeLoadMoreEmojiPanelForShortContent();
+  },
+  { immediate: true }
+);
 
 const openGalleryPanel = async () => {
   const userId = user.info?.id;
@@ -14369,6 +14458,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div
+                    ref="emojiPanelContentRef"
                     class="emoji-panel__content"
                     :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
                   >
@@ -14506,6 +14596,12 @@ onBeforeUnmount(() => {
                       </div>
                     </template>
                     </template>
+                    <div
+                      v-if="emojiPanelTab === 'gallery' && filteredEmojiItems.length"
+                      ref="emojiPanelLoadMoreSentinelRef"
+                      class="emoji-grid__sentinel"
+                      aria-hidden="true"
+                    ></div>
                   </div>
                 </div>
               </n-popover>
@@ -15425,6 +15521,7 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div
+                          ref="emojiPanelContentRef"
                           class="emoji-panel__content"
                           :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
                         >
@@ -15562,6 +15659,12 @@ onBeforeUnmount(() => {
                             </div>
                           </template>
                           </template>
+                          <div
+                            v-if="emojiPanelTab === 'gallery' && filteredEmojiItems.length"
+                            ref="emojiPanelLoadMoreSentinelRef"
+                            class="emoji-grid__sentinel"
+                            aria-hidden="true"
+                          ></div>
                         </div>
                       </div>
                     </n-popover>
@@ -20432,6 +20535,11 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(5, minmax(64px, 1fr));
   gap: 0.5rem;
+}
+
+.emoji-grid__sentinel {
+  grid-column: 1 / -1;
+  height: 1px;
 }
 
 @media (max-width: 768px) {

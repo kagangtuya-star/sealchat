@@ -40,7 +40,7 @@
           <n-button quaternary size="tiny" type="error" @click.stop="emit('delete', item)">删除</n-button>
         </div>
       </div>
-      <div class="gallery-grid__footer">
+      <div ref="loadMoreSentinelRef" class="gallery-grid__footer">
         <span v-if="loadingMore">加载更多中...</span>
         <span v-else-if="hasMore">已加载 {{ items.length }}/{{ totalCount }} 张，向下滚动继续加载</span>
         <span v-else>已加载全部 {{ totalCount }} 张</span>
@@ -50,8 +50,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
-import { useInfiniteScroll } from '@vueuse/core';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { useIntersectionObserver } from '@vueuse/core';
 import { NButton, NImage, NCheckbox } from 'naive-ui';
 import type { GalleryItem } from '@/types';
 import { fetchAttachmentMetaById, normalizeAttachmentId, resolveAttachmentUrl, type AttachmentMeta } from '@/composables/useAttachmentResolver';
@@ -86,6 +86,7 @@ const sizeClass = computed(() => `gallery-grid--${props.thumbnailSize ?? 'medium
 const totalCount = computed(() => Math.max(props.total ?? 0, props.items.length));
 const dragOverIndex = ref<number | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
+const loadMoreSentinelRef = ref<HTMLElement | null>(null);
 let lastClickIndex = -1;
 let draggingIndex = -1;
 
@@ -154,17 +155,55 @@ watch(
   { immediate: true },
 );
 
-useInfiniteScroll(
-  contentRef,
-  () => {
+useIntersectionObserver(
+  loadMoreSentinelRef,
+  ([entry]) => {
+    if (!entry?.isIntersecting) {
+      return;
+    }
     if (!props.loading && !props.loadingMore && props.hasMore) {
       emit('load-more');
     }
   },
   {
-    distance: 120,
-    canLoadMore: () => Boolean(props.hasMore) && !props.loading && !props.loadingMore
+    root: contentRef,
+    rootMargin: '0px 0px 120px 0px',
+    threshold: 0.01,
   }
+);
+
+const autoFillPending = ref(false);
+
+const maybeLoadMoreForShortContent = async () => {
+  await nextTick();
+  const container = contentRef.value;
+  if (!container) {
+    return;
+  }
+  const shouldFill = container.scrollHeight <= container.clientHeight + 40;
+  if (
+    shouldFill &&
+    props.hasMore &&
+    !props.loading &&
+    !props.loadingMore &&
+    !autoFillPending.value
+  ) {
+    autoFillPending.value = true;
+    emit('load-more');
+  }
+};
+
+watch(
+  () => [props.items.length, props.hasMore, props.loading, props.loadingMore],
+  async () => {
+    if (props.loadingMore) {
+      autoFillPending.value = false;
+      return;
+    }
+    autoFillPending.value = false;
+    await maybeLoadMoreForShortContent();
+  },
+  { immediate: true }
 );
 
 function handleClick(item: GalleryItem, index: number, evt: MouseEvent) {
@@ -242,9 +281,11 @@ function handleDrop(toIndex: number, evt: DragEvent) {
 <style scoped>
 .gallery-grid {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 8px;
   height: 100%;
+  min-height: 0;
   --grid-min-size: 96px;
   --grid-gap: 12px;
   --grid-item-padding: 8px;

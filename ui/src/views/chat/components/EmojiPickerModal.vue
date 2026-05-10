@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, reactive, ref, onMounted, onUnmounted, watch } from 'vue';
+import { useIntersectionObserver } from '@vueuse/core';
 import { useMessage } from 'naive-ui';
 import { addRecentEmoji, loadRecentEmojis } from '@/utils/recentEmojis';
 import { normalizeAttachmentId, resolveAttachmentUrl, fetchAttachmentMetaById, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { useGalleryStore } from '@/stores/gallery';
+import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
 import { matchText } from '@/utils/pinyinMatch';
@@ -38,11 +39,25 @@ const customEmojiItems = computed(() => gallery.reactionEmojiItems);
 const searchKeyword = ref('');
 const displayLimit = ref(120);
 const customGridRef = ref<HTMLElement | null>(null);
+const customGridSentinelRef = ref<HTMLElement | null>(null);
 const PAGE_SIZE = 120;
 const EMOJI_LOAD_TIMEOUT_MS = 5000;
 const activeTab = ref<'emoji' | 'reaction'>(props.mode === 'emoji-only' ? 'emoji' : props.initialTab);
 const customEmojiMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
 const pendingCustomEmojiMeta = new Set<string>();
+const reactionCollectionId = computed(() => gallery.reactionCollectionId);
+const reactionPagination = computed(() => (
+  reactionCollectionId.value
+    ? gallery.getItemPagination(reactionCollectionId.value)
+    : { page: 1, pageSize: DEFAULT_GALLERY_PAGE_SIZE, total: 0 }
+));
+const reactionLoadingMore = computed(() => (
+  reactionCollectionId.value ? gallery.isCollectionLoadingMore(reactionCollectionId.value) : false
+));
+const reactionLoading = computed(() => (
+  reactionCollectionId.value ? gallery.isCollectionLoading(reactionCollectionId.value) : false
+));
+const autoFillCustomEmojiPending = ref(false);
 
 const filteredCustomEmojiItems = computed(() => {
   const list = customEmojiItems.value;
@@ -59,6 +74,9 @@ const visibleCustomEmojiItems = computed(() =>
 );
 
 const hasMoreCustomEmoji = computed(() => filteredCustomEmojiItems.value.length > displayLimit.value);
+const canLoadMoreCustomEmoji = computed(() =>
+  reactionPagination.value.total > customEmojiItems.value.length
+);
 
 const handleEmojiClick = (event: CustomEvent) => {
   const emoji = event.detail?.unicode;
@@ -121,13 +139,23 @@ const handleFileInput = async (event: Event) => {
   }
 };
 
-const handleCustomGridScroll = (event: Event) => {
-  if (!hasMoreCustomEmoji.value) return;
-  const target = event.target as HTMLElement | null;
-  if (!target) return;
-  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+const loadMoreCustomEmoji = async () => {
+  const collectionId = reactionCollectionId.value;
+  if (!collectionId) return;
+
+  if (hasMoreCustomEmoji.value) {
     displayLimit.value += PAGE_SIZE;
   }
+
+  if (!canLoadMoreCustomEmoji.value || reactionLoading.value || reactionLoadingMore.value) {
+    return;
+  }
+
+  await gallery.loadItems(collectionId, {
+    page: reactionPagination.value.page + 1,
+    pageSize: reactionPagination.value.pageSize,
+    append: true,
+  });
 };
 
 const ensureCustomEmojiMeta = async (attachmentId: string) => {
@@ -358,12 +386,59 @@ onUnmounted(() => {
   }
 });
 
+useIntersectionObserver(
+  customGridSentinelRef,
+  ([entry]) => {
+    if (!entry?.isIntersecting || activeTab.value !== 'reaction') {
+      return;
+    }
+    void loadMoreCustomEmoji();
+  },
+  {
+    root: customGridRef,
+    rootMargin: '0px 0px 80px 0px',
+    threshold: 0.01,
+  }
+);
+
+const maybeLoadMoreCustomEmojiForShortContent = async () => {
+  await nextTick();
+  const container = customGridRef.value;
+  if (!container || activeTab.value !== 'reaction') {
+    return;
+  }
+  const shouldFill = container.scrollHeight <= container.clientHeight + 40;
+  if (
+    shouldFill &&
+    (hasMoreCustomEmoji.value || canLoadMoreCustomEmoji.value) &&
+    !reactionLoading.value &&
+    !reactionLoadingMore.value &&
+    !autoFillCustomEmojiPending.value
+  ) {
+    autoFillCustomEmojiPending.value = true;
+    await loadMoreCustomEmoji();
+  }
+};
+
 watch(searchKeyword, () => {
   displayLimit.value = PAGE_SIZE;
   if (customGridRef.value) {
     customGridRef.value.scrollTop = 0;
   }
 });
+
+watch(
+  () => [customEmojiItems.value.length, visibleCustomEmojiItems.value.length, activeTab.value, reactionLoadingMore.value, reactionLoading.value],
+  async () => {
+    if (reactionLoadingMore.value) {
+      autoFillCustomEmojiPending.value = false;
+      return;
+    }
+    autoFillCustomEmojiPending.value = false;
+    await maybeLoadMoreCustomEmojiForShortContent();
+  },
+  { immediate: true }
+);
 
 watch(
   () => props.mode,
@@ -442,7 +517,6 @@ watch(
               v-if="filteredCustomEmojiItems.length"
               ref="customGridRef"
               class="custom-emoji-grid"
-              @scroll="handleCustomGridScroll"
             >
               <button
                 v-for="item in visibleCustomEmojiItems"
@@ -454,11 +528,18 @@ watch(
               >
                 <img :src="resolveCustomEmojiSrc(item.attachmentId, item.thumbUrl)" :alt="item.remark || 'emoji'" />
               </button>
+              <div ref="customGridSentinelRef" class="custom-emoji-grid__sentinel" aria-hidden="true"></div>
             </div>
             <div v-else class="custom-emoji-empty">
               {{ searchKeyword ? '没有匹配的表情' : '暂无自定义表情' }}
             </div>
-            <div v-if="hasMoreCustomEmoji" class="custom-emoji-more">继续下拉加载更多</div>
+            <div v-if="reactionLoadingMore" class="custom-emoji-more">加载更多中...</div>
+            <div v-else-if="canLoadMoreCustomEmoji" class="custom-emoji-more">
+              已加载 {{ customEmojiItems.length }}/{{ reactionPagination.total }} 个，继续下拉加载更多
+            </div>
+            <div v-else-if="hasMoreCustomEmoji" class="custom-emoji-more">
+              已显示 {{ visibleCustomEmojiItems.length }}/{{ filteredCustomEmojiItems.length }} 个匹配项，继续下拉查看更多
+            </div>
           </div>
           <div v-show="activeTab === 'emoji'" class="emoji-picker-pane">
             <emoji-picker class="light"></emoji-picker>
@@ -658,6 +739,11 @@ watch(
 .custom-emoji-item:hover {
   border-color: var(--sc-border-strong, rgba(15, 23, 42, 0.12));
   background: var(--sc-bg-layer, rgba(15, 23, 42, 0.04));
+}
+
+.custom-emoji-grid__sentinel {
+  grid-column: 1 / -1;
+  height: 1px;
 }
 
 .custom-emoji-empty {
