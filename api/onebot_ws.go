@@ -10,17 +10,18 @@ import (
 	"sealchat/service"
 )
 
-func oneBotWSWorks(app *fiber.App) {
-	app.Use("/onebot/v11/ws", func(c *fiber.Ctx) error {
+func oneBotWSWorks(app *fiber.App, webUrl string) {
+	wsPath := joinWebPath(webUrl, "onebot/v11/ws")
+	app.Use(wsPath, func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			return c.Next()
 		}
 		return fiber.ErrUpgradeRequired
 	})
 
-	app.Get("/onebot/v11/ws", websocket.New(oneBotForwardWSHandler(oneBotSessionRoleUniversal)))
-	app.Get("/onebot/v11/ws/api", websocket.New(oneBotForwardWSHandler(oneBotSessionRoleAPI)))
-	app.Get("/onebot/v11/ws/event", websocket.New(oneBotForwardWSHandler(oneBotSessionRoleEvent)))
+	app.Get(wsPath, websocket.New(oneBotForwardWSHandler(oneBotSessionRoleUniversal)))
+	app.Get(joinWebPath(webUrl, "onebot/v11/ws/api"), websocket.New(oneBotForwardWSHandler(oneBotSessionRoleAPI)))
+	app.Get(joinWebPath(webUrl, "onebot/v11/ws/event"), websocket.New(oneBotForwardWSHandler(oneBotSessionRoleEvent)))
 }
 
 func oneBotForwardWSHandler(role oneBotSessionRole) func(*websocket.Conn) {

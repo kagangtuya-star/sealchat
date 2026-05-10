@@ -43,7 +43,12 @@
           return resp.json();
         });
       };
-      var origins = [window.location.origin];
+      var _basePath = window.__SEALCHAT_BASE__;
+      if (!_basePath) {
+        var _p = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '');
+        if (_p && _p !== '/') _basePath = _p;
+      }
+      var origins = [window.location.origin + (_basePath || '')];
       var devFallback = window.location.protocol + '//' + window.location.hostname + ':3212';
       if (origins.indexOf(devFallback) === -1) {
         origins.push(devFallback);

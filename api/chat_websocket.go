@@ -241,7 +241,7 @@ func getUserConnInfoMap() *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *Co
 	return userId2ConnInfoGlobal
 }
 
-func websocketWorks(app *fiber.App) {
+func websocketWorks(app *fiber.App, webUrl string) {
 	channelUsersMap := &utils.SyncMap[string, *utils.SyncSet[string]]{}
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
@@ -562,7 +562,7 @@ func websocketWorks(app *fiber.App) {
 		}
 	}()
 
-	app.Use("/ws", func(c *fiber.Ctx) error {
+	app.Use(joinWebPath(webUrl, "ws"), func(c *fiber.Ctx) error {
 		// IsWebSocketUpgrade returns true if the client
 		// requested upgrade to the WebSocket protocol.
 		if websocket.IsWebSocketUpgrade(c) {
@@ -572,7 +572,7 @@ func websocketWorks(app *fiber.App) {
 		return fiber.ErrUpgradeRequired
 	})
 
-	app.Get("/ws/seal", websocket.New(func(rawConn *websocket.Conn) {
+	app.Get(joinWebPath(webUrl, "ws/seal"), websocket.New(func(rawConn *websocket.Conn) {
 		// websocket.Conn bindings https://pkg.go.dev/github.com/fasthttp/websocket?tab=doc#pkg-index
 		var (
 			msg         []byte

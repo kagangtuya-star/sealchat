@@ -167,6 +167,10 @@ func normalizeWebRoot(webURL string) string {
 	if !strings.HasPrefix(webRoot, "/") {
 		webRoot = "/" + webRoot
 	}
+	// Collapse consecutive leading slashes to prevent protocol-relative URLs (e.g. "//evil.com")
+	for strings.HasPrefix(webRoot, "//") {
+		webRoot = webRoot[1:]
+	}
 	webRoot = strings.TrimRight(webRoot, "/")
 	if webRoot == "" {
 		return "/"
@@ -201,13 +205,37 @@ func applyPageTitleToIndex(htmlSource string, title string) string {
 	return htmlSource[:start+len("<title>")] + escapedTitle + htmlSource[end:]
 }
 
-func applyFaviconToIndex(htmlSource string, attachmentID string) string {
+func applyFaviconToIndex(htmlSource string, attachmentID string, webURL string) string {
 	trimmed := strings.TrimPrefix(strings.TrimSpace(attachmentID), "id:")
-	if trimmed == "" {
+	if trimmed != "" {
+		iconURL := joinWebPath(webURL, "api/v1/attachment", url.PathEscape(trimmed)) + "?v=" + url.QueryEscape(trimmed)
+		return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
+	}
+	webRoot := normalizeWebRoot(webURL)
+	if webRoot != "/" {
+		newHref := webRoot + "/favicon.ico"
+		return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(newHref)+`"`)
+	}
+	return htmlSource
+}
+
+func applyBasePathToIndex(htmlSource string, webURL string) string {
+	webRoot := normalizeWebRoot(webURL)
+	base := ""
+	if webRoot != "/" {
+		base = webRoot
+	}
+	baseJSON, err := json.Marshal(base)
+	if err != nil {
 		return htmlSource
 	}
-	iconURL := "/api/v1/attachment/" + url.PathEscape(trimmed) + "?v=" + url.QueryEscape(trimmed)
-	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
+	script := "<script>window.__SEALCHAT_BASE__=" + string(baseJSON) + ";</script>"
+	headStart := strings.Index(htmlSource, "<head>")
+	if headStart == -1 {
+		return htmlSource
+	}
+	insertAt := headStart + len("<head>")
+	return htmlSource[:insertAt] + script + htmlSource[insertAt:]
 }
 
 const (
@@ -216,15 +244,16 @@ const (
 	frontendShortCacheControl = "public, max-age=300"
 )
 
-func frontendCompressMiddleware() fiber.Handler {
+func frontendCompressMiddleware(webURL string) fiber.Handler {
+	apiPrefix := joinWebPath(webURL, "api/v1")
 	return compress.New(compress.Config{
 		Level: compress.LevelBestSpeed,
 		Next: func(c *fiber.Ctx) bool {
 			p := c.Path()
-			return strings.HasPrefix(p, "/api/v1/audio/stream") ||
-				strings.HasPrefix(p, "/api/v1/attachment/") ||
-				strings.HasPrefix(p, "/api/v1/attachments") ||
-				strings.HasPrefix(p, "/api/v1/gallery/thumbs")
+			return strings.HasPrefix(p, apiPrefix+"/audio/stream") ||
+				strings.HasPrefix(p, apiPrefix+"/attachment/") ||
+				strings.HasPrefix(p, apiPrefix+"/attachments") ||
+				strings.HasPrefix(p, apiPrefix+"/gallery/thumbs")
 		},
 	})
 }
@@ -260,7 +289,8 @@ func renderIndexHTML(c *fiber.Ctx, indexHTML []byte, config *utils.AppConfig) er
 	page := string(indexHTML)
 	if config != nil {
 		page = applyPageTitleToIndex(page, config.PageTitle)
-		page = applyFaviconToIndex(page, config.FaviconAttachmentID)
+		page = applyFaviconToIndex(page, config.FaviconAttachmentID, config.WebUrl)
+		page = applyBasePathToIndex(page, config.WebUrl)
 	}
 	body := []byte(page)
 	etagValue := strongETag(body)
@@ -326,9 +356,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(frontendCompressMiddleware())
+	app.Use(frontendCompressMiddleware(config.WebUrl))
 
-	v1 := app.Group("/api/v1")
+	v1 := app.Group(joinWebPath(config.WebUrl, "api/v1"))
 	v1.Post("/user-signup", UserSignup)
 	v1.Post("/user-signin", UserSignin)
 	v1.Get("/captcha/new", CaptchaNew)
@@ -788,8 +818,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	registerFrontendStaticRoutes(app, config.WebUrl, uiStatic, renderIndex)
 
-	websocketWorks(app)
-	oneBotWSWorks(app)
+	websocketWorks(app, config.WebUrl)
+	oneBotWSWorks(app, config.WebUrl)
 	startOneBotReverseRuntime()
 
 	return serveAppWithOptionalCertificate(app, config)

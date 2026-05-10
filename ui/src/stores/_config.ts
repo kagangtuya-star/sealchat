@@ -7,9 +7,27 @@ axios.defaults.withCredentials = true;
 // export const urlBase = '//' + window.location.hostname + ":" + 3212;
 // export const urlBase = '//' + window.location.host + '/';
 
+const _appBase: string = typeof window !== 'undefined'
+  ? ((window as any).__SEALCHAT_BASE__ ?? '')
+  : '';
+
+function detectBasePathFromURL(): string {
+  if (typeof window === 'undefined') return '';
+  let base = window.location.pathname;
+  // Remove /index.html suffix if present
+  base = base.replace(/\/index\.html$/, '');
+  // Remove trailing slashes
+  base = base.replace(/\/+$/, '');
+  // If root path, return empty (no subdirectory)
+  if (base === '' || base === '/') return '';
+  return base;
+}
+
+const _effectiveBase = _appBase || detectBasePathFromURL();
+
 export const urlBase = import.meta.env.MODE === 'development'
   ? '//' + window.location.hostname + ":" + 3212
-  : '//' + window.location.host;
+  : '//' + window.location.host + _effectiveBase;
 
 console.log('mode', import.meta.env.MODE)
 

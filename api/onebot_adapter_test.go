@@ -177,7 +177,7 @@ func mustOneBotMessageID(t *testing.T, resp *oneBotActionResponse) int64 {
 func startOneBotWSTestServer(t *testing.T) (string, func()) {
 	t.Helper()
 	app := fiber.New()
-	oneBotWSWorks(app)
+	oneBotWSWorks(app, "/")
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

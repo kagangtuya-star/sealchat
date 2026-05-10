@@ -1,0 +1,95 @@
+name: Sync Release Metadata with PR
+# 专门用于手动触发，回溯更新 Release 信息
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '要处理的最近 Release 数量 (默认 30)'
+        required: true
+        default: '30'
+      dry_run:
+        description: '仅模拟运行 (不实际修改)'
+        required: true
+        type: boolean
+        default: false
+      force_update:
+        description: '即使找不到 PR 也强制更新 (慎选)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write      # 需要修改 Release
+  pull-requests: read  # 需要读取 PR 信息
+
+jobs:
+  sync-releases:
+    name: Sync Releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 必须拉取完整历史，否则无法通过 Tag 找到 Commit
+
+      - name: Process Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          echo "🔍 开始获取最近 $LIMIT 个 Release..."
+          
+          # 获取 Release 列表 (JSON 格式)
+          gh release list --limit "$LIMIT" --json tagName,isDraft,isPrerelease > releases.json
+
+          # 遍历每一个 Release
+          jq -c '.[]' releases.json | while read -r release_json; do
+            TAG_NAME=$(echo "$release_json" | jq -r '.tagName')
+            
+            echo "---------------------------------------------------"
+            echo "📦 正在处理 Release: $TAG_NAME"
+
+            # 1. 获取该 Tag 对应的 Commit SHA
+            # 这是一个关键步骤，我们需要 Tag 指向的那个 Commit ID
+            COMMIT_SHA=$(git rev-list -n 1 "$TAG_NAME" 2>/dev/null || echo "")
+
+            if [ -z "$COMMIT_SHA" ]; then
+              echo "⚠️  无法解析 Tag $TAG_NAME 的 Commit SHA，跳过。"
+              continue
+            fi
+            echo "   🔗 Commit SHA: $COMMIT_SHA"
+
+            # 2. 查找关联的 Merged PR
+            # 搜索包含此 SHA 且状态为 merged 的 PR
+            PR_DATA=$(gh pr list --search "$COMMIT_SHA" --state merged --json number,title,body --limit 1)
+            PR_NUMBER=$(echo "$PR_DATA" | jq -r '.[0].number')
+
+            if [ "$PR_NUMBER" != "null" ] && [ -n "$PR_NUMBER" ]; then
+              # 3. 提取 PR 信息
+              NEW_TITLE=$(echo "$PR_DATA" | jq -r '.[0].title')
+              NEW_BODY=$(echo "$PR_DATA" | jq -r '.[0].body')
+              
+              echo "   ✅ 找到关联 PR #$PR_NUMBER: $NEW_TITLE"
+
+              # 4. 执行更新
+              if [ "$DRY_RUN" == "true" ]; then
+                echo "   [模拟运行] 将会把标题更新为: $NEW_TITLE"
+              else
+                echo "   🚀 正在更新 Release..."
+                # 使用临时文件处理多行 Body，避免转义问题
+                echo "$NEW_BODY" > release_body_temp.txt
+                
+                gh release edit "$TAG_NAME" \
+                  --title "$NEW_TITLE" \
+                  --notes-file release_body_temp.txt
+                
+                echo "   ✨ 更新成功！"
+                rm release_body_temp.txt
+              fi
+
+            else
+              echo "   ℹ️  未找到关联的 PR (可能是直接 Push 到分支的)。"
+              echo "   ⏭️  保持原样跳过。"
+            fi
+          done

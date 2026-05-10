@@ -225,6 +225,68 @@ Windows下为zip格式。
 打开浏览器，访问 http://localhost:3212/ 即可使用，第一个注册的帐号会成为管理员账号。
 
 
+## 进阶：使用 nginx 反向代理子目录
+
+如果你希望将 SealChat 挂载到某个子目录下（如 `https://example.com/chat/`），需要同时配置服务端的 `webUrl` 和 nginx 反向代理。
+
+### config.yaml 配置
+
+```yaml
+# 将 webUrl 设置为你的子路径（以 / 开头，不带尾部斜杠）
+webUrl: /chat
+
+# serveAt 保持默认端口，仅供内网访问
+serveAt: :3212
+```
+
+> **注意**：`domain` 参数与路由无关，它只用于 onebot 适配器拼接图片/附件的对外 URL、聊天导出中的绝对链接，以及端口冲突时的自动更新。如需在上述场景使用完整外部 URL，可将 `domain` 设置为 `https://example.com/chat`（含子路径的完整 URL）；否则请保持默认或留空，它不会影响用户访问。
+
+### nginx 配置
+
+SealChat 支持两种 nginx 反代配置方式，**任选其一**：
+
+#### 方式一：保留前缀（推荐）
+
+`proxy_pass` **不带尾部斜杠**，nginx 保留路径前缀转发给 Go 服务。
+
+```nginx
+location /chat/ {
+    proxy_pass http://127.0.0.1:3212;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+使用此方式时，`config.yaml` 中的 `webUrl` 需设置为 `/chat`（与 nginx 子路径一致）。
+
+#### 方式二：剥离前缀
+
+`proxy_pass` **带尾部斜杠**，nginx 剥去路径前缀后转发。
+
+```nginx
+location /chat/ {
+    proxy_pass http://127.0.0.1:3212/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+使用此方式时，`config.yaml` 中的 `webUrl` 需保持默认的 `/`。前端会自动从浏览器 URL 中检测子路径。
+
+配置完成后，访问 `https://example.com/chat/` 即可正常使用。直接访问 `http://localhost:3212/` 会显示主页（前端从浏览器 URL 自动检测子路径）。
+
+> **群晖 Web Station**：如果你使用群晖容器管理器（Container Manager）部署并通过 Web Station 别名门户反代，请参照**方式二**（剥离前缀），`webUrl` 保持默认 `/`。Web Station 会自动剥离子路径前缀。本文测试环境为 DSM 7.3.2。
+
 ## 进阶：使用 PostgreSQL 或 MySQL 作为数据库
 
 SealChat 默认使用 SQLite 作为数据库，这使得它可以双击部署，一键运行。
