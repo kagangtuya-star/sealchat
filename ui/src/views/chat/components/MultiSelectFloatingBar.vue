@@ -331,6 +331,7 @@ const handleToggleRangeMode = () => {
   box-sizing: border-box;
   max-width: calc(100vw - 24px);
   user-select: none;
+  overflow: visible;
 }
 
 :root[data-display-palette='night'] .multi-select-bar {
@@ -490,7 +491,31 @@ const handleToggleRangeMode = () => {
   }
 
   .multi-select-bar__drag-handle {
-    min-height: 32px;
+    position: absolute;
+    top: 0;
+    left: 12px;
+    width: 22px;
+    height: 22px;
+    min-height: 22px;
+    padding: 0;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    transform: translateY(-42%);
+    align-self: auto;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
+    z-index: 1;
+  }
+
+  :root[data-display-palette='night'] .multi-select-bar__drag-handle {
+    background: rgba(20, 24, 36, 0.98);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
+  }
+
+  .multi-select-bar__drag-handle :deep(svg) {
+    width: 12px;
+    height: 12px;
   }
 
   .multi-select-bar__button span {
