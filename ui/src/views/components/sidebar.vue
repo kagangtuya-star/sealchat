@@ -5,7 +5,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
@@ -613,22 +613,43 @@ const handleAckWorldAnnouncement = async () => {
           @update:value="handleWorldSelect"
         />
       </div>
-      <div class="flex gap-2 flex-wrap">
-        <n-button quaternary size="tiny" @click="goWorldLobby">
+      <div class="flex gap-2 flex-wrap sc-sidebar__world-actions">
+        <n-button class="sc-sidebar__world-action-button" quaternary size="tiny" @click="goWorldLobby">
+          <template #icon>
+            <span class="sc-sidebar__world-action-icon">
+              <n-icon :component="EarthOutline" />
+            </span>
+          </template>
           世界大厅
         </n-button>
-        <n-button quaternary size="tiny" @click="goWorldManage">
+        <n-button class="sc-sidebar__world-action-button" quaternary size="tiny" @click="goWorldManage">
+          <template #icon>
+            <span class="sc-sidebar__world-action-icon">
+              <n-icon :component="SettingsSharp" />
+            </span>
+          </template>
           世界管理
         </n-button>
         <n-button
+          class="sc-sidebar__world-action-button"
           quaternary
           size="tiny"
           :type="worldGlossary.managerVisible ? 'primary' : 'default'"
           @click="handleOpenWorldGlossary"
         >
+          <template #icon>
+            <span class="sc-sidebar__world-action-icon">
+              <n-icon :component="BookOutline" />
+            </span>
+          </template>
           术语管理
         </n-button>
-        <n-button quaternary size="tiny" @click="handleOpenWorldAnnouncements">
+        <n-button class="sc-sidebar__world-action-button" quaternary size="tiny" @click="handleOpenWorldAnnouncements">
+          <template #icon>
+            <span class="sc-sidebar__world-action-icon">
+              <n-icon :component="MegaphoneOutline" />
+            </span>
+          </template>
           公告
         </n-button>
       </div>
@@ -1118,6 +1139,53 @@ const handleAckWorldAnnouncement = async () => {
 
 .sidebar-footer-actions .n-button {
   justify-content: center;
+}
+
+.sc-sidebar__world-action-button {
+  font-weight: 600;
+}
+
+.sc-sidebar__world-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: start;
+  justify-items: start;
+  column-gap: 0.5rem;
+  row-gap: 0.5rem;
+}
+
+.sc-sidebar__world-action-button .n-button__content {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.sc-sidebar__world-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  color: var(--sc-text-secondary, rgba(248, 250, 252, 0.72));
+  background: color-mix(in srgb, var(--sc-sidebar-hover, rgba(255, 255, 255, 0.12)) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute, rgba(255, 255, 255, 0.12)) 90%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 6%, transparent);
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.sc-sidebar__world-action-button:hover .sc-sidebar__world-action-icon,
+.sc-sidebar__world-action-button:focus .sc-sidebar__world-action-icon {
+  color: var(--primary-color, #3388de);
+  background: color-mix(in srgb, var(--primary-color, #3388de) 14%, var(--sc-bg-elevated, transparent) 86%);
+  border-color: color-mix(in srgb, var(--primary-color, #3388de) 28%, var(--sc-border-mute, rgba(255, 255, 255, 0.12)) 72%);
+}
+
+.sc-sidebar__world-action-button.n-button--primary-type .sc-sidebar__world-action-icon {
+  color: var(--primary-color, #3388de);
+  background: color-mix(in srgb, var(--primary-color, #3388de) 16%, var(--sc-bg-elevated, transparent) 84%);
+  border-color: color-mix(in srgb, var(--primary-color, #3388de) 32%, var(--sc-border-mute, rgba(255, 255, 255, 0.12)) 68%);
 }
 
 .sidebar-footer-row {

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { NBadge, NButton, NIcon, NInput, NRadioButton, NRadioGroup } from 'naive-ui';
 import { ArrowsLeftRight } from '@vicons/tabler';
+import { EarthOutline, SettingsSharp, BookOutline, MegaphoneOutline } from '@vicons/ionicons5';
 import { matchText } from '@/utils/pinyinMatch';
 
 export type PaneId = 'A' | 'B';
@@ -173,16 +174,36 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
       </div>
 
       <div class="sc-split-sidebar__world-actions">
-        <n-button quaternary size="tiny" @click="emit('go-world-lobby')">
+        <n-button class="sc-split-sidebar__world-action-button" quaternary size="tiny" @click="emit('go-world-lobby')">
+          <template #icon>
+            <span class="sc-split-sidebar__world-action-icon">
+              <n-icon :component="EarthOutline" />
+            </span>
+          </template>
           世界大厅
         </n-button>
-        <n-button quaternary size="tiny" @click="emit('go-world-manage')">
+        <n-button class="sc-split-sidebar__world-action-button" quaternary size="tiny" @click="emit('go-world-manage')">
+          <template #icon>
+            <span class="sc-split-sidebar__world-action-icon">
+              <n-icon :component="SettingsSharp" />
+            </span>
+          </template>
           世界管理
         </n-button>
-        <n-button quaternary size="tiny" @click="emit('open-world-glossary')">
+        <n-button class="sc-split-sidebar__world-action-button" quaternary size="tiny" @click="emit('open-world-glossary')">
+          <template #icon>
+            <span class="sc-split-sidebar__world-action-icon">
+              <n-icon :component="BookOutline" />
+            </span>
+          </template>
           术语管理
         </n-button>
-        <n-button quaternary size="tiny" @click="emit('open-world-announcements')">
+        <n-button class="sc-split-sidebar__world-action-button" quaternary size="tiny" @click="emit('open-world-announcements')">
+          <template #icon>
+            <span class="sc-split-sidebar__world-action-icon">
+              <n-icon :component="MegaphoneOutline" />
+            </span>
+          </template>
           公告
         </n-button>
       </div>
@@ -494,9 +515,44 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
 
 .sc-split-sidebar__world-actions {
   margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: start;
+  justify-items: start;
+  column-gap: 8px;
+  row-gap: 8px;
+}
+
+.sc-split-sidebar__world-action-button {
+  font-weight: 600;
+}
+
+.sc-split-sidebar__world-action-button :deep(.n-button__content) {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.sc-split-sidebar__world-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  color: var(--sc-text-secondary, rgba(248, 250, 252, 0.72));
+  background: color-mix(in srgb, var(--sc-sidebar-hover, rgba(255, 255, 255, 0.12)) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute, rgba(255, 255, 255, 0.12)) 90%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 6%, transparent);
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.sc-split-sidebar__world-action-button:hover .sc-split-sidebar__world-action-icon,
+.sc-split-sidebar__world-action-button:focus .sc-split-sidebar__world-action-icon {
+  color: var(--primary-color, #3388de);
+  background: color-mix(in srgb, var(--primary-color, #3388de) 14%, var(--sc-bg-elevated, transparent) 86%);
+  border-color: color-mix(in srgb, var(--primary-color, #3388de) 28%, var(--sc-border-mute, rgba(255, 255, 255, 0.12)) 72%);
 }
 
 .sc-split-channel-tree {
