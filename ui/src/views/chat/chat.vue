@@ -1899,7 +1899,6 @@ const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
 });
 const showMinimalStackedSideControls = computed(() => (
   isMinimalInputActive.value
-  && !isEditing.value
   && minimalInputMeasuredHeight.value >= MINIMAL_INPUT_STACKED_THRESHOLD
 ));
 const showMinimalWideInputShortcut = computed(() => (
@@ -16198,7 +16197,10 @@ onBeforeUnmount(() => {
               :class="{ 'chat-input-editor-row--side-stacked': showMinimalStackedSideControls }"
               :style="chatInputStyle"
             >
-              <div class="chat-input-minimal-side">
+              <div
+                class="chat-input-minimal-side"
+                :class="{ 'chat-input-minimal-side--editing-floating': isEditing && !showMinimalStackedSideControls }"
+              >
                 <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
@@ -16213,8 +16215,26 @@ onBeforeUnmount(() => {
                   />
                 </div>
                 <div
-                  v-if="showMinimalStackedSideControls"
+                  v-if="showMinimalStackedSideControls && isEditing"
+                  class="chat-input-minimal-side__aux chat-input-minimal-side__aux--editing"
+                >
+                  <ChatIcOocToggle
+                    v-model="inputIcMode"
+                    compact
+                  />
+                </div>
+                <div
+                  v-else-if="showMinimalStackedSideControls"
                   class="chat-input-minimal-side__aux"
+                >
+                  <ChatIcOocToggle
+                    v-model="inputIcMode"
+                    compact
+                  />
+                </div>
+                <div
+                  v-else-if="isEditing"
+                  class="chat-input-actions__cell chat-input-minimal-side__floating-toggle"
                 >
                   <ChatIcOocToggle
                     v-model="inputIcMode"
@@ -19436,6 +19456,7 @@ onBeforeUnmount(() => {
   align-self: stretch;
   justify-content: flex-end;
   gap: 0.4rem;
+  position: relative;
 }
 
 .chat-input-minimal-actions {
@@ -19445,6 +19466,12 @@ onBeforeUnmount(() => {
 .chat-input-editor-row--minimal:not(.chat-input-editor-row--side-stacked) .chat-input-minimal-side {
   align-self: center;
   justify-content: center;
+}
+
+.chat-input-minimal-side--editing-floating {
+  padding-inline-end: 0.8rem;
+  align-self: stretch;
+  justify-content: flex-start;
 }
 
 .chat-input-minimal-actions--draft,
@@ -19473,6 +19500,21 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.chat-input-minimal-side__aux--editing {
+  margin-top: auto;
+}
+
+.chat-input-minimal-side__floating-toggle {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(42%);
+  z-index: 1;
 }
 
 .chat-input-minimal-actions__primary {
