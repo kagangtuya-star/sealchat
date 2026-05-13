@@ -193,6 +193,7 @@ const openSplitView = async () => {
       name: 'split',
       query: {
         layout: 'left-column',
+        scopeWorldId: worldId,
         worldId,
         a: currentChannelId,
         b: '',
@@ -316,6 +317,14 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
   }
 };
 
+const setSearchPanelVisibleForShell = (visible: boolean) => {
+  if (visible) {
+    channelSearch.openPanel();
+    return;
+  }
+  channelSearch.closePanel();
+};
+
 const setFiltersForShell = (filters: any) => {
   chat.setFilterState(filters);
 };
@@ -338,6 +347,7 @@ const getCharacterCardVisible = () => characterCardPanelVisible.value;
 
 defineExpose({
   openPanelForShell,
+  setSearchPanelVisibleForShell,
   setFiltersForShell,
   setStickyNoteVisible,
   setCharacterCardVisible,

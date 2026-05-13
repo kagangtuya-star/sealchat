@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } fro
 import { useRoute, useRouter } from 'vue-router';
 import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent, useMessage } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
+import { debounce } from 'lodash-es';
 import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
 import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
@@ -10,6 +11,14 @@ import { setChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { characterApiUnsupportedText } from '@/stores/characterCard';
+import {
+  isSplitPaneFilterRestored,
+  type SplitSessionPaneSnapshot,
+  type SplitSessionSnapshot,
+  isSplitPaneLocationRestored,
+  readSplitSessionSnapshot,
+  writeSplitSessionSnapshot,
+} from '@/utils/splitSessionStorage';
 
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 type PaneMode = 'chat' | 'web';
@@ -57,7 +66,13 @@ type EmbedToggleSidebarMessage = {
   paneId: PaneId;
 };
 
-type EmbedMessage = EmbedStateMessage | EmbedFocusMessage | EmbedToggleSidebarMessage;
+type EmbedRestoreSessionMessage = {
+  type: 'sealchat.embed.restoreSession';
+  paneId: PaneId;
+  snapshot: SplitSessionPaneSnapshot;
+};
+
+type EmbedMessage = EmbedStateMessage | EmbedFocusMessage | EmbedToggleSidebarMessage | EmbedRestoreSessionMessage;
 
 interface PaneState {
   id: PaneId;
@@ -115,7 +130,6 @@ const actionRibbonVisible = ref(false);
 const drawerVisible = ref(false);
 const sidebarCollapsed = ref(false);
 const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
-
 const defaultFilterState: FilterState = { icFilter: 'all', showArchived: false, roleIds: [] };
 const normalizeFilterState = (filters: FilterState): FilterState => {
   const rawRoleIds = Array.isArray(filters.roleIds) ? toRaw(filters.roleIds) : [];
@@ -129,6 +143,11 @@ const normalizeFilterState = (filters: FilterState): FilterState => {
 };
 const storagePrefix = 'sealchat.split.pane';
 const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url' | 'stickyNoteVisible' | 'characterCardVisible') => `${storagePrefix}.${paneId}.${key}`;
+const resolveScopeWorldIdFromRoute = () => {
+  const scopeWorldId = typeof route.query.scopeWorldId === 'string' ? route.query.scopeWorldId.trim() : '';
+  if (scopeWorldId) return scopeWorldId;
+  return typeof route.query.worldId === 'string' ? route.query.worldId.trim() : '';
+};
 const normalizeUrl = (value: string) => value.trim();
 const isHttpUrl = (value: string) => {
   try {
@@ -172,6 +191,11 @@ const persistPaneStorage = (pane: PaneState) => {
   window.localStorage.setItem(paneStorageKey(pane.id, 'stickyNoteVisible'), String(!!pane.stickyNoteVisible));
   window.localStorage.setItem(paneStorageKey(pane.id, 'characterCardVisible'), String(!!pane.characterCardVisible));
 };
+const splitScopeWorldId = ref(resolveScopeWorldIdFromRoute());
+const restoringSession = ref(false);
+const restorePendingByPane = reactive<Record<PaneId, boolean>>({ A: false, B: false });
+const restoreFilterSentByPane = reactive<Record<PaneId, boolean>>({ A: false, B: false });
+let initialSessionSnapshot: SplitSessionSnapshot | null = null;
 
 const splitContainerRef = ref<HTMLElement | null>(null);
 const splitRatio = ref(0.5);
@@ -325,6 +349,7 @@ const persistRouteQuery = () => {
   router.replace({
     name: 'split',
     query: {
+      scopeWorldId: splitScopeWorldId.value || undefined,
       worldId: activePane.value.worldId || '',
       a: paneA.channelId || '',
       b: paneB.channelId || '',
@@ -345,12 +370,100 @@ const postToPane = (paneId: PaneId, payload: any) => {
 };
 
 const ensureWorldAlignment = async (sourcePaneId: PaneId) => {
+  if (restoringSession.value) return;
   if (!lockSameWorld.value) return;
   const source = sourcePaneId === 'A' ? paneA : paneB;
   const target = sourcePaneId === 'A' ? paneB : paneA;
   const worldId = source.worldId;
   if (!worldId || target.worldId === worldId) return;
   postToPane(target.id, { type: 'sealchat.embed.setWorld', paneId: target.id, worldId });
+};
+
+const buildPaneSessionSnapshot = (pane: PaneState): SplitSessionPaneSnapshot => ({
+  mode: pane.mode,
+  worldId: pane.worldId || '',
+  channelId: pane.channelId || '',
+  webUrl: pane.webUrl || '',
+  filterState: normalizeFilterState(pane.filterState),
+  searchPanelVisible: !!pane.searchPanelVisible,
+  stickyNoteVisible: !!pane.stickyNoteVisible,
+  characterCardVisible: !!pane.characterCardVisible,
+  audioStudioDrawerVisible: !!pane.audioStudioDrawerVisible,
+  embedPanelActive: !!pane.embedPanelActive,
+});
+
+const buildSplitSessionSnapshot = (): SplitSessionSnapshot | null => {
+  const scopeWorldId = splitScopeWorldId.value.trim();
+  if (!scopeWorldId) return null;
+  return {
+    version: 1,
+    scopeWorldId,
+    updatedAt: Date.now(),
+    shell: {
+      activePaneId: activePaneId.value,
+      operationTarget: operationTarget.value,
+      audioPlaybackTarget: audioPlaybackTarget.value,
+      lockSameWorld: lockSameWorld.value,
+      notifyOwnerPaneId: notifyOwnerPaneId.value,
+      webTargetPaneId: webTargetPaneId.value,
+      sidebarCollapsed: sidebarCollapsed.value,
+      splitRatio: splitRatio.value,
+      actionRibbonVisible: actionRibbonVisible.value,
+    },
+    panes: {
+      A: buildPaneSessionSnapshot(paneA),
+      B: buildPaneSessionSnapshot(paneB),
+    },
+  };
+};
+
+const persistSplitSessionNow = () => {
+  if (restoringSession.value) return;
+  const snapshot = buildSplitSessionSnapshot();
+  if (!snapshot) return;
+  writeSplitSessionSnapshot(splitScopeWorldId.value, snapshot);
+};
+
+const schedulePersistSplitSession = debounce(() => {
+  persistSplitSessionNow();
+}, 120);
+
+const finalizeRestoreIfReady = () => {
+  if (restorePendingByPane.A || restorePendingByPane.B) return;
+  if (!restoringSession.value) return;
+  restoringSession.value = false;
+  schedulePersistSplitSession.cancel();
+  persistSplitSessionNow();
+};
+
+const applyPaneSnapshotToState = (pane: PaneState, snapshot: SplitSessionPaneSnapshot) => {
+  pane.mode = snapshot.mode;
+  pane.worldId = snapshot.worldId;
+  pane.channelId = snapshot.channelId;
+  pane.webUrl = snapshot.webUrl;
+  pane.filterState = normalizeFilterState(snapshot.filterState);
+  pane.searchPanelVisible = !!snapshot.searchPanelVisible;
+  pane.stickyNoteVisible = !!snapshot.stickyNoteVisible;
+  pane.characterCardVisible = !!snapshot.characterCardVisible;
+  pane.audioStudioDrawerVisible = !!snapshot.audioStudioDrawerVisible;
+  pane.embedPanelActive = !!snapshot.embedPanelActive;
+};
+
+const restorePaneRuntimeState = (pane: PaneState, snapshot: SplitSessionPaneSnapshot) => {
+  if (pane.mode !== 'chat') {
+    restorePendingByPane[pane.id] = false;
+    finalizeRestoreIfReady();
+    return;
+  }
+  restoreFilterSentByPane[pane.id] = true;
+  postToPane(pane.id, {
+    type: 'sealchat.embed.restoreSession',
+    paneId: pane.id,
+    snapshot: {
+      ...snapshot,
+      filterState: normalizeFilterState(snapshot.filterState),
+    },
+  });
 };
 
 const handleEmbedMessage = (event: MessageEvent) => {
@@ -410,20 +523,70 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (typeof msg.iFormButtonActive === 'boolean') target.embedPanelActive = msg.iFormButtonActive;
     if (typeof msg.iFormHasAttention === 'boolean') target.embedPanelHasAttention = msg.iFormHasAttention;
 
+    if (initialSessionSnapshot && restorePendingByPane[target.id] && !restoreFilterSentByPane[target.id]) {
+      restorePaneRuntimeState(target, initialSessionSnapshot.panes[target.id]);
+    }
+
     persistPaneStorage(target);
     persistRouteQuery();
     ensureWorldAlignment(target.id);
     if (isReadyMessage) {
       syncPanePanelVisibility(target);
+    } else if (initialSessionSnapshot && restorePendingByPane[target.id]) {
+      const expectedSnapshot = initialSessionSnapshot.panes[target.id];
+      const locationOk = isSplitPaneLocationRestored(expectedSnapshot, {
+        mode: target.mode,
+        worldId: target.worldId,
+        channelId: target.channelId,
+      });
+      const filterOk = isSplitPaneFilterRestored(expectedSnapshot, {
+        mode: target.mode,
+        worldId: target.worldId,
+        channelId: target.channelId,
+        filterState: target.filterState,
+      });
+      if (locationOk && filterOk) {
+        restorePendingByPane[target.id] = false;
+        restoreFilterSentByPane[target.id] = false;
+        finalizeRestoreIfReady();
+      }
     }
+    schedulePersistSplitSession();
   }
 };
 
 const initialize = () => {
-  loadPaneStorage(paneA);
-  loadPaneStorage(paneB);
+  splitScopeWorldId.value = resolveScopeWorldIdFromRoute();
+  initialSessionSnapshot = readSplitSessionSnapshot(splitScopeWorldId.value);
+  if (initialSessionSnapshot) {
+    restoringSession.value = true;
+    activePaneId.value = initialSessionSnapshot.shell.activePaneId;
+    operationTarget.value = initialSessionSnapshot.shell.operationTarget;
+    audioPlaybackTarget.value = initialSessionSnapshot.shell.audioPlaybackTarget;
+    lockSameWorld.value = initialSessionSnapshot.shell.lockSameWorld;
+    notifyOwnerPaneId.value = initialSessionSnapshot.shell.notifyOwnerPaneId;
+    webTargetPaneId.value = initialSessionSnapshot.shell.webTargetPaneId;
+    sidebarCollapsed.value = initialSessionSnapshot.shell.sidebarCollapsed;
+    splitRatio.value = initialSessionSnapshot.shell.splitRatio;
+    actionRibbonVisible.value = initialSessionSnapshot.shell.actionRibbonVisible;
+    applyPaneSnapshotToState(paneA, initialSessionSnapshot.panes.A);
+    applyPaneSnapshotToState(paneB, initialSessionSnapshot.panes.B);
+    restorePendingByPane.A = paneA.mode === 'chat';
+    restorePendingByPane.B = paneB.mode === 'chat';
+    restoreFilterSentByPane.A = false;
+    restoreFilterSentByPane.B = false;
+  } else {
+    loadPaneStorage(paneA);
+    loadPaneStorage(paneB);
+    restorePendingByPane.A = false;
+    restorePendingByPane.B = false;
+    restoreFilterSentByPane.A = false;
+    restoreFilterSentByPane.B = false;
+  }
   refreshPaneSrc(paneA);
   refreshPaneSrc(paneB);
+  persistRouteQuery();
+  finalizeRestoreIfReady();
 };
 
 const syncPanePanelVisibility = (pane: PaneState) => {
@@ -446,8 +609,15 @@ const setPaneMode = (paneId: PaneId, mode: PaneMode) => {
   const pane = getPaneById(paneId);
   if (pane.mode === mode) return;
   pane.mode = mode;
+  if (initialSessionSnapshot) {
+    restorePendingByPane[paneId] = mode === 'chat';
+    if (mode !== 'chat') {
+      finalizeRestoreIfReady();
+    }
+  }
   persistPaneStorage(pane);
   refreshPaneSrc(pane);
+  schedulePersistSplitSession();
 };
 
 const setPaneWebUrl = (paneId: PaneId, url: string) => {
@@ -459,6 +629,7 @@ const setPaneWebUrl = (paneId: PaneId, url: string) => {
   if (pane.mode === 'web') {
     refreshPaneSrc(pane);
   }
+  schedulePersistSplitSession();
 };
 
 const isPaneWebUrlInvalid = (pane: PaneState) => pane.mode === 'web' && !isHttpUrl(normalizeUrl(pane.webUrl));
@@ -652,6 +823,8 @@ const openWorldAnnouncements = () => {
 };
 
 const exitSplit = async () => {
+  schedulePersistSplitSession.flush();
+  persistSplitSessionNow();
   await router.push({ name: 'home' });
 };
 
@@ -708,11 +881,31 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  schedulePersistSplitSession.flush();
+  persistSplitSessionNow();
+  schedulePersistSplitSession.cancel();
   audioStudio.setPlaybackAuthority(true);
   window.removeEventListener('message', handleEmbedMessage);
 });
 
 const collapsedWidth = computed(() => 0);
+
+watch(
+  () => [
+    activePaneId.value,
+    operationTarget.value,
+    audioPlaybackTarget.value,
+    lockSameWorld.value,
+    notifyOwnerPaneId.value,
+    webTargetPaneId.value,
+    sidebarCollapsed.value,
+    splitRatio.value,
+    actionRibbonVisible.value,
+  ] as const,
+  () => {
+    schedulePersistSplitSession();
+  },
+);
 </script>
 
 <template>

@@ -28,6 +28,19 @@ type SplitChannelNode = {
   children?: SplitChannelNode[];
 };
 
+type SplitSessionPaneSnapshot = {
+  mode: 'chat' | 'web';
+  worldId: string;
+  channelId: string;
+  webUrl: string;
+  filterState: FilterState;
+  searchPanelVisible: boolean;
+  stickyNoteVisible: boolean;
+  characterCardVisible: boolean;
+  audioStudioDrawerVisible: boolean;
+  embedPanelActive: boolean;
+};
+
 const route = useRoute();
 const chat = useChatStore();
 const channelSearch = useChannelSearchStore();
@@ -47,6 +60,7 @@ const initialAudioOwner = computed(() => {
 
 const chatViewRef = ref<any>(null);
 const initializing = ref(false);
+const restoringSession = ref(false);
 const roleOptions = ref<RoleOption[]>([]);
 const audioOwner = ref(initialAudioOwner.value);
 
@@ -171,7 +185,7 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
   const onlineMembersCount = Array.isArray(chat.curChannelUsers) ? chat.curChannelUsers.length : 0;
   const currentChannelUnread = channelId ? (chat.unreadCountMap?.[channelId] || 0) : 0;
 
-  postToParent({
+  const payload = {
     type,
     paneId: paneId.value,
     worldId,
@@ -195,7 +209,8 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     characterCardReason: typeof chat.curChannel?.characterApiReason === 'string' ? chat.curChannel.characterApiReason : '',
     iFormButtonActive: !!iFormButtonActive.value,
     iFormHasAttention: !!iFormHasAttention.value,
-  });
+  };
+  postToParent(payload);
 };
 
 const postStateThrottled = throttle((type: 'sealchat.embed.ready' | 'sealchat.embed.state') => postState(type), 200, {
@@ -326,6 +341,54 @@ const handleMessage = async (event: MessageEvent) => {
     }
     return;
   }
+
+  if (data.type === 'sealchat.embed.restoreSession') {
+    const snapshot = data.snapshot as SplitSessionPaneSnapshot | undefined;
+    if (!snapshot || snapshot.mode !== 'chat') return;
+    restoringSession.value = true;
+    try {
+      if (snapshot.worldId) {
+        await chat.switchWorld(snapshot.worldId, { force: true });
+      }
+      if (snapshot.channelId) {
+        await chat.channelSwitchTo(snapshot.channelId);
+      }
+      chat.setFilterState(normalizeFilterState(snapshot.filterState));
+      if (chatViewRef.value?.setSearchPanelVisibleForShell) {
+        chatViewRef.value.setSearchPanelVisibleForShell(!!snapshot.searchPanelVisible);
+      } else if (snapshot.searchPanelVisible && chatViewRef.value?.openPanelForShell) {
+        chatViewRef.value.openPanelForShell('search');
+      }
+      if (chatViewRef.value?.setStickyNoteVisible) {
+        chatViewRef.value.setStickyNoteVisible(!!snapshot.stickyNoteVisible);
+      }
+      if (chatViewRef.value?.setCharacterCardVisible) {
+        chatViewRef.value.setCharacterCardVisible(!!snapshot.characterCardVisible);
+      }
+      if (snapshot.audioStudioDrawerVisible) {
+        const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+        audioStudio.setActiveChannel(channelId || null);
+        audioStudio.toggleDrawer(true);
+      } else {
+        audioStudio.toggleDrawer(false);
+      }
+      if (snapshot.embedPanelActive) {
+        const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+        if (channelId) {
+          await iFormStore.ensureForms(channelId);
+          iFormStore.openDrawer();
+        }
+      } else {
+        iFormStore.closeDrawer();
+      }
+      postState('sealchat.embed.state');
+    } catch (e) {
+      console.warn('[embed] restoreSession failed', e);
+    } finally {
+      restoringSession.value = false;
+    }
+    return;
+  }
 };
 
 const initialize = async () => {
@@ -354,56 +417,84 @@ watch(
   () => chat.curChannel?.id,
   (channelId) => {
     fetchRoleOptions(channelId ? String(channelId) : '');
+    if (restoringSession.value) return;
     postStateThrottled('sealchat.embed.state');
   },
 );
 
 watch(
   () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled, chat.curChannel?.characterApiReason] as const,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
   () => [chat.currentWorldId, chat.connectState, chat.curChannelUsers.length] as const,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
   () => chat.unreadCountMap,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
   { deep: true },
 );
 
 watch(
   () => chat.filterState,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
   { deep: true },
 );
 
 watch(
   () => chat.channelTree,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
   { deep: true },
 );
 
 watch(
   () => chat.worldDetailMap[chat.currentWorldId]?.memberRole,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
   () => channelSearch.panelVisible,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
   () => [iFormButtonActive.value, iFormHasAttention.value] as const,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
   () => audioStudio.drawerVisible,
-  () => postStateThrottled('sealchat.embed.state'),
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(
