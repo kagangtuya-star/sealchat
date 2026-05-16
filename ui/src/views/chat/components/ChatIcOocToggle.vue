@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Mask, MoodHappy } from '@vicons/tabler'
+import { Mask, MessageCircle2 } from '@vicons/tabler'
 
 interface Props {
   modelValue: 'ic' | 'ooc'
@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const isIc = computed(() => props.modelValue === 'ic')
-const iconComponent = computed(() => (isIc.value ? Mask : MoodHappy))
+const iconComponent = computed(() => (isIc.value ? Mask : MessageCircle2))
 const buttonType = computed(() => (isIc.value ? 'success' : 'info'))
 const tooltipText = computed(() => (isIc.value ? '当前为场内模式，点击切换到场外' : '当前为场外模式，点击切换到场内'))
 const buttonSize = computed(() => (props.compact ? 'medium' : 'small'))

@@ -6,7 +6,7 @@ import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat'
 import type { Event, Message, User } from '@satorijs/protocol'
 import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -14412,11 +14412,11 @@ onBeforeUnmount(() => {
                     @click="handleEmojiTriggerClick($event)"
                   >
                     <template #icon>
-                      <n-icon :component="Plus" size="18" />
+                      <n-icon :component="EmojiTriggerIcon" size="18" />
                     </template>
                   </n-button>
                 </template>
-                添加表情
+                打开表情盘
               </n-tooltip>
 
               <n-popover
@@ -15481,11 +15481,11 @@ onBeforeUnmount(() => {
                           @click="handleEmojiTriggerClick($event)"
                         >
                           <template #icon>
-                            <n-icon :component="Plus" size="18" />
+                            <n-icon :component="EmojiTriggerIcon" size="18" />
                           </template>
                         </n-button>
                       </template>
-                      添加表情
+                      打开表情盘
                     </n-tooltip>
 
                     <n-popover
