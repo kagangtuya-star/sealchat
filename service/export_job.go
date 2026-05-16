@@ -149,7 +149,7 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 	if !job.IncludeArchived {
 		query = query.Where("is_archived = ?", false)
 	}
-	if !job.IncludeOOC {
+	if !job.IncludeOOC && !job.MergeMessages {
 		query = query.Where("COALESCE(ic_mode, 'ic') != ?", "ooc")
 	}
 
@@ -163,14 +163,14 @@ func loadMessagesForExport(job *model.MessageExportJobModel) ([]*model.MessageMo
 		return nil, err
 	}
 	extra := parseExportExtraOptions(job.ExtraOptions)
-	messages = filterMessagesBeforeMerge(messages, extra)
 	if job.MergeMessages {
-		return mergeSequentialMessages(messages), nil
+		return mergeSequentialMessagesForExport(messages, extra, job.IncludeOOC), nil
 	}
+	messages = filterMessagesForExport(messages, extra, job.IncludeOOC)
 	return messages, nil
 }
 
-func filterMessagesBeforeMerge(messages []*model.MessageModel, extra *exportExtraOptions) []*model.MessageModel {
+func filterMessagesForExport(messages []*model.MessageModel, extra *exportExtraOptions, includeOOC bool) []*model.MessageModel {
 	if len(messages) == 0 {
 		return messages
 	}
@@ -182,20 +182,35 @@ func filterMessagesBeforeMerge(messages []*model.MessageModel, extra *exportExtr
 	}
 	filtered := make([]*model.MessageModel, 0, len(messages))
 	for _, msg := range messages {
-		if msg == nil {
-			continue
-		}
-		plainContent := buildFilteredPlainContent(msg.Content, includeImages)
-		if plainContent == "" {
-			continue
-		}
-		isBotMessage := msg.User != nil && msg.User.IsBot
-		if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
+		if classifyExportMessage(msg, includeImages, includeDiceCommand, includeOOC).Skip {
 			continue
 		}
 		filtered = append(filtered, msg)
 	}
 	return filtered
+}
+
+type exportMessageFilterResult struct {
+	Skip       bool
+	SkippedOOC bool
+}
+
+func classifyExportMessage(msg *model.MessageModel, includeImages, includeDiceCommand, includeOOC bool) exportMessageFilterResult {
+	if msg == nil {
+		return exportMessageFilterResult{Skip: true}
+	}
+	if !includeOOC && strings.EqualFold(normalizeIcMode(msg.ICMode), "ooc") {
+		return exportMessageFilterResult{Skip: true, SkippedOOC: true}
+	}
+	plainContent := buildFilteredPlainContent(msg.Content, includeImages)
+	if plainContent == "" {
+		return exportMessageFilterResult{Skip: true}
+	}
+	isBotMessage := msg.User != nil && msg.User.IsBot
+	if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
+		return exportMessageFilterResult{Skip: true}
+	}
+	return exportMessageFilterResult{}
 }
 
 func hydrateWhisperTargetsForExport(messages []*model.MessageModel) error {
@@ -346,7 +361,7 @@ func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageMod
 			result = append(result, current)
 			continue
 		}
-		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow) {
+		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow, false) {
 			nextContent := strings.TrimLeft(formatted, "\r\n")
 			trimmed := strings.TrimRight(current.Content, " \r\n\t")
 			if trimmed == "" {
@@ -371,7 +386,84 @@ func mergeSequentialMessages(messages []*model.MessageModel) []*model.MessageMod
 	return result
 }
 
-func canMerge(base *model.MessageModel, currentIcMode string, last time.Time, next *model.MessageModel, window time.Duration) bool {
+func mergeSequentialMessagesForExport(messages []*model.MessageModel, extra *exportExtraOptions, includeOOC bool) []*model.MessageModel {
+	if len(messages) == 0 {
+		return messages
+	}
+	includeImages := true
+	includeDiceCommand := true
+	if extra != nil {
+		includeImages = extra.IncludeImages
+		includeDiceCommand = extra.IncludeDiceCommand
+	}
+	const mergeWindow = 60 * time.Second
+	var result []*model.MessageModel
+	var current *model.MessageModel
+	var lastTime time.Time
+	var currentIcMode string
+	var sawFilteredOOCGap bool
+	var sawOtherFilteredGap bool
+
+	for _, msg := range messages {
+		filter := classifyExportMessage(msg, includeImages, includeDiceCommand, includeOOC)
+		if filter.Skip {
+			if current == nil {
+				continue
+			}
+			if filter.SkippedOOC {
+				sawFilteredOOCGap = true
+			} else {
+				sawOtherFilteredGap = true
+			}
+			continue
+		}
+
+		formatted := formatContentForMerge(msg)
+		if current == nil {
+			current = cloneMessage(msg)
+			current.Content = formatted
+			current.MergedMessages = 1
+			lastTime = msg.CreatedAt
+			currentIcMode = normalizeIcMode(msg.ICMode)
+			result = append(result, current)
+			sawFilteredOOCGap = false
+			sawOtherFilteredGap = false
+			continue
+		}
+
+		allowFilteredOOCGapMerge := sawFilteredOOCGap && !sawOtherFilteredGap
+		if canMerge(current, currentIcMode, lastTime, msg, mergeWindow, allowFilteredOOCGapMerge) {
+			nextContent := strings.TrimLeft(formatted, "\r\n")
+			trimmed := strings.TrimRight(current.Content, " \r\n\t")
+			if trimmed == "" {
+				current.Content = nextContent
+			} else {
+				current.Content = trimmed + "\n" + nextContent
+			}
+			if current.MergedMessages <= 0 {
+				current.MergedMessages = 1
+			}
+			current.MergedMessages++
+			lastTime = msg.CreatedAt
+			sawFilteredOOCGap = false
+			sawOtherFilteredGap = false
+			continue
+		}
+
+		current = cloneMessage(msg)
+		current.Content = formatted
+		current.MergedMessages = 1
+		lastTime = msg.CreatedAt
+		currentIcMode = normalizeIcMode(msg.ICMode)
+		result = append(result, current)
+		sawFilteredOOCGap = false
+		sawOtherFilteredGap = false
+	}
+
+	return result
+}
+
+func canMerge(base *model.MessageModel, currentIcMode string, last time.Time, next *model.MessageModel, window time.Duration, allowFilteredGap bool) bool {
 	if base == nil || next == nil {
 		return false
 	}
@@ -389,6 +481,9 @@ func canMerge(base *model.MessageModel, currentIcMode string, last time.Time, ne
 	}
 	if base.IsArchived != next.IsArchived {
 		return false
+	}
+	if allowFilteredGap {
+		return true
 	}
 	diff := next.CreatedAt.Sub(last)
 	if diff < 0 {
