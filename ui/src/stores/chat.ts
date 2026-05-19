@@ -4425,6 +4425,22 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async messageReorderBatch(channel_id: string, payload: { messageIds: string[]; clientOpId?: string }) {
+      if (!this.curChannel?.id || !Array.isArray(payload.messageIds) || payload.messageIds.length === 0) {
+        return;
+      }
+      const resp = await this.sendAPI('message.reorder.batch', {
+        channel_id,
+        message_ids: payload.messageIds,
+        client_op_id: payload.clientOpId || '',
+      });
+      const data = resp?.data as { message_ids?: string[] } | undefined;
+      if (!data || !Array.isArray(data.message_ids) || data.message_ids.length === 0) {
+        throw new Error('置底失败：未找到目标消息或无权限操作');
+      }
+      return data;
+    },
+
     async messageCreate(
       content: string,
       quote_id?: string,

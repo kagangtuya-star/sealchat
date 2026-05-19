@@ -3360,6 +3360,148 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 	}, nil
 }
 
+func apiMessageReorderBatch(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+	ClientOpID string   `json:"client_op_id"`
+}) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	ids := lo.Uniq(collectMessageIDs(data.MessageIDs))
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	db := model.GetDB()
+
+	var permissionMessages []model.MessageModel
+	if err := db.Where("channel_id = ? AND id IN ? AND is_deleted = ?", channelID, ids, false).
+		Select("id, user_id").
+		Order("display_order asc").
+		Order("created_at asc").
+		Order("id asc").
+		Find(&permissionMessages).Error; err != nil {
+		return nil, err
+	}
+	if len(permissionMessages) != len(ids) {
+		return nil, fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+	}
+	allSelfOwned := true
+	for _, msg := range permissionMessages {
+		if msg.UserID != ctx.User.ID {
+			allSelfOwned = false
+			break
+		}
+	}
+	if !allSelfOwned && !canReorderAllMessages(ctx.User.ID, channel) {
+		return nil, fmt.Errorf("您没有权限调整选中消息的位置")
+	}
+
+	type reorderResult struct {
+		message model.MessageModel
+	}
+	results := make([]reorderResult, 0, len(ids))
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var messages []model.MessageModel
+		q := tx.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, username, nickname, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("channel_id = ? AND id IN ? AND is_deleted = ?", channelID, ids, false)
+		if err := q.Order("display_order asc").Order("created_at asc").Order("id asc").Find(&messages).Error; err != nil {
+			return err
+		}
+		if len(messages) != len(ids) {
+			return fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+		}
+		if allSelfOwned {
+			for _, msg := range messages {
+				if msg.UserID != ctx.User.ID {
+					return fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+				}
+			}
+		}
+
+		var maxOrder float64
+		if err := tx.Model(&model.MessageModel{}).
+			Where("channel_id = ? AND is_deleted = ?", channelID, false).
+			Select("COALESCE(MAX(display_order), 0)").
+			Scan(&maxOrder).Error; err != nil {
+			return err
+		}
+
+		nextOrder := maxOrder
+		for _, msg := range messages {
+			nextOrder += displayOrderGap
+			if err := tx.Model(&model.MessageModel{}).
+				Where("id = ?", msg.ID).
+				UpdateColumn("display_order", nextOrder).Error; err != nil {
+				return err
+			}
+			msg.DisplayOrder = nextOrder
+			results = append(results, reorderResult{message: msg})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	channelData := channel.ToProtocolType()
+	operatorData := ctx.User.ToProtocolType()
+	for _, result := range results {
+		msg := result.message
+		if msg.WhisperTo != "" && msg.WhisperTarget == nil {
+			msg.WhisperTarget = loadWhisperTargetForChannel(channelID, msg.WhisperTo)
+		}
+		if msg.IsWhisper {
+			msg.WhisperTargets = loadWhisperTargetsForMessage(channelID, msg.ID, msg.WhisperTarget)
+		}
+		messageData := buildProtocolMessage(&msg, channelData)
+		ev := &protocol.Event{
+			Type:     protocol.EventMessageReordered,
+			Message:  messageData,
+			Channel:  channelData,
+			User:     operatorData,
+			Operator: operatorData,
+			Reorder: &protocol.MessageReorder{
+				MessageID:    msg.ID,
+				ChannelID:    channelID,
+				DisplayOrder: msg.DisplayOrder,
+				ClientOpID:   data.ClientOpID,
+			},
+		}
+		if msg.IsWhisper {
+			recipients := []string{ctx.User.ID}
+			if msg.WhisperTo != "" {
+				recipients = append(recipients, msg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(channelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(channelID, ev)
+			ctx.BroadcastEventInChannelForBot(channelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+	}{MessageIDs: ids}, nil
+}
+
 func apiMessageEditHistory(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`

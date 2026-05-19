@@ -932,6 +932,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "message.reorder":
 						apiWrap(ctx, msg, apiMessageReorder)
 						solved = true
+					case "message.reorder.batch":
+						apiWrap(ctx, msg, apiMessageReorderBatch)
+						solved = true
 					case "message.list":
 						apiWrap(ctx, msg, apiMessageList)
 						solved = true

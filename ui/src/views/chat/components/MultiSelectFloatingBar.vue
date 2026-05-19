@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { NIcon, NTooltip } from 'naive-ui';
-import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, DotsVertical } from '@vicons/tabler';
+import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 
 const chat = useChatStore();
@@ -11,6 +11,7 @@ const emit = defineEmits<{
   (e: 'archive'): void;
   (e: 'delete'): void;
   (e: 'copy-image'): void;
+  (e: 'move-to-bottom'): void;
   (e: 'select-all'): void;
   (e: 'range-select'): void;
   (e: 'cancel'): void;
@@ -267,6 +268,21 @@ const handleToggleRangeMode = () => {
             </button>
           </template>
           将选中消息渲染为图片并复制
+        </n-tooltip>
+
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
+          <template #trigger>
+            <button
+              class="multi-select-bar__button"
+              :class="{ 'is-disabled': !hasSelection }"
+              :disabled="!hasSelection"
+              @click="emit('move-to-bottom')"
+            >
+              <n-icon :size="16"><ArrowBarToDown /></n-icon>
+              <span>置底</span>
+            </button>
+          </template>
+          将选中消息移动到当前列表底部，并保持原有顺序
         </n-tooltip>
 
         <div class="multi-select-bar__divider"></div>

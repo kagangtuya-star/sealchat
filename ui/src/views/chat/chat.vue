@@ -14146,6 +14146,34 @@ const handleMultiSelectCopyImage = async () => {
   }
 };
 
+const handleMultiSelectMoveToBottom = async () => {
+  const messages = getMultiSelectedMessages();
+  if (!messages.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.error('当前频道不可用');
+    return;
+  }
+  const messageIds = messages.map((msg) => msg.id).filter((id): id is string => Boolean(id));
+  if (!messageIds.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  try {
+    await chat.messageReorderBatch(channelId, {
+      messageIds,
+      clientOpId: nanoid(),
+    });
+    message.success(`已置底 ${messageIds.length} 条消息`);
+    chat.exitMultiSelectMode();
+  } catch (error) {
+    message.error((error as Error)?.message || '置底失败');
+  }
+};
+
 const handleMultiSelectAll = () => {
   const allIds = rows.value.map(row => row.id);
   chat.selectMessagesByIds(allIds);
@@ -16568,6 +16596,7 @@ onBeforeUnmount(() => {
     @archive="handleMultiSelectArchive"
     @delete="handleMultiSelectDelete"
     @copy-image="handleMultiSelectCopyImage"
+    @move-to-bottom="handleMultiSelectMoveToBottom"
     @select-all="handleMultiSelectAll"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
