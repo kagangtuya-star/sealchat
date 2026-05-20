@@ -606,15 +606,12 @@ const normalizePlatformThemes = (value: any): PlatformTheme[] => {
   }
   return result
 }
-const loadSettings = (): DisplaySettings => {
-  if (typeof window === 'undefined') {
+
+const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => {
+  if (!raw) {
     return defaultSettings()
   }
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      return defaultSettings()
-    }
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
     const favoriteChannelIdsByWorld = normalizeFavoriteMap((parsed as any)?.favoriteChannelIdsByWorld)
     const favoriteChannelHotkeysByWorld = normalizeFavoriteHotkeyMap(
@@ -793,6 +790,15 @@ const loadSettings = (): DisplaySettings => {
     return defaultSettings()
   }
 }
+
+const loadSettings = (): DisplaySettings => {
+  if (typeof window === 'undefined') {
+    return defaultSettings()
+  }
+  return parseStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+}
+
+let storageSyncBound = false
 
 const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>): DisplaySettings => ({
   layout: patch && patch.layout ? coerceLayout(patch.layout) : base.layout,
@@ -1317,6 +1323,23 @@ export const useDisplayStore = defineStore('display', {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
       this.applyTheme()
+    },
+    bindStorageSync() {
+      if (typeof window === 'undefined' || storageSyncBound) return
+      storageSyncBound = true
+      window.addEventListener('storage', (event) => {
+        if (event.storageArea !== window.localStorage) return
+        if (event.key !== STORAGE_KEY) return
+        const nextSettings = parseStoredSettings(event.newValue)
+        const currentSnapshot = JSON.stringify(this.settings)
+        const nextSnapshot = JSON.stringify(nextSettings)
+        if (currentSnapshot === nextSnapshot) return
+        this.settings = nextSettings
+        this.applyTheme()
+        void this.restoreGlobalFontAsset().catch((error) => {
+          console.warn('同步外部常规设置字体资源失败，继续使用当前字体设置', error)
+        })
+      })
     },
     async replaceSettings(snapshot: Partial<DisplaySettings>, options?: { restoreFontAsset?: boolean }) {
       this.settings = normalizeWith(defaultSettings(), snapshot)

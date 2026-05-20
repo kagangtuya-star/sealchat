@@ -145,6 +145,7 @@ meta.name = 'naive-ui-style'
 document.head.appendChild(meta)
 
 const displayStore = useDisplayStore(pinia)
+displayStore.bindStorageSync()
 displayStore.applyTheme()
 displayStore.restoreGlobalFontAsset()
   .then(() => {
