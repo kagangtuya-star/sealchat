@@ -1985,7 +1985,6 @@ const isMobileWideInput = computed(() => wideInputMode.value && isMobileInteract
 const isMinimalInputActive = computed(() => (
   display.settings.mobileMinimalInputEnabled
   && !isMobileWideInput.value
-  && !isEmbedMode.value
 ));
 const inputExtraActionsTeleportTarget = computed<HTMLElement | null>(() => {
   if (!isMinimalInputActive.value || !minimalInputToolbarVisible.value) {
@@ -14424,7 +14423,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="chatRootContainerRef" class="flex flex-col h-full justify-between chat-root-container">
+  <div
+    ref="chatRootContainerRef"
+    class="flex flex-col h-full justify-between chat-root-container"
+    :class="{ 'chat-root-container--embed': isEmbedMode }"
+  >
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
@@ -17444,6 +17447,18 @@ onBeforeUnmount(() => {
 /* 频道背景层样式 */
 .chat-root-container {
   position: relative;
+}
+
+.chat-root-container--embed .chat-input-area {
+  margin-block: 0.2rem;
+}
+
+.chat-root-container--embed .chat-input-inline-toolbar-host {
+  margin-bottom: 0.45rem;
+}
+
+.chat-root-container--embed .chat-input-editor-row--minimal {
+  gap: 0.4rem;
 }
 
 .channel-background-layer {
