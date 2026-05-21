@@ -23,16 +23,20 @@ type BackupInfo struct {
 	Filename  string `json:"filename"`
 	Size      int64  `json:"size"`
 	CreatedAt int64  `json:"createdAt"`
+	Protected bool   `json:"protected"`
 }
 
 var (
 	ErrBackupRunning     = errors.New("backup is already running")
 	ErrBackupUnsupported = errors.New("backup only supported for sqlite")
+	ErrBackupProtected   = errors.New("backup is protected by retention policy")
 
 	backupState struct {
 		mu      sync.Mutex
 		running bool
 	}
+
+	backupNow = time.Now
 )
 
 type backupFile struct {
@@ -86,7 +90,8 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 		files = append(files, backupFile{Source: dbPath + "-shm", Name: filepath.Base(dbPath + "-shm")})
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
+	now := backupNow()
+	timestamp := now.Format("20060102-150405")
 	filename := fmt.Sprintf("backup-%s.zip", timestamp)
 	targetPath := filepath.Join(backupDir, filename)
 	tmpPath := targetPath + ".tmp"
@@ -101,7 +106,7 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 	}
 
 	if cfg.Backup.RetentionCount > 0 {
-		if err := pruneBackups(backupDir, cfg.Backup.RetentionCount); err != nil {
+		if err := pruneBackups(backupDir, cfg.Backup.IntervalHours, cfg.Backup.RetentionCount, now); err != nil {
 			log.Printf("backup: cleanup failed: %v", err)
 		}
 	}
@@ -114,6 +119,7 @@ func ExecuteBackup(cfg *utils.AppConfig) (*BackupInfo, error) {
 		Filename:  filename,
 		Size:      info.Size(),
 		CreatedAt: info.ModTime().Unix(),
+		Protected: false,
 	}, nil
 }
 
@@ -122,7 +128,12 @@ func ListBackups(cfg utils.BackupConfig) ([]BackupInfo, error) {
 	if backupDir == "" {
 		return nil, errors.New("backup path is empty")
 	}
-	return listBackups(backupDir)
+	items, err := listBackups(backupDir)
+	if err != nil {
+		return nil, err
+	}
+	applyProtectedFlags(items, cfg.IntervalHours, cfg.RetentionCount, backupNow())
+	return items, nil
 }
 
 func DeleteBackup(cfg utils.BackupConfig, filename string) error {
@@ -133,6 +144,14 @@ func DeleteBackup(cfg utils.BackupConfig, filename string) error {
 	target, err := resolveBackupFilePath(backupDir, filename)
 	if err != nil {
 		return err
+	}
+	items, err := listBackups(backupDir)
+	if err != nil {
+		return err
+	}
+	protected := protectedBackupSet(items, cfg.IntervalHours, cfg.RetentionCount, backupNow())
+	if _, ok := protected[filename]; ok {
+		return ErrBackupProtected
 	}
 	return os.Remove(target)
 }
@@ -229,7 +248,7 @@ func listBackups(dir string) ([]BackupInfo, error) {
 	return items, nil
 }
 
-func pruneBackups(dir string, retentionCount int) error {
+func pruneBackups(dir string, intervalHours, retentionCount int, now time.Time) error {
 	if retentionCount <= 0 {
 		return nil
 	}
@@ -240,13 +259,92 @@ func pruneBackups(dir string, retentionCount int) error {
 	if len(items) <= retentionCount {
 		return nil
 	}
-	for i := retentionCount; i < len(items); i++ {
-		target := filepath.Join(dir, items[i].Filename)
+	keep := retainedBackupSet(items, intervalHours, retentionCount, now)
+	for _, item := range items {
+		if _, ok := keep[item.Filename]; ok {
+			continue
+		}
+		target := filepath.Join(dir, item.Filename)
 		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+func applyProtectedFlags(items []BackupInfo, intervalHours, retentionCount int, now time.Time) {
+	protected := protectedBackupSet(items, intervalHours, retentionCount, now)
+	for i := range items {
+		_, items[i].Protected = protected[items[i].Filename]
+	}
+}
+
+func retainedBackupSet(items []BackupInfo, intervalHours, retentionCount int, now time.Time) map[string]struct{} {
+	keep := make(map[string]struct{}, retentionCount)
+	if retentionCount <= 0 || len(items) == 0 {
+		return keep
+	}
+
+	keep[items[0].Filename] = struct{}{}
+	for name := range protectedBackupSet(items, intervalHours, retentionCount, now) {
+		keep[name] = struct{}{}
+	}
+	for _, item := range items {
+		if len(keep) >= retentionCount {
+			break
+		}
+		keep[item.Filename] = struct{}{}
+	}
+	return keep
+}
+
+func protectedBackupSet(items []BackupInfo, intervalHours, retentionCount int, now time.Time) map[string]struct{} {
+	protected := make(map[string]struct{})
+	protectedCount := historicalProtectedCount(retentionCount)
+	if len(items) == 0 || protectedCount == 0 {
+		return protected
+	}
+
+	interval := backupIntervalDuration(intervalHours)
+	for bucket := 1; bucket <= protectedCount; bucket++ {
+		for _, item := range items {
+			if backupAgeBucket(item.CreatedAt, interval, now) != bucket {
+				continue
+			}
+			protected[item.Filename] = struct{}{}
+			break
+		}
+	}
+	return protected
+}
+
+func historicalProtectedCount(retentionCount int) int {
+	if retentionCount <= 1 {
+		return 0
+	}
+	count := retentionCount / 3
+	if count < 1 {
+		count = 1
+	}
+	if count > retentionCount-1 {
+		return retentionCount - 1
+	}
+	return count
+}
+
+func backupIntervalDuration(intervalHours int) time.Duration {
+	if intervalHours <= 0 {
+		intervalHours = 12
+	}
+	return time.Duration(intervalHours) * time.Hour
+}
+
+func backupAgeBucket(createdAt int64, interval time.Duration, now time.Time) int {
+	createdAtTime := time.Unix(createdAt, 0)
+	if createdAtTime.After(now) {
+		return 0
+	}
+	return int(now.Sub(createdAtTime) / interval)
 }
 
 func writeBackupZip(targetPath string, files []backupFile) error {

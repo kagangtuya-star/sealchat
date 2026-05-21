@@ -232,6 +232,7 @@ export interface BackupInfo {
   filename: string;
   size: number;
   createdAt: number;
+  protected: boolean;
 }
 
 export interface ThemeManagementConfig {

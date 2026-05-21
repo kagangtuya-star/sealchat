@@ -40,6 +40,8 @@ func AdminBackupExecute(c *fiber.Ctx) error {
 		status := http.StatusInternalServerError
 		if errors.Is(err, service.ErrBackupRunning) {
 			status = http.StatusConflict
+		} else if errors.Is(err, service.ErrBackupProtected) {
+			status = http.StatusConflict
 		} else if errors.Is(err, service.ErrBackupUnsupported) {
 			status = http.StatusBadRequest
 		}
@@ -67,7 +69,11 @@ func AdminBackupDelete(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, http.StatusInternalServerError, nil, "配置未加载")
 	}
 	if err := service.DeleteBackup(cfg.Backup, filename); err != nil {
-		return wrapErrorStatus(c, http.StatusInternalServerError, err, "删除备份失败")
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrBackupProtected) {
+			status = http.StatusConflict
+		}
+		return wrapErrorStatus(c, status, err, "删除备份失败")
 	}
 	return c.Status(http.StatusOK).JSON(fiber.Map{"message": "ok"})
 }

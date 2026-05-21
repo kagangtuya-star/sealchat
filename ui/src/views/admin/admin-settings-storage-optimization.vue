@@ -3,7 +3,7 @@ import { useUtilsStore } from '@/stores/utils'
 import { api } from '@/stores/_config'
 import type { BackupConfig, BackupInfo, SQLiteConfig, ServerConfig } from '@/types'
 import { cloneDeep } from 'lodash-es'
-import { NButton, useMessage } from 'naive-ui'
+import { NButton, NTag, useMessage } from 'naive-ui'
 import dayjs from 'dayjs'
 import { computed, h, onMounted, ref, watch } from 'vue'
 
@@ -262,8 +262,8 @@ const deleteBackup = async (row: BackupInfo) => {
     await utils.adminBackupDelete(row.filename)
     message.success('删除成功')
     await fetchBackupList()
-  } catch {
-    message.error('删除失败')
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || error?.response?.data?.message || '删除失败')
   }
 }
 
@@ -271,6 +271,18 @@ const backupColumns = [
   { title: '文件名', key: 'filename' },
   { title: '大小', key: 'size', render: (row: BackupInfo) => formatBytes(row.size) },
   { title: '创建时间', key: 'createdAt', render: (row: BackupInfo) => dayjs(row.createdAt * 1000).format('YYYY-MM-DD HH:mm:ss') },
+  {
+    title: '状态',
+    key: 'protected',
+    render(row: BackupInfo) {
+      if (!row.protected) return '普通'
+      return h(
+        NTag,
+        { size: 'small', type: 'warning', round: true },
+        { default: () => '历史保护' },
+      )
+    },
+  },
   {
     title: '操作',
     key: 'actions',
@@ -280,9 +292,10 @@ const backupColumns = [
         {
           size: 'tiny',
           type: 'error',
+          disabled: row.protected,
           onClick: () => deleteBackup(row),
         },
-        { default: () => '删除' },
+        { default: () => (row.protected ? '受保护' : '删除') },
       )
     },
   },
@@ -407,7 +420,7 @@ onMounted(async () => {
               <template #suffix>小时</template>
             </n-input-number>
           </n-form-item>
-          <n-form-item label="保留数量" feedback="超过此数量的旧备份将被自动删除">
+          <n-form-item label="保留数量" feedback="超过此数量的旧备份将被自动删除；其中约三分之一历史时间桶会自动保护，超时后才可被轮转。保留数量为 1 时仅保留最新备份，历史保护不会生效。">
             <n-input-number v-model:value="backupConfig.retentionCount" :min="1" />
           </n-form-item>
           <n-form-item label="备份路径" feedback="服务端存储备份文件的绝对路径">
