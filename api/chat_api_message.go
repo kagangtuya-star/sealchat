@@ -2397,6 +2397,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		if renderResult != nil {
+			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
+				return nil, err
+			}
+		}
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -3066,17 +3071,24 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		newContent = fillBotMentionNames(data.ChannelID, newContent)
 		newContent = protocol.EscapeSatoriText(newContent)
 	}
+	existingDiceRolls, err := model.MessageDiceRollListByMessageID(msg.ID)
+	if err != nil {
+		return nil, err
+	}
+	var updatedDiceRolls []*model.MessageDiceRollModel
+	var renderResult *service.DiceRenderResult
 	if effectiveBuiltInDiceEnabled {
 		replayCacheKey := ""
 		if msg.ID != "" {
 			replayCacheKey = fmt.Sprintf("%s:%d", msg.ID, msg.UpdatedAt.UnixMilli())
 		}
-		renderResult, err := service.RenderDiceContentWithPreviousMessage(newContent, channel.DefaultDiceExpr, msg.Content, replayCacheKey, nil)
+		renderResult, err = service.RenderDiceContentWithExisting(newContent, channel.DefaultDiceExpr, existingDiceRolls, msg.Content, replayCacheKey, nil)
 		if err != nil {
 			return nil, err
 		}
 		if renderResult != nil {
 			newContent = renderResult.Content
+			updatedDiceRolls = renderResult.Rolls
 		}
 	}
 
@@ -3177,9 +3189,14 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	updates["edited_by_user_name"] = editorUserName
 	msg.EditedByUserID = ctx.User.ID
 	msg.EditedByUserName = editorUserName
-	err := model.MessageUpdate(msg.ID, updates)
+	err = model.MessageUpdate(msg.ID, updates)
 	if err != nil {
 		return nil, err
+	}
+	if effectiveBuiltInDiceEnabled {
+		if err := model.MessageDiceRollReplace(msg.ID, updatedDiceRolls); err != nil {
+			return nil, err
+		}
 	}
 
 	messageData := buildMessage()

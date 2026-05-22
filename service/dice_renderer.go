@@ -103,6 +103,17 @@ func RenderDiceContent(content string, defaultDiceExpr string, existing []*model
 }
 
 func RenderDiceContentWithPreviousMessage(content string, defaultDiceExpr string, previousContent string, cacheKey string, rollMore func(string) []int) (*DiceRenderResult, error) {
+	return RenderDiceContentWithExisting(content, defaultDiceExpr, nil, previousContent, cacheKey, rollMore)
+}
+
+func RenderDiceContentWithExisting(
+	content string,
+	defaultDiceExpr string,
+	existing []*model.MessageDiceRollModel,
+	previousContent string,
+	cacheKey string,
+	rollMore func(string) []int,
+) (*DiceRenderResult, error) {
 	snapshot, err := loadDiceReplaySnapshot(previousContent, cacheKey)
 	if err != nil {
 		return nil, err
@@ -118,7 +129,7 @@ func RenderDiceContentWithPreviousMessage(content string, defaultDiceExpr string
 	for _, node := range nodes {
 		wrapper.AppendChild(node)
 	}
-	renderer := newDiceReplayRenderer(defaultDiceExpr, snapshot, rollMore)
+	renderer := newDiceReplayRenderer(defaultDiceExpr, existing, snapshot, rollMore)
 	renderer.walk(wrapper)
 	isHidden := containsHiddenDiceCommand(content)
 
@@ -161,8 +172,8 @@ func newDiceRenderer(defaultDiceExpr string, existing []*model.MessageDiceRollMo
 	}
 }
 
-func newDiceReplayRenderer(defaultDiceExpr string, snapshot *DiceReplaySnapshot, rollMore func(string) []int) *diceRenderer {
-	renderer := newDiceRenderer(defaultDiceExpr, nil)
+func newDiceReplayRenderer(defaultDiceExpr string, existing []*model.MessageDiceRollModel, snapshot *DiceReplaySnapshot, rollMore func(string) []int) *diceRenderer {
+	renderer := newDiceRenderer(defaultDiceExpr, existing)
 	if snapshot != nil {
 		for _, entry := range snapshot.Entries {
 			renderer.replayEntries[entry.RollIndex] = entry
