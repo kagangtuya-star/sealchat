@@ -29,6 +29,14 @@ interface LocalFontOption {
   aliases: string[]
 }
 
+type SelectableFontSourceType = Extract<FontSourceType, 'system' | 'platform' | 'upload' | 'manual' | 'url'>
+
+interface FontSourceOption {
+  value: SelectableFontSourceType
+  label: string
+  description: string
+}
+
 const sourceMode = ref<FontSourceType>('system')
 const localFontOptions = ref<LocalFontOption[]>([])
 const loadingLocalFonts = ref(false)
@@ -47,6 +55,39 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const platformFonts = ref<PlatformFontAsset[]>([])
 const loadingPlatformFonts = ref(false)
 const selectedPlatformFontId = ref<string | null>(null)
+
+const fontSourceOptions: Record<SelectableFontSourceType, FontSourceOption> = {
+  system: {
+    value: 'system',
+    label: '系统字体',
+    description: '读取当前设备已安装字体，适合本机自定义显示',
+  },
+  platform: {
+    value: 'platform',
+    label: '平台字体',
+    description: '使用管理员上传的云端字体',
+  },
+  upload: {
+    value: 'upload',
+    label: '上传字体',
+    description: '上传本地字体文件并缓存，适合长期复用',
+  },
+  manual: {
+    value: 'manual',
+    label: '手动输入',
+    description: '手填已安装字体名称，适合无法读取系统字体时使用',
+  },
+  url: {
+    value: 'url',
+    label: 'URL 导入',
+    description: '从字体链接导入并预览，跨域失败时建议改用上传',
+  },
+}
+
+const sourceModeColumns = [
+  [fontSourceOptions.system, fontSourceOptions.platform],
+  [fontSourceOptions.manual, fontSourceOptions.upload, fontSourceOptions.url],
+]
 
 const localFontAvailable = computed(() => isLocalFontApiAvailable())
 const cacheAvailable = computed(() => isFontAssetCacheAvailable())
@@ -478,12 +519,29 @@ const handleRestoreDefault = () => {
           <p class="section-title">选择方式</p>
           <p class="section-desc">系统字体读取失败时，可改用手动输入或导入字体</p>
         </header>
-        <n-radio-group v-model:value="sourceMode" size="small" class="source-mode-group">
-          <n-radio-button value="system">系统字体</n-radio-button>
-          <n-radio-button value="manual">手动输入</n-radio-button>
-          <n-radio-button value="upload">上传字体</n-radio-button>
-          <n-radio-button value="url">URL 导入</n-radio-button>
-          <n-radio-button value="platform">平台字体</n-radio-button>
+        <n-radio-group v-model:value="sourceMode" class="source-mode-group">
+          <div class="source-mode-columns">
+            <div
+              v-for="(column, columnIndex) in sourceModeColumns"
+              :key="`source-column-${columnIndex}`"
+              class="source-mode-column"
+              :style="{ '--source-mode-rows': String(column.length) }"
+            >
+              <n-tooltip
+                v-for="option in column"
+                :key="option.value"
+                trigger="hover"
+                placement="top"
+              >
+                <template #trigger>
+                  <n-radio-button :value="option.value" class="source-mode-tile">
+                    <span class="source-mode-tile__label">{{ option.label }}</span>
+                  </n-radio-button>
+                </template>
+                <span>{{ option.description }}</span>
+              </n-tooltip>
+            </div>
+          </div>
         </n-radio-group>
       </section>
 
@@ -566,7 +624,7 @@ const handleRestoreDefault = () => {
       <section v-if="sourceMode === 'platform'" class="font-settings-section">
         <header>
           <p class="section-title">平台字体</p>
-          <p class="section-desc">由平台管理员上传，所有客户端可按需拉取并保持一致显示</p>
+          <p class="section-desc">使用管理员上传的云端字体</p>
         </header>
         <div class="inline-row">
           <n-button secondary size="small" :loading="loadingPlatformFonts" @click="refreshPlatformFonts">
@@ -686,30 +744,74 @@ const handleRestoreDefault = () => {
 .source-mode-group {
   width: 100%;
   max-width: 100%;
-  display: flex;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  padding-bottom: 2px;
+}
+
+.source-mode-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.source-mode-column {
+  display: grid;
+  grid-template-rows: repeat(var(--source-mode-rows), minmax(0, 1fr));
+  gap: 0.65rem;
 }
 
 .source-mode-group :deep(.n-radio-group__splitor) {
   display: none;
 }
 
-.source-mode-group :deep(.n-radio-button) {
-  flex: 1 1 0;
+.source-mode-tile {
+  width: 100%;
+  --n-button-text-color: var(--sc-text-primary);
+  --n-button-text-color-hover: var(--sc-text-primary);
+  --n-button-text-color-active: var(--sc-text-primary);
+}
+
+.source-mode-tile :deep(.n-radio-button) {
+  width: 100%;
   min-width: 0;
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 12px;
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
 }
 
-.source-mode-group :deep(.n-radio-button__state-border) {
-  border-radius: 8px;
+.source-mode-tile :deep(.n-radio-button__state-border) {
+  border-radius: 12px;
 }
 
-.source-mode-group :deep(.n-radio__label) {
+.source-mode-tile :deep(.n-radio__label) {
+  width: 100%;
+  display: flex;
   justify-content: center;
-  font-size: 0.76rem;
-  padding-inline: 0.45rem;
-  white-space: nowrap;
+  align-items: center;
+  text-align: center;
+  padding: 0.85rem 0.65rem;
+  white-space: normal;
+  line-height: 1.4;
+  color: var(--sc-text-primary);
+}
+
+.source-mode-tile__label {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--sc-text-primary);
+}
+
+.source-mode-tile :deep(.n-radio-button),
+.source-mode-tile :deep(.n-radio-button__state-border) {
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.source-mode-tile:hover :deep(.n-radio-button),
+.source-mode-tile:hover :deep(.n-radio-button__state-border) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  border-color: var(--sc-border-strong);
 }
 
 .upload-row {
