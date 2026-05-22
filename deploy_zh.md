@@ -191,6 +191,48 @@ Windows下为zip格式。
 同时发行包会包含 `bin/<平台目录>/cwebp` 与 `bin/<平台目录>/gif2webp`（以及 `LICENSE`），用于图片压缩/转换；请保持它们与主程序同目录，不要删掉或改名。
 发行包还会包含 `config.yaml.example` 与 `config.docker.yaml.example`，按需复制为 `config.yaml` 后再修改。
 
+### 可选：安装平台字体分割器
+
+如果你希望管理员在“平台管理 → 主题与样式管理”中使用“分割并发布”把平台字体切成多片，请额外准备 `bin/cn-font-split/` 目录。
+
+这个分割器不是基础运行必需项：
+
+- 不安装时，普通访问不会受影响。
+- 富文本使用平台字体、全局 UI 启用平台字体仍可正常工作。
+- 仅管理员点击“分割并发布”时，系统才会懒加载分割 worker，并通过后端读取这里的文件。
+- **字体分割器可以将大型字体库拆解为迷你字体库，按需加载，保证正常的打开速度。**
+
+目录结构：
+
+```text
+sealchat-server(.exe)
+bin/
+  cn-font-split/
+    libffi-wasm32-wasip1.wasm
+    version
+```
+
+安装步骤：
+
+1. 访问上游项目 `https://github.com/KonghaYao/cn-font-split/releases`
+2. 下载 `libffi-wasm32-wasip1.wasm`
+3. 放入主程序同目录的 `bin/cn-font-split/`
+4. 手工创建 `bin/cn-font-split/version`
+5. 在 `version` 中写入 `wasm32-wasip1@<前端构建使用的 cn-font-split 版本>`
+
+当前仓库对应版本可写为：
+
+```text
+wasm32-wasip1@7.4.1
+```
+
+注意事项：
+
+- 上游 release 通常只有 wasm 文件，没有 `version` 文件，这是正常现象。
+- `version` 只是运行时探测和版本展示用文本文件，可以手工新建。
+- 建议 `version` 中声明的版本与前端实际安装的 `cn-font-split` npm 版本保持一致，避免 JS 与 wasm 版本跨度过大。
+- 安装完成后，进入管理员页面点击“检测分割器”即可验证是否可用。
+
 
 ## 3. 运行程序
 
@@ -223,6 +265,8 @@ Windows下为zip格式。
 如果您看到类似"Server listening at :xxx"的消息，说明程序已成功启动。
 
 打开浏览器，访问 http://localhost:3212/ 即可使用，第一个注册的帐号会成为管理员账号。
+
+如果你已经安装了 `bin/cn-font-split/`，可以登录管理员账号后前往“平台管理 → 主题与样式管理”，点击“检测分割器”确认是否就绪。
 
 
 ## 进阶：使用 nginx 反向代理子目录

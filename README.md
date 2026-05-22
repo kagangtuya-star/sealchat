@@ -108,6 +108,43 @@ docker run -d --name sealchat --restart unless-stopped \
 3. 浏览器访问 `http://<domain>:3212/`，注册首个账号（自动成为管理员并创建默认世界）。
 4. 参考 [`docs/product-introduction.md`](docs/product-introduction.md) 或 `deploy_zh.md` 完成世界、频道、权限与资产配置。
 
+#### 平台字体分割器安装（可选）
+
+如果你希望管理员在“平台管理 → 主题与样式管理”里使用“分割并发布”来把平台字体切成多片，请在主程序同目录准备 `bin/cn-font-split/`。这个能力是可选的：
+
+- 缺少分割器时，普通访问、富文本使用平台字体、全局 UI 启用平台字体都不受影响。
+- 只有管理员点击“分割并发布”时，前端才会懒加载分割 worker 并通过后端读取这里的运行时文件。
+- **字体分割器可以将大型字体库拆解为迷你字体库，按需加载，保证正常的打开速度。**
+
+目录结构如下：
+
+```text
+sealchat-server(.exe)
+bin/
+  cn-font-split/
+    libffi-wasm32-wasip1.wasm
+    version
+```
+
+安装步骤：
+
+1. 从 `cn-font-split` 上游 release 下载 `libffi-wasm32-wasip1.wasm`。
+2. 在 `bin/cn-font-split/` 下新建 `version` 文件。
+3. 将 `version` 内容写成 `wasm32-wasip1@<前端构建所使用的 cn-font-split npm 版本>`。
+
+当前仓库前端依赖固定为 `cn-font-split@7.4.1`，因此当前版本推荐直接写：
+
+```text
+wasm32-wasip1@7.4.1
+```
+
+补充说明：
+
+- 上游 release 一般只提供 `libffi-wasm32-wasip1.wasm`，不会额外提供 `version` 文件。
+- `version` 只是运行时探测与版本展示用途，可以手工创建。
+- 不建议混用跨度过大的 JS 包版本与 wasm 版本；最佳实践是让 `version` 中声明的版本与前端实际安装的 `cn-font-split` 版本保持一致。
+- 安装完成后，可在管理员页面点击“检测分割器”确认是否就绪。
+
 ### 从源码构建
 - **先决条件**：Go >= 1.22，Node.js >= 18（建议搭配 pnpm 或 npm），`ffmpeg` 可选（转码），建议同时提供 `ffprobe` 用于更稳定的时长探测。
 - **步骤**：
@@ -115,6 +152,21 @@ docker run -d --name sealchat --restart unless-stopped \
   2. `cd ui && npm install && npm run build`（或 `pnpm i && pnpm build`）
   3. 回到仓库根目录执行 `go build -o sealchat_server ./`
 - **开发模式**：可运行 `npm run dev` 启动前端热更新，同时在根目录 `go run main.go`。
+
+如果你是从源码构建并希望启用管理员前端字体分割，构建完成后同样需要在产物旁边放置 `bin/cn-font-split/`。如果本地已经安装了前端依赖，可以参考以下方式准备：
+
+```bash
+mkdir -p bin/cn-font-split
+# 从上游 release 下载 libffi-wasm32-wasip1.wasm 到 bin/cn-font-split/
+printf 'wasm32-wasip1@7.4.1\n' > bin/cn-font-split/version
+```
+
+Windows PowerShell 可使用：
+
+```powershell
+New-Item -ItemType Directory -Force bin/cn-font-split | Out-Null
+Set-Content -Path bin/cn-font-split/version -Value "wasm32-wasip1@7.4.1"
+```
 
 ### 常用命令
 - `go run main.go`：启动服务端并自动托管静态资源。
