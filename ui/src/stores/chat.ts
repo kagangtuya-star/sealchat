@@ -23,6 +23,7 @@ import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeS
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
 import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
+import { resolveWindowFocusState } from '@/utils/windowFocusState';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -1378,8 +1379,7 @@ export const useChatStore = defineStore({
           focusListenersBound = true;
           const store = this;
           const updateFocusState = () => {
-            const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
-            const isVisible = document.visibilityState !== 'hidden';
+            const { hasFocus, isVisible } = resolveWindowFocusState();
             store.setFocusState(hasFocus && isVisible);
           };
           const triggerForegroundRecover = (reason: string) => {
