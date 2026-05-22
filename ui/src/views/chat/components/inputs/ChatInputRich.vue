@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
+import { h, ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
 import { useMessage } from 'naive-ui';
-import type { MentionOption } from 'naive-ui';
+import type { MentionOption, SelectOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
@@ -70,6 +70,12 @@ const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
 const isComposing = ref(false);
+const isMobile = ref(false);
+const fontSelectorExpanded = ref(false);
+const desktopFontSelectorExpanded = ref(false);
+const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
+const previewPlatformFontFamilies = reactive<Record<string, string>>({});
+const MOBILE_BREAKPOINT = 768;
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -331,6 +337,27 @@ const closeMentionPanel = () => {
   mentionTriggerInfo.value = null;
   mentionActiveIndex.value = 0;
   mentionSearchValue.value = '';
+};
+
+const rememberEditorSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+  const { from, to } = ed.state.selection;
+  savedEditorSelectionRange.value = { start: from, end: to };
+};
+
+const restoreEditorSelection = () => {
+  const ed = editor.value;
+  const range = savedEditorSelectionRange.value;
+  if (!ed || !range) {
+    return;
+  }
+  const docSize = ed.state.doc.content.size;
+  const safeStart = clamp(range.start, 0, docSize);
+  const safeEnd = clamp(range.end, 0, docSize);
+  ed.chain().setTextSelection({ from: safeStart, to: safeEnd }).run();
 };
 
 const scrollActiveMentionIntoView = () => {
@@ -656,6 +683,86 @@ const customTextColor = ref('#1f2937');
 const platformFonts = ref<PlatformFontAsset[]>([]);
 const platformFontLoading = ref(false);
 const selectedPlatformFontId = ref<string | null>(null);
+type PlatformFontSelectOption = SelectOption & {
+  fontFamily?: string
+  rawLabel?: string
+}
+
+const resolvePlatformFontLabel = (item: { displayName?: string | null; family?: string | null }) => {
+  const displayName = String(item.displayName || '').trim();
+  if (displayName) {
+    return displayName;
+  }
+  return String(item.family || '').trim();
+};
+
+const resolveFontPreviewFamily = (item: { id?: string; family?: string | null }) => {
+  const cachedFamily = item.id ? previewPlatformFontFamilies[item.id] : '';
+  const family = cachedFamily || String(item.family || '').trim();
+  return family ? `"${family}"` : undefined;
+};
+
+const platformFontOptions = computed(() => {
+  return platformFonts.value.map((item) => ({
+    label: resolvePlatformFontLabel(item),
+    rawLabel: resolvePlatformFontLabel(item),
+    value: item.id,
+    fontFamily: resolveFontPreviewFamily(item),
+  }));
+});
+
+const renderPlatformFontLabel = (option: SelectOption) => {
+  const fontOption = option as PlatformFontSelectOption;
+  return h(
+    'span',
+    {
+      class: 'tiptap-platform-font-option__label',
+      style: fontOption.fontFamily ? { fontFamily: fontOption.fontFamily } : undefined,
+      title: String(fontOption.rawLabel || fontOption.label || ''),
+    },
+    String(fontOption.rawLabel || fontOption.label || ''),
+  );
+};
+
+const renderPlatformFontOption = ({ node, option }: { node: any; option: SelectOption }) => {
+  const fontOption = option as PlatformFontSelectOption;
+  return h(
+    'div',
+    {
+      class: 'tiptap-platform-font-option',
+      style: fontOption.fontFamily ? { fontFamily: fontOption.fontFamily } : undefined,
+      title: String(fontOption.rawLabel || fontOption.label || ''),
+    },
+    [node],
+  );
+};
+
+const updateIsMobile = () => {
+  const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
+  const isCoarsePointer = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches ?? false;
+  const hasTouchPoints = (navigator?.maxTouchPoints || 0) > 0;
+  const isMobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator?.userAgent || '');
+  isMobile.value = isNarrowViewport || isCoarsePointer || (hasTouchPoints && isMobileUa);
+  if (!isMobile.value) {
+    fontSelectorExpanded.value = false;
+  }
+};
+
+const toggleFontSelectorExpanded = () => {
+  fontSelectorExpanded.value = !fontSelectorExpanded.value;
+};
+
+const closeFontSelector = () => {
+  fontSelectorExpanded.value = false;
+  desktopFontSelectorExpanded.value = false;
+};
+
+const handleDesktopFontSelectorShowUpdate = (show: boolean) => {
+  if (isMobile.value) {
+    return;
+  }
+  desktopFontSelectorExpanded.value = show;
+};
 
 const applyCustomHighlightColor = () => {
   setHighlightColor(customHighlightColor.value);
@@ -920,8 +1027,13 @@ const initEditor = async () => {
           isSyncingFromProps.value = false;
         });
       },
+      onSelectionUpdate: ({ editor: ed }) => {
+        editor.value = ed as Editor;
+        rememberEditorSelection();
+      },
       onFocus: () => {
         isFocused.value = true;
+        rememberEditorSelection();
         emit('focus');
       },
       onBlur: ({ event }) => {
@@ -1112,6 +1224,15 @@ const refreshPlatformFonts = async () => {
   platformFontLoading.value = true;
   try {
     platformFonts.value = await listPlatformFonts();
+    platformFonts.value.forEach((item) => {
+      void ensurePlatformFontLoaded(item.id, item.family)
+        .then((family) => {
+          previewPlatformFontFamilies[item.id] = family;
+        })
+        .catch(() => {
+          previewPlatformFontFamilies[item.id] = item.family;
+        });
+    });
   } catch (error) {
     console.warn('加载平台字体失败', error);
     platformFonts.value = [];
@@ -1122,12 +1243,16 @@ const refreshPlatformFonts = async () => {
 
 const applyPlatformFont = async (fontId: string | null) => {
   if (!fontId) {
+    restoreEditorSelection();
     editor.value?.chain().focus().setMark('textStyle', {
       fontAssetId: null,
       platformFontFamily: null,
       fontFamily: null,
     }).run();
     selectedPlatformFontId.value = null;
+    if (isMobile.value) {
+      closeFontSelector();
+    }
     return;
   }
   const target = platformFonts.value.find((item) => item.id === fontId) || null;
@@ -1136,12 +1261,17 @@ const applyPlatformFont = async (fontId: string | null) => {
     return;
   }
   const family = await ensurePlatformFontLoaded(target.id, target.family);
+  restoreEditorSelection();
   editor.value?.chain().focus().setMark('textStyle', {
     fontAssetId: target.id,
     platformFontFamily: family,
     fontFamily: `"${family}"`,
   }).run();
+  previewPlatformFontFamilies[target.id] = family;
   selectedPlatformFontId.value = target.id;
+  if (isMobile.value) {
+    closeFontSelector();
+  }
 };
 
 const removeTextColor = () => {
@@ -1215,6 +1345,11 @@ watch(editor, (instance) => {
   selectedPlatformFontId.value = typeof attrs?.fontAssetId === 'string' ? attrs.fontAssetId : null;
 });
 
+onMounted(() => {
+  updateIsMobile();
+  window.addEventListener('resize', updateIsMobile);
+});
+
 // 初始化
 initEditor();
 void refreshPlatformFonts();
@@ -1250,6 +1385,7 @@ const handleCompositionEnd = () => {
 
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateIsMobile);
     window.removeEventListener('resize', handleMentionViewportChange);
     window.removeEventListener('scroll', handleMentionViewportChange, true);
     if (mentionPositionRaf !== null) {
@@ -1466,19 +1602,36 @@ defineExpose({
               </div>
             </div>
           </n-popover>
+        </div>
+
+        <div class="tiptap-toolbar__group tiptap-toolbar__group--font" :class="{ 'is-expanded': !isMobile && desktopFontSelectorExpanded }">
+          <n-button
+            v-if="isMobile && !fontSelectorExpanded"
+            size="small"
+            text
+            class="tiptap-platform-font-toggle"
+            title="选择字体"
+            @click="toggleFontSelectorExpanded"
+          >
+            A
+          </n-button>
           <n-select
+            v-else
             size="small"
             class="tiptap-platform-font-select"
             clearable
             filterable
             :loading="platformFontLoading"
             :value="selectedPlatformFontId"
-            :options="platformFonts.map((item) => ({
-              label: item.displayName || item.family,
-              value: item.id,
-            }))"
-            placeholder="平台字体"
+            :options="platformFontOptions"
+            :placeholder="isMobile ? '字体' : '平台字体'"
+            :render-label="renderPlatformFontLabel"
+            :render-option="renderPlatformFontOption"
+            content-class="tiptap-platform-font-select__menu"
             @update:value="applyPlatformFont"
+            @update:show="handleDesktopFontSelectorShowUpdate"
+            @focus="desktopFontSelectorExpanded = true"
+            @blur="closeFontSelector"
           />
         </div>
 
@@ -1930,8 +2083,24 @@ defineExpose({
   gap: 0.25rem;
 }
 
+.tiptap-toolbar__group--font {
+  flex: 0 0 7.5rem;
+  min-width: 7.5rem;
+  transition: flex-basis 0.18s ease, min-width 0.18s ease;
+}
+
+.tiptap-toolbar__group--font.is-expanded {
+  flex-basis: 12.5rem;
+  min-width: 12.5rem;
+}
+
 .tiptap-platform-font-select {
-  width: 148px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tiptap-platform-font-toggle {
+  flex: 0 0 auto;
 }
 
 .tiptap-toolbar__divider {
@@ -2154,6 +2323,23 @@ defineExpose({
   pointer-events: none;
 }
 
+@media (max-width: 767px) {
+  .tiptap-toolbar__group--font {
+    flex: 0 0 auto;
+    min-width: 0;
+    transition: none;
+  }
+
+  .tiptap-toolbar__group--font.is-expanded {
+    flex-basis: auto;
+    min-width: 0;
+  }
+
+  .tiptap-platform-font-select {
+    min-width: 7.5rem;
+  }
+}
+
 /* 夜间模式颜色选择器 */
 :root[data-display-palette='night'] .tiptap-color-picker {
   background-color: #2D2D31;
@@ -2191,6 +2377,23 @@ defineExpose({
 </style>
 
 <style lang="scss">
+.tiptap-platform-font-select__menu {
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16), 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.tiptap-platform-font-option {
+  width: 100%;
+}
+
+.tiptap-platform-font-option__label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tiptap-content {
   padding: 0.75rem 1rem;
   outline: none;
@@ -2418,6 +2621,10 @@ defineExpose({
 
 :root[data-display-palette='night'] .tiptap-toolbar__divider {
   background-color: var(--sc-border-strong, #3f3f46);
+}
+
+:root[data-display-palette='night'] .tiptap-platform-font-select__menu {
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.48), 0 8px 20px rgba(0, 0, 0, 0.28);
 }
 
 /* 浮动菜单夜间模式 */
