@@ -23,7 +23,7 @@ type Manager struct {
 }
 
 func NewManager(cfg utils.StorageConfig) (*Manager, error) {
-	local, err := newLocalBackend(cfg.Local.UploadDir, cfg.Local.AudioDir)
+	local, err := newLocalBackend(cfg.Local.UploadDir, cfg.Local.AudioDir, cfg.Local.FontDir)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +80,15 @@ func (m *Manager) ActiveBackendForAudio() BackendType {
 			return true
 		}
 		return *s3.AudioEnabled
+	})
+}
+
+func (m *Manager) ActiveBackendForFont() BackendType {
+	return m.activeBackendWithToggle(func(s3 utils.S3StorageConfig) bool {
+		if s3.FontsEnabled == nil {
+			return true
+		}
+		return *s3.FontsEnabled
 	})
 }
 
@@ -171,6 +180,18 @@ func (m *Manager) Delete(ctx context.Context, backend BackendType, objectKey str
 		return m.remote.delete(ctx, objectKey)
 	default:
 		return m.local.delete(objectKey)
+	}
+}
+
+func (m *Manager) DeletePrefix(ctx context.Context, backend BackendType, objectKey string) error {
+	switch backend {
+	case BackendS3:
+		if m.remote == nil {
+			return nil
+		}
+		return m.remote.deletePrefix(ctx, objectKey)
+	default:
+		return m.local.deletePrefix(objectKey)
 	}
 }
 

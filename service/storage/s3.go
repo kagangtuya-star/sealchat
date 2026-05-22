@@ -104,6 +104,33 @@ func (s *s3Backend) delete(ctx context.Context, objectKey string) error {
 	return nil
 }
 
+func (s *s3Backend) deletePrefix(ctx context.Context, prefix string) error {
+	if strings.TrimSpace(prefix) == "" {
+		return nil
+	}
+	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    strings.TrimLeft(prefix, "/"),
+		Recursive: true,
+	})
+	for object := range objects {
+		if object.Err != nil {
+			resp := minio.ToErrorResponse(object.Err)
+			if resp.StatusCode == 404 {
+				continue
+			}
+			return object.Err
+		}
+		if err := s.client.RemoveObject(ctx, s.bucket, object.Key, minio.RemoveObjectOptions{}); err != nil {
+			resp := minio.ToErrorResponse(err)
+			if resp.StatusCode == 404 {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *s3Backend) publicURL(objectKey string) string {
 	if s.publicBaseURL == "" {
 		return ""

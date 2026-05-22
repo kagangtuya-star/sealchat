@@ -8,6 +8,7 @@ import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { useImageCompressor } from '@/composables/useImageCompressor'
 import { useLoginGlass } from '@/composables/useLoginGlass'
 import type { CustomThemeColors, PlatformTheme } from '@/services/theme/themeTypes'
+import AdminPlatformFontManager from './components/AdminPlatformFontManager.vue'
 import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
 import { normalizeUITextReplaceConfig } from '@/utils/uiTextReplace'
@@ -547,6 +548,10 @@ defineExpose<AdminThemeStyleExpose>({
               </div>
             </div>
           </n-form-item>
+        </n-collapse-item>
+
+        <n-collapse-item title="平台字体管理" name="platform-font-manager">
+          <AdminPlatformFontManager />
         </n-collapse-item>
 
         <n-collapse-item title="登录页背景" name="login-bg">

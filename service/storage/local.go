@@ -12,14 +12,18 @@ import (
 type localBackend struct {
 	attachmentRoot string
 	audioRoot      string
+	fontRoot       string
 }
 
-func newLocalBackend(uploadDir, audioDir string) (*localBackend, error) {
+func newLocalBackend(uploadDir, audioDir, fontDir string) (*localBackend, error) {
 	if strings.TrimSpace(uploadDir) == "" {
 		uploadDir = "./data/upload"
 	}
 	if strings.TrimSpace(audioDir) == "" {
 		audioDir = "./static/audio"
+	}
+	if strings.TrimSpace(fontDir) == "" {
+		fontDir = "./data/fonts"
 	}
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建附件目录失败: %w", err)
@@ -27,9 +31,13 @@ func newLocalBackend(uploadDir, audioDir string) (*localBackend, error) {
 	if err := os.MkdirAll(audioDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建音频目录失败: %w", err)
 	}
+	if err := os.MkdirAll(fontDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建字体目录失败: %w", err)
+	}
 	return &localBackend{
 		attachmentRoot: uploadDir,
 		audioRoot:      audioDir,
+		fontRoot:       fontDir,
 	}, nil
 }
 
@@ -43,6 +51,8 @@ func (l *localBackend) resolvePath(objectKey string) (string, error) {
 		return filepath.Join(l.attachmentRoot, strings.TrimPrefix(clean, "attachments/")), nil
 	case strings.HasPrefix(clean, "audio/"):
 		return filepath.Join(l.audioRoot, strings.TrimPrefix(clean, "audio/")), nil
+	case strings.HasPrefix(clean, "fonts/"):
+		return filepath.Join(l.fontRoot, strings.TrimPrefix(clean, "fonts/")), nil
 	default:
 		return filepath.Join(l.attachmentRoot, clean), nil
 	}
@@ -104,6 +114,17 @@ func (l *localBackend) delete(objectKey string) error {
 		return err
 	}
 	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (l *localBackend) deletePrefix(objectKey string) error {
+	target, err := l.resolvePath(objectKey)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

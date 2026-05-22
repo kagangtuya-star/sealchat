@@ -14,6 +14,9 @@ export default defineConfig({
   build: {
     assetsInlineLimit: 0,
   },
+  worker: {
+    format: 'es',
+  },
   css: {
     preprocessorOptions: {
       scss: {

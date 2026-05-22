@@ -9,6 +9,7 @@ import router from './router'
 import { installSealChatBridgeRuntime } from './bridge/sealchatBridgeInstaller'
 import { useDisplayStore } from './stores/display'
 import { startFontSurfaceAutoMarking } from './services/font/fontSurfaceAdapter'
+import { preloadPlatformFontsFromDom } from './services/font/platformFontRegistry'
 
 const installMobileViewportGuards = () => {
   if (typeof document === 'undefined') {
@@ -160,3 +161,6 @@ installMobileViewportGuards()
 
 app.mount('#app')
 startFontSurfaceAutoMarking()
+void preloadPlatformFontsFromDom().catch((error) => {
+  console.warn('初始化平台字体预加载失败', error)
+})

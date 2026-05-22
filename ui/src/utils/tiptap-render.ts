@@ -255,6 +255,14 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             text = `<a href="${escapeHtml(href)}" class="${linkClass}" target="${target}" rel="noopener noreferrer">${text}</a>`;
             break;
           case 'textStyle':
+            if (mark.attrs?.fontAssetId) {
+              const platformFontId = escapeHtml(String(mark.attrs.fontAssetId));
+              const platformFontFamily = escapeHtml(String(mark.attrs.platformFontFamily || mark.attrs.fontFamily || ''));
+              const extraStyle = mark.attrs?.fontFamily
+                ? ` style="font-family: ${escapeHtml(String(mark.attrs.fontFamily))} !important"`
+                : '';
+              text = `<span data-platform-font-id="${platformFontId}" data-platform-font-family="${platformFontFamily}"${extraStyle}>${text}</span>`;
+            }
             if (mark.attrs?.color) {
               const normalizedColor = normalizeCssColor(String(mark.attrs.color));
               if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {

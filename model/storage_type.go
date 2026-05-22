@@ -6,4 +6,6 @@ type StorageType string
 const (
 	StorageLocal StorageType = "local"
 	StorageS3    StorageType = "s3"
+	StorageFontLocal StorageType = "font_local"
+	StorageFontS3    StorageType = "font_s3"
 )

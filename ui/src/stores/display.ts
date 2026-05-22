@@ -3,6 +3,7 @@ import { useChatStore } from './chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamilyName } from '@/services/font/fontUtils'
 import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
+import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry'
 import {
   normalizeAvatarVisibilityScope,
   normalizeMessageVisibilityScope,
@@ -245,7 +246,7 @@ const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
-const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url']
+const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url', 'platform']
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
   if (typeof value === 'string') {
     const normalized = value.trim() as TimestampFormat
@@ -1278,7 +1279,7 @@ export const useDisplayStore = defineStore('display', {
       let normalizedSourceType = coerceFontSourceType(payload.sourceType)
       let normalizedAssetId = normalizeFontAssetId(payload.assetId)
 
-      if (normalizedSourceType === 'upload' || normalizedSourceType === 'url') {
+      if (normalizedSourceType === 'upload' || normalizedSourceType === 'url' || normalizedSourceType === 'platform') {
         if (!normalizedAssetId) {
           normalizedSourceType = normalizedFamily ? 'manual' : 'default'
         }
@@ -1297,10 +1298,20 @@ export const useDisplayStore = defineStore('display', {
     },
     async restoreGlobalFontAsset() {
       const sourceType = this.settings.globalFontSourceType
-      if (sourceType !== 'upload' && sourceType !== 'url') return
+      if (sourceType !== 'upload' && sourceType !== 'url' && sourceType !== 'platform') return
       const assetId = normalizeFontAssetId(this.settings.globalFontAssetId)
       if (!assetId) return
       try {
+        if (sourceType === 'platform') {
+          const family = await ensurePlatformFontLoaded(assetId, this.settings.globalFontFamily)
+          const normalizedFamily = sanitizeFontFamilyName(family)
+          if (normalizedFamily && normalizedFamily !== this.settings.globalFontFamily) {
+            this.settings.globalFontFamily = normalizedFamily
+            this.persist()
+          }
+          this.applyTheme()
+          return
+        }
         const restored = await restoreCachedFontById(assetId)
         if (!restored) {
           this.settings.globalFontAssetId = null

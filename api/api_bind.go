@@ -668,6 +668,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/chat/export/:taskId/retry", ChatExportRetry)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
+	v1Auth.Get("/platform-fonts", PlatformFontListPublicHandler)
+	v1Auth.Get("/platform-fonts/:id/meta", PlatformFontMetaHandler)
+	v1Auth.Get("/platform-fonts/:id/file", PlatformFontFileHandler)
+	v1Auth.Get("/platform-fonts/:id/subset-manifest", PlatformFontSubsetManifestHandler)
+	v1Auth.Get("/platform-fonts/:id/subset/*", PlatformFontSubsetFileHandler)
 
 	// 聊天记录导入
 	chatImport := v1Auth.Group("/channels/:channelId/import")
@@ -756,6 +761,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/audio-quotas/:userId", AdminAudioQuotaGet)
 	v1AuthAdmin.Put("/admin/audio-quotas/:userId", AdminAudioQuotaUpsert)
 	v1AuthAdmin.Delete("/admin/audio-quotas/:userId", AdminAudioQuotaDelete)
+	v1AuthAdmin.Get("/admin/platform-fonts", AdminPlatformFontListHandler)
+	v1AuthAdmin.Get("/admin/platform-fonts/split-runtime/*", AdminPlatformFontSplitRuntimeAssetHandler)
+	v1AuthAdmin.Post("/admin/platform-fonts", AdminPlatformFontCreateHandler)
+	v1AuthAdmin.Get("/admin/platform-fonts/:id", AdminPlatformFontGetHandler)
+	v1AuthAdmin.Patch("/admin/platform-fonts/:id", AdminPlatformFontUpdateHandler)
+	v1AuthAdmin.Delete("/admin/platform-fonts/:id", AdminPlatformFontDeleteHandler)
+	v1AuthAdmin.Post("/admin/platform-fonts/:id/subset-package", AdminPlatformFontSubsetPackageHandler)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

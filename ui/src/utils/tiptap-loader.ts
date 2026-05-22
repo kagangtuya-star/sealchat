@@ -6,6 +6,7 @@ type TiptapVueModule = typeof import('@tiptap/vue-3');
 export interface TipTapBundle {
   Editor: TiptapCoreModule['Editor'];
   Node: TiptapCoreModule['Node'];
+  Extension: TiptapCoreModule['Extension'];
   mergeAttributes: TiptapCoreModule['mergeAttributes'];
   EditorContent: TiptapVueModule['EditorContent'];
   BubbleMenu: TiptapVueModule['BubbleMenu'];
@@ -34,6 +35,7 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
     ]).then(([tiptapCore, tiptapVue, starterKit, textStyle, color, image, highlight, textAlign]) => ({
       Editor: tiptapCore.Editor,
       Node: tiptapCore.Node,
+      Extension: tiptapCore.Extension,
       mergeAttributes: tiptapCore.mergeAttributes,
       EditorContent: tiptapVue.EditorContent,
       BubbleMenu: tiptapVue.BubbleMenu,

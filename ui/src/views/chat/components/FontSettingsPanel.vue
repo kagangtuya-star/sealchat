@@ -3,10 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useDisplayStore } from '@/stores/display'
 import { buildGlobalFontFamilyStack, createFontAssetId, sanitizeFontFamilyName } from '@/services/font/fontUtils'
+import { listPlatformFonts } from '@/services/font/platformFontApi'
+import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry'
 import { listFontAssetMeta, deleteFontAssetById, isFontAssetCacheAvailable, saveFontAsset } from '@/services/font/fontCache'
 import { isLocalFontApiAvailable, loadFontFromFile, loadFontFromUrl, queryLocalFontCandidates, restoreCachedFontById } from '@/services/font/fontLoader'
 import type { LocalFontCandidate } from '@/services/font/fontLoader'
 import type { FontAssetMeta, FontSourceType, ImportedFontPayload } from '@/services/font/types'
+import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
 
 interface Props {
   show: boolean
@@ -41,6 +44,9 @@ const selectedCachedAssetId = ref<string | null>(null)
 const cachedAssets = ref<FontAssetMeta[]>([])
 const processing = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const platformFonts = ref<PlatformFontAsset[]>([])
+const loadingPlatformFonts = ref(false)
+const selectedPlatformFontId = ref<string | null>(null)
 
 const localFontAvailable = computed(() => isLocalFontApiAvailable())
 const cacheAvailable = computed(() => isFontAssetCacheAvailable())
@@ -128,6 +134,10 @@ const previewFamily = computed(() => {
     )
     return candidate || currentDisplayFamily.value
   }
+  if (sourceMode.value === 'platform') {
+    const selected = platformFonts.value.find((item) => item.id === selectedPlatformFontId.value) || null
+    return sanitizeFontFamilyName(selected?.family || selected?.displayName || '') || currentDisplayFamily.value
+  }
   return currentDisplayFamily.value
 })
 
@@ -141,6 +151,18 @@ const refreshCachedAssets = async () => {
   } catch (error) {
     console.warn('加载字体缓存列表失败', error)
     cachedAssets.value = []
+  }
+}
+
+const refreshPlatformFonts = async () => {
+  loadingPlatformFonts.value = true
+  try {
+    platformFonts.value = await listPlatformFonts()
+  } catch (error) {
+    console.warn('加载平台字体列表失败', error)
+    platformFonts.value = []
+  } finally {
+    loadingPlatformFonts.value = false
   }
 }
 
@@ -174,7 +196,11 @@ const setupDraftFromCurrent = async () => {
   importedDraft.value = null
   enhancedCoverageEnabled.value = !!display.settings.fontEnhancedCoverageEnabled
   selectedCachedAssetId.value = display.settings.globalFontAssetId || null
+  selectedPlatformFontId.value = display.settings.globalFontSourceType === 'platform'
+    ? (display.settings.globalFontAssetId || null)
+    : null
   await refreshCachedAssets()
+  await refreshPlatformFonts()
 }
 
 watch(
@@ -215,6 +241,21 @@ const handleLoadLocalFonts = async () => {
 const handleSelectLocalFont = (value: string | null) => {
   selectedLocalFamily.value = sanitizeFontFamilyName(value || '')
   sourceMode.value = 'system'
+}
+
+const handleSelectPlatformFont = async (value: string | null) => {
+  selectedPlatformFontId.value = value
+  sourceMode.value = 'platform'
+  const selected = platformFonts.value.find((item) => item.id === value) || null
+  if (!selected) return
+  processing.value = true
+  try {
+    await ensurePlatformFontLoaded(selected.id, selected.family)
+  } catch (error: any) {
+    message.error(error?.message || '平台字体预览加载失败')
+  } finally {
+    processing.value = false
+  }
 }
 
 const triggerFileSelect = () => {
@@ -363,6 +404,19 @@ const resolveSubmitPayload = async (): Promise<{ family: string; sourceType: Fon
     message.warning('请先导入字体文件或选择一个已缓存字体')
     return null
   }
+  if (sourceMode.value === 'platform') {
+    const selected = platformFonts.value.find((item) => item.id === selectedPlatformFontId.value) || null
+    if (!selected?.id) {
+      message.warning('请先选择一个平台字体')
+      return null
+    }
+    await ensurePlatformFontLoaded(selected.id, selected.family)
+    return {
+      family: sanitizeFontFamilyName(selected.family || selected.displayName),
+      sourceType: 'platform',
+      assetId: selected.id,
+    }
+  }
   return {
     family: '',
     sourceType: 'default',
@@ -429,6 +483,7 @@ const handleRestoreDefault = () => {
           <n-radio-button value="manual">手动输入</n-radio-button>
           <n-radio-button value="upload">上传字体</n-radio-button>
           <n-radio-button value="url">URL 导入</n-radio-button>
+          <n-radio-button value="platform">平台字体</n-radio-button>
         </n-radio-group>
       </section>
 
@@ -506,6 +561,29 @@ const handleRestoreDefault = () => {
           <n-input v-model:value="urlFamily" placeholder="可选：自定义字体名称" />
           <n-button secondary size="small" :disabled="processing" @click="handleImportFromUrl">导入并预览</n-button>
         </div>
+      </section>
+
+      <section v-if="sourceMode === 'platform'" class="font-settings-section">
+        <header>
+          <p class="section-title">平台字体</p>
+          <p class="section-desc">由平台管理员上传，所有客户端可按需拉取并保持一致显示</p>
+        </header>
+        <div class="inline-row">
+          <n-button secondary size="small" :loading="loadingPlatformFonts" @click="refreshPlatformFonts">
+            刷新平台字体
+          </n-button>
+        </div>
+        <n-select
+          :value="selectedPlatformFontId"
+          filterable
+          clearable
+          :options="platformFonts.map((item) => ({
+            label: `${item.displayName || item.family} · ${item.family}`,
+            value: item.id,
+          }))"
+          placeholder="选择平台字体"
+          @update:value="handleSelectPlatformFont"
+        />
       </section>
 
       <section class="font-settings-section">

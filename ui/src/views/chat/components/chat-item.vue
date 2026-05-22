@@ -20,6 +20,7 @@ import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { contentEscape, contentUnescape } from '@/utils/tools';
 import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { preloadPlatformFontsFromDom } from '@/services/font/platformFontRegistry';
 import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
 import 'viewerjs/dist/viewer.css';
@@ -3040,6 +3041,17 @@ watch(() => otherEditingPreview.value?.previewHtml, () => {
   applyDiceTone();
   ensureImageViewer();
   void applyImageLayoutToDom();
+});
+
+watch(() => props.item?.content, async () => {
+  await nextTick();
+  void preloadPlatformFontsFromDom(messageContentRef.value).catch((error) => {
+    console.warn('消息平台字体预加载失败', error);
+  });
+});
+
+onMounted(() => {
+  void nextTick(() => preloadPlatformFontsFromDom(messageContentRef.value));
 });
 
 watch(

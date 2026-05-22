@@ -4,12 +4,15 @@ import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
+import { listPlatformFonts } from '@/services/font/platformFontApi';
+import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry';
 import { useChatStore } from '@/stores/chat';
 import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { matchText } from '@/utils/pinyinMatch';
 import { contentUnescape } from '@/utils/tools';
+import type { PlatformFontAsset } from '@/services/font/platformFontTypes';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -650,6 +653,9 @@ const textColors = [
 // 自定义颜色输入
 const customHighlightColor = ref('#fce7f3');
 const customTextColor = ref('#1f2937');
+const platformFonts = ref<PlatformFontAsset[]>([]);
+const platformFontLoading = ref(false);
+const selectedPlatformFontId = ref<string | null>(null);
 
 const applyCustomHighlightColor = () => {
   setHighlightColor(customHighlightColor.value);
@@ -709,6 +715,7 @@ const initEditor = async () => {
     const {
       Editor: EditorClass,
       Node: TiptapNodeClass,
+      Extension,
       mergeAttributes,
       EditorContent: EditorContentComp,
       BubbleMenu: BubbleMenuComp,
@@ -763,6 +770,43 @@ const initEditor = async () => {
       },
     });
 
+    const PlatformFontTextStyle = Extension.create({
+      name: 'platformFontTextStyle',
+      addGlobalAttributes() {
+        return [
+          {
+            types: ['textStyle'],
+            attributes: {
+              fontAssetId: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-platform-font-id'),
+                renderHTML: (attributes: Record<string, any>) => {
+                  if (!attributes.fontAssetId) return {};
+                  return { 'data-platform-font-id': attributes.fontAssetId };
+                },
+              },
+              platformFontFamily: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-platform-font-family'),
+                renderHTML: (attributes: Record<string, any>) => {
+                  if (!attributes.platformFontFamily) return {};
+                  return { 'data-platform-font-family': attributes.platformFontFamily };
+                },
+              },
+              fontFamily: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.style.fontFamily || element.getAttribute('data-platform-font-family'),
+                renderHTML: (attributes: Record<string, any>) => {
+                  if (!attributes.fontFamily) return {};
+                  return { style: `font-family: ${attributes.fontFamily}` };
+                },
+              },
+            },
+          },
+        ];
+      },
+    });
+
     // 创建编辑器实例
     editor.value = new EditorClass({
       content: props.modelValue || '<p></p>',
@@ -788,6 +832,7 @@ const initEditor = async () => {
           },
         }),
         TextStyle,
+        PlatformFontTextStyle,
         Color,
         Highlight.configure({
           multicolor: true,
@@ -912,9 +957,6 @@ const initEditor = async () => {
     isInitializing.value = false;
   }
 };
-
-// 初始化
-initEditor();
 
 // 监听外部值变化
 watch(() => props.modelValue, (newValue) => {
@@ -1066,6 +1108,42 @@ const setTextColor = (color: string) => {
   textColorPopoverShow.value = false;
 };
 
+const refreshPlatformFonts = async () => {
+  platformFontLoading.value = true;
+  try {
+    platformFonts.value = await listPlatformFonts();
+  } catch (error) {
+    console.warn('加载平台字体失败', error);
+    platformFonts.value = [];
+  } finally {
+    platformFontLoading.value = false;
+  }
+};
+
+const applyPlatformFont = async (fontId: string | null) => {
+  if (!fontId) {
+    editor.value?.chain().focus().setMark('textStyle', {
+      fontAssetId: null,
+      platformFontFamily: null,
+      fontFamily: null,
+    }).run();
+    selectedPlatformFontId.value = null;
+    return;
+  }
+  const target = platformFonts.value.find((item) => item.id === fontId) || null;
+  if (!target) {
+    message.warning('平台字体不存在或尚未加载');
+    return;
+  }
+  const family = await ensurePlatformFontLoaded(target.id, target.family);
+  editor.value?.chain().focus().setMark('textStyle', {
+    fontAssetId: target.id,
+    platformFontFamily: family,
+    fontFamily: `"${family}"`,
+  }).run();
+  selectedPlatformFontId.value = target.id;
+};
+
 const removeTextColor = () => {
   editor.value?.chain().focus().unsetColor().run();
   textColorPopoverShow.value = false;
@@ -1130,6 +1208,16 @@ const unsetLink = () => {
 const isActive = (name: string, attrs?: Record<string, any>) => {
   return editor.value?.isActive(name, attrs) ?? false;
 };
+
+watch(editor, (instance) => {
+  if (!instance) return;
+  const attrs = instance.getAttributes('textStyle') as Record<string, any>;
+  selectedPlatformFontId.value = typeof attrs?.fontAssetId === 'string' ? attrs.fontAssetId : null;
+});
+
+// 初始化
+initEditor();
+void refreshPlatformFonts();
 
 const markOverlayInteraction = () => {
   overlayInteractionAt.value = Date.now();
@@ -1378,6 +1466,20 @@ defineExpose({
               </div>
             </div>
           </n-popover>
+          <n-select
+            size="small"
+            class="tiptap-platform-font-select"
+            clearable
+            filterable
+            :loading="platformFontLoading"
+            :value="selectedPlatformFontId"
+            :options="platformFonts.map((item) => ({
+              label: item.displayName || item.family,
+              value: item.id,
+            }))"
+            placeholder="平台字体"
+            @update:value="applyPlatformFont"
+          />
         </div>
 
         <div class="tiptap-toolbar__divider"></div>
@@ -1826,6 +1928,10 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 0.25rem;
+}
+
+.tiptap-platform-font-select {
+  width: 148px;
 }
 
 .tiptap-toolbar__divider {

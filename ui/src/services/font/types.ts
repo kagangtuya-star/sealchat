@@ -1,4 +1,4 @@
-export type FontSourceType = 'default' | 'system' | 'manual' | 'upload' | 'url'
+export type FontSourceType = 'default' | 'system' | 'manual' | 'upload' | 'url' | 'platform'
 
 export interface FontAssetRecord {
   id: string

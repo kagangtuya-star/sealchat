@@ -137,6 +137,7 @@ type StorageConfig struct {
 type LocalStorageConfig struct {
 	UploadDir string `json:"uploadDir" yaml:"uploadDir"`
 	AudioDir  string `json:"audioDir" yaml:"audioDir"`
+	FontDir   string `json:"fontDir" yaml:"fontDir"`
 	TempDir   string `json:"tempDir" yaml:"tempDir"`
 	BaseURL   string `json:"baseUrl" yaml:"baseUrl"`
 }
@@ -145,6 +146,7 @@ type S3StorageConfig struct {
 	Enabled            bool   `json:"enabled" yaml:"enabled"`
 	AttachmentsEnabled *bool  `json:"attachmentsEnabled" yaml:"attachmentsEnabled"`
 	AudioEnabled       *bool  `json:"audioEnabled" yaml:"audioEnabled"`
+	FontsEnabled       *bool  `json:"fontsEnabled" yaml:"fontsEnabled"`
 	Endpoint           string `json:"endpoint" yaml:"endpoint"`
 	Region             string `json:"region" yaml:"region"`
 	Bucket             string `json:"bucket" yaml:"bucket"`
@@ -406,6 +408,7 @@ func ReadConfig() *AppConfig {
 			Local: LocalStorageConfig{
 				UploadDir: "./data/upload",
 				AudioDir:  "./static/audio",
+				FontDir:   "./data/fonts",
 				TempDir:   "./data/temp",
 			},
 			S3: S3StorageConfig{
@@ -1166,6 +1169,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("storage.logLevel", config.Storage.LogLevel)
 		_ = k.Set("storage.local.uploadDir", config.Storage.Local.UploadDir)
 		_ = k.Set("storage.local.audioDir", config.Storage.Local.AudioDir)
+		_ = k.Set("storage.local.fontDir", config.Storage.Local.FontDir)
 		_ = k.Set("storage.local.tempDir", config.Storage.Local.TempDir)
 		_ = k.Set("storage.local.baseUrl", config.Storage.Local.BaseURL)
 		_ = k.Set("storage.s3.enabled", config.Storage.S3.Enabled)
@@ -1174,6 +1178,9 @@ func WriteConfig(config *AppConfig) {
 		}
 		if config.Storage.S3.AudioEnabled != nil {
 			_ = k.Set("storage.s3.audioEnabled", *config.Storage.S3.AudioEnabled)
+		}
+		if config.Storage.S3.FontsEnabled != nil {
+			_ = k.Set("storage.s3.fontsEnabled", *config.Storage.S3.FontsEnabled)
 		}
 		_ = k.Set("storage.s3.endpoint", config.Storage.S3.Endpoint)
 		_ = k.Set("storage.s3.region", config.Storage.S3.Region)
@@ -1624,11 +1631,18 @@ func (cfg *StorageConfig) normalize() {
 		v := true
 		cfg.S3.AudioEnabled = &v
 	}
+	if cfg.S3.FontsEnabled == nil {
+		v := true
+		cfg.S3.FontsEnabled = &v
+	}
 	if strings.TrimSpace(cfg.Local.UploadDir) == "" {
 		cfg.Local.UploadDir = "./data/upload"
 	}
 	if strings.TrimSpace(cfg.Local.AudioDir) == "" {
 		cfg.Local.AudioDir = "./static/audio"
+	}
+	if strings.TrimSpace(cfg.Local.FontDir) == "" {
+		cfg.Local.FontDir = "./data/fonts"
 	}
 	if strings.TrimSpace(cfg.Local.TempDir) == "" {
 		cfg.Local.TempDir = "./data/temp"

@@ -54,6 +54,23 @@ func BuildAudioObjectKey(assetID string, originalName string) string {
 	return path.Clean(path.Join("audio", sanitizeName(assetID), name))
 }
 
+func BuildPlatformFontObjectKey(fontID string, originalName string) string {
+	name := sanitizeName(filepath.Base(originalName))
+	if name == "" {
+		name = "font"
+	}
+	return path.Clean(path.Join("fonts", "original", sanitizeName(fontID), name))
+}
+
+func BuildPlatformFontSubsetObjectKey(fontID string, relativePath string) string {
+	cleanFontID := sanitizeName(fontID)
+	cleanRelative := strings.TrimLeft(path.Clean(strings.ReplaceAll(relativePath, "\\", "/")), "/")
+	if cleanRelative == "." || cleanRelative == "" {
+		return path.Clean(path.Join("fonts", "subset", cleanFontID))
+	}
+	return path.Clean(path.Join("fonts", "subset", cleanFontID, cleanRelative))
+}
+
 func sanitizeName(value string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(value))
 	if trimmed == "" {
