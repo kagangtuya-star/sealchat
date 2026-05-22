@@ -33,11 +33,9 @@ jobs:
       - name: Build UI
         run: |
           cd ui
-          corepack enable
           npm config set registry https://registry.npmjs.org/
-          yarn config set registry https://registry.npmjs.org/
-          yarn install
-          yarn build-only
+          npm ci
+          npm run build-only
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
