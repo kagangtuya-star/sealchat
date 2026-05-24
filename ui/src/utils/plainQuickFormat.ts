@@ -4,6 +4,7 @@ const linkPattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
 const boldPattern = /\*\*([^\n*][^*\n]*?)\*\*/g;
 const italicPattern = /(^|[^*])\*([^*\n]+)\*/g;
 const inlineCodeHtmlPattern = /<code\b[^>]*>(.*?)<\/code>/gis;
+const atTokenPattern = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
 
 export interface QuickFormatRenderOptions {
   disableInlineCode?: boolean;
@@ -11,6 +12,21 @@ export interface QuickFormatRenderOptions {
 }
 
 const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+const decodeAtTokenText = (value: string) => value
+  .replace(/&quot;/g, '"')
+  .replace(/&#039;/g, "'")
+  .replace(/&apos;/g, "'")
+  .replace(/&gt;/g, '>')
+  .replace(/&lt;/g, '<')
+  .replace(/&amp;/g, '&');
+
+const replaceAtTokensWithDisplayText = (value: string) => {
+  atTokenPattern.lastIndex = 0;
+  return value.replace(atTokenPattern, (_full: string, id: string, name: string) => {
+    const display = decodeAtTokenText(name || id || '用户').trim();
+    return `@${display || '用户'}`;
+  });
+};
 
 const isSafeHttpUrl = (value: string) => {
   const normalized = value.replace(/&amp;/g, '&').trim();
@@ -102,6 +118,7 @@ export const stripInlineCodeTagsFromHtml = (htmlInput: string) => {
 const normalizeQuickFormatText = (value: string) => value.replace(/\u00a0/g, ' ');
 
 const isBlockNode = (tagName: string) => ['DIV', 'P', 'PRE', 'BLOCKQUOTE', 'LI'].includes(tagName);
+const mentionCapsuleClassName = 'mention-capsule';
 
 const serializeQuickFormatNode = (node: Node, inCodeBlock = false): string => {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -123,7 +140,7 @@ const serializeQuickFormatNode = (node: Node, inCodeBlock = false): string => {
     case 'AT': {
       const name = (el.getAttribute('name') || '').trim();
       const id = (el.getAttribute('id') || '').trim();
-      return `@${name || id || '用户'}`;
+      return `@${name || id || '用户'}${children}`;
     }
     case 'STRONG':
     case 'B':
@@ -156,7 +173,7 @@ export const restoreQuickFormatTextFromHtml = (htmlInput: string) => {
   }
 
   const container = document.createElement('div');
-  container.innerHTML = htmlInput;
+  container.innerHTML = replaceAtTokensWithDisplayText(htmlInput);
   const parts: string[] = [];
 
   Array.from(container.childNodes).forEach((node) => {
@@ -174,4 +191,42 @@ export const restoreQuickFormatTextFromHtml = (htmlInput: string) => {
   });
 
   return parts.join('').replace(/\n{3,}/g, '\n\n').replace(/\n+$/g, '');
+};
+
+export const serializePlainTextFromDomNode = (node: Node): string => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return normalizeQuickFormatText(node.textContent || '');
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return '';
+  }
+
+  const el = node as HTMLElement;
+  if (el.classList.contains(mentionCapsuleClassName)) {
+    return normalizeQuickFormatText(el.textContent || '');
+  }
+
+  const tag = el.tagName.toUpperCase();
+  const children = Array.from(el.childNodes).map((child) => serializePlainTextFromDomNode(child)).join('');
+
+  switch (tag) {
+    case 'BR':
+      return '\n';
+    case 'IMG':
+      return '[图片]';
+    case 'A': {
+      const href = (el.getAttribute('href') || '').trim();
+      return href ? `[${children}](${href})` : children;
+    }
+    case 'PRE': {
+      const code = children.replace(/\n+$/g, '');
+      return code ? `\`\`\`\n${code}\n\`\`\`` : '';
+    }
+    default: {
+      if (isBlockNode(tag) && children && !children.endsWith('\n')) {
+        return `${children}\n`;
+      }
+      return children;
+    }
+  }
 };

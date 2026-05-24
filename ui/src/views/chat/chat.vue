@@ -77,7 +77,7 @@ import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
-import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml, serializePlainTextFromDomNode } from '@/utils/plainQuickFormat';
 import { isSmartLinkNode, smartLinkToPlainText } from '@/utils/tiptapSmartLink';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
@@ -1825,10 +1825,25 @@ const selectionBar = reactive({
 })
 const selectionBarRef = ref<HTMLElement | null>(null)
 const selectionMaxLength = 120
+let activeMessageSelectionRange: Range | null = null
 
 const hideSelectionBar = () => {
   selectionBar.visible = false
   selectionBar.text = ''
+  activeMessageSelectionRange = null
+}
+
+const serializeMessageSelectionRange = (range: Range | null): string => {
+  if (!range) {
+    return ''
+  }
+  const fragment = range.cloneContents()
+  const text = Array.from(fragment.childNodes)
+    .map((node) => serializePlainTextFromDomNode(node))
+    .join('')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return text
 }
 
 watch(
@@ -1887,11 +1902,6 @@ const handleSelectionChange = () => {
     hideSelectionBar()
     return
   }
-  const text = selection.toString().trim()
-  if (!text || text.length === 0 || text.length > selectionMaxLength) {
-    hideSelectionBar()
-    return
-  }
   const range = selection.rangeCount ? selection.getRangeAt(0) : null
   if (!range) {
     hideSelectionBar()
@@ -1907,8 +1917,14 @@ const handleSelectionChange = () => {
     hideSelectionBar()
     return
   }
+  const serializedText = serializeMessageSelectionRange(range)
+  if (!serializedText || serializedText.length === 0 || serializedText.length > selectionMaxLength) {
+    hideSelectionBar()
+    return
+  }
   updateSelectionPosition(rect)
-  selectionBar.text = text
+  activeMessageSelectionRange = range.cloneRange()
+  selectionBar.text = serializedText
   selectionBar.visible = true
 }
 
@@ -1924,14 +1940,39 @@ const handlePointerDown = (event: PointerEvent) => {
 }
 
 const handleSelectionCopy = async () => {
-  if (!selectionBar.text) return
-  const copied = await copyTextWithFallback(selectionBar.text)
+  const text = serializeMessageSelectionRange(activeMessageSelectionRange) || selectionBar.text
+  if (!text) return
+  const copied = await copyTextWithFallback(text)
   if (copied) {
     message.success('已复制选中文本')
   } else {
     message.error('复制失败')
   }
   hideSelectionBar()
+}
+
+const handleNativeSelectionCopy = (event: ClipboardEvent) => {
+  const container = messagesListRef.value
+  if (!container || !event.clipboardData) {
+    return
+  }
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return
+  }
+  const range = selection.getRangeAt(0)
+  const node = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer?.parentElement
+  if (!node || !container.contains(node)) {
+    return
+  }
+  const serializedText = serializeMessageSelectionRange(range)
+  if (!serializedText) {
+    return
+  }
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', serializedText)
+  selectionBar.text = serializedText
+  activeMessageSelectionRange = range.cloneRange()
 }
 
 const handleSelectionAddKeyword = () => {
@@ -1966,6 +2007,7 @@ if (typeof window !== 'undefined') {
   useEventListener(document, 'selectionchange', handleSelectionChange)
   useEventListener(document, 'pointerdown', handlePointerDown, { capture: true })
   useEventListener(window, 'resize', hideSelectionBar)
+  useEventListener(document, 'copy', handleNativeSelectionCopy)
 }
 
 const topSentinelRef = ref<HTMLElement | null>(null);

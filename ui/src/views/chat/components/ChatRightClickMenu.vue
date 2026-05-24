@@ -65,13 +65,7 @@ const detectContentMode = (content?: string): 'plain' | 'rich' => {
   if (isTipTapJson(content)) {
     return 'rich';
   }
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return 'plain';
-  }
-  const containsRich = /<(p|span|at|strong|em|blockquote|ul|ol|li|code|pre|a)\b/i.test(trimmed);
-  const onlyImagesOrText = /^(?:\s*(<img\b[^>]*>))*\s*$/.test(trimmed);
-  return containsRich && !onlyImagesOrText ? 'rich' : 'plain';
+  return 'plain';
 };
 
 const resolveWhisperTargetId = (msg?: any): string | null => {
