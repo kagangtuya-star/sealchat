@@ -175,31 +175,37 @@ const menuAvatar = computed(() => {
 </template>
 
 <style scoped>
-:deep(.context-menu.avatar-menu--night) {
+:deep(.context-menu.avatar-menu--night),
+:deep(.mx-context-menu.avatar-menu--night) {
   background: rgba(15, 23, 42, 0.95);
   border-color: rgba(148, 163, 184, 0.35);
   color: #e2e8f0;
 }
 
-:deep(.context-menu.avatar-menu--night .context-menu-item) {
+:deep(.context-menu.avatar-menu--night .context-menu-item),
+:deep(.mx-context-menu.avatar-menu--night .mx-context-menu-item) {
   color: inherit;
 }
 
-:deep(.context-menu.avatar-menu--night .context-menu-item:hover) {
+:deep(.context-menu.avatar-menu--night .context-menu-item:hover),
+:deep(.mx-context-menu.avatar-menu--night .mx-context-menu-item:hover) {
   background: rgba(255, 255, 255, 0.08);
 }
 
-:deep(.context-menu.avatar-menu--day) {
+:deep(.context-menu.avatar-menu--day),
+:deep(.mx-context-menu.avatar-menu--day) {
   background: rgba(248, 250, 252, 0.98);
   border-color: rgba(15, 23, 42, 0.08);
   color: #0f172a;
 }
 
-:deep(.context-menu.avatar-menu--day .context-menu-item) {
+:deep(.context-menu.avatar-menu--day .context-menu-item),
+:deep(.mx-context-menu.avatar-menu--day .mx-context-menu-item) {
   color: inherit;
 }
 
-:deep(.context-menu.avatar-menu--day .context-menu-item:hover) {
+:deep(.context-menu.avatar-menu--day .context-menu-item:hover),
+:deep(.mx-context-menu.avatar-menu--day .mx-context-menu-item:hover) {
   background: rgba(15, 23, 42, 0.06);
 }
 </style>
