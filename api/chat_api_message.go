@@ -30,11 +30,68 @@ import (
 const (
 	displayOrderGap     = 1024.0
 	displayOrderEpsilon = 1e-6
+	messageListBefore   = "before"
+	messageListAfter    = "after"
 )
 
 type messageOrderPlacement struct {
 	BeforeID string
 	AfterID  string
+}
+
+type messageListCursor struct {
+	DisplayOrder float64
+	CreatedAt    time.Time
+	MessageID    string
+}
+
+func normalizeMessageListDirection(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), messageListAfter) {
+		return messageListAfter
+	}
+	return messageListBefore
+}
+
+func buildMessageListCursor(msg *model.MessageModel) string {
+	if msg == nil || msg.ID == "" {
+		return ""
+	}
+	orderStr := strconv.FormatFloat(msg.DisplayOrder, 'f', 8, 64)
+	timeStr := strconv.FormatInt(msg.CreatedAt.UnixMilli(), 10)
+	return fmt.Sprintf("%s|%s|%s", orderStr, timeStr, msg.ID)
+}
+
+func parseMessageListCursor(raw string) (messageListCursor, bool, error) {
+	cursor := messageListCursor{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return cursor, false, nil
+	}
+	if strings.Contains(trimmed, "|") {
+		parts := strings.SplitN(trimmed, "|", 3)
+		if len(parts) == 3 {
+			order, err := strconv.ParseFloat(parts[0], 64)
+			if err != nil {
+				return cursor, false, err
+			}
+			ts, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return cursor, false, err
+			}
+			cursor.DisplayOrder = order
+			cursor.CreatedAt = time.UnixMilli(ts)
+			cursor.MessageID = parts[2]
+			return cursor, true, nil
+		}
+	}
+
+	legacyTs, err := strconv.ParseInt(trimmed, 36, 64)
+	if err != nil {
+		return cursor, false, err
+	}
+	cursor.DisplayOrder = float64(legacyTs)
+	cursor.CreatedAt = time.UnixMilli(legacyTs)
+	return cursor, true, nil
 }
 
 func buildWhisperVisibilityDiff(authorID string, oldRecipientIDs []string, newRecipientIDs []string) ([]string, []string) {
@@ -504,15 +561,6 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}
 	beforeLimit := clampMessageContextWindow(data.Before, 12)
 	afterLimit := clampMessageContextWindow(data.After, 12)
-	buildContextCursor := func(msg *model.MessageModel) string {
-		if msg == nil || msg.ID == "" {
-			return ""
-		}
-		orderStr := strconv.FormatFloat(msg.DisplayOrder, 'f', 8, 64)
-		timeStr := strconv.FormatInt(msg.CreatedAt.UnixMilli(), 10)
-		return fmt.Sprintf("%s|%s|%s", orderStr, timeStr, msg.ID)
-	}
-
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
 			Where("channel_id = ?", channelID).
@@ -755,8 +803,8 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	beforeCursor := ""
 	afterCursor := ""
 	if len(items) > 0 {
-		beforeCursor = buildContextCursor(items[0])
-		afterCursor = buildContextCursor(items[len(items)-1])
+		beforeCursor = buildMessageListCursor(items[0])
+		afterCursor = buildMessageListCursor(items[len(items)-1])
 	}
 
 	return &struct {
@@ -2511,6 +2559,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 func apiMessageList(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	Next      string `json:"next"`
+	Direction string `json:"direction"`
 
 	// 以下两个字段用于查询某个时间段内的消息，可选
 	Type            string   `json:"type"` // 查询类型，不填为默认，若time则用下面两个值
@@ -2612,46 +2661,35 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 
 	var count int64
-	var cursorOrder float64
-	var cursorTime time.Time
-	var cursorID string
-	var hasCursor bool
+	cursor := messageListCursor{}
+	hasCursor := false
 	var channel *model.ChannelModel
 	canReorderAll := false
+	direction := normalizeMessageListDirection(data.Direction)
 	if !ctx.IsReadOnly() {
 		channel, _ = model.ChannelGet(data.ChannelID)
 		canReorderAll = canReorderAllMessages(ctx.User.ID, channel)
 	}
 	if data.Next != "" {
-		if strings.Contains(data.Next, "|") {
-			parts := strings.SplitN(data.Next, "|", 3)
-			if len(parts) == 3 {
-				if order, err := strconv.ParseFloat(parts[0], 64); err == nil {
-					if ts, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-						cursorOrder = order
-						cursorTime = time.UnixMilli(ts)
-						cursorID = parts[2]
-						hasCursor = true
-					}
-				}
-			}
-		}
-		if !hasCursor {
-			t, err := strconv.ParseInt(data.Next, 36, 64)
-			if err != nil {
-				return nil, err
-			}
-			cursorOrder = float64(t)
-			cursorTime = time.UnixMilli(t)
-			hasCursor = true
+		var err error
+		cursor, hasCursor, err = parseMessageListCursor(data.Next)
+		if err != nil {
+			return nil, err
 		}
 
 		if hasCursor {
 			cond := "(display_order < ?) OR (display_order = ? AND created_at < ?)"
-			args := []interface{}{cursorOrder, cursorOrder, cursorTime}
-			if cursorID != "" {
-				cond += " OR (display_order = ? AND created_at = ? AND id < ?)"
-				args = append(args, cursorOrder, cursorTime, cursorID)
+			args := []interface{}{cursor.DisplayOrder, cursor.DisplayOrder, cursor.CreatedAt}
+			if direction == messageListAfter {
+				cond = "(display_order > ?) OR (display_order = ? AND created_at > ?)"
+			}
+			if cursor.MessageID != "" {
+				if direction == messageListAfter {
+					cond += " OR (display_order = ? AND created_at = ? AND id > ?)"
+				} else {
+					cond += " OR (display_order = ? AND created_at = ? AND id < ?)"
+				}
+				args = append(args, cursor.DisplayOrder, cursor.CreatedAt, cursor.MessageID)
 			}
 			q = q.Where(cond, args...)
 		}
@@ -2665,12 +2703,18 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		limit = 50
 	}
 
-	q.Order("display_order desc").
-		Order("created_at desc").
-		Order("id desc").
-		Preload("User", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id, username, nickname, avatar, is_bot")
-		}).
+	if direction == messageListAfter {
+		q.Order("display_order asc").
+			Order("created_at asc").
+			Order("id asc")
+	} else {
+		q.Order("display_order desc").
+			Order("created_at desc").
+			Order("id desc")
+	}
+	q.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, username, nickname, avatar, is_bot")
+	}).
 		Preload("Member", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id, nickname, channel_id")
 		}).Limit(limit).Find(&items)
@@ -2688,11 +2732,15 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	q.Count(&count)
 	var next string
 
-	items = lo.Reverse(items)
+	if direction == messageListBefore {
+		items = lo.Reverse(items)
+	}
 	if count > int64(len(items)) && len(items) > 0 {
-		orderStr := strconv.FormatFloat(items[0].DisplayOrder, 'f', 8, 64)
-		timeStr := strconv.FormatInt(items[0].CreatedAt.UnixMilli(), 10)
-		next = fmt.Sprintf("%s|%s|%s", orderStr, timeStr, items[0].ID)
+		boundary := items[0]
+		if direction == messageListAfter {
+			boundary = items[len(items)-1]
+		}
+		next = buildMessageListCursor(boundary)
 	}
 
 	var whisperMsgIDs []string

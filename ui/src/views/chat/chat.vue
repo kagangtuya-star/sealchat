@@ -126,6 +126,7 @@ import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { buildMessageCursor } from '@/utils/messageCursor';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
 import {
   buildInputHistorySignature,
@@ -5816,10 +5817,15 @@ const updateWindowAnchorsFromRows = () => {
     messageWindow.earliestTimestamp = null;
     messageWindow.latestTimestamp = null;
     messageWindow.afterCursor = '';
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.afterCursor = '';
+    }
     return;
   }
-  const firstTs = normalizeTimestamp(rows.value[0]?.createdAt);
-  const lastTs = normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
+  const firstMessage = rows.value[0];
+  const lastMessage = rows.value[rows.value.length - 1];
+  const firstTs = normalizeTimestamp(firstMessage?.createdAt);
+  const lastTs = normalizeTimestamp(lastMessage?.createdAt);
   if (firstTs !== null) {
     messageWindow.earliestTimestamp = firstTs;
   }
@@ -5828,9 +5834,12 @@ const updateWindowAnchorsFromRows = () => {
       messageWindow.hasReachedLatest = false;
     }
     messageWindow.latestTimestamp = lastTs;
-    messageWindow.afterCursor = String(lastTs);
+    messageWindow.afterCursor = buildMessageCursor(lastMessage as any);
   } else {
     messageWindow.afterCursor = '';
+  }
+  if (isSearchBrowseActive()) {
+    searchBrowseSession.afterCursor = messageWindow.afterCursor;
   }
 };
 
@@ -8124,6 +8133,7 @@ const upsertMessage = (incoming?: Message) => {
   if ((incoming as any).is_deleted || (incoming as any).isDeleted) {
     rows.value = rows.value.filter((msg) => msg.id !== incoming.id);
     removePinnedMessage(incoming.id);
+    updateWindowAnchorsFromRows();
     return;
   }
   const index = rows.value.findIndex((msg) => msg.id === incoming.id);
@@ -8137,6 +8147,7 @@ const upsertMessage = (incoming?: Message) => {
     rows.value.push(incoming);
   }
   sortRowsByDisplayOrder();
+  updateWindowAnchorsFromRows();
   upsertPinnedMessage(incoming);
 };
 
@@ -13223,41 +13234,6 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
   return { messages: [] as Message[], cursor: '', reachedStart: false };
 };
 
-const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
-  let span = HISTORY_PAGINATION_WINDOW_MS;
-  let attempts = 0;
-  while (attempts < HISTORY_WINDOW_EXPANSION_LIMIT) {
-    const from = Math.max(0, anchorTimestamp + 1);
-    const to = anchorTimestamp + span;
-    try {
-      const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
-        includeArchived: true,
-        includeOoc: true,
-        ...buildRoleFilterOptions(),
-      });
-      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
-        const created = normalizeTimestamp(msg.createdAt) ?? 0;
-        return created > anchorTimestamp;
-      });
-      if (normalized.length) {
-        return {
-          messages: normalized,
-          reachedLatest: false,
-        };
-      }
-      if (to >= Date.now()) {
-        return { messages: [], reachedLatest: true };
-      }
-    } catch (error) {
-      console.warn('按时间窗口加载新消息失败', error);
-      return { messages: [], reachedLatest: false };
-    }
-    span *= 2;
-    attempts += 1;
-  }
-  return { messages: [], reachedLatest: false };
-};
-
 const autoFillIfNeeded = async () => {
   await nextTick();
   const container = messagesListRef.value;
@@ -13486,34 +13462,36 @@ const loadNewerMessages = async () => {
   ) {
     return false;
   }
-  const anchor =
-    messageWindow.latestTimestamp ??
-    normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
-  if (anchor === null || anchor === undefined) {
+  if (!messageWindow.afterCursor) {
+    messageWindow.hasReachedLatest = true;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.hasMoreAfter = false;
+    }
     return false;
   }
   messageWindow.loadingAfter = true;
   try {
-    const result = await fetchNewerThanTimestamp(anchor);
-    if (result.messages.length) {
-      mergeIncomingMessages(result.messages);
-      updateWindowAnchorsFromRows();
+    const resp = await chat.messageList(chat.curChannel.id, messageWindow.afterCursor, {
+      includeArchived: chat.filterState.showArchived,
+      limit: PAGINATED_MESSAGE_LOAD_LIMIT,
+      direction: 'after',
+      ...buildRoleFilterOptions(),
+    });
+    const normalized = normalizeMessageList(resp?.data || []);
+    if (normalized.length) {
+      mergeIncomingMessages(normalized);
       messageWindow.hasReachedLatest = false;
       if (isSearchBrowseActive()) {
-        searchBrowseSession.hasMoreAfter = true;
+        searchBrowseSession.hasMoreAfter = Boolean(resp?.next);
       }
       return true;
     }
-    if (result.reachedLatest) {
-      messageWindow.hasReachedLatest = true;
-      messageWindow.afterCursor = '';
-      if (isSearchBrowseActive()) {
-        searchBrowseSession.afterCursor = '';
-        searchBrowseSession.hasMoreAfter = false;
-      }
-      if (isNearBottom()) {
-        updateViewMode('live');
-      }
+    messageWindow.hasReachedLatest = true;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.hasMoreAfter = false;
+    }
+    if (isNearBottom()) {
+      updateViewMode('live');
     }
     return false;
   } catch (error) {

@@ -3980,6 +3980,7 @@ export const useChatStore = defineStore({
       roleIds?: string[];
       includeRoleless?: boolean;
       limit?: number;
+      direction?: 'before' | 'after';
     }) {
       const payload: Record<string, any> = {
         channel_id: channelId,
@@ -4014,6 +4015,9 @@ export const useChatStore = defineStore({
           if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
             payload.limit = normalizedLimit;
           }
+        }
+        if (options.direction === 'after') {
+          payload.direction = 'after';
         }
       }
       const resp = await this.sendAPI('message.list', payload as APIMessage);
