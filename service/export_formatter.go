@@ -600,7 +600,7 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 			result = `<a href="` + href + `" target="` + htmlEscape(target) + `" rel="noopener noreferrer">` + result + "</a>"
 		case "textstyle":
 			attrs := make([]string, 0, 3)
-			styles := make([]string, 0, 2)
+			styles := make([]string, 0, 3)
 			if fontAssetID := strings.TrimSpace(mark.attrString("fontAssetId")); fontAssetID != "" {
 				attrs = append(attrs, `data-platform-font-id="`+htmlEscape(fontAssetID)+`"`)
 			}
@@ -609,6 +609,10 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 			}
 			if fontFamily := strings.TrimSpace(mark.attrString("fontFamily")); fontFamily != "" {
 				styles = append(styles, `font-family: `+htmlEscape(fontFamily))
+			}
+			if fontSize := strings.TrimSpace(mark.attrString("fontSize")); fontSize != "" {
+				attrs = append(attrs, `data-font-size="`+htmlEscape(fontSize)+`"`)
+				styles = append(styles, `font-size:`+htmlEscape(fontSize))
 			}
 			if color := strings.TrimSpace(mark.attrString("color")); color != "" {
 				styles = append(styles, `color:`+htmlEscape(color))
