@@ -929,13 +929,41 @@ let channelMembersCountRefreshTimer: ReturnType<typeof setInterval> | null = nul
 let channelListRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
 let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-const scheduleChannelTreeRefresh = (chat: any) => {
-  if (!chat?.currentWorldId) return;
+const resolveActiveWorldId = (chat: any): string => {
+  if (!chat) return '';
+  if (chat.observerMode) {
+    return String(chat.observerWorldId || chat.currentWorldId || '').trim();
+  }
+  return String(chat.currentWorldId || '').trim();
+};
+
+const invalidateChannelTreeCache = (chat: any, worldId: string) => {
+  const normalizedWorldId = String(worldId || '').trim();
+  if (!chat || !normalizedWorldId) return;
+  if (chat.channelTreeByWorld?.[normalizedWorldId]) {
+    const nextTreeByWorld = { ...chat.channelTreeByWorld };
+    delete nextTreeByWorld[normalizedWorldId];
+    chat.channelTreeByWorld = nextTreeByWorld;
+  }
+  if (chat.favoriteChannelCandidatesByWorld?.[normalizedWorldId]) {
+    const nextFavoriteMap = { ...chat.favoriteChannelCandidatesByWorld };
+    delete nextFavoriteMap[normalizedWorldId];
+    chat.favoriteChannelCandidatesByWorld = nextFavoriteMap;
+  }
+  chat.channelTreeReady = {
+    ...chat.channelTreeReady,
+    [normalizedWorldId]: false,
+  };
+};
+
+const scheduleChannelTreeRefresh = (chat: any, worldId?: string) => {
+  const targetWorldId = String(worldId || resolveActiveWorldId(chat) || '').trim();
+  if (!targetWorldId) return;
   if (channelTreeRefreshTimer) return;
   channelTreeRefreshTimer = setTimeout(() => {
     channelTreeRefreshTimer = null;
-    if (chat.currentWorldId) {
-      void chat.channelList(chat.currentWorldId, true);
+    if (resolveActiveWorldId(chat) === targetWorldId) {
+      void chat.channelList(targetWorldId, true);
     }
   }, 150);
 };
@@ -6206,7 +6234,15 @@ chatEvent.on('channel-updated', (event) => {
   const treeChanged = options.treeChanged === true || options.tree_changed === true;
   const chat = useChatStore();
   if (treeChanged) {
-    scheduleChannelTreeRefresh(chat);
+    const targetWorldId = String(options.worldId || options.world_id || (event.channel as any)?.worldId || '').trim();
+    if (!targetWorldId) {
+      scheduleChannelTreeRefresh(chat);
+      return;
+    }
+    invalidateChannelTreeCache(chat, targetWorldId);
+    if (resolveActiveWorldId(chat) === targetWorldId) {
+      scheduleChannelTreeRefresh(chat, targetWorldId);
+    }
     return;
   }
   const channelId = event?.channel?.id;

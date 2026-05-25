@@ -63,21 +63,7 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 		}
 	}
 	if m != nil {
-		ev := &protocol.Event{
-			Type:    protocol.EventChannelUpdated,
-			Channel: m.ToProtocolType(),
-			Argv: &protocol.Argv{
-				Options: map[string]interface{}{
-					"treeChanged": true,
-					"worldId":     worldID,
-					"action":      "create",
-				},
-			},
-		}
-		if ctx.User != nil {
-			ev.User = ctx.User.ToProtocolType()
-		}
-		broadcastEventToWorld(worldID, ev)
+		broadcastChannelTreeInvalidated(ctx.User, m, "create")
 	}
 
 	return &struct {

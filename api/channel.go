@@ -312,7 +312,7 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 		})
 	}
 	if channel, err := model.ChannelGet(channelId); err == nil {
-		broadcastChannelUpdated(user, channel, true)
+		broadcastChannelTreeInvalidated(user, channel, "info-edit")
 	}
 
 	return c.JSON(fiber.Map{
@@ -380,7 +380,7 @@ func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelMo
 		event.User = operator.ToProtocolType()
 	}
 	if treeChanged && strings.TrimSpace(channel.WorldID) != "" {
-		broadcastEventToWorld(channel.WorldID, event)
+		broadcastChannelTreeInvalidated(operator, channel, "")
 		return
 	}
 	ctx := &ChatContext{
@@ -390,6 +390,99 @@ func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelMo
 	ctx.BroadcastEventInChannel(channel.ID, event)
 	if operator != nil {
 		ctx.BroadcastEventInChannelForBot(channel.ID, event)
+	}
+}
+
+func buildOnlineWorldMemberRecipients(worldID string, userConnMap *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]) ([]string, error) {
+	if strings.TrimSpace(worldID) == "" || userConnMap == nil {
+		return nil, nil
+	}
+	var memberUserIDs []string
+	if err := model.GetDB().Table("world_members").
+		Where("world_id = ?", worldID).
+		Pluck("user_id", &memberUserIDs).Error; err != nil {
+		return nil, err
+	}
+	recipients := make([]string, 0, len(memberUserIDs))
+	seen := make(map[string]struct{}, len(memberUserIDs))
+	for _, userID := range memberUserIDs {
+		normalizedUserID := strings.TrimSpace(userID)
+		if normalizedUserID == "" {
+			continue
+		}
+		if _, exists := seen[normalizedUserID]; exists {
+			continue
+		}
+		connInfoMap, ok := userConnMap.Load(normalizedUserID)
+		if !ok || connInfoMap == nil {
+			continue
+		}
+		hasActiveConn := false
+		connInfoMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info != nil && info.Conn != nil {
+				hasActiveConn = true
+				return false
+			}
+			return true
+		})
+		if !hasActiveConn {
+			continue
+		}
+		seen[normalizedUserID] = struct{}{}
+		recipients = append(recipients, normalizedUserID)
+	}
+	return recipients, nil
+}
+
+func buildChannelUpdatedTreeChangeEvent(operator *model.UserModel, channel *model.ChannelModel, reason string) *protocol.Event {
+	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" {
+		return nil
+	}
+	options := map[string]interface{}{
+		"treeChanged": true,
+		"worldId":     channel.WorldID,
+	}
+	if normalizedReason := strings.TrimSpace(reason); normalizedReason != "" {
+		options["reason"] = normalizedReason
+	}
+	event := &protocol.Event{
+		Type:    protocol.EventChannelUpdated,
+		Channel: channel.ToProtocolType(),
+		Argv: &protocol.Argv{
+			Options: options,
+		},
+	}
+	if operator != nil {
+		event.User = operator.ToProtocolType()
+	}
+	return event
+}
+
+func broadcastChannelTreeInvalidated(operator *model.UserModel, channel *model.ChannelModel, reason string) {
+	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" || userId2ConnInfoGlobal == nil {
+		return
+	}
+	event := buildChannelUpdatedTreeChangeEvent(operator, channel, reason)
+	if event == nil {
+		return
+	}
+	recipients, err := buildOnlineWorldMemberRecipients(channel.WorldID, userId2ConnInfoGlobal)
+	if err != nil || len(recipients) == 0 {
+		return
+	}
+	ctx := &ChatContext{
+		User:            operator,
+		UserId2ConnInfo: userId2ConnInfoGlobal,
+	}
+	payload := struct {
+		protocol.Event
+		Op protocol.Opcode `json:"op"`
+	}{
+		Event: *event,
+		Op:    protocol.OpEvent,
+	}
+	for _, userID := range recipients {
+		ctx.BroadcastToUserJSON(userID, payload)
 	}
 }
 
@@ -521,7 +614,7 @@ func ChannelDissolve(c *fiber.Ctx) error {
 		})
 	}
 	if channelRef != nil && channelRef.ID != "" {
-		broadcastChannelUpdated(user, channelRef, true)
+		broadcastChannelTreeInvalidated(user, channelRef, "dissolve")
 	}
 
 	return c.JSON(fiber.Map{
