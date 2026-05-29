@@ -24,6 +24,7 @@ var (
 	ErrWorldCreateForbidden       = errors.New("仅平台管理员可创建世界")
 	ErrWorldInviteInvalid         = errors.New("world invite invalid")
 	ErrWorldMemberInvalid         = errors.New("world member invalid")
+	ErrWorldArchiveForbidden      = errors.New("无权归档该世界")
 	ErrWorldOwnerImmutable        = errors.New("world owner immutable")
 	ErrWorldDescriptionTooLong    = errors.New("世界简介不能超过100字（中文按1字、英文按0.5字计算）")
 	ErrWorldSystemDefaultProtect  = errors.New("系统默认世界不可删除")
@@ -50,13 +51,13 @@ func worldObserverSlugValue(slug *string) string {
 }
 
 type WorldCreateParams struct {
-	Name                   string
-	Description            string
-	Visibility             string
-	Avatar                 string
-	ChannelDefaultDiceMode string
-	ChannelDefaultBotID    string
-	ChannelDefaultBotIDs   []string
+	Name                      string
+	Description               string
+	Visibility                string
+	Avatar                    string
+	ChannelDefaultDiceMode    string
+	ChannelDefaultBotID       string
+	ChannelDefaultBotIDs      []string
 	ChannelDefaultEventBotIDs []string
 }
 
@@ -250,7 +251,7 @@ func ApplyWorldChannelDefaultDiceConfig(channelID string, config WorldChannelDef
 				"bot_feature_enabled":   false,
 				"primary_bot_id":        "",
 				"event_bot_ids_json":    "",
-					"updated_at":            time.Now(),
+				"updated_at":            time.Now(),
 			}).Error
 	}
 	roleID := fmt.Sprintf("ch-%s-bot", channelID)
@@ -783,6 +784,9 @@ func WorldDelete(worldID, actorID string) error {
 		if err := tx.Where("world_id = ?", worldID).Delete(&model.WorldFavoriteModel{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("world_id = ?", worldID).Delete(&model.WorldArchiveModel{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Model(&model.MessageModel{}).
 			Where("channel_id IN (?)", tx.Table("channels").Select("id").Where("world_id = ?", worldID)).
 			Updates(map[string]any{"is_archived": true, "archived_at": time.Now(), "archive_reason": "world_deleted"}).Error; err != nil {
@@ -842,6 +846,7 @@ func WorldLeave(worldID, userID string) error {
 		return err
 	}
 	_ = db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldFavoriteModel{})
+	_ = db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldArchiveModel{})
 	return nil
 }
 
@@ -858,6 +863,60 @@ func IsWorldAdmin(worldID, userID string) bool {
 
 func IsWorldMember(worldID, userID string) bool {
 	return worldRoleEquals(worldID, userID, "")
+}
+
+func getActiveWorldMember(worldID, userID string) (*model.WorldMemberModel, error) {
+	db := model.GetDB()
+
+	var world model.WorldModel
+	if err := db.Where("id = ? AND status = ?", worldID, "active").Limit(1).Find(&world).Error; err != nil {
+		return nil, err
+	}
+	if world.ID == "" {
+		return nil, ErrWorldNotFound
+	}
+
+	var member model.WorldMemberModel
+	if err := db.Where("world_id = ? AND user_id = ?", worldID, userID).Limit(1).Find(&member).Error; err != nil {
+		return nil, err
+	}
+	if member.ID == "" {
+		return nil, ErrWorldArchiveForbidden
+	}
+	return &member, nil
+}
+
+func WorldArchiveSet(worldID, userID string, archived bool) error {
+	if _, err := getActiveWorldMember(worldID, userID); err != nil {
+		return err
+	}
+
+	db := model.GetDB()
+	if !archived {
+		return db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldArchiveModel{}).Error
+	}
+
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "world_id"}},
+		DoNothing: true,
+	}).Create(&model.WorldArchiveModel{
+		WorldID: worldID,
+		UserID:  userID,
+	}).Error
+}
+
+func ListWorldArchives(userID string) ([]string, error) {
+	var rows []model.WorldArchiveModel
+	if err := model.GetDB().Where("user_id = ?", userID).Order("archived_at ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.WorldID != "" {
+			ids = append(ids, row.WorldID)
+		}
+	}
+	return ids, nil
 }
 
 func worldRoleEquals(worldID, userID, role string) bool {

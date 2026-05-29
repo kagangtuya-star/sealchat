@@ -38,6 +38,8 @@ func WorldList(c *fiber.Ctx) error {
 	}
 	db := model.GetDB()
 	joinedOnly := c.QueryBool("joined")
+	archivedOnly := c.QueryBool("archived")
+	includeArchived := c.QueryBool("includeArchived")
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	visibility := strings.TrimSpace(c.Query("visibility"))
 	page := parseQueryIntDefault(c, "page", 1)
@@ -53,8 +55,14 @@ func WorldList(c *fiber.Ctx) error {
 		q = q.Where("worlds.name LIKE ? OR worlds.description LIKE ?", like, like)
 	}
 	memberSub := db.Table("world_members").Select("world_id").Where("user_id = ?", user.ID)
+	archiveSub := db.Table("world_archives").Select("world_id").Where("user_id = ?", user.ID)
 	if joinedOnly {
 		q = q.Where("worlds.id IN (?)", memberSub)
+		if archivedOnly {
+			q = q.Where("worlds.id IN (?)", archiveSub)
+		} else if !includeArchived {
+			q = q.Where("worlds.id NOT IN (?)", archiveSub)
+		}
 	} else {
 		if visibility != "" {
 			q = q.Where("worlds.visibility = ?", visibility)
@@ -83,12 +91,16 @@ func WorldList(c *fiber.Ctx) error {
 		Find(&worlds).Error; err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界列表失败"})
 	}
+	favoriteIDs, _ := service.ListWorldFavorites(user.ID)
+	archiveIDs, _ := service.ListWorldArchives(user.ID)
 	if len(worlds) == 0 {
 		return c.JSON(fiber.Map{
-			"items":    []any{},
-			"total":    total,
-			"page":     page,
-			"pageSize": pageSize,
+			"items":            []any{},
+			"total":            total,
+			"page":             page,
+			"pageSize":         pageSize,
+			"favoriteWorldIds": favoriteIDs,
+			"archivedWorldIds": archiveIDs,
 		})
 	}
 
@@ -111,21 +123,26 @@ func WorldList(c *fiber.Ctx) error {
 		}
 	}
 
-	favoriteIDs, _ := service.ListWorldFavorites(user.ID)
 	favoriteSet := map[string]struct{}{}
 	for _, id := range favoriteIDs {
 		favoriteSet[id] = struct{}{}
+	}
+	archiveSet := map[string]struct{}{}
+	for _, id := range archiveIDs {
+		archiveSet[id] = struct{}{}
 	}
 
 	items := make([]fiber.Map, 0, len(worlds))
 	for _, w := range worlds {
 		_, isFavorite := favoriteSet[w.ID]
+		_, isArchived := archiveSet[w.ID]
 		items = append(items, fiber.Map{
 			"world":       w,
 			"isMember":    membership[w.ID] != "",
 			"memberRole":  membership[w.ID],
 			"memberCount": countMap[w.ID],
 			"isFavorite":  isFavorite,
+			"isArchived":  isArchived,
 		})
 	}
 
@@ -135,6 +152,32 @@ func WorldList(c *fiber.Ctx) error {
 		"page":             page,
 		"pageSize":         pageSize,
 		"favoriteWorldIds": favoriteIDs,
+		"archivedWorldIds": archiveIDs,
+	})
+}
+
+func WorldArchiveSetHandler(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+
+	worldID := c.Params("worldId")
+	archived := c.Method() != fiber.MethodDelete
+	if err := service.WorldArchiveSet(worldID, user.ID, archived); err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
+		case errors.Is(err, service.ErrWorldArchiveForbidden):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权归档该世界"})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新归档状态失败"})
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"worldId":  worldID,
+		"archived": archived,
 	})
 }
 
@@ -144,26 +187,26 @@ func WorldCreateHandler(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
 	}
 	var body struct {
-		Name                   string `json:"name"`
-		Description            string `json:"description"`
-		Visibility             string `json:"visibility"`
-		Avatar                 string `json:"avatar"`
-		ChannelDefaultDiceMode string `json:"channelDefaultDiceMode"`
-		ChannelDefaultBotID    string `json:"channelDefaultBotId"`
-		ChannelDefaultBotIDs   []string `json:"channelDefaultBotIds"`
+		Name                      string   `json:"name"`
+		Description               string   `json:"description"`
+		Visibility                string   `json:"visibility"`
+		Avatar                    string   `json:"avatar"`
+		ChannelDefaultDiceMode    string   `json:"channelDefaultDiceMode"`
+		ChannelDefaultBotID       string   `json:"channelDefaultBotId"`
+		ChannelDefaultBotIDs      []string `json:"channelDefaultBotIds"`
 		ChannelDefaultEventBotIDs []string `json:"channelDefaultEventBotIds"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "参数错误"})
 	}
 	world, channel, err := service.WorldCreate(user.ID, service.WorldCreateParams{
-		Name:                   body.Name,
-		Description:            body.Description,
-		Visibility:             body.Visibility,
-		Avatar:                 body.Avatar,
-		ChannelDefaultDiceMode: body.ChannelDefaultDiceMode,
-		ChannelDefaultBotID:    body.ChannelDefaultBotID,
-		ChannelDefaultBotIDs:   body.ChannelDefaultBotIDs,
+		Name:                      body.Name,
+		Description:               body.Description,
+		Visibility:                body.Visibility,
+		Avatar:                    body.Avatar,
+		ChannelDefaultDiceMode:    body.ChannelDefaultDiceMode,
+		ChannelDefaultBotID:       body.ChannelDefaultBotID,
+		ChannelDefaultBotIDs:      body.ChannelDefaultBotIDs,
 		ChannelDefaultEventBotIDs: body.ChannelDefaultEventBotIDs,
 	})
 	if err != nil {

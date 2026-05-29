@@ -25,7 +25,7 @@ import {
   truncateTextByDisplayWidth,
 } from '@/utils/displayWidth';
 
-type LobbyMode = 'mine' | 'explore';
+type LobbyMode = 'mine' | 'explore' | 'archive';
 type WorldLobbyViewMode = 'list' | 'grid';
 
 interface PaginationState {
@@ -85,6 +85,10 @@ const joining = ref(false);
 const searchKeyword = ref('');
 const createVisible = ref(false);
 const creating = ref(false);
+const archivePickerVisible = ref(false);
+const archivePickerLoading = ref(false);
+const archiveCandidateItems = ref<any[]>([]);
+const archiveSelectedWorldIds = ref<string[]>([]);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
@@ -110,6 +114,12 @@ const minePagination = ref<PaginationState>({
 });
 
 const explorePagination = ref<PaginationState>({
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  total: 0,
+});
+
+const archivePagination = ref<PaginationState>({
   page: 1,
   pageSize: DEFAULT_PAGE_SIZE,
   total: 0,
@@ -315,14 +325,85 @@ const fetchExploreList = async (options: FetchOptions = {}) => {
   }
 };
 
-const lobbyMode = computed<LobbyMode>(() => (chat.worldLobbyMode === 'explore' ? 'explore' : 'mine'));
+const fetchArchiveList = async (options: FetchOptions = {}) => {
+  const seq = beginRequest();
+  try {
+    const keyword = options.keyword ?? searchKeyword.value.trim();
+    const page = options.page ?? archivePagination.value.page;
+    const pageSize = options.pageSize ?? archivePagination.value.pageSize;
+    const data = await chat.worldList({
+      page,
+      pageSize,
+      joined: true,
+      archived: true,
+      keyword: keyword || undefined,
+    });
+    if (!isLatestRequest(seq)) {
+      return;
+    }
+    const nextPage = normalizePositiveInt(data?.page, page);
+    const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+    const nextTotal = normalizeNonNegativeInt(data?.total, 0);
+    const maxPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+
+    if (nextTotal > 0 && nextPage > maxPage) {
+      archivePagination.value = {
+        page: maxPage,
+        pageSize: nextPageSize,
+        total: nextTotal,
+      };
+      await fetchArchiveList({ keyword, page: maxPage, pageSize: nextPageSize });
+      return;
+    }
+
+    archivePagination.value = {
+      page: nextPage,
+      pageSize: nextPageSize,
+      total: nextTotal,
+    };
+  } catch {
+    if (isLatestRequest(seq)) {
+      message.error('加载归档世界失败');
+    }
+  } finally {
+    endRequest(seq);
+  }
+};
+
+const lobbyMode = computed<LobbyMode>(() => {
+  if (chat.worldLobbyMode === 'archive') {
+    return 'archive';
+  }
+  return chat.worldLobbyMode === 'explore' ? 'explore' : 'mine';
+});
 
 const mineWorlds = computed<any[]>(() => chat.worldListCache?.items || []);
 const exploreWorlds = computed<any[]>(() => chat.exploreWorldCache?.items || []);
-const activeWorlds = computed<any[]>(() => (lobbyMode.value === 'mine' ? mineWorlds.value : exploreWorlds.value));
-const activeCardTitle = computed(() => (lobbyMode.value === 'mine' ? '世界列表' : '探索世界'));
-const activeEmptyText = computed(() => (lobbyMode.value === 'mine' ? '暂无世界' : '暂无公开世界'));
-const activePagination = computed(() => (lobbyMode.value === 'mine' ? minePagination.value : explorePagination.value));
+const archivedWorlds = computed<any[]>(() => chat.archivedWorldCache?.items || []);
+const activeWorlds = computed<any[]>(() => {
+  if (lobbyMode.value === 'archive') {
+    return archivedWorlds.value;
+  }
+  return lobbyMode.value === 'mine' ? mineWorlds.value : exploreWorlds.value;
+});
+const activeCardTitle = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return '归档世界';
+  }
+  return lobbyMode.value === 'mine' ? '世界列表' : '探索世界';
+});
+const activeEmptyText = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return '暂无归档世界';
+  }
+  return lobbyMode.value === 'mine' ? '暂无世界' : '暂无公开世界';
+});
+const activePagination = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return archivePagination.value;
+  }
+  return lobbyMode.value === 'mine' ? minePagination.value : explorePagination.value;
+});
 const showPagination = computed(() => activePagination.value.total > activePagination.value.pageSize);
 
 const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
@@ -332,7 +413,9 @@ const lobbyModeLabel = computed(() => (lobbyMode.value === 'mine' ? '我的世�
 const canManageLobbyAnnouncements = computed(() => !!user.checkPerm('mod_admin'));
 
 const refreshCurrentMode = async () => {
-  if (lobbyMode.value === 'mine') {
+  if (lobbyMode.value === 'archive') {
+    await fetchArchiveList();
+  } else if (lobbyMode.value === 'mine') {
     await fetchList();
   } else {
     await fetchExploreList();
@@ -348,12 +431,22 @@ const openTickerAnnouncementPopup = (item: AnnouncementItem) => {
   announcementPopupVisible.value = true;
 };
 
-const openArchivedWorldsPlaceholder = () => {
-  message.info('归档世界功能开发中');
+const openArchivedWorlds = async () => {
+  if (lobbyMode.value === 'archive') {
+    chat.worldLobbyMode = 'mine';
+    await fetchList();
+    return;
+  }
+  chat.worldLobbyMode = 'archive';
+  archivePagination.value.page = 1;
+  await fetchArchiveList({ page: 1 });
 };
 
 const resetAndFetchCurrentMode = async () => {
-  if (lobbyMode.value === 'mine') {
+  if (lobbyMode.value === 'archive') {
+    archivePagination.value.page = 1;
+    await fetchArchiveList({ page: 1 });
+  } else if (lobbyMode.value === 'mine') {
     minePagination.value.page = 1;
     await fetchList({ page: 1 });
   } else {
@@ -690,6 +783,13 @@ const handleGridLeaveWorld = (item: any) => {
   }
 };
 
+const handleGridRestoreWorld = async (worldId: string) => {
+  await restoreWorldArchive(worldId);
+  if (mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
+  }
+};
+
 const handleGridEnterWorld = async (worldId: string) => {
   await enterWorld(worldId);
   if (mobileGridActionMode.value) {
@@ -734,6 +834,76 @@ const confirmLeaveWorld = (item: any) => {
       }
     },
   });
+};
+
+const archivePickerOptions = computed(() => archiveCandidateItems.value.map((item: any) => ({
+  label: item?.world?.name || item?.world?.id || '未命名世界',
+  value: item?.world?.id,
+})).filter((item: any) => Boolean(item.value)));
+
+const openArchivePicker = async () => {
+  archivePickerVisible.value = true;
+  archivePickerLoading.value = true;
+  archiveSelectedWorldIds.value = [];
+  try {
+    const pageSize = 50;
+    let page = 1;
+    let total = 0;
+    const items: any[] = [];
+    do {
+      const data = await chat.worldList({
+        joined: true,
+        includeArchived: false,
+        page,
+        pageSize,
+      });
+      const pageItems = Array.isArray(data?.items) ? data.items : [];
+      items.push(...pageItems);
+      total = normalizeNonNegativeInt(data?.total, items.length);
+      const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+      if (!pageItems.length || page * nextPageSize >= total) {
+        break;
+      }
+      page += 1;
+    } while (items.length < total);
+    archiveCandidateItems.value = items;
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '加载可归档世界失败');
+  } finally {
+    archivePickerLoading.value = false;
+  }
+};
+
+const submitArchiveSelection = async () => {
+  const ids = archiveSelectedWorldIds.value.filter(Boolean);
+  if (!ids.length) {
+    message.warning('请选择要归档的世界');
+    return;
+  }
+  archivePickerLoading.value = true;
+  try {
+    for (const worldId of ids) {
+      await chat.archiveWorld(worldId);
+    }
+    message.success('已归档世界');
+    archivePickerVisible.value = false;
+    archiveSelectedWorldIds.value = [];
+    await fetchArchiveList({ page: 1 });
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '归档失败');
+  } finally {
+    archivePickerLoading.value = false;
+  }
+};
+
+const restoreWorldArchive = async (worldId: string) => {
+  try {
+    await chat.restoreArchivedWorld(worldId);
+    message.success('已恢复世界');
+    await fetchArchiveList();
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '恢复失败');
+  }
 };
 
 const resetCreateForm = () => {
@@ -903,6 +1073,17 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   explorePagination.value.page = 1;
   void fetchExploreList({ page: 1, pageSize });
 };
+
+const handleArchivePageChange = (page: number) => {
+  archivePagination.value.page = page;
+  void fetchArchiveList({ page });
+};
+
+const handleArchivePageSizeChange = (pageSize: number) => {
+  archivePagination.value.pageSize = pageSize;
+  archivePagination.value.page = 1;
+  void fetchArchiveList({ page: 1, pageSize });
+};
 </script>
 
 <template>
@@ -952,19 +1133,24 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </template>
           {{ lobbyModeLabel }}
         </n-button>
-        <n-button
-          size="small"
-          quaternary
-          class="world-lobby-tab"
-          @click="openArchivedWorldsPlaceholder"
-        >
-          <template #icon>
-            <n-icon>
-              <Archive />
-            </n-icon>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              size="small"
+              quaternary
+              class="world-lobby-tab"
+              @click="openArchivedWorlds"
+            >
+              <template #icon>
+                <n-icon>
+                  <Archive />
+                </n-icon>
+              </template>
+              归档世界
+            </n-button>
           </template>
-          归档世界
-        </n-button>
+          <span>{{ lobbyMode === 'archive' ? '返回我的世界' : '查看已归档的世界' }}</span>
+        </n-tooltip>
       </div>
       <div class="world-lobby-header-buttons">
         <div class="world-lobby-header-actions-left">
@@ -984,14 +1170,19 @@ const handleExplorePageSizeChange = (pageSize: number) => {
             </template>
             {{ lobbyModeLabel }}
           </n-button>
-          <n-button size="small" class="world-lobby-desktop-action" tertiary @click="openArchivedWorldsPlaceholder">
-            <template #icon>
-              <n-icon>
-                <Archive />
-              </n-icon>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button size="small" class="world-lobby-desktop-action" tertiary @click="openArchivedWorlds">
+                <template #icon>
+                  <n-icon>
+                    <Archive />
+                  </n-icon>
+                </template>
+                归档世界
+              </n-button>
             </template>
-            归档世界
-          </n-button>
+            <span>{{ lobbyMode === 'archive' ? '返回我的世界' : '查看已归档的世界' }}</span>
+          </n-tooltip>
           <n-button
             size="small"
             quaternary
@@ -1021,7 +1212,25 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </n-button>
         </div>
         <div class="world-lobby-header-actions-right">
-          <n-button size="small" type="primary" class="world-lobby-create-btn" @click="createVisible = true">
+          <n-tooltip v-if="lobbyMode === 'archive'" trigger="hover">
+            <template #trigger>
+              <n-button
+                size="medium"
+                type="error"
+                class="world-lobby-create-btn world-lobby-archive-btn"
+                @click="openArchivePicker"
+              >
+                <template #icon>
+                  <n-icon>
+                    <Archive />
+                  </n-icon>
+                </template>
+                将世界归档
+              </n-button>
+            </template>
+            <span>选择已加入的世界加入归档</span>
+          </n-tooltip>
+          <n-button v-else size="small" type="primary" class="world-lobby-create-btn" @click="createVisible = true">
             <template #icon>
               <n-icon>
                 <Plus />
@@ -1054,7 +1263,7 @@ const handleExplorePageSizeChange = (pageSize: number) => {
       </n-input>
     </div>
 
-    <div class="world-toolbar-row world-toolbar-row--invite">
+    <div v-if="lobbyMode !== 'archive'" class="world-toolbar-row world-toolbar-row--invite">
       <n-input v-model:value="inviteSlug" size="medium" placeholder="输入邀请码" @keyup.enter="consumeInvite" />
       <n-button size="medium" secondary :loading="joining" @click="consumeInvite">加入</n-button>
     </div>
@@ -1088,13 +1297,22 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                   {{ getWorldRoleTag(item.memberRole).label }}
                 </n-tag>
                 <n-button
-                  v-if="item.isMember && item.memberRole !== 'owner'"
+                  v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
                   size="tiny"
                   quaternary
                   type="error"
                   @click="confirmLeaveWorld(item)"
                 >
                   退出
+                </n-button>
+                <n-button
+                  v-if="lobbyMode === 'archive'"
+                  size="tiny"
+                  type="warning"
+                  secondary
+                  @click="restoreWorldArchive(item.world.id)"
+                >
+                  恢复
                 </n-button>
                 <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
               </div>
@@ -1163,13 +1381,22 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                 </n-icon>
               </n-button>
               <n-button
-                v-if="item.isMember && item.memberRole !== 'owner'"
+                v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
                 size="small"
                 quaternary
                 class="world-grid-action-btn world-grid-action-btn--danger"
                 @click.stop="handleGridLeaveWorld(item)"
               >
                 退出
+              </n-button>
+              <n-button
+                v-if="lobbyMode === 'archive'"
+                size="small"
+                quaternary
+                class="world-grid-action-btn"
+                @click.stop="handleGridRestoreWorld(item.world.id)"
+              >
+                恢复
               </n-button>
               <n-button
                 size="small"
@@ -1186,10 +1413,21 @@ const handleExplorePageSizeChange = (pageSize: number) => {
     </template>
 
     <div v-if="showPagination" class="world-pagination">
-      <n-pagination
-        v-if="lobbyMode === 'mine'"
-        size="small"
-        :page="minePagination.page"
+        <n-pagination
+          v-if="lobbyMode === 'archive'"
+          size="small"
+          :page="archivePagination.page"
+          :page-size="archivePagination.pageSize"
+          :item-count="archivePagination.total"
+          show-size-picker
+          :page-sizes="PAGE_SIZES"
+          @update:page="handleArchivePageChange"
+          @update:page-size="handleArchivePageSizeChange"
+        />
+        <n-pagination
+          v-else-if="lobbyMode === 'mine'"
+          size="small"
+          :page="minePagination.page"
         :page-size="minePagination.pageSize"
         :item-count="minePagination.total"
         show-size-picker
@@ -1209,6 +1447,29 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         @update:page-size="handleExplorePageSizeChange"
       />
     </div>
+
+    <n-modal v-model:show="archivePickerVisible" preset="dialog" title="归档世界" style="max-width: 560px">
+      <n-spin :show="archivePickerLoading">
+        <n-select
+          v-model:value="archiveSelectedWorldIds"
+          class="world-archive-select"
+          multiple
+          filterable
+          clearable
+          :options="archivePickerOptions"
+          :max-tag-count="'responsive'"
+          placeholder="搜索并选择要归档的世界"
+          empty="暂无可归档世界"
+        />
+        <n-empty v-if="!archivePickerOptions.length && !archivePickerLoading" description="暂无可归档世界" />
+      </n-spin>
+      <template #action>
+        <n-space>
+          <n-button quaternary @click="archivePickerVisible = false">取消</n-button>
+          <n-button type="error" :loading="archivePickerLoading" @click="submitArchiveSelection">归档</n-button>
+        </n-space>
+      </template>
+    </n-modal>
 
     <n-modal v-model:show="createVisible" preset="dialog" title="创建世界" style="max-width: 420px">
       <n-form label-width="72">
@@ -1501,6 +1762,19 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   width: 32px;
   min-width: 32px;
   padding: 0;
+}
+
+.world-lobby-archive-btn {
+  min-width: 104px;
+  font-weight: 700;
+}
+
+.world-archive-select {
+  width: 100%;
+}
+
+.world-archive-select :deep(.n-base-selection) {
+  min-height: 42px;
 }
 
 .world-lobby-announcement-banner {

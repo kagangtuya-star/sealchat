@@ -617,6 +617,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Delete("/:worldId", WorldDeleteHandler)
 	worldGroup.Post("/:worldId/join", WorldJoinHandler)
 	worldGroup.Post("/:worldId/leave", WorldLeaveHandler)
+	worldGroup.Post("/:worldId/archive", WorldArchiveSetHandler)
+	worldGroup.Delete("/:worldId/archive", WorldArchiveSetHandler)
 	worldGroup.Get("/:worldId/sections", WorldSectionsHandler)
 	worldGroup.Post("/:worldId/invites", WorldInviteCreateHandler)
 	worldGroup.Get("/favorites", WorldFavoriteListHandler)

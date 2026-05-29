@@ -147,7 +147,8 @@ interface ChatState {
   observerSlug: string,
   joinedWorldIds: string[],
   worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
-  worldLobbyMode: 'mine' | 'explore',
+  archivedWorldCache: { items: any[]; total: number; page: number; pageSize: number } | null,
+  worldLobbyMode: 'mine' | 'explore' | 'archive',
   myWorldCache: { owned: any[]; joined: any[] },
   exploreWorldCache: { items: any[]; total: number; page: number; pageSize: number } | null,
   worldMap: Record<string, any>,
@@ -241,6 +242,7 @@ interface ChatState {
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
+  archivedWorldIds: string[];
   channelIcOocRoleConfig: Record<string, ChannelIcOocRoleConfig>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
@@ -1081,10 +1083,11 @@ export const useChatStore = defineStore({
     observerWorldId: '',
     observerChannelId: '',
     observerSlug: '',
-    joinedWorldIds: [],
-    worldListCache: null,
-    worldLobbyMode: 'mine',
-    myWorldCache: { owned: [], joined: [] },
+	    joinedWorldIds: [],
+	    worldListCache: null,
+	    archivedWorldCache: null,
+	    worldLobbyMode: 'mine',
+	    myWorldCache: { owned: [], joined: [] },
     exploreWorldCache: null,
     worldMap: {},
     worldDetailMap: {},
@@ -1173,7 +1176,7 @@ export const useChatStore = defineStore({
     channelMemberPermMap: {},
     botListCache: null,
     botListCacheUpdatedAt: 0,
-    favoriteWorldIds: (() => {
+	    favoriteWorldIds: (() => {
       if (typeof window === 'undefined') return [];
       try {
         const stored = localStorage.getItem('favoriteWorldIds');
@@ -1182,8 +1185,9 @@ export const useChatStore = defineStore({
         console.warn('parse favoriteWorldIds failed', err);
         return [];
       }
-    })(),
-    channelIcOocRoleConfig: {},
+	    })(),
+	    archivedWorldIds: [],
+	    channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
@@ -1917,9 +1921,9 @@ export const useChatStore = defineStore({
       return !!this.currentWorldId;
     },
 
-    async worldList(params?: { page?: number; pageSize?: number; joined?: boolean; keyword?: string }) {
-      const resp = await api.get('/api/v1/worlds', { params });
-      const data = resp.data;
+	    async worldList(params?: { page?: number; pageSize?: number; joined?: boolean; keyword?: string; archived?: boolean; includeArchived?: boolean }) {
+	      const resp = await api.get('/api/v1/worlds', { params });
+	      const data = resp.data;
       if (Array.isArray(data?.items)) {
         data.items.forEach((item: any) => {
           if (item?.world?.id) {
@@ -1927,13 +1931,20 @@ export const useChatStore = defineStore({
           }
         });
       }
-      if (Array.isArray(data?.favoriteWorldIds)) {
-        this.favoriteWorldIds = data.favoriteWorldIds;
-        this.persistFavoriteWorlds();
-      }
-      this.worldListCache = data;
-      return data;
-    },
+	      if (Array.isArray(data?.favoriteWorldIds)) {
+	        this.favoriteWorldIds = data.favoriteWorldIds;
+	        this.persistFavoriteWorlds();
+	      }
+	      if (Array.isArray(data?.archivedWorldIds)) {
+	        this.archivedWorldIds = data.archivedWorldIds;
+	      }
+	      if (params?.archived) {
+	        this.archivedWorldCache = data;
+	      } else {
+	        this.worldListCache = data;
+	      }
+	      return data;
+	    },
 
     async worldListExplore(params?: { page?: number; pageSize?: number; keyword?: string; visibility?: string; joined?: boolean }) {
       const resp = await api.get('/api/v1/worlds', {
@@ -1994,15 +2005,31 @@ export const useChatStore = defineStore({
       return ids;
     },
 
-    async toggleWorldFavorite(worldId: string) {
+	    async toggleWorldFavorite(worldId: string) {
       if (!worldId) return;
       const willFavorite = !this.favoriteWorldIds.includes(worldId);
       const resp = await api.post('/api/v1/worlds/' + worldId + '/favorite', { favorite: willFavorite });
       const ids: string[] = resp.data?.worldIds || [];
       this.favoriteWorldIds = ids;
       this.persistFavoriteWorlds();
-      return ids;
-    },
+	      return ids;
+	    },
+
+	    async archiveWorld(worldId: string) {
+	      const resp = await api.post(`/api/v1/worlds/${worldId}/archive`, {});
+	      if (!this.archivedWorldIds.includes(worldId)) {
+	        this.archivedWorldIds.push(worldId);
+	      }
+	      this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
+	      return resp.data;
+	    },
+
+	    async restoreArchivedWorld(worldId: string) {
+	      const resp = await api.delete(`/api/v1/worlds/${worldId}/archive`);
+	      this.archivedWorldIds = this.archivedWorldIds.filter(id => id !== worldId);
+	      await this.refreshJoinedWorldState();
+	      return resp.data;
+	    },
 
     isWorldFavorited(worldId: string) {
       return this.favoriteWorldIds.includes(worldId);
