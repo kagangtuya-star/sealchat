@@ -177,7 +177,7 @@ function renderMentionAwareText(text: string): string {
 
   while ((match = MENTION_TOKEN_REGEX.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      result += escapeHtml(text.slice(lastIndex, match.index));
+      result += escapeHtmlPreservingBoundarySpaces(text.slice(lastIndex, match.index));
     }
 
     const atId = decodeMentionText(match[2] || '').trim();
@@ -190,7 +190,7 @@ function renderMentionAwareText(text: string): string {
   }
 
   if (lastIndex < text.length) {
-    result += escapeHtml(text.slice(lastIndex));
+    result += escapeHtmlPreservingBoundarySpaces(text.slice(lastIndex));
   }
 
   return result;
@@ -450,7 +450,7 @@ export function tiptapJsonToHtml(json: TipTapNode | string, options: RenderOptio
  */
 function stripTrailingEmptyParagraphs(html: string): string {
   // 匹配尾部的空段落: <p><br /></p> 或 <p></p> 或带样式的空段落
-  const emptyParagraphPattern = /<p(?:\s[^>]*)?>(?:<br\s*\/?>)?\s*<\/p>\s*$/i;
+  const emptyParagraphPattern = /<p(?:\s[^>]*)?>(?:<br\s*\/?>)?<\/p>$/i;
 
   let result = html;
   // 循环移除，因为可能有多个连续的空段落
@@ -458,7 +458,7 @@ function stripTrailingEmptyParagraphs(html: string): string {
     result = result.replace(emptyParagraphPattern, '');
   }
 
-  return result.trim();
+  return result;
 }
 
 function buildFallbackAttachmentUrl(value: string, baseUrl: string): string {
@@ -585,6 +585,13 @@ function escapeHtml(text: string): string {
     "'": '&#039;',
   };
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
+}
+
+function escapeHtmlPreservingBoundarySpaces(text: string): string {
+  const escaped = escapeHtml(text);
+  return escaped
+    .replace(/^ +/, (spaces) => '&nbsp;'.repeat(spaces.length))
+    .replace(/ +$/, (spaces) => '&nbsp;'.repeat(spaces.length));
 }
 
 /**

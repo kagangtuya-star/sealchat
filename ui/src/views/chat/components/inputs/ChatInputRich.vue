@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef,
 import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
+import { Plugin } from 'prosemirror-state';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
 import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry';
@@ -89,6 +90,8 @@ const fontSelectorExpanded = ref(false);
 const desktopFontSelectorExpanded = ref(false);
 const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
 const MOBILE_BREAKPOINT = 768;
+const RICH_CONTENT_PARSE_OPTIONS = { preserveWhitespace: 'full' as const };
+const SILENT_SET_CONTENT_OPTIONS = { emitUpdate: false, parseOptions: RICH_CONTENT_PARSE_OPTIONS };
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -987,6 +990,25 @@ const initEditor = async () => {
     EditorContent = EditorContentComp;
     BubbleMenu = BubbleMenuComp;
 
+    const preserveRichTextInputWhitespace = () => Extension.create({
+      name: 'preserveRichTextInputWhitespace',
+      addProseMirrorPlugins() {
+        return [
+          new Plugin({
+            props: {
+              handleTextInput(view: any, from: number, to: number, text: string) {
+                if (text !== ' ') {
+                  return false;
+                }
+                view.dispatch(view.state.tr.insertText(text, from, to).scrollIntoView());
+                return true;
+              },
+            },
+          }),
+        ];
+      },
+    });
+
     const SatoriMention = TiptapNodeClass.create({
       name: 'satoriMention',
       inline: true,
@@ -1148,7 +1170,9 @@ const initEditor = async () => {
     // 创建编辑器实例
     editor.value = new EditorClass({
       content: props.modelValue || '<p></p>',
+      parseOptions: RICH_CONTENT_PARSE_OPTIONS,
       extensions: [
+        preserveRichTextInputWhitespace(),
         SatoriMention,
         SmartLinkNode,
         StarterKit.configure({
@@ -1284,17 +1308,17 @@ const initEditor = async () => {
       onCreate: ({ editor: ed }) => {
         // 初始化完成后，如果有内容则设置
         if (!props.modelValue) {
-          ed.commands.setContent(cloneEmptyDoc(), false);
+          ed.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
           bumpEditorStateVersion();
           return;
         }
         try {
           const json = JSON.parse(props.modelValue);
           const normalized = normalizeMentionTokensInDoc(json);
-          ed.commands.setContent(normalized, false);
+          ed.commands.setContent(normalized, SILENT_SET_CONTENT_OPTIONS);
         } catch {
           // 如果不是 JSON，当作纯文本
-          ed.commands.setContent(props.modelValue, false);
+          ed.commands.setContent(props.modelValue, SILENT_SET_CONTENT_OPTIONS);
         }
         bumpEditorStateVersion();
       },
@@ -1313,7 +1337,7 @@ watch(() => props.modelValue, (newValue) => {
   if (isSyncingFromProps.value) return;
 
   if (!newValue || newValue.trim() === '') {
-    editor.value.commands.setContent(cloneEmptyDoc(), false);
+    editor.value.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
     editor.value.commands.setTextSelection(0);
     bumpEditorStateVersion();
     return;
@@ -1325,7 +1349,7 @@ watch(() => props.modelValue, (newValue) => {
     const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
     const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
     if (currentSerialized !== incomingSerialized) {
-      editor.value.commands.setContent(normalizedIncoming, false);
+      editor.value.commands.setContent(normalizedIncoming, SILENT_SET_CONTENT_OPTIONS);
       bumpEditorStateVersion();
     }
   } catch {
@@ -2978,6 +3002,7 @@ defineExpose({
   padding: 0.75rem 1rem;
   outline: none;
   min-height: 3rem;
+  white-space: break-spaces;
   color: #1f2937; /* 日间模式默认文字颜色 */
   font-size: var(--chat-font-size, 0.9375rem);
   line-height: var(--chat-line-height, 1.6);
