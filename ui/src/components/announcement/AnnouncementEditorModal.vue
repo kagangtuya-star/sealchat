@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import { useMessage } from 'naive-ui'
-import KeywordRichEditor from '@/views/world/KeywordRichEditor.vue'
+import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import type { AnnouncementItem, AnnouncementPayload, AnnouncementScopeType } from '@/models/announcement'
 import { useAnnouncementStore } from '@/stores/announcement'
 
@@ -256,7 +256,13 @@ const handleSave = async () => {
         </div>
       </n-collapse-transition>
       <div class="announcement-editor__body">
-        <KeywordRichEditor v-model:model-value="form.content" :maxlength="12000" placeholder="填写公告正文" />
+        <RichTextEditor
+          v-model="form.content"
+          variant="announcement"
+          min-height="320px"
+          :maxlength="12000"
+          placeholder="填写公告正文"
+        />
       </div>
     </div>
     <template #action>

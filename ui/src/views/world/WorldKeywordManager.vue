@@ -18,7 +18,7 @@ import {
 import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
-import KeywordRichEditor from './KeywordRichEditor.vue'
+import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import WorldExternalGlossaryManager from './WorldExternalGlossaryManager.vue'
 import {
   buildDisplayCategoryKey,
@@ -152,7 +152,7 @@ const formModel = reactive({
 
 // Description editor ref
 const descriptionEditorRef = ref<InstanceType<typeof KeywordDescriptionEditor> | null>(null)
-const richEditorRef = ref<InstanceType<typeof KeywordRichEditor> | null>(null)
+const richEditorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
 
 // Computed for rich mode toggle
 const handleModeSwitch = (toRich: boolean) => {
@@ -1487,10 +1487,11 @@ onUnmounted(() => {
             v-model="formModel.description"
             :maxlength="keywordMaxLength"
           />
-          <KeywordRichEditor
+          <RichTextEditor
             v-else
             ref="richEditorRef"
             v-model="formModel.description"
+            variant="keyword"
             :maxlength="keywordMaxLength"
           />
         </n-form-item>

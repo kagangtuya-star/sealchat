@@ -10,7 +10,7 @@ import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
 import { matchText } from '@/utils/pinyinMatch'
 import KeywordDescriptionEditor from '@/views/world/KeywordDescriptionEditor.vue'
-import KeywordRichEditor from '@/views/world/KeywordRichEditor.vue'
+import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 
 const store = useExternalGlossaryStore()
 const message = useMessage()
@@ -1090,9 +1090,10 @@ onMounted(async () => {
           </n-form-item>
         </div>
         <n-form-item label="描述">
-          <KeywordRichEditor
+          <RichTextEditor
             v-if="isRichMode"
             v-model="termForm.description"
+            variant="keyword"
             placeholder="输入术语描述"
             :max-length="keywordMaxLength"
             class="external-glossary-admin__editor"
