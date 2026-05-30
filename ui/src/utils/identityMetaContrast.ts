@@ -17,6 +17,12 @@ export interface ResolveIdentityMetaStyleResult {
   style: Record<string, string>
 }
 
+export interface ResolveIdentityMetaOutlineStyleOptions {
+  enabled: boolean
+  identityColor?: string | null
+  backgroundColor?: string | null
+}
+
 const DAY_BACKGROUND: RGB = { r: 248, g: 250, b: 252 }
 const NIGHT_BACKGROUND: RGB = { r: 15, g: 23, b: 42 }
 const DAY_ACCENT: RGB = { r: 37, g: 99, b: 235 }
@@ -255,6 +261,54 @@ export const resolveIdentityMetaStyle = ({
       borderColor: rgbToString(border),
       boxShadow: `inset 0 0 0 1px ${rgbToString(border)}`,
       textShadow: mode === 'normal' ? 'none' : shadow,
+    },
+  }
+}
+
+export const resolveIdentityMetaOutlineStyle = ({
+  enabled,
+  identityColor,
+  backgroundColor,
+}: ResolveIdentityMetaOutlineStyleOptions): ResolveIdentityMetaStyleResult => {
+  const backgroundParsed = parseColor(backgroundColor)
+  const baseBackground = backgroundParsed
+    ? composite(backgroundParsed, resolveBaseBackground())
+    : resolveBaseBackground()
+  const identity = resolveIdentityBaseColor(identityColor)
+  const contrast = contrastRatio(identity, baseBackground)
+  const identityText = toHex(identity)
+
+  if (!enabled || contrast >= TARGET_TEXT_CONTRAST) {
+    return {
+      mode: enabled ? 'normal' : 'disabled',
+      contrastRatio: Number(contrast.toFixed(2)),
+      style: {
+        backgroundColor: 'transparent',
+        color: identityText,
+        borderColor: rgbaToString({ ...identity, a: 0.86 }),
+        boxShadow: 'none',
+        textShadow: 'none',
+      },
+    }
+  }
+
+  const darkContrast = contrastRatio(BLACK, baseBackground)
+  const lightContrast = contrastRatio(WHITE, baseBackground)
+  const guard = darkContrast >= lightContrast ? BLACK : WHITE
+  const border = mix(identity, guard, 0.62)
+  const shadow = guard === WHITE
+    ? '0 1px 1px rgba(15, 23, 42, 0.34)'
+    : '0 1px 1px rgba(255, 255, 255, 0.18)'
+
+  return {
+    mode: 'adjusted',
+    contrastRatio: Number(contrast.toFixed(2)),
+    style: {
+      backgroundColor: 'transparent',
+      color: identityText,
+      borderColor: rgbToString(border),
+      boxShadow: `inset 0 0 0 1px ${rgbToString(border)}`,
+      textShadow: shadow,
     },
   }
 }

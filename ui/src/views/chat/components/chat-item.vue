@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
+import { onMounted, onUpdated, ref, h, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
 import type { PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
@@ -25,7 +25,7 @@ import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
 import 'viewerjs/dist/viewer.css';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
-import { useDisplayStore, type TimestampFormat } from '@/stores/display'
+import { useDisplayStore, type BotBadgeStyle, type TimestampFormat } from '@/stores/display'
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
@@ -50,6 +50,11 @@ import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
 import type { ChannelIForm } from '@/types/iform';
+import {
+  resolveIdentityMetaHostBackground,
+  resolveIdentityMetaOutlineStyle,
+  resolveIdentityMetaStyle,
+} from '@/utils/identityMetaContrast'
 
 type EditingPreviewInfo = {
   userId: string;
@@ -115,6 +120,8 @@ const TIMESTAMP_HOVER_DELAY = 2000;
 
 let hasImage = ref(false);
 const messageContentRef = ref<HTMLElement | null>(null);
+const botBadgeRef = ref<HTMLElement | null>(null);
+const botBadgeHostBackgroundColor = ref('');
 let stopMessageLongPress: (() => void) | null = null;
 
 type InlineImageViewerInstance = Viewer & {
@@ -3101,6 +3108,7 @@ onMounted(() => {
 
   applyDiceTone();
   ensureImageViewer();
+  syncBotBadgeHostBackgroundColor();
   void ensureMessageImageLayoutsLoaded();
   void applyImageLayoutToDom();
   processMessageLinks();
@@ -3126,6 +3134,8 @@ onMounted(() => {
   window.addEventListener('pointercancel', resetMessageIFormPointerState, true);
   window.addEventListener('blur', resetMessageIFormPointerState);
 })
+
+onUpdated(syncBotBadgeHostBackgroundColor);
 
 watch([displayContent, () => props.tone], () => {
   applyDiceTone();
@@ -3353,6 +3363,53 @@ const nameColor = computed(() => {
   return props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '';
 });
 
+const botBadgeStyleValue = computed<BotBadgeStyle>(() => displayStore.settings.botBadgeStyle || 'solidBlue');
+
+const shouldShowBotBadgeBeforeName = computed(() => (
+  isBotMessageItem(props.item) && botBadgeStyleValue.value === 'dice'
+));
+
+const shouldShowBotBadgeAfterName = computed(() => (
+  isBotMessageItem(props.item) && botBadgeStyleValue.value !== 'dice'
+));
+
+const botBadgeText = computed(() => (botBadgeStyleValue.value === 'dice' ? '🎲' : 'BOT'));
+
+const botBadgeClass = computed(() => [
+  'chat-item__bot-tag',
+  `chat-item__bot-tag--${botBadgeStyleValue.value}`,
+]);
+
+const botBadgeInlineStyle = computed<Record<string, string>>(() => {
+  const style = botBadgeStyleValue.value;
+  if (style === 'solidTone') {
+    return resolveIdentityMetaStyle({
+      enabled: displayStore.settings.characterCardBadgeAutoContrastEnabled,
+      kind: 'badge',
+      identityColor: nameColor.value,
+      backgroundColor: botBadgeHostBackgroundColor.value,
+    }).style;
+  }
+  if (style === 'outline') {
+    return resolveIdentityMetaOutlineStyle({
+      enabled: displayStore.settings.characterCardBadgeAutoContrastEnabled,
+      identityColor: nameColor.value,
+      backgroundColor: botBadgeHostBackgroundColor.value,
+    }).style;
+  }
+  if (style === 'dice' && nameColor.value) {
+    return { color: nameColor.value };
+  }
+  return {};
+});
+
+function syncBotBadgeHostBackgroundColor() {
+  const nextColor = resolveIdentityMetaHostBackground(botBadgeRef.value);
+  if (botBadgeHostBackgroundColor.value !== nextColor) {
+    botBadgeHostBackgroundColor.value = nextColor;
+  }
+}
+
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
 
 type MessageSendStatus = 'sending' | 'sent' | 'failed';
@@ -3477,7 +3534,19 @@ const handleRetrySend = () => {
           <span>{{ tooltipTimestampText }}</span>
         </n-popover>
         <template v-if="props.isRtl">
+          <span
+            v-if="shouldShowBotBadgeBeforeName"
+            ref="botBadgeRef"
+            :class="botBadgeClass"
+            :style="botBadgeInlineStyle"
+          >{{ botBadgeText }}</span>
           <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span
+            v-if="shouldShowBotBadgeAfterName"
+            ref="botBadgeRef"
+            :class="botBadgeClass"
+            :style="botBadgeInlineStyle"
+          >{{ botBadgeText }}</span>
           <span
             v-if="showSendingIndicator"
             class="chat-item__send-status chat-item__send-status--sending"
@@ -3506,7 +3575,19 @@ const handleRetrySend = () => {
         </template>
 
         <template v-else>
+          <span
+            v-if="shouldShowBotBadgeBeforeName"
+            ref="botBadgeRef"
+            :class="botBadgeClass"
+            :style="botBadgeInlineStyle"
+          >{{ botBadgeText }}</span>
           <span class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+          <span
+            v-if="shouldShowBotBadgeAfterName"
+            ref="botBadgeRef"
+            :class="botBadgeClass"
+            :style="botBadgeInlineStyle"
+          >{{ botBadgeText }}</span>
           <span
             v-if="showSendingIndicator"
             class="chat-item__send-status chat-item__send-status--sending"
@@ -3551,8 +3632,6 @@ const handleRetrySend = () => {
             <span v-else-if="!props.item?.editedByUserName">编辑时间未知</span>
           </div>
         </n-popover>
-        <span v-if="isBotMessageItem(props.item)"
-          class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
       <div class="content typo relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
@@ -3956,6 +4035,51 @@ const handleRetrySend = () => {
 
 .chat-item > .right > .title > .time {
   color: #94a3b8;
+}
+
+.chat-item__bot-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  min-width: 1.85rem;
+  min-height: 1rem;
+  padding: 0.04rem 0.34rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.chat-item__bot-tag--solidBlue {
+  background: #5865f2;
+  border-color: color-mix(in srgb, #5865f2 82%, #ffffff);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #5865f2 70%, #ffffff);
+}
+
+.chat-item__bot-tag--solidTone {
+  border-color: currentColor;
+}
+
+.chat-item__bot-tag--outline {
+  background: transparent;
+}
+
+.chat-item__bot-tag--dice {
+  min-width: 1rem;
+  min-height: 1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.95rem;
+  line-height: 1;
+  text-shadow: none;
 }
 
 .chat-item__send-status {

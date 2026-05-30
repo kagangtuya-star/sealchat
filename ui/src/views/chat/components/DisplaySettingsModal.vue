@@ -73,6 +73,12 @@ const avatarVisibilityScopeOptions: Array<{ label: string; value: AvatarVisibili
   { label: '场内', value: 'ic' },
   { label: '场外', value: 'ooc' },
 ]
+const botBadgeStyleOptions: Array<{ label: string; value: DisplaySettings['botBadgeStyle'] }> = [
+  { label: '蓝底', value: 'solidBlue' },
+  { label: '昵称底', value: 'solidTone' },
+  { label: '描边', value: 'outline' },
+  { label: '骰子', value: 'dice' },
+]
 const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendShortcut'] }> = [
   { label: 'Enter 直接发送', value: 'enter' },
   { label: 'Ctrl / Cmd + Enter 发送', value: 'ctrlEnter' },
@@ -629,6 +635,38 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           <template #checked>显示徽标</template>
           <template #unchecked>隐藏徽标</template>
         </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">BOT 徽标样式</p>
+            <p class="section-desc">控制机器人消息昵称旁的识别标记</p>
+          </div>
+        </header>
+        <div class="bot-badge-style-grid">
+          <n-button
+            v-for="option in botBadgeStyleOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="bot-badge-style-button"
+            :type="draft.botBadgeStyle === option.value ? 'primary' : 'default'"
+            :secondary="draft.botBadgeStyle !== option.value"
+            :aria-pressed="draft.botBadgeStyle === option.value"
+            @click="draft.botBadgeStyle = option.value"
+          >
+            <span class="bot-badge-style-button__inner">
+              <span
+                class="bot-badge-preview"
+                :class="`bot-badge-preview--${option.value}`"
+              >
+                {{ option.value === 'dice' ? '🎲' : 'BOT' }}
+              </span>
+              <span class="bot-badge-style-button__label">{{ option.label }}</span>
+            </span>
+          </n-button>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -1600,6 +1638,66 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   white-space: normal;
 }
 
+.bot-badge-style-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.bot-badge-style-button {
+  min-height: 44px;
+}
+
+.bot-badge-style-button__inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.bot-badge-style-button__label {
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.bot-badge-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.85rem;
+  height: 1rem;
+  padding: 0 0.36rem;
+  border-radius: 4px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bot-badge-preview--solidBlue {
+  background: #5865f2;
+  color: #fff;
+}
+
+.bot-badge-preview--solidTone {
+  background: #7ea6ff;
+  color: #0f172a;
+  border: 1px solid color-mix(in srgb, #7ea6ff 74%, #ffffff);
+}
+
+.bot-badge-preview--outline {
+  border: 1px solid #7ea6ff;
+  color: #7ea6ff;
+  background: transparent;
+}
+
+.bot-badge-preview--dice {
+  min-width: 1rem;
+  padding: 0;
+  font-size: 0.9rem;
+  background: transparent;
+}
+
 .theme-management-summary {
   display: flex;
   flex: 1 1 320px;
@@ -1653,6 +1751,10 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   .avatar-display-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .bot-badge-style-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .theme-management-summary {
