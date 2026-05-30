@@ -267,6 +267,7 @@ import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
 import { copyTextWithFallback, copyTextWithResult } from '@/utils/clipboard'
 import RichTextEditor from '@/components/rich-text/RichTextEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
+import { preloadPlatformFontsFromDom } from '@/services/font/platformFontRegistry'
 
 // 动态导入类型组件
 const StickyNoteText = defineAsyncComponent(() => import('./sticky-notes/StickyNoteText.vue'))
@@ -909,6 +910,15 @@ const sanitizedContent = computed(() => {
   return processed
 })
 
+async function preloadReadOnlyPlatformFonts() {
+  if (isEditing.value) return
+  await nextTick()
+  if (!noteEl.value) return
+  void preloadPlatformFontsFromDom(noteEl.value).catch((error) => {
+    console.warn('便签阅读态平台字体预加载失败', error)
+  })
+}
+
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
   if (!target) return
@@ -1209,6 +1219,14 @@ watch(() => allTargetIds.value, () => {
   }
   pushTargets.value = pushTargets.value.filter(id => allTargetIds.value.includes(id))
 })
+
+watch(
+  [sanitizedContent, isEditing, () => props.noteId],
+  () => {
+    void preloadReadOnlyPlatformFonts()
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
   clearHighlightTimer()

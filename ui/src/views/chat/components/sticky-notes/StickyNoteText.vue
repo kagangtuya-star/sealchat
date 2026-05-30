@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, h } from 'vue'
+import { ref, computed, watch, h, nextTick } from 'vue'
 import type { StickyNote } from '@/stores/stickyNote'
 import { useStickyNoteStore } from '@/stores/stickyNote'
 import StickyNoteEditor from '../StickyNoteEditor.vue'
@@ -12,6 +12,7 @@ import { useChatStore } from '@/stores/chat'
 import { useUtilsStore } from '@/stores/utils'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { useMessage } from 'naive-ui'
+import { preloadPlatformFontsFromDom } from '@/services/font/platformFontRegistry'
 
 const props = defineProps<{
   note: StickyNote
@@ -23,6 +24,7 @@ const message = useMessage()
 const iFormStore = useIFormStore()
 const chat = useChatStore()
 const utils = useUtilsStore()
+const rootEl = ref<HTMLElement | null>(null)
 iFormStore.bootstrap()
 
 const localContent = ref('')
@@ -130,6 +132,23 @@ const sanitizedContent = computed(() => {
   return processed
 })
 
+async function preloadReadOnlyPlatformFonts() {
+  if (props.isEditing) return
+  await nextTick()
+  if (!rootEl.value) return
+  void preloadPlatformFontsFromDom(rootEl.value).catch((error) => {
+    console.warn('便签文本阅读态平台字体预加载失败', error)
+  })
+}
+
+watch(
+  [sanitizedContent, () => props.isEditing, () => props.note?.id],
+  () => {
+    void preloadReadOnlyPlatformFonts()
+  },
+  { immediate: true }
+)
+
 const singleIFormLink = computed(() => {
   const rawContent = props.note?.content || ''
   const direct = parseSingleIFormEmbedLinkText(rawContent)
@@ -232,7 +251,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="sticky-note-text">
+  <div ref="rootEl" class="sticky-note-text">
     <div v-if="isEditing" class="sticky-note-text__editor">
       <StickyNoteEditor
         v-if="richMode"
