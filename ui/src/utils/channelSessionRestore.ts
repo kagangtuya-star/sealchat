@@ -15,11 +15,39 @@ export interface ChannelRestorePreferenceResult {
   preferIdentityModeMapping: boolean
 }
 
+export interface ChannelSessionRestoreStrategyOptions {
+  splitFilter?: string | null
+  storedMode?: string | null
+}
+
+export interface ChannelSessionRestoreStrategyResult {
+  mode: StoredChannelIcOocMode
+  useStoredIdentity: boolean
+}
+
 const normalizeId = (value: unknown): string => String(value || '').trim()
 
 export const normalizeStoredChannelIcOocMode = (value: unknown): StoredChannelIcOocMode => (
   value === 'ooc' ? 'ooc' : 'ic'
 )
+
+export const resolveChannelSessionRestoreStrategy = (
+  options: ChannelSessionRestoreStrategyOptions,
+): ChannelSessionRestoreStrategyResult => {
+  const splitFilter = options.splitFilter === 'ic' || options.splitFilter === 'ooc'
+    ? options.splitFilter
+    : 'all'
+  if (splitFilter === 'ic' || splitFilter === 'ooc') {
+    return {
+      mode: splitFilter,
+      useStoredIdentity: false,
+    }
+  }
+  return {
+    mode: normalizeStoredChannelIcOocMode(options.storedMode),
+    useStoredIdentity: true,
+  }
+}
 
 export const resolveChannelRestorePreference = (
   options: ChannelRestorePreferenceOptions,

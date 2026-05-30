@@ -295,6 +295,10 @@ const syncAudioStudioContext = () => {
   audioStudio.setActiveChannel(channelId || null);
 };
 
+const syncChannelSessionRestoreOverride = (filterState: FilterState | null | undefined) => {
+  chat.setChannelSessionRestoreFilterOverride(normalizeFilterState(filterState).icFilter);
+};
+
 const postFocus = () => {
   if (!paneId.value) return;
   postToParent({ type: 'sealchat.embed.focus', paneId: paneId.value });
@@ -333,6 +337,7 @@ const handleMessage = async (event: MessageEvent) => {
   if (data.type === 'sealchat.embed.setFilterState') {
     if (data.filterState) {
       chat.setFilterState(data.filterState);
+      syncChannelSessionRestoreOverride(data.filterState);
       postStateThrottled('sealchat.embed.state');
     }
     return;
@@ -425,6 +430,7 @@ const handleMessage = async (event: MessageEvent) => {
     if (!snapshot || snapshot.mode !== 'chat') return;
     restoringSession.value = true;
     try {
+      syncChannelSessionRestoreOverride(snapshot.filterState);
       if (snapshot.worldId) {
         await chat.switchWorld(snapshot.worldId, { force: true });
       }
@@ -544,6 +550,14 @@ watch(
 );
 
 watch(
+  () => chat.filterState.icFilter,
+  (filter) => {
+    chat.setChannelSessionRestoreFilterOverride(filter);
+  },
+  { immediate: true },
+);
+
+watch(
   () => chat.channelTree,
   () => {
     if (restoringSession.value) return;
@@ -621,6 +635,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  chat.setChannelSessionRestoreFilterOverride('all');
   window.removeEventListener('message', handleMessage);
   document.removeEventListener('pointerdown', handleInteraction, { capture: true } as any);
   document.removeEventListener('keydown', handleInteraction, { capture: true } as any);

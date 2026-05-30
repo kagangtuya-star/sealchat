@@ -23,7 +23,7 @@ import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeS
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
 import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
-import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
+import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, resolveChannelSessionRestoreStrategy as resolveChannelSessionRestoreState, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
 import { resolveWindowFocusState } from '@/utils/windowFocusState';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
@@ -236,6 +236,7 @@ interface ChatState {
     showArchived: boolean;
     roleIds: string[];
   };
+  channelSessionRestoreFilterOverride: 'all' | 'ic' | 'ooc';
   channelRoleCache: Record<string, string[]>;
   channelMemberRoleMap: Record<string, Record<string, string[]>>;
   channelAdminMap: Record<string, Record<string, boolean>>;
@@ -1194,6 +1195,7 @@ export const useChatStore = defineStore({
       showArchived: false,
       roleIds: [],
     },
+    channelSessionRestoreFilterOverride: 'all',
     channelRoleCache: {},
     channelMemberRoleMap: {},
     channelAdminMap: {},
@@ -2472,7 +2474,7 @@ export const useChatStore = defineStore({
           this.observerChannelId = id;
           writeObserverSessionChannel(this.observerSlug, this.observerWorldId || this.currentWorldId, id);
           persistLastChannelForWorld(this.observerWorldId || this.currentWorldId, id);
-          this.setIcMode(this.resolveStoredChannelIcOocMode(id), id);
+          this.setIcMode(this.resolveChannelSessionRestoreMode(id).mode, id, undefined, { persist: false });
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
             return true;
@@ -2529,7 +2531,7 @@ export const useChatStore = defineStore({
       }
 
       persistLastChannelForWorld(this.currentWorldId, id);
-      this.setIcMode(this.resolveStoredChannelIcOocMode(id), id);
+      this.setIcMode(this.resolveChannelSessionRestoreMode(id).mode, id, undefined, { persist: false });
       this.setChannelUnreadCount(id, 0);
       this.setChannelMentionState(id, false);
       this.curChannelUsers = [];
@@ -2625,14 +2627,26 @@ export const useChatStore = defineStore({
       return readChannelIcOocModeFromStorage(scopeKey);
     },
 
+    setChannelSessionRestoreFilterOverride(filter: 'all' | 'ic' | 'ooc') {
+      this.channelSessionRestoreFilterOverride = filter === 'ic' || filter === 'ooc' ? filter : 'all';
+    },
+
+    resolveChannelSessionRestoreMode(channelId: string, targetUserId?: string | null) {
+      const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
+      return resolveChannelSessionRestoreState({
+        splitFilter: scopeKey === channelId ? this.channelSessionRestoreFilterOverride : 'all',
+        storedMode: scopeKey ? readChannelIcOocModeFromStorage(scopeKey) : 'ic',
+      });
+    },
+
     restoreChannelIdentitySession(channelId: string, items: ChannelIdentity[], targetUserId?: string | null) {
       const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
       const defaultItem = items.find(item => item.isDefault) || items[0];
+      const restoreState = this.resolveChannelSessionRestoreMode(channelId, targetUserId);
       if (!scopeKey) {
-        const storedMode = this.resolveStoredChannelIcOocMode(channelId, targetUserId);
-        this.setIcMode(storedMode, channelId, targetUserId);
+        this.setIcMode(restoreState.mode, channelId, targetUserId, { persist: restoreState.useStoredIdentity });
         return {
-          mode: storedMode,
+          mode: restoreState.mode,
           identityId: '',
           preferIdentityModeMapping: false,
         };
@@ -2656,18 +2670,20 @@ export const useChatStore = defineStore({
           preferIdentityModeMapping: false,
         };
       }
-      const storedMode = this.resolveStoredChannelIcOocMode(channelId, targetUserId);
       const config = this.getChannelIcOocRoleConfig(channelId, targetUserId);
       const restored = resolveChannelRestorePreference({
-        storedMode,
-        storedIdentityId: readChannelIdentityFromStorage(scopeKey),
+        storedMode: restoreState.mode,
+        storedIdentityId: restoreState.useStoredIdentity ? readChannelIdentityFromStorage(scopeKey) : '',
         defaultIdentityId: defaultItem?.id || '',
         icRoleId: config.icRoleId,
         oocRoleId: config.oocRoleId,
         validIdentityIds: items.map((item) => item.id),
       });
       if (restored.identityId) {
-        this.setActiveIdentity(channelId, restored.identityId, targetUserId);
+        this.setActiveIdentity(channelId, restored.identityId, targetUserId, {
+          persist: restoreState.useStoredIdentity,
+          syncIcOocFromRole: restoreState.useStoredIdentity,
+        });
       } else {
         this.activeChannelIdentity = {
           ...this.activeChannelIdentity,
@@ -2675,7 +2691,7 @@ export const useChatStore = defineStore({
         };
       }
       if (!restored.preferIdentityModeMapping) {
-        this.setIcMode(restored.mode, channelId, targetUserId);
+        this.setIcMode(restored.mode, channelId, targetUserId, { persist: restoreState.useStoredIdentity });
       }
       return restored;
     },
@@ -2837,7 +2853,12 @@ export const useChatStore = defineStore({
       persistIdentityRecentSpokenToStorage(this.channelIdentityRecentSpokenAt);
     },
 
-    setActiveIdentity(channelId: string, identityId: string, targetUserId?: string | null) {
+    setActiveIdentity(
+      channelId: string,
+      identityId: string,
+      targetUserId?: string | null,
+      options?: { persist?: boolean; syncIcOocFromRole?: boolean },
+    ) {
       const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
       if (!scopeKey) {
         return;
@@ -2846,10 +2867,12 @@ export const useChatStore = defineStore({
         ...this.activeChannelIdentity,
         [scopeKey]: identityId,
       };
-      writeChannelIdentityToStorage(scopeKey, identityId || '');
+      if (options?.persist !== false) {
+        writeChannelIdentityToStorage(scopeKey, identityId || '');
+      }
       // 反向自动切换：切换角色时检查是否需要切换场内外模式
-      if (scopeKey === channelId) {
-        this.autoSwitchIcOocOnRoleChange(channelId, identityId);
+      if (scopeKey === channelId && options?.syncIcOocFromRole !== false) {
+        this.autoSwitchIcOocOnRoleChange(channelId, identityId, options?.persist !== false);
       }
     },
 
@@ -2873,7 +2896,7 @@ export const useChatStore = defineStore({
      * 切换角色时的反向自动切换场内外
      * 如果角色存在唯一的场内外映射（仅映射到IC或仅映射到OOC），则自动切换模式
      */
-    autoSwitchIcOocOnRoleChange(channelId: string, newRoleId: string) {
+    autoSwitchIcOocOnRoleChange(channelId: string, newRoleId: string, persist = true) {
       const display = useDisplayStore();
       // 检查是否启用自动切换
       if (!display.settings.autoSwitchRoleOnIcOocToggle) {
@@ -2890,7 +2913,7 @@ export const useChatStore = defineStore({
         : '';
       if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
         if (this.icMode !== temporaryMode) {
-          this.setIcMode(temporaryMode, channelId);
+          this.setIcMode(temporaryMode, channelId, undefined, { persist });
         }
         return;
       }
@@ -2903,12 +2926,12 @@ export const useChatStore = defineStore({
       if (isIcRole && !isOocRole) {
         // 角色仅映射到 IC，自动切换到 IC 模式
         if (this.icMode !== 'ic') {
-          this.setIcMode('ic', channelId);
+          this.setIcMode('ic', channelId, undefined, { persist });
         }
       } else if (isOocRole && !isIcRole) {
         // 角色仅映射到 OOC，自动切换到 OOC 模式
         if (this.icMode !== 'ooc') {
-          this.setIcMode('ooc', channelId);
+          this.setIcMode('ooc', channelId, undefined, { persist });
         }
       }
       // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
@@ -5472,7 +5495,12 @@ export const useChatStore = defineStore({
     },
 
     // 新增方法
-    setIcMode(mode: 'ic' | 'ooc', channelId?: string, targetUserId?: string | null) {
+    setIcMode(
+      mode: 'ic' | 'ooc',
+      channelId?: string,
+      targetUserId?: string | null,
+      options?: { persist?: boolean },
+    ) {
       const normalizedMode = normalizeStoredChannelIcOocMode(mode);
       this.icMode = normalizedMode;
       const targetChannelId = String(channelId || this.curChannel?.id || '').trim();
@@ -5483,7 +5511,9 @@ export const useChatStore = defineStore({
       if (!scopeKey) {
         return;
       }
-      writeChannelIcOocModeToStorage(scopeKey, normalizedMode);
+      if (options?.persist !== false) {
+        writeChannelIcOocModeToStorage(scopeKey, normalizedMode);
+      }
     },
 
     markGatewayActivity() {
