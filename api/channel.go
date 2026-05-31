@@ -135,6 +135,9 @@ func ChannelAddWorldMembers(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "批量添加频道成员失败"})
 		}
 	}
+	if result != nil && result.AddedCount > 0 {
+		broadcastChannelTreeInvalidatedByChannelID(user, channelID, "add-world-members")
+	}
 	return c.JSON(result)
 }
 
@@ -434,20 +437,28 @@ func buildOnlineWorldMemberRecipients(worldID string, userConnMap *utils.SyncMap
 	return recipients, nil
 }
 
-func buildChannelUpdatedTreeChangeEvent(operator *model.UserModel, channel *model.ChannelModel, reason string) *protocol.Event {
-	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" {
+func buildChannelUpdatedTreeChangeEventForWorld(operator *model.UserModel, worldID, reason string, channel *protocol.Channel) *protocol.Event {
+	normalizedWorldID := strings.TrimSpace(worldID)
+	if normalizedWorldID == "" {
 		return nil
+	}
+	channelPayload := channel
+	if channelPayload == nil {
+		channelPayload = &protocol.Channel{}
+	}
+	if strings.TrimSpace(channelPayload.WorldID) == "" {
+		channelPayload.WorldID = normalizedWorldID
 	}
 	options := map[string]interface{}{
 		"treeChanged": true,
-		"worldId":     channel.WorldID,
+		"worldId":     normalizedWorldID,
 	}
 	if normalizedReason := strings.TrimSpace(reason); normalizedReason != "" {
 		options["reason"] = normalizedReason
 	}
 	event := &protocol.Event{
 		Type:    protocol.EventChannelUpdated,
-		Channel: channel.ToProtocolType(),
+		Channel: channelPayload,
 		Argv: &protocol.Argv{
 			Options: options,
 		},
@@ -458,15 +469,18 @@ func buildChannelUpdatedTreeChangeEvent(operator *model.UserModel, channel *mode
 	return event
 }
 
-func broadcastChannelTreeInvalidated(operator *model.UserModel, channel *model.ChannelModel, reason string) {
-	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" || userId2ConnInfoGlobal == nil {
+func buildChannelUpdatedTreeChangeEvent(operator *model.UserModel, channel *model.ChannelModel, reason string) *protocol.Event {
+	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" {
+		return nil
+	}
+	return buildChannelUpdatedTreeChangeEventForWorld(operator, channel.WorldID, reason, channel.ToProtocolType())
+}
+
+func broadcastChannelTreeInvalidatedEvent(operator *model.UserModel, worldID string, event *protocol.Event) {
+	if strings.TrimSpace(worldID) == "" || event == nil || userId2ConnInfoGlobal == nil {
 		return
 	}
-	event := buildChannelUpdatedTreeChangeEvent(operator, channel, reason)
-	if event == nil {
-		return
-	}
-	recipients, err := buildOnlineWorldMemberRecipients(channel.WorldID, userId2ConnInfoGlobal)
+	recipients, err := buildOnlineWorldMemberRecipients(worldID, userId2ConnInfoGlobal)
 	if err != nil || len(recipients) == 0 {
 		return
 	}
@@ -484,6 +498,31 @@ func broadcastChannelTreeInvalidated(operator *model.UserModel, channel *model.C
 	for _, userID := range recipients {
 		ctx.BroadcastToUserJSON(userID, payload)
 	}
+}
+
+func broadcastChannelTreeInvalidated(operator *model.UserModel, channel *model.ChannelModel, reason string) {
+	if channel == nil || channel.ID == "" || strings.TrimSpace(channel.WorldID) == "" {
+		return
+	}
+	event := buildChannelUpdatedTreeChangeEvent(operator, channel, reason)
+	broadcastChannelTreeInvalidatedEvent(operator, channel.WorldID, event)
+}
+
+func broadcastChannelTreeInvalidatedByWorldID(operator *model.UserModel, worldID, reason string) {
+	event := buildChannelUpdatedTreeChangeEventForWorld(operator, worldID, reason, nil)
+	broadcastChannelTreeInvalidatedEvent(operator, worldID, event)
+}
+
+func broadcastChannelTreeInvalidatedByChannelID(operator *model.UserModel, channelID, reason string) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil || channel == nil || channel.ID == "" {
+		return
+	}
+	broadcastChannelTreeInvalidated(operator, channel, reason)
 }
 
 // ChannelInfoGet 处理获取频道信息请求
@@ -574,6 +613,9 @@ func ChannelCopy(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
+	}
+	if result != nil && strings.TrimSpace(result.ChannelID) != "" {
+		broadcastChannelTreeInvalidatedByChannelID(user, result.ChannelID, "clone")
 	}
 
 	return c.JSON(fiber.Map{
@@ -734,7 +776,11 @@ func RolePermApply(c *fiber.Ctx) error {
 	}
 
 	// 更新角色权限
+	oldPerms := pm.ChannelRolePermsGet(req.RoleId)
 	pm.RolePermApply(req.RoleId, req.Permissions)
+	if chId != "" && channelRoleVisibilityPermissionsChanged(oldPerms, req.Permissions) {
+		broadcastChannelTreeInvalidatedByChannelID(getCurUser(c), chId, "role-perm-visibility")
+	}
 
 	return c.JSON(fiber.Map{
 		"message": "更新成功",
@@ -799,11 +845,20 @@ func ChannelArchive(c *fiber.Ctx) error {
 			"error": "频道ID列表不能为空",
 		})
 	}
+	worldIDs, err := loadChannelWorldIDs(req.ChannelIDs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "加载频道世界信息失败",
+		})
+	}
 
 	if err := service.ChannelArchive(req.ChannelIDs, user.ID, req.IncludeChildren); err != nil {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": err.Error(),
 		})
+	}
+	for _, worldID := range worldIDs {
+		broadcastChannelTreeInvalidatedByWorldID(user, worldID, "archive")
 	}
 
 	return c.JSON(fiber.Map{
@@ -836,11 +891,20 @@ func ChannelUnarchive(c *fiber.Ctx) error {
 			"error": "频道ID列表不能为空",
 		})
 	}
+	worldIDs, err := loadChannelWorldIDs(req.ChannelIDs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "加载频道世界信息失败",
+		})
+	}
 
 	if err := service.ChannelUnarchive(req.ChannelIDs, user.ID, req.IncludeChildren); err != nil {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": err.Error(),
 		})
+	}
+	for _, worldID := range worldIDs {
+		broadcastChannelTreeInvalidatedByWorldID(user, worldID, "unarchive")
 	}
 
 	return c.JSON(fiber.Map{
@@ -880,11 +944,20 @@ func ChannelPermanentDelete(c *fiber.Ctx) error {
 			"error": "请确认删除操作",
 		})
 	}
+	worldIDs, err := loadChannelWorldIDs(req.ChannelIDs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "加载频道世界信息失败",
+		})
+	}
 
 	if err := service.ChannelPermanentDelete(req.ChannelIDs, user.ID); err != nil {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": err.Error(),
 		})
+	}
+	for _, worldID := range worldIDs {
+		broadcastChannelTreeInvalidatedByWorldID(user, worldID, "permanent-delete")
 	}
 
 	return c.JSON(fiber.Map{

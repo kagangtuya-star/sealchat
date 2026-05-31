@@ -46,6 +46,7 @@ func UserRoleLink(c *fiber.Ctx) error {
 			"error": "添加用户角色失败",
 		})
 	}
+	broadcastChannelTreeInvalidatedByRoleID(getCurUser(c), body.RoleId, "member-link")
 
 	return c.JSON(fiber.Map{
 		"message": "用户角色已添加",
@@ -98,6 +99,7 @@ func UserRoleUnlink(c *fiber.Ctx) error {
 			"error": "删除用户角色失败",
 		})
 	}
+	broadcastChannelTreeInvalidatedByRoleID(getCurUser(c), body.RoleId, "member-unlink")
 
 	return c.JSON(fiber.Map{
 		"message": "用户角色已成功删除",
