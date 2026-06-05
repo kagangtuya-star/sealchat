@@ -274,6 +274,32 @@ function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs
   return `<${tag}${attrString ? ` ${attrString}` : ''}>${text}</${tag}>`;
 }
 
+function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string, any> }): string {
+  const rubyText = escapeHtml(String(mark.attrs?.rubyText || '').trim());
+  if (!rubyText) {
+    return text;
+  }
+  const rubyAttrs = mark.attrs || {};
+  const variables: string[] = [];
+  const dataAttrs: string[] = [`data-ruby-text="${rubyText}"`];
+  const pushRubyAttr = (key: string, cssVar: string) => {
+    const value = String(rubyAttrs[key] || '').trim();
+    if (!value) {
+      return;
+    }
+    const escaped = escapeHtml(value);
+    dataAttrs.push(`data-${key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}="${escaped}"`);
+    variables.push(`${cssVar}: ${escaped}`);
+  };
+  pushRubyAttr('rubyFontFamily', '--ruby-font-family');
+  pushRubyAttr('rubyFontSize', '--ruby-font-size');
+  pushRubyAttr('rubyColor', '--ruby-color');
+  pushRubyAttr('rubyFontWeight', '--ruby-font-weight');
+  pushRubyAttr('rubyFontStyle', '--ruby-font-style');
+  const styleAttr = variables.length ? ` style="${variables.join('; ')}"` : '';
+  return `<ruby class="tiptap-ruby" ${dataAttrs.join(' ')}${styleAttr}>${text}<rt>${rubyText}</rt></ruby>`;
+}
+
 /**
  * 渲染单个节点
  */
@@ -293,6 +319,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       text = applyCombinedTextStyle(text, node.marks);
       node.marks.forEach((mark) => {
         switch (mark.type) {
+          case 'ruby':
+            text = applyRubyMark(text, mark);
+            break;
           case 'bold':
             text = `<strong>${text}</strong>`;
             break;
@@ -510,7 +539,10 @@ function extractText(node: TipTapNode): string {
   if (!node) return '';
 
   if (node.text !== undefined) {
-    return mentionAwarePlainText(node.text);
+    const text = mentionAwarePlainText(node.text);
+    const rubyMark = node.marks?.find((mark) => mark?.type === 'ruby');
+    const rubyText = String(rubyMark?.attrs?.rubyText || '').trim();
+    return rubyText ? `${text}（${rubyText}）` : text;
   }
 
   if (node.type === 'hardBreak') {

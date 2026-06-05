@@ -641,10 +641,20 @@ const linkTextImage = ref('');
 const linkUrlImage = ref('');
 const linkTextImageLabel = ref('');
 const linkUrlImageLabel = ref('');
+const rubyModalShow = ref(false);
+const rubyBaseText = ref('');
+const rubyTextInput = ref('');
+const rubySelectionMode = ref<'insert' | 'apply' | 'edit'>('insert');
 
 watch(linkModalShow, (visible) => {
   if (!visible) {
     resetLinkModalState();
+  }
+});
+
+watch(rubyModalShow, (visible) => {
+  if (!visible) {
+    resetRubyModalState();
   }
 });
 
@@ -658,6 +668,12 @@ const resetLinkModalState = () => {
   linkUrlImage.value = '';
   linkTextImageLabel.value = '';
   linkUrlImageLabel.value = '';
+};
+
+const resetRubyModalState = () => {
+  rubyBaseText.value = '';
+  rubyTextInput.value = '';
+  rubySelectionMode.value = 'insert';
 };
 
 const applySmartLinkImage = (
@@ -1008,6 +1024,7 @@ const initEditor = async () => {
       Highlight,
       TextAlign,
       Spoiler,
+      Ruby,
     } = await loadTipTapBundle();
 
     EditorContent = EditorContentComp;
@@ -1224,6 +1241,7 @@ const initEditor = async () => {
           multicolor: true,
         }),
         Spoiler,
+        Ruby,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
         }),
@@ -1452,8 +1470,20 @@ const insertImagePlaceholder = (markerId: string, previewUrl: string) => {
 };
 
 // Toolbar actions
-const toggleBold = () => editor.value?.chain().focus().toggleBold().run();
-const toggleItalic = () => editor.value?.chain().focus().toggleItalic().run();
+const toggleBold = () => {
+  const result = editor.value?.chain().focus().toggleBold().run();
+  if (result) {
+    syncActiveRubyVisualAttrs();
+  }
+  return result;
+};
+const toggleItalic = () => {
+  const result = editor.value?.chain().focus().toggleItalic().run();
+  if (result) {
+    syncActiveRubyVisualAttrs();
+  }
+  return result;
+};
 const toggleUnderline = () => editor.value?.chain().focus().toggleUnderline().run();
 const toggleStrike = () => editor.value?.chain().focus().toggleStrike().run();
 const toggleSpoiler = () => editor.value?.chain().focus().toggleSpoiler().run();
@@ -1495,6 +1525,33 @@ const insertIFormEmbedLink = () => {
   openQuickIFormCreateModal();
 };
 
+const buildRubyMarkAttrs = (rubyText: string) => {
+  const ed = editor.value;
+  const textStyleAttrs = (ed?.getAttributes('textStyle') || {}) as Record<string, any>;
+  return {
+    rubyText: rubyText.trim(),
+    rubyFontFamily: typeof textStyleAttrs.fontFamily === 'string' ? textStyleAttrs.fontFamily : null,
+    rubyFontSize: typeof textStyleAttrs.fontSize === 'string' ? textStyleAttrs.fontSize : null,
+    rubyColor: typeof textStyleAttrs.color === 'string' ? textStyleAttrs.color : null,
+    rubyFontWeight: ed?.isActive('bold') ? '700' : null,
+    rubyFontStyle: ed?.isActive('italic') ? 'italic' : null,
+  };
+};
+
+const syncActiveRubyVisualAttrs = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+  const rubyText = String(ed.getAttributes('ruby')?.rubyText || '').trim();
+  if (!rubyText) {
+    return;
+  }
+  ed.chain().focus().setMark('ruby', buildRubyMarkAttrs(rubyText)).run();
+  rememberEditorSelection();
+  bumpEditorStateVersion();
+};
+
 // 高亮颜色操作
 const setHighlightColor = (color: string) => {
   editor.value?.chain().focus().setHighlight({ color }).run();
@@ -1514,7 +1571,10 @@ const getActiveHighlightColor = () => {
 
 // 文字颜色操作
 const setTextColor = (color: string) => {
-  editor.value?.chain().focus().setColor(color).run();
+  const result = editor.value?.chain().focus().setColor(color).run();
+  if (result) {
+    syncActiveRubyVisualAttrs();
+  }
   textColorPopoverShow.value = false;
 };
 
@@ -1542,6 +1602,7 @@ const applyPlatformFont = async (fontId: string | null) => {
       });
     });
     selectedPlatformFontId.value = null;
+    syncActiveRubyVisualAttrs();
     if (isMobile.value) {
       closeFontSelector();
     }
@@ -1561,6 +1622,7 @@ const applyPlatformFont = async (fontId: string | null) => {
     });
   });
   selectedPlatformFontId.value = target.id;
+  syncActiveRubyVisualAttrs();
   if (isMobile.value) {
     closeFontSelector();
   }
@@ -1573,6 +1635,7 @@ const applyFontSize = (size: string | null) => {
     });
   });
   selectedFontSize.value = size;
+  syncActiveRubyVisualAttrs();
   fontSizePopoverShow.value = false;
 };
 
@@ -1616,7 +1679,10 @@ const triggerFontSizePopover = (show: boolean) => {
 };
 
 const removeTextColor = () => {
-  editor.value?.chain().focus().unsetColor().run();
+  const result = editor.value?.chain().focus().unsetColor().run();
+  if (result) {
+    syncActiveRubyVisualAttrs();
+  }
   textColorPopoverShow.value = false;
 };
 
@@ -1776,6 +1842,132 @@ const unsetLink = () => {
   editor.value?.chain().focus().unsetLink().run();
 };
 
+const getSelectedPlainText = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return '';
+  }
+  const { from, to } = ed.state.selection;
+  if (from === to) {
+    return '';
+  }
+  return ed.state.doc.textBetween(from, to, ' ').trim();
+};
+
+const getUniformRubyTextFromSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return '';
+  }
+  const { from, to } = ed.state.selection;
+  if (from === to) {
+    return '';
+  }
+
+  const rubyTexts = new Set<string>();
+  let hasTextNode = false;
+  ed.state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isText) {
+      return;
+    }
+    hasTextNode = true;
+    const rubyMark = node.marks.find((mark) => mark.type.name === 'ruby');
+    if (!rubyMark) {
+      rubyTexts.add('');
+      return;
+    }
+    rubyTexts.add(String(rubyMark.attrs?.rubyText || '').trim());
+  });
+
+  if (!hasTextNode || rubyTexts.size !== 1) {
+    return '';
+  }
+
+  return Array.from(rubyTexts)[0] || '';
+};
+
+const openRubyModal = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+
+  rememberEditorSelection();
+  markOverlayInteraction();
+  const selectedText = getSelectedPlainText();
+  const selectedRubyText = getUniformRubyTextFromSelection();
+
+  if (!selectedText) {
+    rubySelectionMode.value = 'insert';
+    rubyBaseText.value = '';
+    rubyTextInput.value = '';
+  } else if (selectedRubyText) {
+    rubySelectionMode.value = 'edit';
+    rubyBaseText.value = selectedText;
+    rubyTextInput.value = selectedRubyText;
+  } else {
+    rubySelectionMode.value = 'apply';
+    rubyBaseText.value = selectedText;
+    rubyTextInput.value = '';
+  }
+
+  rubyModalShow.value = true;
+};
+
+const closeRubyModal = () => {
+  rubyModalShow.value = false;
+  resetRubyModalState();
+};
+
+const confirmRuby = () => {
+  const ed = editor.value;
+  if (!ed) {
+    closeRubyModal();
+    return;
+  }
+
+  const normalizedRubyText = rubyTextInput.value.trim();
+
+  if (rubySelectionMode.value === 'insert') {
+    const baseText = rubyBaseText.value.trim();
+    if (!baseText || !normalizedRubyText) {
+      message.warning('请输入正文与注音');
+      return;
+    }
+    restoreEditorSelection();
+    const insertFrom = ed.state.selection.from;
+    ed.chain().focus().insertContent(baseText).run();
+    ed.chain().focus().setTextSelection({
+      from: insertFrom,
+      to: insertFrom + baseText.length,
+    }).setMark('ruby', buildRubyMarkAttrs(normalizedRubyText)).run();
+    rememberEditorSelection();
+    bumpEditorStateVersion();
+    closeRubyModal();
+    return;
+  }
+
+  restoreEditorSelection();
+  const chain = ed.chain().focus();
+  const applied = normalizedRubyText
+    ? chain.setMark('ruby', buildRubyMarkAttrs(normalizedRubyText)).run()
+    : chain.unsetRuby().run();
+
+  if (!applied) {
+    message.warning('当前选区无法应用注音');
+    return;
+  }
+
+  rememberEditorSelection();
+  bumpEditorStateVersion();
+  closeRubyModal();
+};
+
+const clearRuby = () => {
+  rubyTextInput.value = '';
+  confirmRuby();
+};
+
 const isActive = (name: string, attrs?: Record<string, any>) => {
   return editor.value?.isActive(name, attrs) ?? false;
 };
@@ -1807,6 +1999,7 @@ const hasOpenOverlay = () => {
     || fontSelectorExpanded.value
     || desktopFontSelectorExpanded.value
     || linkModalShow.value
+    || rubyModalShow.value
     || quickIFormModalShow.value;
 };
 
@@ -2010,6 +2203,15 @@ defineExpose({
             title="行内代码"
           >
             <span class="font-mono text-xs">&lt;/&gt;</span>
+          </n-button>
+          <n-button
+            size="small"
+            text
+            :type="isActive('ruby') ? 'primary' : 'default'"
+            @click="openRubyModal"
+            title="注音 / Ruby"
+          >
+            Rb
           </n-button>
           <!-- 高亮颜色选择器 -->
           <n-popover
@@ -2393,10 +2595,65 @@ defineExpose({
             >
               <span class="font-mono text-xs">&lt;/&gt;</span>
             </n-button>
+            <n-button
+              size="tiny"
+              text
+              :type="isActive('ruby') ? 'primary' : 'default'"
+              @click="openRubyModal"
+              title="注音 / Ruby"
+            >
+              Rb
+            </n-button>
           </div>
         </component>
       </div>
     </div>
+
+    <n-modal
+      v-model:show="rubyModalShow"
+      preset="card"
+      :bordered="false"
+      title="插入注音"
+      style="width: 360px; max-width: 90vw;"
+      :mask-closable="true"
+      @pointerdown.stop="markOverlayInteraction"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="正文">
+          <n-input
+            v-model:value="rubyBaseText"
+            :readonly="rubySelectionMode !== 'insert'"
+            :placeholder="rubySelectionMode === 'insert' ? '请输入正文' : '当前选区正文'"
+          />
+        </n-form-item>
+        <n-form-item label="注音">
+          <n-input
+            v-model:value="rubyTextInput"
+            placeholder="请输入注音文字"
+            @keydown.enter.prevent="confirmRuby"
+          />
+        </n-form-item>
+        <div class="ruby-modal__note">
+          <div v-if="rubySelectionMode === 'insert'">插入模式：输入正文与注音后插入到当前光标位置。</div>
+          <div v-else-if="rubySelectionMode === 'edit'">编辑模式：修改当前选区注音，或清除注音保留正文。</div>
+          <div v-else>应用模式：当前选区正文保持不变，仅应用注音。</div>
+        </div>
+      </n-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <n-button @click="closeRubyModal">取消</n-button>
+          <n-button
+            v-if="rubySelectionMode !== 'insert'"
+            @click="clearRuby"
+          >
+            清除注音
+          </n-button>
+          <n-button type="primary" @click="confirmRuby">
+            确定
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
 
     <!-- 链接插入弹窗 -->
     <n-modal
@@ -3367,6 +3624,34 @@ defineExpose({
     text-decoration: underline;
   }
 
+  .tiptap-ruby {
+    position: relative;
+    display: inline-block;
+    padding-top: 0.38em;
+    ruby-align: center;
+    ruby-position: over;
+    font-family: var(--ruby-font-family, inherit);
+    color: var(--ruby-color, inherit);
+    font-weight: var(--ruby-font-weight, inherit);
+    font-style: var(--ruby-font-style, inherit);
+  }
+
+  .tiptap-ruby::before {
+    content: attr(data-ruby-text);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% - 0.16em);
+    transform: translateX(-50%);
+    font-family: var(--ruby-font-family, inherit);
+    font-size: calc(var(--ruby-font-size, 1em) * 0.58);
+    font-weight: var(--ruby-font-weight, inherit);
+    font-style: var(--ruby-font-style, inherit);
+    line-height: 0.82;
+    white-space: nowrap;
+    color: var(--ruby-color, inherit);
+    pointer-events: none;
+  }
+
   /* 对齐样式 */
   [style*="text-align: center"] {
     text-align: center;
@@ -3432,6 +3717,17 @@ defineExpose({
   line-height: 1.45;
 }
 
+.ruby-modal__note {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--primary-color, #3b82f6) 8%, transparent);
+  color: var(--sc-text-secondary, #475569);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
 /* ===== 夜间模式适配 ===== */
 
 /* 编辑器容器夜间模式 */
@@ -3456,6 +3752,11 @@ defineExpose({
 }
 
 :root[data-display-palette='night'] .smart-link-modal__note {
+  color: var(--sc-text-secondary, #cbd5e1);
+  background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 86%, var(--primary-color, #60a5fa) 14%);
+}
+
+:root[data-display-palette='night'] .ruby-modal__note {
   color: var(--sc-text-secondary, #cbd5e1);
   background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 86%, var(--primary-color, #60a5fa) 14%);
 }

@@ -22065,6 +22065,31 @@ onBeforeUnmount(() => {
   content: none;
 }
 
+.tiptap-ruby,
+.tiptap-editor .tiptap-ruby,
+.keyword-rich-content .tiptap-ruby,
+.sticky-note-editor__content .tiptap-ruby {
+  ruby-align: center;
+  ruby-position: over;
+  font-family: var(--ruby-font-family, inherit);
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+}
+
+.tiptap-ruby rt,
+.tiptap-editor .tiptap-ruby rt,
+.keyword-rich-content .tiptap-ruby rt,
+.sticky-note-editor__content .tiptap-ruby rt {
+  font-family: var(--ruby-font-family, inherit);
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+  font-size: calc(var(--ruby-font-size, 1em) * 0.72);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
 /* @ mention option styles */
 .at-option-avatar {
   flex-shrink: 0;

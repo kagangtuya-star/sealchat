@@ -1305,6 +1305,32 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 			continue
 		}
 		switch strings.ToLower(mark.Type) {
+		case "ruby":
+			rubyText := htmlEscape(strings.TrimSpace(mark.attrString("rubyText")))
+			if rubyText == "" {
+				continue
+			}
+			variables := make([]string, 0, 5)
+			dataAttrs := []string{`data-ruby-text="` + rubyText + `"`}
+			pushRubyAttr := func(key string, cssVar string) {
+				value := htmlEscape(strings.TrimSpace(mark.attrString(key)))
+				if value == "" {
+					return
+				}
+				dataKey := camelToDataAttr(key)
+				dataAttrs = append(dataAttrs, dataKey+`="`+value+`"`)
+				variables = append(variables, cssVar+`: `+value)
+			}
+			pushRubyAttr("rubyFontFamily", "--ruby-font-family")
+			pushRubyAttr("rubyFontSize", "--ruby-font-size")
+			pushRubyAttr("rubyColor", "--ruby-color")
+			pushRubyAttr("rubyFontWeight", "--ruby-font-weight")
+			pushRubyAttr("rubyFontStyle", "--ruby-font-style")
+			styleAttr := ""
+			if len(variables) > 0 {
+				styleAttr = ` style="` + strings.Join(variables, "; ") + `"`
+			}
+			result = `<ruby class="tiptap-ruby" ` + strings.Join(dataAttrs, " ") + styleAttr + `>` + result + `<rt>` + rubyText + `</rt></ruby>`
 		case "bold":
 			result = "<strong>" + result + "</strong>"
 		case "italic":
@@ -2009,6 +2035,23 @@ func (m *tiptapMark) attrString(key string) string {
 	return ""
 }
 
+func camelToDataAttr(key string) string {
+	if key == "" {
+		return "data-"
+	}
+	var builder strings.Builder
+	builder.WriteString("data-")
+	for _, r := range key {
+		if unicode.IsUpper(r) {
+			builder.WriteByte('-')
+			builder.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
+}
+
 var tiptapBlockNodes = map[string]struct{}{
 	"paragraph":      {},
 	"heading":        {},
@@ -2072,7 +2115,18 @@ func writeTipTapNode(w *plainTextWriter, node *tiptapNode) {
 		}
 		return
 	case "text":
-		w.write(node.Text)
+		text := node.Text
+		for _, mark := range node.Marks {
+			if mark == nil || !strings.EqualFold(mark.Type, "ruby") {
+				continue
+			}
+			rubyText := strings.TrimSpace(mark.attrString("rubyText"))
+			if rubyText != "" {
+				text = text + "（" + rubyText + "）"
+			}
+			break
+		}
+		w.write(text)
 		return
 	case "hardbreak":
 		w.newline()
@@ -3291,6 +3345,8 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .content mark { background-color: #fef08a; }
     .content a { color: #3b82f6; text-decoration: underline; }
     .content img { max-width: 100%; height: auto; border-radius: 4px; }
+    .content .tiptap-ruby { ruby-align: center; ruby-position: over; font-family: var(--ruby-font-family, inherit); color: var(--ruby-color, inherit); font-weight: var(--ruby-font-weight, inherit); font-style: var(--ruby-font-style, inherit); }
+    .content .tiptap-ruby rt { font-family: var(--ruby-font-family, inherit); color: var(--ruby-color, inherit); font-weight: var(--ruby-font-weight, inherit); font-style: var(--ruby-font-style, inherit); font-size: calc(var(--ruby-font-size, 1em) * 0.72); line-height: 1.05; letter-spacing: 0; }
     .mention-capsule { display: inline; background-color: rgba(59, 130, 246, 0.1); color: #3b82f6; padding: 0 0.35em; border-radius: 4px; font-weight: 500; }
     .mention-capsule--all { background-color: rgba(239, 68, 68, 0.1); color: #ef4444; }
     .export-sticky-note { margin: 0.6em 0; padding: 0.75em 0.9em; border: 1px solid rgba(15,23,42,0.12); border-left: 4px solid var(--export-sticky-note-accent,#64748b); border-radius: 6px; background: color-mix(in srgb, var(--export-sticky-note-accent,#64748b) 9%, #fff); white-space: normal; }

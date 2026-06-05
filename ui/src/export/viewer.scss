@@ -211,6 +211,25 @@
   font-size: 0.92em;
 }
 
+.viewer-message__body .tiptap-ruby {
+  ruby-align: center;
+  ruby-position: over;
+  font-family: var(--ruby-font-family, inherit);
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+}
+
+.viewer-message__body .tiptap-ruby rt {
+  font-family: var(--ruby-font-family, inherit);
+  color: var(--ruby-color, inherit);
+  font-weight: var(--ruby-font-weight, inherit);
+  font-style: var(--ruby-font-style, inherit);
+  font-size: calc(var(--ruby-font-size, 1em) * 0.72);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
 .viewer-message__body pre {
   background: rgba(15, 23, 42, 0.92);
   border-radius: 10px;

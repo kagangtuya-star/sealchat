@@ -1,4 +1,5 @@
 import { createSpoilerExtension } from './tiptap-spoiler';
+import { createRubyExtension } from './tiptap-ruby';
 
 type TiptapCoreModule = typeof import('@tiptap/core');
 type TiptapVueModule = typeof import('@tiptap/vue-3');
@@ -17,6 +18,7 @@ export interface TipTapBundle {
   Highlight: any;
   TextAlign: any;
   Spoiler: ReturnType<typeof createSpoilerExtension>;
+  Ruby: ReturnType<typeof createRubyExtension>;
 }
 
 let tiptapBundlePromise: Promise<TipTapBundle> | null = null;
@@ -46,6 +48,7 @@ export const loadTipTapBundle = (): Promise<TipTapBundle> => {
       Highlight: highlight.default,
       TextAlign: textAlign.default,
       Spoiler: createSpoilerExtension(tiptapCore),
+      Ruby: createRubyExtension(tiptapCore),
     }));
   }
 
