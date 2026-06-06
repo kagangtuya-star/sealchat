@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 
 	"sealchat/model"
+	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
 
@@ -739,6 +740,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/sqlite/vacuum", AdminSQLiteVacuumExecute)
 	v1AuthAdmin.Get("/admin/message-visible-char-count/status", AdminMessageVisibleCharCountStatus)
 	v1AuthAdmin.Post("/admin/message-visible-char-count/rebuild", AdminMessageVisibleCharCountRebuild)
+	v1AuthAdmin.Get("/admin/perf/status", AdminPerfStatus)
+	v1AuthAdmin.Get("/admin/perf/history", AdminPerfHistory)
+	v1AuthAdmin.Get("/admin/perf/artifacts", AdminPerfArtifacts)
+	v1AuthAdmin.Get("/admin/perf/top-functions", AdminPerfTopFunctions)
+	v1AuthAdmin.Post("/admin/perf/cpu-session/start", AdminPerfCPUSessionStart)
+	v1AuthAdmin.Post("/admin/perf/cpu-session/stop", AdminPerfCPUSessionStop)
+	v1AuthAdmin.Get("/admin/perf/artifacts/:name/download", AdminPerfArtifactDownload)
 	v1AuthAdmin.Get("/admin/external-glossaries", ExternalGlossaryLibraryListHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries", ExternalGlossaryLibraryCreateHandler)
 	v1AuthAdmin.Post("/admin/external-glossaries/import", ExternalGlossaryLibraryImportHandler)
@@ -828,6 +836,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
+		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
+			_ = manager.Reconfigure(perfprofiler.ConfigFromApp(appConfig.PerformanceProfiler))
+		}
 
 		// 同步到数据库
 		SyncConfigToDB(appConfig, "api")

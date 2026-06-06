@@ -87,6 +87,11 @@ const router = createRouter({
       component: () => import('@/views/status/StatusDashboard.vue'),
     },
     {
+      path: '/status/perf',
+      name: 'status-perf',
+      component: () => import('@/views/status/StatusPerfDashboard.vue'),
+    },
+    {
       path: '/:worldId/:channelId?',
       name: 'world-channel',
       component: HomeView,

@@ -20,6 +20,7 @@ import (
 	"sealchat/pm"
 	"sealchat/service"
 	"sealchat/service/metrics"
+	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
 
@@ -198,6 +199,11 @@ func main() {
 	})
 	if collector != nil {
 		collector.Start(ctx)
+	}
+
+	profiler := perfprofiler.Init(perfprofiler.ConfigFromApp(config.PerformanceProfiler))
+	if profiler != nil {
+		profiler.Start(ctx)
 	}
 
 	pm.Init()

@@ -180,10 +180,31 @@ const ensureAudioConfigDefaults = () => {
   }
 };
 
+const ensurePerformanceProfilerDefaults = () => {
+  if (!model.value.performanceProfiler) {
+    model.value.performanceProfiler = {
+      enabled: false,
+      outputDir: './data/perf',
+      lightSampleIntervalSec: 15,
+      snapshotIntervalSec: 300,
+      cpuProfileDurationSec: 300,
+      retentionDays: 3,
+    };
+    return;
+  }
+  model.value.performanceProfiler.enabled = model.value.performanceProfiler.enabled ?? false;
+  model.value.performanceProfiler.outputDir = model.value.performanceProfiler.outputDir || './data/perf';
+  model.value.performanceProfiler.lightSampleIntervalSec = Math.max(5, Math.trunc(model.value.performanceProfiler.lightSampleIntervalSec || 15));
+  model.value.performanceProfiler.snapshotIntervalSec = Math.max(30, Math.trunc(model.value.performanceProfiler.snapshotIntervalSec || 300));
+  model.value.performanceProfiler.cpuProfileDurationSec = Math.max(10, Math.trunc(model.value.performanceProfiler.cpuProfileDurationSec || 300));
+  model.value.performanceProfiler.retentionDays = Math.max(1, Math.trunc(model.value.performanceProfiler.retentionDays || 3));
+};
+
 onMounted(async () => {
   const resp = await utils.configGet();
   model.value = cloneDeep(resp.data);
   ensureAudioConfigDefaults();
+  ensurePerformanceProfilerDefaults();
   if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
     model.value.messageSortBasis = 'typing_start';
   }
@@ -225,6 +246,16 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
     allowNonAdminCreateWorld: model.value.audio?.allowNonAdminCreateWorld ?? true,
     userQuotaMB: Math.max(1, Math.trunc(model.value.audio?.userQuotaMB ?? 150)),
   };
+  payload.performanceProfiler = {
+    ...(payload.performanceProfiler || {}),
+    ...(model.value.performanceProfiler || {}),
+    enabled: model.value.performanceProfiler?.enabled ?? false,
+    outputDir: (model.value.performanceProfiler?.outputDir || './data/perf').trim() || './data/perf',
+    lightSampleIntervalSec: Math.max(5, Math.trunc(model.value.performanceProfiler?.lightSampleIntervalSec ?? 15)),
+    snapshotIntervalSec: Math.max(30, Math.trunc(model.value.performanceProfiler?.snapshotIntervalSec ?? 300)),
+    cpuProfileDurationSec: Math.max(10, Math.trunc(model.value.performanceProfiler?.cpuProfileDurationSec ?? 300)),
+    retentionDays: Math.max(1, Math.trunc(model.value.performanceProfiler?.retentionDays ?? 3)),
+  };
 }
 
 const save = async () => {
@@ -238,6 +269,7 @@ const save = async () => {
       model.value.messageSortBasis = 'typing_start';
     }
     ensureAudioConfigDefaults();
+    ensurePerformanceProfilerDefaults();
     modified.value = false;
     message.success('保存成功');
   } catch (error) {
@@ -577,6 +609,44 @@ const sendSmtpTestEmail = async () => {
       <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
         <n-switch v-model:value="model.emailNotification.enabled" />
       </n-form-item>
+      <n-collapse class="settings-collapse" :default-expanded-names="[]">
+        <n-collapse-item title="性能检测" name="performance-profiler">
+          <template v-if="model.performanceProfiler">
+            <n-form-item
+              label="启用性能检测"
+              feedback="默认关闭。开启后执行轻量采样、定期 pprof 快照，并把结果写入本地文件。"
+            >
+              <n-switch v-model:value="model.performanceProfiler.enabled" />
+            </n-form-item>
+            <n-form-item
+              label="输出目录"
+              feedback="性能检测文件只写本地，不进入数据库。关闭时不会预创建目录。"
+            >
+              <n-input v-model:value="model.performanceProfiler.outputDir" placeholder="./data/perf" />
+            </n-form-item>
+            <n-form-item label="轻量采样间隔" feedback="建议 15-60 秒，影响 current.json 与 samples-*.jsonl 的更新频率。">
+              <n-input-number v-model:value="model.performanceProfiler.lightSampleIntervalSec" :min="5" :precision="0">
+                <template #suffix>秒</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item label="快照间隔" feedback="建议 300 秒以上；会抓 heap、allocs、goroutine，并在未录制连续 CPU 时抓一次短 CPU 快照。">
+              <n-input-number v-model:value="model.performanceProfiler.snapshotIntervalSec" :min="30" :precision="0">
+                <template #suffix>秒</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item label="默认 CPU 录制时长" feedback="状态页点击“开始连续录制”时默认使用此时长，可临时覆盖。">
+              <n-input-number v-model:value="model.performanceProfiler.cpuProfileDurationSec" :min="10" :precision="0">
+                <template #suffix>秒</template>
+              </n-input-number>
+            </n-form-item>
+            <n-form-item label="保留天数" feedback="超过保留期的样本、快照和会话文件会被自动清理。">
+              <n-input-number v-model:value="model.performanceProfiler.retentionDays" :min="1" :precision="0">
+                <template #suffix>天</template>
+              </n-input-number>
+            </n-form-item>
+          </template>
+        </n-collapse-item>
+      </n-collapse>
       <n-form-item label="测试 SMTP" feedback="发送测试邮件以验证 SMTP 配置是否正确">
         <div class="flex gap-2 items-center w-full">
           <n-input v-model:value="smtpTestEmail" placeholder="输入测试邮箱" style="max-width: 240px;" />
@@ -689,6 +759,10 @@ const sendSmtpTestEmail = async () => {
 .update-check-body :deep(ul) {
   padding-left: 1.1rem;
   margin: 0.35rem 0;
+}
+
+.settings-collapse {
+  margin: 0.5rem 0 0.25rem;
 }
 
 .admin-settings-scroll {

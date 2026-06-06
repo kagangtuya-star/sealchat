@@ -307,6 +307,15 @@ export interface CertificateLogEntry {
   challenge?: string;
 }
 
+export interface PerformanceProfilerConfig {
+  enabled: boolean;
+  outputDir: string;
+  lightSampleIntervalSec: number;
+  snapshotIntervalSec: number;
+  cpuProfileDurationSec: number;
+  retentionDays: number;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -343,6 +352,7 @@ export interface ServerConfig {
   themeManagement?: ThemeManagementConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
+  performanceProfiler?: PerformanceProfilerConfig;
 }
 
 export interface UserInfo {

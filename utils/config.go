@@ -270,6 +270,15 @@ type CertificateConfig struct {
 	Staging          bool                 `json:"staging" yaml:"staging"`
 }
 
+type PerformanceProfilerConfig struct {
+	Enabled                bool   `json:"enabled" yaml:"enabled"`
+	OutputDir              string `json:"outputDir" yaml:"outputDir"`
+	LightSampleIntervalSec int    `json:"lightSampleIntervalSec" yaml:"lightSampleIntervalSec"`
+	SnapshotIntervalSec    int    `json:"snapshotIntervalSec" yaml:"snapshotIntervalSec"`
+	CPUProfileDurationSec  int    `json:"cpuProfileDurationSec" yaml:"cpuProfileDurationSec"`
+	RetentionDays          int    `json:"retentionDays" yaml:"retentionDays"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                  `json:"domain" yaml:"domain"`
@@ -307,6 +316,7 @@ type AppConfig struct {
 	ThemeManagement           ThemeManagementConfig   `json:"themeManagement" yaml:"themeManagement"`
 	UITextReplace             UITextReplaceConfig     `json:"uiTextReplace" yaml:"uiTextReplace"`
 	Certificate               CertificateConfig       `json:"certificate" yaml:"certificate"`
+	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
 }
 
 type ExportConfig struct {
@@ -490,6 +500,14 @@ func ReadConfig() *AppConfig {
 			Rules:   DefaultUITextReplaceRules(),
 		},
 		Certificate: defaultCertificateConfig(),
+		PerformanceProfiler: PerformanceProfilerConfig{
+			Enabled:                false,
+			OutputDir:              "./data/perf",
+			LightSampleIntervalSec: 15,
+			SnapshotIntervalSec:    300,
+			CPUProfileDurationSec:  300,
+			RetentionDays:          3,
+		},
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -566,6 +584,7 @@ func ReadConfig() *AppConfig {
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
+	applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 
 	k.Print()
 	currentConfig = &config
@@ -962,6 +981,27 @@ func applyAuthSessionDefaults(cfg *AuthSessionConfig) {
 	}
 }
 
+func applyPerformanceProfilerDefaults(cfg *PerformanceProfilerConfig) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.OutputDir) == "" {
+		cfg.OutputDir = "./data/perf"
+	}
+	if cfg.LightSampleIntervalSec <= 0 {
+		cfg.LightSampleIntervalSec = 15
+	}
+	if cfg.SnapshotIntervalSec <= 0 {
+		cfg.SnapshotIntervalSec = 300
+	}
+	if cfg.CPUProfileDurationSec <= 0 {
+		cfg.CPUProfileDurationSec = 300
+	}
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = 3
+	}
+}
+
 func ResolveAuthSessionMaxAgeDays() int {
 	maxAgeDays := defaultAuthTokenMaxAgeDays
 	if cfg := GetConfig(); cfg != nil && cfg.AuthSession.MaxAgeDays > 0 {
@@ -1076,6 +1116,7 @@ func WriteConfig(config *AppConfig) {
 		config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
+		applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
 		}
@@ -1135,6 +1176,12 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("certificate.zeroSSLEABKeyID", config.Certificate.ZeroSSLEABKeyID)
 		_ = k.Set("certificate.zeroSSLEABMACKey", config.Certificate.ZeroSSLEABMACKey)
 		_ = k.Set("certificate.staging", config.Certificate.Staging)
+		_ = k.Set("performanceProfiler.enabled", config.PerformanceProfiler.Enabled)
+		_ = k.Set("performanceProfiler.outputDir", config.PerformanceProfiler.OutputDir)
+		_ = k.Set("performanceProfiler.lightSampleIntervalSec", config.PerformanceProfiler.LightSampleIntervalSec)
+		_ = k.Set("performanceProfiler.snapshotIntervalSec", config.PerformanceProfiler.SnapshotIntervalSec)
+		_ = k.Set("performanceProfiler.cpuProfileDurationSec", config.PerformanceProfiler.CPUProfileDurationSec)
+		_ = k.Set("performanceProfiler.retentionDays", config.PerformanceProfiler.RetentionDays)
 		_ = k.Set("audio.storageDir", config.Audio.StorageDir)
 		_ = k.Set("audio.tempDir", config.Audio.TempDir)
 		_ = k.Set("audio.importDir", config.Audio.ImportDir)
@@ -1716,6 +1763,9 @@ func EnsureDataDirs(cfg *AppConfig) {
 	}
 	if cfg.Export.StorageDir != "" {
 		dirs = append(dirs, cfg.Export.StorageDir)
+	}
+	if cfg.PerformanceProfiler.Enabled && cfg.PerformanceProfiler.OutputDir != "" {
+		dirs = append(dirs, cfg.PerformanceProfiler.OutputDir)
 	}
 
 	// 创建所有目录

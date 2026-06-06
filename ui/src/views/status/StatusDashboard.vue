@@ -312,6 +312,7 @@ onBeforeUnmount(() => {
       </template>
       <template #extra>
         <n-space align="center">
+          <n-button size="small" secondary tag="a" href="#/status/perf">性能检测</n-button>
           <n-button size="small" :loading="loading || historyLoading" @click="refreshAll">刷新</n-button>
         </n-space>
       </template>
@@ -366,6 +367,11 @@ onBeforeUnmount(() => {
         <div class="status-history-section__copy">
           <h2>历史指标曲线</h2>
           <p>点击标题右侧的 + 可放大查看。</p>
+          <p class="status-history-section__link-line">
+            需要排查 CPU / 内存占用时，可前往
+            <a href="#/status/perf">性能检测页</a>
+            查看轻量采样、pprof 快照和连续 CPU 录制。
+          </p>
           <p v-if="historyFilterMode === 'custom'" class="status-history-section__custom-label">当前自定义区间：{{ customRangeText }}</p>
         </div>
         <div class="status-history-section__controls">
@@ -448,6 +454,14 @@ onBeforeUnmount(() => {
   font-size: 0.8rem;
 }
 
+.status-page a {
+  color: #2563eb;
+}
+
+.status-page a:hover {
+  text-decoration: underline;
+}
+
 .status-card {
   border-radius: 1rem;
   border: 1px solid var(--sc-border-mute);
@@ -501,6 +515,11 @@ onBeforeUnmount(() => {
 
 .status-card__hint {
   font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+}
+
+.status-history-section__link-line {
+  margin-top: 0.2rem;
   color: var(--sc-text-secondary);
 }
 

@@ -10,6 +10,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gofiber/contrib/websocket v1.2.2
 	github.com/gofiber/fiber/v2 v2.52.5
+	github.com/google/pprof v0.0.0-20221118152302-e6195bd50e26
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/kardianos/service v1.2.2
 	github.com/knadh/koanf v1.5.0
