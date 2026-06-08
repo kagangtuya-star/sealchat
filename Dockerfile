@@ -45,10 +45,18 @@ RUN set -eux; \
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata wget ffmpeg && update-ca-certificates
 WORKDIR /app
+ARG TARGETARCH
 
 COPY --from=go-builder /out/sealchat-server /app/sealchat-server
 COPY --from=webp-assets /out/bin /app/bin
 COPY --from=webp-assets /out/LICENSE /app/LICENSE
+RUN set -eux; \
+  case "${TARGETARCH:-amd64}" in \
+    amd64) WEBP_DIR="linux-x64" ;; \
+    arm64) WEBP_DIR="linux-arm64" ;; \
+    *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+  esac; \
+  chmod +x /app/bin/"${WEBP_DIR}"/cwebp /app/bin/"${WEBP_DIR}"/gif2webp
 
 EXPOSE 3212
 ENTRYPOINT ["/app/sealchat-server"]
