@@ -744,6 +744,10 @@ onBeforeUnmount(() => {
   width: 180px;
 }
 
+.is-mobile .sheet-window__front {
+  overflow: hidden;
+}
+
 .is-mobile .sheet-window__header {
   padding: 8px 10px;
   min-height: 40px;
