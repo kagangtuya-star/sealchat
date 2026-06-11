@@ -1,6 +1,6 @@
 # 角色卡模板开发文档
 
-本文档面向需要编写和维护人物卡 HTML 模板的开发者，覆盖模板运行机制、可用 API、事件约定、调试建议，两个可直接复制的示例模板、一个美观的COC角色卡自定义掷骰模板示例。
+本文档面向需要编写和维护人物卡 HTML 模板的开发者，覆盖模板运行机制、可用 API、事件约定、调试建议，一个实现基础功能的COC人物卡模板示例。
 
 ---
 
@@ -87,13 +87,13 @@ sealchat.setRollDispatchMode('template');
 // 或 sealchat.setRollMode('template');
 ~~~
 
-注意：默认模板里该调用会以注释形式出现，仅作示例，不会默认启用。
+注意：文档中的示例模板将 `setRollDispatchMode('template')` 以注释形式保留，仅作演示，实际使用时按需取消注释。
 
 ---
 
 ## 3. 掷骰行为与模式说明
 
-### 3.1 默认模式（推荐给大多数模板）
+### 3.1 默认模式（推荐大多数模板使用）
 
 - 模板触发 ROLL_DICE
 - 宿主展示 DiceRollPopover
@@ -101,6 +101,115 @@ sealchat.setRollDispatchMode('template');
 - 最终生成表达式并发送到聊天
 
 优点：统一体验、用户可临时调整掷骰参数。
+
+**示例：**
+
+~~~html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 12px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    .title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; }
+    .roll { color: #2563eb; cursor: pointer; }
+    .roll:hover { text-decoration: underline; }
+    .value { cursor: pointer; min-width: 44px; text-align: right; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div id="app" class="card"></div>
+
+  <script>
+    var _windowId = null;
+    var _rollDispatchMode = 'default';
+    function postEvent(action, payload) {
+      if (!_windowId) return;
+      window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
+    }
+    window.sealchat = {
+      onUpdate: function(cb) {
+        window.addEventListener('message', function(e) {
+          if (e.source !== window.parent) return;
+          if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
+        });
+      },
+      setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+      setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+      roll: function(template, label, args) {
+        postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
+      },
+      updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); },
+    };
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = String(text == null ? '' : text);
+      return div.innerHTML;
+    }
+
+    function render(data) {
+      var attrs = (data && data.attrs) || {};
+      var keys = ['力量', '敏捷', '体质', '意志', '侦查', '聆听'];
+
+      var html = '';
+      html += '<div class="title">' + escapeHtml((data && data.name) || '未命名角色') + '</div>';
+      html += '<div class="muted">点击属性名掷骰，点击属性值可编辑</div>';
+
+      for (var i = 0; i < keys.length; i += 1) {
+        var key = keys[i];
+        var raw = attrs[key];
+        var val = raw == null ? '--' : String(raw);
+        html += '<div class="row">';
+        html += '  <span class="roll" data-roll=".ra {skill}" data-skill="' + escapeHtml(key) + '" data-label="' + escapeHtml(key + '检定') + '">' + escapeHtml(key) + '</span>';
+        html += '  <span class="value" data-attr="' + escapeHtml(key) + '" data-value="' + escapeHtml(val) + '">' + escapeHtml(val) + '</span>';
+        html += '  <span class="muted">%</span>';
+        html += '</div>';
+      }
+
+      document.getElementById('app').innerHTML = html;
+    }
+
+    function promptAndUpdate(target) {
+      var key = target.dataset.attr;
+      if (!key) return;
+      var current = target.dataset.value || '';
+      var next = window.prompt('输入新的属性值（数字）', current === '--' ? '' : current);
+      if (next == null) return;
+      var num = Number(String(next).trim());
+      if (!Number.isFinite(num)) return;
+      var patch = {};
+      patch[key] = num;
+      sealchat.updateAttrs(patch);
+    }
+
+    document.addEventListener('click', function (e) {
+      var target = e.target;
+      while (target && target !== document.body) {
+        if (target.dataset && target.dataset.attr) {
+          promptAndUpdate(target);
+          return;
+        }
+        if (target.dataset && target.dataset.roll) {
+          sealchat.roll(
+            target.dataset.roll,
+            target.dataset.label || target.innerText || '',
+            { skill: target.dataset.skill }
+          );
+          return;
+        }
+        target = target.parentElement;
+      }
+    });
+
+    sealchat.onUpdate(render);
+  </script>
+</body>
+</html>
+~~~
 
 ### 3.2 模板模式（自定义窗口或快速投掷）
 
@@ -114,6 +223,108 @@ sealchat.setRollDispatchMode('template');
 - 需要单击即投掷（One-click roll）
 - 需要模板完全掌控交互流程
 
+**示例：**
+
+~~~html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 12px; }
+    .panel { border: 1px solid #334155; border-radius: 10px; padding: 12px; background: #0f172a; color: #e2e8f0; }
+    .name { font-size: 18px; margin-bottom: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .btn { border: 1px solid #475569; border-radius: 8px; background: #1e293b; color: #e2e8f0; padding: 8px 10px; cursor: pointer; text-align: left; }
+    .btn:hover { border-color: #60a5fa; }
+    .sub { color: #94a3b8; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="app" class="panel"></div>
+
+  <script>
+    var _windowId = null;
+    var _rollDispatchMode = 'default';
+    function postEvent(action, payload) {
+      if (!_windowId) return;
+      window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
+    }
+    window.sealchat = {
+      onUpdate: function(cb) {
+        window.addEventListener('message', function(e) {
+          if (e.source !== window.parent) return;
+          if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
+        });
+      },
+      setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+      setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
+      roll: function(template, label, args) {
+        postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
+      },
+      updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); },
+    };
+
+    var current = { name: '', attrs: {} };
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = String(text == null ? '' : text);
+      return div.innerHTML;
+    }
+
+    function getSkillVal(skill) {
+      var v = Number(current && current.attrs ? current.attrs[skill] : 0);
+      return Number.isFinite(v) ? v : 0;
+    }
+
+    function render() {
+      var skills = ['侦查', '聆听', '图书馆使用', '潜行'];
+      var html = '';
+      html += '<div class="name">' + escapeHtml(current.name || '未命名角色') + '</div>';
+      html += '<div class="grid">';
+      for (var i = 0; i < skills.length; i += 1) {
+        var skill = skills[i];
+        var val = getSkillVal(skill);
+        html += '<button class="btn" data-skill="' + escapeHtml(skill) + '">';
+        html += '  <div>' + escapeHtml(skill) + '</div>';
+        html += '  <div class="sub">当前值: ' + escapeHtml(val) + '</div>';
+        html += '</button>';
+      }
+      html += '</div>';
+      html += '<div class="sub">已配置为模板内直发模式（可按需改回默认模式）</div>';
+      document.getElementById('app').innerHTML = html;
+    }
+
+    // 示例：启用模板内直发掷骰（跳过默认掷骰窗口）
+    // 默认请保持注释；需要模板全权处理时再取消注释
+    // sealchat.setRollDispatchMode('template');
+
+    // 也可以显式设置默认模式（可选）
+    // sealchat.setRollDispatchMode('default');
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-skill]');
+      if (!btn) return;
+      var skill = btn.dataset.skill;
+      if (!skill) return;
+
+      // 模板内部可以在这里自行做更多逻辑（冷却、资源判断、二次确认等）
+      sealchat.roll('.ra {skill}', skill + '检定', { skill: skill });
+    });
+
+    sealchat.onUpdate(function (data) {
+      current = {
+        name: (data && data.name) || '',
+        attrs: (data && data.attrs) || {},
+      };
+      render();
+    });
+  </script>
+</body>
+</html>
+~~~
+
 ---
 
 ## 4. 推荐模板结构
@@ -121,7 +332,6 @@ sealchat.setRollDispatchMode('template');
 ### 4.1 必要前置：桥接脚本（必须保留）
 
 如果你是直接在模板编辑器里粘贴完整 HTML，请确保模板内包含 `window.sealchat` 桥接脚本。
-文档后面的两个示例已经内置桥接脚本，可直接复制使用。
 
 建议将模板划分为三层：
 
@@ -135,13 +345,13 @@ sealchat.setRollDispatchMode('template');
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset=UTF-8 />
+  <meta charset="UTF-8" />
   <style>
     body { font-family: sans-serif; margin: 0; padding: 12px; }
   </style>
 </head>
 <body>
-  <div id=app></div>
+  <div id="app"></div>
   <script>
     var _windowId = null;
     var _rollDispatchMode = 'default';
@@ -233,7 +443,7 @@ CSS 使用方式：
 - 如果字体不可用或声明格式错误，模板仍会继续渲染，并回退到 CSS 中的后备字体。
 - 平台字体由管理员维护；模板开发者只引用 `platformFontId`，不上传字体文件。
 
-字体测试模板：
+附：字体测试模板
 
 把下面两个 `platformFontId` 替换成管理后台平台字库中的真实字体 ID。建议一个使用普通文本字体，另一个使用标题或装饰字体。预览时应看到：全局正文、角色名、属性数值分别使用声明的字体；包含中英日与符号文本时，分片字体会按可见字符补充分片。
 
@@ -390,244 +600,50 @@ CSS 使用方式：
 
 ---
 
-## 5. 示例一：默认掷骰窗口模式（保持系统默认流程）
+## 5. 开发规范与最佳实践
 
-特点：不设置 setRollDispatchMode('template')，点击属性后走默认掷骰弹窗。
+### 5.1 建议
 
-~~~html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 12px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
-    .title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
-    .row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; }
-    .roll { color: #2563eb; cursor: pointer; }
-    .roll:hover { text-decoration: underline; }
-    .value { cursor: pointer; min-width: 44px; text-align: right; }
-    .muted { color: #6b7280; }
-  </style>
-</head>
-<body>
-  <div id="app" class="card"></div>
-
-  <script>
-    var _windowId = null;
-    var _rollDispatchMode = 'default';
-    function postEvent(action, payload) {
-      if (!_windowId) return;
-      window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
-    }
-    window.sealchat = {
-      onUpdate: function(cb) {
-        window.addEventListener('message', function(e) {
-          if (e.source !== window.parent) return;
-          if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
-        });
-      },
-      setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
-      setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
-      roll: function(template, label, args) {
-        postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
-      },
-      updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); },
-    };
-
-    function escapeHtml(text) {
-      var div = document.createElement('div');
-      div.textContent = String(text == null ? '' : text);
-      return div.innerHTML;
-    }
-
-    function render(data) {
-      var attrs = (data && data.attrs) || {};
-      var keys = ['力量', '敏捷', '体质', '意志', '侦查', '聆听'];
-
-      var html = '';
-      html += '<div class="title">' + escapeHtml((data && data.name) || '未命名角色') + '</div>';
-      html += '<div class="muted">点击属性名掷骰，点击属性值可编辑</div>';
-
-      for (var i = 0; i < keys.length; i += 1) {
-        var key = keys[i];
-        var raw = attrs[key];
-        var val = raw == null ? '--' : String(raw);
-        html += '<div class="row">';
-        html += '  <span class="roll" data-roll=".ra {skill}" data-skill="' + escapeHtml(key) + '" data-label="' + escapeHtml(key + '检定') + '">' + escapeHtml(key) + '</span>';
-        html += '  <span class="value" data-attr="' + escapeHtml(key) + '" data-value="' + escapeHtml(val) + '">' + escapeHtml(val) + '</span>';
-        html += '  <span class="muted">%</span>';
-        html += '</div>';
-      }
-
-      document.getElementById('app').innerHTML = html;
-    }
-
-    function promptAndUpdate(target) {
-      var key = target.dataset.attr;
-      if (!key) return;
-      var current = target.dataset.value || '';
-      var next = window.prompt('输入新的属性值（数字）', current === '--' ? '' : current);
-      if (next == null) return;
-      var num = Number(String(next).trim());
-      if (!Number.isFinite(num)) return;
-      var patch = {};
-      patch[key] = num;
-      sealchat.updateAttrs(patch);
-    }
-
-    document.addEventListener('click', function (e) {
-      var target = e.target;
-      while (target && target !== document.body) {
-        if (target.dataset && target.dataset.attr) {
-          promptAndUpdate(target);
-          return;
-        }
-        if (target.dataset && target.dataset.roll) {
-          sealchat.roll(
-            target.dataset.roll,
-            target.dataset.label || target.innerText || '',
-            { skill: target.dataset.skill }
-          );
-          return;
-        }
-        target = target.parentElement;
-      }
-    });
-
-    sealchat.onUpdate(render);
-  </script>
-</body>
-</html>
-~~~
-
----
-
-## 6. 示例二：模板内直发模式（跳过默认掷骰窗口）
-
-特点：展示如何启用模板模式。默认注释为示例状态，你可按需取消注释。
-
-~~~html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    body { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 12px; }
-    .panel { border: 1px solid #334155; border-radius: 10px; padding: 12px; background: #0f172a; color: #e2e8f0; }
-    .name { font-size: 18px; margin-bottom: 10px; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    .btn { border: 1px solid #475569; border-radius: 8px; background: #1e293b; color: #e2e8f0; padding: 8px 10px; cursor: pointer; text-align: left; }
-    .btn:hover { border-color: #60a5fa; }
-    .sub { color: #94a3b8; font-size: 12px; margin-top: 8px; }
-  </style>
-</head>
-<body>
-  <div id="app" class="panel"></div>
-
-  <script>
-    var _windowId = null;
-    var _rollDispatchMode = 'default';
-    function postEvent(action, payload) {
-      if (!_windowId) return;
-      window.parent.postMessage({ type: 'SEALCHAT_EVENT', version: 1, windowId: _windowId, action: action, payload: payload }, '*');
-    }
-    window.sealchat = {
-      onUpdate: function(cb) {
-        window.addEventListener('message', function(e) {
-          if (e.source !== window.parent) return;
-          if (e.data && e.data.type === 'SEALCHAT_UPDATE') { _windowId = e.data.payload.windowId; cb(e.data.payload); }
-        });
-      },
-      setRollDispatchMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
-      setRollMode: function(mode) { _rollDispatchMode = mode === 'template' ? 'template' : 'default'; },
-      roll: function(template, label, args) {
-        postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {}, dispatchMode: _rollDispatchMode } });
-      },
-      updateAttrs: function(attrs) { postEvent('UPDATE_ATTRS', { attrs: attrs }); },
-    };
-
-    var current = { name: '', attrs: {} };
-
-    function escapeHtml(text) {
-      var div = document.createElement('div');
-      div.textContent = String(text == null ? '' : text);
-      return div.innerHTML;
-    }
-
-    function getSkillVal(skill) {
-      var v = Number(current && current.attrs ? current.attrs[skill] : 0);
-      return Number.isFinite(v) ? v : 0;
-    }
-
-    function render() {
-      var skills = ['侦查', '聆听', '图书馆使用', '潜行'];
-      var html = '';
-      html += '<div class="name">' + escapeHtml(current.name || '未命名角色') + '</div>';
-      html += '<div class="grid">';
-      for (var i = 0; i < skills.length; i += 1) {
-        var skill = skills[i];
-        var val = getSkillVal(skill);
-        html += '<button class="btn" data-skill="' + escapeHtml(skill) + '">';
-        html += '  <div>' + escapeHtml(skill) + '</div>';
-        html += '  <div class="sub">当前值: ' + escapeHtml(val) + '</div>';
-        html += '</button>';
-      }
-      html += '</div>';
-      html += '<div class="sub">已配置为模板内直发模式（可按需改回默认模式）</div>';
-      document.getElementById('app').innerHTML = html;
-    }
-
-    // 示例：启用模板内直发掷骰（跳过默认掷骰窗口）
-    // 默认请保持注释；需要模板全权处理时再取消注释
-    // sealchat.setRollDispatchMode('template');
-
-    // 也可以显式设置默认模式（可选）
-    // sealchat.setRollDispatchMode('default');
-
-    document.addEventListener('click', function (e) {
-      var btn = e.target.closest('[data-skill]');
-      if (!btn) return;
-      var skill = btn.dataset.skill;
-      if (!skill) return;
-
-      // 模板内部可以在这里自行做更多逻辑（冷却、资源判断、二次确认等）
-      sealchat.roll('.ra {skill}', skill + '检定', { skill: skill });
-    });
-
-    sealchat.onUpdate(function (data) {
-      current = {
-        name: (data && data.name) || '',
-        attrs: (data && data.attrs) || {},
-      };
-      render();
-    });
-  </script>
-</body>
-</html>
-~~~
-
----
-
-## 7. 开发规范与最佳实践
-
-### 7.1 建议
-
-- 尽量使用事件委托，减少大量元素逐个绑定监听。
+- 尽量使用事件委托，减少逐个绑定大量元素监听。
 - 属性编辑建议只发送 patch（updateAttrs({ key: value })），避免全量覆盖。
 - 模板内保持渲染函数纯净 + 交互函数独立，便于维护。
 - 复杂模板建议把样式和脚本结构化分区（render / handlers / utils）。
 
-### 7.2 注意事项
+### 5.2 注意事项
 
 - 模板运行在沙箱内，不应依赖外部全局对象。
 - 不要假设宿主一定提供除 sealchat 外的额外 API。
 - attrs 值类型可能是字符串、数字或对象，渲染前请做类型守卫。
-- 当你启用模板模式（template）时，用户将不再看到默认掷骰弹窗。
+- 启用 template 分发模式后，用户将不再看到系统默认掷骰弹窗，模板需自行处理掷骰交互。
+
+### 5.3 Attrs 数据结构
+
+虽然宿主对 `attrs` 的值类型没有限制，但复杂模板建议使用嵌套对象来组织结构化数据。
+
+> **重要：使用 `$` 前缀隔离内部数据。** 如果模板将元数据（如配置项、列表、中间状态等）以 `$` 开头的 key 存入 `attrs`，SealDice 的非指定指令（如 `.st` 展示人物卡）会自动跳过这些 key，避免将内部结构化数据意外输出到聊天中。因此推荐将"用户可见的简单属性"放在根级，将"模板内部的元数据对象"以 `$` 前缀命名：
+>
+> - `侦查: 50` → 用户属性，`.st` 会展示
+> - `$我的内部配置: { ... }` → 内部数据，`.st` 自动忽略
+>
+> 这个 `$` 前缀是 SealDice 的约定，不依赖宿主额外处理。
+
+**编辑嵌套字段时必须展开整个对象**：
+
+~~~js
+// ❌ 错误：子字段不在 attrs 根级
+sealchat.updateAttrs({ 子字段: 'value' });
+
+// ✅ 正确：展开嵌套对象后 patch
+sealchat.updateAttrs({
+  $我的内部配置: { ...currentConfig, 子字段: 'value' }
+});
+~~~
 
 ---
 
-## 8. 调试清单（Checklist）
+## 6. 调试清单
+
+### 6.1 基础验证
 
 发布模板前，建议至少验证：
 
@@ -639,20 +655,64 @@ CSS 使用方式：
 4. 窗口刷新和重开后模板渲染正常。
 5. 缺失属性、空角色名时页面不报错。
 
+### 6.2 高级功能验证（适用于带数据模型的复杂模板）
+
+6. 嵌套对象编辑后，宿主数据正确更新且回显一致。
+7. 自定义扩展数据合并后不影响内置数据。
+8. 属性编辑后关联的派生值（如依赖某属性的计算结果）自动更新。
+
 ---
 
-## 9. 与当前实现对应关系（便于查源）
+## 7. 本地开发与测试
+
+可以在模板末尾添加一个自执行块，仅在 `window.self !== window.top`（即不在 iframe 中）时激活，模拟宿主环境用于本地调试：
+
+~~~js
+(() => {
+  if (window.self !== window.top) return; // 仅在直接打开时运行
+  console.log('模拟宿主环境启动');
+
+  // 设置 mock windowId
+  state.windowId = 'mock-window';
+
+  // 构造 mock 数据并渲染
+  render({
+    name: '模拟测试',
+    avatarUrl: '',
+    attrs: { 力量: 60, 敏捷: 50, /* ... 按模板实际属性填充 */ }
+  });
+
+  // 监听模板事件，模拟 UPDATE_ATTRS 回写和 ROLL_DICE 日志
+  window.addEventListener('message', e => {
+    if (e.data?.type === 'SEALCHAT_EVENT') {
+      console.log('模板发出事件:', e.data);
+      if (e.data.action === 'UPDATE_ATTRS') {
+        Object.assign(mockAttrs, e.data.payload.attrs);
+        render({ name: '模拟测试', avatarUrl: '', attrs: mockAttrs });
+      } else if (e.data.action === 'ROLL_DICE') {
+        console.log('🎲 掷骰指令:', e.data.payload.roll);
+      }
+    }
+  });
+})();
+~~~
+
+**注意：此代码块仅供本地开发调试，生产环境模板不应包含。**
+
+---
+
+## 8. 源码参考
 
 - 模板桥接与事件类型：ui/src/views/chat/components/character-sheet/IframeSandbox.vue
 - 掷骰分流（默认弹窗 vs 模板直发）：ui/src/views/chat/components/character-sheet/CharacterSheetManager.vue
 - 默认掷骰弹窗：ui/src/views/chat/components/character-sheet/DiceRollPopover.vue
 - 默认模板源码（通用 + COC）：ui/src/stores/characterSheet.ts
 
+另外为了方便参考，提取了源码中默认人物卡模版的部分保存在：doc/template/
 
+---
 
-## 10 COC角色卡自定义掷骰模板示例
-
-
+## 9. 基础COC人物卡模板示例
 
 ~~~html
 <script>
