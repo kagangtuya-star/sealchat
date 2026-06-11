@@ -38,17 +38,28 @@ RUN set -eux; \
     *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
   esac; \
   mkdir -p /out/bin/"${WEBP_DIR}"; \
-  cp -a ./bin/"${WEBP_DIR}"/. /out/bin/"${WEBP_DIR}"/; \
+  install -m 0755 ./bin/"${WEBP_DIR}"/cwebp /out/bin/"${WEBP_DIR}"/cwebp; \
+  install -m 0755 ./bin/"${WEBP_DIR}"/gif2webp /out/bin/"${WEBP_DIR}"/gif2webp; \
   cp ./bin/LICENSE /out/LICENSE; \
-  chmod +x /out/bin/"${WEBP_DIR}"/cwebp /out/bin/"${WEBP_DIR}"/gif2webp
+  test -x /out/bin/"${WEBP_DIR}"/cwebp; \
+  test -x /out/bin/"${WEBP_DIR}"/gif2webp
 
 FROM alpine:3.20
+ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata wget ffmpeg && update-ca-certificates
 WORKDIR /app
 
 COPY --from=go-builder /out/sealchat-server /app/sealchat-server
 COPY --from=webp-assets /out/bin /app/bin
 COPY --from=webp-assets /out/LICENSE /app/LICENSE
+RUN set -eux; \
+  case "${TARGETARCH:-amd64}" in \
+    amd64) WEBP_DIR="linux-x64" ;; \
+    arm64) WEBP_DIR="linux-arm64" ;; \
+    *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+  esac; \
+  test -x /app/bin/"${WEBP_DIR}"/cwebp; \
+  test -x /app/bin/"${WEBP_DIR}"/gif2webp
 
 EXPOSE 3212
 ENTRYPOINT ["/app/sealchat-server"]

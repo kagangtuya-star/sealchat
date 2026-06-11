@@ -267,6 +267,9 @@ jobs:
 
           mkdir -p "package/bin/${WEBP_DIR}"
           cp -a "bin/${WEBP_DIR}/." "package/bin/${WEBP_DIR}/"
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            chmod +x "package/bin/${WEBP_DIR}/cwebp" "package/bin/${WEBP_DIR}/gif2webp"
+          fi
 
           cp bin/LICENSE package/LICENSE
           cp config.yaml.example package/
