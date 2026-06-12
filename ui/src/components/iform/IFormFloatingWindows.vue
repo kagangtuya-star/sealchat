@@ -104,8 +104,8 @@
         v-if="window.minimized"
         type="button"
         class="iform-floating__badge"
-        @click.stop="toggleMinimize(window.windowId)"
-        @pointerdown.prevent="startDragging(window, $event)"
+        @click.stop="onFloatingBadgeClick"
+        @pointerdown.prevent="startFloatingBadgeGesture(window, $event)"
       >
         <span>{{ formInitial(window.formId) }}</span>
       </button>
@@ -118,6 +118,12 @@ import { computed, ref, nextTick, watch, onBeforeUnmount } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { useIFormStore } from '@/stores/iform';
 import IFormEmbedPortal from './IFormEmbedPortal.vue';
+import {
+  createFloatingBadgeGesture,
+  finishFloatingBadgeGesture,
+  updateFloatingBadgeGesture,
+  type FloatingBadgeGestureState,
+} from './floatingBadgeGesture';
 import { CloseOutline, ContractOutline, ExpandOutline, ResizeOutline, ReturnUpBackOutline, VolumeHighOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
 
@@ -158,6 +164,7 @@ type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const dragging = ref<{ windowId: string; offsetX: number; offsetY: number; pointerId: number; captureTarget?: HTMLElement | null } | null>(
   null,
 );
+const badgeGesture = ref<{ windowId: string; captureTarget?: HTMLElement | null; gesture: FloatingBadgeGestureState; suppressClick: boolean } | null>(null);
 const resizing = ref<{
   windowId: string;
   startWidth: number;
@@ -187,6 +194,27 @@ const startDragging = (windowState: (typeof floatingWindows.value)[number], even
   };
 };
 
+const startFloatingBadgeGesture = (windowState: (typeof floatingWindows.value)[number], event: PointerEvent) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  iform.bringFloatingToFront(windowState.windowId);
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  badgeGesture.value = {
+    windowId: windowState.windowId,
+    captureTarget: target,
+    suppressClick: false,
+    gesture: createFloatingBadgeGesture({
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      windowX: windowState.x,
+      windowY: windowState.y,
+    }),
+  };
+};
+
 const startResizing = (
   windowState: (typeof floatingWindows.value)[number],
   direction: ResizeDirection,
@@ -213,7 +241,21 @@ const startResizing = (
 };
 
 useEventListener(window, 'pointermove', (event: PointerEvent) => {
-  if (dragging.value) {
+  if (badgeGesture.value) {
+    if (event.pointerId !== badgeGesture.value.gesture.pointerId) {
+      return;
+    }
+    if (event.buttons === 0) {
+      resetPointerStateFor(badgeGesture.value.windowId);
+      return;
+    }
+    event.preventDefault();
+    const result = updateFloatingBadgeGesture(badgeGesture.value.gesture, event.clientX, event.clientY);
+    if (result.dragActivated) {
+      badgeGesture.value.suppressClick = true;
+      iform.updateFloatingPosition(badgeGesture.value.windowId, result.position.x, result.position.y);
+    }
+  } else if (dragging.value) {
     if (event.pointerId !== dragging.value.pointerId) {
       return;
     }
@@ -260,6 +302,17 @@ useEventListener(window, 'pointermove', (event: PointerEvent) => {
 });
 
 const clearPointerState = (event: PointerEvent) => {
+  if (badgeGesture.value?.gesture.pointerId === event.pointerId) {
+    const current = badgeGesture.value;
+    current.captureTarget?.releasePointerCapture?.(event.pointerId);
+    const result = finishFloatingBadgeGesture(current.gesture);
+    badgeGesture.value = result.action === 'none'
+      ? { ...current, captureTarget: null, suppressClick: true }
+      : null;
+    if (result.action === 'toggle') {
+      iform.toggleFloatingMinimize(current.windowId);
+    }
+  }
   if (dragging.value?.pointerId === event.pointerId) {
     dragging.value?.captureTarget?.releasePointerCapture?.(event.pointerId);
     dragging.value = null;
@@ -271,6 +324,10 @@ const clearPointerState = (event: PointerEvent) => {
 };
 
 const resetPointerStateFor = (windowId?: string) => {
+  if (badgeGesture.value && (!windowId || badgeGesture.value.windowId === windowId)) {
+    badgeGesture.value.captureTarget?.releasePointerCapture?.(badgeGesture.value.gesture.pointerId);
+    badgeGesture.value = null;
+  }
   if (dragging.value && (!windowId || dragging.value.windowId === windowId)) {
     dragging.value.captureTarget?.releasePointerCapture?.(dragging.value.pointerId);
     dragging.value = null;
@@ -311,6 +368,13 @@ onBeforeUnmount(() => {
 
 const toggleMinimize = (windowId: string) => {
   iform.toggleFloatingMinimize(windowId);
+};
+
+const onFloatingBadgeClick = (event: MouseEvent) => {
+  if (badgeGesture.value?.suppressClick) {
+    event.preventDefault();
+    badgeGesture.value = null;
+  }
 };
 
 const closeFloating = (windowId: string) => {
