@@ -16495,7 +16495,7 @@ onBeforeUnmount(() => {
                     润色
                   </n-tooltip>
                 </div>
-                <div class="chat-input-actions__cell" v-else-if="showDiceTrayTrigger">
+                <div class="chat-input-actions__cell" v-if="showDiceTrayTrigger">
                   <n-popover trigger="manual" placement="top" :show="diceTrayDesktopVisible">
                     <template #trigger>
                       <n-tooltip trigger="hover">
