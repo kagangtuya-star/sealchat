@@ -9,7 +9,12 @@ import {
   ContractOutline,
   RefreshOutline,
 } from '@vicons/ionicons5'
-import type { AIPolishDockState, AIPolishSlotState } from '@/services/ai/ai-polish-dock'
+import { buildAIPolishDiffTokens } from '@/services/ai/ai-polish-diff'
+import type {
+  AIPolishDockState,
+  AIPolishResultViewMode,
+  AIPolishSlotState,
+} from '@/services/ai/ai-polish-dock'
 
 const props = defineProps<{
   visible: boolean
@@ -28,6 +33,7 @@ const emit = defineEmits<{
   (event: 'close'): void
   (event: 'update:source-text', value: string): void
   (event: 'update:result-text', value: string): void
+  (event: 'update:view-mode', value: AIPolishResultViewMode): void
 }>()
 
 const panelRef = ref<HTMLElement | null>(null)
@@ -52,9 +58,26 @@ const emptySlot: AIPolishSlotState = {
   error: '',
   requestId: '',
   updatedAt: 0,
+  viewMode: 'edit',
 }
 
 const activeSlot = computed(() => props.dockState.slots[props.dockState.activeSlotIndex] || emptySlot)
+const activeViewMode = computed<AIPolishResultViewMode>(() => activeSlot.value.viewMode || 'edit')
+const activeDiffTokens = computed(() => (
+  buildAIPolishDiffTokens(activeSlot.value.sourceText, activeSlot.value.resultText)
+))
+
+const handleResultTextUpdate = (value: string) => {
+  emit('update:result-text', value)
+  if (activeViewMode.value !== 'edit') {
+    emit('update:view-mode', 'edit')
+  }
+}
+
+const switchViewMode = (viewMode: AIPolishResultViewMode) => {
+  if (activeViewMode.value === viewMode) return
+  emit('update:view-mode', viewMode)
+}
 
 const dragState = ref<{
   mode: 'panel' | 'badge'
@@ -432,7 +455,33 @@ onBeforeUnmount(() => {
 
           <div class="chat-ai-polish-dock__field chat-ai-polish-dock__field--result">
             <div class="chat-ai-polish-dock__label">
-              <span>润色结果</span>
+              <div class="chat-ai-polish-dock__label-main">
+                <span>润色结果</span>
+                <div class="chat-ai-polish-dock__view-switch" @pointerdown.stop>
+                  <button
+                    type="button"
+                    class="chat-ai-polish-dock__view-switch-button"
+                    :class="{ 'is-active': activeViewMode === 'edit' }"
+                    @click="switchViewMode('edit')"
+                  >
+                    纯结果
+                  </button>
+                  <button
+                    type="button"
+                    class="chat-ai-polish-dock__view-switch-button"
+                    :class="{ 'is-active': activeViewMode === 'diff' }"
+                    @click="switchViewMode('diff')"
+                  >
+                    显示改动
+                  </button>
+                </div>
+                <span
+                  v-if="activeViewMode === 'diff'"
+                  class="chat-ai-polish-dock__view-hint"
+                >
+                  需修改结果可切回纯结果
+                </span>
+              </div>
               <span v-if="activeSlot.status === 'loading'" class="chat-ai-polish-dock__status">生成中</span>
               <span
                 v-else-if="activeSlot.status === 'error'"
@@ -442,14 +491,38 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <n-input
+              v-if="activeViewMode === 'edit'"
               class="chat-ai-polish-dock__textarea chat-ai-polish-dock__textarea--result"
               :value="activeSlot.resultText"
               type="textarea"
               :rows="8"
               :readonly="activeSlot.status === 'loading'"
               :placeholder="activeSlot.status === 'loading' ? 'AI 正在润色，请稍候…' : '润色结果将显示在这里'"
-              @update:value="emit('update:result-text', $event)"
+              @update:value="handleResultTextUpdate"
             />
+            <div
+              v-else
+              class="chat-ai-polish-dock__diff-preview"
+              role="textbox"
+              aria-readonly="true"
+            >
+              <template v-if="activeDiffTokens.length > 0">
+                <span
+                  v-for="(token, index) in activeDiffTokens"
+                  :key="`${index}-${token.type}-${token.text}`"
+                  class="chat-ai-polish-dock__diff-token"
+                  :class="[
+                    `is-${token.type}`,
+                    { 'is-subtle': token.subtle },
+                  ]"
+                >
+                  {{ token.text }}
+                </span>
+              </template>
+              <span v-else class="chat-ai-polish-dock__diff-placeholder">
+                {{ activeSlot.status === 'loading' ? 'AI 正在润色，请稍候…' : '润色结果将显示在这里' }}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -575,6 +648,12 @@ onBeforeUnmount(() => {
 }
 
 .chat-ai-polish-dock__field--result {
+  --sc-polish-diff-insert-bg: color-mix(in srgb, #22c55e 16%, var(--sc-bg-elevated, #25262b));
+  --sc-polish-diff-insert-line: color-mix(in srgb, #22c55e 74%, var(--sc-text-primary, #f8fafc));
+  --sc-polish-diff-delete-bg: color-mix(in srgb, #ef4444 6%, var(--sc-bg-elevated, #25262b));
+  --sc-polish-diff-delete-line: color-mix(in srgb, #ef4444 48%, var(--sc-text-secondary, #b5b5c5));
+  --sc-polish-diff-delete-opacity: 0.68;
+  --sc-polish-diff-subtle-opacity: 0.52;
   min-height: 0;
 }
 
@@ -585,6 +664,47 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.chat-ai-polish-dock__label-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.chat-ai-polish-dock__view-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sc-bg-surface, rgba(255, 255, 255, 0.08)) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong, rgba(255, 255, 255, 0.12)) 78%, transparent);
+  gap: 2px;
+}
+
+.chat-ai-polish-dock__view-switch-button {
+  border: none;
+  background: transparent;
+  color: var(--sc-text-secondary, #b5b5c5);
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.chat-ai-polish-dock__view-switch-button.is-active {
+  color: var(--sc-text-primary, #f8fafc);
+  background: color-mix(in srgb, var(--sc-bg-elevated, #25262b) 84%, var(--primary-color, #3b82f6) 16%);
+}
+
+.chat-ai-polish-dock__view-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--sc-text-secondary, #b5b5c5);
+  white-space: nowrap;
 }
 
 .chat-ai-polish-dock__status {
@@ -655,6 +775,53 @@ onBeforeUnmount(() => {
 .chat-ai-polish-dock__textarea :deep(textarea) {
   resize: none;
   overflow: auto;
+}
+
+.chat-ai-polish-dock__diff-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, 0.12));
+  background: var(--sc-bg-elevated, #25262b);
+  color: var(--sc-text-primary, #f8fafc);
+}
+
+.chat-ai-polish-dock__diff-token {
+  border-radius: 4px;
+  padding: 0 1px;
+}
+
+.chat-ai-polish-dock__diff-token.is-insert {
+  background: var(--sc-polish-diff-insert-bg);
+  text-decoration: underline;
+  text-decoration-color: var(--sc-polish-diff-insert-line);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  margin-left: -1px;
+}
+
+.chat-ai-polish-dock__diff-token.is-delete {
+  background: var(--sc-polish-diff-delete-bg);
+  text-decoration: line-through;
+  text-decoration-color: var(--sc-polish-diff-delete-line);
+  text-decoration-thickness: 1px;
+  opacity: var(--sc-polish-diff-delete-opacity);
+  font-size: 0.92em;
+  padding: 0;
+  margin-right: -1px;
+}
+
+.chat-ai-polish-dock__diff-token.is-subtle {
+  opacity: var(--sc-polish-diff-subtle-opacity);
+}
+
+.chat-ai-polish-dock__diff-placeholder {
+  color: var(--sc-text-secondary, #b5b5c5);
 }
 
 @media (max-width: 768px) {

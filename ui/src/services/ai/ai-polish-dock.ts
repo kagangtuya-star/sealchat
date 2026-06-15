@@ -1,4 +1,5 @@
 export type AIPolishSlotStatus = 'idle' | 'loading' | 'success' | 'error'
+export type AIPolishResultViewMode = 'edit' | 'diff'
 
 export interface AIPolishSlotState {
   sourceText: string
@@ -7,6 +8,7 @@ export interface AIPolishSlotState {
   error: string
   requestId: string
   updatedAt: number
+  viewMode: AIPolishResultViewMode
 }
 
 export interface AIPolishDockState {
@@ -24,6 +26,7 @@ const createEmptySlot = (): AIPolishSlotState => ({
   error: '',
   requestId: '',
   updatedAt: 0,
+  viewMode: 'edit',
 })
 
 const now = () => Date.now()
@@ -80,6 +83,7 @@ export function finishAIPolishTaskSuccess(state: AIPolishDockState, slotIndex: n
   slot.status = 'success'
   slot.error = ''
   slot.updatedAt = now()
+  slot.viewMode = 'diff'
 }
 
 export function finishAIPolishTaskError(state: AIPolishDockState, slotIndex: number, requestId: string, error: string) {
@@ -106,6 +110,18 @@ export function setActiveAIPolishSlot(state: AIPolishDockState, slotIndex: numbe
     return
   }
   state.activeSlotIndex = slotIndex
+}
+
+export function setAIPolishSlotViewMode(
+  state: AIPolishDockState,
+  slotIndex: number,
+  viewMode: AIPolishResultViewMode,
+) {
+  const slot = state.slots[slotIndex]
+  if (!slot) {
+    return
+  }
+  slot.viewMode = viewMode
 }
 
 export function toggleAIPolishDockMinimized(state: AIPolishDockState, minimized?: boolean) {

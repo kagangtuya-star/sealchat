@@ -103,6 +103,7 @@ import {
   findNextIdleAIPolishSlot,
   readCurrentInputIntoSlot,
   setActiveAIPolishSlot,
+  setAIPolishSlotViewMode,
   prepareAIPolishTask,
   toggleAIPolishDockMinimized,
 } from '@/services/ai/ai-polish-dock'
@@ -14793,6 +14794,10 @@ const updateActiveAIPolishSourceText = (value: string) => {
   slot.sourceText = value
 }
 
+const updateActiveAIPolishViewMode = (viewMode: 'edit' | 'diff') => {
+  setAIPolishSlotViewMode(aiPolishDockState, aiPolishDockState.activeSlotIndex, viewMode)
+}
+
 const clearCurrentAIPolishSlot = () => {
   if (aiPolishActiveSlot.value?.status === 'loading') {
     message.warning('当前槽位仍在处理中，暂不能清空')
@@ -17635,6 +17640,7 @@ onBeforeUnmount(() => {
     @close="closeAIPolishDock"
     @update:source-text="updateActiveAIPolishSourceText"
     @update:result-text="updateActiveAIPolishResultText"
+    @update:view-mode="updateActiveAIPolishViewMode"
   />
   <ChatImportDialog
     v-model:visible="importDialogVisible"
