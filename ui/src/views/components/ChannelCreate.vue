@@ -4,9 +4,10 @@ import { useUserStore } from '@/stores/user';
 import { ChannelType, type SChannel } from '@/types';
 import { clone } from 'lodash-es';
 import { useDialog, useMessage } from 'naive-ui';
-import { onMounted, ref, watch, type PropType } from 'vue';
+import { computed, onMounted, ref, watch, type PropType } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { chatEvent } from '@/stores/chat';
+import { canCreateChannelSession } from '@/utils/channelCreateGuard';
 
 const message = useMessage()
 const dialog = useDialog()
@@ -15,6 +16,12 @@ const user = useUserStore();
 const { t } = useI18n()
 
 const show = defineModel<boolean>('show');
+const canCreateChannel = computed(() => canCreateChannelSession({
+  token: user.token,
+  isObserver: chat.isObserver,
+  observerMode: chat.observerMode,
+  observerWorldId: chat.observerWorldId,
+}));
 
 const props = defineProps({
   parentId: {
@@ -66,6 +73,10 @@ const openChannelSettings = async (channelId?: string) => {
 };
 
 const newChannel = async () => {
+  if (!canCreateChannel.value) {
+    message.warning('当前会话为只读，不能创建频道');
+    return false;
+  }
   if (!model.value.name.trim()) {
     message.error(t('dialoChannelgNew.channelNameHint'));
     return false;

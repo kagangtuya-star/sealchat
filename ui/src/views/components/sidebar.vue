@@ -12,6 +12,7 @@ import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
+import { canCreateChannelSession } from '@/utils/channelCreateGuard';
 import type { Channel } from '@satorijs/protocol';
 import type { SChannel } from '@/types';
 import IconNumber from '@/components/icons/IconNumber.vue'
@@ -40,6 +41,12 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const display = useDisplayStore();
+const canCreateChannel = computed(() => canCreateChannelSession({
+  token: user.token,
+  isObserver: chat.isObserver,
+  observerMode: chat.observerMode,
+  observerWorldId: chat.observerWorldId,
+}));
 const user = useUserStore();
 const worldGlossary = useWorldGlossaryStore();
 const pushStore = usePushNotificationStore();
@@ -854,7 +861,11 @@ const handleAckWorldAnnouncement = async () => {
             <div class="px-6">加载中 ...</div>
           </template>
 
-          <div class="sider-item" @click="parentId = ''; showModal = true">
+          <div
+            class="sider-item"
+            :class="{ 'sider-item--disabled': !canCreateChannel }"
+            @click="() => { if (!canCreateChannel) { message.warning('当前会话为只读，不能创建频道'); return; } parentId = ''; showModal = true; }"
+          >
             <div class="flex space-x-1 items-center font-bold">
               <n-icon :component="Plus"></n-icon>
               <span>{{ t('channelListNew') }}</span>
