@@ -14,6 +14,10 @@ interface BattleReportDisplayResponse {
   item?: BattleReportDisplayChannel | null;
 }
 
+interface BattleReportSummaryInputResponse {
+  input?: string;
+}
+
 interface BattleReportState {
   itemsByChannel: Record<string, BattleReport[]>;
   detailById: Record<string, BattleReport>;
@@ -146,6 +150,15 @@ export const useBattleReportStore = defineStore('battleReport', {
         const item = resp.data?.item;
         this.upsertItem(item);
         return item;
+      } finally {
+        this.saving = false;
+      }
+    },
+    async buildSummaryInput(channelId: string, payload: BattleReportPayload) {
+      this.saving = true;
+      try {
+        const resp = await api.post<BattleReportSummaryInputResponse>(`api/v1/channels/${channelId}/battle-reports/summarize-input`, payload);
+        return String(resp.data?.input || '');
       } finally {
         this.saving = false;
       }

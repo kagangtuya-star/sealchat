@@ -30,6 +30,15 @@ type BattleReportSummaryRunOptions struct {
 	Runner           aiService.TaskRunner
 }
 
+type BattleReportSummaryPromptInput struct {
+	Title              string
+	PeriodStart        time.Time
+	PeriodEnd          time.Time
+	ContextReportCount int
+	SourceChannelIDs   []string
+	AIConfig           utils.AIConfig
+}
+
 func StartBattleReportSummary(ctx context.Context, channelID string, userID string, input BattleReportSummaryInput) (*model.BattleReportModel, error) {
 	channels, err := resolveBattleReportSourceChannels(channelID, "", input.SourceChannelIDs, userID)
 	if err != nil {
@@ -78,6 +87,37 @@ func StartBattleReportSummary(ctx context.Context, channelID string, userID stri
 		}
 	}()
 	return item, nil
+}
+
+func BuildBattleReportSummaryPrompt(channelID string, userID string, input BattleReportSummaryPromptInput) (string, error) {
+	channels, err := resolveBattleReportSourceChannels(channelID, "", input.SourceChannelIDs, userID)
+	if err != nil {
+		return "", err
+	}
+	preflightReport := &model.BattleReportModel{
+		ChannelID:          strings.TrimSpace(channelID),
+		WorldID:            channels[0].WorldID,
+		Title:              input.Title,
+		PeriodStart:        input.PeriodStart,
+		PeriodEnd:          input.PeriodEnd,
+		ContextReportCount: input.ContextReportCount,
+	}
+	messageGroups, err := loadBattleReportMessageGroups(channels, preflightReport.PeriodStart, preflightReport.PeriodEnd)
+	if err != nil {
+		return "", err
+	}
+	if battleReportMessageGroupLen(messageGroups) == 0 {
+		return "", fmt.Errorf("所选时间范围内没有可总结的消息")
+	}
+	contextReports, err := loadBattleReportContextReports(preflightReport)
+	if err != nil {
+		return "", err
+	}
+	prompt := buildBattleReportSummaryPromptWithGroups(preflightReport, contextReports, messageGroups)
+	if err := validateBattleReportSummaryPromptSize(prompt, input.AIConfig); err != nil {
+		return "", err
+	}
+	return prompt, nil
 }
 
 func runBattleReportSummaryTask(ctx context.Context, reportID string, opts BattleReportSummaryRunOptions) error {

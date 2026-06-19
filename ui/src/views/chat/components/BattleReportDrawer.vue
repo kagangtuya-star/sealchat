@@ -36,6 +36,8 @@ const editorVisible = ref(false)
 const editingReportId = ref('')
 const draggedId = ref('')
 const createMode = ref<'manual' | 'ai'>('ai')
+const localSummaryRunning = ref(false)
+const localSummaryStatus = ref('')
 const createForm = reactive({
   title: '',
   content: '',
@@ -54,6 +56,7 @@ const displayChannelId = computed(() => displayChannel.value?.displayChannelId |
 const sourceReports = computed(() => sourceChannelId.value ? (store.itemsByChannel[sourceChannelId.value] || []) : [])
 const editingReport = computed(() => editingReportId.value ? store.detailById[editingReportId.value] : null)
 const hasGenerating = computed(() => sourceReports.value.some((item) => item.status === 'generating'))
+const createSubmitting = computed(() => store.saving || localSummaryRunning.value)
 
 const flattenChannels = (items: SChannel[] = []): SChannel[] => {
   const out: SChannel[] = []
@@ -294,6 +297,48 @@ const copyReportLink = async (item: BattleReport) => {
   message.success('战报嵌入链接已复制')
 }
 
+const createLocalAISummaryReport = async (primaryChannelId: string, payload: {
+  title: string
+  content: string
+  periodStart: number
+  periodEnd: number
+  contextReportCount: number
+  source: string
+  sourceChannelIds: string[]
+}) => {
+  localSummaryRunning.value = true
+  try {
+    localSummaryStatus.value = '正在整理战报上下文'
+    const input = await store.buildSummaryInput(primaryChannelId, payload)
+    if (!input.trim()) {
+      throw new Error('战报总结输入为空')
+    }
+    localSummaryStatus.value = '正在调用本地 AI 总结'
+    const resp = await aiStore.runTask('battle_summary', {
+      worldId: props.worldId,
+      channelId: primaryChannelId,
+      input,
+      source: 'user',
+    })
+    const result = String(resp?.data?.result || '').trim()
+    if (!result) {
+      throw new Error('AI 返回空战报')
+    }
+    localSummaryStatus.value = '正在提交战报内容'
+    return store.create(primaryChannelId, {
+      ...payload,
+      content: result,
+      source: 'user',
+      aiProviderId: String(resp?.data?.providerId || '').trim(),
+      aiModel: String(resp?.data?.model || '').trim(),
+      aiFeatureKey: 'battle_summary',
+    })
+  } finally {
+    localSummaryRunning.value = false
+    localSummaryStatus.value = ''
+  }
+}
+
 const createReport = async () => {
   const sourceChannelIds = normalizeCreateSourceChannelIds()
   const primaryChannelId = sourceChannelIds[0] || sourceChannelId.value
@@ -316,8 +361,13 @@ const createReport = async () => {
   }
   try {
     if (createMode.value === 'ai') {
-      await store.summarize(primaryChannelId, payload)
-      message.success('AI 总结已开始')
+      if (aiStore.currentSource === 'user') {
+        await createLocalAISummaryReport(primaryChannelId, payload)
+        message.success('本地 AI 战报已创建')
+      } else {
+        await store.summarize(primaryChannelId, payload)
+        message.success('AI 总结已开始')
+      }
     } else {
       await store.create(primaryChannelId, payload)
       message.success('战报已创建')
@@ -487,52 +537,61 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
     title="新建战报"
     class="battle-report-create-modal"
     :auto-focus="false"
+    :mask-closable="!createSubmitting"
+    :close-on-esc="!createSubmitting"
   >
-    <n-form label-placement="top">
-      <n-form-item label="生成方式">
-        <n-radio-group v-model:value="createMode">
-          <n-radio-button value="ai">AI 总结</n-radio-button>
-          <n-radio-button value="manual">手动创建</n-radio-button>
-        </n-radio-group>
-      </n-form-item>
-      <n-form-item label="来源频道">
-        <n-select
-          v-model:value="createForm.sourceChannelIds"
-          :options="createChannelOptions"
-          multiple
-          filterable
-          clearable
-          placeholder="选择要纳入战报的频道"
-        />
-        <template #feedback>默认当前频道。多选时会按频道分别拼接同一时间段内的内容。</template>
-      </n-form-item>
-      <n-form-item label="时间周期">
-        <ActiveDayDateRangePicker
-          v-model="createForm.period"
-          :channel-id="createPrimaryChannelId"
-          placeholder="选择需要总结的活跃消息周期"
-        />
-      </n-form-item>
-      <n-form-item label="前情提要">
-        <n-input-number v-model:value="createForm.contextReportCount" :min="0" :max="20" />
-        <template #feedback>AI 总结时引用多少篇之前的已完成战报。</template>
-      </n-form-item>
-      <n-form-item label="标题">
-        <n-input v-model:value="createForm.title" maxlength="120" show-count placeholder="留空则使用默认标题" />
-      </n-form-item>
-      <n-form-item v-if="createMode === 'manual'" label="内容">
-        <n-input
-          v-model:value="createForm.content"
-          type="textarea"
-          :autosize="{ minRows: 8, maxRows: 18 }"
-          placeholder="纯文本战报内容"
-        />
-      </n-form-item>
-    </n-form>
+    <n-spin :show="createSubmitting">
+      <template #description>
+        {{ localSummaryStatus || '正在处理战报' }}
+      </template>
+      <n-form label-placement="top">
+        <n-form-item label="生成方式">
+          <n-radio-group v-model:value="createMode" :disabled="createSubmitting">
+            <n-radio-button value="ai">AI 总结</n-radio-button>
+            <n-radio-button value="manual">手动创建</n-radio-button>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item label="来源频道">
+          <n-select
+            v-model:value="createForm.sourceChannelIds"
+            :options="createChannelOptions"
+            :disabled="createSubmitting"
+            multiple
+            filterable
+            clearable
+            placeholder="选择要纳入战报的频道"
+          />
+          <template #feedback>默认当前频道。多选时会按频道分别拼接同一时间段内的内容。</template>
+        </n-form-item>
+        <n-form-item label="时间周期">
+          <ActiveDayDateRangePicker
+            v-model="createForm.period"
+            :channel-id="createPrimaryChannelId"
+            placeholder="选择需要总结的活跃消息周期"
+          />
+        </n-form-item>
+        <n-form-item label="前情提要">
+          <n-input-number v-model:value="createForm.contextReportCount" :min="0" :max="20" :disabled="createSubmitting" />
+          <template #feedback>AI 总结时引用多少篇之前的已完成战报。</template>
+        </n-form-item>
+        <n-form-item label="标题">
+          <n-input v-model:value="createForm.title" maxlength="120" show-count placeholder="留空则使用默认标题" :disabled="createSubmitting" />
+        </n-form-item>
+        <n-form-item v-if="createMode === 'manual'" label="内容">
+          <n-input
+            v-model:value="createForm.content"
+            type="textarea"
+            :autosize="{ minRows: 8, maxRows: 18 }"
+            placeholder="纯文本战报内容"
+            :disabled="createSubmitting"
+          />
+        </n-form-item>
+      </n-form>
+    </n-spin>
     <template #footer>
       <n-space justify="end">
-        <n-button @click="createVisible = false">取消</n-button>
-        <n-button type="primary" :loading="store.saving" @click="createReport">
+        <n-button :disabled="createSubmitting" @click="createVisible = false">取消</n-button>
+        <n-button type="primary" :loading="createSubmitting" :disabled="createSubmitting" @click="createReport">
           {{ createMode === 'ai' ? '开始总结' : '创建战报' }}
         </n-button>
       </n-space>

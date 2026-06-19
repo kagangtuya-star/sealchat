@@ -686,6 +686,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/channels/:channelId/message-active-days", ChannelMessageActiveDaysHandler)
 	v1Auth.Get("/channels/:channelId/battle-reports", BattleReportList)
 	v1Auth.Post("/channels/:channelId/battle-reports", BattleReportCreate)
+	v1Auth.Post("/channels/:channelId/battle-reports/summarize-input", BattleReportSummarizeInput)
 	v1Auth.Post("/channels/:channelId/battle-reports/summarize", BattleReportSummarize)
 	v1Auth.Post("/channels/:channelId/battle-reports/reorder", BattleReportReorder)
 	v1Auth.Get("/channels/:channelId/battle-report-display", BattleReportDisplayGet)

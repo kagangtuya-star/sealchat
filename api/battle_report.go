@@ -21,6 +21,9 @@ type battleReportRequest struct {
 	ContextReportCount int      `json:"contextReportCount"`
 	Source             string   `json:"source"`
 	SourceChannelIDs   []string `json:"sourceChannelIds"`
+	AIProviderID       string   `json:"aiProviderId"`
+	AIModel            string   `json:"aiModel"`
+	AIFeatureKey       string   `json:"aiFeatureKey"`
 }
 
 type battleReportReorderRequest struct {
@@ -124,6 +127,35 @@ func BattleReportUpdate(c *fiber.Ctx) error {
 		return battleReportError(c, err)
 	}
 	return c.JSON(fiber.Map{"item": battleReportToResponse(item, true)})
+}
+
+func BattleReportSummarizeInput(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	var req battleReportRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "请求体解析失败"})
+	}
+	cfg := utils.AIConfig{}
+	if appConfig != nil {
+		cfg = appConfig.AI
+	}
+	prompt, err := service.BuildBattleReportSummaryPrompt(c.Params("channelId"), user.ID, service.BattleReportSummaryPromptInput{
+		Title:              req.Title,
+		PeriodStart:        unixMilliToTime(req.PeriodStart),
+		PeriodEnd:          unixMilliToTime(req.PeriodEnd),
+		ContextReportCount: req.ContextReportCount,
+		SourceChannelIDs:   req.SourceChannelIDs,
+		AIConfig:           cfg,
+	})
+	if err != nil {
+		return battleReportError(c, err)
+	}
+	return c.JSON(fiber.Map{
+		"input": prompt,
+	})
 }
 
 func BattleReportDelete(c *fiber.Ctx) error {
@@ -283,6 +315,10 @@ func battleReportInputFromRequest(req battleReportRequest) service.BattleReportI
 		PeriodEnd:          unixMilliToTime(req.PeriodEnd),
 		ContextReportCount: req.ContextReportCount,
 		SourceChannelIDs:   req.SourceChannelIDs,
+		AISource:           req.Source,
+		AIProviderID:       req.AIProviderID,
+		AIModel:            req.AIModel,
+		AIFeatureKey:       req.AIFeatureKey,
 	}
 }
 

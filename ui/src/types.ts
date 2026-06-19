@@ -154,6 +154,9 @@ export interface BattleReportPayload {
   contextReportCount?: number;
   source?: string;
   sourceChannelIds?: string[];
+  aiProviderId?: string;
+  aiModel?: string;
+  aiFeatureKey?: string;
 }
 
 export interface BattleReportDisplayChannel {
