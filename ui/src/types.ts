@@ -433,6 +433,16 @@ export interface UserAIProviderProfile {
   hasApiKey?: boolean;
 }
 
+export interface UserAIFeatureBinding {
+  providerId: string;
+  model: string;
+}
+
+export interface UserAISettings {
+  profiles: UserAIProviderProfile[];
+  featureBindings: Record<string, UserAIFeatureBinding>;
+}
+
 export interface AIConfig {
   enabled: boolean;
   routing: AIRoutingConfig;

@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AIFeatureCapability, AIRunSource, UserAIProviderProfile } from '@/types'
+import type { AIFeatureCapability, AIRunSource, UserAIFeatureBinding, UserAIProviderProfile, UserAISettings } from '@/types'
 import { api } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
-import { discoverLocalAIModels, readLocalAIProfiles, runLocalAIChat, writeLocalAIProfiles } from '@/services/ai/local-ai'
+import { discoverLocalAIModels, readLocalAISettings, runLocalAIChat, writeLocalAISettings } from '@/services/ai/local-ai'
 
 const AI_SOURCE_STORAGE_KEY = 'sealchat_ai_source_v1'
 const PLATFORM_AI_TASK_TIMEOUT_MS = 120000
@@ -37,7 +37,9 @@ export const useAIStore = defineStore('ai', () => {
   const profileLoading = ref(false)
   const features = ref<Record<string, AIFeatureCapability>>({})
   const currentSource = ref<AIRunSource>(readStoredSource())
-  const userProfiles = ref<UserAIProviderProfile[]>(readLocalAIProfiles())
+  const initialUserAISettings = readLocalAISettings()
+  const userProfiles = ref<UserAIProviderProfile[]>(initialUserAISettings.profiles)
+  const userFeatureBindings = ref<Record<string, UserAIFeatureBinding>>(initialUserAISettings.featureBindings)
 
   async function loadCapabilities(worldId?: string) {
     const user = useUserStore()
@@ -77,7 +79,9 @@ export const useAIStore = defineStore('ai', () => {
   async function loadUserProfiles() {
     profileLoading.value = true
     try {
-      userProfiles.value = readLocalAIProfiles()
+      const settings = readLocalAISettings()
+      userProfiles.value = settings.profiles
+      userFeatureBindings.value = settings.featureBindings
       return userProfiles.value
     } finally {
       profileLoading.value = false
@@ -85,10 +89,31 @@ export const useAIStore = defineStore('ai', () => {
   }
 
   async function saveUserProfiles(items: UserAIProviderProfile[]) {
+    return saveUserAISettings({
+      profiles: items,
+      featureBindings: userFeatureBindings.value,
+    })
+  }
+
+  async function loadUserAISettings() {
     profileLoading.value = true
     try {
-      userProfiles.value = writeLocalAIProfiles(items)
-      return userProfiles.value
+      const settings = readLocalAISettings()
+      userProfiles.value = settings.profiles
+      userFeatureBindings.value = settings.featureBindings
+      return settings
+    } finally {
+      profileLoading.value = false
+    }
+  }
+
+  async function saveUserAISettings(settings: UserAISettings) {
+    profileLoading.value = true
+    try {
+      const normalized = writeLocalAISettings(settings)
+      userProfiles.value = normalized.profiles
+      userFeatureBindings.value = normalized.featureBindings
+      return normalized
     } finally {
       profileLoading.value = false
     }
@@ -107,6 +132,7 @@ export const useAIStore = defineStore('ai', () => {
           input: payload.input,
           feature: getFeatureCapability(featureKey),
           profiles: userProfiles.value,
+          featureBindings: userFeatureBindings.value,
         }),
       }
     }
@@ -130,6 +156,7 @@ export const useAIStore = defineStore('ai', () => {
     enabledFeatureKeys,
     currentSource,
     userProfiles,
+    userFeatureBindings,
     hasEnabledUserProfile,
     loadCapabilities,
     isFeatureEnabled,
@@ -137,6 +164,8 @@ export const useAIStore = defineStore('ai', () => {
     setSource,
     loadUserProfiles,
     saveUserProfiles,
+    loadUserAISettings,
+    saveUserAISettings,
     discoverUserProfileModels,
     runTask,
   }

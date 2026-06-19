@@ -9,7 +9,7 @@ import { api, urlBase } from '@/stores/_config';
 import { NIcon, useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
 import router from '@/router';
-import type { AIRunSource, ServerConfig, UserAIProviderProfile } from '@/types';
+import type { AIRunSource, ServerConfig, UserAIFeatureBinding, UserAIProviderProfile } from '@/types';
 import { useCapWidget } from '@/composables/useCapWidget';
 import { Refresh } from '@vicons/tabler';
 
@@ -58,7 +58,13 @@ const aiSettingsVisible = ref(false);
 const aiSettingsSaving = ref(false);
 const aiSettingsSource = ref<AIRunSource>('platform');
 const aiProfileDrafts = ref<UserAIProviderProfile[]>([]);
+const aiFeatureBindingDrafts = ref<Record<string, UserAIFeatureBinding>>({});
 const aiProfileRefreshing = ref<Record<string, boolean>>({});
+
+const AI_FEATURE_OPTIONS = [
+  { key: 'polish', label: '润色' },
+  { key: 'battle_summary', label: '战报总结' },
+];
 
 // Captcha state
 const captchaId = ref('');
@@ -239,6 +245,54 @@ const profileModelOptions = (profile: UserAIProviderProfile) => {
     .map((item) => ({ label: item, value: item }))
 }
 
+const aiFeatureModelOptions = computed(() => {
+  const options: { label: string; value: string }[] = []
+  aiProfileDrafts.value
+    .filter((profile) => profile.enabled)
+    .forEach((profile) => {
+      const providerName = String(profile.name || profile.id || 'Provider').trim()
+      const seen = new Set<string>()
+      ;(Array.isArray(profile.models) ? profile.models : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => {
+          if (!item || seen.has(item)) return false
+          seen.add(item)
+          return true
+        })
+        .forEach((modelName) => {
+          options.push({
+            label: `${providerName} / ${modelName}`,
+            value: `${profile.id}::${modelName}`,
+          })
+        })
+    })
+  return options
+})
+
+const bindingValue = (featureKey: string) => {
+  const binding = aiFeatureBindingDrafts.value[featureKey]
+  if (!binding?.providerId || !binding?.model) return undefined
+  return `${binding.providerId}::${binding.model}`
+}
+
+const updateFeatureBinding = (featureKey: string, value: string | null) => {
+  const raw = String(value || '').trim()
+  const separator = raw.indexOf('::')
+  if (!raw || separator <= 0) {
+    const next = { ...aiFeatureBindingDrafts.value }
+    delete next[featureKey]
+    aiFeatureBindingDrafts.value = next
+    return
+  }
+  aiFeatureBindingDrafts.value = {
+    ...aiFeatureBindingDrafts.value,
+    [featureKey]: {
+      providerId: raw.slice(0, separator),
+      model: raw.slice(separator + 2),
+    },
+  }
+}
+
 const updateProfileModels = (profile: UserAIProviderProfile, value: string) => {
   profile.models = value
     .split(',')
@@ -284,10 +338,12 @@ const openAISettings = async () => {
   aiSettingsVisible.value = true
   aiSettingsSource.value = aiStore.currentSource
   try {
-    const items = await aiStore.loadUserProfiles()
-    aiProfileDrafts.value = items.map(cloneAIProfile)
+    const settings = await aiStore.loadUserAISettings()
+    aiProfileDrafts.value = settings.profiles.map(cloneAIProfile)
+    aiFeatureBindingDrafts.value = { ...settings.featureBindings }
   } catch (error: any) {
     aiProfileDrafts.value = []
+    aiFeatureBindingDrafts.value = {}
     message.error(error?.response?.data?.message || error?.message || '加载 AI 设置失败')
   }
 }
@@ -304,7 +360,10 @@ const saveAISettings = async () => {
   aiSettingsSaving.value = true
   try {
     const normalized = aiProfileDrafts.value.map(cloneAIProfile)
-    await aiStore.saveUserProfiles(normalized)
+    await aiStore.saveUserAISettings({
+      profiles: normalized,
+      featureBindings: aiFeatureBindingDrafts.value,
+    })
     aiStore.setSource(aiSettingsSource.value)
     aiSettingsVisible.value = false
     message.success('AI 设置已保存')
@@ -723,7 +782,7 @@ onBeforeUnmount(() => {
       <n-spin :show="aiStore.profileLoading || aiSettingsSaving">
         <div class="user-profile-ai">
           <n-alert type="info" class="user-profile-ai__notice">
-            选择“我的 API”后，配置仅保存在当前浏览器，请求会由浏览器直接发送到你填写的模型接口，不经过 SealChat 后端代理。
+            选择“我的 API”后，API Key 仅保存在当前浏览器，不会上传到 SealChat 服务器。AI 请求由当前浏览器直接发送到你填写的模型接口。
           </n-alert>
 
           <n-form label-placement="top">
@@ -799,6 +858,30 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+
+          <div class="user-profile-ai__header user-profile-ai__header--spaced">
+            <div class="user-profile-ai__title">功能模型</div>
+          </div>
+
+          <div class="user-profile-ai__bindings">
+            <n-empty v-if="aiFeatureModelOptions.length === 0" description="请先启用至少一个 Provider 并填写模型列表" />
+            <template v-else>
+              <n-form-item
+                v-for="feature in AI_FEATURE_OPTIONS"
+                :key="feature.key"
+                :label="feature.label"
+              >
+                <n-select
+                  :value="bindingValue(feature.key)"
+                  :options="aiFeatureModelOptions"
+                  filterable
+                  clearable
+                  placeholder="选择该功能使用的 Provider / Model"
+                  @update:value="updateFeatureBinding(feature.key, $event as string | null)"
+                />
+              </n-form-item>
+            </template>
+          </div>
         </div>
       </n-spin>
 
@@ -851,6 +934,10 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
 }
 
+.user-profile-ai__header--spaced {
+  margin-top: 0.25rem;
+}
+
 .user-profile-ai__title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -887,6 +974,12 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.5rem;
   width: 100%;
+}
+
+.user-profile-ai__bindings {
+  border: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  padding: 0.9rem;
 }
 
 @media (max-width: 720px) {

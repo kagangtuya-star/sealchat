@@ -1,7 +1,15 @@
-import type { AIFeatureCapability, UserAIProviderProfile } from '@/types'
+import type { AIFeatureCapability, UserAIFeatureBinding, UserAIProviderProfile, UserAISettings } from '@/types'
 
 export const AI_PROFILE_STORAGE_KEY = 'sealchat_user_ai_profiles_v2'
+export const AI_SETTINGS_STORAGE_KEY = 'sealchat_user_ai_settings_v3'
 const AI_MODEL_DISCOVERY_TIMEOUT_MS = 15000
+
+const normalizeFeatureBinding = (binding?: Partial<UserAIFeatureBinding> | null): UserAIFeatureBinding | null => {
+  const providerId = String(binding?.providerId || '').trim()
+  const model = String(binding?.model || '').trim()
+  if (!providerId || !model) return null
+  return { providerId, model }
+}
 
 const normalizeProfile = (profile: Partial<UserAIProviderProfile>, index: number): UserAIProviderProfile => ({
   id: String(profile.id || '').trim() || `user-ai-${Date.now().toString(36)}-${index}`,
@@ -15,6 +23,20 @@ const normalizeProfile = (profile: Partial<UserAIProviderProfile>, index: number
   selectedModel: String(profile.selectedModel || '').trim(),
   hasApiKey: String(profile.apiKey || '').trim().length > 0 || profile.hasApiKey === true,
 })
+
+const normalizeProfiles = (items: UserAIProviderProfile[]): UserAIProviderProfile[] => (
+  Array.isArray(items) ? items.map((item, index) => normalizeProfile(item, index)) : []
+)
+
+const buildDefaultFeatureBindings = (profiles: UserAIProviderProfile[]): Record<string, UserAIFeatureBinding> => {
+  const profile = profiles.find((item) => item.enabled)
+  const model = String(profile?.selectedModel || profile?.models?.[0] || '').trim()
+  if (!profile || !model) return {}
+  return {
+    polish: { providerId: profile.id, model },
+    battle_summary: { providerId: profile.id, model },
+  }
+}
 
 const safeLocalStorage = () => {
   if (typeof window === 'undefined') return null
@@ -42,11 +64,54 @@ export function readLocalAIProfiles(): UserAIProviderProfile[] {
 }
 
 export function writeLocalAIProfiles(items: UserAIProviderProfile[]): UserAIProviderProfile[] {
-  const normalized = items.map((item, index) => normalizeProfile(item, index))
+  const current = readLocalAISettings()
+  const normalized = normalizeProfiles(items)
+  writeLocalAISettings({
+    profiles: normalized,
+    featureBindings: current.featureBindings,
+  })
+  return normalized
+}
+
+export function readLocalAISettings(): UserAISettings {
+  const storage = safeLocalStorage()
+  if (!storage) return { profiles: [], featureBindings: {} }
+  try {
+    const raw = storage.getItem(AI_SETTINGS_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      const profiles = normalizeProfiles(parsed?.profiles || [])
+      const featureBindings: Record<string, UserAIFeatureBinding> = {}
+      Object.entries(parsed?.featureBindings || {}).forEach(([featureKey, binding]) => {
+        const normalized = normalizeFeatureBinding(binding as Partial<UserAIFeatureBinding>)
+        if (normalized) featureBindings[String(featureKey).trim()] = normalized
+      })
+      return { profiles, featureBindings }
+    }
+  } catch {
+    // fall through to v2 migration
+  }
+  const profiles = readLocalAIProfiles()
+  return {
+    profiles,
+    featureBindings: buildDefaultFeatureBindings(profiles),
+  }
+}
+
+export function writeLocalAISettings(settings: UserAISettings): UserAISettings {
+  const normalized: UserAISettings = {
+    profiles: normalizeProfiles(settings.profiles),
+    featureBindings: {},
+  }
+  Object.entries(settings.featureBindings || {}).forEach(([featureKey, binding]) => {
+    const normalizedBinding = normalizeFeatureBinding(binding)
+    if (normalizedBinding) normalized.featureBindings[String(featureKey).trim()] = normalizedBinding
+  })
   const storage = safeLocalStorage()
   if (storage) {
     try {
-      storage.setItem(AI_PROFILE_STORAGE_KEY, JSON.stringify(normalized))
+      storage.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify(normalized))
+      storage.setItem(AI_PROFILE_STORAGE_KEY, JSON.stringify(normalized.profiles))
     } catch {
       // ignore localStorage failure in private mode or restricted env
     }
@@ -108,11 +173,41 @@ export function getActiveLocalAIProfile(profiles: UserAIProviderProfile[]): User
   return profile
 }
 
+export function resolveLocalAIProfileForFeature(options: {
+  featureKey: string
+  profiles: UserAIProviderProfile[]
+  featureBindings?: Record<string, UserAIFeatureBinding>
+}): { profile: UserAIProviderProfile; model: string } {
+  const featureKey = String(options.featureKey || '').trim()
+  const binding = normalizeFeatureBinding(options.featureBindings?.[featureKey])
+  const enabledProfiles = options.profiles.filter((item) => item.enabled)
+  if (binding) {
+    const profile = enabledProfiles.find((item) => item.id === binding.providerId)
+    if (!profile) {
+      throw new Error('当前 AI 功能绑定的 API 配置不可用')
+    }
+    if (!profile.baseUrl.trim()) {
+      throw new Error('AI Base URL 不能为空')
+    }
+    if (!profile.apiKey?.trim()) {
+      throw new Error('请先填写本地 AI 的 API Key')
+    }
+    return { profile, model: binding.model }
+  }
+  const profile = getActiveLocalAIProfile(options.profiles)
+  const model = String(profile.selectedModel || profile.models[0] || '').trim()
+  if (!model) {
+    throw new Error('未找到可用模型')
+  }
+  return { profile, model }
+}
+
 export async function runLocalAIChat(options: {
   featureKey: string
   input: string
   feature?: AIFeatureCapability | null
   profiles: UserAIProviderProfile[]
+  featureBindings?: Record<string, UserAIFeatureBinding>
 }): Promise<{ result: string; model: string; providerId: string }> {
   const feature = options.feature
   if (!feature?.enabled) {
@@ -124,12 +219,12 @@ export async function runLocalAIChat(options: {
     throw new Error('请输入需要处理的内容')
   }
 
-  const profile = getActiveLocalAIProfile(options.profiles)
+  const { profile, model } = resolveLocalAIProfileForFeature({
+    featureKey: options.featureKey,
+    profiles: options.profiles,
+    featureBindings: options.featureBindings,
+  })
   const baseUrl = normalizeBaseUrl(profile.baseUrl.trim())
-  const model = String(profile.selectedModel || profile.models[0] || feature.defaultModel || '').trim()
-  if (!model) {
-    throw new Error('未找到可用模型')
-  }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
