@@ -2,7 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +22,8 @@ const (
 	aiQuotaPolicySourceDefault  = "default"
 	aiQuotaPolicySourceOverride = "override"
 )
+
+var adminAIHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 func AdminAIConfigGet(ctx *fiber.Ctx) error {
 	cfg := sanitizeConfigForAdmin(appConfig).AI
@@ -103,6 +109,97 @@ func AdminAIProviderTest(ctx *fiber.Ctx) error {
 			"providerId": result.ProviderID,
 			"model":      result.Model,
 			"result":     result.Result,
+		})
+	}
+	return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "AI provider 不存在"})
+}
+
+func discoverAIProviderModels(ctx context.Context, provider utils.AIProviderConfig) ([]string, error) {
+	baseURL := strings.TrimSpace(provider.BaseURL)
+	if baseURL == "" {
+		return nil, fmt.Errorf("AI provider baseUrl 不能为空")
+	}
+	apiKey := strings.TrimSpace(provider.APIKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("AI provider apiKey 不能为空")
+	}
+	target, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("AI provider baseUrl 非法")
+	}
+	target.Path = strings.TrimRight(target.Path, "/") + "/models"
+	target.RawQuery = ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+	resp, err := adminAIHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
+			return nil, errors.New(strings.TrimSpace(payload.Error.Message))
+		}
+		if strings.TrimSpace(payload.Message) != "" {
+			return nil, errors.New(strings.TrimSpace(payload.Message))
+		}
+		return nil, fmt.Errorf("AI provider models 请求失败(%d)", resp.StatusCode)
+	}
+	models := make([]string, 0, len(payload.Data))
+	seen := make(map[string]struct{}, len(payload.Data))
+	for _, item := range payload.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, id)
+	}
+	return models, nil
+}
+
+func AdminAIProviderModelsDiscover(ctx *fiber.Ctx) error {
+	var body struct {
+		ProviderID string `json:"providerId"`
+	}
+	if err := ctx.BodyParser(&body); err != nil {
+		return err
+	}
+	if appConfig == nil {
+		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"message": "AI 配置不可用"})
+	}
+	providerID := strings.TrimSpace(body.ProviderID)
+	cfg := utils.NormalizeAIConfig(appConfig.AI)
+	for _, provider := range cfg.Providers {
+		if provider.ID != providerID {
+			continue
+		}
+		models, err := discoverAIProviderModels(ctx.Context(), provider)
+		if err != nil {
+			return ctx.Status(fiber.StatusBadGateway).JSON(fiber.Map{"message": err.Error()})
+		}
+		return ctx.JSON(fiber.Map{
+			"providerId": provider.ID,
+			"models":     models,
 		})
 	}
 	return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "AI provider 不存在"})

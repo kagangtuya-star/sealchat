@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import type { AIFeatureCapability, AIRunSource, UserAIProviderProfile } from '@/types'
 import { api } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
-import { readLocalAIProfiles, runLocalAIChat, writeLocalAIProfiles } from '@/services/ai/local-ai'
+import { discoverLocalAIModels, readLocalAIProfiles, runLocalAIChat, writeLocalAIProfiles } from '@/services/ai/local-ai'
 
 const AI_SOURCE_STORAGE_KEY = 'sealchat_ai_source_v1'
 const PLATFORM_AI_TASK_TIMEOUT_MS = 120000
@@ -94,6 +94,10 @@ export const useAIStore = defineStore('ai', () => {
     }
   }
 
+  async function discoverUserProfileModels(baseUrl: string, apiKey: string) {
+    return discoverLocalAIModels(baseUrl, apiKey)
+  }
+
   async function runTask(featureKey: string, payload: { worldId?: string; channelId?: string; input: string; source?: 'platform' | 'user' }) {
     const source = payload.source || currentSource.value
     if (source === 'user') {
@@ -133,6 +137,7 @@ export const useAIStore = defineStore('ai', () => {
     setSource,
     loadUserProfiles,
     saveUserProfiles,
+    discoverUserProfileModels,
     runTask,
   }
 })

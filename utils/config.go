@@ -318,13 +318,14 @@ type AIRoutingConfig struct {
 }
 
 type AIProviderConfig struct {
-	ID      string   `json:"id" yaml:"id"`
-	Name    string   `json:"name" yaml:"name"`
-	Enabled bool     `json:"enabled" yaml:"enabled"`
-	BaseURL string   `json:"baseUrl" yaml:"baseUrl"`
-	APIKey  string   `json:"apiKey,omitempty" yaml:"apiKey"`
-	Models  []string `json:"models" yaml:"models"`
-	Weight  int      `json:"weight" yaml:"weight"`
+	ID            string   `json:"id" yaml:"id"`
+	Name          string   `json:"name" yaml:"name"`
+	Enabled       bool     `json:"enabled" yaml:"enabled"`
+	BaseURL       string   `json:"baseUrl" yaml:"baseUrl"`
+	APIKey        string   `json:"apiKey,omitempty" yaml:"apiKey"`
+	Models        []string `json:"models" yaml:"models"`
+	SelectedModel string   `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
+	Weight        int      `json:"weight" yaml:"weight"`
 }
 
 type AIModelPricingConfig struct {
@@ -882,13 +883,14 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 			models = append(models, model)
 		}
 		result.Providers = append(result.Providers, AIProviderConfig{
-			ID:      id,
-			Name:    name,
-			Enabled: provider.Enabled,
-			BaseURL: strings.TrimSpace(provider.BaseURL),
-			APIKey:  strings.TrimSpace(provider.APIKey),
-			Models:  models,
-			Weight:  max(1, provider.Weight),
+			ID:            id,
+			Name:          name,
+			Enabled:       provider.Enabled,
+			BaseURL:       strings.TrimSpace(provider.BaseURL),
+			APIKey:        strings.TrimSpace(provider.APIKey),
+			Models:        models,
+			SelectedModel: strings.TrimSpace(provider.SelectedModel),
+			Weight:        max(1, provider.Weight),
 		})
 	}
 

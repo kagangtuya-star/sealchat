@@ -404,6 +404,7 @@ export interface AIProviderConfig {
   baseUrl: string;
   apiKey?: string;
   models: string[];
+  selectedModel?: string;
   weight: number;
 }
 
@@ -428,6 +429,7 @@ export interface UserAIProviderProfile {
   baseUrl: string;
   apiKey?: string;
   models: string[];
+  selectedModel?: string;
   hasApiKey?: boolean;
 }
 

@@ -6,11 +6,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import Avatar from '@/components/avatar.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import { api, urlBase } from '@/stores/_config';
-import { useMessage } from 'naive-ui';
+import { NIcon, useMessage } from 'naive-ui';
 import { useI18n } from 'vue-i18n'
 import router from '@/router';
 import type { AIRunSource, ServerConfig, UserAIProviderProfile } from '@/types';
 import { useCapWidget } from '@/composables/useCapWidget';
+import { Refresh } from '@vicons/tabler';
 
 declare global {
   interface Window {
@@ -57,6 +58,7 @@ const aiSettingsVisible = ref(false);
 const aiSettingsSaving = ref(false);
 const aiSettingsSource = ref<AIRunSource>('platform');
 const aiProfileDrafts = ref<UserAIProviderProfile[]>([]);
+const aiProfileRefreshing = ref<Record<string, boolean>>({});
 
 // Captcha state
 const captchaId = ref('');
@@ -208,6 +210,7 @@ const createAIProfileDraft = (): UserAIProviderProfile => ({
   baseUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
   models: ['deepseek-v4-flash'],
+  selectedModel: 'deepseek-v4-flash',
   hasApiKey: false,
 })
 
@@ -218,16 +221,63 @@ const cloneAIProfile = (profile: UserAIProviderProfile): UserAIProviderProfile =
   baseUrl: String(profile.baseUrl || '').trim(),
   apiKey: profile.apiKey || '',
   models: Array.isArray(profile.models) ? profile.models.map((item) => String(item || '').trim()).filter(Boolean) : [],
+  selectedModel: String(profile.selectedModel || '').trim(),
   hasApiKey: profile.hasApiKey === true,
 })
 
 const formatModelsInput = (profile: UserAIProviderProfile) => (Array.isArray(profile.models) ? profile.models.join(', ') : '')
+
+const profileModelOptions = (profile: UserAIProviderProfile) => {
+  const seen = new Set<string>()
+  return (Array.isArray(profile.models) ? profile.models : [])
+    .map((item) => String(item || '').trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+    .map((item) => ({ label: item, value: item }))
+}
 
 const updateProfileModels = (profile: UserAIProviderProfile, value: string) => {
   profile.models = value
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+  if (!String(profile.selectedModel || '').trim() && profile.models.length > 0) {
+    profile.selectedModel = profile.models[0]
+  }
+}
+
+const updateProfileSelectedModel = (profile: UserAIProviderProfile, value: string) => {
+  profile.selectedModel = String(value || '').trim()
+  if (profile.selectedModel && !profile.models.includes(profile.selectedModel)) {
+    profile.models = [...profile.models, profile.selectedModel]
+  }
+}
+
+const refreshAIProfileModels = async (profile: UserAIProviderProfile) => {
+  const profileId = String(profile.id || '').trim()
+  if (!profileId) return
+  aiProfileRefreshing.value = {
+    ...aiProfileRefreshing.value,
+    [profileId]: true,
+  }
+  try {
+    const models = await aiStore.discoverUserProfileModels(profile.baseUrl, profile.apiKey || '')
+    profile.models = models
+    if (!String(profile.selectedModel || '').trim() && models.length > 0) {
+      profile.selectedModel = models[0]
+    }
+    message.success(`已刷新 ${models.length} 个模型`)
+  } catch (error: any) {
+    message.error(error?.message || '刷新模型列表失败')
+  } finally {
+    aiProfileRefreshing.value = {
+      ...aiProfileRefreshing.value,
+      [profileId]: false,
+    }
+  }
 }
 
 const openAISettings = async () => {
@@ -717,6 +767,28 @@ onBeforeUnmount(() => {
                     placeholder="仅保存在当前浏览器"
                   />
                 </n-form-item>
+                <n-form-item label="当前模型">
+                  <div class="user-profile-ai__model-row">
+                    <n-select
+                      :value="profile.selectedModel || undefined"
+                      :options="profileModelOptions(profile)"
+                      filterable
+                      tag
+                      placeholder="选择或输入模型名"
+                      @update:value="updateProfileSelectedModel(profile, String($event || ''))"
+                    />
+                    <n-button
+                      quaternary
+                      circle
+                      :loading="aiProfileRefreshing[profile.id]"
+                      @click="refreshAIProfileModels(profile)"
+                    >
+                      <template #icon>
+                        <n-icon :component="Refresh" />
+                      </template>
+                    </n-button>
+                  </div>
+                </n-form-item>
                 <n-form-item label="模型列表">
                   <n-input
                     :value="formatModelsInput(profile)"
@@ -808,6 +880,13 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 0.75rem;
+}
+
+.user-profile-ai__model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 @media (max-width: 720px) {

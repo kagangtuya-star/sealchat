@@ -391,6 +391,14 @@ export const useUtilsStore = defineStore({
       return resp;
     },
 
+    async adminAIProviderModelsDiscover(payload: { providerId: string }) {
+      const user = useUserStore();
+      const resp = await api.post<{ providerId: string; models: string[] }>('api/v1/admin/ai/models', payload, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
     async adminAIUsageLogs(params?: {
       page?: number;
       pageSize?: number;

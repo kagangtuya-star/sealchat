@@ -157,6 +157,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			continue
 		}
 		model := featureCfg.DefaultModel
+		if strings.EqualFold(strings.TrimSpace(req.Source), "user") && strings.TrimSpace(provider.SelectedModel) != "" {
+			model = strings.TrimSpace(provider.SelectedModel)
+		}
 		if model == "" && len(provider.Models) > 0 {
 			model = provider.Models[0]
 		}

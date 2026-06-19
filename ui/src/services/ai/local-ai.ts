@@ -1,6 +1,7 @@
 import type { AIFeatureCapability, UserAIProviderProfile } from '@/types'
 
 export const AI_PROFILE_STORAGE_KEY = 'sealchat_user_ai_profiles_v2'
+const AI_MODEL_DISCOVERY_TIMEOUT_MS = 15000
 
 const normalizeProfile = (profile: Partial<UserAIProviderProfile>, index: number): UserAIProviderProfile => ({
   id: String(profile.id || '').trim() || `user-ai-${Date.now().toString(36)}-${index}`,
@@ -11,6 +12,7 @@ const normalizeProfile = (profile: Partial<UserAIProviderProfile>, index: number
   models: Array.isArray(profile.models)
     ? profile.models.map((item) => String(item || '').trim()).filter(Boolean)
     : [],
+  selectedModel: String(profile.selectedModel || '').trim(),
   hasApiKey: String(profile.apiKey || '').trim().length > 0 || profile.hasApiKey === true,
 })
 
@@ -52,6 +54,43 @@ export function writeLocalAIProfiles(items: UserAIProviderProfile[]): UserAIProv
   return normalized
 }
 
+export async function discoverLocalAIModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const normalizedBaseUrl = normalizeBaseUrl(String(baseUrl || '').trim())
+  if (!normalizedBaseUrl) {
+    throw new Error('AI Base URL 不能为空')
+  }
+  if (!String(apiKey || '').trim()) {
+    throw new Error('请先填写本地 AI 的 API Key')
+  }
+  const response = await fetch(`${normalizedBaseUrl}/models`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${String(apiKey || '').trim()}`,
+    },
+    signal: AbortSignal.timeout(AI_MODEL_DISCOVERY_TIMEOUT_MS),
+  })
+  let payload: any = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || `模型列表请求失败(${response.status})`
+    throw new Error(message)
+  }
+  const models = Array.isArray(payload?.data) ? payload.data : []
+  const seen = new Set<string>()
+  return models
+    .map((item: any) => String(item?.id || '').trim())
+    .filter((item: string) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
 export function getActiveLocalAIProfile(profiles: UserAIProviderProfile[]): UserAIProviderProfile {
   const profile = profiles.find((item) => item.enabled)
   if (!profile) {
@@ -87,7 +126,7 @@ export async function runLocalAIChat(options: {
 
   const profile = getActiveLocalAIProfile(options.profiles)
   const baseUrl = normalizeBaseUrl(profile.baseUrl.trim())
-  const model = String(feature.defaultModel || profile.models[0] || '').trim()
+  const model = String(profile.selectedModel || profile.models[0] || feature.defaultModel || '').trim()
   if (!model) {
     throw new Error('未找到可用模型')
   }

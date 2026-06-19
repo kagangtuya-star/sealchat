@@ -11,13 +11,14 @@ import (
 
 type UserAIProviderProfileModel struct {
 	StringPKBaseModel
-	UserID  string           `json:"userId" gorm:"index:idx_user_ai_provider_user,not null"`
-	Name    string           `json:"name" gorm:"size:128;not null"`
-	BaseURL string           `json:"baseUrl" gorm:"size:255;not null"`
-	APIKey  string           `json:"apiKey" gorm:"size:512;not null"`
-	Models  JSONList[string] `json:"models" gorm:"type:json"`
-	Enabled bool             `json:"enabled" gorm:"not null;default:true"`
-	Sort    int              `json:"sort" gorm:"not null;default:0"`
+	UserID        string           `json:"userId" gorm:"index:idx_user_ai_provider_user,not null"`
+	Name          string           `json:"name" gorm:"size:128;not null"`
+	BaseURL       string           `json:"baseUrl" gorm:"size:255;not null"`
+	APIKey        string           `json:"apiKey" gorm:"size:512;not null"`
+	Models        JSONList[string] `json:"models" gorm:"type:json"`
+	SelectedModel string           `json:"selectedModel" gorm:"size:255;not null;default:''"`
+	Enabled       bool             `json:"enabled" gorm:"not null;default:true"`
+	Sort          int              `json:"sort" gorm:"not null;default:0"`
 }
 
 func (*UserAIProviderProfileModel) TableName() string {

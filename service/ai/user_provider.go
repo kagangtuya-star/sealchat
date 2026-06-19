@@ -25,13 +25,14 @@ func loadUserProviders(userID string) ([]utils.AIProviderConfig, error) {
 			}
 		}
 		out = append(out, utils.AIProviderConfig{
-			ID:      strings.TrimSpace(item.ID),
-			Name:    strings.TrimSpace(item.Name),
-			Enabled: item.Enabled,
-			BaseURL: strings.TrimSpace(item.BaseURL),
-			APIKey:  item.APIKey,
-			Models:  models,
-			Weight:  index + 1,
+			ID:            strings.TrimSpace(item.ID),
+			Name:          strings.TrimSpace(item.Name),
+			Enabled:       item.Enabled,
+			BaseURL:       strings.TrimSpace(item.BaseURL),
+			APIKey:        item.APIKey,
+			Models:        models,
+			SelectedModel: strings.TrimSpace(item.SelectedModel),
+			Weight:        index + 1,
 		})
 	}
 	return out, nil

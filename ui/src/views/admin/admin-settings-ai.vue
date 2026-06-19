@@ -2,7 +2,8 @@
 import { useUtilsStore } from '@/stores/utils'
 import type { AIConfig, AIFeatureConfig, AIModelParams, AIModelPricingConfig, AIProviderConfig, AIQuotaPolicyConfig } from '@/types'
 import { cloneDeep } from 'lodash-es'
-import { useMessage } from 'naive-ui'
+import { Refresh } from '@vicons/tabler'
+import { NIcon, useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
 
 type BuiltinFeatureKey = 'polish' | 'battle_summary'
@@ -54,6 +55,7 @@ const createDefaultProvider = (): AIProviderConfig => ({
   baseUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
   models: ['deepseek-v4-flash'],
+  selectedModel: 'deepseek-v4-flash',
   weight: 1,
 })
 
@@ -90,6 +92,7 @@ const originalSnapshot = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const testingProviderId = ref('')
+const refreshingProviderId = ref('')
 const featureEditorVisible = ref(false)
 const editingFeatureKey = ref<BuiltinFeatureKey>('polish')
 const featureEditorDraft = ref<AIFeatureConfig>(defaultFeatureConfig('polish'))
@@ -128,6 +131,7 @@ const normalizeProvider = (provider: AIProviderConfig, index: number): AIProvide
   baseUrl: provider.baseUrl?.trim() || 'https://api.deepseek.com/v1',
   apiKey: provider.apiKey || '',
   models: Array.isArray(provider.models) && provider.models.length ? provider.models : ['deepseek-v4-flash'],
+  selectedModel: provider.selectedModel?.trim() || (Array.isArray(provider.models) && provider.models.length ? provider.models[0] : 'deepseek-v4-flash'),
   weight: Number.isFinite(provider.weight) && provider.weight > 0 ? provider.weight : 1,
 })
 
@@ -172,6 +176,16 @@ const parseCommaList = (value: string): string[] => value
 
 const updateProviderModels = (provider: AIProviderConfig, value: string) => {
   provider.models = parseCommaList(value)
+  if (!provider.selectedModel && provider.models.length) {
+    provider.selectedModel = provider.models[0]
+  }
+}
+
+const updateProviderSelectedModel = (provider: AIProviderConfig, value: string) => {
+  provider.selectedModel = value.trim()
+  if (provider.selectedModel && !provider.models.includes(provider.selectedModel)) {
+    provider.models = [...provider.models, provider.selectedModel]
+  }
 }
 
 const updateFeatureUserIds = (feature: AIFeatureConfig, value: string) => {
@@ -180,6 +194,36 @@ const updateFeatureUserIds = (feature: AIFeatureConfig, value: string) => {
 
 const updateFeatureWorldIds = (feature: AIFeatureConfig, value: string) => {
   feature.access.worldIds = parseCommaList(value)
+}
+
+const providerModelOptions = (provider: AIProviderConfig) => {
+  const seen = new Set<string>()
+  return (provider.models || [])
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+    .map((item) => ({ label: item, value: item }))
+}
+
+const allProviderModelOptions = computed(() => {
+  const seen = new Set<string>()
+  const values: string[] = []
+  model.value.providers.forEach((provider) => {
+    ;(provider.models || []).forEach((item) => {
+      const trimmed = item.trim()
+      if (!trimmed || seen.has(trimmed)) return
+      seen.add(trimmed)
+      values.push(trimmed)
+    })
+  })
+  return values.map((item) => ({ label: item, value: item }))
+})
+
+const updateFeatureDefaultModel = (value: string) => {
+  featureEditorDraft.value.defaultModel = value.trim()
 }
 
 const load = async () => {
@@ -216,7 +260,7 @@ const testProvider = async (providerId: string) => {
     const provider = model.value.providers.find((item) => item.id === providerId)
     const resp = await utils.adminAIProviderTest({
       providerId,
-      model: provider?.models?.[0] || '',
+      model: provider?.selectedModel || provider?.models?.[0] || '',
       prompt: '连通性测试',
     })
     message.success(`测试成功：${resp.data?.model || provider?.models?.[0] || 'unknown'}`)
@@ -224,6 +268,23 @@ const testProvider = async (providerId: string) => {
     message.error(error?.response?.data?.message || error?.message || 'AI provider 测试失败')
   } finally {
     testingProviderId.value = ''
+  }
+}
+
+const refreshProviderModels = async (provider: AIProviderConfig) => {
+  refreshingProviderId.value = provider.id
+  try {
+    const resp = await utils.adminAIProviderModelsDiscover({ providerId: provider.id })
+    const models = Array.isArray(resp.data?.models) ? resp.data.models.map((item: string) => String(item || '').trim()).filter(Boolean) : []
+    provider.models = models
+    if (!provider.selectedModel && models.length) {
+      provider.selectedModel = models[0]
+    }
+    message.success(`已刷新 ${models.length} 个模型`)
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '刷新模型列表失败')
+  } finally {
+    refreshingProviderId.value = ''
   }
 }
 
@@ -364,6 +425,30 @@ defineExpose({
                 <n-gi span="2">
                   <n-form-item label="API Key" feedback="留空表示保留旧值；后端不会回显已保存密钥。">
                     <n-input v-model:value="provider.apiKey" type="password" show-password-on="click" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi span="2">
+                  <n-form-item label="当前模型">
+                    <div class="admin-ai__model-row">
+                      <n-select
+                        :value="provider.selectedModel || undefined"
+                        :options="providerModelOptions(provider)"
+                        filterable
+                        tag
+                        placeholder="选择或输入模型名"
+                        @update:value="(value: string) => updateProviderSelectedModel(provider, String(value || ''))"
+                      />
+                      <n-button
+                        quaternary
+                        circle
+                        :loading="refreshingProviderId === provider.id"
+                        @click="refreshProviderModels(provider)"
+                      >
+                        <template #icon>
+                          <n-icon :component="Refresh" />
+                        </template>
+                      </n-button>
+                    </div>
                   </n-form-item>
                 </n-gi>
                 <n-gi span="2">
@@ -549,7 +634,14 @@ defineExpose({
                 <n-switch v-model:value="featureEditorDraft.enabled" />
               </n-form-item>
               <n-form-item label="默认模型">
-                <n-input v-model:value="featureEditorDraft.defaultModel" />
+                <n-select
+                  :value="featureEditorDraft.defaultModel || undefined"
+                  :options="allProviderModelOptions"
+                  filterable
+                  tag
+                  placeholder="选择或输入模型名"
+                  @update:value="(value: string) => updateFeatureDefaultModel(String(value || ''))"
+                />
               </n-form-item>
               <n-form-item label="开放范围">
                 <n-select
@@ -666,6 +758,13 @@ defineExpose({
 .admin-ai__provider-actions {
   margin-top: 8px;
   justify-content: flex-end;
+}
+
+.admin-ai__model-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
 }
 
 .admin-ai__feature-title {

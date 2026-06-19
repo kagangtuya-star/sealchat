@@ -9,13 +9,14 @@ import (
 )
 
 type userAIProviderProfilePayload struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	BaseURL   string   `json:"baseUrl"`
-	APIKey    string   `json:"apiKey,omitempty"`
-	Models    []string `json:"models"`
-	Enabled   bool     `json:"enabled"`
-	HasAPIKey bool     `json:"hasApiKey,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	BaseURL       string   `json:"baseUrl"`
+	APIKey        string   `json:"apiKey,omitempty"`
+	Models        []string `json:"models"`
+	SelectedModel string   `json:"selectedModel,omitempty"`
+	Enabled       bool     `json:"enabled"`
+	HasAPIKey     bool     `json:"hasApiKey,omitempty"`
 }
 
 func sanitizeUserAIProfilesForClient(items []*model.UserAIProviderProfileModel) []userAIProviderProfilePayload {
@@ -25,13 +26,14 @@ func sanitizeUserAIProfilesForClient(items []*model.UserAIProviderProfileModel) 
 			continue
 		}
 		out = append(out, userAIProviderProfilePayload{
-			ID:        item.ID,
-			Name:      item.Name,
-			BaseURL:   item.BaseURL,
-			APIKey:    "",
-			Models:    append([]string(nil), item.Models...),
-			Enabled:   item.Enabled,
-			HasAPIKey: strings.TrimSpace(item.APIKey) != "",
+			ID:            item.ID,
+			Name:          item.Name,
+			BaseURL:       item.BaseURL,
+			APIKey:        "",
+			Models:        append([]string(nil), item.Models...),
+			SelectedModel: strings.TrimSpace(item.SelectedModel),
+			Enabled:       item.Enabled,
+			HasAPIKey:     strings.TrimSpace(item.APIKey) != "",
 		})
 	}
 	return out
@@ -60,6 +62,7 @@ func mergeUserAIProfiles(userID string, current []*model.UserAIProviderProfileMo
 			BaseURL:           strings.TrimSpace(item.BaseURL),
 			APIKey:            apiKey,
 			Models:            model.JSONList[string](normalizeUserAIModelList(item.Models)),
+			SelectedModel:     strings.TrimSpace(item.SelectedModel),
 			Enabled:           item.Enabled,
 		})
 	}

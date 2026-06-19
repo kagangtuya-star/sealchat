@@ -749,6 +749,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/ai/config", AdminAIConfigGet)
 	v1AuthAdmin.Put("/admin/ai/config", AdminAIConfigUpdate)
 	v1AuthAdmin.Post("/admin/ai/test", AdminAIProviderTest)
+	v1AuthAdmin.Post("/admin/ai/models", AdminAIProviderModelsDiscover)
 	v1AuthAdmin.Get("/admin/ai/usage-logs", AdminAIUsageLogs)
 	v1AuthAdmin.Post("/admin/ai/usage-logs/cleanup", AdminAIUsageLogsCleanup)
 	v1AuthAdmin.Get("/admin/ai-quotas", AdminAIQuotaList)
