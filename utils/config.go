@@ -17,6 +17,21 @@ import (
 
 const defaultSQLiteReadConnections = 2
 
+var defaultAIModelPricingByModel = map[string]AIModelPricingConfig{
+	"deepseek-v4-flash": {
+		Model:                      "deepseek-v4-flash",
+		PromptPricePer1MTokens:     1,
+		CompletionPricePer1MTokens: 2,
+		CachePricePer1MTokens:      0.02,
+	},
+	"deepseek-v4-pro": {
+		Model:                      "deepseek-v4-pro",
+		PromptPricePer1MTokens:     3,
+		CompletionPricePer1MTokens: 6,
+		CachePricePer1MTokens:      0.025,
+	},
+}
+
 type LogUploadConfig struct {
 	Enabled        bool     `json:"enabled" yaml:"enabled"`
 	Endpoint       string   `json:"endpoint" yaml:"endpoint"`
@@ -830,6 +845,20 @@ func normalizeAIIdentifierList(values []string) []string {
 	return out
 }
 
+func resolveDefaultAIModelPricing(model string) (AIModelPricingConfig, bool) {
+	item, ok := defaultAIModelPricingByModel[strings.TrimSpace(model)]
+	if !ok {
+		return AIModelPricingConfig{}, false
+	}
+	return item, true
+}
+
+func isZeroAIModelPricing(pricing AIModelPricingConfig) bool {
+	return pricing.PromptPricePer1MTokens == 0 &&
+		pricing.CompletionPricePer1MTokens == 0 &&
+		pricing.CachePricePer1MTokens == 0
+}
+
 func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	result := AIConfig{
 		Enabled:          cfg.Enabled,
@@ -922,6 +951,7 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 		result.Features[featureKey] = feature
 	}
 
+	pricingIndexByKey := make(map[string]int, len(cfg.Pricing))
 	for _, pricing := range cfg.Pricing {
 		providerID := strings.TrimSpace(pricing.ProviderID)
 		model := strings.TrimSpace(pricing.Model)
@@ -940,13 +970,41 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 		if cachePricePer1M == 0 && pricing.LegacyCachePricePer1KTokens > 0 {
 			cachePricePer1M = pricing.LegacyCachePricePer1KTokens * 1000
 		}
-		result.Pricing = append(result.Pricing, AIModelPricingConfig{
+		normalizedPricing := AIModelPricingConfig{
 			ProviderID:                 providerID,
 			Model:                      model,
 			PromptPricePer1MTokens:     promptPricePer1M,
 			CompletionPricePer1MTokens: completionPricePer1M,
 			CachePricePer1MTokens:      cachePricePer1M,
-		})
+		}
+		if defaultPricing, ok := resolveDefaultAIModelPricing(model); ok && isZeroAIModelPricing(normalizedPricing) {
+			normalizedPricing.PromptPricePer1MTokens = defaultPricing.PromptPricePer1MTokens
+			normalizedPricing.CompletionPricePer1MTokens = defaultPricing.CompletionPricePer1MTokens
+			normalizedPricing.CachePricePer1MTokens = defaultPricing.CachePricePer1MTokens
+		}
+		pricingIndexByKey[providerID+"::"+model] = len(result.Pricing)
+		result.Pricing = append(result.Pricing, normalizedPricing)
+	}
+
+	for _, provider := range result.Providers {
+		for _, model := range provider.Models {
+			defaultPricing, ok := resolveDefaultAIModelPricing(model)
+			if !ok {
+				continue
+			}
+			key := provider.ID + "::" + model
+			if _, exists := pricingIndexByKey[key]; exists {
+				continue
+			}
+			result.Pricing = append(result.Pricing, AIModelPricingConfig{
+				ProviderID:                 provider.ID,
+				Model:                      model,
+				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
+				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
+				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
+			})
+			pricingIndexByKey[key] = len(result.Pricing) - 1
+		}
 	}
 
 	return result
