@@ -29,6 +29,7 @@ export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
 export type BotBadgeStyle = 'solidBlue' | 'solidTone' | 'outline' | 'dice'
 export type EditingSelfActionsPlacement = 'left' | 'right'
+export type InterjectSwitchRule = 'invert' | 'preserve' | 'forceOoc' | 'forceIc'
 export type { CustomTheme, CustomThemeColors, PlatformTheme, ThemeSelectionMode } from '@/services/theme/themeTypes'
 
 export interface FavoriteHotkey {
@@ -47,6 +48,7 @@ export interface ToolbarHotkeyConfig {
 
 export type ToolbarHotkeyKey =
   | 'icToggle'
+  | 'interject'
   | 'whisper'
   | 'upload'
   | 'richMode'
@@ -108,6 +110,7 @@ export interface DisplaySettings {
   worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   identityQuickSwitchTrigger: string      // 角色快捷切换触发字符，默认 /
   identityVariantQuickSwitchTrigger: string // 身份差分快捷切换触发字符，默认 =
+  interjectSwitchRule: InterjectSwitchRule // 插话后第二条消息的模式切换规则
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -242,6 +245,12 @@ const QUICK_INPUT_TRIGGER_DEFAULT = '/'
 const coerceQuickInputTrigger = (value?: string): string => {
   if (typeof value === 'string' && value.length === 1) return value
   return QUICK_INPUT_TRIGGER_DEFAULT
+}
+const coerceInterjectSwitchRule = (value: unknown): InterjectSwitchRule => {
+  if (value === 'preserve' || value === 'forceOoc' || value === 'forceIc') {
+    return value
+  }
+  return 'invert'
 }
 const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
   if (typeof value === 'string' && (MESSAGE_SOUND_MODE_VALUES as readonly string[]).includes(value)) {
@@ -409,6 +418,10 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
     enabled: true,
     hotkey: { combo: 'Esc', key: 'Escape' },
   },
+  interject: {
+    enabled: true,
+    hotkey: { combo: 'Alt+I', key: 'I', alt: true },
+  },
   whisper: {
     enabled: true,
     hotkey: { combo: 'Ctrl+W', key: 'W', ctrl: true },
@@ -494,6 +507,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordQuickInputTrigger: '/',
   identityQuickSwitchTrigger: '/',
   identityVariantQuickSwitchTrigger: '=',
+  interjectSwitchRule: 'invert',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -536,6 +550,7 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
   const result: Record<string, ToolbarHotkeyConfig> = {}
   const keys: ToolbarHotkeyKey[] = [
     'icToggle',
+    'interject',
     'whisper',
     'upload',
     'richMode',
@@ -771,6 +786,7 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       identityQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityQuickSwitchTrigger),
       identityVariantQuickSwitchTrigger: coerceQuickInputTrigger((parsed as any)?.identityVariantQuickSwitchTrigger || '='),
+      interjectSwitchRule: coerceInterjectSwitchRule((parsed as any)?.interjectSwitchRule),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -1043,6 +1059,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'identityVariantQuickSwitchTrigger')
       ? coerceQuickInputTrigger((patch as any).identityVariantQuickSwitchTrigger || '=')
       : base.identityVariantQuickSwitchTrigger,
+  interjectSwitchRule:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'interjectSwitchRule')
+      ? coerceInterjectSwitchRule((patch as any).interjectSwitchRule)
+      : base.interjectSwitchRule,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)

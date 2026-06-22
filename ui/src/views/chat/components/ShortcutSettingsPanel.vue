@@ -27,6 +27,7 @@ interface HotkeyItem {
 
 const hotkeyItems: HotkeyItem[] = [
   { key: 'icToggle', label: '场内/场外切换', description: '快速切换 IC/OOC 模式' },
+  { key: 'interject', label: '插话', description: '发送当前消息后进入插话流程' },
   { key: 'whisper', label: '悄悄话面板', description: '打开/关闭悄悄话选择面板' },
   { key: 'upload', label: '上传图片', description: '快速触发图片上传' },
   { key: 'richMode', label: '富文本模式', description: '切换富文本/纯文本编辑模式' },

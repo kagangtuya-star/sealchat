@@ -23,6 +23,9 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   compact?: boolean;
   iconOnly?: boolean;
+  controlledSelection?: boolean;
+  selectedIdentityId?: string | null;
+  selectedIdentityVariantId?: string | null;
   previewAppearance?: {
     identityId?: string;
     displayName?: string;
@@ -36,6 +39,9 @@ const props = withDefaults(defineProps<{
   disabled: false,
   compact: false,
   iconOnly: false,
+  controlledSelection: false,
+  selectedIdentityId: null,
+  selectedIdentityVariantId: null,
   previewAppearance: null,
 });
 
@@ -44,6 +50,7 @@ const emit = defineEmits<{
   (event: 'manage'): void;
   (event: 'avatar-setup'): void;
   (event: 'identity-changed'): void;
+  (event: 'identity-selected', identityId: string): void;
   (event: 'edit-temporary'): void;
 }>();
 
@@ -116,12 +123,29 @@ const sortedIdentities = computed(() => {
 });
 const identityOptionCount = computed(() => Math.max(sortedIdentities.value.length, 1));
 
-const activeIdentity = computed(() => chat.getActiveIdentity(resolvedChannelId.value));
+const selectedIdentityId = computed(() => String(props.selectedIdentityId || '').trim());
+const selectedIdentityVariantId = computed(() => String(props.selectedIdentityVariantId || '').trim());
+
+const activeIdentity = computed(() => {
+  if (props.controlledSelection) {
+    if (!selectedIdentityId.value) {
+      return null;
+    }
+    return identities.value.find((identity) => identity.id === selectedIdentityId.value) || null;
+  }
+  return chat.getActiveIdentity(resolvedChannelId.value);
+});
 const activeIdentityVariant = computed(() => {
   const channelId = resolvedChannelId.value;
   const identityId = activeIdentity.value?.id || '';
   if (!channelId || !identityId) {
     return null;
+  }
+  if (props.controlledSelection && selectedIdentityId.value === identityId) {
+    if (!selectedIdentityVariantId.value) {
+      return null;
+    }
+    return chat.getIdentityVariants(channelId, identityId).find((variant) => variant.id === selectedIdentityVariantId.value) || null;
   }
   return chat.getActiveIdentityVariant(channelId, identityId);
 });
@@ -139,6 +163,12 @@ const resolveIdentityAvatarToken = (identity?: { id?: string; avatarAttachmentId
   const identityId = String(identity.id || '').trim();
   if (!channelId || !identityId) {
     return identity.avatarAttachmentId || '';
+  }
+  if (props.controlledSelection && selectedIdentityId.value === identityId) {
+    const selectedVariant = selectedIdentityVariantId.value
+      ? chat.getIdentityVariants(channelId, identityId).find((variant) => variant.id === selectedIdentityVariantId.value) || null
+      : null;
+    return selectedVariant?.avatarAttachmentId || identity.avatarAttachmentId || '';
   }
   const variant = chat.getActiveIdentityVariant(channelId, identityId);
   return variant?.avatarAttachmentId || identity.avatarAttachmentId || '';
@@ -489,6 +519,10 @@ const handleSelect = async (key: string | number) => {
   }
   const channelId = resolvedChannelId.value;
   if (!channelId || props.disabled) {
+    return;
+  }
+  if (props.controlledSelection) {
+    emit('identity-selected', String(key));
     return;
   }
   chat.setActiveIdentity(channelId, String(key));

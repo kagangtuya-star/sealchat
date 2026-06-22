@@ -93,6 +93,12 @@ const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendSh
   { label: 'Enter 直接发送', value: 'enter' },
   { label: 'Ctrl / Cmd + Enter 发送', value: 'ctrlEnter' },
 ]
+const interjectSwitchRuleOptions: Array<{ label: string; value: DisplaySettings['interjectSwitchRule'] }> = [
+  { label: '反转场内外', value: 'invert' },
+  { label: '不反转', value: 'preserve' },
+  { label: '固定场外', value: 'forceOoc' },
+  { label: '固定场内', value: 'forceIc' },
+]
 const editingSelfActionsPlacementOptions: Array<{ label: string; value: DisplaySettings['editingSelfActionsPlacement'] }> = [
   { label: '左置', value: 'left' },
   { label: '右置', value: 'right' },
@@ -873,7 +879,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <header>
           <div>
             <p class="section-title">快捷键管理</p>
-            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、悄悄话、上传等</p>
+            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、插话、悄悄话、上传等</p>
           </div>
         </header>
         <n-button secondary size="small" @click="shortcutPanelVisible = true">
@@ -961,6 +967,30 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           </n-button>
         </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">插话切换规则</p>
+            <p class="section-desc">点击“插话”后，第一条消息发送成功时，第二条消息将按此规则进入场内/场外模式</p>
+          </div>
+        </header>
+        <div class="setting-mode-grid sendShortcut-mode-grid">
+          <n-button
+            v-for="option in interjectSwitchRuleOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.interjectSwitchRule === option.value ? 'primary' : 'default'"
+            :secondary="draft.interjectSwitchRule !== option.value"
+            :aria-pressed="draft.interjectSwitchRule === option.value"
+            @click="draft.interjectSwitchRule = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">

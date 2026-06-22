@@ -4928,12 +4928,6 @@ export const useChatStore = defineStore({
         identitySnapshot: payload.identitySnapshot ? { ...payload.identitySnapshot } : null,
         activeIdentityBackup: previousActiveIdentity || null,
       };
-      if (payload.channelId && normalizedIdentityId) {
-        this.setActiveIdentity(payload.channelId, normalizedIdentityId);
-        if (normalizedIdentityVariantId) {
-          this.setActiveIdentityVariant(payload.channelId, normalizedIdentityId, normalizedIdentityVariantId);
-        }
-      }
     },
 
     updateEditingDraft(draft: string) {
@@ -4956,9 +4950,7 @@ export const useChatStore = defineStore({
               const identities = this.channelIdentities[channelId] || [];
               const targetRole = identities.find((identity) => identity.id === targetRoleId);
               if (targetRole) {
-                this.editing.identityId = targetRoleId;
-                // 同时更新当前活跃角色，以便预览正确显示
-                this.setActiveIdentity(channelId, targetRoleId);
+                this.updateEditingIdentity(targetRoleId);
               }
             }
           }
@@ -4968,8 +4960,10 @@ export const useChatStore = defineStore({
 
     updateEditingIdentity(identityId?: string | null) {
       if (this.editing) {
-        this.editing.identityId = identityId || null;
-        if (!identityId) {
+        const nextIdentityId = identityId || null;
+        const previousIdentityId = this.editing.identityId || null;
+        this.editing.identityId = nextIdentityId;
+        if (!nextIdentityId || previousIdentityId !== nextIdentityId) {
           this.editing.identityVariantId = null;
         }
       }
