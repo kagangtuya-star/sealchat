@@ -34,7 +34,8 @@ import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCand
 import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
 import { resolveWorldKeywordTooltipInteractionPolicy } from '@/utils/worldKeywordTooltipInteraction'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
-import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
+import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/utils/messageLink'
+import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
@@ -2211,6 +2212,77 @@ const applyDiceTone = () => {
   });
 };
 
+const findChannelInTree = (list: Array<SChannel | any>, channelId: string): SChannel | null => {
+  for (const item of list || []) {
+    if (item?.id === channelId) {
+      return item as SChannel;
+    }
+    const nested = findChannelInTree((item?.children || []) as Array<SChannel | any>, channelId);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+};
+
+const getChannelTreeForWorld = (worldId: string): SChannel[] => {
+  if (!worldId) {
+    return [];
+  }
+  if (worldId === chat.currentWorldId) {
+    return (chat.channelTree || []) as SChannel[];
+  }
+  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
+};
+
+const findChannelByIdInWorld = (channelId: string, worldId?: string): SChannel | null => {
+  if (!channelId) {
+    return null;
+  }
+  const normalizedWorldId = String(worldId || '').trim();
+  if (!normalizedWorldId || normalizedWorldId === chat.currentWorldId) {
+    return chat.findChannelById(channelId) as SChannel | null;
+  }
+  const tree = getChannelTreeForWorld(normalizedWorldId);
+  return findChannelInTree(tree, channelId);
+};
+
+const getChannelPathForWorld = (channelId: string, worldId: string): string[] => {
+  const target = findChannelByIdInWorld(channelId, worldId);
+  if (!target) {
+    return [];
+  }
+  const segments: string[] = [];
+  const visited = new Set<string>();
+  let current: SChannel | null = target;
+  while (current?.id && !visited.has(current.id)) {
+    visited.add(current.id);
+    const name = String(current.name || '').trim();
+    if (name) {
+      segments.unshift(name);
+    }
+    const parentId = String(current.parentId || '').trim();
+    if (!parentId) {
+      break;
+    }
+    current = findChannelByIdInWorld(parentId, worldId);
+  }
+  return segments;
+};
+
+const getCurrentChannelPath = (): string[] => {
+  const worldId = chat.currentWorldId;
+  return chat.curChannel?.id ? getChannelPathForWorld(chat.curChannel.id, worldId) : [];
+};
+
+const buildMessageLinkContext = () => ({
+  currentWorldId: chat.currentWorldId,
+  worldMap: chat.worldMap,
+  findChannelById: (id: string, worldId?: string) => findChannelByIdInWorld(id, worldId),
+  getChannelPath: (channelId: string, worldId: string) => getChannelPathForWorld(channelId, worldId),
+  getCurrentChannelPath: () => getCurrentChannelPath(),
+});
+
 // 处理消息链接渲染
 const processMessageLinks = () => {
   nextTick(() => {
@@ -2225,22 +2297,18 @@ const processMessageLinks = () => {
       let messageId = link.dataset.messageId || '';
       const url = link.href;
 
-      if (!worldId || !channelId || !messageId) {
-        const parsed = parseMessageLink(url);
+      if (!worldId || !channelId) {
+        const parsed = parseChatLink(url);
         if (parsed) {
           worldId = parsed.worldId;
           channelId = parsed.channelId;
-          messageId = parsed.messageId;
+          messageId = parsed.messageId || '';
         }
       }
 
-      if (!worldId || !channelId || !messageId) return;
+      if (!worldId || !channelId) return;
 
-      const info = resolveMessageLinkInfo(url, {
-        currentWorldId: chat.currentWorldId,
-        worldMap: chat.worldMap,
-        findChannelById: (id) => chat.findChannelById(id),
-      });
+      const info = resolveMessageLinkInfo(url, buildMessageLinkContext());
 
       if (!info) {
         link.classList.remove('message-jump-link-pending');
@@ -2410,13 +2478,9 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
 
       // 解析链接参数
       const url = seg.url!;
-      const params = parseMessageLink(url);
+      const params = parseChatLink(url);
       if (params) {
-        const info = resolveMessageLinkInfo(url, {
-          currentWorldId: chat.currentWorldId,
-          worldMap: chat.worldMap,
-          findChannelById: (id) => chat.findChannelById(id),
-        }, seg.title);
+        const info = resolveMessageLinkInfo(url, buildMessageLinkContext(), seg.title);
 
         if (info) {
           const wrapper = document.createElement('span');
@@ -2811,7 +2875,7 @@ const processStateTextWidgets = () => {
   });
 };
 
-const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId: string; isCurrentWorld: boolean }) => {
+const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId?: string; isCurrentWorld: boolean }) => {
   // 内联跳转，不开新标签页
   if (!info.isCurrentWorld) {
     try {
@@ -2830,11 +2894,13 @@ const handleMessageLinkClick = async (info: { worldId: string; channelId: string
     }
   }
 
-  await nextTick();
-  chatEvent.emit('search-jump', {
-    messageId: info.messageId,
-    channelId: info.channelId,
-  });
+  if (info.messageId) {
+    await nextTick();
+    chatEvent.emit('search-jump', {
+      messageId: info.messageId,
+      channelId: info.channelId,
+    });
+  }
 };
 
 const handleStickyNoteEmbedClick = async (info: StickyNoteEmbedLinkParams) => {

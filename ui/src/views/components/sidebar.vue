@@ -33,6 +33,9 @@ import { useAnnouncementStore } from '@/stores/announcement';
 import type { AnnouncementItem } from '@/models/announcement';
 import { shouldRenderChannelSidebarList } from '@/stores/chatChannelSelection';
 import { MESSAGE_SOUND_MODE_LABELS, type MessageSoundMode } from '@/utils/messageSoundMode';
+import { useUtilsStore } from '@/stores/utils';
+import { generateChannelLink } from '@/utils/messageLink';
+import { copyTextWithFallback } from '@/utils/clipboard';
 
 const { t } = useI18n()
 
@@ -48,6 +51,7 @@ const canCreateChannel = computed(() => canCreateChannelSession({
   observerWorldId: chat.observerWorldId,
 }));
 const user = useUserStore();
+const utils = useUtilsStore();
 const worldGlossary = useWorldGlossaryStore();
 const pushStore = usePushNotificationStore();
 const announcementStore = useAnnouncementStore();
@@ -135,6 +139,43 @@ const handleChannelCopy = async (channel: SChannel) => {
   }
   channelToCopy.value = channel;
   showCopyModal.value = true;
+};
+
+const resolveChannelLinkBase = (): string => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return '';
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const handleChannelCopyLink = async (channel: SChannel) => {
+  if (!channel?.id || !chat.currentWorldId) {
+    message.error('无法生成频道链接');
+    return;
+  }
+  const linkBase = resolveChannelLinkBase();
+  const link = generateChannelLink(
+    {
+      worldId: chat.currentWorldId,
+      channelId: channel.id,
+    },
+    linkBase ? { base: linkBase } : undefined,
+  );
+  const copied = await copyTextWithFallback(link);
+  if (!copied) {
+    message.error('复制失败');
+    return;
+  }
+  message.success('频道链接已复制');
 };
 
 const handleOpenMemberSettings = () => {
@@ -381,6 +422,9 @@ const handleSelect = async (key: string, data: any) => {
       break;
     case 'copy':
       await handleChannelCopy(data.item as SChannel);
+      break;
+    case 'copyLink':
+      await handleChannelCopyLink(data.item as SChannel);
       break;
     case 'leave':
       // 实现退出频道的逻辑
@@ -704,6 +748,7 @@ const handleAckWorldAnnouncement = async () => {
                   <n-dropdown trigger="click" :options="[
                     { label: '进入', key: 'enter', item: chat.temporaryArchivedChannel },
                     { label: '频道设置', key: 'manage', item: chat.temporaryArchivedChannel },
+                    { label: '复制频道链接', key: 'copyLink', item: chat.temporaryArchivedChannel },
                     { label: '复制频道', key: 'copy', item: chat.temporaryArchivedChannel },
                     { label: '恢复归档', key: 'unarchive', item: chat.temporaryArchivedChannel, show: canShowArchive(chat.temporaryArchivedChannel as SChannel) }
                   ]" @select="handleSelect">
@@ -759,6 +804,7 @@ const handleAckWorldAnnouncement = async () => {
                     <n-dropdown trigger="click" :options="[
                       { label: '进入', key: 'enter', item: i },
                       { label: '添加子频道', key: 'addSubChannel', show: !Boolean(i.parentId), item: i },
+                      { label: '复制频道链接', key: 'copyLink', item: i },
                       { label: '频道设置', key: 'manage', item: i },
                       { label: '复制频道', key: 'copy', item: i },
                       { label: '归档', key: 'archive', item: i, show: canShowArchive(i as SChannel) },
@@ -820,6 +866,7 @@ const handleAckWorldAnnouncement = async () => {
                       <div class="flex justify-center space-x-1">
                         <n-dropdown trigger="click" :options="[
                           { label: '进入', key: 'enter', item: child },
+                          { label: '复制频道链接', key: 'copyLink', item: child },
                           { label: '频道设置', key: 'manage', item: child },
                           { label: '复制频道', key: 'copy', item: child },
                           { label: '归档', key: 'archive', item: child, show: canShowArchive(child as SChannel) },
