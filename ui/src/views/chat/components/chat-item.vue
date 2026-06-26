@@ -4371,12 +4371,14 @@ const handleRetrySend = () => {
 .chat-item--layout-bubble > .right {
   margin-left: 0.5rem;
   max-width: calc(100% - 3.5rem);
+  transform: translateX(calc(var(--chat-localized-bubble-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble .chat-item__avatar {
   width: var(--chat-avatar-size, 2.75rem);
   height: var(--chat-avatar-size, 2.75rem);
   margin-right: 0.5rem;
+  transform: translateX(var(--chat-localized-avatar-side-offset, 0px));
 }
 
 .chat-item--layout-bubble .right > .content {
@@ -4400,6 +4402,7 @@ const handleRetrySend = () => {
 .chat-item--layout-bubble.chat-item--self .chat-item__avatar {
   margin-left: 0.5rem;
   margin-right: 0;
+  transform: translateX(calc(var(--chat-localized-avatar-side-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble.chat-item--self > .right {
@@ -4407,6 +4410,7 @@ const handleRetrySend = () => {
   margin-right: 0.5rem;
   align-items: flex-end;
   text-align: right;
+  transform: translateX(calc(var(--chat-localized-bubble-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble.chat-item--self > .right > .title {

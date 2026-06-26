@@ -89,6 +89,8 @@ export interface DisplaySettings {
   fontEnhancedCoverageEnabled: boolean
   bubbleGap: number
   compactBubbleGap: number
+  localizedBubbleVisualOffset: number
+  localizedAvatarSideOffset: number
   paragraphSpacing: number
   messagePaddingX: number
   messagePaddingY: number
@@ -164,11 +166,17 @@ const LETTER_SPACING_DEFAULT = 0
 const LETTER_SPACING_MIN = -1
 const LETTER_SPACING_MAX = 2
 const BUBBLE_GAP_DEFAULT = 12
-const BUBBLE_GAP_MIN = 4
+const BUBBLE_GAP_MIN = 0.5
 const BUBBLE_GAP_MAX = 48
 const COMPACT_BUBBLE_GAP_DEFAULT = 4
 const COMPACT_BUBBLE_GAP_MIN = 0
 const COMPACT_BUBBLE_GAP_MAX = 24
+const LOCALIZED_BUBBLE_VISUAL_OFFSET_DEFAULT = 0
+const LOCALIZED_BUBBLE_VISUAL_OFFSET_MIN = 0
+const LOCALIZED_BUBBLE_VISUAL_OFFSET_MAX = 24
+const LOCALIZED_AVATAR_SIDE_OFFSET_DEFAULT = 0
+const LOCALIZED_AVATAR_SIDE_OFFSET_MIN = -16
+const LOCALIZED_AVATAR_SIDE_OFFSET_MAX = 16
 const PARAGRAPH_SPACING_DEFAULT = 8
 const PARAGRAPH_SPACING_MIN = 0
 const PARAGRAPH_SPACING_MAX = 24
@@ -486,6 +494,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   fontEnhancedCoverageEnabled: false,
   bubbleGap: BUBBLE_GAP_DEFAULT,
   compactBubbleGap: COMPACT_BUBBLE_GAP_DEFAULT,
+  localizedBubbleVisualOffset: LOCALIZED_BUBBLE_VISUAL_OFFSET_DEFAULT,
+  localizedAvatarSideOffset: LOCALIZED_AVATAR_SIDE_OFFSET_DEFAULT,
   paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
@@ -739,6 +749,18 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
         COMPACT_BUBBLE_GAP_MIN,
         COMPACT_BUBBLE_GAP_MAX,
       ),
+      localizedBubbleVisualOffset: coerceFloatInRange(
+        (parsed as any)?.localizedBubbleVisualOffset,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_DEFAULT,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_MIN,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_MAX,
+      ),
+      localizedAvatarSideOffset: coerceFloatInRange(
+        (parsed as any)?.localizedAvatarSideOffset,
+        LOCALIZED_AVATAR_SIDE_OFFSET_DEFAULT,
+        LOCALIZED_AVATAR_SIDE_OFFSET_MIN,
+        LOCALIZED_AVATAR_SIDE_OFFSET_MAX,
+      ),
       paragraphSpacing: coerceNumberInRange(
         parsed.paragraphSpacing,
         PARAGRAPH_SPACING_DEFAULT,
@@ -955,6 +977,24 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'compactBubbleGap')
       ? coerceNumberInRange(patch.compactBubbleGap, COMPACT_BUBBLE_GAP_DEFAULT, COMPACT_BUBBLE_GAP_MIN, COMPACT_BUBBLE_GAP_MAX)
       : base.compactBubbleGap,
+  localizedBubbleVisualOffset:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'localizedBubbleVisualOffset')
+      ? coerceFloatInRange(
+        (patch as any).localizedBubbleVisualOffset,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_DEFAULT,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_MIN,
+        LOCALIZED_BUBBLE_VISUAL_OFFSET_MAX,
+      )
+      : base.localizedBubbleVisualOffset,
+  localizedAvatarSideOffset:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'localizedAvatarSideOffset')
+      ? coerceFloatInRange(
+        (patch as any).localizedAvatarSideOffset,
+        LOCALIZED_AVATAR_SIDE_OFFSET_DEFAULT,
+        LOCALIZED_AVATAR_SIDE_OFFSET_MIN,
+        LOCALIZED_AVATAR_SIDE_OFFSET_MAX,
+      )
+      : base.localizedAvatarSideOffset,
   paragraphSpacing:
     patch && Object.prototype.hasOwnProperty.call(patch, 'paragraphSpacing')
       ? coerceNumberInRange(
@@ -1481,6 +1521,8 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-letter-spacing', `${effective.letterSpacing}px`)
       setVar('--chat-bubble-gap', `${effective.bubbleGap}px`)
       setVar('--chat-compact-gap', `${effective.compactBubbleGap}px`)
+      setVar('--chat-localized-bubble-offset', `${effective.localizedBubbleVisualOffset}px`)
+      setVar('--chat-localized-avatar-side-offset', `${effective.localizedAvatarSideOffset}px`)
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)
