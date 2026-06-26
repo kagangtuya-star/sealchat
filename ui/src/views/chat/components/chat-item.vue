@@ -4841,6 +4841,11 @@ const handleRetrySend = () => {
   white-space: break-spaces;
 }
 
+:global(.content .keyword-highlight) {
+  padding: 0;
+  margin: 0;
+}
+
 :global(.twin-layer-message) {
   position: relative;
 }
