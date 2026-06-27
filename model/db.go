@@ -157,7 +157,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
-	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
+	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioImportJobModel{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
 	db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &AIUserQuotaOverrideModel{})
 	db.AutoMigrate(&PlatformFontAsset{})
 	db.AutoMigrate(&DiceMacroModel{})

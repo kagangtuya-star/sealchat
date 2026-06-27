@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+const (
+	AudioImportJobStatusPending = "pending"
+	AudioImportJobStatusRunning = "running"
+	AudioImportJobStatusDone    = "done"
+	AudioImportJobStatusFailed  = "failed"
+)
+
 type AudioAssetVisibility string
 
 const (
@@ -126,6 +133,29 @@ type AudioFolder struct {
 }
 
 func (*AudioFolder) TableName() string { return "audio_folders" }
+
+type AudioImportJobModel struct {
+	StringPKBaseModel
+	Status         string  `json:"status" gorm:"size:24;default:pending;index"`
+	CreatedBy      string  `json:"createdBy" gorm:"index"`
+	Scope          string  `json:"scope" gorm:"size:24;index"`
+	WorldID        *string `json:"worldId" gorm:"index"`
+	FolderID       *string `json:"folderId" gorm:"index"`
+	DirectoryPath  string  `json:"directoryPath" gorm:"size:512"`
+	TotalFiles     int     `json:"totalFiles"`
+	ProcessedFiles int     `json:"processedFiles"`
+	ImportedCount  int     `json:"importedCount"`
+	SkippedCount   int     `json:"skippedCount"`
+	FailedCount    int     `json:"failedCount"`
+	ErrorMessage   string  `json:"errorMessage" gorm:"type:text"`
+	ImportedJSON   string  `json:"importedJson" gorm:"type:text"`
+	SkippedJSON    string  `json:"skippedJson" gorm:"type:text"`
+	FailedJSON     string  `json:"failedJson" gorm:"type:text"`
+	StartedAt      *time.Time `json:"startedAt"`
+	FinishedAt     *time.Time `json:"finishedAt"`
+}
+
+func (*AudioImportJobModel) TableName() string { return "audio_import_jobs" }
 
 type AudioSceneTrack struct {
 	Type             string   `json:"type"`
