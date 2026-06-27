@@ -311,6 +311,7 @@
       :show="uploadDrawerVisible"
       placement="right"
       :width="uploadDrawerWidth"
+      :destroy-on-close="true"
       @update:show="uploadDrawerVisible = $event"
     >
       <n-drawer-content>

@@ -589,7 +589,7 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .n-radio-button:hover {
-  border-color: var(--sc-border-strong) !important;
+  border-color: var(--sc-border-mute) !important;
 }
 
 /* Keep radio button borders visible in custom theme */
@@ -608,12 +608,12 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .n-radio-button--checked,
-:root[data-custom-theme='true'] .n-radio-button:hover {
+:root[data-custom-theme='true'] .n-radio-button:focus-within {
   z-index: 2;
 }
 
 :root[data-custom-theme='true'] .n-radio-button--checked::after,
-:root[data-custom-theme='true'] .n-radio-button:hover::after {
+:root[data-custom-theme='true'] .n-radio-button:focus-within::after {
   border-color: var(--sc-border-strong);
 }
 

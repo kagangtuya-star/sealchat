@@ -7,7 +7,7 @@
 
     <div class="upload-panel__scope" v-if="audio.isSystemAdmin">
       <div class="upload-panel__scope-main">
-        <n-radio-group v-model:value="uploadScope" size="small">
+        <n-radio-group v-model:value="uploadScope" size="small" class="upload-panel__scope-group">
           <n-radio-button value="common">通用级</n-radio-button>
           <n-radio-button value="world">世界级</n-radio-button>
         </n-radio-group>
@@ -120,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { NAlert, NCheckbox, NCheckboxGroup, NModal, NRadioGroup, NRadioButton, NButton, NTag, NSpin, NSpace } from 'naive-ui';
 import { useMessage } from 'naive-ui';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -133,7 +133,14 @@ const props = defineProps<{
 const audio = useAudioStudioStore();
 const message = useMessage();
 
-const uploadScope = ref<AudioAssetScope>('world');
+function resolveDefaultUploadScope(): AudioAssetScope {
+  if (!audio.isSystemAdmin) {
+    return 'world';
+  }
+  return audio.currentWorldId ? 'world' : 'common';
+}
+
+const uploadScope = ref<AudioAssetScope>(resolveDefaultUploadScope());
 const importDialogVisible = ref(false);
 const importSelection = ref<string[]>([]);
 
@@ -194,6 +201,20 @@ const quotaInlineText = computed(() => {
   }
   return `剩余 ${formatFileSize(quotaSummary.value.remainingBytes ?? 0)} · ${(quotaSummary.value.usagePercent ?? 0).toFixed(1)}%`;
 });
+
+watch(
+  () => audio.currentWorldId,
+  (worldId) => {
+    if (!audio.isSystemAdmin) return;
+    if (!worldId && uploadScope.value === 'world') {
+      uploadScope.value = 'common';
+      return;
+    }
+    if (worldId && uploadScope.value !== 'world') {
+      uploadScope.value = 'world';
+    }
+  }
+);
 
 function getStatusLabel(status: UploadTaskState['status']): string {
   switch (status) {
@@ -368,6 +389,20 @@ function clearAll() {
   align-items: center;
   gap: 0.75rem;
   min-width: 0;
+}
+
+.upload-panel__scope-group :deep(.n-radio-button),
+.upload-panel__scope-group :deep(.n-radio-button__state-border) {
+  box-shadow: none !important;
+}
+
+.upload-panel__scope-group :deep(.n-radio-button:hover),
+.upload-panel__scope-group :deep(.n-radio-button:hover .n-radio-button__state-border),
+.upload-panel__scope-group :deep(.n-radio-button:focus-within),
+.upload-panel__scope-group :deep(.n-radio-button:focus-within .n-radio-button__state-border),
+.upload-panel__scope-group :deep(.n-radio-button--checked),
+.upload-panel__scope-group :deep(.n-radio-button--checked .n-radio-button__state-border) {
+  box-shadow: none !important;
 }
 
 .upload-panel__scope--readonly {
