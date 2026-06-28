@@ -340,7 +340,7 @@ export const resolveIdentityMetaHostBackground = (element?: HTMLElement | null) 
     return rgbToString(baseFallback)
   }
 
-  let current: HTMLElement | null = element
+  let current: HTMLElement | null = element.parentElement
   while (current) {
     const parsed = parseColor(getComputedStyle(current).backgroundColor)
     if (parsed && parsed.a > TRANSPARENT_THRESHOLD) {
