@@ -6,7 +6,7 @@ import { chatEvent, useChatStore, type PendingMessageJump } from '@/stores/chat'
 import type { Event, Message, User } from '@satorijs/protocol'
 import type { AvatarDecoration, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityVariant, GalleryItem, UserInfo, SChannel, WhisperMeta } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, MessagePlus, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight, MoodSmile as EmojiTriggerIcon } from '@vicons/tabler'
 import { NIcon, c, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -157,6 +157,7 @@ import { buildEditMessageUpdateOptions } from './editMessageUpdate';
 import { shouldMergeNeighborMessages } from './messageMerge';
 import { useRobustInfiniteScroll } from '@/composables/useRobustInfiniteScroll';
 import { shouldResetMentionOptionsOnSearchStart, sortMentionableMembersByMode } from './mentionOptionOrdering';
+import { resolveInterjectTargetMode, shouldAllowInterject } from './interjectFlow';
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
@@ -185,6 +186,10 @@ const router = useRouter();
 const route = useRoute();
 const pushStore = usePushNotificationStore();
 const isEditing = computed(() => !!chat.editing);
+const isEditingCurrentChannel = computed(() => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  return Boolean(chat.editing && channelId && chat.editing.channelId === channelId);
+});
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
@@ -1637,7 +1642,47 @@ const emojiPanelContentRef = ref<HTMLElement | null>(null);
 const emojiPanelLoadMoreSentinelRef = ref<HTMLElement | null>(null);
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
-const activeIdentityForEmojiPanel = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const editingIdentityPreviewContext = computed(() => {
+  if (!isEditingCurrentChannel.value || !chat.editing) {
+    return null;
+  }
+  const channelId = String(chat.editing.channelId || '').trim();
+  const identityId = String(chat.editing.identityId || '').trim();
+  const identity = identityId
+    ? (chat.channelIdentities[channelId] || []).find((item) => item.id === identityId) || null
+    : null;
+  const variantId = identityId ? String(chat.editing.identityVariantId || '').trim() : '';
+  const variant = identity && variantId
+    ? chat.getIdentityVariants(channelId, identityId).find((item) => item.id === variantId) || null
+    : null;
+  let appearance = identity ? resolveIdentityAppearancePreview(identity, variant) : null;
+  const snapshot = chat.editing.identitySnapshot as MessageIdentitySnapshot | null | undefined;
+  if (!appearance && snapshot && snapshot.identityId === (identityId || null)) {
+    appearance = {
+      identityId: snapshot.identityId || '',
+      variantId,
+      displayName: snapshot.displayName || '',
+      color: snapshot.color || '',
+      avatarAttachmentId: snapshot.avatarAttachmentId || '',
+      avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations),
+      isTemporary: Boolean(snapshot.isTemporary),
+    };
+  }
+  return {
+    channelId,
+    identityId: identityId || null,
+    identity,
+    variantId: variantId || null,
+    variant,
+    appearance,
+  };
+});
+const activeIdentityForEmojiPanel = computed(() => {
+  if (editingIdentityPreviewContext.value) {
+    return editingIdentityPreviewContext.value.identity;
+  }
+  return chat.getActiveIdentity(chat.curChannel?.id || '');
+});
 const activeIdentityVariantOptions = computed(() => {
   const channelId = chat.curChannel?.id || '';
   const identityId = activeIdentityForEmojiPanel.value?.id || '';
@@ -1647,6 +1692,9 @@ const activeIdentityVariantOptions = computed(() => {
   return chat.getIdentityVariants(channelId, identityId).filter(item => item.enabled !== false);
 });
 const activeIdentityVariantForEmojiPanel = computed(() => {
+  if (editingIdentityPreviewContext.value) {
+    return editingIdentityPreviewContext.value.variant;
+  }
   const channelId = chat.curChannel?.id || '';
   const identityId = activeIdentityForEmojiPanel.value?.id || '';
   if (!channelId || !identityId) {
@@ -2840,6 +2888,13 @@ const handleEmojiVariantSelect = (variantId: string) => {
   const channelId = chat.curChannel?.id || '';
   const identityId = activeIdentityForEmojiPanel.value?.id || '';
   if (!channelId || !identityId) {
+    return;
+  }
+  if (isEditingCurrentChannel.value && chat.editing?.identityId === identityId) {
+    chat.updateEditingIdentityVariant(variantId || null);
+    emojiSearchQuery.value = '';
+    emojiPopoverShow.value = false;
+    emitEditingPreview();
     return;
   }
   chat.setActiveIdentityVariant(channelId, identityId, variantId);
@@ -8706,12 +8761,19 @@ const shouldObserveTypingPreview = computed(() => (
   inputPreviewEnabled.value
   && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
 ));
-const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
+const activeIdentityForPreview = computed(() => {
+  if (editingIdentityPreviewContext.value) {
+    return editingIdentityPreviewContext.value.identity;
+  }
+  return chat.getActiveIdentity(chat.curChannel?.id || '');
+});
 const activeIdentityVariantShortcutContext = computed(() => {
   const rawDraft = textToSend.value;
   const channelId = chat.curChannel?.id || '';
   const identity = activeIdentityForPreview.value;
-  const fallbackVariant = identity ? chat.getActiveIdentityVariant(channelId, identity.id) : null;
+  const fallbackVariant = editingIdentityPreviewContext.value
+    ? editingIdentityPreviewContext.value.variant
+    : (identity ? chat.getActiveIdentityVariant(channelId, identity.id) : null);
   if (isEditing.value || inputMode.value !== 'plain' || !channelId || !identity) {
     return {
       draftContent: rawDraft,
@@ -8753,11 +8815,17 @@ const activeIdentityVariantShortcutContext = computed(() => {
   };
 });
 const activeIdentityVariantForPreview = computed(() => {
+  if (editingIdentityPreviewContext.value) {
+    return editingIdentityPreviewContext.value.variant;
+  }
   return activeIdentityVariantShortcutContext.value.variant;
 });
-const activeIdentityAppearanceForPreview = computed(() => (
-  resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value)
-));
+const activeIdentityAppearanceForPreview = computed(() => {
+  if (editingIdentityPreviewContext.value) {
+    return editingIdentityPreviewContext.value.appearance;
+  }
+  return resolveIdentityAppearancePreview(activeIdentityForPreview.value, activeIdentityVariantForPreview.value);
+});
 const activeIdentityAppearancePreviewSignature = computed(() => {
   const appearance = activeIdentityAppearanceForPreview.value;
   return [
@@ -9731,6 +9799,154 @@ const hasMeaningfulDraft = computed(() => (
   isEditing.value || isContentMeaningful(inputMode.value, textToSend.value)
 ));
 
+type InterjectPhase = 'awaiting-first-send' | 'awaiting-second-send';
+
+interface InterjectComposerSnapshot {
+  channelId: string;
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  identityVariantId: string | null;
+}
+
+interface InterjectEditSnapshot {
+  messageId: string;
+  channelId: string;
+  originalContent: string;
+  draft: string;
+  mode: 'plain' | 'rich';
+  isWhisper: boolean;
+  whisperTargetId: string | null;
+  whisperTargets: User[];
+  icMode: 'ic' | 'ooc';
+  identityId: string | null;
+  identityVariantId: string | null;
+  identitySnapshot: MessageIdentitySnapshot | null;
+}
+
+interface InterjectSession {
+  phase: InterjectPhase;
+  channelId: string;
+  secondMode: 'ic' | 'ooc';
+  firstEditSnapshot: InterjectEditSnapshot | null;
+  returnComposerSnapshot: InterjectComposerSnapshot | null;
+}
+
+const interjectSession = ref<InterjectSession | null>(null);
+const clearInterjectSession = () => {
+  interjectSession.value = null;
+};
+const canStartInterject = computed(() => {
+  if (interjectSession.value) {
+    return false;
+  }
+  return shouldAllowInterject({
+    isEditing: isEditing.value,
+    isConnected: chat.connectState === 'connected',
+    spectatorInputDisabled: spectatorInputDisabled.value,
+    draftText: textToSend.value,
+    hasMeaningfulDraft: !isEditing.value && hasMeaningfulDraft.value,
+    hasUploadingInlineImages: hasUploadingInlineImages.value,
+    hasFailedInlineImages: hasFailedInlineImages.value,
+  });
+});
+const interjectTooltip = computed(() => {
+  const phase = interjectSession.value?.phase;
+  if (phase === 'awaiting-first-send') {
+    return '插话中：正在发送第一条消息';
+  }
+  if (phase === 'awaiting-second-send') {
+    return '插话中：发送下一条消息后回到首条编辑';
+  }
+  return '插话';
+});
+const interjectButtonType = computed(() => (
+  interjectSession.value ? 'primary' : 'default'
+));
+
+function startInterject() {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (interjectSession.value) {
+    return;
+  }
+  if (!canStartInterject.value) {
+    message.warning('当前输入内容不可插话');
+    return;
+  }
+  interjectSession.value = {
+    phase: 'awaiting-first-send',
+    channelId: chat.curChannel.id,
+    secondMode: resolveInterjectTargetMode(inputIcMode.value, display.settings.interjectSwitchRule),
+    firstEditSnapshot: null,
+    returnComposerSnapshot: createInterjectComposerSnapshot(),
+  };
+  send();
+  send.flush();
+}
+
+const handleInterjectSendSuccess = (
+  sentMessage: Message,
+  firstEditSnapshot?: InterjectEditSnapshot | null,
+) => {
+  const session = interjectSession.value;
+  if (!session) {
+    return;
+  }
+  const activeChannelId = String(chat.curChannel?.id || '').trim();
+  if (!activeChannelId || session.channelId !== activeChannelId) {
+    clearInterjectSession();
+    return;
+  }
+  if (session.phase === 'awaiting-first-send') {
+    session.firstEditSnapshot = firstEditSnapshot || createInterjectEditSnapshot({
+      messageId: String(sentMessage?.id || '').trim(),
+      channelId: activeChannelId,
+      originalContent: sentMessage?.content || '',
+      draft: sentMessage?.content || '',
+      mode: detectMessageContentMode(sentMessage?.content),
+      isWhisper: Boolean((sentMessage as any)?.isWhisper),
+      whisperTargetId: resolveMessageWhisperTargetId(sentMessage),
+      whisperTargets: resolveMessageWhisperTargets(sentMessage),
+      icMode: String((sentMessage as any)?.icMode ?? (sentMessage as any)?.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic',
+      identityId: resolveMessageIdentityId(sentMessage),
+      identityVariantId: resolveIdentityVariantIdFromMessage(sentMessage),
+      identitySnapshot: resolveMessageIdentitySnapshot(sentMessage),
+    });
+    if (!session.firstEditSnapshot) {
+      clearInterjectSession();
+      message.warning('插话首条消息快照记录失败');
+      return;
+    }
+    session.phase = 'awaiting-second-send';
+    inputIcMode.value = session.secondMode;
+    nextTick(() => {
+      ensureInputFocus();
+    });
+    return;
+  }
+  if (session.phase === 'awaiting-second-send') {
+    const firstEditSnapshot = session.firstEditSnapshot;
+    const returnComposerSnapshot = session.returnComposerSnapshot;
+    clearInterjectSession();
+    if (!firstEditSnapshot) {
+      message.warning('插话首条消息快照缺失，无法进入编辑态');
+      return;
+    }
+    if (returnComposerSnapshot) {
+      restoreInterjectComposerSnapshot(returnComposerSnapshot);
+    }
+    restoreInterjectEditingSnapshot(firstEditSnapshot);
+  }
+};
+
+const handleInterjectSendFailure = () => {
+  if (interjectSession.value?.phase === 'awaiting-first-send') {
+    clearInterjectSession();
+  }
+};
+
 const getServerAlignedNowMs = () => {
   const localNow = Date.now();
   const offset = Number(chat.serverTimeOffsetMs);
@@ -10568,6 +10784,19 @@ const moveInputCursorToEnd = () => {
   textInputRef.value?.focus?.();
 };
 
+const scheduleInterjectCursorRestoreToEnd = (mode: 'plain' | 'rich') => {
+  nextTick(() => {
+    nextTick(() => {
+      if (mode === 'plain') {
+        moveInputCursorToEnd();
+        return;
+      }
+      const editor = textInputRef.value?.getEditor?.();
+      editor?.chain().focus('end').run();
+    });
+  });
+};
+
 const detectMessageContentMode = (content?: string): 'plain' | 'rich' => {
   if (!content) {
     return 'plain';
@@ -10756,6 +10985,142 @@ const resolveMessageIdentitySnapshot = (msg?: any): MessageIdentitySnapshot | nu
   };
 };
 
+const createInterjectIdentitySnapshot = (
+  identity?: ChannelIdentity | null,
+  appearance?: IdentityAppearancePreview | null,
+): MessageIdentitySnapshot | null => {
+  const identityId = String(identity?.id || appearance?.identityId || '').trim() || null;
+  const displayName = String(appearance?.displayName || identity?.displayName || '').trim();
+  const color = normalizeHexColor(appearance?.color || identity?.color || '') || '';
+  const avatarAttachmentId = String(appearance?.avatarAttachmentId || identity?.avatarAttachmentId || '').trim();
+  const avatarDecorations = cloneAvatarDecorations(appearance?.avatarDecorations);
+  const isTemporary = Boolean(appearance?.isTemporary ?? identity?.isTemporary);
+  if (!identityId && !displayName && !color && !avatarAttachmentId && avatarDecorations.length === 0 && !isTemporary) {
+    return null;
+  }
+  return {
+    identityId,
+    displayName,
+    color,
+    avatarAttachmentId,
+    avatarDecorations,
+    isTemporary,
+  };
+};
+
+const createInterjectEditSnapshot = (source: {
+  messageId?: string | null;
+  channelId?: string | null;
+  originalContent?: string;
+  draft?: string;
+  mode?: 'plain' | 'rich';
+  isWhisper?: boolean;
+  whisperTargetId?: string | null;
+  whisperTargets?: User[];
+  icMode?: 'ic' | 'ooc';
+  identityId?: string | null;
+  identityVariantId?: string | null;
+  identitySnapshot?: MessageIdentitySnapshot | null;
+}): InterjectEditSnapshot | null => {
+  const messageId = String(source.messageId || '').trim();
+  const channelId = String(source.channelId || '').trim();
+  if (!messageId || !channelId) {
+    return null;
+  }
+  const whisperTargets = (source.whisperTargets || [])
+    .filter((target) => target?.id)
+    .map((target) => ({ ...target }));
+  const whisperTargetId = String(source.whisperTargetId || whisperTargets[0]?.id || '').trim() || null;
+  const identityId = String(source.identityId || '').trim() || null;
+  const identityVariantId = String(source.identityVariantId || '').trim() || null;
+  return {
+    messageId,
+    channelId,
+    originalContent: source.originalContent || '',
+    draft: source.draft || source.originalContent || '',
+    mode: source.mode === 'rich' ? 'rich' : 'plain',
+    isWhisper: Boolean(source.isWhisper) || whisperTargets.length > 0,
+    whisperTargetId,
+    whisperTargets,
+    icMode: source.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId,
+    identityVariantId,
+    identitySnapshot: source.identitySnapshot ? {
+      ...source.identitySnapshot,
+      avatarDecorations: cloneAvatarDecorations(source.identitySnapshot.avatarDecorations),
+    } : null,
+  };
+};
+
+const createInterjectComposerSnapshot = (): InterjectComposerSnapshot | null => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId) {
+    return null;
+  }
+  const identityId = String(chat.getActiveIdentityId(channelId) || '').trim() || null;
+  const identityVariantId = identityId
+    ? (String(chat.getActiveIdentityVariantId(channelId, identityId) || '').trim() || null)
+    : null;
+  return {
+    channelId,
+    icMode: inputIcMode.value === 'ooc' ? 'ooc' : 'ic',
+    identityId,
+    identityVariantId,
+  };
+};
+
+const restoreInterjectComposerSnapshot = (snapshot: InterjectComposerSnapshot) => {
+  const channelId = String(snapshot.channelId || '').trim();
+  if (!channelId) {
+    return;
+  }
+  const identityId = String(snapshot.identityId || '').trim();
+  if (identityId) {
+    chat.setActiveIdentity(channelId, identityId, undefined, { syncIcOocFromRole: false });
+    chat.setActiveIdentityVariant(channelId, identityId, snapshot.identityVariantId || '');
+  } else {
+    chat.setActiveIdentity(channelId, '', undefined, { syncIcOocFromRole: false });
+  }
+  chat.setIcMode(snapshot.icMode === 'ooc' ? 'ooc' : 'ic', channelId);
+};
+
+const restoreInterjectEditingSnapshot = (snapshot: InterjectEditSnapshot) => {
+  const messageId = String(snapshot.messageId || '').trim();
+  const channelId = String(snapshot.channelId || '').trim();
+  if (!messageId || !channelId) {
+    message.warning('插话首条消息缺失，无法进入编辑态');
+    return;
+  }
+  reeditRevokedSource.value = null;
+  stopTypingPreviewNow();
+  stopEditingPreviewNow();
+  chat.curReplyTo = null;
+  chat.clearWhisperTargets();
+  invalidateEditSession();
+  const identitySnapshot = snapshot.identitySnapshot
+    ? {
+      ...snapshot.identitySnapshot,
+      avatarDecorations: cloneAvatarDecorations(snapshot.identitySnapshot.avatarDecorations),
+    }
+    : null;
+  chat.startEditingMessage({
+    messageId,
+    channelId,
+    originalContent: snapshot.originalContent || '',
+    draft: snapshot.draft || '',
+    mode: snapshot.mode,
+    isWhisper: Boolean(snapshot.isWhisper),
+    whisperTargetId: snapshot.whisperTargetId || null,
+    whisperTargets: (snapshot.whisperTargets || []).map((target) => ({ ...target })),
+    icMode: snapshot.icMode === 'ooc' ? 'ooc' : 'ic',
+    identityId: snapshot.identityId || null,
+    identityVariantId: snapshot.identityVariantId || null,
+    identitySnapshot,
+  });
+  inputMode.value = snapshot.mode;
+  scheduleInterjectCursorRestoreToEnd(snapshot.mode);
+};
+
 const findIdentityMeta = (channelId?: string, identityId?: string | null) => {
   if (!channelId || !identityId) {
     return null;
@@ -10940,6 +11305,7 @@ const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
   }
+  clearInterjectSession();
   reeditRevokedSource.value = null;
   if (!canEditMessage(target)) {
     message.error('无权编辑该消息');
@@ -11846,6 +12212,9 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
   if (messageId !== previousId) {
     invalidateEditSession();
   }
+  if (messageId && interjectSession.value) {
+    clearInterjectSession();
+  }
   if (!messageId && previousId) {
     stopEditingPreviewNow();
     clearInputModeCache();
@@ -11988,6 +12357,7 @@ const send = throttle(async () => {
     return;
   }
   const sendMode = inputMode.value;
+  const sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
   let identityVariantIdOverride: string | undefined;
@@ -12232,6 +12602,22 @@ const send = throttle(async () => {
     for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
       (tmpMsg as any)[k] = v;
     }
+    const interjectFirstEditSnapshot = interjectSession.value?.phase === 'awaiting-first-send'
+      ? createInterjectEditSnapshot({
+        messageId: String(tmpMsg.id || '').trim(),
+        channelId: activeChannelId,
+        originalContent: finalContent,
+        draft: finalContent,
+        mode: sendMode,
+        isWhisper: whisperTargetsForSend.length > 0,
+        whisperTargetId: whisperTargetIds[0] || null,
+        whisperTargets: whisperTargetsForSend.map((target) => ({ ...target })),
+        icMode: sendIcMode,
+        identityId: activeIdentity?.id || identityIdOverride || null,
+        identityVariantId: activeAppearance?.variantId || identityVariantIdOverride || null,
+        identitySnapshot: createInterjectIdentitySnapshot(activeIdentity, activeAppearance),
+      })
+      : null;
     if (diceMatchesInDraft.length) {
       diceMatchesInDraft.forEach((entry) => recordDiceHistory(entry.source.trim()));
     }
@@ -12263,7 +12649,11 @@ const send = throttle(async () => {
     textToSend.value = '';
     syncSessionDraftSnapshot();
     clearInputModeCache();
-    ensureInputFocus();
+    const shouldDeferInputFocusToInterjectFlow = Boolean(interjectSession.value);
+    if (!shouldDeferInputFocusToInterjectFlow) {
+      ensureInputFocus();
+    }
+    handleInterjectSendSuccess(tmpMsg, interjectFirstEditSnapshot);
   } catch (e) {
     const reason = resolveMessageSendFailureReason(e);
     message.error(`发送失败：${reason}`);
@@ -12279,6 +12669,7 @@ const send = throttle(async () => {
     } else {
       setMessageSendStatus(tmpMsg as any, 'failed', reason);
     }
+    handleInterjectSendFailure();
   }
 
   if (wasAtBottom && !insertPlacement) {
@@ -12289,6 +12680,22 @@ const send = throttle(async () => {
 const handleDiceInsert = (expr: string) => {
   insertDiceExpression(expr.trim() ? `${expr.trim()} ` : expr);
   ensureInputFocus();
+};
+
+const handleIdentitySwitcherChange = () => {
+  if (isEditingCurrentChannel.value) {
+    emitEditingPreview();
+    return;
+  }
+  emitTypingPreview();
+};
+
+const handleEditingIdentitySelected = (identityId: string) => {
+  if (!isEditingCurrentChannel.value) {
+    return;
+  }
+  chat.updateEditingIdentity(identityId || null);
+  emitEditingPreview();
 };
 
 const handleDiceRollNow = (expr: string) => {
@@ -12360,6 +12767,7 @@ watch(
     if (channelId === previous) {
       return;
     }
+    clearInterjectSession();
     resetDraftOrderContext();
     whisperCandidateUsers.value = [];
     if (whisperPanelVisible.value) {
@@ -12391,28 +12799,6 @@ watch(isEditing, (editing) => {
   }
   syncSelfTypingPreview();
 });
-
-watch(
-  () => activeIdentityForPreview.value?.id,
-  (identityId, previous) => {
-    if (!chat.editing || chat.editing.channelId !== chat.curChannel?.id || identityId === previous) {
-      return;
-    }
-    chat.updateEditingIdentity(identityId || null);
-    emitEditingPreview();
-  },
-);
-
-watch(
-  () => activeIdentityVariantForPreview.value?.id,
-  (identityVariantId, previous) => {
-    if (!chat.editing || chat.editing.channelId !== chat.curChannel?.id || identityVariantId === previous) {
-      return;
-    }
-    chat.updateEditingIdentityVariant(identityVariantId || null);
-    emitEditingPreview();
-  },
-);
 
 watch(
   () => activeIdentityAppearancePreviewSignature.value,
@@ -13864,6 +14250,7 @@ const handleChatInputBlur = () => {
 
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'icToggle',
+  'interject',
   'whisper',
   'upload',
   'richMode',
@@ -13888,6 +14275,13 @@ const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
     inputIcMode.value = nextMode;
     emitTypingPreview();
     message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
+    return true;
+  },
+  interject: () => {
+    if (!canStartInterject.value) {
+      return false;
+    }
+    startInterject();
     return true;
   },
   whisper: () => {
@@ -15253,6 +15647,24 @@ onBeforeUnmount(() => {
           <div class="chat-input-actions__cell">
             <n-tooltip trigger="hover">
               <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  :type="interjectButtonType"
+                  :disabled="!canStartInterject"
+                  @click="startInterject"
+                >
+                  <template #icon>
+                    <n-icon :component="MessagePlus" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              {{ interjectTooltip }}
+            </n-tooltip>
+          </div>
+          <div class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
                 <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperToggleActive }"
                   @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
                   <span class="chat-input-actions__icon">W</span>
@@ -16070,11 +16482,15 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    :controlled-selection="isEditingCurrentChannel"
+                    :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
+                    :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"
                     :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
                     @edit-temporary="openActiveTemporaryIdentityEdit"
                     @manage="openIdentityManager"
-                    @identity-changed="emitTypingPreview"
+                    @identity-changed="handleIdentitySwitcherChange"
+                    @identity-selected="handleEditingIdentitySelected"
                     @avatar-setup="handleOpenAvatarPrompt"
                   />
                 </div>
@@ -16370,6 +16786,24 @@ onBeforeUnmount(() => {
                     v-model="inputIcMode"
                   />
                 </div>
+                <div class="chat-input-actions__cell">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button
+                        quaternary
+                        circle
+                        :type="interjectButtonType"
+                        :disabled="!canStartInterject"
+                        @click="startInterject"
+                      >
+                        <template #icon>
+                          <n-icon :component="MessagePlus" size="18" />
+                        </template>
+                      </n-button>
+                    </template>
+                    {{ interjectTooltip }}
+                  </n-tooltip>
+                </div>
 
                <div class="chat-input-actions__cell">
                  <n-tooltip trigger="hover">
@@ -16588,13 +17022,17 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell identity-switcher-cell--minimal">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
+                    :controlled-selection="isEditingCurrentChannel"
+                    :selected-identity-id="isEditingCurrentChannel ? (chat.editing?.identityId || null) : null"
+                    :selected-identity-variant-id="isEditingCurrentChannel ? (chat.editing?.identityVariantId || null) : null"
                     compact
                     icon-only
                     :preview-appearance="activeIdentityAppearanceForPreview"
                     @create="openIdentityCreate"
                     @edit-temporary="openActiveTemporaryIdentityEdit"
                     @manage="openIdentityManager"
-                    @identity-changed="emitTypingPreview"
+                    @identity-changed="handleIdentitySwitcherChange"
+                    @identity-selected="handleEditingIdentitySelected"
                     @avatar-setup="handleOpenAvatarPrompt"
                   />
                 </div>
@@ -19927,6 +20365,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
 }
 
 .chat-input-minimal-side__aux--editing {
@@ -22281,6 +22720,79 @@ onBeforeUnmount(() => {
   color: inherit;
   background-color: var(--spoiler-reveal-bg);
   background-image: none;
+}
+
+.tiptap-text-decoration {
+  --tiptap-decoration-thickness: 0.12em;
+  --tiptap-decoration-underline-offset: 0.18em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.55));
+  --tiptap-decoration-dot-step: 0.36em;
+  --tiptap-decoration-wave-height: 0.22em;
+  --tiptap-decoration-line-layer-1: linear-gradient(currentColor, currentColor);
+  --tiptap-decoration-line-layer-2: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-layer-3: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-size: 100% var(--tiptap-decoration-thickness);
+  --tiptap-decoration-line-pos-1: 0 calc(100% + var(--tiptap-decoration-underline-offset));
+  --tiptap-decoration-line-pos-2: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.24em);
+  --tiptap-decoration-line-pos-3: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.48em);
+  text-decoration: none !important;
+  padding-bottom: calc(var(--tiptap-decoration-underline-offset) + var(--tiptap-decoration-wave-height));
+  background-repeat: repeat-x;
+  background-origin: content-box;
+  background-clip: padding-box;
+  background-image:
+    var(--tiptap-decoration-line-layer-1),
+    var(--tiptap-decoration-line-layer-2),
+    var(--tiptap-decoration-line-layer-3);
+  background-size:
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size);
+  background-position:
+    var(--tiptap-decoration-line-pos-1),
+    var(--tiptap-decoration-line-pos-2),
+    var(--tiptap-decoration-line-pos-3);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.tiptap-text-decoration--strike {
+  --tiptap-decoration-line-pos-1: 0 50%;
+  --tiptap-decoration-line-pos-2: 0 calc(50% - 0.22em);
+  --tiptap-decoration-line-pos-3: 0 calc(50% + 0.22em);
+  padding-bottom: 0;
+}
+
+.tiptap-text-decoration--dotted {
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.5px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--dense-dotted {
+  --tiptap-decoration-dot-step: 0.24em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.7));
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.45px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--wave-soft {
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 42%, currentColor 45% 54%, transparent 58%);
+  --tiptap-decoration-line-size: 0.48em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--wave-heavy {
+  --tiptap-decoration-wave-height: 0.3em;
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 36%, currentColor 40% 58%, transparent 62%);
+  --tiptap-decoration-line-size: 0.46em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--double {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+}
+
+.tiptap-text-decoration--triple {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+  --tiptap-decoration-line-layer-3: var(--tiptap-decoration-line-layer-1);
 }
 
 .tiptap-editor .tiptap-spoiler,

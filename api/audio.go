@@ -31,11 +31,14 @@ type audioPlayTokenResponse struct {
 
 func AudioAssetList(c *fiber.Ctx) error {
 	filters := service.AudioAssetFilters{
-		Query:      c.Query("query"),
-		Page:       c.QueryInt("page", 1),
-		PageSize:   c.QueryInt("pageSize", 200),
-		Tags:       queryStringSlice(c, "tags[]", "tags"),
-		CreatorIDs: queryStringSlice(c, "creatorIds[]", "creatorIds"),
+		Query:             c.Query("query"),
+		Page:              c.QueryInt("page", 1),
+		PageSize:          c.QueryInt("pageSize", 200),
+		Tags:              queryStringSlice(c, "tags[]", "tags"),
+		CreatorIDs:        queryStringSlice(c, "creatorIds[]", "creatorIds"),
+		SortBy:            strings.TrimSpace(c.Query("sortBy")),
+		SortOrder:         strings.TrimSpace(c.Query("sortOrder")),
+		ManualSortEnabled: c.QueryBool("manualSort", true),
 	}
 	if folder := strings.TrimSpace(c.Query("folderId")); folder != "" {
 		switch folder {
@@ -214,16 +217,20 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 	})
 }
 
-func AudioAssetImportPreview(c *fiber.Ctx) error {
+func AudioAssetImportBrowse(c *fiber.Ctx) error {
 	cfg := utils.GetConfig()
 	if cfg == nil || strings.TrimSpace(cfg.Audio.ImportDir) == "" {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
 	}
-	preview, err := service.GetAudioImportPreview()
+	preview, err := service.GetAudioImportBrowser(strings.TrimSpace(c.Query("path")))
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取导入目录失败")
 	}
 	return c.JSON(preview)
+}
+
+func AudioAssetImportPreview(c *fiber.Ctx) error {
+	return AudioAssetImportBrowse(c)
 }
 
 func AudioAssetImport(c *fiber.Ctx) error {
@@ -232,6 +239,7 @@ func AudioAssetImport(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
 	}
 	var req struct {
+		Directory   string                     `json:"directory"`
 		All         bool                       `json:"all"`
 		Paths       []string                   `json:"paths"`
 		Scope       model.AudioAssetScope      `json:"scope"`
@@ -244,7 +252,11 @@ func AudioAssetImport(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "导入请求解析失败")
 	}
-	if !req.All && len(req.Paths) == 0 {
+	if req.All {
+		if strings.TrimSpace(req.Directory) == "" {
+			req.Directory = ""
+		}
+	} else if len(req.Paths) == 0 {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "请指定要导入的文件")
 	}
 	user := getCurUser(c)
@@ -278,9 +290,10 @@ func AudioAssetImport(c *fiber.Ctx) error {
 	if visibility == "" {
 		visibility = model.AudioVisibilityPublic
 	}
-	result, err := service.AudioImportFromDir(service.AudioImportRequest{
-		All:   req.All,
-		Paths: req.Paths,
+	result, err := service.StartAudioImportJob(service.AudioImportRequest{
+		Directory: req.Directory,
+		All:       req.All,
+		Paths:     req.Paths,
 		Options: service.AudioUploadOptions{
 			FolderID:    parseOptionalString(req.FolderID),
 			Tags:        req.Tags,
@@ -293,6 +306,21 @@ func AudioAssetImport(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "导入音频失败")
+	}
+	return c.Status(http.StatusAccepted).JSON(result)
+}
+
+func AudioAssetImportJobStatus(c *fiber.Ctx) error {
+	jobID := strings.TrimSpace(c.Params("jobId"))
+	if jobID == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少任务ID")
+	}
+	result, err := service.GetAudioImportJobStatus(jobID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "导入任务不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取导入任务失败")
 	}
 	return c.JSON(result)
 }
@@ -444,6 +472,29 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新素材失败")
 	}
 	return c.JSON(fiber.Map{"item": updated})
+}
+
+func AudioAssetReorder(c *fiber.Ctx) error {
+	var req struct {
+		IDs      []string `json:"ids"`
+		MovedIDs []string `json:"movedIds"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	items, err := service.AudioReorderAssets(req.IDs, req.MovedIDs, user.ID, isSystemAdmin)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在或无权排序")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新素材排序失败")
+	}
+	return c.JSON(fiber.Map{"items": items})
 }
 
 func AudioAssetDelete(c *fiber.Ctx) error {

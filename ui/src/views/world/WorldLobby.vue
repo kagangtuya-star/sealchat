@@ -205,9 +205,7 @@ const endRequest = (seq: number) => {
 };
 
 const formatWorldDescription = (description?: string) => {
-  const value = (description || '暂无简介').trim() || '暂无简介';
-  const limited = truncateTextByDisplayWidth(value, WORLD_DESCRIPTION_PREVIEW_MAX_WIDTH_UNITS);
-  return splitTextByDisplayWidth(limited, WORLD_DESCRIPTION_PREVIEW_LINE_WIDTH_UNITS).join('\n');
+  return (description || '暂无简介').trim() || '暂无简介';
 };
 
 const formatWorldGridDescription = (description?: string) => {
@@ -1278,57 +1276,84 @@ const handleArchivePageSizeChange = (pageSize: number) => {
     </div>
 
     <template v-if="viewMode === 'list'">
-      <n-card :title="activeCardTitle" class="sc-card-scroll">
-        <div class="card-body-scroll">
-          <n-empty v-if="!activeWorlds.length" :description="activeEmptyText" />
+      <section class="world-list-panel" :aria-label="activeCardTitle">
+        <header class="world-list-panel__header">
+          <h3 class="world-list-panel__title">{{ activeCardTitle }}</h3>
+        </header>
+
+        <div class="world-list-scroll">
+          <n-empty v-if="!activeWorlds.length" :description="activeEmptyText" class="world-list-empty" />
 
           <div v-else class="world-list">
-            <div v-for="item in activeWorlds" :key="item.world.id" class="world-row">
-              <div class="flex items-start gap-2">
-                <n-button quaternary circle size="tiny" @click="toggleFavorite(item.world.id)">
-                  <n-icon
-                    size="16"
-                    :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
+            <article v-for="item in activeWorlds" :key="item.world.id" class="world-list-card">
+              <n-button
+                quaternary
+                circle
+                size="small"
+                class="world-list-favorite"
+                :aria-label="isWorldFavorited(item.world.id) ? `取消收藏 ${item.world.name}` : `收藏 ${item.world.name}`"
+                @click="toggleFavorite(item.world.id)"
+              >
+                <n-icon
+                  size="18"
+                  :color="isWorldFavorited(item.world.id) ? 'var(--sc-accent, #f59e0b)' : 'var(--sc-text-secondary, #94a3b8)'"
+                >
+                  <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
+                </n-icon>
+              </n-button>
+
+              <div class="world-list-content">
+                <div class="world-list-title-row">
+                  <div class="world-list-name" :title="item.world.name">{{ item.world.name }}</div>
+                  <n-tag
+                    v-if="item.isMember"
+                    size="small"
+                    :bordered="false"
+                    class="world-list-role-badge"
+                    :class="`world-list-role-badge--${item.memberRole || 'member'}`"
                   >
-                    <component :is="isWorldFavorited(item.world.id) ? Star : StarOff" />
-                  </n-icon>
-                </n-button>
-                <div class="flex-1 min-w-0">
-                  <div class="font-bold text-sm flex items-center gap-1">
-                    {{ item.world.name }}
-                    <n-tag v-if="isWorldFavorited(item.world.id)" size="tiny" type="warning">收藏</n-tag>
-                  </div>
-                  <div class="text-xs world-desc">{{ formatWorldDescription(item.world.description) }}</div>
+                    {{ getWorldRoleTag(item.memberRole).label }}
+                  </n-tag>
+                </div>
+
+                <div class="world-list-desc" :title="item.world.description || '暂无简介'">
+                  {{ formatWorldDescription(item.world.description) }}
+                </div>
+
+                <div class="world-list-actions">
+                  <button
+                    type="button"
+                    class="world-list-text-action world-list-text-action--favorite"
+                    @click="toggleFavorite(item.world.id)"
+                  >
+                    {{ isWorldFavorited(item.world.id) ? '已收藏' : '收藏' }}
+                  </button>
+                  <button
+                    v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
+                    type="button"
+                    class="world-list-text-action world-list-text-action--danger"
+                    @click="confirmLeaveWorld(item)"
+                  >
+                    退出
+                  </button>
+                  <button
+                    v-if="lobbyMode === 'archive'"
+                    type="button"
+                    class="world-list-text-action"
+                    @click="restoreWorldArchive(item.world.id)"
+                  >
+                    恢复
+                  </button>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
-                <n-tag v-if="item.isMember" size="small" :type="getWorldRoleTag(item.memberRole).type">
-                  {{ getWorldRoleTag(item.memberRole).label }}
-                </n-tag>
-                <n-button
-                  v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
-                  size="tiny"
-                  quaternary
-                  type="error"
-                  @click="confirmLeaveWorld(item)"
-                >
-                  退出
-                </n-button>
-                <n-button
-                  v-if="lobbyMode === 'archive'"
-                  size="tiny"
-                  type="warning"
-                  secondary
-                  @click="restoreWorldArchive(item.world.id)"
-                >
-                  恢复
-                </n-button>
-                <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
-              </div>
-            </div>
+
+              <n-button size="small" type="primary" class="world-list-enter-button" @click="enterWorld(item.world.id)">
+                进入
+              </n-button>
+            </article>
           </div>
         </div>
-      </n-card>
+      </section>
     </template>
 
     <template v-else>
@@ -1837,25 +1862,212 @@ const handleArchivePageSizeChange = (pageSize: number) => {
   min-width: 82px;
 }
 
-.sc-card-scroll {
-  max-height: 520px;
+.world-list-panel {
+  width: min(860px, calc(100vw - 48px));
+  margin: 6px auto 0;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute) 84%, rgba(255, 255, 255, 0.08));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--sc-bg-layer-strong) 94%, transparent), color-mix(in srgb, var(--sc-bg-surface) 96%, transparent));
+  backdrop-filter: blur(10px);
+  box-sizing: border-box;
 }
 
-.card-body-scroll {
-  max-height: 360px;
-  overflow: auto;
-  padding-right: 4px;
+.world-list-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.world-list-panel__title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--sc-text-primary);
+}
+
+.world-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sc-scrollbar-thumb) transparent;
+}
+
+.world-list-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.world-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.world-list-scroll::-webkit-scrollbar-thumb {
+  background: var(--sc-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.world-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--sc-scrollbar-thumb-hover);
+}
+
+.world-list-empty {
+  padding: 48px 0;
 }
 
 .world-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-.world-desc {
-  white-space: pre-line;
+.world-list-card {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--sc-border-mute) 88%, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--sc-bg-surface) 78%, transparent);
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.world-list-card:hover,
+.world-list-card:focus-within {
+  background: color-mix(in srgb, var(--sc-bg-elevated) 84%, transparent);
+  border-color: color-mix(in srgb, #3388de 36%, var(--sc-border-strong));
+  transform: translateY(-1px);
+}
+
+.world-list-favorite {
+  align-self: start;
+  margin-top: 2px;
+}
+
+.world-list-content {
+  min-width: 0;
+}
+
+.world-list-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.world-list-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sc-text-primary);
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.world-list-role-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.35;
   color: var(--sc-text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.world-list-role-badge--member {
+  color: #62e6c5;
+  background: rgba(58, 220, 180, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(58, 220, 180, 0.28);
+}
+
+.world-list-role-badge--owner {
+  color: #f1c96b;
+  background: rgba(241, 201, 107, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(241, 201, 107, 0.3);
+}
+
+.world-list-role-badge--admin {
+  color: #88c9ff;
+  background: rgba(79, 163, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(79, 163, 255, 0.28);
+}
+
+.world-list-role-badge--spectator {
+  color: rgba(230, 230, 235, 0.72);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.world-list-desc {
+  margin-top: 5px;
+  color: var(--sc-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.world-list-actions {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.world-list-text-action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--sc-text-secondary) 88%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.world-list-text-action:hover,
+.world-list-text-action:focus-visible {
+  color: var(--sc-text-primary);
+}
+
+.world-list-text-action--favorite::before {
+  content: '★';
+  margin-right: 4px;
+  font-size: 11px;
+  color: color-mix(in srgb, #f59e0b 72%, var(--sc-text-secondary));
+}
+
+.world-list-text-action--danger:hover,
+.world-list-text-action--danger:focus-visible {
+  color: #ff7b7b;
+}
+
+.world-list-enter-button {
+  align-self: center;
+}
+
+.world-list-enter-button :deep(.n-button__content) {
+  font-weight: 600;
 }
 
 .world-description-field {
@@ -1880,22 +2092,6 @@ const handleArchivePageSizeChange = (pageSize: number) => {
   line-height: 1.4;
   color: var(--sc-text-secondary);
   pointer-events: none;
-}
-
-.world-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: start;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--sc-border-mute);
-  transition: background-color 0.2s ease, border-color 0.2s ease;
-}
-
-.world-row:hover {
-  background-color: var(--sc-chip-bg);
-  border-color: var(--sc-border-strong);
 }
 
 .world-grid-board {
@@ -2234,9 +2430,56 @@ const handleArchivePageSizeChange = (pageSize: number) => {
     min-width: 76px;
   }
 
-  .world-row {
-    grid-template-columns: 1fr;
+  .world-list-panel {
+    width: calc(100vw - 28px);
+    margin-top: 0;
+    padding: 14px;
+    gap: 14px;
+    border-radius: 12px;
+  }
+
+  .world-list-panel__title {
+    font-size: 18px;
+  }
+
+  .world-list-scroll {
+    padding-right: 2px;
+  }
+
+  .world-list-card {
+    grid-template-columns: 28px minmax(0, 1fr);
     gap: 10px;
+    align-items: start;
+    padding: 12px;
+  }
+
+  .world-list-favorite {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+  }
+
+  .world-list-title-row {
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .world-list-name {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .world-list-actions {
+    gap: 10px;
+  }
+
+  .world-list-enter-button {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
   }
 
   .world-grid-board {

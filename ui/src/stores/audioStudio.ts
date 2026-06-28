@@ -10,26 +10,27 @@ import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embeddedRuntime';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
+import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
 import type {
   AudioAsset,
   AudioAssetBatchDeleteSummary,
   AudioBulkDeleteFailure,
   AudioDeleteConflictPayload,
   AudioDeleteResult,
+  AudioFolder,
+  AudioFolderPayload,
+  AudioImportBrowseResult,
+  AudioImportJobStatus,
   AudioAssetListResult,
   AudioAssetMutationPayload,
   AudioQuotaSummary,
   AudioAssetQueryParams,
   AudioAssetScope,
-  AudioFolder,
-  AudioFolderPayload,
   AudioScene,
   AudioSceneInput,
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
-  AudioImportPreview,
-  AudioImportResult,
   AudioPlayableStreamResponse,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
@@ -86,10 +87,12 @@ interface AudioStudioState {
   folderActionLoading: boolean;
   filters: AudioSearchFilters;
   uploadTasks: UploadTaskState[];
-  importPreview: AudioImportPreview | null;
-  importPreviewLoading: boolean;
-  importLoading: boolean;
-  importResult: AudioImportResult | null;
+  importBrowse: AudioImportBrowseResult | null;
+  importDirectoryTree: AudioImportBrowseResult['tree'];
+  importCurrentPath: string;
+  importBrowseLoading: boolean;
+  importJobLoading: boolean;
+  importJobStatus: AudioImportJobStatus | null;
   importError: string | null;
   networkMode: 'normal' | 'constrained' | 'minimal';
   bufferMessage: string;
@@ -217,6 +220,7 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
 }
 let progressTimer: number | null = null;
 let transcodeTimer: number | null = null;
+let importJobPollingTimer: number | null = null;
 const SYNC_DEBOUNCE_MS = 300;
 const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
@@ -357,6 +361,8 @@ function normalizeAssetTags(tags: AudioAsset['tags'] | null | undefined): string
 function normalizeAudioAsset(asset: AudioAsset): AudioAsset {
   return {
     ...asset,
+    sortOrder: Number(asset.sortOrder ?? 0) || 0,
+    manualSorted: !!asset.manualSorted,
     tags: normalizeAssetTags(asset.tags),
   };
 }
@@ -369,6 +375,13 @@ interface FetchAssetsOptions {
   filters?: Partial<AudioSearchFilters>;
   pagination?: Partial<PaginationState>;
   silent?: boolean;
+}
+
+interface FetchFoldersOptions {
+  scope?: AudioAssetScope;
+  worldId?: string | null;
+  includeCommon?: boolean;
+  applyState?: boolean;
 }
 
 function normalizeFolderId(input: string | null | undefined): string | null {
@@ -415,6 +428,15 @@ function buildAssetQueryParams(filters: AudioSearchFilters, pagination: Paginati
   if (filters.includeCommon !== undefined) {
     params.includeCommon = filters.includeCommon;
   }
+  if (filters.sortBy) {
+    params.sortBy = filters.sortBy;
+  }
+  if (filters.sortOrder) {
+    params.sortOrder = filters.sortOrder;
+  }
+  if (filters.manualSort !== undefined) {
+    params.manualSort = filters.manualSort;
+  }
   return params;
 }
 
@@ -456,15 +478,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       creatorIds: [],
       durationRange: null,
       hasSceneOnly: false,
+      sortBy: 'name',
+      sortOrder: 'asc',
+      manualSort: true,
       scope: undefined,
       worldId: null,
       includeCommon: true,
     },
     uploadTasks: [],
-    importPreview: null,
-    importPreviewLoading: false,
-    importLoading: false,
-    importResult: null,
+    importBrowse: null,
+    importDirectoryTree: [],
+    importCurrentPath: '',
+    importBrowseLoading: false,
+    importJobLoading: false,
+    importJobStatus: null,
     importError: null,
     networkMode: 'normal',
     bufferMessage: '',
@@ -1431,25 +1458,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (filters && filters.query !== undefined) {
           this.scenePagination.page = 1;
         }
-        const params: Record<string, unknown> = {
-          ...this.sceneFilters,
-          page: this.scenePagination.page,
-          pageSize: this.scenePagination.pageSize,
-        };
-        if (!params.folderId) {
-          delete params.folderId;
-        }
-        if (!params.query) {
-          delete params.query;
-        }
         if (!this.isSystemAdmin) {
           if (!this.currentWorldId) {
             throw new Error('当前世界上下文缺失，无法加载播放列表');
           }
-          params.scope = 'world';
-          params.worldId = this.currentWorldId;
-          params.includeCommon = false;
         }
+        const params = buildSceneListRequestParams({
+          canManage: this.canManage,
+          isSystemAdmin: this.isSystemAdmin,
+          currentWorldId: this.currentWorldId,
+          sceneFilters: this.sceneFilters,
+          page: this.scenePagination.page,
+          pageSize: this.scenePagination.pageSize,
+        });
         const resp = await api.get('/api/v1/audio/scenes', { params });
         const raw = resp.data as PaginatedResult<AudioScene> | AudioScene[] | undefined;
         const items = Array.isArray(raw) ? raw : raw?.items || [];
@@ -1775,27 +1796,44 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return result;
     },
 
-    async fetchFolders() {
+    async fetchFolders(options?: FetchFoldersOptions) {
       try {
         const params: Record<string, unknown> = {};
-        if (!this.isSystemAdmin && !this.filters.worldId) {
-          return;
+        const targetScope = options?.scope ?? this.filters.scope;
+        const targetWorldId = normalizeFolderId(options?.worldId ?? this.filters.worldId);
+        const includeCommon = options?.includeCommon ?? this.filters.includeCommon;
+        const applyState = options?.applyState ?? true;
+        if (!this.isSystemAdmin && !targetWorldId) {
+          if (applyState) {
+            this.folders = [];
+            this.folderPathLookup = {};
+          }
+          return [];
         }
-        if (this.filters.scope) {
-          params.scope = this.filters.scope;
+        if (targetScope) {
+          params.scope = targetScope;
         }
-        if (this.filters.worldId) {
-          params.worldId = this.filters.worldId;
+        if (targetWorldId) {
+          params.worldId = targetWorldId;
         }
-        if (this.filters.includeCommon !== undefined) {
-          params.includeCommon = this.filters.includeCommon;
+        if (includeCommon !== undefined) {
+          params.includeCommon = includeCommon;
         }
         const resp = await api.get('/api/v1/audio/folders', { params });
-        this.folders = resp.data?.items || [];
-        this.folderPathLookup = buildFolderPathLookup(this.folders);
-        await this.refreshLocalCacheWithFolderPaths();
+        const items = (resp.data?.items || []) as AudioFolder[];
+        if (applyState) {
+          this.folders = items;
+          this.folderPathLookup = buildFolderPathLookup(this.folders);
+          await this.refreshLocalCacheWithFolderPaths();
+        }
+        return items;
       } catch (err) {
         console.error('fetchFolders failed', err);
+        if (options?.applyState ?? true) {
+          this.folders = [];
+          this.folderPathLookup = {};
+        }
+        return [];
       }
     },
 
@@ -1815,8 +1853,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (effectivePayload.scope === 'world' && !effectivePayload.worldId) {
           effectivePayload.worldId = this.filters.worldId ?? this.currentWorldId ?? undefined;
         }
-        await api.post('/api/v1/audio/folders', effectivePayload);
+        const resp = await api.post('/api/v1/audio/folders', effectivePayload);
         await this.fetchFolders();
+        return (resp.data?.item || null) as AudioFolder | null;
       } catch (err) {
         console.error('createFolder failed', err);
         throw err;
@@ -1954,6 +1993,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
         track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
         track.status = 'ready';
+        if (shouldAutoplayLoadedTrack(this.isPlaying, !!track.muted) && track.howl && !track.howl.playing()) {
+          track.howl.play();
+        }
       } catch (err) {
         console.error('loadTrackAsset error', err);
         track.status = 'error';
@@ -2489,6 +2531,22 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.fetchAssets({ pagination: { page: 1, pageSize } });
     },
 
+    async setAssetSort(sortBy: NonNullable<AudioSearchFilters['sortBy']>) {
+      const currentSortBy = this.filters.sortBy ?? 'updatedAt';
+      const currentSortOrder = this.filters.sortOrder ?? 'asc';
+      const nextSortOrder = currentSortBy === sortBy ? (currentSortOrder === 'asc' ? 'desc' : 'asc') : 'asc';
+      await this.applyFilters({
+        sortBy,
+        sortOrder: nextSortOrder,
+      });
+    },
+
+    async setManualSortEnabled(enabled: boolean) {
+      await this.applyFilters({
+        manualSort: enabled,
+      });
+    },
+
     setSelectedAsset(assetId: string | null) {
       this.selectedAssetId = assetId;
     },
@@ -2568,7 +2626,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async batchUpdateAssets(assetIds: string[], payload: AudioAssetMutationPayload) {
       if (!assetIds?.length) {
-        return { success: 0, failed: 0 };
+        return { success: 0, failed: 0, failures: [] };
       }
       if ((payload.scope || payload.worldId !== undefined) && !this.isSystemAdmin) {
         throw new Error('无权限调整素材级别');
@@ -2578,6 +2636,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const tasks = assetIds.map((id) => api.patch(`/api/v1/audio/assets/${id}`, payload));
         const results = await Promise.allSettled(tasks);
         let success = 0;
+        const failures: { assetId: string; reason: string }[] = [];
         results.forEach((result, index) => {
           if (result.status === 'fulfilled') {
             success += 1;
@@ -2590,13 +2649,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
                 this.upsertAssetLocally({ ...existing, ...payload });
               }
             }
+            return;
           }
+          failures.push({
+            assetId: assetIds[index],
+            reason: result.reason?.response?.data?.message || result.reason?.response?.data?.error || result.reason?.message || '更新失败',
+          });
         });
         if (success) {
           await this.persistAssetsToCache();
           await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
         }
-        return { success, failed: assetIds.length - success };
+        return { success, failed: failures.length, failures };
       } finally {
         this.assetBulkLoading = false;
       }
@@ -2630,6 +2694,38 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
         await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: false });
         return { success, failed: failures.length, failures };
+      } finally {
+        this.assetBulkLoading = false;
+      }
+    },
+
+    async reorderAssets(assetIds: string[], movedIds: string[]) {
+      if (!assetIds.length) return;
+      this.assetBulkLoading = true;
+      const previousAssets = [...this.assets];
+      const previousFilteredAssets = [...this.filteredAssets];
+      try {
+        const draggedAssets = this.filteredAssets.filter((asset) => assetIds.includes(asset.id));
+        const positiveOrders = draggedAssets.map((asset) => asset.sortOrder ?? 0).filter((order) => order > 0);
+        const baseSortOrder = positiveOrders.length ? Math.min(...positiveOrders) : 1000;
+        const orderMap = new Map(assetIds.map((id, index) => [id, baseSortOrder + index * 1000] as const));
+        const applyLocalOrder = (list: AudioAsset[]) =>
+          list.map((asset) => ({
+            ...asset,
+            sortOrder: orderMap.get(asset.id) ?? asset.sortOrder ?? 0,
+            manualSorted: movedIds.includes(asset.id) ? true : asset.manualSorted,
+          }));
+        this.assets = applyLocalOrder(this.assets);
+        this.filteredAssets = applyLocalOrder(this.filteredAssets);
+        const resp = await api.post<{ items?: AudioAsset[] }>('/api/v1/audio/assets/reorder', { ids: assetIds, movedIds });
+        const items = normalizeAudioAssets(resp.data?.items || []);
+        items.forEach((item) => this.upsertAssetLocally(item));
+        await this.persistAssetsToCache();
+        await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
+      } catch (err) {
+        this.assets = previousAssets;
+        this.filteredAssets = previousFilteredAssets;
+        throw err;
       } finally {
         this.assetBulkLoading = false;
       }
@@ -2773,57 +2869,135 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await doUpload();
     },
 
-    async previewImport() {
+    async fetchImportBrowser(path = '') {
       if (!this.canManage) return null;
       if (!this.importEnabled) {
         this.importError = '未启用导入目录';
         return null;
       }
-      this.importPreviewLoading = true;
+      this.importBrowseLoading = true;
       this.importError = null;
-      this.importResult = null;
       try {
-        const resp = await api.get('/api/v1/audio/assets/import/preview');
-        this.importPreview = resp.data as AudioImportPreview;
-        return this.importPreview;
+        const params = path ? { path } : undefined;
+        const resp = await api.get('/api/v1/audio/assets/import/browser', { params });
+        const browse = resp.data as AudioImportBrowseResult;
+        this.importBrowse = browse;
+        this.importDirectoryTree = browse.tree || [];
+        this.importCurrentPath = browse.currentPath || '';
+        return browse;
       } catch (err: any) {
         this.importError = err?.response?.data?.message || err?.message || '读取导入目录失败';
-        this.importPreview = null;
+        this.importBrowse = null;
+        this.importDirectoryTree = [];
+        this.importCurrentPath = '';
         return null;
       } finally {
-        this.importPreviewLoading = false;
+        this.importBrowseLoading = false;
       }
     },
 
-    async importFromDir(options: { all: boolean; paths?: string[]; scope?: AudioAssetScope; worldId?: string }) {
+    async startImportJob(options: {
+      directory?: string;
+      all: boolean;
+      paths?: string[];
+      scope?: AudioAssetScope;
+      worldId?: string;
+      folderId?: string | null;
+    }) {
       if (!this.canManage) return null;
       if (!this.importEnabled) {
         this.importError = '未启用导入目录';
         return null;
       }
-      this.importLoading = true;
+      this.importJobLoading = true;
       this.importError = null;
-      this.importResult = null;
+      this.importJobStatus = null;
       try {
         const resp = await api.post('/api/v1/audio/assets/import', {
+          directory: options.directory ?? this.importCurrentPath,
           all: options.all,
           paths: options.paths || [],
           scope: options.scope,
           worldId: options.worldId,
+          folderId: normalizeFolderId(options.folderId) ?? undefined,
         });
-        this.importResult = resp.data as AudioImportResult;
-        try {
-          await this.fetchAssets();
-        } catch (err) {
-          console.warn('refresh assets after import failed', err);
-        }
-        return this.importResult;
+        this.importJobStatus = resp.data as AudioImportJobStatus;
+        return this.importJobStatus;
       } catch (err: any) {
         this.importError = err?.response?.data?.message || err?.message || '导入失败';
         return null;
       } finally {
-        this.importLoading = false;
+        this.importJobLoading = false;
       }
+    },
+
+    async pollImportJobStatus(jobId?: string) {
+      const targetJobId = (jobId || this.importJobStatus?.jobId || '').trim();
+      if (!targetJobId) {
+        return null;
+      }
+      try {
+        const resp = await api.get(`/api/v1/audio/assets/import/jobs/${targetJobId}`);
+        const status = resp.data as AudioImportJobStatus;
+        this.importJobStatus = status;
+        if (status.status === 'done' || status.status === 'failed') {
+          this.stopImportJobPolling();
+          if (status.status === 'done') {
+            const refreshResults = await Promise.allSettled([
+              this.fetchAssets({ pagination: { page: 1 } }),
+              this.fetchTrackSelectableAssets(),
+              this.fetchImportBrowser(this.importCurrentPath),
+            ]);
+            refreshResults.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                console.warn(`audio import refresh ${index} failed`, result.reason);
+              }
+            });
+          }
+        }
+        return status;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '读取导入任务失败';
+        this.stopImportJobPolling();
+        return null;
+      }
+    },
+
+    startImportJobPolling(jobId?: string) {
+      const targetJobId = (jobId || this.importJobStatus?.jobId || '').trim();
+      if (!targetJobId) {
+        return;
+      }
+      this.stopImportJobPolling();
+      void this.pollImportJobStatus(targetJobId);
+      if (typeof window === 'undefined') {
+        return;
+      }
+      importJobPollingTimer = window.setInterval(() => {
+        void this.pollImportJobStatus(targetJobId);
+      }, 2000);
+    },
+
+    stopImportJobPolling() {
+      if (importJobPollingTimer !== null) {
+        clearInterval(importJobPollingTimer);
+        importJobPollingTimer = null;
+      }
+    },
+
+    async previewImport() {
+      return this.fetchImportBrowser('');
+    },
+
+    async importFromDir(options: {
+      directory?: string;
+      all: boolean;
+      paths?: string[];
+      scope?: AudioAssetScope;
+      worldId?: string;
+      folderId?: string | null;
+    }) {
+      return this.startImportJob(options);
     },
 
     async refreshTranscodeTasks() {

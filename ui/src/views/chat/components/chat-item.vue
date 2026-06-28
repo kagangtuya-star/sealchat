@@ -34,7 +34,8 @@ import type { KeywordTooltipSessionState } from '@/utils/worldKeywordTooltipCand
 import { formatWorldKeywordSourceLabel } from '@/utils/worldKeywordSourceLabel'
 import { resolveWorldKeywordTooltipInteractionPolicy } from '@/utils/worldKeywordTooltipInteraction'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
-import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
+import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseChatLink } from '@/utils/messageLink'
+import type { SChannel } from '@/types'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
 import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
@@ -167,6 +168,13 @@ const BOT_USER_ID_PREFIX = 'BOT:';
 const MESSAGE_IFORM_MIN_WIDTH = 120;
 const MESSAGE_IFORM_MIN_HEIGHT = 72;
 const MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE = 480;
+
+const isCoarsePointer = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(hover: none), (pointer: coarse)').matches;
+};
 const StickyNoteCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteCounter.vue'));
 const StickyNoteListEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteList.vue'));
 const StickyNoteSliderEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteSlider.vue'));
@@ -405,6 +413,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
       const widgetHeight = Number.isFinite(embedState.height)
         ? clampStickyNoteEmbedSize(embedState.height as number, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT)
         : undefined;
+      const widgetAspectRatio = widgetWidth && widgetHeight
+        ? `${widgetWidth} / ${widgetHeight}`
+        : undefined;
       const openStickyNote = (event?: MouseEvent | KeyboardEvent) => {
         event?.preventDefault();
         event?.stopPropagation();
@@ -479,8 +490,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
               {
                 class: 'message-sticky-note-embed__widget',
                 style: {
-                  width: widgetWidth ? `${widgetWidth}px` : undefined,
-                  height: widgetHeight ? `${widgetHeight}px` : undefined,
+                  '--sticky-note-embed-width': widgetWidth ? `${widgetWidth}px` : undefined,
+                  '--sticky-note-embed-height': widgetHeight ? `${widgetHeight}px` : undefined,
+                  '--sticky-note-embed-aspect-ratio': widgetAspectRatio,
                 } as Record<string, string | undefined>,
                 onClick: (event: MouseEvent) => event.stopPropagation(),
                 onPointerdown: (event: PointerEvent) => event.stopPropagation(),
@@ -540,14 +552,22 @@ const parseContent = (payload: any, overrideContent?: string) => {
         class: 'message-iform-embed',
         'data-iform-link': singleIFormLink.rawLink,
         'data-message-id': payload?.id || '',
+        'data-iform-width': String(width),
+        'data-iform-height': String(height),
         style: {
-          width: `${width}px`,
-          height: `${height}px`,
-          minWidth: `${MESSAGE_IFORM_MIN_WIDTH}px`,
-          minHeight: `${MESSAGE_IFORM_MIN_HEIGHT}px`,
+          '--message-iform-width': `${width}px`,
+          '--message-iform-height': `${height}px`,
+          '--message-iform-min-width': `${MESSAGE_IFORM_MIN_WIDTH}px`,
+          '--message-iform-min-height': `${MESSAGE_IFORM_MIN_HEIGHT}px`,
         },
       },
-      [h(IFormEmbedFrame, { form: runtimeForm })],
+      [
+        h(
+          'div',
+          { class: 'message-iform-embed__scale' },
+          [h(IFormEmbedFrame, { form: runtimeForm })],
+        ),
+      ],
     );
   }
 
@@ -697,6 +717,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
 
 
 let messageIFormResizeObserver: ResizeObserver | null = null;
+let messageIFormScaleObserver: ResizeObserver | null = null;
 let messageIFormResizePersistTimer: ReturnType<typeof setTimeout> | null = null;
 let messageIFormPersistInFlight = false;
 let messageIFormQueuedSize: { width: number; height: number } | null = null;
@@ -707,6 +728,10 @@ const cleanupMessageIFormResizeSync = () => {
   if (messageIFormResizeObserver) {
     messageIFormResizeObserver.disconnect();
     messageIFormResizeObserver = null;
+  }
+  if (messageIFormScaleObserver) {
+    messageIFormScaleObserver.disconnect();
+    messageIFormScaleObserver = null;
   }
   if (messageIFormResizePersistTimer) {
     clearTimeout(messageIFormResizePersistTimer);
@@ -802,6 +827,26 @@ const resetMessageIFormSyncBaseline = () => {
     : '';
 };
 
+const syncMessageIFormMobileScale = (embedEl: HTMLElement) => {
+  if (!isCoarsePointer()) {
+    embedEl.style.removeProperty('--message-iform-scale');
+    embedEl.style.removeProperty('--message-iform-scaled-height');
+    return;
+  }
+
+  const originalWidth = Number.parseFloat(embedEl.dataset.iformWidth || '');
+  const originalHeight = Number.parseFloat(embedEl.dataset.iformHeight || '');
+  if (!Number.isFinite(originalWidth) || originalWidth <= 0 || !Number.isFinite(originalHeight) || originalHeight <= 0) {
+    return;
+  }
+
+  const parentWidth = embedEl.parentElement?.clientWidth || embedEl.clientWidth || originalWidth;
+  const availableWidth = Math.max(1, parentWidth);
+  const scale = Math.min(1, availableWidth / originalWidth);
+  embedEl.style.setProperty('--message-iform-scale', String(scale));
+  embedEl.style.setProperty('--message-iform-scaled-height', `${Math.round(originalHeight * scale)}px`);
+};
+
 const setupMessageIFormResizeSync = () => {
   cleanupMessageIFormResizeSync();
   const host = messageContentRef.value;
@@ -810,6 +855,14 @@ const setupMessageIFormResizeSync = () => {
   }
   const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
   if (!embedEl) {
+    return;
+  }
+  syncMessageIFormMobileScale(embedEl);
+  if (isCoarsePointer()) {
+    messageIFormScaleObserver = new ResizeObserver(() => {
+      syncMessageIFormMobileScale(embedEl);
+    });
+    messageIFormScaleObserver.observe(embedEl.parentElement || embedEl);
     return;
   }
   messageIFormResizeObserver = new ResizeObserver((entries) => {
@@ -854,6 +907,9 @@ const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
   if (!canEdit.value) {
     return;
   }
+  if (isCoarsePointer()) {
+    return;
+  }
   if (!target?.closest('.message-iform-embed')) {
     return;
   }
@@ -861,6 +917,9 @@ const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
 };
 
 const flushMessageIFormSizeFromDom = () => {
+  if (isCoarsePointer()) {
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) {
     return;
@@ -2211,6 +2270,77 @@ const applyDiceTone = () => {
   });
 };
 
+const findChannelInTree = (list: Array<SChannel | any>, channelId: string): SChannel | null => {
+  for (const item of list || []) {
+    if (item?.id === channelId) {
+      return item as SChannel;
+    }
+    const nested = findChannelInTree((item?.children || []) as Array<SChannel | any>, channelId);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+};
+
+const getChannelTreeForWorld = (worldId: string): SChannel[] => {
+  if (!worldId) {
+    return [];
+  }
+  if (worldId === chat.currentWorldId) {
+    return (chat.channelTree || []) as SChannel[];
+  }
+  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
+};
+
+const findChannelByIdInWorld = (channelId: string, worldId?: string): SChannel | null => {
+  if (!channelId) {
+    return null;
+  }
+  const normalizedWorldId = String(worldId || '').trim();
+  if (!normalizedWorldId || normalizedWorldId === chat.currentWorldId) {
+    return chat.findChannelById(channelId) as SChannel | null;
+  }
+  const tree = getChannelTreeForWorld(normalizedWorldId);
+  return findChannelInTree(tree, channelId);
+};
+
+const getChannelPathForWorld = (channelId: string, worldId: string): string[] => {
+  const target = findChannelByIdInWorld(channelId, worldId);
+  if (!target) {
+    return [];
+  }
+  const segments: string[] = [];
+  const visited = new Set<string>();
+  let current: SChannel | null = target;
+  while (current?.id && !visited.has(current.id)) {
+    visited.add(current.id);
+    const name = String(current.name || '').trim();
+    if (name) {
+      segments.unshift(name);
+    }
+    const parentId = String(current.parentId || '').trim();
+    if (!parentId) {
+      break;
+    }
+    current = findChannelByIdInWorld(parentId, worldId);
+  }
+  return segments;
+};
+
+const getCurrentChannelPath = (): string[] => {
+  const worldId = chat.currentWorldId;
+  return chat.curChannel?.id ? getChannelPathForWorld(chat.curChannel.id, worldId) : [];
+};
+
+const buildMessageLinkContext = () => ({
+  currentWorldId: chat.currentWorldId,
+  worldMap: chat.worldMap,
+  findChannelById: (id: string, worldId?: string) => findChannelByIdInWorld(id, worldId),
+  getChannelPath: (channelId: string, worldId: string) => getChannelPathForWorld(channelId, worldId),
+  getCurrentChannelPath: () => getCurrentChannelPath(),
+});
+
 // 处理消息链接渲染
 const processMessageLinks = () => {
   nextTick(() => {
@@ -2225,22 +2355,18 @@ const processMessageLinks = () => {
       let messageId = link.dataset.messageId || '';
       const url = link.href;
 
-      if (!worldId || !channelId || !messageId) {
-        const parsed = parseMessageLink(url);
+      if (!worldId || !channelId) {
+        const parsed = parseChatLink(url);
         if (parsed) {
           worldId = parsed.worldId;
           channelId = parsed.channelId;
-          messageId = parsed.messageId;
+          messageId = parsed.messageId || '';
         }
       }
 
-      if (!worldId || !channelId || !messageId) return;
+      if (!worldId || !channelId) return;
 
-      const info = resolveMessageLinkInfo(url, {
-        currentWorldId: chat.currentWorldId,
-        worldMap: chat.worldMap,
-        findChannelById: (id) => chat.findChannelById(id),
-      });
+      const info = resolveMessageLinkInfo(url, buildMessageLinkContext());
 
       if (!info) {
         link.classList.remove('message-jump-link-pending');
@@ -2410,13 +2536,9 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
 
       // 解析链接参数
       const url = seg.url!;
-      const params = parseMessageLink(url);
+      const params = parseChatLink(url);
       if (params) {
-        const info = resolveMessageLinkInfo(url, {
-          currentWorldId: chat.currentWorldId,
-          worldMap: chat.worldMap,
-          findChannelById: (id) => chat.findChannelById(id),
-        }, seg.title);
+        const info = resolveMessageLinkInfo(url, buildMessageLinkContext(), seg.title);
 
         if (info) {
           const wrapper = document.createElement('span');
@@ -2811,7 +2933,7 @@ const processStateTextWidgets = () => {
   });
 };
 
-const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId: string; isCurrentWorld: boolean }) => {
+const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId?: string; isCurrentWorld: boolean }) => {
   // 内联跳转，不开新标签页
   if (!info.isCurrentWorld) {
     try {
@@ -2830,11 +2952,13 @@ const handleMessageLinkClick = async (info: { worldId: string; channelId: string
     }
   }
 
-  await nextTick();
-  chatEvent.emit('search-jump', {
-    messageId: info.messageId,
-    channelId: info.channelId,
-  });
+  if (info.messageId) {
+    await nextTick();
+    chatEvent.emit('search-jump', {
+      messageId: info.messageId,
+      channelId: info.channelId,
+    });
+  }
 };
 
 const handleStickyNoteEmbedClick = async (info: StickyNoteEmbedLinkParams) => {
@@ -4247,12 +4371,14 @@ const handleRetrySend = () => {
 .chat-item--layout-bubble > .right {
   margin-left: 0.5rem;
   max-width: calc(100% - 3.5rem);
+  transform: translateX(calc(var(--chat-localized-bubble-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble .chat-item__avatar {
   width: var(--chat-avatar-size, 2.75rem);
   height: var(--chat-avatar-size, 2.75rem);
   margin-right: 0.5rem;
+  transform: translateX(var(--chat-localized-avatar-side-offset, 0px));
 }
 
 .chat-item--layout-bubble .right > .content {
@@ -4276,6 +4402,7 @@ const handleRetrySend = () => {
 .chat-item--layout-bubble.chat-item--self .chat-item__avatar {
   margin-left: 0.5rem;
   margin-right: 0;
+  transform: translateX(calc(var(--chat-localized-avatar-side-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble.chat-item--self > .right {
@@ -4283,6 +4410,7 @@ const handleRetrySend = () => {
   margin-right: 0.5rem;
   align-items: flex-end;
   text-align: right;
+  transform: translateX(calc(var(--chat-localized-bubble-offset, 0px) * -1));
 }
 
 .chat-item--layout-bubble.chat-item--self > .right > .title {
@@ -4711,6 +4839,11 @@ const handleRetrySend = () => {
 :global(.message-rich-content s),
 :global(.message-rich-content mark) {
   white-space: break-spaces;
+}
+
+:global(.content .keyword-highlight) {
+  padding: 0;
+  margin: 0;
 }
 
 :global(.twin-layer-message) {
@@ -5319,7 +5452,8 @@ const handleRetrySend = () => {
 }
 
 .message-sticky-note-embed__widget {
-  width: min(430px, 100%);
+  width: min(var(--sticky-note-embed-width, 430px), 100%);
+  height: var(--sticky-note-embed-height, auto);
   max-width: 100%;
   min-width: 0;
   min-height: 0;
@@ -5327,6 +5461,24 @@ const handleRetrySend = () => {
   resize: both;
   overflow: auto;
   scrollbar-width: thin;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-sticky-note-embed {
+    max-width: 100%;
+  }
+
+  .message-sticky-note-embed__panel {
+    margin-left: 0;
+  }
+
+  .message-sticky-note-embed__widget {
+    box-sizing: border-box;
+    width: min(var(--sticky-note-embed-width, 430px), 100%);
+    height: auto;
+    aspect-ratio: var(--sticky-note-embed-aspect-ratio, auto);
+    resize: none;
+  }
 }
 
 .message-sticky-note-embed__widget :deep(.sticky-note-counter),
@@ -5461,6 +5613,12 @@ const handleRetrySend = () => {
 
 .message-iform-embed {
   position: relative;
+  box-sizing: border-box;
+  width: var(--message-iform-width);
+  height: var(--message-iform-height);
+  min-width: var(--message-iform-min-width, 120px);
+  min-height: var(--message-iform-min-height, 72px);
+  max-width: 100%;
   overflow: auto;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.08)) 88%, transparent);
@@ -5468,6 +5626,33 @@ const handleRetrySend = () => {
   resize: both;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+.message-iform-embed__scale {
+  width: 100%;
+  height: 100%;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-iform-embed {
+    width: min(var(--message-iform-width), 100%);
+    height: var(--message-iform-scaled-height, var(--message-iform-height));
+    min-width: 0;
+    overflow: hidden;
+    resize: none;
+    scrollbar-width: none;
+  }
+
+  .message-iform-embed__scale {
+    width: var(--message-iform-width);
+    height: var(--message-iform-height);
+    transform: scale(var(--message-iform-scale, 1));
+    transform-origin: top left;
+  }
+
+  .message-iform-embed::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .message-iform-embed::-webkit-scrollbar {

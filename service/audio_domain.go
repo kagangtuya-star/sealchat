@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
@@ -19,18 +20,21 @@ import (
 )
 
 type AudioAssetFilters struct {
-	Query         string
-	Tags          []string
-	FolderID      *string
-	CreatorIDs    []string
-	DurationMin   float64
-	DurationMax   float64
-	HasSceneOnly  bool
-	Page          int
-	PageSize      int
-	Scope         model.AudioAssetScope
-	WorldID       *string
-	IncludeCommon bool
+	Query             string
+	Tags              []string
+	FolderID          *string
+	CreatorIDs        []string
+	DurationMin       float64
+	DurationMax       float64
+	HasSceneOnly      bool
+	Page              int
+	PageSize          int
+	SortBy            string
+	SortOrder         string
+	ManualSortEnabled bool
+	Scope             model.AudioAssetScope
+	WorldID           *string
+	IncludeCommon     bool
 }
 
 type AudioAssetUpdateInput struct {
@@ -165,7 +169,23 @@ type AudioImportPreview struct {
 	Invalid int                      `json:"invalid"`
 }
 
+type AudioImportDirectoryNode struct {
+	Path     string                     `json:"path"`
+	Name     string                     `json:"name"`
+	Children []*AudioImportDirectoryNode `json:"children,omitempty"`
+}
+
+type AudioImportBrowseResult struct {
+	Tree        []*AudioImportDirectoryNode `json:"tree"`
+	CurrentPath string                      `json:"currentPath"`
+	Items       []AudioImportPreviewItem    `json:"items"`
+	Total       int                         `json:"total"`
+	Valid       int                         `json:"valid"`
+	Invalid     int                         `json:"invalid"`
+}
+
 type AudioImportRequest struct {
+	Directory string
 	All     bool
 	Paths   []string
 	Options AudioUploadOptions
@@ -185,6 +205,31 @@ type AudioImportResult struct {
 	Failed   []AudioImportResultItem `json:"failed"`
 	Skipped  []AudioImportResultItem `json:"skipped"`
 }
+
+type AudioImportJobStatus struct {
+	JobID          string                  `json:"jobId"`
+	Status         string                  `json:"status"`
+	Directory      string                  `json:"directory"`
+	TotalFiles     int                     `json:"totalFiles"`
+	ProcessedFiles int                     `json:"processedFiles"`
+	ImportedCount  int                     `json:"importedCount"`
+	SkippedCount   int                     `json:"skippedCount"`
+	FailedCount    int                     `json:"failedCount"`
+	ErrorMessage   string                  `json:"errorMessage,omitempty"`
+	Percentage     int                     `json:"percentage"`
+	Imported       []AudioImportResultItem `json:"imported"`
+	Failed         []AudioImportResultItem `json:"failed"`
+	Skipped        []AudioImportResultItem `json:"skipped"`
+	StartedAt      *time.Time              `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time              `json:"finishedAt,omitempty"`
+}
+
+const (
+	AudioImportJobStatusPending = model.AudioImportJobStatusPending
+	AudioImportJobStatusRunning = model.AudioImportJobStatusRunning
+	AudioImportJobStatusDone    = model.AudioImportJobStatusDone
+	AudioImportJobStatusFailed  = model.AudioImportJobStatusFailed
+)
 
 type AudioFolderNode struct {
 	*model.AudioFolder
@@ -300,6 +345,8 @@ var audioPlaybackRuntimeStore = struct {
 
 func (f *AudioAssetFilters) normalize() {
 	f.Query = strings.TrimSpace(f.Query)
+	f.SortBy = normalizeAudioAssetSortField(f.SortBy)
+	f.SortOrder = normalizeAdminAudioSortOrder(f.SortOrder)
 	if f.Page <= 0 {
 		f.Page = 1
 	}
@@ -518,11 +565,59 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 			}
 		}
-		return q.Order("updated_at DESC")
+		return applyAudioAssetListOrder(q, filters.SortBy, filters.SortOrder, filters.ManualSortEnabled)
 	})
 }
 
-func GetAudioImportPreview() (*AudioImportPreview, error) {
+func normalizeAudioAssetSortField(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "manual":
+		return "manual"
+	case "name", "scope", "duration", "updatedAt":
+		return strings.TrimSpace(value)
+	default:
+		return "manual"
+	}
+}
+
+func applyAudioAssetListOrder(q *gorm.DB, sortBy, sortOrder string, manualSortEnabled bool) *gorm.DB {
+	desc := sortOrder == "desc"
+	manualFirst := func(q *gorm.DB) *gorm.DB {
+		if manualSortEnabled {
+			return q.Order("manual_sorted DESC").Order("CASE WHEN manual_sorted THEN sort_order ELSE 0 END ASC")
+		}
+		return q
+	}
+	withStableTail := func(q *gorm.DB) *gorm.DB {
+		return q.Order("id ASC")
+	}
+	switch sortBy {
+	case "name":
+		if desc {
+			return withStableTail(manualFirst(q).Order("LOWER(name) DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("LOWER(name) ASC"))
+	case "scope":
+		if desc {
+			return withStableTail(manualFirst(q).Order("scope DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("scope ASC"))
+	case "duration":
+		if desc {
+			return withStableTail(manualFirst(q).Order("duration DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("duration ASC"))
+	case "updatedAt":
+		if desc {
+			return withStableTail(manualFirst(q).Order("updated_at DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("updated_at ASC"))
+	default:
+		return q.Order("sort_order ASC").Order("id ASC")
+	}
+}
+
+func GetAudioImportBrowser(currentPath string) (*AudioImportBrowseResult, error) {
 	svc := GetAudioService()
 	if svc == nil {
 		return nil, errors.New("音频服务未初始化")
@@ -531,30 +626,22 @@ func GetAudioImportPreview() (*AudioImportPreview, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(importDir)
+	tree, err := buildAudioImportDirectoryTree(importDir, "")
 	if err != nil {
 		return nil, err
 	}
-	items := make([]AudioImportPreviewItem, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if shouldSkipImportEntry(name, entry) {
-			continue
-		}
-		fullPath := filepath.Join(importDir, name)
-		item := buildAudioImportPreviewItem(svc, fullPath, name)
-		items = append(items, item)
+	fullDir, normalizedPath, err := resolveAudioImportRelativePath(importDir, currentPath, true)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Name < items[j].Name
-	})
-	validCount := 0
-	for _, item := range items {
-		if item.Valid {
-			validCount++
-		}
+	items, err := listAudioImportDirectoryItems(svc, importDir, fullDir, normalizedPath)
+	if err != nil {
+		return nil, err
 	}
-	return &AudioImportPreview{
+	validCount := countValidAudioImportItems(items)
+	return &AudioImportBrowseResult{
+		Tree:        tree,
+		CurrentPath: normalizedPath,
 		Items:   items,
 		Total:   len(items),
 		Valid:   validCount,
@@ -562,7 +649,11 @@ func GetAudioImportPreview() (*AudioImportPreview, error) {
 	}, nil
 }
 
-func AudioImportFromDir(req AudioImportRequest) (*AudioImportResult, error) {
+func GetAudioImportPreview() (*AudioImportBrowseResult, error) {
+	return GetAudioImportBrowser("")
+}
+
+func StartAudioImportJob(req AudioImportRequest) (*AudioImportJobStatus, error) {
 	svc := GetAudioService()
 	if svc == nil {
 		return nil, errors.New("音频服务未初始化")
@@ -571,89 +662,27 @@ func AudioImportFromDir(req AudioImportRequest) (*AudioImportResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &AudioImportResult{}
-	paths := make([]string, 0)
-	seen := map[string]struct{}{}
 	if req.All {
-		preview, err := GetAudioImportPreview()
-		if err != nil {
+		if _, _, err := resolveAudioImportRelativePath(importDir, req.Directory, true); err != nil {
 			return nil, err
 		}
-		for _, item := range preview.Items {
-			if !item.Valid {
-				result.Skipped = append(result.Skipped, AudioImportResultItem{
-					Path:   item.Path,
-					Name:   item.Name,
-					Reason: item.Reason,
-				})
-				continue
-			}
-			if _, ok := seen[item.Path]; ok {
-				continue
-			}
-			seen[item.Path] = struct{}{}
-			paths = append(paths, item.Path)
-		}
-	} else {
-		for _, raw := range req.Paths {
-			name := strings.TrimSpace(raw)
-			if name == "" {
-				continue
-			}
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			paths = append(paths, name)
-		}
 	}
-	for _, name := range paths {
-		fullPath, err := resolveAudioImportPath(importDir, name)
-		if err != nil {
-			result.Skipped = append(result.Skipped, AudioImportResultItem{
-				Path:   name,
-				Name:   name,
-				Reason: err.Error(),
-			})
-			continue
-		}
-		previewItem := buildAudioImportPreviewItem(svc, fullPath, name)
-		if !previewItem.Valid {
-			result.Skipped = append(result.Skipped, AudioImportResultItem{
-				Path:   name,
-				Name:   previewItem.Name,
-				Reason: previewItem.Reason,
-			})
-			continue
-		}
-		asset, err := AudioCreateAssetFromImport(fullPath, req.Options)
-		if err != nil {
-			if errors.Is(err, ErrAudioTooLarge) || errors.Is(err, ErrAudioUnsupportedMime) {
-				result.Skipped = append(result.Skipped, AudioImportResultItem{
-					Path:   name,
-					Name:   previewItem.Name,
-					Reason: err.Error(),
-				})
-				continue
-			}
-			result.Failed = append(result.Failed, AudioImportResultItem{
-				Path:  name,
-				Name:  previewItem.Name,
-				Error: err.Error(),
-			})
-			continue
-		}
-		item := AudioImportResultItem{
-			Path:    name,
-			Name:    asset.Name,
-			AssetID: asset.ID,
-		}
-		if err := os.Remove(fullPath); err != nil {
-			item.Warning = fmt.Sprintf("导入成功但清理失败: %v", err)
-		}
-		result.Imported = append(result.Imported, item)
+	job := &model.AudioImportJobModel{}
+	job.StringPKBaseModel.Init()
+	job.Status = model.AudioImportJobStatusPending
+	job.CreatedBy = strings.TrimSpace(req.Options.CreatedBy)
+	job.Scope = strings.TrimSpace(string(req.Options.Scope))
+	job.WorldID = cloneStringPtr(req.Options.WorldID)
+	job.FolderID = cloneStringPtr(req.Options.FolderID)
+	job.DirectoryPath = strings.TrimSpace(req.Directory)
+	job.ImportedJSON = "[]"
+	job.SkippedJSON = "[]"
+	job.FailedJSON = "[]"
+	if err := model.GetDB().Create(job).Error; err != nil {
+		return nil, err
 	}
-	return result, nil
+	go executeAudioImportJob(job.ID, req)
+	return audioImportJobModelToStatus(job)
 }
 
 func getAudioImportDir(svc *audioService) (string, error) {
@@ -672,10 +701,7 @@ func shouldSkipImportEntry(name string, entry os.DirEntry) bool {
 	if trimmed == "" {
 		return true
 	}
-	if strings.HasPrefix(trimmed, ".") {
-		return true
-	}
-	if entry.IsDir() {
+	if isHiddenImportPath(trimmed) {
 		return true
 	}
 	if entry.Type()&os.ModeSymlink != 0 {
@@ -685,25 +711,8 @@ func shouldSkipImportEntry(name string, entry os.DirEntry) bool {
 }
 
 func resolveAudioImportPath(importDir, name string) (string, error) {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return "", errors.New("文件名为空")
-	}
-	if filepath.Base(trimmed) != trimmed {
-		return "", errors.New("非法文件路径")
-	}
-	if strings.HasPrefix(trimmed, ".") {
-		return "", errors.New("隐藏文件")
-	}
-	fullPath := filepath.Join(importDir, trimmed)
-	relPath, err := filepath.Rel(importDir, fullPath)
-	if err != nil {
-		return "", errors.New("非法文件路径")
-	}
-	if relPath == "." || strings.HasPrefix(relPath, "..") || strings.HasPrefix(filepath.Clean(relPath), "..") {
-		return "", errors.New("非法文件路径")
-	}
-	return fullPath, nil
+	fullPath, _, err := resolveAudioImportRelativePath(importDir, name, false)
+	return fullPath, err
 }
 
 func buildAudioImportPreviewItem(svc *audioService, fullPath, name string) AudioImportPreviewItem {
@@ -745,6 +754,400 @@ func buildAudioImportPreviewItem(svc *audioService, fullPath, name string) Audio
 	item.MimeType = mimeType
 	item.Valid = true
 	return item
+}
+
+func resolveAudioImportRelativePath(importDir, rawPath string, allowRoot bool) (string, string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		if allowRoot {
+			return importDir, "", nil
+		}
+		return "", "", errors.New("文件路径为空")
+	}
+	rawNormalized := strings.ReplaceAll(trimmed, "\\", "/")
+	for _, segment := range strings.Split(rawNormalized, "/") {
+		segment = strings.TrimSpace(segment)
+		if segment == ".." || segment == "." {
+			return "", "", errors.New("非法文件路径")
+		}
+		if strings.HasPrefix(segment, ".") {
+			return "", "", errors.New("隐藏文件")
+		}
+	}
+	normalized := filepath.ToSlash(filepath.Clean(rawNormalized))
+	if normalized == "." {
+		if allowRoot {
+			return importDir, "", nil
+		}
+		return "", "", errors.New("文件路径为空")
+	}
+	if normalized == ".." || strings.HasPrefix(normalized, "../") || strings.HasPrefix(normalized, "/") {
+		return "", "", errors.New("非法文件路径")
+	}
+	segments := strings.Split(normalized, "/")
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" || segment == "." || segment == ".." {
+			return "", "", errors.New("非法文件路径")
+		}
+	}
+	fullPath := filepath.Join(importDir, filepath.FromSlash(normalized))
+	relPath, err := filepath.Rel(importDir, fullPath)
+	if err != nil {
+		return "", "", errors.New("非法文件路径")
+	}
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	if relPath == "." {
+		if allowRoot {
+			return importDir, "", nil
+		}
+		return "", "", errors.New("非法文件路径")
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, "../") {
+		return "", "", errors.New("非法文件路径")
+	}
+	return fullPath, relPath, nil
+}
+
+func isHiddenImportPath(name string) bool {
+	normalized := filepath.ToSlash(strings.TrimSpace(name))
+	if normalized == "" {
+		return false
+	}
+	for _, segment := range strings.Split(normalized, "/") {
+		if strings.HasPrefix(strings.TrimSpace(segment), ".") {
+			return true
+		}
+	}
+	return false
+}
+
+func buildAudioImportDirectoryTree(importDir, currentRelative string) ([]*AudioImportDirectoryNode, error) {
+	fullDir, _, err := resolveAudioImportRelativePath(importDir, currentRelative, true)
+	if err != nil {
+		return nil, err
+	}
+	return buildAudioImportDirectoryNodes(importDir, fullDir)
+}
+
+func buildAudioImportDirectoryNodes(importDir, currentDir string) ([]*AudioImportDirectoryNode, error) {
+	entries, err := os.ReadDir(currentDir)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]*AudioImportDirectoryNode, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if shouldSkipImportEntry(name, entry) || !entry.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(currentDir, name)
+		relPath, err := filepath.Rel(importDir, fullPath)
+		if err != nil {
+			return nil, err
+		}
+		relPath = filepath.ToSlash(filepath.Clean(relPath))
+		children, err := buildAudioImportDirectoryNodes(importDir, fullPath)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, &AudioImportDirectoryNode{
+			Path:     relPath,
+			Name:     name,
+			Children: children,
+		})
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
+	return nodes, nil
+}
+
+func listAudioImportDirectoryItems(svc *audioService, importDir, fullDir, currentRelative string) ([]AudioImportPreviewItem, error) {
+	entries, err := os.ReadDir(fullDir)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]AudioImportPreviewItem, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if shouldSkipImportEntry(name, entry) || entry.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(fullDir, name)
+		relName := name
+		if currentRelative != "" {
+			relName = filepath.ToSlash(filepath.Join(currentRelative, name))
+		}
+		item := buildAudioImportPreviewItem(svc, fullPath, relName)
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
+	})
+	return items, nil
+}
+
+func countValidAudioImportItems(items []AudioImportPreviewItem) int {
+	count := 0
+	for _, item := range items {
+		if item.Valid {
+			count++
+		}
+	}
+	return count
+}
+
+func executeAudioImportJob(jobID string, req AudioImportRequest) {
+	job := &model.AudioImportJobModel{}
+	if err := model.GetDB().Where("id = ?", jobID).First(job).Error; err != nil {
+		return
+	}
+	startedAt := time.Now()
+	job.Status = model.AudioImportJobStatusRunning
+	job.StartedAt = &startedAt
+	_ = persistAudioImportJob(job, nil, nil, nil)
+
+	svc := GetAudioService()
+	if svc == nil {
+		finishAudioImportJobWithFatal(job, "音频服务未初始化")
+		return
+	}
+	importDir, err := getAudioImportDir(svc)
+	if err != nil {
+		finishAudioImportJobWithFatal(job, err.Error())
+		return
+	}
+	paths, err := collectRequestedAudioImportPaths(svc, importDir, req)
+	if err != nil {
+		finishAudioImportJobWithFatal(job, err.Error())
+		return
+	}
+	job.TotalFiles = len(paths)
+	_ = persistAudioImportJob(job, nil, nil, nil)
+	if len(paths) == 0 {
+		finishedAt := time.Now()
+		job.Status = model.AudioImportJobStatusDone
+		job.FinishedAt = &finishedAt
+		_ = persistAudioImportJob(job, []AudioImportResultItem{}, []AudioImportResultItem{}, []AudioImportResultItem{})
+		return
+	}
+
+	imported := make([]AudioImportResultItem, 0, len(paths))
+	failed := make([]AudioImportResultItem, 0)
+	skipped := make([]AudioImportResultItem, 0)
+
+	for _, name := range paths {
+		fullPath, err := resolveAudioImportPath(importDir, name)
+		if err != nil {
+			skipped = append(skipped, AudioImportResultItem{Path: name, Name: name, Reason: err.Error()})
+			job.SkippedCount++
+			job.ProcessedFiles++
+			_ = persistAudioImportJob(job, imported, skipped, failed)
+			continue
+		}
+		previewItem := buildAudioImportPreviewItem(svc, fullPath, name)
+		if !previewItem.Valid {
+			skipped = append(skipped, AudioImportResultItem{
+				Path:   name,
+				Name:   previewItem.Name,
+				Reason: previewItem.Reason,
+			})
+			job.SkippedCount++
+			job.ProcessedFiles++
+			_ = persistAudioImportJob(job, imported, skipped, failed)
+			continue
+		}
+		asset, err := AudioCreateAssetFromImport(fullPath, req.Options)
+		if err != nil {
+			if errors.Is(err, ErrAudioTooLarge) || errors.Is(err, ErrAudioUnsupportedMime) {
+				skipped = append(skipped, AudioImportResultItem{
+					Path:   name,
+					Name:   previewItem.Name,
+					Reason: err.Error(),
+				})
+				job.SkippedCount++
+			} else {
+				failed = append(failed, AudioImportResultItem{
+					Path:  name,
+					Name:  previewItem.Name,
+					Error: err.Error(),
+				})
+				job.FailedCount++
+			}
+			job.ProcessedFiles++
+			_ = persistAudioImportJob(job, imported, skipped, failed)
+			continue
+		}
+		item := AudioImportResultItem{
+			Path:    name,
+			Name:    asset.Name,
+			AssetID: asset.ID,
+		}
+		if err := os.Remove(fullPath); err != nil {
+			item.Warning = fmt.Sprintf("导入成功但清理失败: %v", err)
+		}
+		imported = append(imported, item)
+		job.ImportedCount++
+		job.ProcessedFiles++
+		_ = persistAudioImportJob(job, imported, skipped, failed)
+	}
+
+	finishedAt := time.Now()
+	job.Status = model.AudioImportJobStatusDone
+	job.FinishedAt = &finishedAt
+	_ = persistAudioImportJob(job, imported, skipped, failed)
+}
+
+func finishAudioImportJobWithFatal(job *model.AudioImportJobModel, message string) {
+	finishedAt := time.Now()
+	job.Status = model.AudioImportJobStatusFailed
+	job.ErrorMessage = strings.TrimSpace(message)
+	job.FinishedAt = &finishedAt
+	_ = persistAudioImportJob(job, nil, nil, nil)
+}
+
+func collectRequestedAudioImportPaths(svc *audioService, importDir string, req AudioImportRequest) ([]string, error) {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0)
+	if req.All {
+		fullDir, normalizedDir, err := resolveAudioImportRelativePath(importDir, req.Directory, true)
+		if err != nil {
+			return nil, err
+		}
+		items, err := listAudioImportDirectoryItems(svc, importDir, fullDir, normalizedDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if _, ok := seen[item.Path]; ok {
+				continue
+			}
+			seen[item.Path] = struct{}{}
+			paths = append(paths, item.Path)
+		}
+		return paths, nil
+	}
+	for _, raw := range req.Paths {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		paths = append(paths, filepath.ToSlash(filepath.Clean(strings.ReplaceAll(name, "\\", "/"))))
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func persistAudioImportJob(job *model.AudioImportJobModel, imported, skipped, failed []AudioImportResultItem) error {
+	if job == nil {
+		return nil
+	}
+	if imported != nil {
+		if payload, err := json.Marshal(imported); err == nil {
+			job.ImportedJSON = string(payload)
+		} else {
+			return err
+		}
+	}
+	if skipped != nil {
+		if payload, err := json.Marshal(skipped); err == nil {
+			job.SkippedJSON = string(payload)
+		} else {
+			return err
+		}
+	}
+	if failed != nil {
+		if payload, err := json.Marshal(failed); err == nil {
+			job.FailedJSON = string(payload)
+		} else {
+			return err
+		}
+	}
+	return model.GetDB().Model(&model.AudioImportJobModel{}).Where("id = ?", job.ID).Updates(map[string]interface{}{
+		"status":          job.Status,
+		"directory_path":  job.DirectoryPath,
+		"total_files":     job.TotalFiles,
+		"processed_files": job.ProcessedFiles,
+		"imported_count":  job.ImportedCount,
+		"skipped_count":   job.SkippedCount,
+		"failed_count":    job.FailedCount,
+		"error_message":   job.ErrorMessage,
+		"imported_json":   job.ImportedJSON,
+		"skipped_json":    job.SkippedJSON,
+		"failed_json":     job.FailedJSON,
+		"started_at":      job.StartedAt,
+		"finished_at":     job.FinishedAt,
+	}).Error
+}
+
+func GetAudioImportJobStatus(jobID string) (*AudioImportJobStatus, error) {
+	job := &model.AudioImportJobModel{}
+	if err := model.GetDB().Where("id = ?", strings.TrimSpace(jobID)).First(job).Error; err != nil {
+		return nil, err
+	}
+	return audioImportJobModelToStatus(job)
+}
+
+func audioImportJobModelToStatus(job *model.AudioImportJobModel) (*AudioImportJobStatus, error) {
+	if job == nil {
+		return nil, errors.New("导入任务不存在")
+	}
+	imported, err := decodeAudioImportResultItems(job.ImportedJSON)
+	if err != nil {
+		return nil, err
+	}
+	skipped, err := decodeAudioImportResultItems(job.SkippedJSON)
+	if err != nil {
+		return nil, err
+	}
+	failed, err := decodeAudioImportResultItems(job.FailedJSON)
+	if err != nil {
+		return nil, err
+	}
+	percentage := 0
+	if job.TotalFiles > 0 {
+		percentage = int(float64(job.ProcessedFiles) / float64(job.TotalFiles) * 100)
+		if percentage > 100 {
+			percentage = 100
+		}
+	}
+	return &AudioImportJobStatus{
+		JobID:          job.ID,
+		Status:         job.Status,
+		Directory:      job.DirectoryPath,
+		TotalFiles:     job.TotalFiles,
+		ProcessedFiles: job.ProcessedFiles,
+		ImportedCount:  job.ImportedCount,
+		SkippedCount:   job.SkippedCount,
+		FailedCount:    job.FailedCount,
+		ErrorMessage:   job.ErrorMessage,
+		Percentage:     percentage,
+		Imported:       imported,
+		Failed:         failed,
+		Skipped:        skipped,
+		StartedAt:      job.StartedAt,
+		FinishedAt:     job.FinishedAt,
+	}, nil
+}
+
+func decodeAudioImportResultItems(raw string) ([]AudioImportResultItem, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []AudioImportResultItem{}, nil
+	}
+	var items []AudioImportResultItem
+	if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return []AudioImportResultItem{}, nil
+	}
+	return items, nil
 }
 
 func normalizeTrackStates(items []AudioTrackState) []AudioTrackState {
@@ -1358,6 +1761,101 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 		return nil, err
 	}
 	return asset, nil
+}
+
+func AudioReorderAssets(assetIDs []string, movedAssetIDs []string, actorID string, isSystemAdmin bool) ([]*model.AudioAsset, error) {
+	if len(assetIDs) == 0 {
+		return []*model.AudioAsset{}, nil
+	}
+	cleaned := make([]string, 0, len(assetIDs))
+	seen := map[string]struct{}{}
+	for _, rawID := range assetIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return []*model.AudioAsset{}, nil
+	}
+	movedSet := map[string]struct{}{}
+	for _, rawID := range movedAssetIDs {
+		id := strings.TrimSpace(rawID)
+		if id != "" {
+			movedSet[id] = struct{}{}
+		}
+	}
+	if len(movedSet) == 0 && len(cleaned) > 0 {
+		movedSet[cleaned[0]] = struct{}{}
+	}
+
+	assets := make([]*model.AudioAsset, 0, len(cleaned))
+	assetByID := map[string]*model.AudioAsset{}
+	if err := model.GetDB().Where("id IN ? AND deleted_at IS NULL", cleaned).Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	if len(assets) != len(cleaned) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	for _, asset := range assets {
+		ok, err := audioManageAssetInScope(actorID, asset, isSystemAdmin)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, gorm.ErrRecordNotFound
+		}
+		assetByID[asset.ID] = asset
+	}
+
+	baseSortOrder := 1000
+	for index, id := range cleaned {
+		asset := assetByID[id]
+		if asset == nil || asset.SortOrder <= 0 {
+			continue
+		}
+		if index == 0 || asset.SortOrder < baseSortOrder {
+			baseSortOrder = asset.SortOrder
+		}
+	}
+	now := time.Now()
+	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		for index, id := range cleaned {
+			if _, ok := assetByID[id]; !ok {
+				return gorm.ErrRecordNotFound
+			}
+			sortOrder := baseSortOrder + index*1000
+			_, manualSorted := movedSet[id]
+			if err := tx.Model(&model.AudioAsset{}).
+				Where("id = ?", id).
+				Updates(map[string]interface{}{
+					"sort_order":    sortOrder,
+					"manual_sorted": manualSorted || assetByID[id].ManualSorted,
+					"updated_by":    actorID,
+					"updated_at":    now,
+				}).Error; err != nil {
+				return err
+			}
+			assetByID[id].SortOrder = sortOrder
+			assetByID[id].ManualSorted = manualSorted || assetByID[id].ManualSorted
+			assetByID[id].UpdatedBy = actorID
+			assetByID[id].UpdatedAt = now
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	ordered := make([]*model.AudioAsset, 0, len(cleaned))
+	for _, id := range cleaned {
+		ordered = append(ordered, assetByID[id])
+	}
+	return ordered, nil
 }
 
 func AudioDeleteAsset(id string, hard bool) error {

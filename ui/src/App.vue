@@ -589,7 +589,7 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .n-radio-button:hover {
-  border-color: var(--sc-border-strong) !important;
+  border-color: var(--sc-border-mute) !important;
 }
 
 /* Keep radio button borders visible in custom theme */
@@ -608,12 +608,12 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .n-radio-button--checked,
-:root[data-custom-theme='true'] .n-radio-button:hover {
+:root[data-custom-theme='true'] .n-radio-button:focus-within {
   z-index: 2;
 }
 
 :root[data-custom-theme='true'] .n-radio-button--checked::after,
-:root[data-custom-theme='true'] .n-radio-button:hover::after {
+:root[data-custom-theme='true'] .n-radio-button:focus-within::after {
   border-color: var(--sc-border-strong);
 }
 
@@ -923,6 +923,79 @@ nav a:first-of-type {
 /* TipTap placeholder */
 :root[data-custom-theme='true'] .tiptap p.is-editor-empty:first-child::before {
   color: var(--sc-text-secondary) !important;
+}
+
+.tiptap-text-decoration {
+  --tiptap-decoration-thickness: 0.12em;
+  --tiptap-decoration-underline-offset: 0.18em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.55));
+  --tiptap-decoration-dot-step: 0.36em;
+  --tiptap-decoration-wave-height: 0.22em;
+  --tiptap-decoration-line-layer-1: linear-gradient(currentColor, currentColor);
+  --tiptap-decoration-line-layer-2: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-layer-3: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-size: 100% var(--tiptap-decoration-thickness);
+  --tiptap-decoration-line-pos-1: 0 calc(100% + var(--tiptap-decoration-underline-offset));
+  --tiptap-decoration-line-pos-2: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.24em);
+  --tiptap-decoration-line-pos-3: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.48em);
+  text-decoration: none !important;
+  padding-bottom: calc(var(--tiptap-decoration-underline-offset) + var(--tiptap-decoration-wave-height));
+  background-repeat: repeat-x;
+  background-origin: content-box;
+  background-clip: padding-box;
+  background-image:
+    var(--tiptap-decoration-line-layer-1),
+    var(--tiptap-decoration-line-layer-2),
+    var(--tiptap-decoration-line-layer-3);
+  background-size:
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size);
+  background-position:
+    var(--tiptap-decoration-line-pos-1),
+    var(--tiptap-decoration-line-pos-2),
+    var(--tiptap-decoration-line-pos-3);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.tiptap-text-decoration--strike {
+  --tiptap-decoration-line-pos-1: 0 50%;
+  --tiptap-decoration-line-pos-2: 0 calc(50% - 0.22em);
+  --tiptap-decoration-line-pos-3: 0 calc(50% + 0.22em);
+  padding-bottom: 0;
+}
+
+.tiptap-text-decoration--dotted {
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.5px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--dense-dotted {
+  --tiptap-decoration-dot-step: 0.24em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.7));
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.45px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--wave-soft {
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 42%, currentColor 45% 54%, transparent 58%);
+  --tiptap-decoration-line-size: 0.48em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--wave-heavy {
+  --tiptap-decoration-wave-height: 0.3em;
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 36%, currentColor 40% 58%, transparent 62%);
+  --tiptap-decoration-line-size: 0.46em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--double {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+}
+
+.tiptap-text-decoration--triple {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+  --tiptap-decoration-line-layer-3: var(--tiptap-decoration-line-layer-1);
 }
 
 /* TipTap selection and focus */

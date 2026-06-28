@@ -749,6 +749,13 @@ func chooseName(name, fallback string) string {
 	if base == "" {
 		return "新音频"
 	}
+	if ext := filepath.Ext(base); ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return "新音频"
+	}
 	return base
 }
 

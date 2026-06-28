@@ -157,7 +157,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&CharacterCardAvatarBindingModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
-	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
+	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioImportJobModel{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
 	db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &AIUserQuotaOverrideModel{})
 	db.AutoMigrate(&PlatformFontAsset{})
 	db.AutoMigrate(&DiceMacroModel{})
@@ -200,6 +200,9 @@ func DBInit(cfg *utils.AppConfig) {
 
 	if err := BackfillMessageDisplayOrder(); err != nil {
 		log.Printf("补齐消息 display_order 失败: %v", err)
+	}
+	if err := BackfillAudioAssetSortOrder(); err != nil {
+		log.Printf("补齐音频素材 sort_order 失败: %v", err)
 	}
 
 	if err := BackfillChannelRecentSentAt(); err != nil {

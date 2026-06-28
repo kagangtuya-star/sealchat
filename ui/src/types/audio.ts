@@ -20,6 +20,8 @@ export interface AudioAsset {
   updatedAt: string;
   lastAccessedAt?: string | null;
   accessCount?: number;
+  sortOrder?: number;
+  manualSorted?: boolean;
   scope: AudioAssetScope;
   worldId?: string | null;
 }
@@ -248,6 +250,9 @@ export interface AudioSearchFilters {
   creatorIds: string[];
   durationRange: [number, number] | null;
   hasSceneOnly?: boolean;
+  sortBy?: 'name' | 'scope' | 'duration' | 'updatedAt';
+  sortOrder?: 'asc' | 'desc';
+  manualSort?: boolean;
   scope?: AudioAssetScope;
   worldId?: string | null;
   includeCommon?: boolean;
@@ -282,6 +287,17 @@ export interface AudioImportPreview {
   invalid: number;
 }
 
+export interface AudioImportDirectoryNode {
+  path: string;
+  name: string;
+  children?: AudioImportDirectoryNode[];
+}
+
+export interface AudioImportBrowseResult extends AudioImportPreview {
+  tree: AudioImportDirectoryNode[];
+  currentPath: string;
+}
+
 export interface AudioImportResultItem {
   path: string;
   name?: string;
@@ -295,6 +311,24 @@ export interface AudioImportResult {
   imported: AudioImportResultItem[];
   failed: AudioImportResultItem[];
   skipped: AudioImportResultItem[];
+}
+
+export interface AudioImportJobStatus {
+  jobId: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+  directory: string;
+  totalFiles: number;
+  processedFiles: number;
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  errorMessage?: string;
+  percentage: number;
+  imported: AudioImportResultItem[];
+  failed: AudioImportResultItem[];
+  skipped: AudioImportResultItem[];
+  startedAt?: string;
+  finishedAt?: string;
 }
 
 export interface AudioTrackStatePayload {

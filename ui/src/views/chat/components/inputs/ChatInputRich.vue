@@ -60,6 +60,19 @@ const props = withDefaults(defineProps<{
 });
 
 type SmartLinkUploadSource = 'smart-link-text-image' | 'smart-link-url-image';
+type TextDecorationLine = 'underline' | 'line-through';
+type TextDecorationThickness = 'thin' | 'regular' | 'bold';
+type TextDecorationPattern = 'solid' | 'dotted' | 'dense-dotted';
+type TextDecorationWave = 'none' | 'soft' | 'heavy';
+type TextDecorationCount = 'single' | 'double' | 'triple';
+type TextDecorationSelectionState = 'none' | 'partial' | 'full';
+
+interface TextDecorationStyleState {
+  thickness: TextDecorationThickness;
+  pattern: TextDecorationPattern;
+  wave: TextDecorationWave;
+  count: TextDecorationCount;
+}
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
@@ -451,6 +464,8 @@ const closeToolbarPopovers = () => {
   blockTypePopoverShow.value = false;
   fontSizePopoverShow.value = false;
   performancePopoverShow.value = false;
+  underlineStylePopoverShow.value = false;
+  strikeStylePopoverShow.value = false;
 };
 
 const scrollActiveMentionIntoView = () => {
@@ -634,6 +649,8 @@ const textColorPopoverShow = ref(false);
 const blockTypePopoverShow = ref(false);
 const fontSizePopoverShow = ref(false);
 const performancePopoverShow = ref(false);
+const underlineStylePopoverShow = ref(false);
+const strikeStylePopoverShow = ref(false);
 
 // 链接弹窗状态
 const linkModalShow = ref(false);
@@ -920,6 +937,96 @@ const fontSizeOptions = [
   { value: '32px', shortLabel: '32', label: '32 px' },
   { value: '48px', shortLabel: '48', label: '48 px' },
 ] as const;
+const decorationThicknessOptions = [
+  { value: 'thin', label: '细', meta: '1px' },
+  { value: 'regular', label: '中', meta: '2px' },
+  { value: 'bold', label: '粗', meta: '3px' },
+] as const;
+const decorationPatternOptions = [
+  { value: 'solid', label: '实线', meta: '━' },
+  { value: 'dotted', label: '细点', meta: '···' },
+  { value: 'dense-dotted', label: '密点', meta: '•••' },
+] as const;
+const decorationWaveOptions = [
+  { value: 'none', label: '无', meta: '一' },
+  { value: 'soft', label: '轻', meta: '≈' },
+  { value: 'heavy', label: '重', meta: '≋' },
+] as const;
+const decorationCountOptions = [
+  { value: 'single', label: '一重', meta: '1' },
+  { value: 'double', label: '二重', meta: '2' },
+  { value: 'triple', label: '三重', meta: '3' },
+] as const;
+const selectedUnderlineDecorationStyle = reactive<TextDecorationStyleState>({
+  thickness: 'regular',
+  pattern: 'solid',
+  wave: 'none',
+  count: 'single',
+});
+const selectedStrikeDecorationStyle = reactive<TextDecorationStyleState>({
+  thickness: 'regular',
+  pattern: 'solid',
+  wave: 'none',
+  count: 'single',
+});
+const DECORATION_THICKNESS_CSS: Record<TextDecorationThickness, string> = {
+  thin: '1px',
+  regular: '0.12em',
+  bold: '0.18em',
+};
+
+const isDecorationThickness = (value: unknown): value is TextDecorationThickness =>
+  value === 'thin' || value === 'regular' || value === 'bold';
+const isDecorationPattern = (value: unknown): value is TextDecorationPattern =>
+  value === 'solid' || value === 'dotted' || value === 'dense-dotted';
+const isDecorationWave = (value: unknown): value is TextDecorationWave =>
+  value === 'none' || value === 'soft' || value === 'heavy';
+const isDecorationCount = (value: unknown): value is TextDecorationCount =>
+  value === 'single' || value === 'double' || value === 'triple';
+const isTextDecorationLine = (value: unknown): value is TextDecorationLine =>
+  value === 'underline' || value === 'line-through';
+
+const normalizeDecorationStyle = (attrs: Record<string, any> = {}): TextDecorationStyleState => ({
+  thickness: isDecorationThickness(attrs.textDecorationThickness) ? attrs.textDecorationThickness : 'regular',
+  pattern: isDecorationPattern(attrs.textDecorationPattern) ? attrs.textDecorationPattern : 'solid',
+  wave: isDecorationWave(attrs.textDecorationWave) ? attrs.textDecorationWave : 'none',
+  count: isDecorationCount(attrs.textDecorationCount) ? attrs.textDecorationCount : 'single',
+});
+
+const textDecorationLineFromAttrs = (attrs: Record<string, any> = {}): TextDecorationLine | null => (
+  isTextDecorationLine(attrs.textDecorationLine) ? attrs.textDecorationLine : null
+);
+
+const renderTextDecorationStyleAttrs = (attrs: Record<string, any> = {}) => {
+  const line = textDecorationLineFromAttrs(attrs);
+  if (!line) {
+    return {};
+  }
+  const style = normalizeDecorationStyle(attrs);
+  const classes = [
+    'tiptap-text-decoration',
+    `tiptap-text-decoration--${line === 'underline' ? 'underline' : 'strike'}`,
+    `tiptap-text-decoration--${style.pattern}`,
+    `tiptap-text-decoration--wave-${style.wave}`,
+    `tiptap-text-decoration--${style.count}`,
+  ].join(' ');
+  const cssText = [
+    `--tiptap-decoration-line-kind: ${line}`,
+    `--tiptap-decoration-thickness: ${DECORATION_THICKNESS_CSS[style.thickness]}`,
+    `--tiptap-decoration-pattern: ${style.pattern}`,
+    `--tiptap-decoration-wave: ${style.wave}`,
+    `--tiptap-decoration-count: ${style.count}`,
+  ].join('; ');
+  return {
+    class: classes,
+    'data-text-decoration-line': line,
+    'data-text-decoration-thickness': style.thickness,
+    'data-text-decoration-pattern': style.pattern,
+    'data-text-decoration-wave': style.wave,
+    'data-text-decoration-count': style.count,
+    style: cssText,
+  };
+};
 const {
   platformFontOptions,
   renderPlatformFontLabel,
@@ -1438,6 +1545,35 @@ const initEditor = async () => {
                   };
                 },
               },
+              textDecorationLine: {
+                default: null,
+                parseHTML: (element: HTMLElement) => (
+                  element.getAttribute('data-text-decoration-line')
+                  || (element.style.textDecorationLine === 'underline' || element.tagName.toLowerCase() === 'u' ? 'underline' : null)
+                  || (element.style.textDecorationLine === 'line-through' || element.tagName.toLowerCase() === 's' ? 'line-through' : null)
+                ),
+                renderHTML: (attributes: Record<string, any>) => renderTextDecorationStyleAttrs(attributes),
+              },
+              textDecorationThickness: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-text-decoration-thickness'),
+                renderHTML: () => ({}),
+              },
+              textDecorationPattern: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-text-decoration-pattern'),
+                renderHTML: () => ({}),
+              },
+              textDecorationWave: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-text-decoration-wave'),
+                renderHTML: () => ({}),
+              },
+              textDecorationCount: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.getAttribute('data-text-decoration-count'),
+                renderHTML: () => ({}),
+              },
             },
           },
         ];
@@ -1794,14 +1930,205 @@ const toggleItalic = () => {
   }
   return result;
 };
-const toggleUnderline = () => editor.value?.chain().focus().toggleUnderline().run();
-const toggleStrike = () => {
-  const result = editor.value?.chain().focus().toggleStrike().run();
+const isDecorationActive = (line: TextDecorationLine) => {
+  const attrs = (editor.value?.getAttributes('textStyle') || {}) as Record<string, any>;
+  if (textDecorationLineFromAttrs(attrs) === line) {
+    return true;
+  }
+  return line === 'underline' ? isActive('underline') : isActive('strike');
+};
+
+const markHasDecorationLine = (marks: readonly any[] | undefined, line: TextDecorationLine) => {
+  const hasStyledDecoration = marks?.some((mark) => (
+    mark?.type?.name === 'textStyle'
+    && textDecorationLineFromAttrs(mark.attrs || {}) === line
+  ));
+  const hasLegacyDecoration = marks?.some((mark) => (
+    line === 'underline' ? mark?.type?.name === 'underline' : mark?.type?.name === 'strike'
+  ));
+  return Boolean(hasStyledDecoration || hasLegacyDecoration);
+};
+
+const getDecorationSelectionState = (line: TextDecorationLine): TextDecorationSelectionState => {
+  const ed = editor.value;
+  if (!ed) {
+    return 'none';
+  }
+  const { from, to, empty } = ed.state.selection;
+  if (empty || from === to) {
+    return isDecorationActive(line) ? 'full' : 'none';
+  }
+
+  let selectedTextSize = 0;
+  let decoratedTextSize = 0;
+  ed.state.doc.nodesBetween(from, to, (node: any, pos: number) => {
+    if (!node?.isText || typeof node.text !== 'string') {
+      return;
+    }
+    const textFrom = Math.max(from, pos);
+    const textTo = Math.min(to, pos + node.nodeSize);
+    const size = Math.max(0, textTo - textFrom);
+    if (!size) {
+      return;
+    }
+    selectedTextSize += size;
+    if (markHasDecorationLine(node.marks, line)) {
+      decoratedTextSize += size;
+    }
+  });
+
+  if (selectedTextSize === 0) {
+    return isDecorationActive(line) ? 'full' : 'none';
+  }
+  if (decoratedTextSize === 0) {
+    return 'none';
+  }
+  return decoratedTextSize >= selectedTextSize ? 'full' : 'partial';
+};
+
+const rememberDecorationStyle = (line: TextDecorationLine, style: TextDecorationStyleState) => {
+  const target = line === 'underline' ? selectedUnderlineDecorationStyle : selectedStrikeDecorationStyle;
+  target.thickness = style.thickness;
+  target.pattern = style.pattern;
+  target.wave = style.wave;
+  target.count = style.count;
+};
+
+const applyDecorationStyle = (line: TextDecorationLine, nextStyle?: Partial<TextDecorationStyleState>) => {
+  const remembered = line === 'underline' ? selectedUnderlineDecorationStyle : selectedStrikeDecorationStyle;
+  const style = { ...remembered, ...nextStyle };
+  rememberDecorationStyle(line, style);
+  const result = runEditorCommandWithSelection((chain) => {
+    chain
+      .unsetUnderline()
+      .unsetStrike()
+      .setMark('textStyle', {
+        textDecorationLine: line,
+        textDecorationThickness: style.thickness,
+        textDecorationPattern: style.pattern,
+        textDecorationWave: style.wave,
+        textDecorationCount: style.count,
+      });
+  });
   if (result) {
     syncActiveRubyVisualAttrs();
   }
   return result;
 };
+
+const applyUnderlineDecorationStyle = (nextStyle?: Partial<TextDecorationStyleState>) =>
+  applyDecorationStyle('underline', nextStyle);
+const applyStrikeDecorationStyle = (nextStyle?: Partial<TextDecorationStyleState>) =>
+  applyDecorationStyle('line-through', nextStyle);
+
+const removeDecorationStyle = (line: TextDecorationLine) => {
+  const result = runEditorCommandWithSelection((chain) => {
+    if (line === 'underline') {
+      chain.unsetUnderline();
+    } else {
+      chain.unsetStrike();
+    }
+    chain.setMark('textStyle', {
+      textDecorationLine: null,
+      textDecorationThickness: null,
+      textDecorationPattern: null,
+      textDecorationWave: null,
+      textDecorationCount: null,
+    });
+  });
+  if (result) {
+    syncActiveRubyVisualAttrs();
+  }
+  return result;
+};
+
+const toggleDecorationStyle = (line: TextDecorationLine) => {
+  if (isDecorationActive(line)) {
+    return removeDecorationStyle(line);
+  }
+  return applyDecorationStyle(line);
+};
+
+const openDecorationPopover = (line: TextDecorationLine) => {
+  closeToolbarPopovers();
+  rememberEditorSelection();
+  const attrs = (editor.value?.getAttributes('textStyle') || {}) as Record<string, any>;
+  if (textDecorationLineFromAttrs(attrs) === line) {
+    rememberDecorationStyle(line, normalizeDecorationStyle(attrs));
+  }
+  markOverlayInteraction();
+  if (line === 'underline') {
+    underlineStylePopoverShow.value = true;
+  } else {
+    strikeStylePopoverShow.value = true;
+  }
+};
+
+const closeDecorationPopover = (line: TextDecorationLine) => {
+  markOverlayInteraction();
+  if (line === 'underline') {
+    underlineStylePopoverShow.value = false;
+  } else {
+    strikeStylePopoverShow.value = false;
+  }
+};
+
+const handleDecorationTriggerPointerDown = (event: PointerEvent | MouseEvent, line: TextDecorationLine) => {
+  event.preventDefault();
+  rememberEditorSelection();
+  markOverlayInteraction();
+
+  const selectionState = getDecorationSelectionState(line);
+  if (selectionState === 'full') {
+    removeDecorationStyle(line);
+    if (line === 'underline') {
+      underlineStylePopoverShow.value = false;
+    } else {
+      strikeStylePopoverShow.value = false;
+    }
+    return;
+  }
+
+  if (selectionState === 'partial') {
+    openDecorationPopover(line);
+    return;
+  }
+
+  if (selectionState === 'none') {
+    applyDecorationStyle(line);
+    openDecorationPopover(line);
+  }
+};
+
+const triggerDecorationPopover = (line: TextDecorationLine, show: boolean) => {
+  if (show) {
+    openDecorationPopover(line);
+    return;
+  }
+  if (line === 'underline') {
+    underlineStylePopoverShow.value = false;
+  } else {
+    strikeStylePopoverShow.value = false;
+  }
+};
+
+const applyDecorationOption = (
+  event: MouseEvent,
+  line: TextDecorationLine,
+  key: keyof TextDecorationStyleState,
+  value: TextDecorationStyleState[keyof TextDecorationStyleState],
+) => {
+  event.preventDefault();
+  markOverlayInteraction();
+  if (line === 'underline') {
+    applyUnderlineDecorationStyle({ [key]: value });
+  } else {
+    applyStrikeDecorationStyle({ [key]: value });
+  }
+};
+
+const toggleUnderline = () => toggleDecorationStyle('underline');
+const toggleStrike = () => toggleDecorationStyle('line-through');
 const toggleSpoiler = () => {
   const result = editor.value?.chain().focus().toggleSpoiler().run();
   if (result) {
@@ -1932,6 +2259,7 @@ const buildRubyMarkAttrs = (rubyText: string) => {
   const ed = editor.value;
   const textStyleAttrs = (ed?.getAttributes('textStyle') || {}) as Record<string, any>;
   const highlightAttrs = (ed?.getAttributes('highlight') || {}) as Record<string, any>;
+  const decorationLine = textDecorationLineFromAttrs(textStyleAttrs);
   const rubyFontSize = typeof textStyleAttrs.fontSize === 'string' ? textStyleAttrs.fontSize : null;
   const rubyBaseFontSize = normalizeOptionalFontSizeValue(rubyBaseFontSizeInput.value) || rubyFontSize;
   const rubyRtFontSize = normalizeOptionalFontSizeValue(rubyRtFontSizeInput.value) || rubyFontSize;
@@ -1955,7 +2283,7 @@ const buildRubyMarkAttrs = (rubyText: string) => {
     rubyFontWeight: ed?.isActive('bold') ? '700' : null,
     rubyFontStyle: ed?.isActive('italic') ? 'italic' : null,
     rubyRtScale: resolveRubyRtScale(rubyRtFontSize),
-    rubyTextDecoration: ed?.isActive('strike') ? 'line-through' : null,
+    rubyTextDecoration: decorationLine || (ed?.isActive('strike') ? 'line-through' : ed?.isActive('underline') ? 'underline' : null),
     rubyBackgroundColor: typeof highlightAttrs.color === 'string' ? highlightAttrs.color : null,
     rubySpoiler: ed?.isActive('spoiler') ? 'true' : null,
   };
@@ -2489,6 +2817,8 @@ const hasOpenOverlay = () => {
     || blockTypePopoverShow.value
     || fontSizePopoverShow.value
     || performancePopoverShow.value
+    || underlineStylePopoverShow.value
+    || strikeStylePopoverShow.value
     || fontSelectorExpanded.value
     || desktopFontSelectorExpanded.value
     || linkModalShow.value
@@ -2661,24 +2991,176 @@ defineExpose({
           >
             <span class="italic">I</span>
           </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('underline') ? 'primary' : 'default'"
-            @click="toggleUnderline"
-            title="下划线 (Ctrl+U)"
+          <n-popover
+            trigger="manual"
+            placement="bottom-start"
+            :show="underlineStylePopoverShow"
+            :content-class="toolbarPopoverContentClass"
+            @update:show="triggerDecorationPopover('underline', $event)"
           >
-            <span class="underline">U</span>
-          </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('strike') ? 'primary' : 'default'"
-            @click="toggleStrike"
-            title="删除线"
+            <template #trigger>
+              <div
+                @pointerdown="handleDecorationTriggerPointerDown($event, 'underline')"
+                @click.stop.prevent
+              >
+                <n-button
+                  size="small"
+                  text
+                  :type="isDecorationActive('underline') ? 'primary' : 'default'"
+                  title="下划线样式 (Ctrl+U)"
+                >
+                  <span class="underline">U</span>
+                </n-button>
+              </div>
+            </template>
+            <div class="tiptap-decoration-panel" @pointerdown.stop="markOverlayInteraction">
+              <div class="tiptap-decoration-panel__header">
+                <span class="tiptap-decoration-panel__title">下划线</span>
+                <button
+                  type="button"
+                  class="tiptap-decoration-panel__close"
+                  title="关闭"
+                  aria-label="关闭下划线样式面板"
+                  @mousedown.prevent.stop="closeDecorationPopover('underline')"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">粗细</span>
+                <button
+                  v-for="option in decorationThicknessOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedUnderlineDecorationStyle.thickness }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'underline', 'thickness', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">线型</span>
+                <button
+                  v-for="option in decorationPatternOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedUnderlineDecorationStyle.pattern }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'underline', 'pattern', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">波浪</span>
+                <button
+                  v-for="option in decorationWaveOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedUnderlineDecorationStyle.wave }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'underline', 'wave', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">数量</span>
+                <button
+                  v-for="option in decorationCountOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedUnderlineDecorationStyle.count }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'underline', 'count', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+            </div>
+          </n-popover>
+          <n-popover
+            trigger="manual"
+            placement="bottom-start"
+            :show="strikeStylePopoverShow"
+            :content-class="toolbarPopoverContentClass"
+            @update:show="triggerDecorationPopover('line-through', $event)"
           >
-            <span class="line-through">S</span>
-          </n-button>
+            <template #trigger>
+              <div
+                @pointerdown="handleDecorationTriggerPointerDown($event, 'line-through')"
+                @click.stop.prevent
+              >
+                <n-button
+                  size="small"
+                  text
+                  :type="isDecorationActive('line-through') ? 'primary' : 'default'"
+                  title="删除线样式"
+                >
+                  <span class="line-through">S</span>
+                </n-button>
+              </div>
+            </template>
+            <div class="tiptap-decoration-panel" @pointerdown.stop="markOverlayInteraction">
+              <div class="tiptap-decoration-panel__header">
+                <span class="tiptap-decoration-panel__title">删除线</span>
+                <button
+                  type="button"
+                  class="tiptap-decoration-panel__close"
+                  title="关闭"
+                  aria-label="关闭删除线样式面板"
+                  @mousedown.prevent.stop="closeDecorationPopover('line-through')"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">粗细</span>
+                <button
+                  v-for="option in decorationThicknessOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedStrikeDecorationStyle.thickness }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'line-through', 'thickness', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">线型</span>
+                <button
+                  v-for="option in decorationPatternOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedStrikeDecorationStyle.pattern }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'line-through', 'pattern', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">波浪</span>
+                <button
+                  v-for="option in decorationWaveOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedStrikeDecorationStyle.wave }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'line-through', 'wave', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+              <div class="tiptap-decoration-panel__row">
+                <span class="tiptap-decoration-panel__label">数量</span>
+                <button
+                  v-for="option in decorationCountOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="['tiptap-decoration-panel__chip', { 'is-active': option.value === selectedStrikeDecorationStyle.count }]"
+                  @mousedown.prevent="applyDecorationOption($event, 'line-through', 'count', option.value)"
+                >
+                  <span>{{ option.label }}</span><small>{{ option.meta }}</small>
+                </button>
+              </div>
+            </div>
+          </n-popover>
           <n-button
             size="small"
             text
@@ -3159,7 +3641,7 @@ defineExpose({
             <n-button
               size="tiny"
               text
-              :type="isActive('underline') ? 'primary' : 'default'"
+              :type="isDecorationActive('underline') ? 'primary' : 'default'"
               @click="toggleUnderline"
               title="下划线"
             >
@@ -3168,7 +3650,7 @@ defineExpose({
             <n-button
               size="tiny"
               text
-              :type="isActive('strike') ? 'primary' : 'default'"
+              :type="isDecorationActive('line-through') ? 'primary' : 'default'"
               @click="toggleStrike"
               title="删除线"
             >
@@ -3815,6 +4297,93 @@ defineExpose({
   flex: 1 1 auto;
 }
 
+.tiptap-decoration-panel {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 17rem;
+  max-width: min(19rem, calc(100vw - 2rem));
+  padding: 0.45rem;
+}
+
+.tiptap-decoration-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0 0.1rem 0.2rem;
+}
+
+.tiptap-decoration-panel__title {
+  color: var(--sc-text-primary, #0f172a);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.tiptap-decoration-panel__close {
+  display: inline-grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tiptap-decoration-panel__close:hover {
+  background: color-mix(in srgb, var(--primary-color, #3b82f6) 10%, transparent);
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.tiptap-decoration-panel__row {
+  display: grid;
+  grid-template-columns: 2.5rem repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.tiptap-decoration-panel__label {
+  color: var(--sc-text-secondary, #64748b);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tiptap-decoration-panel__chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  min-height: 2.15rem;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--sc-text-primary, #0f172a);
+  font-size: 0.75rem;
+  line-height: 1.05;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tiptap-decoration-panel__chip small {
+  font-size: 0.65rem;
+  opacity: 0.68;
+}
+
+.tiptap-decoration-panel__chip:hover,
+.tiptap-decoration-panel__chip.is-active {
+  border-color: color-mix(in srgb, var(--primary-color, #3b82f6) 32%, transparent);
+  background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, transparent);
+}
+
+.tiptap-decoration-panel__chip.is-active {
+  color: var(--primary-color, #2563eb);
+}
+
 .tiptap-performance-panel {
   display: flex;
   flex-direction: column;
@@ -4047,6 +4616,79 @@ defineExpose({
   color: rgba(255, 255, 255, 0.9);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   pointer-events: none;
+}
+
+.tiptap-text-decoration {
+  --tiptap-decoration-thickness: 0.12em;
+  --tiptap-decoration-underline-offset: 0.18em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.55));
+  --tiptap-decoration-dot-step: 0.36em;
+  --tiptap-decoration-wave-height: 0.22em;
+  --tiptap-decoration-line-layer-1: linear-gradient(currentColor, currentColor);
+  --tiptap-decoration-line-layer-2: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-layer-3: linear-gradient(transparent, transparent);
+  --tiptap-decoration-line-size: 100% var(--tiptap-decoration-thickness);
+  --tiptap-decoration-line-pos-1: 0 calc(100% + var(--tiptap-decoration-underline-offset));
+  --tiptap-decoration-line-pos-2: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.24em);
+  --tiptap-decoration-line-pos-3: 0 calc(100% + var(--tiptap-decoration-underline-offset) + 0.48em);
+  text-decoration: none !important;
+  padding-bottom: calc(var(--tiptap-decoration-underline-offset) + var(--tiptap-decoration-wave-height));
+  background-repeat: repeat-x;
+  background-origin: content-box;
+  background-clip: padding-box;
+  background-image:
+    var(--tiptap-decoration-line-layer-1),
+    var(--tiptap-decoration-line-layer-2),
+    var(--tiptap-decoration-line-layer-3);
+  background-size:
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size),
+    var(--tiptap-decoration-line-size);
+  background-position:
+    var(--tiptap-decoration-line-pos-1),
+    var(--tiptap-decoration-line-pos-2),
+    var(--tiptap-decoration-line-pos-3);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.tiptap-text-decoration--strike {
+  --tiptap-decoration-line-pos-1: 0 50%;
+  --tiptap-decoration-line-pos-2: 0 calc(50% - 0.22em);
+  --tiptap-decoration-line-pos-3: 0 calc(50% + 0.22em);
+  padding-bottom: 0;
+}
+
+.tiptap-text-decoration--dotted {
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.5px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--dense-dotted {
+  --tiptap-decoration-dot-step: 0.24em;
+  --tiptap-decoration-dot-size: max(1px, calc(var(--tiptap-decoration-thickness) * 0.7));
+  --tiptap-decoration-line-layer-1: radial-gradient(circle, currentColor var(--tiptap-decoration-dot-size), transparent calc(var(--tiptap-decoration-dot-size) + 0.45px));
+  --tiptap-decoration-line-size: var(--tiptap-decoration-dot-step) calc(var(--tiptap-decoration-thickness) * 2 + 2px);
+}
+
+.tiptap-text-decoration--wave-soft {
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 42%, currentColor 45% 54%, transparent 58%);
+  --tiptap-decoration-line-size: 0.48em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--wave-heavy {
+  --tiptap-decoration-wave-height: 0.3em;
+  --tiptap-decoration-line-layer-1: radial-gradient(ellipse at 50% 100%, transparent 36%, currentColor 40% 58%, transparent 62%);
+  --tiptap-decoration-line-size: 0.46em var(--tiptap-decoration-wave-height);
+}
+
+.tiptap-text-decoration--double {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+}
+
+.tiptap-text-decoration--triple {
+  --tiptap-decoration-line-layer-2: var(--tiptap-decoration-line-layer-1);
+  --tiptap-decoration-line-layer-3: var(--tiptap-decoration-line-layer-1);
 }
 
 @media (max-width: 767px) {

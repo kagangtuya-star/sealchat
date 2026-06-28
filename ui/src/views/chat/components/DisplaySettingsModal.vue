@@ -93,6 +93,12 @@ const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendSh
   { label: 'Enter 直接发送', value: 'enter' },
   { label: 'Ctrl / Cmd + Enter 发送', value: 'ctrlEnter' },
 ]
+const interjectSwitchRuleOptions: Array<{ label: string; value: DisplaySettings['interjectSwitchRule'] }> = [
+  { label: '反转场内外', value: 'invert' },
+  { label: '不反转', value: 'preserve' },
+  { label: '固定场外', value: 'forceOoc' },
+  { label: '固定场内', value: 'forceIc' },
+]
 const editingSelfActionsPlacementOptions: Array<{ label: string; value: DisplaySettings['editingSelfActionsPlacement'] }> = [
   { label: '左置', value: 'left' },
   { label: '右置', value: 'right' },
@@ -210,9 +216,13 @@ const previewStyleVars = computed(() => ({
   '--chat-letter-spacing': `${draft.letterSpacing}px`,
   '--chat-bubble-gap': `${draft.bubbleGap}px`,
   '--chat-compact-gap': `${draft.compactBubbleGap}px`,
+  '--chat-localized-bubble-offset': `${draft.localizedBubbleVisualOffset}px`,
+  '--chat-localized-avatar-side-offset': `${draft.localizedAvatarSideOffset}px`,
   '--chat-paragraph-spacing': `${draft.paragraphSpacing}px`,
   '--chat-message-padding-x': `${draft.messagePaddingX}px`,
   '--chat-message-padding-y': `${draft.messagePaddingY}px`,
+  '--chat-avatar-size': `${draft.avatarSize}px`,
+  '--chat-avatar-radius': draft.avatarBorderRadius >= 50 ? '50%' : `${draft.avatarBorderRadius}%`,
 }))
 
 const formatPxTooltip = (value: number) => `${Math.round(value)}px`
@@ -224,6 +234,8 @@ type NumericSettingKey =
   | 'letterSpacing'
   | 'bubbleGap'
   | 'compactBubbleGap'
+  | 'localizedBubbleVisualOffset'
+  | 'localizedAvatarSideOffset'
   | 'paragraphSpacing'
   | 'messagePaddingX'
   | 'messagePaddingY'
@@ -238,6 +250,8 @@ const handleLineHeightUpdate = (value: number | null) => handleNumericInput('lin
 const handleLetterSpacingUpdate = (value: number | null) => handleNumericInput('letterSpacing', value)
 const handleBubbleGapUpdate = (value: number | null) => handleNumericInput('bubbleGap', value)
 const handleCompactBubbleGapUpdate = (value: number | null) => handleNumericInput('compactBubbleGap', value)
+const handleLocalizedBubbleVisualOffsetUpdate = (value: number | null) => handleNumericInput('localizedBubbleVisualOffset', value)
+const handleLocalizedAvatarSideOffsetUpdate = (value: number | null) => handleNumericInput('localizedAvatarSideOffset', value)
 const handleParagraphSpacingUpdate = (value: number | null) => handleNumericInput('paragraphSpacing', value)
 const handleMessagePaddingXUpdate = (value: number | null) => handleNumericInput('messagePaddingX', value)
 const handleMessagePaddingYUpdate = (value: number | null) => handleNumericInput('messagePaddingY', value)
@@ -873,7 +887,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <header>
           <div>
             <p class="section-title">快捷键管理</p>
-            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、悄悄话、上传等</p>
+            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、插话、悄悄话、上传等</p>
           </div>
         </header>
         <n-button secondary size="small" @click="shortcutPanelVisible = true">
@@ -961,6 +975,30 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
           </n-button>
         </div>
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">插话切换规则</p>
+            <p class="section-desc">点击“插话”后，第一条消息发送成功时，第二条消息将按此规则进入场内/场外模式</p>
+          </div>
+        </header>
+        <div class="setting-mode-grid sendShortcut-mode-grid">
+          <n-button
+            v-for="option in interjectSwitchRuleOptions"
+            :key="option.value"
+            size="small"
+            block
+            class="setting-mode-button"
+            :type="draft.interjectSwitchRule === option.value ? 'primary' : 'default'"
+            :secondary="draft.interjectSwitchRule !== option.value"
+            :aria-pressed="draft.interjectSwitchRule === option.value"
+            @click="draft.interjectSwitchRule = option.value"
+          >
+            <span class="setting-mode-button__label">{{ option.label }}</span>
+          </n-button>
+        </div>
       </section>
 
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
@@ -1220,13 +1258,13 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
               <p class="control-desc">作用于消息行之间的上下内间距</p>
             </div>
             <div class="control-input">
-              <n-slider v-model:value="draft.bubbleGap" :min="4" :max="48" :step="2" :format-tooltip="formatPxTooltip" />
+              <n-slider v-model:value="draft.bubbleGap" :min="0.5" :max="48" :step="0.5" :format-tooltip="formatPxTooltip" />
               <n-input-number
                 v-model:value="draft.bubbleGap"
                 size="small"
-                :min="4"
+                :min="0.5"
                 :max="48"
-                :step="2"
+                :step="0.5"
                 @update:value="handleBubbleGapUpdate"
               />
             </div>
@@ -1273,6 +1311,63 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
                 :min="0"
                 :max="24"
                 @update:value="handleParagraphSpacingUpdate"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
+        <header>
+          <div>
+            <p class="section-title">定位气泡布局微调</p>
+            <p class="section-desc">仅在气泡模式生效，用于微调消息整体位置与头像贴合度</p>
+          </div>
+        </header>
+        <div class="display-settings__controls">
+          <div class="control-field">
+            <div>
+              <p class="control-title">气泡整体左移</p>
+              <p class="control-desc">左侧与右侧气泡都会向屏幕左边平移</p>
+            </div>
+            <div class="control-input">
+              <n-slider
+                v-model:value="draft.localizedBubbleVisualOffset"
+                :min="0"
+                :max="24"
+                :step="0.5"
+                :format-tooltip="formatPxTooltip"
+              />
+              <n-input-number
+                v-model:value="draft.localizedBubbleVisualOffset"
+                size="small"
+                :min="0"
+                :max="24"
+                :step="0.5"
+                @update:value="handleLocalizedBubbleVisualOffsetUpdate"
+              />
+            </div>
+          </div>
+          <div class="control-field">
+            <div>
+              <p class="control-title">头像侧微调</p>
+              <p class="control-desc">按头像所在侧解释方向，左右消息会自动适配</p>
+            </div>
+            <div class="control-input">
+              <n-slider
+                v-model:value="draft.localizedAvatarSideOffset"
+                :min="-16"
+                :max="16"
+                :step="0.5"
+                :format-tooltip="formatPxTooltip"
+              />
+              <n-input-number
+                v-model:value="draft.localizedAvatarSideOffset"
+                size="small"
+                :min="-16"
+                :max="16"
+                :step="0.5"
+                @update:value="handleLocalizedAvatarSideOffsetUpdate"
               />
             </div>
           </div>
@@ -1357,17 +1452,21 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </header>
         <div :class="previewClasses" :style="previewStyleVars">
           <div class="preview-card">
-            <div class="preview-avatar" />
-            <div>
-              <p class="preview-name">晨星角色 · 场内</p>
-              <p class="preview-body">采用 {{ draft.layout === 'bubble' ? '气泡' : '紧凑' }} 模式展示。</p>
+            <div class="preview-card__bubble-row">
+              <div class="preview-avatar" />
+              <div>
+                <p class="preview-name">晨星角色 · 场内</p>
+                <p class="preview-body">采用 {{ draft.layout === 'bubble' ? '气泡' : '紧凑' }} 模式展示。</p>
+              </div>
             </div>
           </div>
-          <div class="preview-card preview-card--ooc">
-            <div class="preview-avatar" />
-            <div>
-              <p class="preview-name">旁白 · 场外</p>
-              <p class="preview-body">日夜模式在此同步变化。</p>
+          <div class="preview-card preview-card--ooc preview-card--self">
+            <div class="preview-card__bubble-row">
+              <div>
+                <p class="preview-name">旁白 · 场外</p>
+                <p class="preview-body">右侧消息会自动反向适配头像侧微调。</p>
+              </div>
+              <div class="preview-avatar" />
             </div>
           </div>
           <div class="preview-card preview-card--preview">
@@ -1585,11 +1684,14 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 
 .display-preview .preview-card {
   display: flex;
-  gap: 0.75rem;
   padding: var(--chat-message-padding-y, 0.65rem) var(--chat-message-padding-x, 0.75rem);
   border-radius: var(--preview-radius, 1rem);
   background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg, var(--sc-bg-surface)));
   border: 1px solid var(--sc-border-mute);
+}
+
+.display-preview--bubble .preview-card {
+  transform: translateX(calc(var(--chat-localized-bubble-offset, 0px) * -1));
 }
 
 .display-preview--night .preview-card {
@@ -1626,12 +1728,40 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   background-size: 10px 10px;
 }
 
+.preview-card__bubble-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.display-preview--bubble .preview-card--self .preview-card__bubble-row {
+  justify-content: flex-end;
+}
+
 .preview-avatar {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.75rem;
+  width: var(--chat-avatar-size, 2.25rem);
+  height: var(--chat-avatar-size, 2.25rem);
+  border-radius: var(--chat-avatar-radius, 0.75rem);
   background: linear-gradient(135deg, #f87171, #fbbf24);
   border: 1px solid var(--sc-border-mute);
+  flex: 0 0 auto;
+}
+
+.display-preview--bubble .preview-card .preview-avatar {
+  transform: translateX(var(--chat-localized-avatar-side-offset, 0px));
+}
+
+.display-preview--bubble .preview-card--self .preview-avatar {
+  transform: translateX(calc(var(--chat-localized-avatar-side-offset, 0px) * -1));
+}
+
+.preview-card--self {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.preview-card--self .preview-body {
+  text-align: left;
 }
 
 .preview-name {

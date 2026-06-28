@@ -4,7 +4,7 @@
  */
 
 import { urlBase } from '@/stores/_config';
-import { isLocalMessageLink, parseMessageLink } from './messageLink';
+import { isLocalChatLink, parseChatLink } from './messageLink';
 import { normalizePerformanceEffect } from './tiptap-performance-mark';
 import {
   SMART_LINK_DATA_ATTR,
@@ -122,6 +122,65 @@ function shouldFilterTextColor(value: string): boolean {
 const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
 const SPOILER_OPEN_TAG = '<span class="tiptap-spoiler" data-spoiler="true">';
 const SPOILER_CLOSE_TAG = '</span>';
+type TextDecorationLine = 'underline' | 'line-through';
+type TextDecorationThickness = 'thin' | 'regular' | 'bold';
+type TextDecorationPattern = 'solid' | 'dotted' | 'dense-dotted';
+type TextDecorationWave = 'none' | 'soft' | 'heavy';
+type TextDecorationCount = 'single' | 'double' | 'triple';
+
+const DECORATION_THICKNESS_CSS: Record<TextDecorationThickness, string> = {
+  thin: '1px',
+  regular: '0.12em',
+  bold: '0.18em',
+};
+
+function isTextDecorationLine(value: unknown): value is TextDecorationLine {
+  return value === 'underline' || value === 'line-through';
+}
+
+function normalizeTextDecorationStyle(attrs: Record<string, any> = {}) {
+  const thickness = attrs.textDecorationThickness;
+  const pattern = attrs.textDecorationPattern;
+  const wave = attrs.textDecorationWave;
+  const count = attrs.textDecorationCount;
+  return {
+    thickness: (thickness === 'thin' || thickness === 'regular' || thickness === 'bold' ? thickness : 'regular') as TextDecorationThickness,
+    pattern: (pattern === 'solid' || pattern === 'dotted' || pattern === 'dense-dotted' ? pattern : 'solid') as TextDecorationPattern,
+    wave: (wave === 'none' || wave === 'soft' || wave === 'heavy' ? wave : 'none') as TextDecorationWave,
+    count: (count === 'single' || count === 'double' || count === 'triple' ? count : 'single') as TextDecorationCount,
+  };
+}
+
+function renderTextDecorationStyleAttrs(sourceAttrs: Record<string, any> = {}) {
+  const line = isTextDecorationLine(sourceAttrs.textDecorationLine) ? sourceAttrs.textDecorationLine : null;
+  if (!line) {
+    return { attrs: [] as string[], styles: [] as string[] };
+  }
+  const style = normalizeTextDecorationStyle(sourceAttrs);
+  const modifierClasses = [
+    `tiptap-text-decoration--${line === 'underline' ? 'underline' : 'strike'}`,
+    `tiptap-text-decoration--${style.pattern}`,
+    `tiptap-text-decoration--wave-${style.wave}`,
+    `tiptap-text-decoration--${style.count}`,
+  ].join(' ');
+  return {
+    attrs: [
+      `class="tiptap-text-decoration ${modifierClasses}"`,
+      `data-text-decoration-line="${line}"`,
+      `data-text-decoration-thickness="${style.thickness}"`,
+      `data-text-decoration-pattern="${style.pattern}"`,
+      `data-text-decoration-wave="${style.wave}"`,
+      `data-text-decoration-count="${style.count}"`,
+    ],
+    styles: [
+      `--tiptap-decoration-line-kind: ${line}`,
+      `--tiptap-decoration-thickness: ${DECORATION_THICKNESS_CSS[style.thickness]}`,
+      `--tiptap-decoration-pattern: ${style.pattern}`,
+      `--tiptap-decoration-wave: ${style.wave}`,
+      `--tiptap-decoration-count: ${style.count}`,
+    ],
+  };
+}
 
 function unwrapSpoilerFragment(fragment: string): string | null {
   if (!fragment.startsWith(SPOILER_OPEN_TAG) || !fragment.endsWith(SPOILER_CLOSE_TAG)) {
@@ -254,6 +313,11 @@ function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs
     if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
       styles.push(`color: ${escapeHtml(normalizedColor)} !important`);
     }
+  }
+  if (textStyleMark?.attrs) {
+    const decoration = renderTextDecorationStyleAttrs(textStyleMark.attrs);
+    attrs.push(...decoration.attrs);
+    styles.push(...decoration.styles);
   }
   if (highlightMark) {
     const bgColor = escapeHtml(String(highlightMark.attrs?.color || '#fef08a'));
@@ -402,10 +466,11 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             const href = mark.attrs?.href || '#';
             const target = mark.attrs?.target || '_blank';
             // 检查是否为本站消息链接，添加特殊标记供后续处理
-            if (isLocalMessageLink(href)) {
-              const params = parseMessageLink(href);
+            if (isLocalChatLink(href)) {
+              const params = parseChatLink(href);
               if (params) {
-                text = `<a href="${escapeHtml(href)}" class="message-jump-link-pending" data-world-id="${escapeHtml(params.worldId)}" data-channel-id="${escapeHtml(params.channelId)}" data-message-id="${escapeHtml(params.messageId)}">${text}</a>`;
+                const messageIdAttr = params.messageId ? ` data-message-id="${escapeHtml(params.messageId)}"` : '';
+                text = `<a href="${escapeHtml(href)}" class="message-jump-link-pending" data-world-id="${escapeHtml(params.worldId)}" data-channel-id="${escapeHtml(params.channelId)}"${messageIdAttr}>${text}</a>`;
                 break;
               }
             }
