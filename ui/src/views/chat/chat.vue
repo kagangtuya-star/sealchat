@@ -6241,9 +6241,30 @@ const normalizeTimestamp = (value: any): number | null => {
   return null;
 };
 
-const normalizeMessageShape = (msg: any): Message => {
+const MAX_QUOTE_NORMALIZE_DEPTH = 8;
+
+interface NormalizeMessageShapeContext {
+  seen: WeakSet<object>;
+  quoteDepth: number;
+}
+
+const createNormalizeMessageShapeContext = (): NormalizeMessageShapeContext => ({
+  seen: new WeakSet<object>(),
+  quoteDepth: 0,
+});
+
+const normalizeMessageShape = (msg: any, context: NormalizeMessageShapeContext = createNormalizeMessageShapeContext()): Message => {
   if (!msg) {
     return msg as Message;
+  }
+  if (typeof msg === 'object') {
+    if (context.seen.has(msg)) {
+      return {
+        ...(msg as Record<string, unknown>),
+        quote: undefined,
+      } as Message;
+    }
+    context.seen.add(msg);
   }
   // 统一主键，避免不同接口返回 message_id/_id 导致重复插入
   if (!msg.id) {
@@ -6400,7 +6421,17 @@ const normalizeMessageShape = (msg: any): Message => {
   msg.pinnedAt = normalizedPinnedAt ?? undefined;
 
   if (msg.quote) {
-    msg.quote = normalizeMessageShape(msg.quote);
+    if (context.quoteDepth >= MAX_QUOTE_NORMALIZE_DEPTH) {
+      msg.quote = {
+        ...(msg.quote as Record<string, unknown>),
+        quote: undefined,
+      };
+    } else {
+      msg.quote = normalizeMessageShape(msg.quote, {
+        seen: context.seen,
+        quoteDepth: context.quoteDepth + 1,
+      });
+    }
   }
   if (Array.isArray((msg as any).reactions) && msg.id) {
     chat.setMessageReactions(msg.id, (msg as any).reactions);
