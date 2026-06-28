@@ -10,6 +10,7 @@ import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embeddedRuntime';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
+import { buildSceneListRequestParams } from './audioStudioSceneHelpers';
 import type {
   AudioAsset,
   AudioAssetBatchDeleteSummary,
@@ -1457,25 +1458,19 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (filters && filters.query !== undefined) {
           this.scenePagination.page = 1;
         }
-        const params: Record<string, unknown> = {
-          ...this.sceneFilters,
-          page: this.scenePagination.page,
-          pageSize: this.scenePagination.pageSize,
-        };
-        if (!params.folderId) {
-          delete params.folderId;
-        }
-        if (!params.query) {
-          delete params.query;
-        }
         if (!this.isSystemAdmin) {
           if (!this.currentWorldId) {
             throw new Error('当前世界上下文缺失，无法加载播放列表');
           }
-          params.scope = 'world';
-          params.worldId = this.currentWorldId;
-          params.includeCommon = false;
         }
+        const params = buildSceneListRequestParams({
+          canManage: this.canManage,
+          isSystemAdmin: this.isSystemAdmin,
+          currentWorldId: this.currentWorldId,
+          sceneFilters: this.sceneFilters,
+          page: this.scenePagination.page,
+          pageSize: this.scenePagination.pageSize,
+        });
         const resp = await api.get('/api/v1/audio/scenes', { params });
         const raw = resp.data as PaginatedResult<AudioScene> | AudioScene[] | undefined;
         const items = Array.isArray(raw) ? raw : raw?.items || [];
