@@ -215,7 +215,7 @@ onMounted(refresh);
 </script>
 
 <template>
-  <div class="p-3">
+  <div class="webhook-integration-manager p-3">
     <n-alert type="info" :bordered="false" class="mb-3">
       外部系统使用：
       <div class="mt-1 text-xs">
@@ -260,19 +260,19 @@ onMounted(refresh);
     </n-card>
 
     <n-card title="已创建授权" size="small">
-      <n-space justify="space-between" align="center" class="mb-2">
+      <div class="webhook-integration-manager__header mb-2">
         <div class="text-xs text-gray-500">当前频道：{{ channelId || '-' }}</div>
         <n-button size="small" :loading="loading" @click="refresh">刷新</n-button>
-      </n-space>
+      </div>
       <n-divider class="my-2" />
       <div v-if="items.length === 0" class="text-sm text-gray-500">暂无授权</div>
       <div v-for="it in items" :key="it.id" class="mb-3">
-        <div class="flex items-center justify-between">
+        <div class="webhook-integration-manager__item-header">
           <div class="font-bold">
             {{ it.name }}
             <n-tag v-if="it.status !== 'active'" size="small" type="warning" class="ml-2">{{ it.status }}</n-tag>
           </div>
-          <n-space>
+          <n-space class="webhook-integration-manager__actions">
             <n-button size="small" :disabled="it.status !== 'active' || loading" @click="rotateToken(it)">轮换</n-button>
             <n-button size="small" type="error" :disabled="it.status !== 'active' || loading" @click="revokeIntegration(it)">撤销</n-button>
           </n-space>
@@ -290,3 +290,29 @@ onMounted(refresh);
     </n-card>
   </div>
 </template>
+
+<style scoped>
+.webhook-integration-manager {
+  min-width: 0;
+}
+
+.webhook-integration-manager__header,
+.webhook-integration-manager__item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .webhook-integration-manager__header,
+  .webhook-integration-manager__item-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .webhook-integration-manager__actions {
+    width: 100%;
+  }
+}
+</style>

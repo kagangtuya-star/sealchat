@@ -1293,7 +1293,9 @@ watch(() => chat.curChannel?.id, (id, prevId) => {
 });
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
+const webhookDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 520));
 const bridgeStatusDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 560));
+const emailNotificationDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 480));
 const compactInlineStackLayout = computed(() => {
   if (!compactInlineLayout.value) return false;
   const width = windowWidth.value;
@@ -15904,7 +15906,7 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="520">
+    <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="webhookDrawerWidth">
       <n-drawer-content closable>
         <template #header>Webhook 授权</template>
         <WebhookIntegrationManager :channel-id="chat.curChannel?.id || ''" />
@@ -15923,7 +15925,7 @@ onBeforeUnmount(() => {
       </n-drawer-content>
     </n-drawer>
 
-    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
+    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="emailNotificationDrawerWidth">
       <n-drawer-content closable>
         <template #header>未读提醒</template>
         <EmailNotificationManager scope-type="channel" :scope-id="chat.curChannel?.id || ''" />

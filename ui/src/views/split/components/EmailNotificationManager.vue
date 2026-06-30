@@ -679,7 +679,7 @@ watch(passiveToken, () => {
 </script>
 
 <template>
-  <div class="p-3">
+  <div class="email-notification-manager p-3">
     <n-alert v-if="errorText" type="error" :bordered="false" class="mb-3">
       {{ errorText }}
     </n-alert>
@@ -690,7 +690,7 @@ watch(passiveToken, () => {
 
     <n-card :title="`${scopeLabel}未读提醒`" size="small" class="mb-3">
       <n-space vertical size="large">
-        <div class="flex items-center justify-between">
+        <div class="email-notification-manager__row">
           <div>
             <div class="font-medium">启用规则</div>
             <div class="text-xs text-gray-500">窗口结束后按访问人数阈值判断是否生成摘要</div>
@@ -812,9 +812,9 @@ watch(passiveToken, () => {
               :disabled="loading || clearSigningSecret"
               placeholder="留空则保持现有签名密钥"
             />
-            <div class="flex items-center justify-between text-xs text-gray-500">
+            <div class="email-notification-manager__row email-notification-manager__row--muted text-xs text-gray-500">
               <span>当前签名密钥：{{ settings.hasSigningSecret ? '已配置' : '未配置' }}</span>
-              <label class="flex items-center gap-2">
+              <label class="email-notification-manager__checkbox">
                 <input v-model="clearSigningSecret" type="checkbox" />
                 清空签名密钥
               </label>
@@ -880,7 +880,7 @@ watch(passiveToken, () => {
           </div>
         </div>
 
-        <div class="flex items-center justify-between">
+        <div class="email-notification-manager__row">
           <div>
             <div class="text-sm">同时触发主动推送</div>
             <div class="text-xs text-gray-500">仅在已配置主动推送地址时有效</div>
@@ -944,3 +944,37 @@ watch(passiveToken, () => {
     </n-card>
   </div>
 </template>
+
+<style scoped>
+.email-notification-manager {
+  min-width: 0;
+}
+
+.email-notification-manager__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.email-notification-manager__row--muted {
+  align-items: flex-start;
+}
+
+.email-notification-manager__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .email-notification-manager__row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .email-notification-manager__checkbox {
+    width: 100%;
+  }
+}
+</style>
