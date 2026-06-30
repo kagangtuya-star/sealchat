@@ -58,6 +58,32 @@ func TestNormalizeBotCommandContentWithPrefixes_ConvertsDiceChipHTMLCommand(t *t
 	}
 }
 
+func TestBotNicknameSyncPendingSuppressesCustomPrefixAck(t *testing.T) {
+	botID := "bot-custom-prefix"
+	channelID := "channel-custom-prefix"
+	botNicknameSyncPendingByBotChannel.Delete(botNicknameSyncPendingKey(botID, channelID))
+
+	storeBotNicknameSyncPendingForBot(botID, channelID, "Alice", "sender", time.Now().UnixMilli())
+	if !shouldSuppressBotNicknameSyncContent(botID, channelID, "昵称已切换为 Alice") {
+		t.Fatal("expected nickname sync ack to be suppressed")
+	}
+
+	event := &protocol.Event{
+		Type: protocol.EventMessageCreated,
+		Message: &protocol.Message{
+			ID:      botCommandDispatchMessageIDPrefix + utils.NewID(),
+			Content: "#nn Alice",
+		},
+		MessageContext: &protocol.MessageContext{SenderUserID: "sender"},
+	}
+	info := &ConnInfo{User: &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: botID}, IsBot: true}}
+	storeBotNicknameSyncPending(info, channelID, event)
+
+	if !shouldSuppressBotNicknameSyncContent(botID, channelID, "昵称已切换为 Alice") {
+		t.Fatal("expected custom-prefix nickname sync ack to be suppressed")
+	}
+}
+
 func TestNormalizeEventForBot_EscapesPlainTextAmpersandCommand(t *testing.T) {
 	event := &protocol.Event{
 		Type: protocol.EventMessageCreated,
