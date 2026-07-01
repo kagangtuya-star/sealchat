@@ -1206,7 +1206,7 @@ const openEditPanel = async (card: CharacterCard) => {
             </div>
             <div class="settings-row">
               <div>
-                <p class="settings-title">自动同步 BOT 昵称</p>
+                <p class="settings-title">自动同步昵称</p>
                 <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
               </div>
               <n-switch v-model:value="autoSyncBotNicknameEnabled">
