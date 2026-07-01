@@ -177,8 +177,8 @@ const settings = ref<DigestPushSettings>({
   scopeId: '',
   windowSeconds: 3600,
   supportedWindowSeconds: [300, 900, 1800, 3600, 7200, 21600, 86400],
-  activeUserThresholdMode: 'channel_member_count',
-  activeUserThresholdValue: 0,
+  activeUserThresholdMode: 'fixed',
+  activeUserThresholdValue: 1,
   effectiveActiveUserThreshold: 1,
   pushMode: 'passive',
   selectedChannelIds: [],
@@ -311,7 +311,7 @@ const pushModeOptions = [
 ]
 
 const thresholdModeOptions = computed(() => [
-  { label: isWorldScope.value ? '覆盖频道成员数' : '频道成员数', value: 'channel_member_count' },
+  { label: isWorldScope.value ? '覆盖频道成员数上限' : '频道成员数上限', value: 'channel_member_count' },
   { label: '固定阈值', value: 'fixed' },
 ])
 
@@ -693,7 +693,7 @@ watch(passiveToken, () => {
         <div class="email-notification-manager__row">
           <div>
             <div class="font-medium">启用规则</div>
-            <div class="text-xs text-gray-500">窗口结束后按访问人数阈值判断是否生成摘要</div>
+            <div class="text-xs text-gray-500">窗口结束后按低活跃阈值判断是否生成摘要</div>
           </div>
           <n-switch v-model:value="settings.enabled" :disabled="loading" />
         </div>
@@ -708,7 +708,7 @@ watch(passiveToken, () => {
         </div>
 
         <div>
-          <div class="text-sm mb-2">登录用户阈值</div>
+          <div class="text-sm mb-2">低活跃阈值</div>
           <n-radio-group v-model:value="settings.activeUserThresholdMode" name="threshold-mode">
             <n-space>
               <n-radio-button
@@ -721,7 +721,7 @@ watch(passiveToken, () => {
             </n-space>
           </n-radio-group>
           <div class="text-xs text-gray-500 mt-2">
-            当前生效阈值：{{ settings.effectiveActiveUserThreshold }}
+            当前生效上限：{{ settings.effectiveActiveUserThreshold }}
           </div>
           <n-input-number
             v-if="showFixedThreshold"
@@ -919,7 +919,7 @@ watch(passiveToken, () => {
             <template v-if="isWorldScope && testPreview.channelCount">
               命中频道数：{{ testPreview.channelCount }}<br />
             </template>
-            访问人数：{{ testPreview.activeUserCount }} / 阈值 {{ testPreview.thresholdValue }}<br />
+            活跃人数：{{ testPreview.activeUserCount }} / 上限 {{ testPreview.thresholdValue }}<br />
             规则命中：{{ testPreview.thresholdSatisfied ? '是' : '否' }}
           </div>
         </n-alert>

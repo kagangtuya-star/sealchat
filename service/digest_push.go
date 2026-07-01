@@ -204,8 +204,8 @@ func NewDefaultDigestRule(scopeType, scopeID string) *model.DigestPushRuleModel 
 		ScopeID:                  strings.TrimSpace(scopeID),
 		Enabled:                  false,
 		WindowSeconds:            DigestDefaultWindowSeconds,
-		ActiveUserThresholdMode:  model.DigestThresholdModeChannelMemberCount,
-		ActiveUserThresholdValue: 0,
+		ActiveUserThresholdMode:  model.DigestThresholdModeFixed,
+		ActiveUserThresholdValue: 1,
 		PushMode:                 model.DigestPushModePassive,
 		TextTemplate:             DefaultDigestTextTemplateForScope(scopeType),
 		JSONTemplate:             DefaultDigestJSONTemplateForScope(scopeType),
@@ -230,7 +230,8 @@ func LatestClosedDigestWindowStart(windowSeconds int, now time.Time) int64 {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	start, _ := AlignDigestWindow(now.UnixMilli()-1, windowSeconds)
+	windowMillis := int64(windowSeconds) * 1000
+	start, _ := AlignDigestWindow(now.UnixMilli()-windowMillis, windowSeconds)
 	return start
 }
 
@@ -266,6 +267,11 @@ func RecordDigestWindowMessage(channelID string, message *model.MessageModel) er
 	}
 	for _, windowSeconds := range DigestSupportedWindowSeconds() {
 		windowStart, windowEnd := AlignDigestWindow(messageAt, windowSeconds)
+		if userID := strings.TrimSpace(message.UserID); userID != "" {
+			if err := model.DigestWindowVisitorUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, userID); err != nil {
+				return err
+			}
+		}
 		if err := model.DigestWindowSpeakerUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, speakerKey, speakerName, messageAt); err != nil {
 			return err
 		}
@@ -701,7 +707,7 @@ func buildChannelDigestPreview(rule *model.DigestPushRuleModel, windowStart, win
 		ActiveUserCount:    int(activeUserCount),
 		ThresholdMode:      rule.ActiveUserThresholdMode,
 		ThresholdValue:     thresholdValue,
-		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
+		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) <= thresholdValue,
 		SpeakerNames:       speakerNames,
 		SpeakerSummary:     channelSummary.SpeakerSummary,
 		Speakers:           speakers,
@@ -866,7 +872,7 @@ func buildWorldDigestPreview(rule *model.DigestPushRuleModel, windowStart, windo
 		ActiveUserCount:    int(activeUserCount),
 		ThresholdMode:      rule.ActiveUserThresholdMode,
 		ThresholdValue:     thresholdValue,
-		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
+		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) <= thresholdValue,
 		SpeakerNames:       aggregateSpeakerNames,
 		SpeakerSummary:     buildSpeakerSummary(aggregateSpeakerList),
 		Speakers:           aggregateSpeakerList,
