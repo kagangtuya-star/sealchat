@@ -199,13 +199,23 @@ func DefaultDigestJSONTemplateForScope(scopeType string) string {
 }
 
 func NewDefaultDigestRule(scopeType, scopeID string) *model.DigestPushRuleModel {
+	defaultThresholdValue := 1
+	if model.GetDB() != nil {
+		if threshold, err := DigestEffectiveThreshold(&model.DigestPushRuleModel{
+			ScopeType:               strings.TrimSpace(scopeType),
+			ScopeID:                 strings.TrimSpace(scopeID),
+			ActiveUserThresholdMode: model.DigestThresholdModeChannelMemberCount,
+		}); err == nil && threshold > 0 {
+			defaultThresholdValue = threshold
+		}
+	}
 	return &model.DigestPushRuleModel{
 		ScopeType:                strings.TrimSpace(scopeType),
 		ScopeID:                  strings.TrimSpace(scopeID),
 		Enabled:                  false,
 		WindowSeconds:            DigestDefaultWindowSeconds,
 		ActiveUserThresholdMode:  model.DigestThresholdModeFixed,
-		ActiveUserThresholdValue: 1,
+		ActiveUserThresholdValue: defaultThresholdValue,
 		PushMode:                 model.DigestPushModePassive,
 		TextTemplate:             DefaultDigestTextTemplateForScope(scopeType),
 		JSONTemplate:             DefaultDigestJSONTemplateForScope(scopeType),
@@ -348,7 +358,19 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 		rule.ActiveUserThresholdValue = 0
 	case model.DigestThresholdModeFixed:
 		if rule.ActiveUserThresholdValue <= 0 {
-			rule.ActiveUserThresholdValue = 1
+			threshold, err := resolveDigestThresholdValue(&model.DigestPushRuleModel{
+				ScopeType:               rule.ScopeType,
+				ScopeID:                 rule.ScopeID,
+				SelectedChannelIDsJSON:  rule.SelectedChannelIDsJSON,
+				ActiveUserThresholdMode: model.DigestThresholdModeChannelMemberCount,
+			}, digestTargetChannelIDs(rule))
+			if err != nil {
+				return err
+			}
+			if threshold <= 0 {
+				threshold = 1
+			}
+			rule.ActiveUserThresholdValue = threshold
 		}
 	default:
 		return fmt.Errorf("无效的访问阈值模式")

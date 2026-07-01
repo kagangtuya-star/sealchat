@@ -24,6 +24,7 @@ type digestPushSettingsDTO struct {
 	ActiveUserThresholdMode      string                    `json:"activeUserThresholdMode"`
 	ActiveUserThresholdValue     int                       `json:"activeUserThresholdValue"`
 	EffectiveActiveUserThreshold int                       `json:"effectiveActiveUserThreshold"`
+	ChannelMemberThreshold       int                       `json:"channelMemberThreshold"`
 	PushMode                     string                    `json:"pushMode"`
 	SelectedChannelIDs           []string                  `json:"selectedChannelIds"`
 	TextTemplate                 string                    `json:"textTemplate"`
@@ -601,6 +602,15 @@ func buildDigestPushSettingsResponse(scopeType, scopeID string, rule *model.Dige
 	if err := service.NormalizeDigestRule(rule); err != nil {
 		return nil, err
 	}
+	channelMemberThreshold, err := service.DigestEffectiveThreshold(&model.DigestPushRuleModel{
+		ScopeType:               rule.ScopeType,
+		ScopeID:                 rule.ScopeID,
+		SelectedChannelIDsJSON:  rule.SelectedChannelIDsJSON,
+		ActiveUserThresholdMode: model.DigestThresholdModeChannelMemberCount,
+	})
+	if err != nil || channelMemberThreshold <= 0 {
+		channelMemberThreshold = 1
+	}
 	effectiveThreshold, err := service.DigestEffectiveThreshold(rule)
 	if err != nil || effectiveThreshold <= 0 {
 		effectiveThreshold = 1
@@ -631,6 +641,7 @@ func buildDigestPushSettingsResponse(scopeType, scopeID string, rule *model.Dige
 		ActiveUserThresholdMode:      rule.ActiveUserThresholdMode,
 		ActiveUserThresholdValue:     rule.ActiveUserThresholdValue,
 		EffectiveActiveUserThreshold: effectiveThreshold,
+		ChannelMemberThreshold:       channelMemberThreshold,
 		PushMode:                     rule.PushMode,
 		SelectedChannelIDs:           service.DigestRuleSelectedChannelIDs(rule),
 		TextTemplate:                 rule.TextTemplate,

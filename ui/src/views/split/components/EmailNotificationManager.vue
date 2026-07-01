@@ -93,6 +93,7 @@ interface DigestPushSettings {
   activeUserThresholdMode: string
   activeUserThresholdValue: number
   effectiveActiveUserThreshold: number
+  channelMemberThreshold: number
   pushMode: string
   selectedChannelIds: string[]
   textTemplate: string
@@ -180,6 +181,7 @@ const settings = ref<DigestPushSettings>({
   activeUserThresholdMode: 'fixed',
   activeUserThresholdValue: 1,
   effectiveActiveUserThreshold: 1,
+  channelMemberThreshold: 1,
   pushMode: 'passive',
   selectedChannelIds: [],
   textTemplate: DEFAULT_CHANNEL_DIGEST_TEXT_TEMPLATE,
@@ -287,6 +289,15 @@ const passivePullEnabled = computed(() => settings.value.enabled && (settings.va
 const showFixedThreshold = computed(() => settings.value.activeUserThresholdMode === 'fixed')
 const showActivePush = computed(() => settings.value.pushMode === 'active' || settings.value.pushMode === 'both')
 const showWorldChannelPicker = computed(() => isWorldScope.value && settings.value.availableChannels.length > 0)
+const normalizePositiveInt = (value: unknown, fallback = 1) => {
+  const normalized = Number(value || 0)
+  return normalized > 0 ? normalized : fallback
+}
+const displayedEffectiveThreshold = computed(() => {
+  const memberThreshold = normalizePositiveInt(settings.value.channelMemberThreshold, 1)
+  const fixedThreshold = normalizePositiveInt(settings.value.activeUserThresholdValue, memberThreshold)
+  return settings.value.activeUserThresholdMode === 'channel_member_count' ? memberThreshold : fixedThreshold
+})
 
 const windowOptions = computed(() => {
   const labels: Record<number, string> = {
@@ -322,11 +333,14 @@ const methodOptions = [
 ]
 
 const normalizeSettingsValue = (input?: Partial<DigestPushSettings>) => {
+  const channelMemberThreshold = normalizePositiveInt(input?.channelMemberThreshold ?? settings.value.channelMemberThreshold, 1)
   return {
     ...settings.value,
     ...(input || {}),
     scopeType: props.scopeType,
     scopeId: props.scopeId,
+    activeUserThresholdValue: normalizePositiveInt(input?.activeUserThresholdValue ?? settings.value.activeUserThresholdValue, channelMemberThreshold),
+    channelMemberThreshold,
     selectedChannelIds: Array.isArray(input?.selectedChannelIds ?? settings.value.selectedChannelIds)
       ? [...(input?.selectedChannelIds ?? settings.value.selectedChannelIds ?? [])]
       : [],
@@ -463,14 +477,6 @@ const ensurePassivePullToken = async (forceRotate = false) => {
       if (tokenMatchesTailFragment(cachedToken, dedicated.tokenTailFragment)) {
         passiveToken.value = cachedToken
         persistPassivePullCache()
-        return
-      }
-      if (cachedToken) {
-        passiveToken.value = ''
-        persistPassivePullCache()
-        passiveTokenError.value = cachedIntegrationId && cachedIntegrationId !== dedicated.id
-          ? '检测到该摘要拉取 BOT 已被服务端收敛，原本地缓存 token 已失效；当前仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
-          : '检测到本地缓存 token 已失效；服务端仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
         return
       }
       await rotatePassivePullToken()
@@ -673,6 +679,15 @@ watch(() => settings.value.pushMode, () => {
     testDeliverActive.value = false
   }
 })
+watch(() => settings.value.activeUserThresholdMode, (mode, prevMode) => {
+  if (mode !== 'fixed' || prevMode === 'fixed') {
+    return
+  }
+  settings.value.activeUserThresholdValue = normalizePositiveInt(
+    settings.value.activeUserThresholdValue,
+    normalizePositiveInt(settings.value.channelMemberThreshold, 1),
+  )
+})
 watch(passiveToken, () => {
   persistPassivePullCache()
 })
@@ -721,7 +736,7 @@ watch(passiveToken, () => {
             </n-space>
           </n-radio-group>
           <div class="text-xs text-gray-500 mt-2">
-            当前生效上限：{{ settings.effectiveActiveUserThreshold }}
+            当前生效上限：{{ displayedEffectiveThreshold }}
           </div>
           <n-input-number
             v-if="showFixedThreshold"
