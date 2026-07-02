@@ -2,12 +2,13 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh, ChevronDown, ChevronRight, Settings } from '@vicons/tabler';
-import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
+import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard, type OnlineCharacterCardItem } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
 import { useCharacterCardAvatarStore } from '@/stores/characterCardAvatar';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
+import { useUserStore } from '@/stores/user';
 import { useUtilsStore } from '@/stores/utils';
 import { resolveCharacterCardNarratorCountBadge } from '@/utils/characterCardNarratorSettings';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
@@ -33,6 +34,7 @@ const templateStore = useCharacterCardTemplateStore();
 const avatarStore = useCharacterCardAvatarStore();
 const chatStore = useChatStore();
 const displayStore = useDisplayStore();
+const userStore = useUserStore();
 const utilsStore = useUtilsStore();
 
 const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
@@ -105,6 +107,16 @@ const toggleBadgeSettingsExpanded = () => {
   badgeSettingsExpanded.value = !badgeSettingsExpanded.value;
 };
 
+const onlineCharacterCardsExpanded = ref(true);
+
+const onlineCharacterCardsToggleIcon = computed(() => (
+  onlineCharacterCardsExpanded.value ? ChevronDown : ChevronRight
+));
+
+const toggleOnlineCharacterCardsExpanded = () => {
+  onlineCharacterCardsExpanded.value = !onlineCharacterCardsExpanded.value;
+};
+
 const badgeAutoContrastEnabled = computed({
   get: () => displayStore.settings.characterCardBadgeAutoContrastEnabled,
   set: (value: boolean) => {
@@ -124,6 +136,88 @@ const badgeVisibilityScope = computed({
     displayStore.updateSettings({ characterCardBadgeVisibilityScope: value });
   },
 });
+
+const onlineCharacterCardsEnabled = computed({
+  get: () => displayStore.settings.onlineCharacterCardsEnabled,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ onlineCharacterCardsEnabled: value });
+  },
+});
+
+const onlineCharacterCards = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return [];
+  return Object.values(cardStore.onlineCardsByChannel[channelId] || {})
+    .filter(item => item.userId !== userStore.info?.id && item.card?.name)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+});
+
+const onlineCharacterCardsLoading = computed(() => (
+  !!cardStore.onlineCardsLoadingByChannel[resolvedChannelId.value]
+));
+
+let onlineCharacterCardsRefreshTimer: ReturnType<typeof setInterval> | null = null;
+const lastOnlineCharacterCardsRefreshAt = ref(0);
+
+const stopOnlineCharacterCardsRefresh = () => {
+  if (onlineCharacterCardsRefreshTimer) {
+    clearInterval(onlineCharacterCardsRefreshTimer);
+    onlineCharacterCardsRefreshTimer = null;
+  }
+};
+
+const refreshOnlineCharacterCards = async (manual = false) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || !onlineCharacterCardsEnabled.value) return;
+  const now = Date.now();
+  if (manual && now - lastOnlineCharacterCardsRefreshAt.value < 3000) return;
+  lastOnlineCharacterCardsRefreshAt.value = now;
+  await cardStore.requestOnlineCardSnapshot(channelId, { requestPeers: true });
+};
+
+const syncOnlineCharacterCardsRefresh = () => {
+  stopOnlineCharacterCardsRefresh();
+  if (!props.visible || !resolvedChannelId.value || !onlineCharacterCardsEnabled.value) return;
+  void refreshOnlineCharacterCards(false);
+  onlineCharacterCardsRefreshTimer = setInterval(() => {
+    void refreshOnlineCharacterCards(false);
+  }, 45_000);
+};
+
+const formatOnlineCardUpdatedAt = (updatedAt?: number) => {
+  if (!updatedAt) return '最后更新未知';
+  const time = new Date(updatedAt * 1000);
+  if (Number.isNaN(time.getTime())) return '最后更新未知';
+  return `最后更新 ${time.toLocaleTimeString()}`;
+};
+
+const onlinePreviewCard = (item: OnlineCharacterCardItem): CharacterCard => ({
+  id: `online:${item.userId}:${item.identityId}`,
+  name: item.card.name,
+  sheetType: item.card.sheetType,
+  attrs: item.card.attrs,
+});
+
+const openOnlineCharacterCardPreview = (item: OnlineCharacterCardItem) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const windowId = sheetStore.openSheet(onlinePreviewCard(item), channelId, {
+    name: item.card.name,
+    type: item.card.sheetType,
+    attrs: item.card.attrs || {},
+    avatarUrl: item.identityAvatar || undefined,
+  }, {
+    templateText: item.card.templateText || undefined,
+    readOnly: true,
+  });
+  if (isMobile.value) {
+    handleClose();
+  }
+  sheetStore.setMode(windowId, 'view');
+};
 
 const narratorSettingsVisible = ref(false);
 const narratorIdentityIdsDraft = ref<string[]>([]);
@@ -343,6 +437,33 @@ watch(badgeEnabled, (enabled) => {
   void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
 });
 
+watch(onlineCharacterCardsEnabled, (enabled, prevEnabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || prevEnabled === undefined || enabled === prevEnabled) {
+    return;
+  }
+  if (!enabled) {
+    stopOnlineCharacterCardsRefresh();
+    void cardStore.clearOnlineActiveCard(channelId);
+    return;
+  }
+  void refreshOnlineCharacterCards(false);
+});
+
+watch(
+  [() => props.visible, resolvedChannelId, onlineCharacterCardsEnabled],
+  () => {
+    syncOnlineCharacterCardsRefresh();
+  },
+  { immediate: true },
+);
+
+watch(resolvedChannelId, (newId, oldId) => {
+  if (oldId && oldId !== newId) {
+    void cardStore.clearOnlineActiveCard(oldId);
+  }
+});
+
 watch(
   () => sheetStore.activeWindowIds.map(windowId => {
     const window = sheetStore.windows[windowId];
@@ -368,6 +489,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopOnlineCharacterCardsRefresh();
   if (typeof window === 'undefined') return;
   window.removeEventListener('resize', updateViewportWidth);
 });
@@ -1165,6 +1287,16 @@ const openEditPanel = async (card: CharacterCard) => {
             </div>
             <div class="settings-row">
               <div>
+                <p class="settings-title">显示在线成员人物卡</p>
+                <p class="settings-desc">可以查看在线成员当前使用的人物卡信息</p>
+              </div>
+              <n-switch v-model:value="onlineCharacterCardsEnabled">
+                <template #checked>已启用</template>
+                <template #unchecked>已关闭</template>
+              </n-switch>
+            </div>
+            <div class="settings-row">
+              <div>
                 <p class="settings-title">自动提高可读性</p>
                 <p class="settings-desc">当徽标颜色与频道背景接近时，自动调整文字、底色与边框</p>
               </div>
@@ -1236,6 +1368,79 @@ const openEditPanel = async (card: CharacterCard) => {
                   @click="syncBadgeTemplateToWorld"
                 >模板同步</n-button>
               </div>
+            </div>
+          </div>
+        </n-collapse-transition>
+      </div>
+
+      <div v-if="onlineCharacterCardsEnabled" class="character-card-settings">
+        <button
+          type="button"
+          class="settings-group-toggle"
+          :aria-expanded="onlineCharacterCardsExpanded"
+          @click="toggleOnlineCharacterCardsExpanded"
+        >
+          <span class="settings-group-toggle__title-wrap">
+            <n-icon size="18" class="settings-group-toggle__icon">
+              <component :is="onlineCharacterCardsToggleIcon" />
+            </n-icon>
+            <span class="settings-group-toggle__title">在线成员人物卡</span>
+          </span>
+          <span class="settings-group-toggle__state">{{ onlineCharacterCardsExpanded ? '收起' : '展开' }}</span>
+        </button>
+        <n-collapse-transition :show="onlineCharacterCardsExpanded">
+          <div class="character-card-settings__body">
+            <div class="online-character-cards__header">
+              <div>
+                <p class="settings-desc">仅显示当前频道其他在线成员当前启用的人物卡</p>
+              </div>
+              <n-button
+                tertiary
+                circle
+                size="small"
+                title="刷新在线成员人物卡"
+                aria-label="刷新在线成员人物卡"
+                :loading="onlineCharacterCardsLoading"
+                @click="refreshOnlineCharacterCards(true)"
+              >
+                <template #icon><n-icon :component="Refresh" /></template>
+              </n-button>
+            </div>
+            <div class="character-card-list">
+              <n-empty v-if="!onlineCharacterCardsLoading && onlineCharacterCards.length === 0" description="暂无在线成员人物卡" />
+              <n-card
+                v-for="item in onlineCharacterCards"
+                :key="`${item.userId}:${item.identityId}`"
+                size="small"
+                class="character-card-item character-card-item--online"
+              >
+                <template #header>
+                  <div class="card-header-main">
+                    <AvatarVue :size="34" :src="item.identityAvatar" :fallback-text="item.identityName || item.card.name" use-text-fallback />
+                    <div class="online-card-title-group">
+                      <span class="online-card-user" :style="{ color: item.userColor || undefined }">{{ item.username || item.userNick || '未命名用户' }}</span>
+                      <span class="card-name">{{ item.card.name }}</span>
+                    </div>
+                    <n-tag size="small" :bordered="false">{{ item.card.sheetType || 'custom' }}</n-tag>
+                  </div>
+                </template>
+                <template #header-extra>
+                  <n-button
+                    text
+                    size="small"
+                    title="预览"
+                    @click="openOnlineCharacterCardPreview(item)"
+                  >
+                    <template #icon><n-icon :component="Eye" /></template>
+                  </n-button>
+                </template>
+                <div class="card-main-content">
+                  <div class="online-card-meta">
+                    <span class="online-card-meta__identity">{{ item.identityName || '未命名角色' }}</span>
+                    <span class="online-card-meta__updated-at">{{ formatOnlineCardUpdatedAt(item.updatedAt) }}</span>
+                  </div>
+                </div>
+              </n-card>
             </div>
           </div>
         </n-collapse-transition>
@@ -1643,6 +1848,19 @@ const openEditPanel = async (card: CharacterCard) => {
   padding-top: 0.25rem;
 }
 
+.online-character-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.online-character-cards__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .character-api-unavailable {
   display: flex;
   align-items: center;
@@ -1913,6 +2131,45 @@ const openEditPanel = async (card: CharacterCard) => {
     min-width: 0;
   }
 
+  .online-card-title-group {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 0.12rem;
+  }
+
+  .online-card-user {
+    font-size: 0.76rem;
+    line-height: 1.1;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .online-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .online-card-meta__identity {
+    color: var(--sc-text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .online-card-meta__updated-at {
+    color: var(--sc-text-tertiary);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
   .card-attrs {
     min-width: 0;
   }
@@ -2006,6 +2263,10 @@ const openEditPanel = async (card: CharacterCard) => {
   .settings-template-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .online-character-cards__header {
+    align-items: center;
   }
 
   .template-manager__toolbar {

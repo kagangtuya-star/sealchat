@@ -1111,6 +1111,15 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "character.badge.snapshot":
 						apiWrap(ctx, msg, apiCharacterBadgeSnapshot)
 						solved = true
+					case "character.online.card.request":
+						apiWrap(ctx, msg, apiCharacterOnlineCardRequest)
+						solved = true
+					case "character.online.card.broadcast":
+						apiWrap(ctx, msg, apiCharacterOnlineCardBroadcast)
+						solved = true
+					case "character.online.card.snapshot":
+						apiWrap(ctx, msg, apiCharacterOnlineCardSnapshot)
+						solved = true
 					case "character.remark.broadcast":
 						apiWrap(ctx, msg, apiCharacterRemarkBroadcast)
 						solved = true

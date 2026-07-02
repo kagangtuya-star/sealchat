@@ -419,6 +419,10 @@ const (
 	// Character Card Badge Events
 	EventCharacterCardBadgeUpdated  EventName = "character-card-badge-updated"
 	EventCharacterCardBadgeSnapshot EventName = "character-card-badge-snapshot"
+	// Online Character Card Events
+	EventCharacterOnlineCardRequested EventName = "character-online-card-requested"
+	EventCharacterOnlineCardUpdated   EventName = "character-online-card-updated"
+	EventCharacterOnlineCardSnapshot  EventName = "character-online-card-snapshot"
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
@@ -443,36 +447,39 @@ type MessageReactionEvent struct {
 }
 
 type Event struct {
-	ID                         int64                              `json:"id"`
-	Type                       EventName                          `json:"type"`
-	SelfID                     string                             `json:"selfID"`
-	Platform                   string                             `json:"platform"`
-	Timestamp                  int64                              `json:"timestamp"`
-	Argv                       *Argv                              `json:"argv"`
-	Channel                    *Channel                           `json:"channel"`
-	Guild                      *Guild                             `json:"guild"`
-	Login                      *Login                             `json:"login"`
-	Member                     *GuildMember                       `json:"member"`
-	Message                    *Message                           `json:"message"`
-	Operator                   *User                              `json:"operator"`
-	Role                       *GuildRole                         `json:"role"`
-	User                       *User                              `json:"user"`
-	Button                     *Button                            `json:"button"`
-	Typing                     *TypingPreview                     `json:"typing"`
-	Reorder                    *MessageReorder                    `json:"reorder"`
-	Presence                   []*ChannelPresence                 `json:"presence"`
-	AudioState                 *AudioPlaybackStatePayload         `json:"audioState,omitempty"`
-	IForm                      *ChannelIFormEventPayload          `json:"iform,omitempty"`
-	ChannelImageLayout         *ChannelImageLayoutEventPayload    `json:"channelImageLayout,omitempty"`
-	StickyNote                 *StickyNoteEventPayload            `json:"stickyNote,omitempty"`
-	CharacterCard              *CharacterCardEventPayload         `json:"characterCard,omitempty"`
-	CharacterCardBadge         *CharacterCardBadgeEventPayload    `json:"characterCardBadge,omitempty"`
-	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload `json:"characterCardBadgeSnapshot,omitempty"`
-	CharacterRemark            *CharacterRemarkEventPayload       `json:"characterRemark,omitempty"`
-	CharacterRemarkSnapshot    *CharacterRemarkSnapshotPayload    `json:"characterRemarkSnapshot,omitempty"`
-	MessageContext             *MessageContext                    `json:"messageContext,omitempty"`
-	MessageReaction            *MessageReactionEvent              `json:"messageReaction,omitempty"`
-	IsInteractiveUpdate        bool                               `json:"is_interactive_update,omitempty"`
+	ID                          int64                               `json:"id"`
+	Type                        EventName                           `json:"type"`
+	SelfID                      string                              `json:"selfID"`
+	Platform                    string                              `json:"platform"`
+	Timestamp                   int64                               `json:"timestamp"`
+	Argv                        *Argv                               `json:"argv"`
+	Channel                     *Channel                            `json:"channel"`
+	Guild                       *Guild                              `json:"guild"`
+	Login                       *Login                              `json:"login"`
+	Member                      *GuildMember                        `json:"member"`
+	Message                     *Message                            `json:"message"`
+	Operator                    *User                               `json:"operator"`
+	Role                        *GuildRole                          `json:"role"`
+	User                        *User                               `json:"user"`
+	Button                      *Button                             `json:"button"`
+	Typing                      *TypingPreview                      `json:"typing"`
+	Reorder                     *MessageReorder                     `json:"reorder"`
+	Presence                    []*ChannelPresence                  `json:"presence"`
+	AudioState                  *AudioPlaybackStatePayload          `json:"audioState,omitempty"`
+	IForm                       *ChannelIFormEventPayload           `json:"iform,omitempty"`
+	ChannelImageLayout          *ChannelImageLayoutEventPayload     `json:"channelImageLayout,omitempty"`
+	StickyNote                  *StickyNoteEventPayload             `json:"stickyNote,omitempty"`
+	CharacterCard               *CharacterCardEventPayload          `json:"characterCard,omitempty"`
+	CharacterCardBadge          *CharacterCardBadgeEventPayload     `json:"characterCardBadge,omitempty"`
+	CharacterCardBadgeSnapshot  *CharacterCardBadgeSnapshotPayload  `json:"characterCardBadgeSnapshot,omitempty"`
+	OnlineCharacterCardRequest  *OnlineCharacterCardRequestPayload  `json:"onlineCharacterCardRequest,omitempty"`
+	OnlineCharacterCard         *OnlineCharacterCardEventPayload    `json:"onlineCharacterCard,omitempty"`
+	OnlineCharacterCardSnapshot *OnlineCharacterCardSnapshotPayload `json:"onlineCharacterCardSnapshot,omitempty"`
+	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
+	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
+	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
+	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
+	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`
 }
 
 type TypingState string
@@ -652,6 +659,44 @@ type CharacterCardBadgeEventPayload struct {
 // CharacterCardBadgeSnapshotPayload 角色徽章快照载荷
 type CharacterCardBadgeSnapshotPayload struct {
 	Items []*CharacterCardBadgeEventPayload `json:"items,omitempty"`
+}
+
+// OnlineCharacterCardData 在线成员当前人物卡只读数据
+type OnlineCharacterCardData struct {
+	Name      string         `json:"name,omitempty"`
+	SheetType string         `json:"sheetType,omitempty"`
+	Attrs     map[string]any `json:"attrs,omitempty"`
+	TemplateText string      `json:"templateText,omitempty"`
+}
+
+// OnlineCharacterCardItem 在线成员当前人物卡条目
+type OnlineCharacterCardItem struct {
+	UserID         string                   `json:"userId,omitempty"`
+	Username       string                   `json:"username,omitempty"`
+	UserNick       string                   `json:"userNick,omitempty"`
+	UserColor      string                   `json:"userColor,omitempty"`
+	IdentityID     string                   `json:"identityId,omitempty"`
+	IdentityName   string                   `json:"identityName,omitempty"`
+	IdentityColor  string                   `json:"identityColor,omitempty"`
+	IdentityAvatar string                   `json:"identityAvatar,omitempty"`
+	Card           *OnlineCharacterCardData `json:"card,omitempty"`
+	UpdatedAt      int64                    `json:"updatedAt,omitempty"`
+}
+
+// OnlineCharacterCardRequestPayload 请求在线客户端上报当前人物卡
+type OnlineCharacterCardRequestPayload struct {
+	RequesterID string `json:"requesterId,omitempty"`
+}
+
+// OnlineCharacterCardEventPayload 在线成员人物卡事件载荷
+type OnlineCharacterCardEventPayload struct {
+	Item   *OnlineCharacterCardItem `json:"item,omitempty"`
+	Action string                   `json:"action,omitempty"` // update/clear
+}
+
+// OnlineCharacterCardSnapshotPayload 在线成员人物卡快照载荷
+type OnlineCharacterCardSnapshotPayload struct {
+	Items []*OnlineCharacterCardItem `json:"items,omitempty"`
 }
 
 // CharacterRemarkEventPayload 角色备注事件载荷

@@ -28,6 +28,7 @@
       </div>
       <div class="sheet-window__controls">
         <button
+          v-if="!windowData.readOnly"
           class="sheet-window__control-btn"
           :title="windowData.mode === 'view' ? '编辑' : '预览'"
           @click="sheetStore.toggleMode(windowId)"
@@ -241,10 +242,13 @@ const handleIframeEvent = (event: SealChatEvent) => {
   if (event.action === 'ROLL_DICE' && event.payload.roll) {
     emit('rollRequest', event.payload.roll);
   } else if (event.action === 'EDIT_START') {
+    if (windowData.value?.readOnly) return;
     sheetStore.beginEditLock(props.windowId);
   } else if (event.action === 'EDIT_END') {
+    if (windowData.value?.readOnly) return;
     sheetStore.endEditLock(props.windowId);
   } else if (event.action === 'UPDATE_ATTRS' && event.payload.attrs) {
+    if (windowData.value?.readOnly) return;
     sheetStore.updateAttrs(props.windowId, {
       ...windowData.value?.attrs,
       ...event.payload.attrs,
@@ -353,6 +357,7 @@ const syncTemplateText = () => {
 };
 
 const handleJsonSave = () => {
+  if (windowData.value?.readOnly) return;
   try {
     const parsed = JSON.parse(jsonText.value);
     jsonError.value = '';
@@ -363,10 +368,12 @@ const handleJsonSave = () => {
 };
 
 const handleTemplateSave = () => {
+  if (windowData.value?.readOnly) return;
   sheetStore.updateTemplate(props.windowId, templateText.value);
 };
 
 const handleManagedTemplateChange = async (templateId: string) => {
+  if (windowData.value?.readOnly) return;
   if (!templateId) return;
   try {
     await sheetStore.applyManagedTemplate(props.windowId, templateId);
@@ -383,6 +390,7 @@ const handleManagedTemplateChange = async (templateId: string) => {
 };
 
 const handleSaveAsTemplate = async () => {
+  if (windowData.value?.readOnly) return;
   const name = templateSaveName.value.trim();
   if (!name) {
     message.warning('请输入新模板名称');
@@ -401,6 +409,7 @@ const handleSaveAsTemplate = async () => {
 };
 
 const handleSyncToTemplate = async () => {
+  if (windowData.value?.readOnly) return;
   if (!selectedTemplateId.value) {
     message.warning('请先选择模板');
     return;
@@ -418,6 +427,7 @@ const handleSyncToTemplate = async () => {
 };
 
 const resetTemplate = () => {
+  if (windowData.value?.readOnly) return;
   const defaultTpl = sheetStore.getDefaultTemplate(windowData.value?.sheetType);
   templateText.value = defaultTpl;
   sheetStore.updateTemplate(props.windowId, defaultTpl);
@@ -426,6 +436,7 @@ const resetTemplate = () => {
 };
 
 const resetTemplateToCoc = () => {
+  if (windowData.value?.readOnly) return;
   const cocTpl = sheetStore.getDefaultTemplate('coc7');
   templateText.value = cocTpl;
   sheetStore.updateTemplate(props.windowId, cocTpl);
@@ -436,6 +447,7 @@ const resetTemplateToCoc = () => {
 watch(selectedTemplateMode, async (mode) => {
   const win = windowData.value;
   if (!win) return;
+  if (win.readOnly) return;
   if (win.templateMode === mode && (mode !== 'managed' || (win.templateId || '') === selectedTemplateId.value)) {
     return;
   }
