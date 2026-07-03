@@ -14282,6 +14282,7 @@ const handleChatInputBlur = () => {
 };
 
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+  'send',
   'icToggle',
   'interject',
   'whisper',
@@ -14294,7 +14295,18 @@ const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'diceTray',
 ];
 
-const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
+const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
+  send: (event) => {
+    if (event.isComposing) {
+      return false;
+    }
+    if (isEditing.value) {
+      void saveEdit();
+    } else {
+      send();
+    }
+    return true;
+  },
   icToggle: () => {
     if (
       !icHotkeyEnabled.value ||
@@ -14365,7 +14377,7 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
     if (!handler) {
       continue;
     }
-    const result = handler();
+    const result = handler(event);
     if (result !== false) {
       event.preventDefault();
       event.stopPropagation();
@@ -14374,6 +14386,11 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
   }
   return false;
 };
+
+const customSendShortcutEnabled = computed(() => {
+  const config = display.settings.toolbarHotkeys?.send;
+  return Boolean(config?.enabled && config.hotkey);
+});
 
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
@@ -14421,7 +14438,7 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !customSendShortcutEnabled.value) {
     if (e.isComposing) {
       return;
     }
@@ -17123,7 +17140,7 @@ onBeforeUnmount(() => {
                     :mention-render-label="atRenderLabel"
                     :rows="1"
                     :input-class="chatInputClassList"
-                    :send-shortcut="display.settings.sendShortcut"
+                    :send-shortcut="customSendShortcutEnabled ? 'ctrlEnter' : display.settings.sendShortcut"
                     :inline-images="inlineImagePreviewMap"
                     :default-i-form-embed-link="defaultIFormEmbedLink"
                     @mention-search="atHandleSearch"
@@ -17283,7 +17300,7 @@ onBeforeUnmount(() => {
                   :mention-render-label="atRenderLabel"
                   :rows="1"
                   :input-class="chatInputClassList"
-                  :send-shortcut="display.settings.sendShortcut"
+                  :send-shortcut="customSendShortcutEnabled ? 'ctrlEnter' : display.settings.sendShortcut"
                   :inline-images="inlineImagePreviewMap"
                   :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"

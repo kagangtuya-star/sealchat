@@ -50,6 +50,7 @@ export interface ToolbarHotkeyConfig {
 }
 
 export type ToolbarHotkeyKey =
+  | 'send'
   | 'icToggle'
   | 'interject'
   | 'whisper'
@@ -426,6 +427,10 @@ const cloneDeepHotkeys = (value: Record<string, Record<string, FavoriteHotkey>>)
 const WORLD_FALLBACK_KEY = '__global__'
 
 const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyConfig> => ({
+  send: {
+    enabled: false,
+    hotkey: null,
+  },
   icToggle: {
     enabled: true,
     hotkey: { combo: 'Esc', key: 'Escape' },
@@ -564,6 +569,7 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
   }
   const result: Record<string, ToolbarHotkeyConfig> = {}
   const keys: ToolbarHotkeyKey[] = [
+    'send',
     'icToggle',
     'interject',
     'whisper',
