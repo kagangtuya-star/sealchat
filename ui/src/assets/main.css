@@ -640,10 +640,8 @@ body .sc-fluid-modal .sc-modal-table-scroll {
 }
 
 .message-jump-link__name {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .message-jump-link__separator {

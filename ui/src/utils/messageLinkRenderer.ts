@@ -36,9 +36,6 @@ export function resolveMessageLinkInfo(
   const { worldId, channelId, messageId } = params
   const worldInfo = context.worldMap[worldId]
   const channelInfo = context.findChannelById(channelId, worldId)
-  if (!worldInfo?.name || !channelInfo?.name) {
-    return null
-  }
   const isCurrentWorld = worldId === context.currentWorldId
 
   // 获取世界名称
@@ -63,6 +60,10 @@ export function resolveMessageLinkInfo(
         currentPath,
         targetPath,
       }) || undefined
+    } else if (isCurrentWorld && channelInfo?.name) {
+      resolvedCustomTitle = channelInfo.name
+    } else if (!isCurrentWorld && worldInfo?.name) {
+      resolvedCustomTitle = worldInfo.name
     }
   }
 
