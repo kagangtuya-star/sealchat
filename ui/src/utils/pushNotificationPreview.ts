@@ -15,6 +15,11 @@ interface TipTapNode {
   marks?: Array<{ type?: string; attrs?: Record<string, any> }>;
 }
 
+const isMentionNodeType = (value: unknown): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'mention' || normalized === 'satorimention';
+};
+
 const contentUnescape = (value: string): string => {
   let current = String(value || '');
   for (let i = 0; i < 4; i += 1) {
@@ -78,7 +83,7 @@ const extractTipTapPreviewText = (node: TipTapNode): string => {
   if (nodeType === 'hardbreak') {
     return '\n';
   }
-  if (nodeType === 'mention' || nodeType === 'satorimention') {
+  if (isMentionNodeType(nodeType)) {
     const mentionId = String(node.attrs?.id || '').trim();
     const mentionName = String(node.attrs?.name || '').trim();
     return `@${mentionName || mentionId || '用户'}`;

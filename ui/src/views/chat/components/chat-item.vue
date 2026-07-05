@@ -91,6 +91,7 @@ const stickyNoteStore = useStickyNoteStore();
 const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
+const messageLinkChannelInfoCache = ref<Record<string, SChannel>>({});
 
 const shouldDisableInlineCodeForBotCommand = (content: string) => (
   isBotCommandLikeContent(content, chat.curChannel?.botCommandPrefixes)
@@ -1088,7 +1089,13 @@ const handleSmartLinkClick = (event: MouseEvent, host: HTMLElement, target: HTML
     return true;
   }
 
-  if (attrs.target === '_self') {
+  const parsedChatLink = parseChatLink(attrs.urlValue);
+  if (attrs.target === '_self' && parsedChatLink) {
+    void handleMessageLinkClick({
+      ...parsedChatLink,
+      isCurrentWorld: parsedChatLink.worldId === chat.currentWorldId,
+    });
+  } else if (attrs.target === '_self') {
     window.location.href = attrs.urlValue;
   } else {
     window.open(attrs.urlValue, attrs.target, 'noopener,noreferrer');
@@ -2293,6 +2300,8 @@ const getChannelTreeForWorld = (worldId: string): SChannel[] => {
   return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
 };
 
+const getMessageLinkChannelCacheKey = (worldId: string, channelId: string) => `${worldId}:${channelId}`;
+
 const findChannelByIdInWorld = (channelId: string, worldId?: string): SChannel | null => {
   if (!channelId) {
     return null;
@@ -2302,7 +2311,9 @@ const findChannelByIdInWorld = (channelId: string, worldId?: string): SChannel |
     return chat.findChannelById(channelId) as SChannel | null;
   }
   const tree = getChannelTreeForWorld(normalizedWorldId);
-  return findChannelInTree(tree, channelId);
+  return findChannelInTree(tree, channelId)
+    || messageLinkChannelInfoCache.value[getMessageLinkChannelCacheKey(normalizedWorldId, channelId)]
+    || null;
 };
 
 const getChannelPathForWorld = (channelId: string, worldId: string): string[] => {
@@ -2341,11 +2352,113 @@ const buildMessageLinkContext = () => ({
   getCurrentChannelPath: () => getCurrentChannelPath(),
 });
 
+const pendingMessageLinkChannelPrefetches = new Set<string>();
+
+const collectMessageLinkChannelsNeedingPrefetch = (content: string): Array<{ worldId: string; channelId: string }> => {
+  const source = String(content || '');
+  if (!source) {
+    return [];
+  }
+  const channelKeys = new Set<string>();
+  const channels: Array<{ worldId: string; channelId: string }> = [];
+  const collect = (url: string) => {
+    const parsed = parseChatLink(url);
+    if (!parsed?.worldId || !parsed.channelId || parsed.worldId === chat.currentWorldId) {
+      return;
+    }
+    if (findChannelByIdInWorld(parsed.channelId, parsed.worldId)) {
+      return;
+    }
+    const key = getMessageLinkChannelCacheKey(parsed.worldId, parsed.channelId);
+    if (channelKeys.has(key)) {
+      return;
+    }
+    channelKeys.add(key);
+    channels.push({ worldId: parsed.worldId, channelId: parsed.channelId });
+  };
+
+  TITLED_MESSAGE_LINK_REGEX.lastIndex = 0;
+  let titledMatch: RegExpExecArray | null;
+  while ((titledMatch = TITLED_MESSAGE_LINK_REGEX.exec(source)) !== null) {
+    collect(titledMatch[2] || '');
+  }
+
+  MESSAGE_LINK_REGEX.lastIndex = 0;
+  let plainMatch: RegExpExecArray | null;
+  while ((plainMatch = MESSAGE_LINK_REGEX.exec(source)) !== null) {
+    collect(plainMatch[0] || '');
+  }
+
+  return channels;
+};
+
+const ensureMessageLinkChannelsLoaded = (content: string) => {
+  const channels = collectMessageLinkChannelsNeedingPrefetch(content);
+  channels.forEach(({ worldId, channelId }) => {
+    const key = getMessageLinkChannelCacheKey(worldId, channelId);
+    if (pendingMessageLinkChannelPrefetches.has(key)) {
+      return;
+    }
+    pendingMessageLinkChannelPrefetches.add(key);
+    void chat.channelInfoGet(channelId)
+      .then((resp) => {
+        if (resp?.item?.id === channelId) {
+          messageLinkChannelInfoCache.value = {
+            ...messageLinkChannelInfoCache.value,
+            [key]: resp.item,
+          };
+          processMessageLinks();
+        }
+      })
+      .catch((error) => {
+        console.warn('消息链接预取频道信息失败', worldId, channelId, error);
+      })
+      .finally(() => {
+        pendingMessageLinkChannelPrefetches.delete(key);
+      });
+  });
+};
+
 // 处理消息链接渲染
 const processMessageLinks = () => {
   nextTick(() => {
     const host = messageContentRef.value;
     if (!host) return;
+
+    const createMessageLinkElement = (info: ReturnType<typeof resolveMessageLinkInfo>): HTMLAnchorElement | null => {
+      if (!info) {
+        return null;
+      }
+      const wrapper = document.createElement('span');
+      wrapper.innerHTML = renderMessageLinkHtml(info);
+      const linkEl = wrapper.firstElementChild as HTMLAnchorElement | null;
+      if (!linkEl) {
+        return null;
+      }
+      linkEl.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleMessageLinkClick(info);
+      });
+      return linkEl;
+    };
+
+    // 异步频道信息返回后，已渲染过的链接也需要刷新标题。
+    host.querySelectorAll<HTMLAnchorElement>('a.message-jump-link:not(.message-jump-link-pending)').forEach((link) => {
+      const url = link.getAttribute('href') || link.href;
+      const info = resolveMessageLinkInfo(url, buildMessageLinkContext());
+      const newLink = createMessageLinkElement(info);
+      if (!newLink) {
+        return;
+      }
+      if (
+        newLink.innerHTML !== link.innerHTML
+        || newLink.dataset.worldId !== link.dataset.worldId
+        || newLink.dataset.channelId !== link.dataset.channelId
+      ) {
+        link.replaceWith(newLink);
+      }
+    });
 
     // 1. 处理已标记的 pending 链接（来自 tiptap-render）
     const pendingLinks = host.querySelectorAll<HTMLAnchorElement>('.message-jump-link-pending');
@@ -2374,17 +2487,8 @@ const processMessageLinks = () => {
       }
 
       // 创建新的链接元素
-      const wrapper = document.createElement('span');
-      wrapper.innerHTML = renderMessageLinkHtml(info);
-      const newLink = wrapper.firstElementChild as HTMLAnchorElement;
+      const newLink = createMessageLinkElement(info);
       if (!newLink) return;
-
-      // 绑定点击事件（内联跳转，不开新标签页）
-      newLink.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleMessageLinkClick(info);
-      });
 
       link.replaceWith(newLink);
     });
@@ -2555,7 +2659,12 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
             fragment.appendChild(document.createTextNode(seg.content));
           }
         } else {
-          fragment.appendChild(document.createTextNode(seg.content));
+          const externalLink = createExternalLinkElement(url);
+          if (externalLink) {
+            fragment.appendChild(externalLink);
+          } else {
+            fragment.appendChild(document.createTextNode(seg.content));
+          }
         }
       } else if (seg.type === 'external' && url) {
         const externalLink = createExternalLinkElement(url);
@@ -2565,7 +2674,12 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
           fragment.appendChild(document.createTextNode(seg.content));
         }
       } else {
-        fragment.appendChild(document.createTextNode(seg.content));
+        const externalLink = url ? createExternalLinkElement(url) : null;
+        if (externalLink) {
+          fragment.appendChild(externalLink);
+        } else {
+          fragment.appendChild(document.createTextNode(seg.content));
+        }
       }
 
       lastIndex = seg.index + seg.length;
@@ -3319,6 +3433,7 @@ onMounted(() => {
 onUpdated(syncBotBadgeHostBackgroundColor);
 
 watch([displayContent, () => props.tone], () => {
+  ensureMessageLinkChannelsLoaded(displayContent.value);
   applyDiceTone();
   ensureImageViewer();
   void ensureMessageImageLayoutsLoaded();
@@ -3331,6 +3446,17 @@ watch([displayContent, () => props.tone], () => {
     setupMessageIFormResizeSync();
   });
 }, { immediate: true });
+
+watch(
+  () => JSON.stringify({
+    currentWorldId: chat.currentWorldId,
+    worldNames: Object.fromEntries(Object.entries(chat.worldMap || {}).map(([id, item]) => [id, item?.name || ''])),
+    channelTreeReady: chat.channelTreeReady,
+  }),
+  () => {
+    processMessageLinks();
+  },
+);
 
 watch(() => (props.item as any)?.widgetData, (newData) => {
   nextTick(() => {

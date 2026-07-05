@@ -3884,7 +3884,7 @@ export const useChatStore = defineStore({
       this.channelCollapseState = next;
     },
 
-    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean }) {
+    async channelList(worldId?: string, force = false, options?: { autoSwitch?: boolean; preserveCurrentChannel?: boolean }) {
       let targetWorld = worldId || this.currentWorldId;
       if (!targetWorld && this.observerMode && this.observerWorldId) {
         targetWorld = this.observerWorldId;
@@ -3898,7 +3898,9 @@ export const useChatStore = defineStore({
       }
       await this.ensureConnectionReady();
       if (!force && this.channelTreeByWorld[finalWorld]) {
-        this.channelTree = this.channelTreeByWorld[finalWorld];
+        if (this.currentWorldId === finalWorld) {
+          this.channelTree = this.channelTreeByWorld[finalWorld];
+        }
         if (!this.channelTreeReady[finalWorld]) {
           this.channelTreeReady = {
             ...this.channelTreeReady,
@@ -3911,8 +3913,10 @@ export const useChatStore = defineStore({
       const d = resp.data;
       const chns = d.data ?? [];
       const tree = this.applyChannelTree(finalWorld, chns);
+      const isCurrentWorldRequest = finalWorld === this.currentWorldId;
+      const shouldPreserveCurrentChannel = options?.preserveCurrentChannel === true || !isCurrentWorldRequest;
       const currentChannelId = this.curChannel?.id ? String(this.curChannel.id).trim() : '';
-      const curItem = currentChannelId ? findChannelByIdFromTree(tree as SChannel[], currentChannelId) : null;
+      const curItem = currentChannelId && isCurrentWorldRequest ? findChannelByIdFromTree(tree as SChannel[], currentChannelId) : null;
       const preserveDetachedChannel = currentChannelId
         && (
           this.temporaryArchivedChannel?.id === currentChannelId
@@ -3920,11 +3924,11 @@ export const useChatStore = defineStore({
         );
       if (curItem) {
         this.curChannel = curItem;
-      } else if (currentChannelId && !preserveDetachedChannel) {
+      } else if (currentChannelId && !preserveDetachedChannel && !shouldPreserveCurrentChannel) {
         this.clearCurrentChannelContext('channelList:currentChannelMissingInTree');
       }
 
-      if (!this.curChannel && options?.autoSwitch !== false) {
+      if (!this.curChannel && options?.autoSwitch !== false && isCurrentWorldRequest) {
         const targetChannelId = resolvePreferredChannelForWorld({
           worldId: finalWorld,
           tree: tree as SChannel[],

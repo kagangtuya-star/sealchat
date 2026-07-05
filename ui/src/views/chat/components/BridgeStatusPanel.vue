@@ -62,20 +62,21 @@ const diagnostics = computed(() => [
 </script>
 
 <template>
-  <n-space vertical :size="16">
+  <n-space vertical :size="16" class="bridge-status-panel">
     <n-alert type="info" :show-icon="false">
       这里显示 [doc/sealchat-bridge-api.md] 定义的桥接运行状态，并提供当前频道头像强制重签发入口。
     </n-alert>
 
-    <n-space align="center" justify="space-between">
-      <n-space align="center">
+    <div class="bridge-status-panel__header">
+      <div class="bridge-status-panel__status-group">
         <span class="bridge-status-panel__title">当前状态</span>
         <n-tag :type="activeTagType" size="small">{{ activeLabel }}</n-tag>
         <n-tag size="small" :type="isContextMatched ? 'success' : 'warning'">
           {{ isContextMatched ? '频道匹配' : '频道未对齐' }}
         </n-tag>
-      </n-space>
+      </div>
       <n-button
+        class="bridge-status-panel__action"
         type="warning"
         :loading="refreshing"
         :disabled="!isCurrentChannelReady"
@@ -83,7 +84,7 @@ const diagnostics = computed(() => [
       >
         刷新频道角色头像
       </n-button>
-    </n-space>
+    </div>
 
     <n-text depth="3">
       作用范围：当前频道内你可管理用户的频道角色头像与头像差分。该操作会重建附件 ID 与存储文件名，但文件内容保持不变。
@@ -106,8 +107,42 @@ const diagnostics = computed(() => [
 </template>
 
 <style scoped>
+.bridge-status-panel {
+  min-width: 0;
+}
+
 .bridge-status-panel__title {
   font-size: 14px;
   font-weight: 600;
+}
+
+.bridge-status-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bridge-status-panel__status-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bridge-status-panel__action {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .bridge-status-panel__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bridge-status-panel__action {
+    width: 100%;
+  }
 }
 </style>

@@ -511,9 +511,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       return childrenHtml;
 
     case 'performanceCommand': {
-      const command = escapeHtml(String(node.attrs?.command || ''));
+      const command = String(node.attrs?.command) === 'pause' ? 'pause' : 'delay';
       const value = node.attrs?.value == null ? '' : escapeHtml(String(node.attrs.value));
-      return `<span data-performance-command="${command}" data-performance-value="${value}" class="tiptap-performance-command"></span>`;
+      return `<span data-performance-command="${command}" data-performance-value="${value}" class="tiptap-performance-command tiptap-performance-command--${command}"></span>`;
     }
 
     case 'paragraph':

@@ -10,7 +10,10 @@ import {
   type AvatarVisibilityScope,
   type MessageVisibilityScope,
 } from './displayAvatarVisibility'
-import { normalizeCharacterCardBadgeSettingsExpanded } from './displayCharacterCardSettings'
+import {
+  normalizeCharacterCardBadgeSettingsExpanded,
+  normalizeOnlineCharacterCardsEnabled,
+} from './displayCharacterCardSettings'
 import {
   migrateLegacyThemeSelection,
   resolveCustomThemeEnabledUpdate,
@@ -47,6 +50,7 @@ export interface ToolbarHotkeyConfig {
 }
 
 export type ToolbarHotkeyKey =
+  | 'send'
   | 'icToggle'
   | 'interject'
   | 'whisper'
@@ -139,6 +143,7 @@ export interface DisplaySettings {
   characterCardBadgeVisibilityScope: MessageVisibilityScope
   characterCardBadgeAutoContrastEnabled: boolean
   characterCardAutoSyncBotNickname: boolean
+  onlineCharacterCardsEnabled: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
   identityRemarkAutoContrastEnabled: boolean
   showOwnIdentityRemark: boolean
@@ -422,6 +427,10 @@ const cloneDeepHotkeys = (value: Record<string, Record<string, FavoriteHotkey>>)
 const WORLD_FALLBACK_KEY = '__global__'
 
 const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyConfig> => ({
+  send: {
+    enabled: false,
+    hotkey: null,
+  },
   icToggle: {
     enabled: true,
     hotkey: { combo: 'Esc', key: 'Escape' },
@@ -539,6 +548,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   characterCardBadgeVisibilityScope: 'ic',
   characterCardBadgeAutoContrastEnabled: true,
   characterCardAutoSyncBotNickname: true,
+  onlineCharacterCardsEnabled: true,
   characterCardBadgeTemplateByWorld: {},
   identityRemarkAutoContrastEnabled: true,
   showOwnIdentityRemark: true,
@@ -559,6 +569,7 @@ const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHo
   }
   const result: Record<string, ToolbarHotkeyConfig> = {}
   const keys: ToolbarHotkeyKey[] = [
+    'send',
     'icToggle',
     'interject',
     'whisper',
@@ -838,6 +849,7 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       characterCardBadgeVisibilityScope: normalizeMessageVisibilityScope((parsed as any)?.characterCardBadgeVisibilityScope),
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
       characterCardAutoSyncBotNickname: coerceBoolean((parsed as any)?.characterCardAutoSyncBotNickname ?? true),
+      onlineCharacterCardsEnabled: normalizeOnlineCharacterCardsEnabled((parsed as any)?.onlineCharacterCardsEnabled),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
         ? (parsed as any).characterCardBadgeTemplateByWorld
         : {},
@@ -1189,6 +1201,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardAutoSyncBotNickname')
       ? coerceBoolean((patch as any).characterCardAutoSyncBotNickname)
       : base.characterCardAutoSyncBotNickname,
+  onlineCharacterCardsEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'onlineCharacterCardsEnabled')
+      ? normalizeOnlineCharacterCardsEnabled((patch as any).onlineCharacterCardsEnabled)
+      : base.onlineCharacterCardsEnabled,
   characterCardBadgeTemplateByWorld:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeTemplateByWorld')
       ? (isPlainObject((patch as any).characterCardBadgeTemplateByWorld)

@@ -133,7 +133,10 @@ func DigestPushRuleUpsert(scopeType, scopeID string, params DigestPushRuleUpsert
 		record.ActiveWebhookMethod = "POST"
 	}
 	if record.ActiveUserThresholdMode == "" {
-		record.ActiveUserThresholdMode = DigestThresholdModeChannelMemberCount
+		record.ActiveUserThresholdMode = DigestThresholdModeFixed
+	}
+	if record.ActiveUserThresholdMode == DigestThresholdModeFixed && record.ActiveUserThresholdValue <= 0 {
+		record.ActiveUserThresholdValue = 1
 	}
 	if record.PushMode == "" {
 		record.PushMode = DigestPushModePassive

@@ -96,6 +96,11 @@ func EmailNotificationSettingsUpsert(userID, channelID string, params EmailNotif
 	if err != nil {
 		return nil, err
 	}
+	if !params.Enabled {
+		if err := EmailNotificationLogDeleteByUserAndChannel(userID, channelID); err != nil {
+			return nil, err
+		}
+	}
 	// 返回实际记录
 	return EmailNotificationSettingsGet(userID, channelID)
 }
@@ -174,6 +179,10 @@ func EmailNotificationLogGetLatest(userID, channelID string) (*EmailNotification
 		return nil, nil
 	}
 	return &record, nil
+}
+
+func EmailNotificationLogDeleteByUserAndChannel(userID, channelID string) error {
+	return db.Where("user_id = ? AND channel_id = ?", userID, channelID).Delete(&EmailNotificationLogModel{}).Error
 }
 
 // EmailNotificationLogCleanup 清理指定天数之前的记录

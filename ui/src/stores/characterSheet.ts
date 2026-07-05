@@ -9,6 +9,7 @@ export interface CharacterSheetWindow {
   cardId: string;
   cardName: string;
   channelId: string;
+  readOnly?: boolean;
   sheetType?: string;
   attrs: Record<string, any>;
   template: string;
@@ -45,6 +46,12 @@ const BUBBLE_PERSIST_THROTTLE = 300;
 const WINDOWS_PERSIST_THROTTLE = 300;
 const ATTRS_SYNC_THROTTLE = 600;
 
+const isOnlinePreviewCardId = (cardId?: string) => String(cardId || '').startsWith('online:');
+
+const isEphemeralWindowState = (state?: { cardId?: string; readOnly?: boolean }) => (
+  !!state?.readOnly || isOnlinePreviewCardId(state?.cardId)
+);
+
 const isAttrsEqual = (a: Record<string, any>, b: Record<string, any>) => {
   try {
     return JSON.stringify(a || {}) === JSON.stringify(b || {});
@@ -62,6 +69,7 @@ interface PersistedWindowState {
   cardId: string;
   cardName: string;
   channelId: string;
+  readOnly?: boolean;
   sheetType?: string;
   attrs: Record<string, any>;
   positionX: number;
@@ -4736,11 +4744,13 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     for (const id of activeWindowIds.value) {
       const win = windows.value[id];
       if (!win) continue;
+      if (isEphemeralWindowState(win)) continue;
       states.push({
         id: win.id,
         cardId: win.cardId,
         cardName: win.cardName,
         channelId: win.channelId,
+        readOnly: !!win.readOnly,
         sheetType: win.sheetType,
         attrs: win.attrs,
         positionX: win.positionX,
@@ -4773,10 +4783,14 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     hasRestored.value = true;
     const states = loadWindowStates();
     if (!states.length) return;
+    const sanitizedStates = states.filter(state => !isEphemeralWindowState(state));
+    if (sanitizedStates.length !== states.length) {
+      saveWindowStates(sanitizedStates);
+    }
     windows.value = {};
     activeWindowIds.value = [];
     let nextMaxZ = maxZIndex.value;
-    for (const state of states) {
+    for (const state of sanitizedStates) {
       if (!state?.cardId) continue;
       const resolvedSheetType = state.sheetType || resolveSheetTypeByCardId(state.cardId);
       const template = getTemplate(state.cardId, resolvedSheetType);
@@ -4794,6 +4808,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         cardId: state.cardId,
         cardName: state.cardName || '人物卡',
         channelId: state.channelId || '',
+        readOnly: !!state.readOnly,
         sheetType: resolvedSheetType || undefined,
         attrs: state.attrs || {},
         template,
@@ -4826,6 +4841,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const syncWindowTemplateFromCloud = async (windowId: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId || !win.cardId) return;
+    if (win.readOnly) return;
     try {
       await templateStore.ensureTemplatesLoaded();
       await templateStore.ensureBindingsLoaded(win.channelId);
@@ -4856,6 +4872,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const applyManagedTemplate = async (windowId: string, templateId: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId || !win.cardId || !templateId) return null;
+    if (win.readOnly) return null;
     await templateStore.ensureTemplatesLoaded();
     const template = templateStore.getTemplateById(templateId);
     if (!template) {
@@ -4880,6 +4897,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const applyDetachedTemplate = async (windowId: string, templateText?: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId || !win.cardId) return null;
+    if (win.readOnly) return null;
     const normalized = normalizeTemplate(win.cardId, templateText ?? win.template, win.sheetType);
     const binding = await templateStore.bindCardToDetachedTemplate({
       channelId: win.channelId,
@@ -4899,6 +4917,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const saveCurrentTemplateAsNew = async (windowId: string, name: string) => {
     const win = windows.value[windowId];
     if (!win) return null;
+    if (win.readOnly) return null;
     const trimmedName = name.trim();
     if (!trimmedName) {
       throw new Error('模板名称不能为空');
@@ -4919,6 +4938,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const syncCurrentTemplateToTemplate = async (windowId: string, templateId: string) => {
     const win = windows.value[windowId];
     if (!win || !templateId) return null;
+    if (win.readOnly) return null;
     await templateStore.updateTemplate(templateId, {
       content: win.template,
     });
@@ -4993,6 +5013,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const refreshWindowAttrs = async (windowId: string) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId) return;
+    if (win.readOnly) return;
     normalizeSyncState(win);
     try {
       const active = await cardStore.getActiveCard(win.channelId);
@@ -5025,6 +5046,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       templateMode?: CharacterCardTemplateMode;
       templateId?: string;
       templateText?: string;
+      readOnly?: boolean;
     }
   ): string => {
     restoreWindows();
@@ -5036,11 +5058,18 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
       if (existing) {
         normalizeSyncState(existing);
+        existing.cardName = card.name || existing.cardName;
         if (resolvedSheetType && !existing.sheetType) {
           existing.sheetType = resolvedSheetType;
         }
         if (cardData?.avatarUrl !== undefined) {
           existing.avatarUrl = cardData.avatarUrl;
+        }
+        if (templateMeta?.readOnly) {
+          existing.attrs = cardData?.attrs || card.attrs || existing.attrs;
+          if (resolvedSheetType) {
+            existing.sheetType = resolvedSheetType;
+          }
         }
         const normalized = normalizeTemplate(existing.cardId, existing.template, existing.sheetType);
         if (normalized !== existing.template) {
@@ -5051,6 +5080,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         }
         if (templateMeta?.templateId !== undefined) {
           existing.templateId = templateMeta.templateId || undefined;
+        }
+        if (templateMeta?.readOnly !== undefined) {
+          existing.readOnly = templateMeta.readOnly;
+          existing.mode = 'view';
         }
         if (templateMeta?.templateText) {
           existing.template = normalizeTemplate(existing.cardId, templateMeta.templateText, existing.sheetType);
@@ -5073,8 +5106,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
           existing.positionY = clampedPos.y;
         }
       }
-      void syncWindowTemplateFromCloud(existingId);
-      void refreshWindowAttrs(existingId);
+      if (!existing?.readOnly) {
+        void syncWindowTemplateFromCloud(existingId);
+        void refreshWindowAttrs(existingId);
+      }
       bringToFront(existingId);
       schedulePersistWindows();
       return existingId;
@@ -5110,6 +5145,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       cardId: card.id,
       cardName: card.name,
       channelId,
+      readOnly: !!templateMeta?.readOnly,
       sheetType: resolvedSheetType || undefined,
       attrs: cardData?.attrs || card.attrs || {},
       template: initialTemplate,
@@ -5132,7 +5168,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     };
     activeWindowIds.value.push(windowId);
     schedulePersistWindows();
-    void syncWindowTemplateFromCloud(windowId);
+    if (!windows.value[windowId].readOnly) {
+      void syncWindowTemplateFromCloud(windowId);
+    }
 
     return windowId;
   };
@@ -5196,6 +5234,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const updateAttrs = (windowId: string, attrs: Record<string, any>) => {
     const win = windows.value[windowId];
     if (win) {
+      if (win.readOnly) return;
       normalizeSyncState(win);
       win.attrs = attrs;
       if (win.syncState !== 'normal') {
@@ -5210,6 +5249,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const updateTemplate = (windowId: string, template: string) => {
     const win = windows.value[windowId];
     if (win) {
+      if (win.readOnly) return;
       const normalized = normalizeTemplate(win.cardId, template, win.sheetType);
       win.template = normalized;
       win.templateMode = 'detached';
@@ -5220,9 +5260,40 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   };
 
+  const updateReadOnlyWindowData = (
+    windowId: string,
+    payload: {
+      cardName?: string;
+      sheetType?: string;
+      attrs?: Record<string, any>;
+      avatarUrl?: string;
+      templateText?: string;
+    },
+  ) => {
+    const win = windows.value[windowId];
+    if (!win || !win.readOnly) return;
+    if (payload.cardName) {
+      win.cardName = payload.cardName;
+    }
+    if (payload.sheetType) {
+      win.sheetType = payload.sheetType;
+    }
+    if (payload.attrs && typeof payload.attrs === 'object') {
+      win.attrs = payload.attrs;
+    }
+    if (payload.avatarUrl !== undefined) {
+      win.avatarUrl = payload.avatarUrl;
+    }
+    if (payload.templateText) {
+      win.template = normalizeTemplate(win.cardId, payload.templateText, payload.sheetType || win.sheetType);
+    }
+    schedulePersistWindows();
+  };
+
   const setMode = (windowId: string, mode: 'view' | 'edit') => {
     const win = windows.value[windowId];
     if (win) {
+      if (win.readOnly && mode === 'edit') return;
       win.mode = mode;
       schedulePersistWindows();
     }
@@ -5246,6 +5317,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const toggleMode = (windowId: string) => {
     const win = windows.value[windowId];
     if (win) {
+      if (win.readOnly) return;
       win.mode = win.mode === 'view' ? 'edit' : 'view';
       schedulePersistWindows();
     }
@@ -5317,6 +5389,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     beginEditLock,
     endEditLock,
     updateTemplate,
+    updateReadOnlyWindowData,
     applyManagedTemplate,
     applyDetachedTemplate,
     saveCurrentTemplateAsNew,

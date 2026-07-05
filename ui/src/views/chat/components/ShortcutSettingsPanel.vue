@@ -26,6 +26,7 @@ interface HotkeyItem {
 }
 
 const hotkeyItems: HotkeyItem[] = [
+  { key: 'send', label: '发送消息', description: '配置后替代 Enter 或 Ctrl/Cmd + Enter 发送' },
   { key: 'icToggle', label: '场内/场外切换', description: '快速切换 IC/OOC 模式' },
   { key: 'interject', label: '插话', description: '发送当前消息后进入插话流程' },
   { key: 'whisper', label: '悄悄话面板', description: '打开/关闭悄悄话选择面板' },
@@ -181,8 +182,8 @@ onBeforeUnmount(() => {
 
     <section class="shortcut-settings-panel__section">
       <header>
-        <p class="section-title">工具栏快捷键</p>
-        <p class="section-desc">自定义各功能的快捷键绑定，快捷键需包含 Ctrl/Cmd/Alt 中至少一个按键</p>
+        <p class="section-title">快捷键</p>
+        <p class="section-desc">自定义发送与工具栏功能快捷键，快捷键需包含 Ctrl/Cmd/Alt 中至少一个按键</p>
       </header>
 
       <div class="shortcut-list">

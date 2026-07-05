@@ -66,6 +66,7 @@ const renderedContent = computed(() => {
 
 const isVisible = computed(() => {
   return displayStore.settings.characterCardBadgeEnabled
+    && !cardStore.isNarratorIdentity(chatStore.curChannel?.id || '', props.identityId || '')
     && messageVisibilityScopeMatches(
       displayStore.settings.characterCardBadgeVisibilityScope,
       props.messageTone,

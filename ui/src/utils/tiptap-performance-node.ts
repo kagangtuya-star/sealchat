@@ -7,6 +7,12 @@ export interface PerformanceCommandAttrs {
   value?: number | string | null;
 }
 
+export const formatPerformanceCommandLabel = (attrs: PerformanceCommandAttrs) => {
+  const command = attrs.command === 'pause' ? 'pause' : 'delay';
+  const value = attrs.value == null || attrs.value === '' ? '' : `-${attrs.value}`;
+  return command === 'pause' ? '[暂停并高亮]' : `[停顿${value}]`;
+};
+
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     performanceCommand: {
@@ -55,15 +61,18 @@ export const createPerformanceCommandExtension = ({
     return [{ tag: 'span[data-performance-command]' }];
   },
 
-  renderHTML({ HTMLAttributes }) {
-    const command = String(HTMLAttributes.command || 'command');
+  renderHTML({ node, HTMLAttributes }) {
+    const command = node.attrs.command === 'pause' ? 'pause' : 'delay';
     return [
       'span',
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
-        class: 'tiptap-performance-command',
+        class: `tiptap-performance-command tiptap-performance-command--${command}`,
         contenteditable: 'false',
       }),
-      `[${command}]`,
+      formatPerformanceCommandLabel({
+        command,
+        value: node.attrs.value,
+      }),
     ];
   },
 

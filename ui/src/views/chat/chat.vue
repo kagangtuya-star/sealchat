@@ -1293,7 +1293,9 @@ watch(() => chat.curChannel?.id, (id, prevId) => {
 });
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
+const webhookDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 520));
 const bridgeStatusDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 560));
+const emailNotificationDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 480));
 const compactInlineStackLayout = computed(() => {
   if (!compactInlineLayout.value) return false;
   const width = windowWidth.value;
@@ -6241,9 +6243,30 @@ const normalizeTimestamp = (value: any): number | null => {
   return null;
 };
 
-const normalizeMessageShape = (msg: any): Message => {
+const MAX_QUOTE_NORMALIZE_DEPTH = 8;
+
+interface NormalizeMessageShapeContext {
+  seen: WeakSet<object>;
+  quoteDepth: number;
+}
+
+const createNormalizeMessageShapeContext = (): NormalizeMessageShapeContext => ({
+  seen: new WeakSet<object>(),
+  quoteDepth: 0,
+});
+
+const normalizeMessageShape = (msg: any, context: NormalizeMessageShapeContext = createNormalizeMessageShapeContext()): Message => {
   if (!msg) {
     return msg as Message;
+  }
+  if (typeof msg === 'object') {
+    if (context.seen.has(msg)) {
+      return {
+        ...(msg as Record<string, unknown>),
+        quote: undefined,
+      } as Message;
+    }
+    context.seen.add(msg);
   }
   // 统一主键，避免不同接口返回 message_id/_id 导致重复插入
   if (!msg.id) {
@@ -6400,7 +6423,17 @@ const normalizeMessageShape = (msg: any): Message => {
   msg.pinnedAt = normalizedPinnedAt ?? undefined;
 
   if (msg.quote) {
-    msg.quote = normalizeMessageShape(msg.quote);
+    if (context.quoteDepth >= MAX_QUOTE_NORMALIZE_DEPTH) {
+      msg.quote = {
+        ...(msg.quote as Record<string, unknown>),
+        quote: undefined,
+      };
+    } else {
+      msg.quote = normalizeMessageShape(msg.quote, {
+        seen: context.seen,
+        quoteDepth: context.quoteDepth + 1,
+      });
+    }
   }
   if (Array.isArray((msg as any).reactions) && msg.id) {
     chat.setMessageReactions(msg.id, (msg as any).reactions);
@@ -14249,6 +14282,7 @@ const handleChatInputBlur = () => {
 };
 
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+  'send',
   'icToggle',
   'interject',
   'whisper',
@@ -14261,7 +14295,18 @@ const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'diceTray',
 ];
 
-const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
+const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, (event: KeyboardEvent) => boolean | void> = {
+  send: (event) => {
+    if (event.isComposing) {
+      return false;
+    }
+    if (isEditing.value) {
+      void saveEdit();
+    } else {
+      send();
+    }
+    return true;
+  },
   icToggle: () => {
     if (
       !icHotkeyEnabled.value ||
@@ -14332,7 +14377,7 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
     if (!handler) {
       continue;
     }
-    const result = handler();
+    const result = handler(event);
     if (result !== false) {
       event.preventDefault();
       event.stopPropagation();
@@ -14341,6 +14386,11 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
   }
   return false;
 };
+
+const customSendShortcutEnabled = computed(() => {
+  const config = display.settings.toolbarHotkeys?.send;
+  return Boolean(config?.enabled && config.hotkey);
+});
 
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
@@ -14388,7 +14438,7 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !customSendShortcutEnabled.value) {
     if (e.isComposing) {
       return;
     }
@@ -15873,7 +15923,7 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="520">
+    <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="webhookDrawerWidth">
       <n-drawer-content closable>
         <template #header>Webhook 授权</template>
         <WebhookIntegrationManager :channel-id="chat.curChannel?.id || ''" />
@@ -15892,7 +15942,7 @@ onBeforeUnmount(() => {
       </n-drawer-content>
     </n-drawer>
 
-    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
+    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="emailNotificationDrawerWidth">
       <n-drawer-content closable>
         <template #header>未读提醒</template>
         <EmailNotificationManager scope-type="channel" :scope-id="chat.curChannel?.id || ''" />
@@ -17090,7 +17140,7 @@ onBeforeUnmount(() => {
                     :mention-render-label="atRenderLabel"
                     :rows="1"
                     :input-class="chatInputClassList"
-                    :send-shortcut="display.settings.sendShortcut"
+                    :send-shortcut="customSendShortcutEnabled ? 'ctrlEnter' : display.settings.sendShortcut"
                     :inline-images="inlineImagePreviewMap"
                     :default-i-form-embed-link="defaultIFormEmbedLink"
                     @mention-search="atHandleSearch"
@@ -17250,7 +17300,7 @@ onBeforeUnmount(() => {
                   :mention-render-label="atRenderLabel"
                   :rows="1"
                   :input-class="chatInputClassList"
-                  :send-shortcut="display.settings.sendShortcut"
+                  :send-shortcut="customSendShortcutEnabled ? 'ctrlEnter' : display.settings.sendShortcut"
                   :inline-images="inlineImagePreviewMap"
                   :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"

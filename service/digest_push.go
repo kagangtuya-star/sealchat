@@ -199,13 +199,23 @@ func DefaultDigestJSONTemplateForScope(scopeType string) string {
 }
 
 func NewDefaultDigestRule(scopeType, scopeID string) *model.DigestPushRuleModel {
+	defaultThresholdValue := 1
+	if model.GetDB() != nil {
+		if threshold, err := DigestEffectiveThreshold(&model.DigestPushRuleModel{
+			ScopeType:               strings.TrimSpace(scopeType),
+			ScopeID:                 strings.TrimSpace(scopeID),
+			ActiveUserThresholdMode: model.DigestThresholdModeChannelMemberCount,
+		}); err == nil && threshold > 0 {
+			defaultThresholdValue = threshold
+		}
+	}
 	return &model.DigestPushRuleModel{
 		ScopeType:                strings.TrimSpace(scopeType),
 		ScopeID:                  strings.TrimSpace(scopeID),
 		Enabled:                  false,
 		WindowSeconds:            DigestDefaultWindowSeconds,
-		ActiveUserThresholdMode:  model.DigestThresholdModeChannelMemberCount,
-		ActiveUserThresholdValue: 0,
+		ActiveUserThresholdMode:  model.DigestThresholdModeFixed,
+		ActiveUserThresholdValue: defaultThresholdValue,
 		PushMode:                 model.DigestPushModePassive,
 		TextTemplate:             DefaultDigestTextTemplateForScope(scopeType),
 		JSONTemplate:             DefaultDigestJSONTemplateForScope(scopeType),
@@ -230,7 +240,8 @@ func LatestClosedDigestWindowStart(windowSeconds int, now time.Time) int64 {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	start, _ := AlignDigestWindow(now.UnixMilli()-1, windowSeconds)
+	windowMillis := int64(windowSeconds) * 1000
+	start, _ := AlignDigestWindow(now.UnixMilli()-windowMillis, windowSeconds)
 	return start
 }
 
@@ -266,6 +277,11 @@ func RecordDigestWindowMessage(channelID string, message *model.MessageModel) er
 	}
 	for _, windowSeconds := range DigestSupportedWindowSeconds() {
 		windowStart, windowEnd := AlignDigestWindow(messageAt, windowSeconds)
+		if userID := strings.TrimSpace(message.UserID); userID != "" {
+			if err := model.DigestWindowVisitorUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, userID); err != nil {
+				return err
+			}
+		}
 		if err := model.DigestWindowSpeakerUpsert(model.DigestScopeTypeChannel, channelID, windowSeconds, windowStart, windowEnd, speakerKey, speakerName, messageAt); err != nil {
 			return err
 		}
@@ -342,7 +358,19 @@ func NormalizeDigestRule(rule *model.DigestPushRuleModel) error {
 		rule.ActiveUserThresholdValue = 0
 	case model.DigestThresholdModeFixed:
 		if rule.ActiveUserThresholdValue <= 0 {
-			rule.ActiveUserThresholdValue = 1
+			threshold, err := resolveDigestThresholdValue(&model.DigestPushRuleModel{
+				ScopeType:               rule.ScopeType,
+				ScopeID:                 rule.ScopeID,
+				SelectedChannelIDsJSON:  rule.SelectedChannelIDsJSON,
+				ActiveUserThresholdMode: model.DigestThresholdModeChannelMemberCount,
+			}, digestTargetChannelIDs(rule))
+			if err != nil {
+				return err
+			}
+			if threshold <= 0 {
+				threshold = 1
+			}
+			rule.ActiveUserThresholdValue = threshold
 		}
 	default:
 		return fmt.Errorf("无效的访问阈值模式")
@@ -701,7 +729,7 @@ func buildChannelDigestPreview(rule *model.DigestPushRuleModel, windowStart, win
 		ActiveUserCount:    int(activeUserCount),
 		ThresholdMode:      rule.ActiveUserThresholdMode,
 		ThresholdValue:     thresholdValue,
-		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
+		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) <= thresholdValue,
 		SpeakerNames:       speakerNames,
 		SpeakerSummary:     channelSummary.SpeakerSummary,
 		Speakers:           speakers,
@@ -866,7 +894,7 @@ func buildWorldDigestPreview(rule *model.DigestPushRuleModel, windowStart, windo
 		ActiveUserCount:    int(activeUserCount),
 		ThresholdMode:      rule.ActiveUserThresholdMode,
 		ThresholdValue:     thresholdValue,
-		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) >= thresholdValue,
+		ThresholdSatisfied: messageCount > 0 && int(activeUserCount) <= thresholdValue,
 		SpeakerNames:       aggregateSpeakerNames,
 		SpeakerSummary:     buildSpeakerSummary(aggregateSpeakerList),
 		Speakers:           aggregateSpeakerList,

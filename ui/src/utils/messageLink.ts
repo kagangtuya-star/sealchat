@@ -5,6 +5,16 @@
 
 const CHAT_LINK_PATH_EXACT_REGEX = /^(?:https?:\/\/[^\s<>"']*)?\/?#\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)(?:\?([^\s#]+))?$/
 const CHAT_LINK_REGEX_SOURCE = '(?:https?:\\/\\/[^\\s<>"]*)?\\/?#\\/[a-zA-Z0-9_-]+\\/[a-zA-Z0-9_-]+(?:\\?[^\\s<>\"]+)?'
+const RESERVED_CHAT_ROUTE_SEGMENTS = new Set([
+  'about',
+  'embed',
+  'invite',
+  'ob',
+  'split',
+  'status',
+  'user',
+  'worlds',
+])
 
 export interface MessageLinkParams {
   worldId: string
@@ -67,6 +77,7 @@ export function parseChatLink(url: string): ChatLinkParams | null {
 
   const [, worldId, channelId, queryString] = match
   if (!worldId || !channelId) return null
+  if (RESERVED_CHAT_ROUTE_SEGMENTS.has(worldId.toLowerCase())) return null
 
   const search = new URLSearchParams(queryString || '')
   const messageId = (search.get('msg') || '').trim()

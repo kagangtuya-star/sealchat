@@ -1111,23 +1111,23 @@ nav a:first-of-type {
 
 /* Override keyword highlight styles in custom theme mode */
 :root[data-custom-theme='true'] .keyword-highlight:not(.keyword-highlight--underline) {
-  background: var(--keyword-bg) !important;
+  background-color: var(--keyword-bg) !important;
   border-bottom-color: var(--keyword-border-color) !important;
   color: var(--keyword-text-color) !important;
 }
 
 :root[data-custom-theme='true'] .keyword-highlight:not(.keyword-highlight--underline):hover {
-  background: var(--keyword-bg-hover) !important;
+  background-color: var(--keyword-bg-hover) !important;
 }
 
 :root[data-custom-theme='true'] .keyword-highlight.keyword-highlight--underline {
-  background: transparent !important;
+  background-color: transparent !important;
   border-bottom-color: var(--keyword-border-color) !important;
   color: inherit !important;
 }
 
 :root[data-custom-theme='true'] .keyword-highlight.keyword-highlight--underline:hover {
-  background: var(--keyword-underline-bg-hover) !important;
+  background-color: var(--keyword-underline-bg-hover) !important;
 }
 
 /* Keyword tooltip body in custom theme */
@@ -1138,12 +1138,12 @@ nav a:first-of-type {
 }
 
 :root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight:not(.keyword-highlight--underline) {
-  background: var(--keyword-bg) !important;
+  background-color: var(--keyword-bg) !important;
   border-bottom-color: var(--keyword-border-color) !important;
 }
 
 :root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight.keyword-highlight--underline {
-  background: transparent !important;
+  background-color: transparent !important;
   border-bottom-color: var(--keyword-border-color) !important;
 }
 

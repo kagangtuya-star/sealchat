@@ -379,7 +379,23 @@ func extractBotNicknameSyncTarget(content string) (string, bool) {
 		}
 		return targetName, true
 	}
-	return "", false
+	return extractBotNicknameSyncTargetByCommandName(leading)
+}
+
+func extractBotNicknameSyncTargetByCommandName(content string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(content))
+	if len(fields) < 2 {
+		return "", false
+	}
+	command := fields[0]
+	if len(command) < 3 || !strings.EqualFold(command[len(command)-2:], "nn") {
+		return "", false
+	}
+	targetName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(content), command))
+	if targetName == "" {
+		return "", false
+	}
+	return targetName, true
 }
 
 func normalizeEventForBot(event *protocol.Event) *protocol.Event {

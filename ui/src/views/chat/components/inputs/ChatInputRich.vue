@@ -14,6 +14,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { matchText } from '@/utils/pinyinMatch';
 import { contentUnescape } from '@/utils/tools';
+import { plainTextToTiptapJson } from '@/utils/tiptap-render';
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes';
 import {
   SMART_LINK_DATA_ATTR,
@@ -276,6 +277,19 @@ const serializeMentionNodesToTokens = (json: any) => {
   }
   const serialized = serializeMentionNodesInNode(json);
   return serialized[0] ?? json;
+};
+
+const parseIncomingRichContent = (value: string) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return cloneEmptyDoc();
+  }
+  try {
+    const json = JSON.parse(trimmed);
+    return normalizeMentionTokensInDoc(json);
+  } catch {
+    return normalizeMentionTokensInDoc(plainTextToTiptapJson(value));
+  }
 };
 
 const parseMentionOption = (option: MentionOption) => {
@@ -1097,6 +1111,12 @@ const closePerformancePopover = () => {
   performancePopoverShow.value = false;
 };
 
+const closePerformancePopoverAfterSubmit = () => {
+  if (isMobile.value) {
+    closePerformancePopover();
+  }
+};
+
 const syncPerformanceControlsFromSelection = () => {
   const attrs = (editor.value?.getAttributes('performance') || {}) as Record<string, any>;
   const effect = normalizePerformanceEffect(attrs.effect);
@@ -1276,7 +1296,7 @@ const applyPerformanceEffectToSelection = () => {
     ...baseAttrs,
     effect: performanceEffect.value,
   }));
-  closePerformancePopover();
+  closePerformancePopoverAfterSubmit();
 };
 
 const setPerformanceEnterMode = (mode: PerformanceEnterMode) => {
@@ -1315,8 +1335,8 @@ const insertPerformanceCommandNode = () => {
       command,
       value: command === 'delay' ? numericValue : null,
     },
-  }).run();
-  closePerformancePopover();
+  }).setMark('performance', getPerformanceBlockAttrs()).run();
+  closePerformancePopoverAfterSubmit();
 };
 
 const applyCustomHighlightColor = () => {
@@ -1500,6 +1520,26 @@ const initEditor = async () => {
         const id = String(node.attrs?.id || '').trim();
         const name = String(node.attrs?.name || '').trim();
         return `@${name || id || '用户'}`;
+      },
+      addKeyboardShortcuts() {
+        const deleteAdjacentMention = (direction: 'backward' | 'forward') => ({ editor }: any) => {
+          const { from, empty } = editor.state.selection;
+          if (!empty) {
+            return false;
+          }
+          const $from = editor.state.selection.$from;
+          const targetNode = direction === 'backward' ? $from.nodeBefore : $from.nodeAfter;
+          if (!targetNode || targetNode.type?.name !== 'satoriMention') {
+            return false;
+          }
+          const targetPos = direction === 'backward' ? from - targetNode.nodeSize : from;
+          editor.chain().focus().deleteRange({ from: targetPos, to: targetPos + targetNode.nodeSize }).run();
+          return true;
+        };
+        return {
+          Backspace: deleteAdjacentMention('backward'),
+          Delete: deleteAdjacentMention('forward'),
+        };
       },
     });
 
@@ -1799,14 +1839,7 @@ const initEditor = async () => {
           bumpEditorStateVersion();
           return;
         }
-        try {
-          const json = JSON.parse(props.modelValue);
-          const normalized = normalizeMentionTokensInDoc(json);
-          ed.commands.setContent(normalized, SILENT_SET_CONTENT_OPTIONS);
-        } catch {
-          // 如果不是 JSON，当作纯文本
-          ed.commands.setContent(props.modelValue, SILENT_SET_CONTENT_OPTIONS);
-        }
+        ed.commands.setContent(parseIncomingRichContent(props.modelValue), SILENT_SET_CONTENT_OPTIONS);
         bumpEditorStateVersion();
       },
     }) as unknown as Editor;
@@ -1831,8 +1864,7 @@ watch(() => props.modelValue, (newValue) => {
   }
 
   try {
-    const incomingJson = JSON.parse(newValue);
-    const normalizedIncoming = normalizeMentionTokensInDoc(incomingJson);
+    const normalizedIncoming = parseIncomingRichContent(newValue);
     const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
     const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
     if (currentSerialized !== incomingSerialized) {
@@ -1840,7 +1872,7 @@ watch(() => props.modelValue, (newValue) => {
       bumpEditorStateVersion();
     }
   } catch {
-    // 非 JSON 格式，跳过
+    // ignore
   }
 });
 
@@ -3188,7 +3220,22 @@ defineExpose({
           >
             Rb
           </n-button>
+          <template v-if="isMobile">
+            <span ref="performanceTriggerRef">
+              <n-button
+                size="small"
+                text
+                :type="isActive('performance') ? 'primary' : 'default'"
+                title="文字演出"
+                class="tiptap-toolbar-btn"
+                @click="performancePopoverShow ? closePerformancePopover() : openPerformancePopover()"
+              >
+                Fx
+              </n-button>
+            </span>
+          </template>
           <n-popover
+            v-else
             trigger="manual"
             placement="bottom"
             :show="performancePopoverShow"
@@ -3824,6 +3871,118 @@ defineExpose({
         </div>
       </template>
     </n-modal>
+
+    <Teleport to="body">
+      <Transition name="mention-fade">
+        <div
+          v-if="isMobile && performancePopoverShow"
+          class="tiptap-performance-sheet"
+          @click="closePerformancePopover"
+        >
+          <div
+            class="tiptap-performance-sheet__panel"
+            @click.stop
+            @pointerdown.stop="markOverlayInteraction"
+          >
+            <div class="tiptap-performance-panel tiptap-performance-panel--mobile">
+              <div class="tiptap-performance-panel__topbar">
+                <div class="tiptap-performance-panel__title">文字演出</div>
+                <button type="button" class="tiptap-performance-panel__close" @click="closePerformancePopover">×</button>
+              </div>
+              <div class="tiptap-performance-sheet__body">
+                <div class="tiptap-performance-panel__section">
+                  <div class="tiptap-performance-panel__header">
+                    <div class="tiptap-performance-panel__label">当前文本块</div>
+                    <div class="tiptap-performance-panel__hint">进入方式与语气实时应用到当前块</div>
+                  </div>
+                  <div class="tiptap-performance-panel__subsection">
+                    <div class="tiptap-performance-panel__label">文本进入</div>
+                    <div class="tiptap-performance-panel__chips">
+                      <button
+                        v-for="option in performanceEnterModeOptions"
+                        :key="option.value"
+                        type="button"
+                        class="tiptap-performance-chip"
+                        :class="{ 'is-active': performanceEnterMode === option.value }"
+                        @click="setPerformanceEnterMode(option.value)"
+                      >{{ option.label }}</button>
+                    </div>
+                  </div>
+                  <div class="tiptap-performance-panel__slider-grid">
+                    <div class="tiptap-performance-panel__subsection">
+                      <div class="tiptap-performance-panel__slider-head">
+                        <span class="tiptap-performance-panel__label">进入速度</span>
+                        <span class="tiptap-performance-panel__value">{{ performanceSpeedLabel }}</span>
+                      </div>
+                      <n-slider
+                        :value="performanceEnterSpeed"
+                        :min="1"
+                        :max="9"
+                        :step="1"
+                        @update:value="handlePerformanceEnterSpeedUpdate"
+                      />
+                      <div class="tiptap-performance-panel__scale">
+                        <span>慢</span>
+                        <span>中</span>
+                        <span>快</span>
+                      </div>
+                    </div>
+                    <div class="tiptap-performance-panel__subsection">
+                      <div class="tiptap-performance-panel__slider-head">
+                        <span class="tiptap-performance-panel__label">语气尺度</span>
+                        <span class="tiptap-performance-panel__value">{{ performanceToneLabel }}</span>
+                      </div>
+                      <n-slider
+                        :value="performanceToneIntensity"
+                        :min="-4"
+                        :max="4"
+                        :step="1"
+                        :marks="performanceToneMarks"
+                        @update:value="handlePerformanceToneIntensityUpdate"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="tiptap-performance-panel__section">
+                  <div class="tiptap-performance-panel__header">
+                    <div class="tiptap-performance-panel__label">选区文字效果</div>
+                    <div class="tiptap-performance-panel__hint">仅作用于当前选区文字</div>
+                  </div>
+                  <div class="tiptap-performance-panel__label">文字效果</div>
+                  <div class="tiptap-performance-panel__chips">
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'wave' }" @click="performanceEffect = 'wave'">波浪</button>
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'shake' }" @click="performanceEffect = 'shake'">抖动</button>
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'rainbow' }" @click="performanceEffect = 'rainbow'">虹彩</button>
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'glitch' }" @click="performanceEffect = 'glitch'">故障</button>
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'blink' }" @click="performanceEffect = 'blink'">闪烁</button>
+                  </div>
+                  <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+                </div>
+                <div class="tiptap-performance-panel__section">
+                  <div class="tiptap-performance-panel__header">
+                    <div class="tiptap-performance-panel__label">节奏命令</div>
+                    <div class="tiptap-performance-panel__hint">仅在朦胧显现 / 逐字时生效</div>
+                  </div>
+                  <div class="tiptap-performance-panel__chips">
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'delay' }" @click="performanceCommandType = 'delay'">停顿</button>
+                    <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'pause' }" @click="performanceCommandType = 'pause'">暂停并高亮</button>
+                  </div>
+                  <div class="tiptap-performance-panel__command-row">
+                    <n-input
+                      v-if="performanceCommandType === 'delay'"
+                      v-model:value="performanceCommandValue"
+                      size="small"
+                      placeholder="停顿毫秒，例如 500"
+                    />
+                  </div>
+                  <n-button size="tiny" secondary @click="insertPerformanceCommandNode">插入命令</n-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- 链接插入弹窗 -->
     <n-modal
@@ -4767,6 +4926,12 @@ defineExpose({
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16), 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
+.tiptap-toolbar-popover,
+.tiptap-platform-font-select__menu {
+  box-sizing: border-box;
+  max-width: min(30rem, calc(100vw - 1rem));
+}
+
 .tiptap-platform-font-select__menu--sticky-note {
   --n-color: #ffffff !important;
   --n-option-text-color: #0f172a !important;
@@ -4894,6 +5059,105 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .tiptap-toolbar-popover,
+  .tiptap-platform-font-select__menu,
+  .n-popover-shared:has(.tiptap-toolbar-popover),
+  .n-popover-shared:has(.tiptap-platform-font-select__menu) {
+    box-sizing: border-box;
+    max-width: calc(100vw - 1rem) !important;
+    max-height: min(70vh, 32rem);
+    overflow: auto;
+  }
+
+  .tiptap-toolbar-picker,
+  .tiptap-decoration-panel,
+  .tiptap-performance-panel,
+  .tiptap-color-picker {
+    min-width: 0;
+    width: min(100%, calc(100vw - 1.5rem));
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .tiptap-decoration-panel {
+    gap: 0.35rem;
+  }
+
+  .tiptap-decoration-panel__row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tiptap-decoration-panel__label {
+    grid-column: 1 / -1;
+  }
+
+  .tiptap-decoration-panel__chip {
+    min-width: 0;
+  }
+
+  .tiptap-performance-panel__chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tiptap-performance-chip {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .tiptap-color-picker {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.tiptap-performance-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.tiptap-performance-sheet__panel {
+  width: min(100%, 32rem);
+  max-height: min(78vh, 36rem);
+  padding: 0 0.5rem max(0.5rem, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+
+.tiptap-performance-panel--mobile {
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+  max-height: min(78vh, 36rem);
+  border-radius: 1rem 1rem 0 0;
+  background: var(--sc-bg-elevated, #ffffff);
+  box-shadow: 0 -10px 32px rgba(15, 23, 42, 0.28);
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.tiptap-performance-sheet__body {
+  overflow: auto;
+  max-height: calc(min(78vh, 36rem) - 3.25rem);
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 767px) {
+  .tiptap-performance-sheet__panel {
+    width: 100%;
+    padding: 0;
+  }
+
+  .tiptap-performance-panel--mobile {
+    border-radius: 1rem 1rem 0 0;
+  }
 }
 
 .tiptap-content {

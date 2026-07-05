@@ -34,18 +34,18 @@ export function resolveMessageLinkInfo(
   if (!params) return null
 
   const { worldId, channelId, messageId } = params
+  const worldInfo = context.worldMap[worldId]
+  const channelInfo = context.findChannelById(channelId, worldId)
   const isCurrentWorld = worldId === context.currentWorldId
 
   // 获取世界名称
   let worldName = '未知世界'
-  const worldInfo = context.worldMap[worldId]
   if (worldInfo?.name) {
     worldName = worldInfo.name
   }
 
   // 获取频道名称
   let channelName = '频道'
-  const channelInfo = context.findChannelById(channelId, worldId)
   if (channelInfo?.name) {
     channelName = channelInfo.name
   }
@@ -60,6 +60,10 @@ export function resolveMessageLinkInfo(
         currentPath,
         targetPath,
       }) || undefined
+    } else if (isCurrentWorld && channelInfo?.name) {
+      resolvedCustomTitle = channelInfo.name
+    } else if (!isCurrentWorld && worldInfo?.name) {
+      resolvedCustomTitle = worldInfo.name
     }
   }
 

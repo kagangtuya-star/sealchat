@@ -3,7 +3,16 @@ import { ref, computed, watch } from 'vue';
 import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
+import { useCharacterCardTemplateStore } from './characterCardTemplate';
+import { useCharacterSheetStore } from './characterSheet';
 import { extractTemplateKeys, getWorldCardTemplate, hasRenderableBadgeData } from '@/utils/characterCardTemplate';
+import {
+  clearNarratorBadgeCacheEntries,
+  isCharacterCardNarratorIdentity,
+  normalizeCharacterCardNarratorSettings,
+  type CharacterCardNarratorSettings,
+} from '@/utils/characterCardNarratorSettings';
+import { cleanupDeletedCharacterCardState } from './characterCardDeleteCleanup';
 import {
   buildBotNicknameSyncCommand,
   resolveBotNicknameSyncName,
@@ -38,6 +47,7 @@ export interface CharacterCardData {
   type: string;
   attrs: Record<string, any>;
   avatarUrl?: string;
+  templateText?: string;
 }
 
 export interface CharacterCardBadgeEntry {
@@ -46,6 +56,24 @@ export interface CharacterCardBadgeEntry {
   template: string;
   attrs: Record<string, any>;
   updatedAt: number;
+}
+
+export interface OnlineCharacterCardItem {
+  userId: string;
+  username?: string;
+  userNick?: string;
+  userColor?: string;
+  identityId: string;
+  identityName?: string;
+  identityColor?: string;
+  identityAvatar?: string;
+  card: {
+    name: string;
+    sheetType: string;
+    attrs: Record<string, any>;
+    templateText?: string;
+  };
+  updatedAt?: number;
 }
 
 type CharacterApiRevalidateResult =
@@ -101,6 +129,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const identityBindings = ref<Record<string, string>>({});
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
+  const onlineCardsByChannel = ref<Record<string, Record<string, OnlineCharacterCardItem>>>({});
+  const onlineCardsLoadingByChannel = ref<Record<string, boolean>>({});
+  const narratorIdentityIdsByChannel = ref<CharacterCardNarratorSettings>({});
   const botCharacterDisabledByChannel = ref<Record<string, boolean>>({});
   const characterApiHealthySessionByChannel = ref<Record<string, boolean>>({});
 
@@ -110,8 +141,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const chatStore = useChatStore();
   const userStore = useUserStore();
   const displayStore = useDisplayStore();
+  const templateStore = useCharacterCardTemplateStore();
+  const sheetStore = useCharacterSheetStore();
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
+  let loadedNarratorSettingsKey = '';
   let badgeGatewayBound = false;
   const revalidateCharacterApiInFlight = new Map<string, Promise<CharacterApiRevalidateResult>>();
 
@@ -281,6 +315,14 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return `characterCardBadgeCache:${userId}`;
   };
 
+  const getNarratorSettingsStorageKey = () => {
+    const userId = getUserId();
+    if (!userId || typeof window === 'undefined') {
+      return '';
+    }
+    return `characterCardNarratorSettings:${userId}`;
+  };
+
   const ensureBadgeCacheLoaded = () => {
     const key = getBadgeCacheStorageKey();
     if (!key || key === loadedBadgeCacheKey) {
@@ -318,6 +360,91 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
   };
 
+  const ensureNarratorSettingsLoaded = () => {
+    const key = getNarratorSettingsStorageKey();
+    if (!key || key === loadedNarratorSettingsKey) {
+      return key;
+    }
+    loadedNarratorSettingsKey = key;
+    try {
+      narratorIdentityIdsByChannel.value = normalizeCharacterCardNarratorSettings(localStorage.getItem(key)
+        ? JSON.parse(localStorage.getItem(key) || '{}')
+        : {});
+    } catch (e) {
+      console.warn('Failed to load character card narrator settings from localStorage', e);
+      narratorIdentityIdsByChannel.value = {};
+    }
+    return key;
+  };
+
+  const persistNarratorSettings = () => {
+    const key = ensureNarratorSettingsLoaded();
+    if (!key) {
+      return;
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(narratorIdentityIdsByChannel.value));
+    } catch (e) {
+      console.warn('Failed to persist character card narrator settings to localStorage', e);
+    }
+  };
+
+  const isNarratorIdentity = (channelId: string, identityId: string) => {
+    ensureNarratorSettingsLoaded();
+    return isCharacterCardNarratorIdentity(narratorIdentityIdsByChannel.value, channelId, identityId);
+  };
+
+  const getNarratorIdentityIds = (channelId: string) => {
+    ensureNarratorSettingsLoaded();
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return [];
+    }
+    return narratorIdentityIdsByChannel.value[normalizedChannelId] || [];
+  };
+
+  const applyNarratorBadgeCleanup = (channelId: string, identityIds: string[]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId || identityIds.length === 0) {
+      return;
+    }
+    const removeSet = new Set(identityIds.map(item => String(item || '').trim()).filter(Boolean));
+    if (removeSet.size === 0) {
+      return;
+    }
+    const nextBadgeByIdentity = { ...badgeByIdentity.value };
+    for (const identityId of removeSet) {
+      if (nextBadgeByIdentity[identityId]?.channelId === normalizedChannelId) {
+        delete nextBadgeByIdentity[identityId];
+      }
+    }
+    badgeByIdentity.value = nextBadgeByIdentity;
+    badgeCacheByChannel.value = clearNarratorBadgeCacheEntries(
+      badgeCacheByChannel.value,
+      normalizedChannelId,
+      Array.from(removeSet),
+    );
+    persistBadgeCache();
+  };
+
+  const setNarratorIdentityIds = (channelId: string, identityIds: string[]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return;
+    }
+    ensureNarratorSettingsLoaded();
+    const normalized = Array.from(new Set(identityIds.map(item => String(item || '').trim()).filter(Boolean)));
+    const next = { ...narratorIdentityIdsByChannel.value };
+    if (normalized.length === 0) {
+      delete next[normalizedChannelId];
+    } else {
+      next[normalizedChannelId] = normalized;
+    }
+    narratorIdentityIdsByChannel.value = next;
+    persistNarratorSettings();
+    applyNarratorBadgeCleanup(normalizedChannelId, normalized);
+  };
+
   const loadBadgeCache = (channelId: string) => {
     if (!channelId) return;
     const key = ensureBadgeCacheLoaded();
@@ -332,6 +459,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (!entry || typeof entry !== 'object') return;
       const identityId = typeof entry.identityId === 'string' ? entry.identityId : '';
       if (!identityId) return;
+      if (isNarratorIdentity(channelId, identityId)) return;
       const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
       const normalized: CharacterCardBadgeEntry = {
         identityId,
@@ -395,6 +523,167 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     persistBadgeCache();
   };
 
+  const normalizeOnlineCardItem = (raw: any): OnlineCharacterCardItem | null => {
+    const userId = String(raw?.userId || '').trim();
+    const identityId = String(raw?.identityId || '').trim();
+    const cardName = String(raw?.card?.name || '').trim();
+    if (!userId || !identityId || !cardName) return null;
+    return {
+      userId,
+      username: String(raw?.username || '').trim(),
+      userNick: String(raw?.userNick || '').trim(),
+      userColor: String(raw?.userColor || '').trim(),
+      identityId,
+      identityName: String(raw?.identityName || '').trim(),
+      identityColor: String(raw?.identityColor || '').trim(),
+      identityAvatar: String(raw?.identityAvatar || '').trim(),
+      card: {
+        name: cardName,
+        sheetType: String(raw?.card?.sheetType || raw?.card?.sheet_type || '').trim(),
+        attrs: raw?.card?.attrs && typeof raw.card.attrs === 'object' ? raw.card.attrs : {},
+        templateText: String(raw?.card?.templateText || raw?.card?.template_text || '').trim(),
+      },
+      updatedAt: Number(raw?.updatedAt || 0),
+    };
+  };
+
+  const setOnlineCardsLoading = (channelId: string, loading: boolean) => {
+    if (!channelId) return;
+    onlineCardsLoadingByChannel.value = {
+      ...onlineCardsLoadingByChannel.value,
+      [channelId]: loading,
+    };
+  };
+
+  const syncOnlinePreviewWindows = (channelId: string, entry: OnlineCharacterCardItem) => {
+    if (!channelId || !entry?.userId || !entry.identityId) return;
+    const previewCardId = `online:${entry.userId}:${entry.identityId}`;
+    sheetStore.activeWindowIds.forEach((windowId) => {
+      const win = sheetStore.windows[windowId];
+      if (!win || !win.readOnly || win.cardId !== previewCardId || win.channelId !== channelId) return;
+      sheetStore.updateReadOnlyWindowData(windowId, {
+        cardName: entry.card.name,
+        sheetType: entry.card.sheetType,
+        attrs: entry.card.attrs || {},
+        avatarUrl: entry.identityAvatar || undefined,
+        templateText: entry.card.templateText || '',
+      });
+    });
+  };
+
+  const upsertOnlineCardEntry = (channelId: string, entry: OnlineCharacterCardItem) => {
+    if (!channelId || !entry.userId) return;
+    onlineCardsByChannel.value = {
+      ...onlineCardsByChannel.value,
+      [channelId]: {
+        ...(onlineCardsByChannel.value[channelId] || {}),
+        [entry.userId]: entry,
+      },
+    };
+  };
+
+  const removeOnlineCardEntry = (channelId: string, userId: string) => {
+    if (!channelId || !userId) return;
+    const current = onlineCardsByChannel.value[channelId] || {};
+    if (!current[userId]) return;
+    const nextChannel = { ...current };
+    delete nextChannel[userId];
+    onlineCardsByChannel.value = {
+      ...onlineCardsByChannel.value,
+      [channelId]: nextChannel,
+    };
+  };
+
+  const applyOnlineCardEvent = (event?: any) => {
+    const channelId = String(event?.channel?.id || '').trim();
+    const payload = event?.onlineCharacterCard;
+    if (!channelId || !payload) return;
+    const item = normalizeOnlineCardItem(payload.item);
+    if (payload.action === 'clear') {
+      removeOnlineCardEntry(channelId, item?.userId || String(payload?.item?.userId || '').trim());
+      return;
+    }
+    if (item) {
+      upsertOnlineCardEntry(channelId, item);
+      syncOnlinePreviewWindows(channelId, item);
+    }
+  };
+
+  const applyOnlineCardSnapshot = (event?: any) => {
+    const channelId = String(event?.channel?.id || '').trim();
+    if (!channelId) return;
+    const items = Array.isArray(event?.onlineCharacterCardSnapshot?.items)
+      ? event.onlineCharacterCardSnapshot.items
+      : [];
+    const next: Record<string, OnlineCharacterCardItem> = {};
+    for (const raw of items) {
+      const item = normalizeOnlineCardItem(raw);
+      if (item) {
+        next[item.userId] = item;
+        syncOnlinePreviewWindows(channelId, item);
+      }
+    }
+    onlineCardsByChannel.value = {
+      ...onlineCardsByChannel.value,
+      [channelId]: next,
+    };
+    setOnlineCardsLoading(channelId, false);
+  };
+
+  const broadcastOnlineActiveCard = async (channelId: string) => {
+    if (!channelId) return;
+    await chatStore.ensureConnectionReady();
+    if (!displayStore.settings.onlineCharacterCardsEnabled) {
+      await chatStore.sendAPI('character.online.card.broadcast', {
+        channel_id: channelId,
+        action: 'clear',
+      });
+      return;
+    }
+    const active = activeCards.value[channelId];
+    const identityId = chatStore.getActiveIdentityId(channelId);
+    if (!active || !identityId) {
+      await chatStore.sendAPI('character.online.card.broadcast', {
+        channel_id: channelId,
+        action: 'clear',
+      });
+      return;
+    }
+    await chatStore.sendAPI('character.online.card.broadcast', {
+      channel_id: channelId,
+      identity_id: identityId,
+      card: {
+        name: active.name,
+        sheetType: active.type,
+        attrs: active.attrs || {},
+        templateText: active.templateText || '',
+      },
+      action: 'update',
+    });
+  };
+
+  const clearOnlineActiveCard = async (channelId: string) => {
+    if (!channelId) return;
+    await chatStore.ensureConnectionReady();
+    try {
+      await chatStore.sendAPI('character.online.card.broadcast', {
+        channel_id: channelId,
+        action: 'clear',
+      });
+    } catch (e) {
+      console.warn('[CharacterCard] Failed to clear online active card', e);
+    }
+  };
+
+  const handleOnlineCardRequest = (event?: any) => {
+    const channelId = String(event?.channel?.id || '').trim();
+    const requesterId = String(event?.onlineCharacterCardRequest?.requesterId || '').trim();
+    if (!channelId || requesterId === getUserId()) return;
+    void broadcastOnlineActiveCard(channelId).catch((e) => {
+      console.warn('[CharacterCard] Failed to broadcast online active card', e);
+    });
+  };
+
   const resolveWorldBadgeTemplate = (worldId: string) => {
     if (!worldId) return '';
     const world = (chatStore as any).worldMap?.[worldId];
@@ -448,6 +737,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const channelId = typeof event?.channel?.id === 'string'
       ? event.channel.id
       : badgeByIdentity.value[identityId]?.channelId || '';
+    if (channelId && isNarratorIdentity(channelId, identityId)) {
+      removeBadgeEntry(identityId);
+      removeBadgeCacheEntry(channelId, identityId);
+      return;
+    }
     if (action === 'clear') {
       const existing = channelId ? badgeCacheByChannel.value[channelId]?.[identityId] : null;
       if (existing && updatedAt < existing.updatedAt) {
@@ -494,6 +788,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     for (const item of items) {
       const identityId = typeof item?.identityId === 'string' ? item.identityId : '';
       if (!identityId) continue;
+      if (isNarratorIdentity(channelId, identityId)) continue;
       if (item?.action === 'clear') continue;
       const updatedAt = Number(
         item?.updatedAt
@@ -520,6 +815,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (badgeGatewayBound) return;
     chatEvent.on('character-card-badge-updated' as any, applyBadgeEvent);
     chatEvent.on('character-card-badge-snapshot' as any, applyBadgeSnapshot);
+    chatEvent.on('character-online-card-requested' as any, handleOnlineCardRequest);
+    chatEvent.on('character-online-card-updated' as any, applyOnlineCardEvent);
+    chatEvent.on('character-online-card-snapshot' as any, applyOnlineCardSnapshot);
     chatEvent.on('channel-identity-updated' as any, (payload?: { channelId?: string; removedId?: string; replacedId?: string }) => {
       const channelId = String(payload?.channelId || '').trim();
       const removedId = String(payload?.removedId || payload?.replacedId || '').trim();
@@ -605,6 +903,12 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       });
       maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
+        await templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
+        await templateStore.ensureBindingsLoaded(channelId);
+        const activeCardId = getActiveCardId(channelId);
+        const resolvedTemplate = activeCardId
+          ? templateStore.resolveCardTemplate(channelId, activeCardId, resp.data.type || '', '')
+          : '';
         const rawAvatar = [
           (resp.data as any)?.avatarUrl,
           (resp.data as any)?.avatar_url,
@@ -617,9 +921,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           type: resp.data.type || '',
           attrs: resp.data.data || {},
           avatarUrl: typeof rawAvatar === 'string' ? rawAvatar.trim() : undefined,
+          templateText: resolvedTemplate || undefined,
         };
         activeCards.value[channelId] = cardData;
         void broadcastActiveBadge(channelId);
+        void broadcastOnlineActiveCard(channelId).catch((error) => {
+          console.warn('[CharacterCard] Failed to update online active card', error);
+        });
         return cardData;
       }
     } catch (e) {
@@ -937,6 +1245,22 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string; binding_groups?: string[] } }>('character.delete', payload);
       maybeDisableFromResponse(resolvedChannelId, resp);
       if (resp?.data?.ok) {
+        const deletedCardId = String(payload.id || '').trim();
+        const cleanup = cleanupDeletedCharacterCardState({
+          channelId: resolvedChannelId,
+          deletedCardId,
+          activeCardId: resolvedChannelId ? getActiveCardId(resolvedChannelId) : '',
+          identityBindings: identityBindings.value,
+          badgeByIdentity: badgeByIdentity.value,
+          badgeCacheByChannel: badgeCacheByChannel.value,
+          activeCards: activeCards.value,
+        });
+        identityBindings.value = cleanup.identityBindings;
+        badgeByIdentity.value = cleanup.badgeByIdentity;
+        badgeCacheByChannel.value = cleanup.badgeCacheByChannel;
+        activeCards.value = cleanup.activeCards;
+        persistIdentityBindings();
+        persistBadgeCache();
         await loadCardList(resolvedChannelId);
         return resp.data;
       } else if (resp?.data?.error) {
@@ -1164,6 +1488,21 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
   };
 
+  const requestOnlineCardSnapshot = async (channelId: string, options?: { requestPeers?: boolean }) => {
+    if (!channelId) return;
+    setOnlineCardsLoading(channelId, true);
+    await chatStore.ensureConnectionReady();
+    try {
+      if (options?.requestPeers !== false) {
+        await chatStore.sendAPI('character.online.card.request', { channel_id: channelId });
+      }
+      await chatStore.sendAPI('character.online.card.snapshot', { channel_id: channelId });
+    } catch (e) {
+      setOnlineCardsLoading(channelId, false);
+      console.warn('[CharacterCard] Failed to request online character cards', e);
+    }
+  };
+
   const broadcastActiveBadge = async (channelId: string, identityId?: string, action: 'update' | 'clear' = 'update') => {
     if (!channelId) return;
     if (shouldSkipCharacterApi(channelId, 'broadcastActiveBadge')) {
@@ -1171,6 +1510,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     const resolvedIdentityId = identityId || chatStore.getActiveIdentityId(channelId);
     if (!resolvedIdentityId) return;
+    if (isNarratorIdentity(channelId, resolvedIdentityId)) {
+      action = 'clear';
+      applyNarratorBadgeCleanup(channelId, [resolvedIdentityId]);
+    }
     await chatStore.ensureConnectionReady();
     if (!displayStore.settings.characterCardBadgeEnabled) {
       action = 'clear';
@@ -1231,6 +1574,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const getBadgeByIdentity = (channelId: string, identityId: string) => {
     if (!channelId || !identityId) return null;
+    if (isNarratorIdentity(channelId, identityId)) return null;
     return badgeCacheByChannel.value[channelId]?.[identityId] || null;
   };
 
@@ -1238,7 +1582,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     () => userStore.info?.id,
     () => {
       loadedBindingsKey = '';
+      loadedNarratorSettingsKey = '';
       loadIdentityBindings();
+      ensureNarratorSettingsLoaded();
     },
     { immediate: true },
   );
@@ -1250,6 +1596,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     cards,
     activeCards,
     badgeByIdentity,
+    onlineCardsByChannel,
+    onlineCardsLoadingByChannel,
     identityBindings,
     panelVisible,
     loading,
@@ -1268,6 +1616,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getActiveCardId,
     getCardsByChannel,
     getBadgeByIdentity,
+    getNarratorIdentityIds,
+    setNarratorIdentityIds,
+    isNarratorIdentity,
     getBoundCardId,
     syncCardForIdentity,
     syncBotNicknameForIdentity,
@@ -1276,6 +1627,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     unbindIdentity,
     requestBadgeSnapshot,
     broadcastActiveBadge,
+    requestOnlineCardSnapshot,
+    broadcastOnlineActiveCard,
+    clearOnlineActiveCard,
     revalidateCharacterApi,
     markCharacterApiHealthy,
     hasSuccessfulCharacterApiSession,

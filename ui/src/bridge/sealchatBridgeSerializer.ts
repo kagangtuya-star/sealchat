@@ -14,6 +14,11 @@ type TipTapNode = {
   content?: TipTapNode[]
 }
 
+const isMentionNodeType = (value: unknown): boolean => {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'mention' || normalized === 'satorimention'
+}
+
 type IdentityLike = {
   id?: string
   displayName?: string
@@ -69,7 +74,7 @@ const extractTipTapText = (node: TipTapNode | null | undefined): string => {
   if (node.type === 'hardBreak') {
     return '\n'
   }
-  if (node.type === 'mention') {
+  if (isMentionNodeType(node.type)) {
     const mentionId = String(node.attrs?.id || '').trim()
     const mentionName = String(node.attrs?.name || '').trim()
     return `@${mentionName || mentionId || '用户'}`

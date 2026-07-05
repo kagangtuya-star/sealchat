@@ -114,9 +114,35 @@ const QUICK_ITALIC_PATTERN = /(^|[^*])\*([^*\n]+)\*/g;
 const ZERO_WIDTH_SPACE = '\u200B';
 const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;
 const GALLERY_ITEM_MIME_TYPE = 'application/x-sealchat-gallery-item';
+const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
 
 const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
+
+interface MentionTokenInfo {
+  start: number;
+  end: number;
+}
+
+const findMentionTokenAtPosition = (value: string, position: number): MentionTokenInfo | null => {
+  if (!value) {
+    return null;
+  }
+  const safePosition = clamp(position, 0, value.length);
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MENTION_TOKEN_REGEX.exec(value)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (safePosition >= start && safePosition < end) {
+      return { start, end };
+    }
+    if (safePosition === end && safePosition > 0) {
+      return { start, end };
+    }
+  }
+  return null;
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const isHighSurrogate = (code: number) => code >= 0xD800 && code <= 0xDBFF;
@@ -960,6 +986,12 @@ const deleteBackwardAtSelection = (): boolean => {
     removeImageMarker(marker);
     return true;
   }
+  const mentionToken = findMentionTokenAtPosition(props.modelValue, start - 1);
+  if (mentionToken) {
+    const nextValue = `${props.modelValue.slice(0, mentionToken.start)}${props.modelValue.slice(mentionToken.end)}`;
+    commitInputMutation(nextValue, mentionToken.start);
+    return true;
+  }
   if (start <= 0) {
     return false;
   }
@@ -981,6 +1013,12 @@ const deleteForwardAtSelection = (): boolean => {
   const marker = findMarkerInfoAt(start);
   if (marker) {
     removeImageMarker(marker);
+    return true;
+  }
+  const mentionToken = findMentionTokenAtPosition(props.modelValue, start);
+  if (mentionToken) {
+    const nextValue = `${props.modelValue.slice(0, mentionToken.start)}${props.modelValue.slice(mentionToken.end)}`;
+    commitInputMutation(nextValue, mentionToken.start);
     return true;
   }
   if (start >= props.modelValue.length) {

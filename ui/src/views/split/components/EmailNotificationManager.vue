@@ -93,6 +93,7 @@ interface DigestPushSettings {
   activeUserThresholdMode: string
   activeUserThresholdValue: number
   effectiveActiveUserThreshold: number
+  channelMemberThreshold: number
   pushMode: string
   selectedChannelIds: string[]
   textTemplate: string
@@ -177,9 +178,10 @@ const settings = ref<DigestPushSettings>({
   scopeId: '',
   windowSeconds: 3600,
   supportedWindowSeconds: [300, 900, 1800, 3600, 7200, 21600, 86400],
-  activeUserThresholdMode: 'channel_member_count',
-  activeUserThresholdValue: 0,
+  activeUserThresholdMode: 'fixed',
+  activeUserThresholdValue: 1,
   effectiveActiveUserThreshold: 1,
+  channelMemberThreshold: 1,
   pushMode: 'passive',
   selectedChannelIds: [],
   textTemplate: DEFAULT_CHANNEL_DIGEST_TEXT_TEMPLATE,
@@ -287,6 +289,15 @@ const passivePullEnabled = computed(() => settings.value.enabled && (settings.va
 const showFixedThreshold = computed(() => settings.value.activeUserThresholdMode === 'fixed')
 const showActivePush = computed(() => settings.value.pushMode === 'active' || settings.value.pushMode === 'both')
 const showWorldChannelPicker = computed(() => isWorldScope.value && settings.value.availableChannels.length > 0)
+const normalizePositiveInt = (value: unknown, fallback = 1) => {
+  const normalized = Number(value || 0)
+  return normalized > 0 ? normalized : fallback
+}
+const displayedEffectiveThreshold = computed(() => {
+  const memberThreshold = normalizePositiveInt(settings.value.channelMemberThreshold, 1)
+  const fixedThreshold = normalizePositiveInt(settings.value.activeUserThresholdValue, memberThreshold)
+  return settings.value.activeUserThresholdMode === 'channel_member_count' ? memberThreshold : fixedThreshold
+})
 
 const windowOptions = computed(() => {
   const labels: Record<number, string> = {
@@ -311,7 +322,7 @@ const pushModeOptions = [
 ]
 
 const thresholdModeOptions = computed(() => [
-  { label: isWorldScope.value ? '覆盖频道成员数' : '频道成员数', value: 'channel_member_count' },
+  { label: isWorldScope.value ? '覆盖频道成员数上限' : '频道成员数上限', value: 'channel_member_count' },
   { label: '固定阈值', value: 'fixed' },
 ])
 
@@ -322,11 +333,14 @@ const methodOptions = [
 ]
 
 const normalizeSettingsValue = (input?: Partial<DigestPushSettings>) => {
+  const channelMemberThreshold = normalizePositiveInt(input?.channelMemberThreshold ?? settings.value.channelMemberThreshold, 1)
   return {
     ...settings.value,
     ...(input || {}),
     scopeType: props.scopeType,
     scopeId: props.scopeId,
+    activeUserThresholdValue: normalizePositiveInt(input?.activeUserThresholdValue ?? settings.value.activeUserThresholdValue, channelMemberThreshold),
+    channelMemberThreshold,
     selectedChannelIds: Array.isArray(input?.selectedChannelIds ?? settings.value.selectedChannelIds)
       ? [...(input?.selectedChannelIds ?? settings.value.selectedChannelIds ?? [])]
       : [],
@@ -463,14 +477,6 @@ const ensurePassivePullToken = async (forceRotate = false) => {
       if (tokenMatchesTailFragment(cachedToken, dedicated.tokenTailFragment)) {
         passiveToken.value = cachedToken
         persistPassivePullCache()
-        return
-      }
-      if (cachedToken) {
-        passiveToken.value = ''
-        persistPassivePullCache()
-        passiveTokenError.value = cachedIntegrationId && cachedIntegrationId !== dedicated.id
-          ? '检测到该摘要拉取 BOT 已被服务端收敛，原本地缓存 token 已失效；当前仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
-          : '检测到本地缓存 token 已失效；服务端仍保留一个有效 token，如需在本设备重新获取，请点击“重新生成”。'
         return
       }
       await rotatePassivePullToken()
@@ -673,13 +679,22 @@ watch(() => settings.value.pushMode, () => {
     testDeliverActive.value = false
   }
 })
+watch(() => settings.value.activeUserThresholdMode, (mode, prevMode) => {
+  if (mode !== 'fixed' || prevMode === 'fixed') {
+    return
+  }
+  settings.value.activeUserThresholdValue = normalizePositiveInt(
+    settings.value.activeUserThresholdValue,
+    normalizePositiveInt(settings.value.channelMemberThreshold, 1),
+  )
+})
 watch(passiveToken, () => {
   persistPassivePullCache()
 })
 </script>
 
 <template>
-  <div class="p-3">
+  <div class="email-notification-manager p-3">
     <n-alert v-if="errorText" type="error" :bordered="false" class="mb-3">
       {{ errorText }}
     </n-alert>
@@ -690,10 +705,10 @@ watch(passiveToken, () => {
 
     <n-card :title="`${scopeLabel}未读提醒`" size="small" class="mb-3">
       <n-space vertical size="large">
-        <div class="flex items-center justify-between">
+        <div class="email-notification-manager__row">
           <div>
             <div class="font-medium">启用规则</div>
-            <div class="text-xs text-gray-500">窗口结束后按访问人数阈值判断是否生成摘要</div>
+            <div class="text-xs text-gray-500">窗口结束后按低活跃阈值判断是否生成摘要</div>
           </div>
           <n-switch v-model:value="settings.enabled" :disabled="loading" />
         </div>
@@ -708,7 +723,7 @@ watch(passiveToken, () => {
         </div>
 
         <div>
-          <div class="text-sm mb-2">登录用户阈值</div>
+          <div class="text-sm mb-2">低活跃阈值</div>
           <n-radio-group v-model:value="settings.activeUserThresholdMode" name="threshold-mode">
             <n-space>
               <n-radio-button
@@ -721,7 +736,7 @@ watch(passiveToken, () => {
             </n-space>
           </n-radio-group>
           <div class="text-xs text-gray-500 mt-2">
-            当前生效阈值：{{ settings.effectiveActiveUserThreshold }}
+            当前生效上限：{{ displayedEffectiveThreshold }}
           </div>
           <n-input-number
             v-if="showFixedThreshold"
@@ -812,9 +827,9 @@ watch(passiveToken, () => {
               :disabled="loading || clearSigningSecret"
               placeholder="留空则保持现有签名密钥"
             />
-            <div class="flex items-center justify-between text-xs text-gray-500">
+            <div class="email-notification-manager__row email-notification-manager__row--muted text-xs text-gray-500">
               <span>当前签名密钥：{{ settings.hasSigningSecret ? '已配置' : '未配置' }}</span>
-              <label class="flex items-center gap-2">
+              <label class="email-notification-manager__checkbox">
                 <input v-model="clearSigningSecret" type="checkbox" />
                 清空签名密钥
               </label>
@@ -880,7 +895,7 @@ watch(passiveToken, () => {
           </div>
         </div>
 
-        <div class="flex items-center justify-between">
+        <div class="email-notification-manager__row">
           <div>
             <div class="text-sm">同时触发主动推送</div>
             <div class="text-xs text-gray-500">仅在已配置主动推送地址时有效</div>
@@ -919,7 +934,7 @@ watch(passiveToken, () => {
             <template v-if="isWorldScope && testPreview.channelCount">
               命中频道数：{{ testPreview.channelCount }}<br />
             </template>
-            访问人数：{{ testPreview.activeUserCount }} / 阈值 {{ testPreview.thresholdValue }}<br />
+            活跃人数：{{ testPreview.activeUserCount }} / 上限 {{ testPreview.thresholdValue }}<br />
             规则命中：{{ testPreview.thresholdSatisfied ? '是' : '否' }}
           </div>
         </n-alert>
@@ -944,3 +959,37 @@ watch(passiveToken, () => {
     </n-card>
   </div>
 </template>
+
+<style scoped>
+.email-notification-manager {
+  min-width: 0;
+}
+
+.email-notification-manager__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.email-notification-manager__row--muted {
+  align-items: flex-start;
+}
+
+.email-notification-manager__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .email-notification-manager__row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .email-notification-manager__checkbox {
+    width: 100%;
+  }
+}
+</style>

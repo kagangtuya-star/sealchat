@@ -1,6 +1,7 @@
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 
 const DEFAULT_BOT_COMMAND_PREFIXES = ['.', '。', '．', '｡', '/']
+const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/gi
 
 export const normalizeBotCommandPrefixes = (raw?: unknown): string[] => {
   if (!Array.isArray(raw)) {
@@ -47,6 +48,36 @@ const ensureTrailingNewline = (parts: string[]) => {
   parts.push('\n')
 }
 
+const decodeMentionAttr = (value: string) => String(value || '')
+  .replace(/&quot;/g, '"')
+  .replace(/&#039;/g, "'")
+  .replace(/&apos;/g, "'")
+  .replace(/&gt;/g, '>')
+  .replace(/&lt;/g, '<')
+  .replace(/&amp;/g, '&')
+
+const renderMentionCapsuleHtml = (id: string, name: string) => {
+  const mentionId = decodeMentionAttr(id || '').trim()
+  const mentionName = decodeMentionAttr(name || '').trim()
+  const display = mentionName || mentionId
+  if (!display) {
+    return ''
+  }
+  const className = mentionId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule'
+  return `<span class="${className}">@${escapeHtml(display)}</span>`
+}
+
+const replaceMentionTokensWithDisplayText = (value: string, options?: { html?: boolean }) => {
+  MENTION_TOKEN_REGEX.lastIndex = 0
+  return String(value || '').replace(MENTION_TOKEN_REGEX, (_full, _idQuote, id, _nameQuote, name) => {
+    if (options?.html) {
+      return renderMentionCapsuleHtml(id || '', name || '')
+    }
+    const display = decodeMentionAttr(name || id || '').trim()
+    return display ? `@${display}` : ''
+  })
+}
+
 const resolveDiceHtmlSource = (el: HTMLElement): string => {
   const className = el.getAttribute('class') || ''
   const source = el.getAttribute('data-dice-source') || ''
@@ -87,6 +118,11 @@ const applyMarks = (text: string, marks?: Array<{ type: string; attrs?: Record<s
   }, text)
 }
 
+const isMentionNodeType = (value: unknown) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === 'mention' || normalized === 'satorimention'
+}
+
 const serializeTipTapNode = (node: any, parts: string[]) => {
   if (!node) return
   const type = String(node.type || '').trim().toLowerCase()
@@ -108,12 +144,13 @@ const serializeTipTapNode = (node: any, parts: string[]) => {
       ensureTrailingNewline(parts)
       return
     case 'text':
-      parts.push(applyMarks(String(node.text || ''), node.marks))
+      parts.push(applyMarks(replaceMentionTokensWithDisplayText(String(node.text || '')), node.marks))
       return
     case 'hardbreak':
       parts.push('\n')
       return
-    case 'mention': {
+    case 'mention':
+    case 'satorimention': {
       const attrs = node.attrs || {}
       const label = String(attrs.label || attrs.name || attrs.id || node.text || '').trim()
       if (label) parts.push(`@${label}`)
@@ -126,7 +163,7 @@ const serializeTipTapNode = (node: any, parts: string[]) => {
 
 const serializeHtmlNode = (node: Node, parts: string[], inCodeBlock = false) => {
   if (node.nodeType === Node.TEXT_NODE) {
-    parts.push(node.textContent || '')
+    parts.push(replaceMentionTokensWithDisplayText(node.textContent || ''))
     return
   }
   if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -189,6 +226,15 @@ const serializeHtmlNode = (node: Node, parts: string[], inCodeBlock = false) => 
       if (href) parts.push(`](${href})`)
       return
     }
+    case 'at': {
+      const id = String(el.getAttribute('id') || '').trim()
+      const name = String(el.getAttribute('name') || '').trim()
+      const label = name || id
+      if (label) {
+        parts.push(`@${label}`)
+      }
+      return
+    }
     default:
       Array.from(el.childNodes).forEach((child) => serializeHtmlNode(child, parts, inCodeBlock))
   }
@@ -225,7 +271,17 @@ export const serializeBotCommandContent = (content: string): string => {
 
 export const renderBotCommandTextAsHtml = (content: string): string => {
   const serialized = serializeBotCommandContent(content)
-  return escapeHtml(serialized).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '<br />')
+  const withMentions = replaceMentionTokensWithDisplayText(serialized, { html: true })
+  const html = withMentions
+    .split(/\r\n|\r|\n/g)
+    .map((line) => line
+      .split(/(<span class="mention-capsule(?: mention-capsule--all)?">.*?<\/span>)/g)
+      .map((segment) => segment.startsWith('<span class="mention-capsule')
+        ? segment
+        : escapeHtml(segment))
+      .join(''))
+    .join('<br />')
+  return html
 }
 
 export const isBotCommandLikeContent = (content: string, prefixes?: unknown): boolean => {
