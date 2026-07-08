@@ -283,6 +283,60 @@ webUrl: /chat
 serveAt: :3212
 ```
 
+如果你通过 nginx、Caddy、Traefik 等反向代理访问 SealChat，并希望程序正确识别客户端真实 IP（用于日志、限流、快捷登录风控等），还需要在 `config.yaml` 中补充 `proxy` 配置：
+
+```yaml
+proxy:
+  # 反代传给 SealChat 的客户端 IP 请求头，默认就是 X-Forwarded-For
+  proxyHeader: X-Forwarded-For
+
+  # 只信任这些反向代理来源。不要直接写 0.0.0.0/0。
+  trustedProxies:
+    - 127.0.0.1
+    - ::1
+```
+
+常见写法：
+
+1. **本机 nginx / Caddy 反代**
+
+   反代和 SealChat 在同一台机器上，通常写：
+
+   ```yaml
+   proxy:
+     proxyHeader: X-Forwarded-For
+     trustedProxies:
+       - 127.0.0.1
+       - ::1
+   ```
+
+2. **Docker / 容器网络内反代**
+
+   如果反代容器和 SealChat 容器在同一个 Docker 网段，通常写该网段 CIDR，例如：
+
+   ```yaml
+   proxy:
+     proxyHeader: X-Forwarded-For
+     trustedProxies:
+       - 172.16.0.0/12
+   ```
+
+   实际值请以你的容器网络网段为准，例如 `docker network inspect` 查到的是 `172.18.0.0/16`，那就写 `172.18.0.0/16`。
+
+3. **上游代理改用其他请求头**
+
+   如果你的反代不是传 `X-Forwarded-For`，而是传 `X-Real-IP`，则写：
+
+   ```yaml
+   proxy:
+     proxyHeader: X-Real-IP
+     trustedProxies:
+       - 127.0.0.1
+       - ::1
+   ```
+
+> **注意**：`trustedProxies` 为空时，SealChat 不会信任任何代理头，此时看到的客户端 IP 往往是反向代理自身 IP。
+
 > **注意**：`domain` 参数与路由无关，它只用于 onebot 适配器拼接图片/附件的对外 URL、聊天导出中的绝对链接，以及端口冲突时的自动更新。如需在上述场景使用完整外部 URL，可将 `domain` 设置为 `https://example.com/chat`（含子路径的完整 URL）；否则请保持默认或留空，它不会影响用户访问。
 
 ### nginx 配置
