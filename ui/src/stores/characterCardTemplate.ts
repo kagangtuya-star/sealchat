@@ -70,8 +70,10 @@ interface CharacterCardLite {
 
 const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
+const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd']);
 
 const normalizeSheetType = (value?: string) => (value || '').trim().toLowerCase();
+const isBuiltInSheetType = (value?: string) => BUILTIN_SHEET_TYPES.has(normalizeSheetType(value));
 
 const buildMigrationFlagKey = (userId?: string) => {
   if (!userId) return '';
@@ -113,7 +115,8 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
     return templates.value.filter(item => {
       const current = normalizeSheetType(item.sheetType);
       if (!normalized) return true;
-      return !current || current === normalized;
+      if (!current || current === normalized) return true;
+      return !isBuiltInSheetType(current);
     });
   };
 
