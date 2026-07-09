@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
 import { useCharacterCardStore } from './characterCard';
 import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from './characterCardTemplate';
 import { useChatStore } from './chat';
@@ -174,6 +175,12 @@ const isCocSheetType = (value?: string) => {
   if (!normalized) return false;
   if (normalized === 'coc') return true;
   return normalized.startsWith('coc');
+};
+
+const isShinobigamiSheetType = (value?: string) => {
+  const normalized = (value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === 'shinobigami' || normalized === '忍神' || normalized.startsWith('shinobigami');
 };
 
 const isLegacyDefaultTemplate = (template: string) => {
@@ -4671,8 +4678,12 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
 </html>
 `;
 
+const getShinobigamiDefaultTemplate = () => shinobigamiTemplateHtml.trim();
+
 const getDefaultTemplate = (sheetType?: string) => (
-  isCocSheetType(sheetType) ? getCocDefaultTemplate() : getGenericDefaultTemplate()
+  isShinobigamiSheetType(sheetType)
+    ? getShinobigamiDefaultTemplate()
+    : (isCocSheetType(sheetType) ? getCocDefaultTemplate() : getGenericDefaultTemplate())
 );
 
 export const useCharacterSheetStore = defineStore('characterSheet', () => {

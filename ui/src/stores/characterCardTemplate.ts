@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import shinobigamiTemplateHtml from '../../../doc/template/sealchat-shinobigami-template-v1.html?raw';
 import { api } from './_config';
 import { useUserStore } from './user';
 
@@ -71,8 +72,21 @@ interface CharacterCardLite {
 const LOCAL_TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
 const MIGRATION_FLAG_PREFIX = 'sealchat_template_migration_v1_done';
 const BUILTIN_SHEET_TYPES = new Set(['coc7', 'coc', 'dnd5e', 'dnd5', 'dnd']);
+const BUILTIN_CHARACTER_CARD_TEMPLATES = [
+  {
+    name: '忍神人物卡模板',
+    sheetType: '忍神',
+    content: shinobigamiTemplateHtml.trim(),
+  },
+];
 
-const normalizeSheetType = (value?: string) => (value || '').trim().toLowerCase();
+const normalizeSheetType = (value?: string) => {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'shinobigami' || normalized === '忍神') {
+    return 'shinobigami';
+  }
+  return normalized;
+};
 const isBuiltInSheetType = (value?: string) => BUILTIN_SHEET_TYPES.has(normalizeSheetType(value));
 
 const buildMigrationFlagKey = (userId?: string) => {
@@ -98,6 +112,7 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const loading = ref(false);
   const migrating = ref(false);
   const loadedWorldId = ref('');
+  const builtinTemplatesEnsured = ref(false);
 
   const templates = computed(() => Object.values(templateMap.value));
 
@@ -176,15 +191,56 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
       templateMap.value = nextMap;
       templatesLoaded.value = true;
       loadedWorldId.value = worldId;
+      if (!sheetType) {
+        await ensureBuiltinTemplates(items);
+      }
       return items;
     } finally {
       loading.value = false;
     }
   };
 
+  const ensureBuiltinTemplates = async (items: CharacterCardTemplate[]) => {
+    if (builtinTemplatesEnsured.value) return;
+    if (!userStore.info?.id) return;
+    const contentIndex = new Map<string, CharacterCardTemplate>();
+    items.forEach(item => {
+      const idxKey = `${normalizeSheetType(item.sheetType)}::${item.content.trim()}`;
+      if (!contentIndex.has(idxKey)) {
+        contentIndex.set(idxKey, item);
+      }
+    });
+
+    let missing = false;
+    for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
+      const idxKey = `${normalizeSheetType(builtin.sheetType)}::${builtin.content}`;
+      if (contentIndex.has(idxKey)) {
+        continue;
+      }
+      missing = true;
+      const created = await createTemplate({
+        name: builtin.name,
+        sheetType: builtin.sheetType,
+        content: builtin.content,
+      });
+      if (created?.id) {
+        contentIndex.set(idxKey, created);
+      }
+    }
+
+    if (!missing || BUILTIN_CHARACTER_CARD_TEMPLATES.every(item => contentIndex.has(`${normalizeSheetType(item.sheetType)}::${item.content}`))) {
+      builtinTemplatesEnsured.value = true;
+    }
+  };
+
   const ensureTemplatesLoaded = async (options?: TemplateQueryOptions) => {
     const worldId = String(options?.worldId ?? loadedWorldId.value ?? '').trim();
-    if (templatesLoaded.value && loadedWorldId.value === worldId) return;
+    if (templatesLoaded.value && loadedWorldId.value === worldId) {
+      if (!options?.sheetType) {
+        await ensureBuiltinTemplates(templates.value);
+      }
+      return;
+    }
     await loadTemplates({ ...options, worldId: worldId || undefined });
   };
 
