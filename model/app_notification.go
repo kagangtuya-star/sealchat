@@ -1,0 +1,202 @@
+package model
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"sealchat/utils"
+)
+
+const (
+	appNotificationInstanceRowID = "main"
+	appNotificationTokenTTL      = 90 * 24 * time.Hour
+)
+
+var ErrAppNotificationDeviceTokenInvalid = errors.New("app notification device token invalid")
+
+type AppNotificationInstanceModel struct {
+	ID         string `gorm:"primaryKey;size:32"`
+	InstanceID string `gorm:"size:100;not null;uniqueIndex"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+func (*AppNotificationInstanceModel) TableName() string {
+	return "app_notification_instance"
+}
+
+type AppNotificationDeviceModel struct {
+	StringPKBaseModel
+	UserID          string     `json:"user_id" gorm:"size:100;not null;uniqueIndex:idx_app_notification_user_installation,priority:1;index"`
+	InstallationID  string     `json:"installation_id" gorm:"size:160;not null;uniqueIndex:idx_app_notification_user_installation,priority:2"`
+	TokenHash       string     `json:"-" gorm:"size:64;not null;uniqueIndex"`
+	TokenExpiresAt  time.Time  `json:"token_expires_at" gorm:"not null;index"`
+	ActiveWorldID   string     `json:"active_world_id" gorm:"size:100;index"`
+	LastSequence    uint64     `json:"last_sequence" gorm:"not null;default:0"`
+	LastConnectedAt *time.Time `json:"last_connected_at"`
+	RevokedAt       *time.Time `json:"revoked_at" gorm:"index"`
+	Name            string     `json:"name" gorm:"size:128"`
+	Platform        string     `json:"platform" gorm:"size:32"`
+	AppVersion      string     `json:"app_version" gorm:"size:64"`
+	AppBuild        int        `json:"app_build"`
+	OSVersion       string     `json:"os_version" gorm:"size:64"`
+	Locale          string     `json:"locale" gorm:"size:32"`
+}
+
+func (*AppNotificationDeviceModel) TableName() string {
+	return "app_notification_devices"
+}
+
+type AppNotificationDeviceInput struct {
+	InstallationID string
+	Name           string
+	Platform       string
+	AppVersion     string
+	AppBuild       int
+	OSVersion      string
+	Locale         string
+}
+
+func EnsureAppNotificationInstanceID() (string, error) {
+	var instance AppNotificationInstanceModel
+	err := db.Where("id = ?", appNotificationInstanceRowID).First(&instance).Error
+	if err == nil {
+		return instance.InstanceID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+	instance = AppNotificationInstanceModel{
+		ID:         appNotificationInstanceRowID,
+		InstanceID: "sc_" + utils.NewID(),
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&instance).Error; err != nil {
+		return "", err
+	}
+	if err := db.Where("id = ?", appNotificationInstanceRowID).First(&instance).Error; err != nil {
+		return "", err
+	}
+	return instance.InstanceID, nil
+}
+
+func UpsertAppNotificationDevice(userID string, input AppNotificationDeviceInput) (*AppNotificationDeviceModel, string, error) {
+	userID = strings.TrimSpace(userID)
+	input.InstallationID = strings.TrimSpace(input.InstallationID)
+	if userID == "" || input.InstallationID == "" {
+		return nil, "", errors.New("user_id and installation_id are required")
+	}
+	rawToken, tokenHash, err := newAppNotificationDeviceToken()
+	if err != nil {
+		return nil, "", err
+	}
+
+	var device AppNotificationDeviceModel
+	err = db.Where("user_id = ? AND installation_id = ?", userID, input.InstallationID).First(&device).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		device = AppNotificationDeviceModel{UserID: userID, InstallationID: input.InstallationID}
+		device.Init()
+	} else if err != nil {
+		return nil, "", err
+	}
+
+	now := time.Now().UTC()
+	device.TokenHash = tokenHash
+	device.TokenExpiresAt = now.Add(appNotificationTokenTTL)
+	device.RevokedAt = nil
+	device.Name = strings.TrimSpace(input.Name)
+	device.Platform = strings.TrimSpace(input.Platform)
+	device.AppVersion = strings.TrimSpace(input.AppVersion)
+	device.AppBuild = input.AppBuild
+	device.OSVersion = strings.TrimSpace(input.OSVersion)
+	device.Locale = strings.TrimSpace(input.Locale)
+	if err := db.Save(&device).Error; err != nil {
+		return nil, "", err
+	}
+	return &device, rawToken, nil
+}
+
+func VerifyAppNotificationDeviceToken(deviceID, rawToken string) (*AppNotificationDeviceModel, error) {
+	var device AppNotificationDeviceModel
+	if err := db.Where("id = ? AND revoked_at IS NULL", strings.TrimSpace(deviceID)).First(&device).Error; err != nil {
+		return nil, ErrAppNotificationDeviceTokenInvalid
+	}
+	if !device.TokenExpiresAt.After(time.Now()) {
+		return nil, ErrAppNotificationDeviceTokenInvalid
+	}
+	want, err := hex.DecodeString(device.TokenHash)
+	if err != nil {
+		return nil, ErrAppNotificationDeviceTokenInvalid
+	}
+	got := sha256.Sum256([]byte(strings.TrimSpace(rawToken)))
+	if len(want) != len(got) || subtle.ConstantTimeCompare(want, got[:]) != 1 {
+		return nil, ErrAppNotificationDeviceTokenInvalid
+	}
+	return &device, nil
+}
+
+func AdvanceAppNotificationSequence(deviceID string) (uint64, error) {
+	var next uint64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var device AppNotificationDeviceModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strings.TrimSpace(deviceID)).First(&device).Error; err != nil {
+			return err
+		}
+		next = device.LastSequence + 1
+		return tx.Model(&device).UpdateColumn("last_sequence", next).Error
+	})
+	return next, err
+}
+
+func GetAppNotificationDevice(deviceID string) (*AppNotificationDeviceModel, error) {
+	var device AppNotificationDeviceModel
+	if err := db.Where("id = ?", strings.TrimSpace(deviceID)).First(&device).Error; err != nil {
+		return nil, err
+	}
+	return &device, nil
+}
+
+func ListActiveAppNotificationDevicesByWorld(worldID string) ([]AppNotificationDeviceModel, error) {
+	var devices []AppNotificationDeviceModel
+	err := db.Where("active_world_id = ? AND revoked_at IS NULL AND token_expires_at > ?", strings.TrimSpace(worldID), time.Now()).Find(&devices).Error
+	return devices, err
+}
+
+func UpdateAppNotificationDeviceWorld(deviceID, worldID string) (*AppNotificationDeviceModel, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	worldID = strings.TrimSpace(worldID)
+	if err := db.Model(&AppNotificationDeviceModel{}).Where("id = ? AND revoked_at IS NULL", deviceID).Update("active_world_id", worldID).Error; err != nil {
+		return nil, err
+	}
+	return GetAppNotificationDevice(deviceID)
+}
+
+func MarkAppNotificationDeviceConnected(deviceID string, at time.Time) error {
+	return db.Model(&AppNotificationDeviceModel{}).Where("id = ? AND revoked_at IS NULL", strings.TrimSpace(deviceID)).Update("last_connected_at", at.UTC()).Error
+}
+
+func RevokeAppNotificationDevice(deviceID string) error {
+	now := time.Now().UTC()
+	return db.Model(&AppNotificationDeviceModel{}).Where("id = ?", strings.TrimSpace(deviceID)).Updates(map[string]any{
+		"active_world_id": "",
+		"revoked_at":      &now,
+	}).Error
+}
+
+func newAppNotificationDeviceToken() (string, string, error) {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return "", "", err
+	}
+	raw := "scnt_" + base64.RawURLEncoding.EncodeToString(random)
+	hash := sha256.Sum256([]byte(raw))
+	return raw, hex.EncodeToString(hash[:]), nil
+}

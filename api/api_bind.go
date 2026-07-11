@@ -368,7 +368,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId, X-SealChat-Device-ID, Last-Event-ID",
 		ExposeHeaders:    "Content-Length, X-Access-Token-Refresh",
 		MaxAge:           3600,
 		AllowOrigins:     "",
@@ -402,6 +402,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	app.Use(recover.New())
 	app.Use(logger.New())
 	app.Use(frontendCompressMiddleware(config.WebUrl))
+	bindAppNotificationRoutes(app, config.WebUrl)
 
 	v1 := app.Group(joinWebPath(config.WebUrl, "api/v1"))
 	v1.Post("/user-signup", UserSignup)

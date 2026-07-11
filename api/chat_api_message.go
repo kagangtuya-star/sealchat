@@ -2396,6 +2396,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		notifyAppMessageCreated(m.ID)
 		if renderResult != nil {
 			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
 				return nil, err
@@ -4212,6 +4213,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		notifyAppMessageCreated(m.ID)
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录 BOT 消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -4285,6 +4287,7 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		User:    userData,
 	})
 	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
+	notifyAppMessageCreated(m.ID)
 	go func(channelID string, message model.MessageModel) {
 		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 			log.Printf("digest-push: 记录私聊副本摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -4448,6 +4451,7 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 		})
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
+	notifyAppMessageCreated(m.ID)
 	go func(channelID string, message model.MessageModel) {
 		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 			log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
