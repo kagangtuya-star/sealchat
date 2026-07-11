@@ -479,6 +479,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/user/preferences", UserPreferencesUpsert)
 	v1Auth.Get("/app-notification/settings", AppNotificationSettingsGet)
 	v1Auth.Put("/app-notification/settings", AppNotificationSettingsPut)
+	v1Auth.Post("/app-notification/server-chan/test", AppNotificationServerChanTest)
 	v1Auth.Get("/user/ai-profiles", UserAIProfilesGet)
 	v1Auth.Post("/user/ai-profiles", UserAIProfilesUpsert)
 

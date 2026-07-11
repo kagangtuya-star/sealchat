@@ -2,7 +2,7 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { api } from '@/stores/_config';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo, Send } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, shallowRef, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
@@ -48,9 +48,13 @@ const inputStatsComponent = shallowRef<Component | null>(null)
 const appNotificationSettingsShow = ref(false)
 const appNotificationSettingsLoading = ref(false)
 const appNotificationSettingsSaving = ref(false)
+const serverChanTesting = ref(false)
 const appNotificationSettings = ref({
   world_whitelist_enabled: false,
   world_whitelist_ids: [] as string[],
+  server_chan_enabled: false,
+  server_chan_send_key: '',
+  server_chan_configured: false,
 })
 const chat = useChatStore();
 const user = useUserStore();
@@ -256,6 +260,9 @@ const loadAppNotificationSettings = async () => {
       world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
         ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
         : [],
+      server_chan_enabled: data.server_chan_enabled === true,
+      server_chan_send_key: '',
+      server_chan_configured: data.server_chan_configured === true,
     }
   } catch (error) {
     console.error('load app notification settings failed', error)
@@ -279,6 +286,14 @@ const saveAppNotificationSettings = async () => {
     message.warning(t('appNotificationSettings.selectWorld'))
     return
   }
+  if (appNotificationSettings.value.server_chan_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.serverChanWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.server_chan_enabled && !appNotificationSettings.value.server_chan_configured && !appNotificationSettings.value.server_chan_send_key.trim()) {
+    message.warning(t('appNotificationSettings.serverChanSendKeyRequired'))
+    return
+  }
   appNotificationSettingsSaving.value = true
   try {
     const response = await api.put('/api/v1/app-notification/settings', appNotificationSettings.value)
@@ -288,6 +303,9 @@ const saveAppNotificationSettings = async () => {
       world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
         ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
         : [],
+      server_chan_enabled: data.server_chan_enabled === true,
+      server_chan_send_key: '',
+      server_chan_configured: data.server_chan_configured === true,
     }
     message.success(t('appNotificationSettings.saved'))
     appNotificationSettingsShow.value = false
@@ -296,6 +314,25 @@ const saveAppNotificationSettings = async () => {
     message.error(t('appNotificationSettings.saveFailed'))
   } finally {
     appNotificationSettingsSaving.value = false
+  }
+}
+
+watch(() => appNotificationSettings.value.world_whitelist_enabled, (enabled) => {
+  if (!enabled) {
+    appNotificationSettings.value.server_chan_enabled = false
+  }
+})
+
+const sendServerChanTest = async () => {
+  serverChanTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/server-chan/test')
+    message.success(response.data?.message || t('appNotificationSettings.serverChanTestSent'))
+  } catch (error: any) {
+    console.error('send ServerChan test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.serverChanTestFailed'))
+  } finally {
+    serverChanTesting.value = false
   }
 }
 
@@ -1029,21 +1066,24 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   <n-modal
     v-model:show="appNotificationSettingsShow"
     preset="card"
+    class="app-notification-modal"
     :title="t('appNotificationSettings.title')"
     :mask-closable="!appNotificationSettingsSaving"
     :closable="!appNotificationSettingsSaving"
-    style="width: min(36rem, calc(100vw - 2rem));"
+    style="width: min(32rem, calc(100vw - 1.25rem));"
   >
     <n-spin :show="appNotificationSettingsLoading">
-      <n-space vertical :size="16">
-        <n-alert type="info" :bordered="false">
+      <n-space class="app-notification-settings" vertical :size="10">
+        <n-alert class="app-notification-hint" type="info" :bordered="false">
           {{ t('appNotificationSettings.hint') }}
         </n-alert>
-        <n-form-item :label="t('appNotificationSettings.whitelist')">
-          <n-switch v-model:value="appNotificationSettings.world_whitelist_enabled" />
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.whitelist')">
+          <n-switch v-model:value="appNotificationSettings.world_whitelist_enabled" size="small" />
         </n-form-item>
         <n-form-item
           v-if="appNotificationSettings.world_whitelist_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
           :label="t('appNotificationSettings.worlds')"
         >
           <n-select
@@ -1052,27 +1092,54 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
             multiple
             filterable
             clearable
+            size="small"
             :placeholder="t('appNotificationSettings.worldsPlaceholder')"
           />
         </n-form-item>
-        <n-divider>{{ t('appNotificationSettings.serverChanTitle') }}</n-divider>
-        <n-alert type="warning" :bordered="false">
-          {{ t('appNotificationSettings.serverChanReserved') }}
-        </n-alert>
-        <n-form-item :label="t('appNotificationSettings.serverChanEnabled')">
-          <n-switch :value="false" disabled />
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.serverChanTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.serverChanEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.server_chan_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
         </n-form-item>
-        <n-form-item :label="t('appNotificationSettings.serverChanSendKey')">
-          <n-input disabled :placeholder="t('appNotificationSettings.serverChanPlaceholder')" />
+        <n-form-item
+          v-if="appNotificationSettings.server_chan_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.serverChanSendKey')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.server_chan_send_key"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.server_chan_configured
+                ? t('appNotificationSettings.serverChanConfiguredPlaceholder')
+                : t('appNotificationSettings.serverChanPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="serverChanTesting"
+              :disabled="!appNotificationSettings.server_chan_configured || appNotificationSettingsSaving"
+              @click="sendServerChanTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.serverChanTest') }}
+            </n-button>
+          </div>
         </n-form-item>
       </n-space>
     </n-spin>
     <template #footer>
       <div class="flex justify-end gap-2">
-        <n-button :disabled="appNotificationSettingsSaving" @click="appNotificationSettingsShow = false">
+        <n-button size="small" :disabled="appNotificationSettingsSaving" @click="appNotificationSettingsShow = false">
           {{ t('appNotificationSettings.cancel') }}
         </n-button>
-        <n-button type="primary" :loading="appNotificationSettingsSaving" @click="saveAppNotificationSettings">
+        <n-button size="small" type="primary" :loading="appNotificationSettingsSaving" @click="saveAppNotificationSettings">
           {{ t('appNotificationSettings.save') }}
         </n-button>
       </div>
@@ -1083,6 +1150,67 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 </template>
 
 <style scoped lang="scss">
+.app-notification-settings {
+  width: 100%;
+}
+
+.server-chan-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  width: 100%;
+}
+
+:deep(.app-notification-modal .n-card-header) {
+  padding: 14px 18px 10px;
+}
+
+:deep(.app-notification-modal .n-card__content) {
+  padding: 8px 18px 12px;
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
+}
+
+:deep(.app-notification-modal .n-card__footer) {
+  padding: 10px 18px 14px;
+}
+
+:deep(.app-notification-hint .n-alert-body) {
+  padding: 9px 12px;
+}
+
+:deep(.app-notification-hint .n-alert-body__content) {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+:deep(.app-notification-form-item .n-form-item-label) {
+  min-height: 24px;
+  padding: 0 0 4px;
+  font-size: 13px;
+}
+
+:deep(.app-notification-divider) {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+:deep(.app-notification-settings .n-base-selection-tags) {
+  gap: 3px;
+  padding-block: 2px;
+}
+
+@media (max-width: 520px) {
+  :deep(.app-notification-modal .n-card-header) {
+    padding-inline: 14px;
+  }
+
+  :deep(.app-notification-modal .n-card__content),
+  :deep(.app-notification-modal .n-card__footer) {
+    padding-inline: 14px;
+  }
+}
+
 .sc-header {
   background-color: var(--sc-bg-header);
   color: var(--sc-text-primary);

@@ -2,6 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -17,6 +20,13 @@ const (
 )
 
 var appNotificationAtTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
+
+var (
+	appNotificationHTTPClient     = &http.Client{Timeout: 10 * time.Second}
+	serverChanTurboBaseURL        = "https://sctapi.ftqq.com"
+	serverChanSC3Domain           = "push.ft07.com"
+	AppNotificationUserPageOnline = func(string) bool { return false }
+)
 
 type AppNotificationMessageSource struct {
 	WorldID             string
@@ -231,7 +241,78 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 		}
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
+	return sendServerChanAppNotifications(source, webURL, canReadByUser)
+}
+
+func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL string, canReadByUser map[string]bool) error {
+	preferences, err := model.ListServerChanAppNotificationPreferences()
+	if err != nil {
+		return err
+	}
+	for _, preference := range preferences {
+		canRead, known := canReadByUser[preference.UserID]
+		if !known {
+			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)
+			canReadByUser[preference.UserID] = canRead
+		}
+		candidate := AppNotificationDeviceCandidate{
+			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
+			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
+		}
+		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+			continue
+		}
+		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)
+		title := strings.TrimSpace(source.WorldName) + "|" + strings.TrimSpace(source.ChannelName)
+		if err := sendServerChan(preference.ServerChanSendKey, title, event.Notification.Body); err != nil {
+			return fmt.Errorf("send ServerChan notification to user %s: %w", preference.UserID, err)
+		}
+	}
 	return nil
+}
+
+func serverChanEndpoint(sendKey string) string {
+	sendKey = strings.TrimSpace(sendKey)
+	if strings.HasPrefix(strings.ToLower(sendKey), "sctp") {
+		return "https://" + sendKey + "." + serverChanSC3Domain + "/send"
+	}
+	return strings.TrimRight(serverChanTurboBaseURL, "/") + "/" + url.PathEscape(sendKey) + ".send"
+}
+
+func sendServerChan(sendKey, title, content string) error {
+	payload, err := json.Marshal(map[string]string{"title": title, "desp": content})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, serverChanEndpoint(sendKey), strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json;charset=utf-8")
+	response, err := appNotificationHTTPClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected HTTP status %d", response.StatusCode)
+	}
+	var result struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &result) == nil && result.Code != 0 {
+		return fmt.Errorf("ServerChan rejected request: code=%d message=%s", result.Code, result.Message)
+	}
+	return nil
+}
+
+func SendServerChanTestNotification(sendKey, title, content string) error {
+	return sendServerChan(sendKey, title, content)
 }
 
 func resolveAppNotificationMentionDisplayNames(channelID, content, icMode string) map[string]string {

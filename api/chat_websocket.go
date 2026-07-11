@@ -316,11 +316,29 @@ func getUserConnInfoMap() *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *Co
 	return userId2ConnInfoGlobal
 }
 
+func isUserPageOnline(userID string) bool {
+	connections := getUserConnInfoMap()
+	if connections == nil {
+		return false
+	}
+	userConnections, ok := connections.Load(strings.TrimSpace(userID))
+	if !ok || userConnections == nil {
+		return false
+	}
+	online := false
+	userConnections.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+		online = info != nil && !info.IsGuest && !info.IsObserver
+		return !online
+	})
+	return online
+}
+
 func websocketWorks(app *fiber.App, webUrl string) {
 	channelUsersMap := &utils.SyncMap[string, *utils.SyncSet[string]]{}
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
 	userId2ConnInfoGlobal = userId2ConnInfo
+	service.AppNotificationUserPageOnline = isUserPageOnline
 
 	// 在线态兜底广播：事件驱动为主，周期性全量广播用于状态收敛。
 	go func() {

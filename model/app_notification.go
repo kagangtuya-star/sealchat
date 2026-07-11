@@ -56,12 +56,13 @@ func (*AppNotificationDeviceModel) TableName() string {
 	return "app_notification_devices"
 }
 
-// AppNotificationPreferenceModel stores notification routing preferences shared
-// by every active App device belonging to one user.
+// AppNotificationPreferenceModel stores user-level notification routing preferences.
 type AppNotificationPreferenceModel struct {
 	UserID                string    `json:"user_id" gorm:"primaryKey;size:100"`
 	WorldWhitelistEnabled bool      `json:"world_whitelist_enabled" gorm:"not null;default:false"`
 	WorldWhitelistJSON    string    `json:"-" gorm:"type:text"`
+	ServerChanEnabled     bool      `json:"server_chan_enabled" gorm:"not null;default:false"`
+	ServerChanSendKey     string    `json:"-" gorm:"size:256"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
@@ -234,7 +235,7 @@ func GetAppNotificationPreferences(userIDs []string) (map[string]*AppNotificatio
 	return preferences, nil
 }
 
-func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, worldWhitelistJSON string) (*AppNotificationPreferenceModel, error) {
+func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, worldWhitelistJSON string, serverChanEnabled bool, serverChanSendKey string) (*AppNotificationPreferenceModel, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, errors.New("user_id is required")
@@ -243,18 +244,38 @@ func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, 
 		UserID:                userID,
 		WorldWhitelistEnabled: worldWhitelistEnabled,
 		WorldWhitelistJSON:    strings.TrimSpace(worldWhitelistJSON),
+		ServerChanEnabled:     serverChanEnabled,
+		ServerChanSendKey:     strings.TrimSpace(serverChanSendKey),
+	}
+	if preference.ServerChanSendKey == "" {
+		if existing, err := GetAppNotificationPreference(userID); err != nil {
+			return nil, err
+		} else {
+			preference.ServerChanSendKey = existing.ServerChanSendKey
+		}
+	}
+	if preference.ServerChanEnabled && preference.ServerChanSendKey == "" {
+		return nil, errors.New("server chan send key is required")
 	}
 	if err := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "user_id"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"world_whitelist_enabled": preference.WorldWhitelistEnabled,
 			"world_whitelist_json":    preference.WorldWhitelistJSON,
+			"server_chan_enabled":     preference.ServerChanEnabled,
+			"server_chan_send_key":    preference.ServerChanSendKey,
 			"updated_at":              time.Now().UTC(),
 		}),
 	}).Create(&preference).Error; err != nil {
 		return nil, err
 	}
 	return GetAppNotificationPreference(userID)
+}
+
+func ListServerChanAppNotificationPreferences() ([]AppNotificationPreferenceModel, error) {
+	var preferences []AppNotificationPreferenceModel
+	err := db.Where("world_whitelist_enabled = ? AND server_chan_enabled = ? AND server_chan_send_key <> ?", true, true, "").Find(&preferences).Error
+	return preferences, err
 }
 
 func UpdateAppNotificationDeviceWorld(deviceID, worldID string) (*AppNotificationDeviceModel, error) {

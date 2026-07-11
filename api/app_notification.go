@@ -43,6 +43,7 @@ func bindAppNotificationRoutes(app *fiber.App, webURL string) {
 }
 
 var enqueueAppNotificationForMessage = service.EnqueueAppNotificationForMessage
+var sendServerChanTestNotification = service.SendServerChanTestNotification
 
 func notifyAppMessageCreated(messageID string) {
 	go func() {
@@ -254,6 +255,8 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	var body struct {
 		WorldWhitelistEnabled bool     `json:"world_whitelist_enabled"`
 		WorldWhitelistIDs     []string `json:"world_whitelist_ids"`
+		ServerChanEnabled     bool     `json:"server_chan_enabled"`
+		ServerChanSendKey     string   `json:"server_chan_send_key"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请求格式错误"})
@@ -261,6 +264,12 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	worldIDs := normalizeAppNotificationWorldIDs(body.WorldWhitelistIDs)
 	if len(worldIDs) > appNotificationMaxWhitelistWorlds {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单世界数量超出限制"})
+	}
+	if body.ServerChanEnabled && !body.WorldWhitelistEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱推送仅可在白名单模式下启用"})
+	}
+	if len(strings.TrimSpace(body.ServerChanSendKey)) > 256 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱 SendKey 长度超出限制"})
 	}
 	for _, worldID := range worldIDs {
 		if !service.IsWorldMember(worldID, user.ID) {
@@ -271,11 +280,42 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单格式错误"})
 	}
-	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded))
+	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded), body.ServerChanEnabled, body.ServerChanSendKey)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "保存推送设置失败"})
 	}
 	return c.JSON(appNotificationPreferenceResponse(preference))
+}
+
+func AppNotificationServerChanTest(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	preference, err := model.GetAppNotificationPreference(user.ID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "读取推送设置失败"})
+	}
+	if !preference.WorldWhitelistEnabled || !preference.ServerChanEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存并启用白名单与 Server酱推送"})
+	}
+	sendKey := strings.TrimSpace(preference.ServerChanSendKey)
+	if sendKey == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存 Server酱 SendKey"})
+	}
+	instanceName := "SealChat"
+	if appConfig != nil && strings.TrimSpace(appConfig.PageTitle) != "" {
+		instanceName = strings.TrimSpace(appConfig.PageTitle)
+	}
+	displayName := strings.TrimSpace(user.Nickname)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	if err := sendServerChanTestNotification(sendKey, instanceName+"|推送测试", displayName+"：Server酱推送测试成功"); err != nil {
+		log.Printf("server-chan: 测试推送失败 user=%s err=%v", user.ID, err)
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": "测试推送失败，请检查 SendKey"})
+	}
+	return c.JSON(fiber.Map{"message": "测试消息已发送"})
 }
 
 func AppNotificationDeviceContextPut(c *fiber.Ctx) error {
@@ -363,6 +403,8 @@ func appNotificationPreferenceResponse(preference *model.AppNotificationPreferen
 	return fiber.Map{
 		"world_whitelist_enabled": preference != nil && preference.WorldWhitelistEnabled,
 		"world_whitelist_ids":     worldIDs,
+		"server_chan_enabled":     preference != nil && preference.ServerChanEnabled,
+		"server_chan_configured":  preference != nil && strings.TrimSpace(preference.ServerChanSendKey) != "",
 	}
 }
 
