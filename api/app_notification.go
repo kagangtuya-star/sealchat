@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,11 +21,23 @@ import (
 	"sealchat/utils"
 )
 
+var appNotificationManualRedeemLimiter = struct {
+	sync.Mutex
+	entries map[string]struct {
+		windowStart time.Time
+		count       int
+	}
+}{entries: make(map[string]struct {
+	windowStart time.Time
+	count       int
+})}
+
 const (
 	appNotificationClientID           = "sealchat_android"
 	appNotificationRedirectURI        = "sealchat-app://notify-auth"
 	appNotificationHeartbeat          = 45
 	appNotificationMaxWhitelistWorlds = 100
+	appNotificationManualCodeTTL      = 5 * time.Minute
 )
 
 func bindAppNotificationRoutes(app *fiber.App, webURL string) {
@@ -34,6 +47,7 @@ func bindAppNotificationRoutes(app *fiber.App, webURL string) {
 	app.Get(base+"/authorize", SignCheckMiddleware, AppNotificationAuthorizeGet)
 	app.Post(base+"/authorize", SignCheckMiddleware, AppNotificationAuthorizePost)
 	app.Post(base+"/authorize/automatic", SignCheckMiddleware, AppNotificationAuthorizeAutomatic)
+	app.Post(base+"/authorize/manual", AppNotificationAuthorizeManual)
 	app.Post(base+"/token", AppNotificationToken)
 	device := app.Group(base, AppNotificationDeviceMiddleware)
 	device.Get("/device", AppNotificationDeviceGet)
@@ -77,14 +91,92 @@ func AppNotificationDiscovery(c *fiber.Ctx) error {
 		"instance":       fiber.Map{"instance_id": instanceID, "name": name, "base_url": origin + normalizeWebRoot(webURL)},
 		"app_notification": fiber.Map{
 			"enabled": true, "api_version": "1", "api_base": base,
-			"authorization_endpoint": base + "/authorize", "automatic_authorization_endpoint": base + "/authorize/automatic",
+			"authorization_endpoint": base + "/authorize", "automatic_authorization_endpoint": base + "/authorize/automatic", "manual_authorization_endpoint": base + "/authorize/manual",
 			"token_endpoint":  base + "/token",
 			"stream_endpoint": base + "/stream", "ack_endpoint": base + "/acks",
 			"device_endpoint": base + "/device", "context_endpoint": base + "/device/context",
 			"heartbeat_seconds": appNotificationHeartbeat, "event_retention_seconds": 3600,
-			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true, "world_whitelist": true, "automatic_authorization": true},
+			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true, "world_whitelist": true, "automatic_authorization": true, "manual_authorization": true},
 		},
 	})
+}
+
+func AppNotificationManualCodeCreate(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	expiresAt := time.Now().Add(appNotificationManualCodeTTL)
+	code, err := service.DefaultAppNotificationHub.CreateManualAuthorizationCode(user.ID, expiresAt)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "生成授权码失败"})
+	}
+	return c.JSON(fiber.Map{"code": code, "expires_at": expiresAt})
+}
+
+func AppNotificationAuthorizeManual(c *fiber.Ctx) error {
+	var body struct {
+		Code   string                          `json:"code"`
+		Device appNotificationDeviceDescriptor `json:"device"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_request", "授权码或设备参数无效")
+	}
+	code := strings.TrimSpace(body.Code)
+	if !isSixDigitAppNotificationCode(code) || strings.TrimSpace(body.Device.InstallationID) == "" || body.Device.Platform != "android" {
+		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_request", "授权码或设备参数无效")
+	}
+	if !allowAppNotificationManualRedeem(getClientIP(c), time.Now()) {
+		return sendAppNotificationError(c, http.StatusTooManyRequests, "rate_limited", "授权尝试过于频繁，请稍后重试")
+	}
+	grant, err := service.DefaultAppNotificationHub.RedeemManualAuthorizationCode(code)
+	if err != nil {
+		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_grant", "授权码无效或已过期")
+	}
+	return issueAppNotificationDeviceToken(c, grant.UserID, body.Device)
+}
+
+func isSixDigitAppNotificationCode(code string) bool {
+	if len(code) != 6 {
+		return false
+	}
+	for _, char := range code {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func allowAppNotificationManualRedeem(clientIP string, now time.Time) bool {
+	const limit = 10
+	const window = time.Minute
+	clientIP = strings.TrimSpace(clientIP)
+	if clientIP == "" {
+		clientIP = "unknown"
+	}
+	appNotificationManualRedeemLimiter.Lock()
+	defer appNotificationManualRedeemLimiter.Unlock()
+	if len(appNotificationManualRedeemLimiter.entries) > 10_000 {
+		for key, candidate := range appNotificationManualRedeemLimiter.entries {
+			if now.Sub(candidate.windowStart) >= window {
+				delete(appNotificationManualRedeemLimiter.entries, key)
+			}
+		}
+	}
+	entry := appNotificationManualRedeemLimiter.entries[clientIP]
+	if entry.windowStart.IsZero() || now.Sub(entry.windowStart) >= window {
+		entry.windowStart = now
+		entry.count = 1
+		appNotificationManualRedeemLimiter.entries[clientIP] = entry
+		return true
+	}
+	if entry.count >= limit {
+		return false
+	}
+	entry.count++
+	appNotificationManualRedeemLimiter.entries[clientIP] = entry
+	return true
 }
 
 type appNotificationDeviceDescriptor struct {

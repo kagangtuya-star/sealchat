@@ -49,6 +49,9 @@ const appNotificationSettingsShow = ref(false)
 const appNotificationSettingsLoading = ref(false)
 const appNotificationSettingsSaving = ref(false)
 const serverChanTesting = ref(false)
+const manualAuthorizationCodeLoading = ref(false)
+const manualAuthorizationCode = ref('')
+const manualAuthorizationCodeExpiresAt = ref('')
 const appNotificationSettings = ref({
   world_whitelist_enabled: false,
   world_whitelist_ids: [] as string[],
@@ -279,6 +282,19 @@ const openAppNotificationSettings = () => {
   inputStatsShow.value = false
   appNotificationSettingsShow.value = true
   void loadAppNotificationSettings()
+}
+
+const generateManualAuthorizationCode = async () => {
+  manualAuthorizationCodeLoading.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/manual-code')
+    manualAuthorizationCode.value = String(response.data?.code || '')
+    manualAuthorizationCodeExpiresAt.value = String(response.data?.expires_at || '')
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '生成授权码失败')
+  } finally {
+    manualAuthorizationCodeLoading.value = false
+  }
 }
 
 const saveAppNotificationSettings = async () => {
@@ -1077,6 +1093,24 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <n-alert class="app-notification-hint" type="info" :bordered="false">
           {{ t('appNotificationSettings.hint') }}
         </n-alert>
+        <n-divider class="app-notification-divider">移动端设备绑定</n-divider>
+        <div class="manual-authorization-row">
+          <div>
+            <div class="manual-authorization-label">一次性授权码</div>
+            <div v-if="manualAuthorizationCode" class="manual-authorization-code">{{ manualAuthorizationCode }}</div>
+            <div v-if="manualAuthorizationCodeExpiresAt" class="manual-authorization-expiry">
+              5 分钟内有效，仅可使用一次
+            </div>
+          </div>
+          <n-button
+            size="small"
+            secondary
+            :loading="manualAuthorizationCodeLoading"
+            @click="generateManualAuthorizationCode"
+          >
+            {{ manualAuthorizationCode ? '重新生成' : '生成授权码' }}
+          </n-button>
+        </div>
         <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.whitelist')">
           <n-switch v-model:value="appNotificationSettings.world_whitelist_enabled" size="small" />
         </n-form-item>
@@ -1152,6 +1186,27 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 <style scoped lang="scss">
 .app-notification-settings {
   width: 100%;
+}
+
+.manual-authorization-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manual-authorization-label,
+.manual-authorization-expiry {
+  color: var(--n-text-color-3);
+  font-size: 12px;
+}
+
+.manual-authorization-code {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .server-chan-input-row {

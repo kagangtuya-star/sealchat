@@ -1,7 +1,10 @@
 package service
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +20,7 @@ const (
 var (
 	ErrAppNotificationEventCursorExpired       = errors.New("app notification event cursor expired")
 	ErrAppNotificationAuthorizationCodeInvalid = errors.New("app notification authorization code invalid")
+	ErrAppNotificationManualCodeUnavailable    = errors.New("app notification manual code unavailable")
 	DefaultAppNotificationHub                  = NewAppNotificationHub(AppNotificationHubOptions{})
 	appNotificationCleanupOnce                 sync.Once
 )
@@ -126,6 +130,7 @@ type AppNotificationHub struct {
 	queues         map[string]*appNotificationDeviceQueue
 	authorizations map[string]AppNotificationAuthorizationRequest
 	codes          map[string]AppNotificationAuthorizationRequest
+	manualCodes    map[string]AppNotificationAuthorizationRequest
 	maxEvents      int
 	retention      time.Duration
 	now            func() time.Time
@@ -145,10 +150,52 @@ func NewAppNotificationHub(options AppNotificationHubOptions) *AppNotificationHu
 		queues:         map[string]*appNotificationDeviceQueue{},
 		authorizations: map[string]AppNotificationAuthorizationRequest{},
 		codes:          map[string]AppNotificationAuthorizationRequest{},
+		manualCodes:    map[string]AppNotificationAuthorizationRequest{},
 		maxEvents:      options.MaxEventsPerDevice,
 		retention:      options.Retention,
 		now:            options.Now,
 	}
+}
+
+func (h *AppNotificationHub) CreateManualAuthorizationCode(userID string, expiresAt time.Time) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cleanupLocked()
+	userID = strings.TrimSpace(userID)
+	if userID == "" || !expiresAt.After(h.now()) {
+		return "", ErrAppNotificationManualCodeUnavailable
+	}
+	for code, request := range h.manualCodes {
+		if request.UserID == userID {
+			delete(h.manualCodes, code)
+		}
+	}
+	for range 20 {
+		value, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+		if err != nil {
+			return "", err
+		}
+		code := fmt.Sprintf("%06d", value.Int64())
+		if _, exists := h.manualCodes[code]; exists {
+			continue
+		}
+		h.manualCodes[code] = AppNotificationAuthorizationRequest{UserID: userID, ExpiresAt: expiresAt}
+		return code, nil
+	}
+	return "", ErrAppNotificationManualCodeUnavailable
+}
+
+func (h *AppNotificationHub) RedeemManualAuthorizationCode(code string) (AppNotificationAuthorizationRequest, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cleanupLocked()
+	code = strings.TrimSpace(code)
+	request, ok := h.manualCodes[code]
+	delete(h.manualCodes, code)
+	if !ok || !request.ExpiresAt.After(h.now()) {
+		return AppNotificationAuthorizationRequest{}, ErrAppNotificationAuthorizationCodeInvalid
+	}
+	return request, nil
 }
 
 func StartAppNotificationCleanup() {
@@ -379,6 +426,11 @@ func (h *AppNotificationHub) cleanupLocked() {
 	for code, request := range h.codes {
 		if !request.ExpiresAt.After(now) {
 			delete(h.codes, code)
+		}
+	}
+	for code, request := range h.manualCodes {
+		if !request.ExpiresAt.After(now) {
+			delete(h.manualCodes, code)
 		}
 	}
 	for _, queue := range h.queues {
