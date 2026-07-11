@@ -34,10 +34,12 @@ type AppNotificationMessageSource struct {
 }
 
 type AppNotificationDeviceCandidate struct {
-	DeviceID      string
-	UserID        string
-	ActiveWorldID string
-	CanRead       bool
+	DeviceID              string
+	UserID                string
+	ActiveWorldID         string
+	WorldWhitelistEnabled bool
+	WorldWhitelistIDs     map[string]struct{}
+	CanRead               bool
 }
 
 type appNotificationTipTapMentionNode struct {
@@ -122,7 +124,11 @@ func ShouldDeliverAppNotification(source AppNotificationMessageSource, candidate
 	if strings.TrimSpace(candidate.UserID) == "" || candidate.UserID == source.SenderUserID || !candidate.CanRead {
 		return false
 	}
-	if strings.TrimSpace(candidate.ActiveWorldID) == "" || candidate.ActiveWorldID != source.WorldID {
+	if candidate.WorldWhitelistEnabled {
+		if _, ok := candidate.WorldWhitelistIDs[source.WorldID]; !ok {
+			return false
+		}
+	} else if strings.TrimSpace(candidate.ActiveWorldID) == "" || candidate.ActiveWorldID != source.WorldID {
 		return false
 	}
 	if !source.IsWhisper {
@@ -157,7 +163,15 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 	if err != nil {
 		return err
 	}
-	devices, err := model.ListActiveAppNotificationDevicesByWorld(channel.WorldID)
+	devices, err := model.ListActiveAppNotificationDevices()
+	if err != nil {
+		return err
+	}
+	deviceUserIDs := make([]string, 0, len(devices))
+	for _, device := range devices {
+		deviceUserIDs = append(deviceUserIDs, device.UserID)
+	}
+	preferences, err := model.GetAppNotificationPreferences(deviceUserIDs)
 	if err != nil {
 		return err
 	}
@@ -191,8 +205,13 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 			canRead = IsWorldMember(channel.WorldID, device.UserID) && CanReadChannelByUserId(device.UserID, channel.ID)
 			canReadByUser[device.UserID] = canRead
 		}
+		preference := preferences[device.UserID]
 		candidate := AppNotificationDeviceCandidate{
 			DeviceID: device.ID, UserID: device.UserID, ActiveWorldID: device.ActiveWorldID, CanRead: canRead,
+		}
+		if preference != nil && preference.WorldWhitelistEnabled {
+			candidate.WorldWhitelistEnabled = true
+			candidate.WorldWhitelistIDs = appNotificationWorldIDSet(preference.WorldWhitelistJSON)
 		}
 		if !ShouldDeliverAppNotification(source, candidate) {
 			continue
@@ -204,6 +223,20 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
 	return nil
+}
+
+func appNotificationWorldIDSet(raw string) map[string]struct{} {
+	worldIDs := make([]string, 0)
+	if json.Unmarshal([]byte(raw), &worldIDs) != nil {
+		return map[string]struct{}{}
+	}
+	result := make(map[string]struct{}, len(worldIDs))
+	for _, worldID := range worldIDs {
+		if worldID = strings.TrimSpace(worldID); worldID != "" {
+			result[worldID] = struct{}{}
+		}
+	}
+	return result
 }
 
 func collectAppNotificationAtTags(content string, targets map[string]struct{}) {

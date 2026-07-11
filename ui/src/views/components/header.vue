@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { api } from '@/stores/_config';
 import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
@@ -44,6 +45,13 @@ const adminShow = ref(false)
 const inputStatsShow = ref(false)
 const inputStatsLoading = ref(false)
 const inputStatsComponent = shallowRef<Component | null>(null)
+const appNotificationSettingsShow = ref(false)
+const appNotificationSettingsLoading = ref(false)
+const appNotificationSettingsSaving = ref(false)
+const appNotificationSettings = ref({
+  world_whitelist_enabled: false,
+  world_whitelist_ids: [] as string[],
+})
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
@@ -165,6 +173,10 @@ const options = computed(() => [
     label: t('headerMenu.display'),
     key: 'display',
   },
+  {
+    label: t('headerMenu.appNotification'),
+    key: 'appNotification',
+  },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
     key: 'admin',
@@ -234,6 +246,59 @@ const toggleInputStats = async () => {
   await ensureInputStatsLoaded()
 }
 
+const loadAppNotificationSettings = async () => {
+  appNotificationSettingsLoading.value = true
+  try {
+    const response = await api.get('/api/v1/app-notification/settings')
+    const data = response.data || {}
+    appNotificationSettings.value = {
+      world_whitelist_enabled: data.world_whitelist_enabled === true,
+      world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
+        ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+        : [],
+    }
+  } catch (error) {
+    console.error('load app notification settings failed', error)
+    message.error(t('appNotificationSettings.loadFailed'))
+  } finally {
+    appNotificationSettingsLoading.value = false
+  }
+}
+
+const openAppNotificationSettings = () => {
+  notifShow.value = false
+  adminShow.value = false
+  userProfileShow.value = false
+  inputStatsShow.value = false
+  appNotificationSettingsShow.value = true
+  void loadAppNotificationSettings()
+}
+
+const saveAppNotificationSettings = async () => {
+  if (appNotificationSettings.value.world_whitelist_enabled && !appNotificationSettings.value.world_whitelist_ids.length) {
+    message.warning(t('appNotificationSettings.selectWorld'))
+    return
+  }
+  appNotificationSettingsSaving.value = true
+  try {
+    const response = await api.put('/api/v1/app-notification/settings', appNotificationSettings.value)
+    const data = response.data || {}
+    appNotificationSettings.value = {
+      world_whitelist_enabled: data.world_whitelist_enabled === true,
+      world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
+        ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+        : [],
+    }
+    message.success(t('appNotificationSettings.saved'))
+    appNotificationSettingsShow.value = false
+  } catch (error) {
+    console.error('save app notification settings failed', error)
+    message.error(t('appNotificationSettings.saveFailed'))
+  } finally {
+    appNotificationSettingsSaving.value = false
+  }
+}
+
 
 const handleSelect = async (key: string | number) => {
   switch (key) {
@@ -260,6 +325,10 @@ const handleSelect = async (key: string | number) => {
       adminShow.value = false;
       inputStatsShow.value = false;
       openDisplaySettings();
+      break;
+
+    case 'appNotification':
+      openAppNotificationSettings();
       break;
 
     case 'admin':
@@ -652,6 +721,7 @@ watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', vi
 watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
 watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
 watch(inputStatsShow, (visible, prevVisible) => emitOverlayState('input-stats', visible, prevVisible));
+watch(appNotificationSettingsShow, (visible, prevVisible) => emitOverlayState('app-notification-settings', visible, prevVisible));
 watch(notifShow, async (visible) => {
   if (!visible || !isAdmin.value) {
     return;
@@ -956,6 +1026,58 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     />
     <div v-else class="input-stats-loading">输入统计加载中...</div>
   </div>
+  <n-modal
+    v-model:show="appNotificationSettingsShow"
+    preset="card"
+    :title="t('appNotificationSettings.title')"
+    :mask-closable="!appNotificationSettingsSaving"
+    :closable="!appNotificationSettingsSaving"
+    style="width: min(36rem, calc(100vw - 2rem));"
+  >
+    <n-spin :show="appNotificationSettingsLoading">
+      <n-space vertical :size="16">
+        <n-alert type="info" :bordered="false">
+          {{ t('appNotificationSettings.hint') }}
+        </n-alert>
+        <n-form-item :label="t('appNotificationSettings.whitelist')">
+          <n-switch v-model:value="appNotificationSettings.world_whitelist_enabled" />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.world_whitelist_enabled"
+          :label="t('appNotificationSettings.worlds')"
+        >
+          <n-select
+            v-model:value="appNotificationSettings.world_whitelist_ids"
+            :options="chat.joinedWorldOptions"
+            multiple
+            filterable
+            clearable
+            :placeholder="t('appNotificationSettings.worldsPlaceholder')"
+          />
+        </n-form-item>
+        <n-divider>{{ t('appNotificationSettings.serverChanTitle') }}</n-divider>
+        <n-alert type="warning" :bordered="false">
+          {{ t('appNotificationSettings.serverChanReserved') }}
+        </n-alert>
+        <n-form-item :label="t('appNotificationSettings.serverChanEnabled')">
+          <n-switch :value="false" disabled />
+        </n-form-item>
+        <n-form-item :label="t('appNotificationSettings.serverChanSendKey')">
+          <n-input disabled :placeholder="t('appNotificationSettings.serverChanPlaceholder')" />
+        </n-form-item>
+      </n-space>
+    </n-spin>
+    <template #footer>
+      <div class="flex justify-end gap-2">
+        <n-button :disabled="appNotificationSettingsSaving" @click="appNotificationSettingsShow = false">
+          {{ t('appNotificationSettings.cancel') }}
+        </n-button>
+        <n-button type="primary" :loading="appNotificationSettingsSaving" @click="saveAppNotificationSettings">
+          {{ t('appNotificationSettings.save') }}
+        </n-button>
+      </div>
+    </template>
+  </n-modal>
   <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
 </template>

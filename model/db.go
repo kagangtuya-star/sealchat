@@ -136,7 +136,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
-	db.AutoMigrate(&AppNotificationInstanceModel{}, &AppNotificationDeviceModel{})
+	db.AutoMigrate(&AppNotificationInstanceModel{}, &AppNotificationDeviceModel{}, &AppNotificationPreferenceModel{})
 	db.AutoMigrate(&MemberModel{})
 	db.AutoMigrate(&AttachmentModel{})
 	db.AutoMigrate(&ChannelAttachmentImageLayoutModel{})

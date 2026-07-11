@@ -49,7 +49,26 @@
     "notice": "消息提醒",
     "inputStats": "输入统计",
     "display": "常规设置",
+    "appNotification": "消息推送",
     "logout": "退出登录"
+  },
+  "appNotificationSettings": {
+    "title": "消息推送",
+    "hint": "设置会同步到已授权的 SealChat APP。开启白名单后，仅推送所选世界中的频道新消息，即使 APP 当前不在该世界。",
+    "whitelist": "启用白名单世界",
+    "worlds": "允许推送的世界",
+    "worldsPlaceholder": "选择已加入的世界",
+    "selectWorld": "请至少选择一个白名单世界",
+    "serverChanTitle": "Server酱 Turbo（预留）",
+    "serverChanReserved": "此推送方式尚未启用，当前不会保存配置或发送消息。",
+    "serverChanEnabled": "启用 Server酱 Turbo",
+    "serverChanSendKey": "SendKey",
+    "serverChanPlaceholder": "功能开发中",
+    "cancel": "取消",
+    "save": "保存",
+    "saved": "消息推送设置已保存",
+    "loadFailed": "读取消息推送设置失败",
+    "saveFailed": "保存消息推送设置失败"
   },
   "inputStats": {
     "title": "输入统计",

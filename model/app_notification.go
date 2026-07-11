@@ -56,6 +56,20 @@ func (*AppNotificationDeviceModel) TableName() string {
 	return "app_notification_devices"
 }
 
+// AppNotificationPreferenceModel stores notification routing preferences shared
+// by every active App device belonging to one user.
+type AppNotificationPreferenceModel struct {
+	UserID                string    `json:"user_id" gorm:"primaryKey;size:100"`
+	WorldWhitelistEnabled bool      `json:"world_whitelist_enabled" gorm:"not null;default:false"`
+	WorldWhitelistJSON    string    `json:"-" gorm:"type:text"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+func (*AppNotificationPreferenceModel) TableName() string {
+	return "app_notification_preferences"
+}
+
 type AppNotificationDeviceInput struct {
 	InstallationID string
 	Name           string
@@ -168,6 +182,79 @@ func ListActiveAppNotificationDevicesByWorld(worldID string) ([]AppNotificationD
 	var devices []AppNotificationDeviceModel
 	err := db.Where("active_world_id = ? AND revoked_at IS NULL AND token_expires_at > ?", strings.TrimSpace(worldID), time.Now()).Find(&devices).Error
 	return devices, err
+}
+
+func ListActiveAppNotificationDevices() ([]AppNotificationDeviceModel, error) {
+	var devices []AppNotificationDeviceModel
+	err := db.Where("revoked_at IS NULL AND token_expires_at > ?", time.Now()).Find(&devices).Error
+	return devices, err
+}
+
+func GetAppNotificationPreference(userID string) (*AppNotificationPreferenceModel, error) {
+	preference := &AppNotificationPreferenceModel{UserID: strings.TrimSpace(userID)}
+	if preference.UserID == "" {
+		return preference, nil
+	}
+	err := db.Where("user_id = ?", preference.UserID).First(preference).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return preference, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return preference, nil
+}
+
+func GetAppNotificationPreferences(userIDs []string) (map[string]*AppNotificationPreferenceModel, error) {
+	uniqueIDs := make([]string, 0, len(userIDs))
+	seen := make(map[string]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, userID)
+	}
+	preferences := make(map[string]*AppNotificationPreferenceModel, len(uniqueIDs))
+	if len(uniqueIDs) == 0 {
+		return preferences, nil
+	}
+	var rows []AppNotificationPreferenceModel
+	if err := db.Where("user_id IN ?", uniqueIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for index := range rows {
+		preference := rows[index]
+		preferences[preference.UserID] = &preference
+	}
+	return preferences, nil
+}
+
+func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, worldWhitelistJSON string) (*AppNotificationPreferenceModel, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, errors.New("user_id is required")
+	}
+	preference := AppNotificationPreferenceModel{
+		UserID:                userID,
+		WorldWhitelistEnabled: worldWhitelistEnabled,
+		WorldWhitelistJSON:    strings.TrimSpace(worldWhitelistJSON),
+	}
+	if err := db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"world_whitelist_enabled": preference.WorldWhitelistEnabled,
+			"world_whitelist_json":    preference.WorldWhitelistJSON,
+			"updated_at":              time.Now().UTC(),
+		}),
+	}).Create(&preference).Error; err != nil {
+		return nil, err
+	}
+	return GetAppNotificationPreference(userID)
 }
 
 func UpdateAppNotificationDeviceWorld(deviceID, worldID string) (*AppNotificationDeviceModel, error) {

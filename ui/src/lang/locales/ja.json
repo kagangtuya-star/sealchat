@@ -39,7 +39,26 @@
     "notice": "通知",
     "inputStats": "入力統計",
     "display": "一般設定",
+    "appNotification": "メッセージ通知",
     "logout": "ログアウト"
+  },
+  "appNotificationSettings": {
+    "title": "メッセージ通知",
+    "hint": "設定は認可済み SealChat APP と同期されます。ホワイトリストを有効にすると、APP が別の世界を開いていても選択した世界の新着メッセージを通知します。",
+    "whitelist": "世界ホワイトリストを有効化",
+    "worlds": "通知を許可する世界",
+    "worldsPlaceholder": "参加中の世界を選択",
+    "selectWorld": "少なくとも 1 つの世界を選択してください",
+    "serverChanTitle": "Server酱 Turbo（予約）",
+    "serverChanReserved": "この通知方法は未実装です。設定の保存・送信は行いません。",
+    "serverChanEnabled": "Server酱 Turbo を有効化",
+    "serverChanSendKey": "SendKey",
+    "serverChanPlaceholder": "開発中",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "saved": "メッセージ通知設定を保存しました",
+    "loadFailed": "メッセージ通知設定の読み込みに失敗しました",
+    "saveFailed": "メッセージ通知設定の保存に失敗しました"
   },
   "inputStats": {
     "title": "入力統計",

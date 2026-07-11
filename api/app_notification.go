@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log"
@@ -20,9 +21,10 @@ import (
 )
 
 const (
-	appNotificationClientID    = "sealchat_android"
-	appNotificationRedirectURI = "sealchat-app://notify-auth"
-	appNotificationHeartbeat   = 45
+	appNotificationClientID           = "sealchat_android"
+	appNotificationRedirectURI        = "sealchat-app://notify-auth"
+	appNotificationHeartbeat          = 45
+	appNotificationMaxWhitelistWorlds = 100
 )
 
 func bindAppNotificationRoutes(app *fiber.App, webURL string) {
@@ -77,7 +79,7 @@ func AppNotificationDiscovery(c *fiber.Ctx) error {
 			"stream_endpoint": base + "/stream", "ack_endpoint": base + "/acks",
 			"device_endpoint": base + "/device", "context_endpoint": base + "/device/context",
 			"heartbeat_seconds": appNotificationHeartbeat, "event_retention_seconds": 3600,
-			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true},
+			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true, "world_whitelist": true},
 		},
 	})
 }
@@ -215,6 +217,10 @@ func AppNotificationDeviceMiddleware(c *fiber.Ctx) error {
 func AppNotificationDeviceGet(c *fiber.Ctx) error {
 	device := appNotificationDeviceFromContext(c)
 	user := model.UserGet(device.UserID)
+	preference, err := model.GetAppNotificationPreference(device.UserID)
+	if err != nil {
+		return sendAppNotificationError(c, http.StatusInternalServerError, "internal_error", "读取推送设置失败")
+	}
 	displayName := ""
 	if user != nil {
 		displayName = user.Nickname
@@ -222,9 +228,54 @@ func AppNotificationDeviceGet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"device_id": device.ID, "installation_id": device.InstallationID, "authorized": true,
 		"token_expires_at": device.TokenExpiresAt, "last_connected_at": device.LastConnectedAt,
-		"active_world_id": nullableAppNotificationWorldID(device.ActiveWorldID),
-		"user":            fiber.Map{"id": device.UserID, "display_name": displayName},
+		"active_world_id":       nullableAppNotificationWorldID(device.ActiveWorldID),
+		"notification_settings": appNotificationPreferenceResponse(preference),
+		"user":                  fiber.Map{"id": device.UserID, "display_name": displayName},
 	})
+}
+
+func AppNotificationSettingsGet(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	preference, err := model.GetAppNotificationPreference(user.ID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "读取推送设置失败"})
+	}
+	return c.JSON(appNotificationPreferenceResponse(preference))
+}
+
+func AppNotificationSettingsPut(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	var body struct {
+		WorldWhitelistEnabled bool     `json:"world_whitelist_enabled"`
+		WorldWhitelistIDs     []string `json:"world_whitelist_ids"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请求格式错误"})
+	}
+	worldIDs := normalizeAppNotificationWorldIDs(body.WorldWhitelistIDs)
+	if len(worldIDs) > appNotificationMaxWhitelistWorlds {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单世界数量超出限制"})
+	}
+	for _, worldID := range worldIDs {
+		if !service.IsWorldMember(worldID, user.ID) {
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "白名单中存在无权访问的世界"})
+		}
+	}
+	encoded, err := json.Marshal(worldIDs)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单格式错误"})
+	}
+	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded))
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "保存推送设置失败"})
+	}
+	return c.JSON(appNotificationPreferenceResponse(preference))
 }
 
 func AppNotificationDeviceContextPut(c *fiber.Ctx) error {
@@ -302,4 +353,40 @@ func nullableAppNotificationWorldID(worldID string) any {
 		return nil
 	}
 	return worldID
+}
+
+func appNotificationPreferenceResponse(preference *model.AppNotificationPreferenceModel) fiber.Map {
+	worldIDs := []string{}
+	if preference != nil {
+		worldIDs = normalizeAppNotificationWorldIDs(appNotificationWorldIDs(preference.WorldWhitelistJSON))
+	}
+	return fiber.Map{
+		"world_whitelist_enabled": preference != nil && preference.WorldWhitelistEnabled,
+		"world_whitelist_ids":     worldIDs,
+	}
+}
+
+func appNotificationWorldIDs(raw string) []string {
+	var worldIDs []string
+	if json.Unmarshal([]byte(raw), &worldIDs) != nil {
+		return []string{}
+	}
+	return worldIDs
+}
+
+func normalizeAppNotificationWorldIDs(worldIDs []string) []string {
+	result := make([]string, 0, len(worldIDs))
+	seen := make(map[string]struct{}, len(worldIDs))
+	for _, worldID := range worldIDs {
+		worldID = strings.TrimSpace(worldID)
+		if worldID == "" {
+			continue
+		}
+		if _, ok := seen[worldID]; ok {
+			continue
+		}
+		seen[worldID] = struct{}{}
+		result = append(result, worldID)
+	}
+	return result
 }
