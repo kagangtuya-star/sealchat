@@ -19,10 +19,6 @@ import {
   resolveCustomThemeEnabledUpdate,
   resolveEffectiveThemeSelection,
 } from '@/services/theme/themeSelection'
-import {
-  resolveEffectiveDisplayPalette,
-  type StoredDisplayPalette,
-} from '@/services/theme/systemPalette'
 import type {
   CustomTheme,
   CustomThemeColors,
@@ -1276,7 +1272,7 @@ export const useDisplayStore = defineStore('display', {
   }),
   getters: {
     layout: (state) => state.settings.layout,
-    palette: (state) => resolveEffectiveDisplayPalette(state.settings.palette),
+    palette: (state) => state.settings.palette,
     showAvatar: (state) => state.settings.showAvatar,
     favoriteBarEnabled: (state) => state.settings.favoriteChannelBarEnabled,
   },
@@ -1594,8 +1590,7 @@ export const useDisplayStore = defineStore('display', {
       if (typeof document === 'undefined') return
       const effective = target || this.settings
       const root = document.documentElement
-      const resolvedPalette = resolveEffectiveDisplayPalette(effective.palette)
-      root.dataset.displayPalette = resolvedPalette
+      root.dataset.displayPalette = effective.palette
       root.dataset.displayLayout = effective.layout
       const setVar = (name: string, value: string) => {
         root.style.setProperty(name, value)

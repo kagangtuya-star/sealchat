@@ -8,7 +8,6 @@ import {
   type DisplaySettings,
   type ThemeSelectionMode,
 } from '@/stores/display'
-import { resolveEffectiveDisplayPalette } from '@/services/theme/systemPalette'
 import { useOnboardingStore } from '@/stores/onboarding'
 import {
   downloadDisplaySettingsTransfer,
@@ -75,11 +74,13 @@ const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout']
   { label: '气泡模式', value: 'bubble' },
   { label: '紧凑模式', value: 'compact' },
 ]
-const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette'] }> = [
-  { label: '自动适应', value: 'auto' },
+type PaletteMode = DisplaySettings['palette'] | 'system'
+const paletteModeOptions: Array<{ label: string; value: PaletteMode }> = [
+  { label: '跟随系统', value: 'system' },
   { label: '日间模式', value: 'day' },
   { label: '夜间模式', value: 'night' },
 ]
+const activePaletteMode = computed<PaletteMode>(() => draft.followSystemTheme ? 'system' : draft.palette)
 const systemThemeOptions = computed(() => [
   { label: '系统基础配色', value: 'base:' },
   ...display.platformThemes.map(theme => ({ label: `平台 · ${theme.name}`, value: `platform:${theme.id}` })),
@@ -103,9 +104,13 @@ const systemNightThemeValue = computed({
   get: () => formatSystemThemeBinding(draft.systemNightTheme),
   set: value => { draft.systemNightTheme = parseSystemThemeBinding(value) },
 })
-const setManualPalette = (palette: DisplaySettings['palette']) => {
+const setPaletteMode = (mode: PaletteMode) => {
+  if (mode === 'system') {
+    draft.followSystemTheme = true
+    return
+  }
   draft.followSystemTheme = false
-  draft.palette = palette
+  draft.palette = mode
 }
 const avatarVisibilityScopeOptions: Array<{ label: string; value: AvatarVisibilityScope }> = [
   { label: '全部', value: 'all' },
@@ -235,7 +240,7 @@ watch(
 
 const previewClasses = computed(() => [
   'display-preview',
-  `display-preview--${resolveEffectiveDisplayPalette(draft.palette)}`,
+  `display-preview--${draft.followSystemTheme ? display.palette : draft.palette}`,
   `display-preview--${draft.layout}`,
 ])
 
@@ -537,40 +542,31 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             size="small"
             block
             class="setting-mode-button"
-            :type="draft.palette === option.value ? 'primary' : 'default'"
-            :secondary="draft.palette !== option.value"
-            :aria-pressed="draft.palette === option.value"
-            @click="setManualPalette(option.value)"
+            :type="activePaletteMode === option.value ? 'primary' : 'default'"
+            :secondary="activePaletteMode !== option.value"
+            :aria-pressed="activePaletteMode === option.value"
+            @click="setPaletteMode(option.value)"
           >
             <span class="setting-mode-button__label">{{ option.label }}</span>
           </n-button>
         </div>
-        <div class="theme-management-row">
-          <div class="theme-management-summary">
-            <span class="active-theme-name">跟随系统主题</span>
-            <span class="theme-management-meta">系统外观变化时自动切换日间或夜间配色</span>
+        <div v-if="draft.followSystemTheme" class="system-theme-bindings">
+          <div class="system-theme-binding">
+            <span class="system-theme-binding__label">日间主题</span>
+            <n-select
+              v-model:value="systemDayThemeValue"
+              :options="systemThemeOptions"
+              size="small"
+            />
           </div>
-          <n-switch v-model:value="draft.followSystemTheme" />
-        </div>
-        <div v-if="draft.followSystemTheme" class="theme-management-row">
-          <div class="theme-management-summary">
-            <span class="active-theme-name">日间主题</span>
+          <div class="system-theme-binding">
+            <span class="system-theme-binding__label">夜间主题</span>
+            <n-select
+              v-model:value="systemNightThemeValue"
+              :options="systemThemeOptions"
+              size="small"
+            />
           </div>
-          <n-select
-            v-model:value="systemDayThemeValue"
-            :options="systemThemeOptions"
-            style="width: 280px"
-          />
-        </div>
-        <div v-if="draft.followSystemTheme" class="theme-management-row">
-          <div class="theme-management-summary">
-            <span class="active-theme-name">夜间主题</span>
-          </div>
-          <n-select
-            v-model:value="systemNightThemeValue"
-            :options="systemThemeOptions"
-            style="width: 280px"
-          />
         </div>
       </section>
 
@@ -1950,9 +1946,32 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   min-height: 32px;
 }
 
-.layout-mode-grid,
-.palette-mode-grid {
+.layout-mode-grid {
   grid-template-columns: repeat(2, minmax(120px, 180px));
+}
+
+.palette-mode-grid {
+  grid-template-columns: repeat(3, minmax(100px, 160px));
+}
+
+.system-theme-bindings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 0.6rem;
+  margin-top: -0.15rem;
+}
+
+.system-theme-binding {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.system-theme-binding__label {
+  color: var(--sc-text-secondary);
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .setting-mode-button__label,
@@ -2123,6 +2142,14 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   .setting-mode-grid,
   .theme-management-mode-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .palette-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .system-theme-bindings {
+    grid-template-columns: 1fr;
   }
 
   .theme-management-summary {
