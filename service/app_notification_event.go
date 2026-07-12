@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ var (
 	appNotificationHTTPClient     = &http.Client{Timeout: 10 * time.Second}
 	serverChanTurboBaseURL        = "https://sctapi.ftqq.com"
 	serverChanSC3Domain           = "push.ft07.com"
+	meowAPIBaseURL                = "https://api.chuckfang.com"
 	AppNotificationUserPageOnline = func(string) bool { return false }
 )
 
@@ -161,6 +163,10 @@ func ShouldDeliverAppNotification(source AppNotificationMessageSource, candidate
 }
 
 func EnqueueAppNotificationForMessage(messageID, webURL string) error {
+	return EnqueueAppNotificationForMessageWithMeow(messageID, webURL, "", "")
+}
+
+func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, faviconURL string) error {
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
 		return nil
@@ -241,7 +247,9 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 		}
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
-	return sendServerChanAppNotifications(source, webURL, canReadByUser)
+	serverChanErr := sendServerChanAppNotifications(source, webURL, canReadByUser)
+	meowErr := sendMeowAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser)
+	return errors.Join(serverChanErr, meowErr)
 }
 
 func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL string, canReadByUser map[string]bool) error {
@@ -313,6 +321,91 @@ func sendServerChan(sendKey, title, content string) error {
 
 func SendServerChanTestNotification(sendKey, title, content string) error {
 	return sendServerChan(sendKey, title, content)
+}
+
+func sendMeowAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool) error {
+	preferences, err := model.ListMeowAppNotificationPreferences()
+	if err != nil {
+		return err
+	}
+	for _, preference := range preferences {
+		canRead, known := canReadByUser[preference.UserID]
+		if !known {
+			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)
+			canReadByUser[preference.UserID] = canRead
+		}
+		candidate := AppNotificationDeviceCandidate{
+			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
+			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
+		}
+		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+			continue
+		}
+		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)
+		title := strings.TrimSpace(source.WorldName) + "|" + strings.TrimSpace(source.ChannelName)
+		messageURL := appNotificationExternalURL(publicOrigin, event.Navigation.OpenPath)
+		if err := sendMeow(preference.MeowNickname, title, event.Notification.Body, messageURL, faviconURL); err != nil {
+			return fmt.Errorf("send MeoW notification to user %s: %w", preference.UserID, err)
+		}
+	}
+	return nil
+}
+
+func appNotificationExternalURL(origin, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.HasPrefix(strings.ToLower(path), "http://") || strings.HasPrefix(strings.ToLower(path), "https://") {
+		return path
+	}
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return path
+	}
+	return origin + "/" + strings.TrimLeft(path, "/")
+}
+
+func meowEndpoint(nickname string) string {
+	return strings.TrimRight(meowAPIBaseURL, "/") + "/" + url.PathEscape(strings.TrimSpace(nickname))
+}
+
+func sendMeow(nickname, title, message, messageURL, imageURL string) error {
+	payload, err := json.Marshal(map[string]string{
+		"title":  title,
+		"msg":    message,
+		"url":    messageURL,
+		"imgUrl": imageURL,
+	})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, meowEndpoint(nickname), strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json;charset=utf-8")
+	response, err := appNotificationHTTPClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected HTTP status %d", response.StatusCode)
+	}
+	var result struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &result) == nil && result.Status != 0 && result.Status != http.StatusOK {
+		return fmt.Errorf("MeoW rejected request: status=%d message=%s", result.Status, result.Message)
+	}
+	return nil
+}
+
+func SendMeowTestNotification(nickname, title, content, messageURL, imageURL string) error {
+	return sendMeow(nickname, title, content, messageURL, imageURL)
 }
 
 func resolveAppNotificationMentionDisplayNames(channelID, content, icMode string) map[string]string {

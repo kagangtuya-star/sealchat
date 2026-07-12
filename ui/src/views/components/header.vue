@@ -49,6 +49,7 @@ const appNotificationSettingsShow = ref(false)
 const appNotificationSettingsLoading = ref(false)
 const appNotificationSettingsSaving = ref(false)
 const serverChanTesting = ref(false)
+const meowTesting = ref(false)
 const manualAuthorizationCodeLoading = ref(false)
 const manualAuthorizationCode = ref('')
 const manualAuthorizationCodeExpiresAt = ref('')
@@ -58,6 +59,9 @@ const appNotificationSettings = ref({
   server_chan_enabled: false,
   server_chan_send_key: '',
   server_chan_configured: false,
+  meow_enabled: false,
+  meow_nickname: '',
+  meow_configured: false,
 })
 const chat = useChatStore();
 const user = useUserStore();
@@ -266,6 +270,9 @@ const loadAppNotificationSettings = async () => {
       server_chan_enabled: data.server_chan_enabled === true,
       server_chan_send_key: '',
       server_chan_configured: data.server_chan_configured === true,
+      meow_enabled: data.meow_enabled === true,
+      meow_nickname: '',
+      meow_configured: data.meow_configured === true,
     }
   } catch (error) {
     console.error('load app notification settings failed', error)
@@ -310,6 +317,14 @@ const saveAppNotificationSettings = async () => {
     message.warning(t('appNotificationSettings.serverChanSendKeyRequired'))
     return
   }
+  if (appNotificationSettings.value.meow_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.meowWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.meow_enabled && !appNotificationSettings.value.meow_configured && !appNotificationSettings.value.meow_nickname.trim()) {
+    message.warning(t('appNotificationSettings.meowNicknameRequired'))
+    return
+  }
   appNotificationSettingsSaving.value = true
   try {
     const response = await api.put('/api/v1/app-notification/settings', appNotificationSettings.value)
@@ -322,6 +337,9 @@ const saveAppNotificationSettings = async () => {
       server_chan_enabled: data.server_chan_enabled === true,
       server_chan_send_key: '',
       server_chan_configured: data.server_chan_configured === true,
+      meow_enabled: data.meow_enabled === true,
+      meow_nickname: '',
+      meow_configured: data.meow_configured === true,
     }
     message.success(t('appNotificationSettings.saved'))
     appNotificationSettingsShow.value = false
@@ -336,6 +354,7 @@ const saveAppNotificationSettings = async () => {
 watch(() => appNotificationSettings.value.world_whitelist_enabled, (enabled) => {
   if (!enabled) {
     appNotificationSettings.value.server_chan_enabled = false
+    appNotificationSettings.value.meow_enabled = false
   }
 })
 
@@ -349,6 +368,19 @@ const sendServerChanTest = async () => {
     message.error(error?.response?.data?.message || t('appNotificationSettings.serverChanTestFailed'))
   } finally {
     serverChanTesting.value = false
+  }
+}
+
+const sendMeowTest = async () => {
+  meowTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/meow/test')
+    message.success(response.data?.message || t('appNotificationSettings.meowTestSent'))
+  } catch (error: any) {
+    console.error('send MeoW test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.meowTestFailed'))
+  } finally {
+    meowTesting.value = false
   }
 }
 
@@ -1163,6 +1195,42 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
             >
               <template #icon><n-icon :component="Send" /></template>
               {{ t('appNotificationSettings.serverChanTest') }}
+            </n-button>
+          </div>
+        </n-form-item>
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.meowTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.meowEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.meow_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.meow_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.meowNickname')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.meow_nickname"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.meow_configured
+                ? t('appNotificationSettings.meowConfiguredPlaceholder')
+                : t('appNotificationSettings.meowPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="meowTesting"
+              :disabled="!appNotificationSettings.meow_configured || appNotificationSettingsSaving"
+              @click="sendMeowTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.meowTest') }}
             </n-button>
           </div>
         </n-form-item>

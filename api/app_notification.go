@@ -57,12 +57,13 @@ func bindAppNotificationRoutes(app *fiber.App, webURL string) {
 	device.Post("/acks", AppNotificationAcks)
 }
 
-var enqueueAppNotificationForMessage = service.EnqueueAppNotificationForMessage
+var enqueueAppNotificationForMessage = service.EnqueueAppNotificationForMessageWithMeow
 var sendServerChanTestNotification = service.SendServerChanTestNotification
+var sendMeowTestNotification = service.SendMeowTestNotification
 
 func notifyAppMessageCreated(messageID string) {
 	go func() {
-		if err := enqueueAppNotificationForMessage(messageID, currentAppWebURL()); err != nil {
+		if err := enqueueAppNotificationForMessage(messageID, currentAppWebURL(), currentAppPublicOrigin(), currentAppFaviconURL()); err != nil {
 			log.Printf("app-notify: 构建消息通知失败 message=%s err=%v", messageID, err)
 		}
 	}()
@@ -376,6 +377,8 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 		WorldWhitelistIDs     []string `json:"world_whitelist_ids"`
 		ServerChanEnabled     bool     `json:"server_chan_enabled"`
 		ServerChanSendKey     string   `json:"server_chan_send_key"`
+		MeowEnabled           bool     `json:"meow_enabled"`
+		MeowNickname          string   `json:"meow_nickname"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请求格式错误"})
@@ -387,8 +390,14 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	if body.ServerChanEnabled && !body.WorldWhitelistEnabled {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱推送仅可在白名单模式下启用"})
 	}
+	if body.MeowEnabled && !body.WorldWhitelistEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "MeoW推送仅可在白名单模式下启用"})
+	}
 	if len(strings.TrimSpace(body.ServerChanSendKey)) > 256 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱 SendKey 长度超出限制"})
+	}
+	if len(strings.TrimSpace(body.MeowNickname)) > 256 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "MeoW昵称长度超出限制"})
 	}
 	for _, worldID := range worldIDs {
 		if !service.IsWorldMember(worldID, user.ID) {
@@ -399,7 +408,7 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单格式错误"})
 	}
-	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded), body.ServerChanEnabled, body.ServerChanSendKey)
+	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded), body.ServerChanEnabled, body.ServerChanSendKey, body.MeowEnabled, body.MeowNickname)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "保存推送设置失败"})
 	}
@@ -433,6 +442,37 @@ func AppNotificationServerChanTest(c *fiber.Ctx) error {
 	if err := sendServerChanTestNotification(sendKey, instanceName+"|推送测试", displayName+"：Server酱推送测试成功"); err != nil {
 		log.Printf("server-chan: 测试推送失败 user=%s err=%v", user.ID, err)
 		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": "测试推送失败，请检查 SendKey"})
+	}
+	return c.JSON(fiber.Map{"message": "测试消息已发送"})
+}
+
+func AppNotificationMeowTest(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	preference, err := model.GetAppNotificationPreference(user.ID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "读取推送设置失败"})
+	}
+	if !preference.WorldWhitelistEnabled || !preference.MeowEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存并启用白名单与MeoW推送"})
+	}
+	nickname := strings.TrimSpace(preference.MeowNickname)
+	if nickname == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存MeoW昵称"})
+	}
+	instanceName := "SealChat"
+	if appConfig != nil && strings.TrimSpace(appConfig.PageTitle) != "" {
+		instanceName = strings.TrimSpace(appConfig.PageTitle)
+	}
+	displayName := strings.TrimSpace(user.Nickname)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	if err := sendMeowTestNotification(nickname, instanceName+"|推送测试", displayName+"：MeoW推送测试成功", currentAppPublicOrigin(), currentAppFaviconURL()); err != nil {
+		log.Printf("meow: 测试推送失败 user=%s err=%v", user.ID, err)
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": "测试推送失败，请检查MeoW昵称"})
 	}
 	return c.JSON(fiber.Map{"message": "测试消息已发送"})
 }
@@ -507,6 +547,37 @@ func currentAppWebURL() string {
 	return appConfig.WebUrl
 }
 
+func currentAppPublicOrigin() string {
+	if appConfig == nil {
+		return ""
+	}
+	return normalizeOneBotDomainToURL(appConfig.Domain)
+}
+
+func currentAppFaviconURL() string {
+	if appConfig == nil {
+		return ""
+	}
+	origin := currentAppPublicOrigin()
+	if origin == "" {
+		return ""
+	}
+	attachmentID := strings.TrimPrefix(strings.TrimSpace(appConfig.FaviconAttachmentID), "id:")
+	if attachmentID != "" {
+		path := joinWebPath(appConfig.WebUrl, "api/v1/attachment", url.PathEscape(attachmentID)) + "?v=" + url.QueryEscape(attachmentID)
+		return appNotificationExternalURL(origin, path)
+	}
+	return appNotificationExternalURL(origin, joinWebPath(appConfig.WebUrl, "favicon.ico")+"?v=default")
+}
+
+func appNotificationExternalURL(origin, path string) string {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return ""
+	}
+	return origin + "/" + strings.TrimLeft(path, "/")
+}
+
 func nullableAppNotificationWorldID(worldID string) any {
 	if strings.TrimSpace(worldID) == "" {
 		return nil
@@ -524,6 +595,8 @@ func appNotificationPreferenceResponse(preference *model.AppNotificationPreferen
 		"world_whitelist_ids":     worldIDs,
 		"server_chan_enabled":     preference != nil && preference.ServerChanEnabled,
 		"server_chan_configured":  preference != nil && strings.TrimSpace(preference.ServerChanSendKey) != "",
+		"meow_enabled":            preference != nil && preference.MeowEnabled,
+		"meow_configured":         preference != nil && strings.TrimSpace(preference.MeowNickname) != "",
 	}
 }
 

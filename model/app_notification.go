@@ -63,6 +63,8 @@ type AppNotificationPreferenceModel struct {
 	WorldWhitelistJSON    string    `json:"-" gorm:"type:text"`
 	ServerChanEnabled     bool      `json:"server_chan_enabled" gorm:"not null;default:false"`
 	ServerChanSendKey     string    `json:"-" gorm:"size:256"`
+	MeowEnabled           bool      `json:"meow_enabled" gorm:"not null;default:false"`
+	MeowNickname          string    `json:"-" gorm:"size:256"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
@@ -235,7 +237,7 @@ func GetAppNotificationPreferences(userIDs []string) (map[string]*AppNotificatio
 	return preferences, nil
 }
 
-func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, worldWhitelistJSON string, serverChanEnabled bool, serverChanSendKey string) (*AppNotificationPreferenceModel, error) {
+func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, worldWhitelistJSON string, serverChanEnabled bool, serverChanSendKey string, meowEnabled bool, meowNickname string) (*AppNotificationPreferenceModel, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, errors.New("user_id is required")
@@ -246,16 +248,26 @@ func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, 
 		WorldWhitelistJSON:    strings.TrimSpace(worldWhitelistJSON),
 		ServerChanEnabled:     serverChanEnabled,
 		ServerChanSendKey:     strings.TrimSpace(serverChanSendKey),
+		MeowEnabled:           meowEnabled,
+		MeowNickname:          strings.TrimSpace(meowNickname),
 	}
-	if preference.ServerChanSendKey == "" {
+	if preference.ServerChanSendKey == "" || preference.MeowNickname == "" {
 		if existing, err := GetAppNotificationPreference(userID); err != nil {
 			return nil, err
 		} else {
-			preference.ServerChanSendKey = existing.ServerChanSendKey
+			if preference.ServerChanSendKey == "" {
+				preference.ServerChanSendKey = existing.ServerChanSendKey
+			}
+			if preference.MeowNickname == "" {
+				preference.MeowNickname = existing.MeowNickname
+			}
 		}
 	}
 	if preference.ServerChanEnabled && preference.ServerChanSendKey == "" {
 		return nil, errors.New("server chan send key is required")
+	}
+	if preference.MeowEnabled && preference.MeowNickname == "" {
+		return nil, errors.New("MeoW nickname is required")
 	}
 	if err := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "user_id"}},
@@ -264,6 +276,8 @@ func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, 
 			"world_whitelist_json":    preference.WorldWhitelistJSON,
 			"server_chan_enabled":     preference.ServerChanEnabled,
 			"server_chan_send_key":    preference.ServerChanSendKey,
+			"meow_enabled":            preference.MeowEnabled,
+			"meow_nickname":           preference.MeowNickname,
 			"updated_at":              time.Now().UTC(),
 		}),
 	}).Create(&preference).Error; err != nil {
@@ -275,6 +289,12 @@ func UpsertAppNotificationPreference(userID string, worldWhitelistEnabled bool, 
 func ListServerChanAppNotificationPreferences() ([]AppNotificationPreferenceModel, error) {
 	var preferences []AppNotificationPreferenceModel
 	err := db.Where("world_whitelist_enabled = ? AND server_chan_enabled = ? AND server_chan_send_key <> ?", true, true, "").Find(&preferences).Error
+	return preferences, err
+}
+
+func ListMeowAppNotificationPreferences() ([]AppNotificationPreferenceModel, error) {
+	var preferences []AppNotificationPreferenceModel
+	err := db.Where("world_whitelist_enabled = ? AND meow_enabled = ? AND meow_nickname <> ?", true, true, "").Find(&preferences).Error
 	return preferences, err
 }
 
