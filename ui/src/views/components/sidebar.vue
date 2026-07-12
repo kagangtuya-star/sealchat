@@ -924,6 +924,21 @@ const handleAckWorldAnnouncement = async () => {
           </div>
 
           <div class="sidebar-footer-actions">
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  block
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
+                  @click="toggleSubChannelDisplay"
+                >
+                  {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
+                </n-button>
+              </template>
+              <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
+            </n-tooltip>
+
             <!-- 推送通知开关 -->
             <n-tooltip placement="top" trigger="hover">
               <template #trigger>
@@ -975,20 +990,6 @@ const handleAckWorldAnnouncement = async () => {
               <span>{{ messageSoundTooltip }}</span>
             </n-tooltip>
 
-            <n-tooltip placement="top" trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  block
-                  tertiary
-                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
-                  @click="toggleSubChannelDisplay"
-                >
-                  {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
-                </n-button>
-              </template>
-              <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
-            </n-tooltip>
             <div class="sidebar-footer-row">
               <n-button size="tiny" quaternary @click="handleChannelSortEntry">
                 频道排序
