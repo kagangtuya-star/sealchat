@@ -13,7 +13,11 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
-
+*_test.go
+*.test.ts
+*.test.tsx
+*.test.js
+*.test.jsx
 info.db
 record.log
 go.sum
