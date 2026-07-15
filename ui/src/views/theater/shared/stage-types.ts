@@ -49,6 +49,8 @@ export interface StageImageRef {
   resourceId: string
   url: string
   alt?: string
+  mimeType?: string
+  animated?: boolean
 }
 
 export interface StageObjectTransform {

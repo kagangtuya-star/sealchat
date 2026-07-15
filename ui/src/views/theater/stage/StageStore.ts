@@ -30,10 +30,22 @@ const uid = (prefix: string) => {
 
 const clone = <T>(value: T): T => structuredClone(toRaw(value))
 
-const createImageRef = (url: string, alt?: string, resourceId?: string): StageImageRef | null => {
+const createImageRef = (
+  url: string,
+  alt?: string,
+  resourceId?: string,
+  mimeType?: string,
+  animated?: boolean,
+): StageImageRef | null => {
   const normalized = url.trim()
   if (!normalized || !isSafeStageImageUrl(normalized)) return null
-  return { resourceId: resourceId?.trim() || uid('resource'), url: normalized, ...(alt ? { alt } : {}) }
+  return {
+    resourceId: resourceId?.trim() || uid('resource'),
+    url: normalized,
+    ...(alt ? { alt } : {}),
+    ...(mimeType?.trim() ? { mimeType: mimeType.trim().toLowerCase() } : {}),
+    ...(animated === true ? { animated: true } : {}),
+  }
 }
 
 const makeObject = (
@@ -126,6 +138,8 @@ const normalizeImageRef = (input: unknown): StageImageRef | null => {
       : uid('resource'),
     url: value.url.trim(),
     ...(typeof value.alt === 'string' ? { alt: value.alt } : {}),
+    ...(typeof value.mimeType === 'string' && value.mimeType.trim() ? { mimeType: value.mimeType.trim().toLowerCase() } : {}),
+    ...(value.animated === true ? { animated: true } : {}),
   }
 }
 
@@ -256,8 +270,8 @@ export interface TheaterStageStore {
   ) => boolean
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
-  setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string) => boolean
-  setObjectImage: (objectId: string, url: string, resourceId?: string) => boolean
+  setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
+  setObjectImage: (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
   toggleObject: (objectId: string) => boolean
@@ -643,25 +657,25 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
   })
 
-  const setSceneImage = (target: 'background' | 'foreground', url: string, resourceId?: string) => {
+  const setSceneImage = (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => {
     if (!url.trim()) {
       state.liveState[target] = null
       return true
     }
-    const image = createImageRef(url, target === 'background' ? '场景背景' : '场景前景', resourceId)
+    const image = createImageRef(url, target === 'background' ? '场景背景' : '场景前景', resourceId, mimeType, animated)
     if (!image) return false
     state.liveState[target] = image
     return true
   }
 
-  const setObjectImage = (objectId: string, url: string, resourceId?: string) => runObjectEdit('修改对象图片', () => {
+  const setObjectImage = (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => runObjectEdit('修改对象图片', () => {
     const object = getObject(objectId)
     if (!object || object.type !== 'image') return false
     if (!url.trim()) {
       object.image = undefined
       return true
     }
-    const image = createImageRef(url, object.name, resourceId)
+    const image = createImageRef(url, object.name, resourceId, mimeType, animated)
     if (!image) return false
     object.image = image
     return true

@@ -79,11 +79,16 @@ type ImageTarget =
   | { kind: 'object', objectId: string }
 
 interface TheaterResourceResponse {
-  resource?: {
-    id?: string
-    status?: string
-    processing?: { errorCode?: string }
-  }
+  resource?: TheaterResource
+}
+
+interface TheaterResource {
+  id?: string
+  status?: string
+  animated?: boolean
+  playbackVariant?: string
+  playbackMimeType?: string
+  processing?: { errorCode?: string }
 }
 
 const pendingImageTarget = ref<ImageTarget | null>(null)
@@ -355,6 +360,9 @@ let gridSignature = ''
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 const transformCenters = new Map<string, { x: number, y: number }>()
+type StageMediaSource = HTMLImageElement | HTMLVideoElement
+const activeStageVideos = new Set<HTMLVideoElement>()
+let mediaAnimation: Konva.Animation | null = null
 let multiDrag: {
   driverId: string
   driverStart: { x: number, y: number }
@@ -369,7 +377,7 @@ interface SurfaceSlot {
   label: Konva.Text
   url: string
   version: number
-  source: HTMLImageElement | null
+  source: StageMediaSource | null
 }
 
 let backgroundSlot: SurfaceSlot | null = null
@@ -573,15 +581,75 @@ const toggleBulkSelectionMode = () => {
   })
 }
 
+const isVideoSource = (source: StageMediaSource): source is HTMLVideoElement => source instanceof HTMLVideoElement
+
+const stageMediaDimensions = (source: StageMediaSource) => isVideoSource(source)
+  ? { width: source.videoWidth, height: source.videoHeight }
+  : { width: source.naturalWidth || source.width, height: source.naturalHeight || source.height }
+
+const syncMediaAnimation = () => {
+  if (!activeStageVideos.size) {
+    mediaAnimation?.stop()
+    return
+  }
+  if (!mediaAnimation && backgroundLayer && worldLayer && foregroundLayer) {
+    mediaAnimation = new Konva.Animation(() => {}, [backgroundLayer, worldLayer, foregroundLayer])
+  }
+  mediaAnimation?.start()
+}
+
+const releaseStageMedia = (source: StageMediaSource | null | undefined) => {
+  if (!source || !isVideoSource(source)) return
+  activeStageVideos.delete(source)
+  source.pause()
+  source.onloadedmetadata = null
+  source.onerror = null
+  source.removeAttribute('src')
+  source.load()
+  syncMediaAnimation()
+}
+
+const loadStageMedia = (
+  imageRef: StageImageRef,
+  resolved: string,
+  onReady: (source: StageMediaSource) => void,
+  onError: () => void,
+) => {
+  if (imageRef.mimeType === 'video/webm') {
+    const source = document.createElement('video')
+    source.muted = true
+    source.loop = true
+    source.autoplay = true
+    source.playsInline = true
+    source.preload = 'auto'
+    source.onloadedmetadata = () => {
+      activeStageVideos.add(source)
+      syncMediaAnimation()
+      onReady(source)
+      void source.play().catch(onError)
+    }
+    source.onerror = onError
+    source.src = resolved
+    source.load()
+    return source
+  }
+  const source = new Image()
+  source.onload = () => onReady(source)
+  source.onerror = onError
+  source.src = resolved
+  return source
+}
+
 const setImageFit = (
   node: Konva.Image,
-  source: HTMLImageElement,
+  source: StageMediaSource,
   width: number,
   height: number,
   fit: StageObjectFit,
 ) => {
-  const sourceWidth = Math.max(1, source.naturalWidth || source.width)
-  const sourceHeight = Math.max(1, source.naturalHeight || source.height)
+  const dimensions = stageMediaDimensions(source)
+  const sourceWidth = Math.max(1, dimensions.width)
+  const sourceHeight = Math.max(1, dimensions.height)
   node.image(source)
   if (fit === 'fill') {
     node.position({ x: 0, y: 0 })
@@ -640,6 +708,7 @@ const updateSurfaceSlot = (
 
   const resolved = imageRef ? resolveStageImageUrl(imageRef.url) : null
   if (!imageRef) {
+    releaseStageMedia(slot.source)
     slot.url = ''
     slot.source = null
     slot.image.visible(false)
@@ -648,6 +717,7 @@ const updateSurfaceSlot = (
     return
   }
   if (!resolved) {
+    releaseStageMedia(slot.source)
     slot.url = imageRef.url
     slot.source = null
     slot.image.visible(false)
@@ -656,6 +726,7 @@ const updateSurfaceSlot = (
     return
   }
   if (slot.url === resolved) return
+  releaseStageMedia(slot.source)
   slot.url = resolved
   slot.source = null
   slot.version += 1
@@ -663,14 +734,17 @@ const updateSurfaceSlot = (
   slot.image.visible(false)
   slot.placeholder.visible(true)
   slot.label.text(`${loadingLabel}加载中…`).visible(true)
-  const source = new Image()
-  source.onload = () => {
-    if (slot.version !== version || slot.url !== resolved) return
-    slot.source = source
-    slot.image.image(source)
+  let source: StageMediaSource | null = null
+  source = loadStageMedia(imageRef, resolved, (loadedSource) => {
+    if (slot.version !== version || slot.url !== resolved) {
+      releaseStageMedia(loadedSource)
+      return
+    }
+    slot.source = loadedSource
+    slot.image.image(loadedSource)
     setImageFit(
       slot.image,
-      source,
+      loadedSource,
       slot.placeholder.width(),
       slot.placeholder.height(),
       props.store.state.liveState.fieldObjectFit,
@@ -679,15 +753,15 @@ const updateSurfaceSlot = (
     slot.placeholder.visible(false)
     slot.label.visible(false)
     slot.group.getLayer()?.batchDraw()
-  }
-  source.onerror = () => {
+  }, () => {
     if (slot.version !== version || slot.url !== resolved) return
+    releaseStageMedia(source)
     slot.image.visible(false)
     slot.placeholder.visible(true)
     slot.label.text(`${loadingLabel}加载失败`).visible(true)
     slot.group.getLayer()?.batchDraw()
-  }
-  source.src = resolved
+  })
+  slot.source = source
 }
 
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
@@ -731,11 +805,18 @@ const syncField = () => {
   foregroundLayer?.batchDraw()
 }
 
+const releaseObjectMedia = (wrapper: Konva.Group) => {
+  const image = wrapper.findOne<Konva.Image>('.theater-object-image')
+  releaseStageMedia(image?.image() as StageMediaSource | undefined)
+  image?.image(undefined)
+}
+
 const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
   if (wrapper.getAttr('stageObjectType') && wrapper.getAttr('stageObjectType') !== object.type) {
     imageLoadVersions.set(object.id, (imageLoadVersions.get(object.id) || 0) + 1)
     wrapper.setAttr('stageImageUrl', '')
   }
+  releaseObjectMedia(wrapper)
   wrapper.destroyChildren()
   wrapper.setAttr('stageObjectType', object.type)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
@@ -985,6 +1066,8 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   if (!image || !placeholder || !label) return
   const resolved = object.image ? resolveStageImageUrl(object.image.url) : null
   if (!object.image) {
+    releaseStageMedia(image.image() as StageMediaSource | undefined)
+    image.image(undefined)
     wrapper.setAttr('stageImageUrl', '')
     image.visible(false)
     placeholder.visible(true)
@@ -992,34 +1075,42 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
     return
   }
   if (!resolved) {
+    releaseStageMedia(image.image() as StageMediaSource | undefined)
+    image.image(undefined)
     wrapper.setAttr('stageImageUrl', object.image.url)
     image.visible(false)
     placeholder.visible(true)
     label.text('图片地址被安全策略拒绝').visible(true)
     return
   }
-  const currentSource = image.image() as HTMLImageElement | undefined
+  const currentSource = image.image() as StageMediaSource | undefined
   if (wrapper.getAttr('stageImageUrl') === resolved && currentSource) {
     setImageFit(image, currentSource, width, height, 'contain')
     return
   }
   if (wrapper.getAttr('stageImageUrl') === resolved) return
+  releaseStageMedia(currentSource)
+  image.image(undefined)
   wrapper.setAttr('stageImageUrl', resolved)
   const version = (imageLoadVersions.get(object.id) || 0) + 1
   imageLoadVersions.set(object.id, version)
   image.visible(false)
   placeholder.visible(true)
   label.text('图片加载中…').visible(true)
-  const source = new Image()
-  source.onload = () => {
-    if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) return
-    const sourceWidth = Math.max(1, source.naturalWidth || source.width)
-    const sourceHeight = Math.max(1, source.naturalHeight || source.height)
+  let source: StageMediaSource | null = null
+  source = loadStageMedia(object.image, resolved, (loadedSource) => {
+    if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) {
+      releaseStageMedia(loadedSource)
+      return
+    }
+    const dimensions = stageMediaDimensions(loadedSource)
+    const sourceWidth = Math.max(1, dimensions.width)
+    const sourceHeight = Math.max(1, dimensions.height)
     object.transform.width = Number((Math.max(0.5, object.transform.height * sourceWidth / sourceHeight)).toFixed(6))
-    image.image(source)
+    image.image(loadedSource)
     setImageFit(
       image,
-      source,
+      loadedSource,
       frame?.width() || width,
       frame?.height() || height,
       'contain',
@@ -1028,15 +1119,14 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
     placeholder.visible(false)
     label.visible(false)
     wrapper.getLayer()?.batchDraw()
-  }
-  source.onerror = () => {
+  }, () => {
     if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) return
+    releaseStageMedia(source)
     image.visible(false)
     placeholder.visible(true)
     label.text('图片加载失败').visible(true)
     wrapper.getLayer()?.batchDraw()
-  }
-  source.src = resolved
+  })
 }
 
 const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
@@ -1090,6 +1180,7 @@ const syncObjects = () => {
   for (const [objectId, node] of objectNodes) {
     if (objects[objectId]) continue
     imageLoadVersions.delete(objectId)
+    releaseObjectMedia(node)
     node.destroy()
     objectNodes.delete(objectId)
   }
@@ -1228,13 +1319,15 @@ const stopPan = () => {
   interactionLayer?.batchDraw()
 }
 
-const targetImageUrl = (target: ImageTarget) => target.kind === 'scene'
-  ? props.store.state.liveState[target.target]?.url || ''
-  : props.store.activeObjects.value[target.objectId]?.image?.url || ''
+const targetImageRef = (target: ImageTarget) => target.kind === 'scene'
+  ? props.store.state.liveState[target.target]
+  : props.store.activeObjects.value[target.objectId]?.image || null
 
-const applyImageUrl = (target: ImageTarget, url: string, resourceId?: string) => {
-  if (target.kind === 'scene') return props.store.setSceneImage(target.target, url, resourceId)
-  return props.store.setObjectImage(target.objectId, url, resourceId)
+const targetImageUrl = (target: ImageTarget) => targetImageRef(target)?.url || ''
+
+const applyImageUrl = (target: ImageTarget, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => {
+  if (target.kind === 'scene') return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated)
+  return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated)
 }
 
 const theaterResourcePath = (resourceId = '') => {
@@ -1243,16 +1336,43 @@ const theaterResourcePath = (resourceId = '') => {
 }
 
 const waitForResource = async (resourceId: string) => {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
     const response = await api.get<TheaterResourceResponse>(theaterResourcePath(resourceId))
-    const status = response.data?.resource?.status
-    if (status === 'ready') return
+    const resource = response.data?.resource
+    const status = resource?.status
+    if (status === 'ready') return resource
     if (status === 'failed') {
       throw new Error(response.data?.resource?.processing?.errorCode || '图片处理失败')
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 200))
+    await new Promise((resolve) => window.setTimeout(resolve, 500))
   }
   throw new Error('图片处理超时')
+}
+
+const supportedTheaterMedia = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/webm'])
+
+const normalizedFileType = (file: File) => {
+  const declared = file.type.trim().toLowerCase()
+  if (supportedTheaterMedia.has(declared)) return declared
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  return extension === 'jpg' || extension === 'jpeg'
+    ? 'image/jpeg'
+    : extension === 'png'
+      ? 'image/png'
+      : extension === 'webp'
+        ? 'image/webp'
+        : extension === 'gif'
+          ? 'image/gif'
+          : extension === 'webm'
+            ? 'video/webm'
+            : declared
+}
+
+const prepareTheaterMedia = async (file: File) => {
+  const mimeType = normalizedFileType(file)
+  if (!supportedTheaterMedia.has(mimeType)) throw new Error('仅支持 PNG、JPEG、WebP、GIF、WebM')
+  if (mimeType !== 'image/jpeg' && mimeType !== 'image/png') return file
+  return compressImage(file, { mimeType: 'image/webp' })
 }
 
 const uploadImage = async (file: File, target: ImageTarget) => {
@@ -1261,20 +1381,22 @@ const uploadImage = async (file: File, target: ImageTarget) => {
   resourceUploading.value = true
   resourceError.value = ''
   try {
-    const compressed = await compressImage(file, { mimeType: 'image/webp' })
-    if (compressed.type !== 'image/webp') throw new Error('图片无法转换为 WebP')
+    const prepared = await prepareTheaterMedia(file)
     const formData = new FormData()
-    formData.append('file', compressed)
+    formData.append('file', prepared)
     formData.append('mediaKind', 'image')
     formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
     const response = await api.post<TheaterResourceResponse>(theaterResourcePath(), formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    const resourceId = response.data?.resource?.id
+    let resource = response.data?.resource
+    const resourceId = resource?.id
     if (!resourceId) throw new Error('上传响应缺少资源 ID')
-    if (response.data?.resource?.status !== 'ready') await waitForResource(resourceId)
-    const url = `${urlBase}/${theaterResourcePath(resourceId)}/variants/original/content`
-    if (!applyImageUrl(target, url, resourceId)) throw new Error('图片目标已失效')
+    if (resource?.status !== 'ready') resource = await waitForResource(resourceId)
+    const variant = resource?.playbackVariant || 'original'
+    const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
+    const url = `${urlBase}/${theaterResourcePath(resourceId)}/variants/${encodeURIComponent(variant)}/content`
+    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
     throw error
@@ -1309,6 +1431,7 @@ const clearImage = (target: ImageTarget) => {
 }
 
 const openImageEditor = async (target: ImageTarget) => {
+  if (targetImageRef(target)?.animated) return
   const url = targetImageUrl(target)
   if (!url) return
   resourceUploading.value = true
@@ -1346,7 +1469,7 @@ const saveEditedImage = async (file: File) => {
 
 const handleCanvasDrop = async (event: DragEvent) => {
   if (!canEditAllObjects.value || !canUploadResources.value) return
-  const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type.startsWith('image/'))
+  const file = Array.from(event.dataTransfer?.files || []).find((item) => supportedTheaterMedia.has(normalizedFileType(item)))
   const rect = viewportRef.value?.getBoundingClientRect()
   if (!file || !rect) return
   const object = props.store.addObject('image')
@@ -1552,6 +1675,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', stopPanelDrag)
   window.removeEventListener('keydown', handleStageShortcut)
   props.store.commitObjectEdit()
+  objectNodes.forEach(releaseObjectMedia)
+  releaseStageMedia(backgroundSlot?.source)
+  releaseStageMedia(foregroundSlot?.source)
+  Array.from(activeStageVideos).forEach(releaseStageMedia)
+  mediaAnimation?.stop()
+  mediaAnimation = null
   objectNodes.clear()
   imageLoadVersions.clear()
   props.store.setBulkSelectionMode(false)
@@ -1562,7 +1691,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="theater-stage-app">
-    <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/*" @change="handleImageInput">
+    <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/webm,.webm" @change="handleImageInput">
     <header class="theater-stage-toolbar">
       <n-tooltip trigger="hover">
         <template #trigger>
@@ -1791,7 +1920,7 @@ onBeforeUnmount(() => {
                 </n-button>
                 <n-tooltip trigger="hover">
                   <template #trigger>
-                    <n-button size="small" :disabled="!canUploadResources || !selectedObject.image || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
+                    <n-button size="small" :disabled="!canUploadResources || !selectedObject.image || selectedObject.image.animated || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
                       <template #icon><n-icon><Edit /></n-icon></template>
                     </n-button>
                   </template>
@@ -1880,13 +2009,13 @@ onBeforeUnmount(() => {
           <label>背景图片</label>
           <div class="theater-image-actions">
             <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.background" @click="openImageEditor({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
+            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.background || store.state.liveState.background.animated" @click="openImageEditor({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
             <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.background" @click="clearImage({ kind: 'scene', target: 'background' })">清除</n-button>
           </div>
           <label>前景图片</label>
           <div class="theater-image-actions">
             <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.foreground" @click="openImageEditor({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
+            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.foreground || store.state.liveState.foreground.animated" @click="openImageEditor({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
             <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.foreground" @click="clearImage({ kind: 'scene', target: 'foreground' })">清除</n-button>
           </div>
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>

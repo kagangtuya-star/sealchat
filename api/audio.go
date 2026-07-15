@@ -1768,6 +1768,7 @@ func streamFileWithRange(c *fiber.Ctx, file *os.File, size int64, contentType st
 	}
 	start, end, err := parseRange(rangeHeader, size)
 	if err != nil {
+		_ = file.Close()
 		return wrapErrorStatus(c, fiber.StatusRequestedRangeNotSatisfiable, err, "无效的 Range 请求")
 	}
 	length := end - start + 1

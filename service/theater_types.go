@@ -163,6 +163,8 @@ type TheaterResourcePublic struct {
 	FrameCount       *int                           `json:"frameCount"`
 	FrameRate        *float64                       `json:"frameRate"`
 	Animated         bool                           `json:"animated"`
+	PlaybackVariant  string                         `json:"playbackVariant,omitempty"`
+	PlaybackMimeType string                         `json:"playbackMimeType,omitempty"`
 	PosterResourceID *string                        `json:"posterResourceId"`
 	Variants         []TheaterResourceVariantPublic `json:"variants"`
 	Processing       TheaterResourceProcessing      `json:"processing"`

@@ -192,9 +192,7 @@ func AttachmentGet(c *fiber.Ctx) error {
 	if strings.TrimSpace(att.ObjectKey) != "" {
 		if path, err := service.ResolveLocalAttachmentPath(att.ObjectKey); err == nil {
 			if _, err := os.Stat(path); err == nil {
-				setAttachmentCacheHeaders(c, &att)
-				setAttachmentContentType(c, &att)
-				return c.SendFile(path)
+				return serveLocalAttachment(c, path, &att)
 			}
 		}
 	}
@@ -213,9 +211,34 @@ func AttachmentGet(c *fiber.Ctx) error {
 		}
 		return wrapError(c, err, "读取附件失败")
 	}
-	setAttachmentCacheHeaders(c, &att)
-	setAttachmentContentType(c, &att)
-	return c.SendFile(fullPath)
+	return serveLocalAttachment(c, fullPath, &att)
+}
+
+func serveLocalAttachment(c *fiber.Ctx, path string, att *model.AttachmentModel) error {
+	setAttachmentCacheHeaders(c, att)
+	setAttachmentContentType(c, att)
+	mimeType := strings.TrimSpace(att.MimeType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	if !strings.HasPrefix(mimeType, "video/") && !strings.HasPrefix(mimeType, "audio/") {
+		return c.SendFile(path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	c.Set("Accept-Ranges", "bytes")
+	if c.Get(fiber.HeaderRange) != "" {
+		return streamFileWithRange(c, file, stat.Size(), mimeType)
+	}
+	_ = file.Close()
+	return c.SendFile(path)
 }
 
 func AttachmentMeta(c *fiber.Ctx) error {

@@ -169,6 +169,10 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 	if mimeType == "" {
 		return nil, newTheaterError(TheaterMediaErrorUnsupported, "不支持媒体格式", 415, nil)
 	}
+	requestedKind := strings.ToLower(strings.TrimSpace(input.MediaKind))
+	if mimeType == "video/webm" && (requestedKind == "image" || requestedKind == "animated_image") {
+		kind = "animated_image"
+	}
 	limit := config.ImageMaxSizeMB << 20
 	if kind == "video" {
 		limit = config.VideoMaxSizeMB << 20

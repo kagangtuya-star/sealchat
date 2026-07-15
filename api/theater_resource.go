@@ -119,6 +119,7 @@ func serveTheaterResourceContent(c *fiber.Ctx, requestID string, content *servic
 		mimeType = content.Variant.MimeType
 	}
 	c.Set(fiber.HeaderContentType, mimeType)
+	c.Set("X-Content-Type-Options", "nosniff")
 	contentHash := content.Resource.ContentHash
 	if content.Variant != nil && content.Variant.ContentHash != "" {
 		contentHash = content.Variant.ContentHash

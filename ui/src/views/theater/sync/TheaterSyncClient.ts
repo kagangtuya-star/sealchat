@@ -115,6 +115,8 @@ const imageRef = (value: unknown): StageImageRef | null => {
     resourceId: typeof raw.resourceId === 'string' && raw.resourceId.trim() ? raw.resourceId.trim() : `resource-${url}`,
     url,
     ...(typeof raw.alt === 'string' ? { alt: raw.alt } : {}),
+    ...(typeof raw.mimeType === 'string' && raw.mimeType.trim() ? { mimeType: raw.mimeType.trim().toLowerCase() } : {}),
+    ...(raw.animated === true ? { animated: true } : {}),
   }
 }
 

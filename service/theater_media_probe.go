@@ -11,10 +11,13 @@ import (
 	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	_ "golang.org/x/image/webp"
 
 	"sealchat/utils"
 )
@@ -30,6 +33,7 @@ type theaterMediaMetadata struct {
 	Container  string
 	VideoCodec string
 	AudioCodec string
+	HasAlpha   bool
 }
 
 func detectTheaterMediaType(head []byte) (string, string) {
@@ -71,38 +75,50 @@ func probeTheaterMedia(ctx context.Context, path, kind, mimeType string, config 
 		decoded, _, err := image.DecodeConfig(file)
 		if err != nil {
 			if mimeType == "image/webp" {
-				width, height, animated, parseErr := parseWebPMetadata(path)
-				if parseErr == nil && !animated {
-					return validateTheaterMediaMetadata(theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: width, Height: height, FrameCount: 1}, config)
+				webpMetadata, parseErr := parseWebPMetadata(path)
+				if parseErr == nil && !webpMetadata.Animated {
+					return validateTheaterMediaMetadata(theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: webpMetadata.Width, Height: webpMetadata.Height, FrameCount: 1, HasAlpha: webpMetadata.HasAlpha}, config)
 				}
 			}
 			return theaterMediaMetadata{}, fmt.Errorf("IMAGE_DECODE_FAILED: %w", err)
 		}
 		return validateTheaterMediaMetadata(theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: decoded.Width, Height: decoded.Height, FrameCount: 1}, config)
 	case "animated_image":
+		if mimeType == "video/webm" {
+			metadata, err := probeTheaterVideo(ctx, path, mimeType, config, toolchain, runner)
+			if err != nil {
+				return theaterMediaMetadata{}, err
+			}
+			metadata.Kind = "animated_image"
+			return validateTheaterMediaMetadata(metadata, config)
+		}
 		metadata, err := probeAnimatedImage(path, mimeType)
 		if err != nil {
 			return theaterMediaMetadata{}, err
 		}
 		return validateTheaterMediaMetadata(metadata, config)
 	case "video":
-		if !toolchain.FFprobeAvailable() {
-			return theaterMediaMetadata{}, errors.New(TheaterMediaErrorProcessorUnavailable)
-		}
-		probeCtx, cancel := context.WithTimeout(ctx, time.Duration(config.ProbeTimeoutSeconds)*time.Second)
-		defer cancel()
-		output, err := runner.Run(probeCtx, toolchain.FFprobePath, "-v", "error", "-show_format", "-show_streams", "-of", "json", path)
-		if err != nil {
-			return theaterMediaMetadata{}, fmt.Errorf("%s: %w", TheaterMediaErrorProbeFailed, err)
-		}
-		metadata, err := parseFFprobeMetadata(output, mimeType)
-		if err != nil {
-			return theaterMediaMetadata{}, err
-		}
-		return validateTheaterMediaMetadata(metadata, config)
+		return probeTheaterVideo(ctx, path, mimeType, config, toolchain, runner)
 	default:
 		return theaterMediaMetadata{}, errors.New(TheaterMediaErrorUnsupported)
 	}
+}
+
+func probeTheaterVideo(ctx context.Context, path, mimeType string, config utils.TheaterMediaConfig, toolchain MediaToolchain, runner MediaCommandRunner) (theaterMediaMetadata, error) {
+	if !toolchain.FFprobeAvailable() {
+		return theaterMediaMetadata{}, errors.New(TheaterMediaErrorProcessorUnavailable)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(config.ProbeTimeoutSeconds)*time.Second)
+	defer cancel()
+	output, err := runner.Run(probeCtx, toolchain.FFprobePath, "-v", "error", "-show_format", "-show_streams", "-of", "json", path)
+	if err != nil {
+		return theaterMediaMetadata{}, fmt.Errorf("%s: %w", TheaterMediaErrorProbeFailed, err)
+	}
+	metadata, err := parseFFprobeMetadata(output, mimeType)
+	if err != nil {
+		return theaterMediaMetadata{}, err
+	}
+	return validateTheaterMediaMetadata(metadata, config)
 }
 
 func probeAnimatedImage(path, mimeType string) (theaterMediaMetadata, error) {
@@ -124,20 +140,23 @@ func probeAnimatedImage(path, mimeType string) (theaterMediaMetadata, error) {
 			}
 			duration += int64(delay) * 10
 		}
-		return theaterMediaMetadata{Kind: "animated_image", MimeType: mimeType, Width: decoded.Config.Width, Height: decoded.Config.Height, FrameCount: len(decoded.Image), DurationMS: duration}, nil
+		kind := "animated_image"
+		if len(decoded.Image) <= 1 {
+			kind = "static_image"
+		}
+		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: decoded.Config.Width, Height: decoded.Config.Height, FrameCount: len(decoded.Image), DurationMS: duration}, nil
 	case "image/apng":
 		return parseAPNGMetadata(path)
 	case "image/webp":
-		width, height, animated, err := parseWebPMetadata(path)
-		if err != nil || !animated {
+		webpMetadata, err := parseWebPMetadata(path)
+		if err != nil {
 			return theaterMediaMetadata{}, errors.New("IMAGE_DECODE_FAILED: WebP animation metadata invalid")
 		}
-		data, _ := os.ReadFile(path)
-		frameCount := bytes.Count(data, []byte("ANMF"))
-		if frameCount == 0 {
-			frameCount = 1
+		kind := "animated_image"
+		if !webpMetadata.Animated || webpMetadata.FrameCount <= 1 {
+			kind = "static_image"
 		}
-		return theaterMediaMetadata{Kind: "animated_image", MimeType: mimeType, Width: width, Height: height, FrameCount: frameCount}, nil
+		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: webpMetadata.Width, Height: webpMetadata.Height, FrameCount: webpMetadata.FrameCount, DurationMS: webpMetadata.DurationMS, HasAlpha: webpMetadata.HasAlpha}, nil
 	default:
 		return theaterMediaMetadata{}, errors.New(TheaterMediaErrorUnsupported)
 	}
@@ -178,32 +197,83 @@ func parseAPNGMetadata(path string) (theaterMediaMetadata, error) {
 	return theaterMediaMetadata{Kind: "animated_image", MimeType: "image/apng", Width: width, Height: height, FrameCount: frameCount, DurationMS: duration}, nil
 }
 
-func parseWebPMetadata(path string) (int, int, bool, error) {
+type theaterWebPMetadata struct {
+	Width      int
+	Height     int
+	Animated   bool
+	FrameCount int
+	DurationMS int64
+	HasAlpha   bool
+}
+
+func parseWebPMetadata(path string) (theaterWebPMetadata, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, false, err
+		return theaterWebPMetadata{}, err
 	}
-	if len(data) < 30 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
-		return 0, 0, false, errors.New("invalid WebP")
+	if len(data) < 20 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+		return theaterWebPMetadata{}, errors.New("invalid WebP")
 	}
-	animated := bytes.Contains(data, []byte("ANIM"))
-	index := bytes.Index(data, []byte("VP8X"))
-	if index >= 0 && index+18 <= len(data) {
-		width := 1 + int(data[index+12]) + int(data[index+13])<<8 + int(data[index+14])<<16
-		height := 1 + int(data[index+15]) + int(data[index+16])<<8 + int(data[index+17])<<16
-		return width, height, animated, nil
+	metadata := theaterWebPMetadata{}
+	for offset := 12; offset+8 <= len(data); {
+		chunkType := string(data[offset : offset+4])
+		chunkSize := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		chunkStart := offset + 8
+		chunkEnd := chunkStart + chunkSize
+		if chunkSize < 0 || chunkEnd > len(data) {
+			return theaterWebPMetadata{}, errors.New("invalid WebP chunk")
+		}
+		chunk := data[chunkStart:chunkEnd]
+		switch chunkType {
+		case "VP8X":
+			if len(chunk) >= 10 {
+				metadata.Animated = chunk[0]&0x02 != 0
+				metadata.HasAlpha = chunk[0]&0x10 != 0
+				metadata.Width = 1 + uint24LE(chunk[4:7])
+				metadata.Height = 1 + uint24LE(chunk[7:10])
+			}
+		case "ANMF":
+			if len(chunk) >= 16 {
+				metadata.FrameCount++
+				duration := uint24LE(chunk[12:15])
+				if duration <= 0 {
+					duration = 10
+				}
+				metadata.DurationMS += int64(duration)
+			}
+		case "ALPH":
+			metadata.HasAlpha = true
+		}
+		offset = chunkEnd + chunkSize%2
 	}
-	return 0, 0, animated, errors.New("WebP dimensions unavailable")
+	if metadata.Width <= 0 || metadata.Height <= 0 {
+		return theaterWebPMetadata{}, errors.New("WebP dimensions unavailable")
+	}
+	if metadata.FrameCount == 0 {
+		metadata.FrameCount = 1
+	}
+	metadata.Animated = metadata.Animated || metadata.FrameCount > 1
+	return metadata, nil
+}
+
+func uint24LE(value []byte) int {
+	if len(value) < 3 {
+		return 0
+	}
+	return int(value[0]) | int(value[1])<<8 | int(value[2])<<16
 }
 
 func parseFFprobeMetadata(raw []byte, mimeType string) (theaterMediaMetadata, error) {
 	var document struct {
 		Streams []struct {
-			CodecType    string `json:"codec_type"`
-			CodecName    string `json:"codec_name"`
-			Width        int    `json:"width"`
-			Height       int    `json:"height"`
-			AvgFrameRate string `json:"avg_frame_rate"`
+			CodecType    string            `json:"codec_type"`
+			CodecName    string            `json:"codec_name"`
+			Width        int               `json:"width"`
+			Height       int               `json:"height"`
+			AvgFrameRate string            `json:"avg_frame_rate"`
+			NBFrames     string            `json:"nb_frames"`
+			PixelFormat  string            `json:"pix_fmt"`
+			Tags         map[string]string `json:"tags"`
 		} `json:"streams"`
 		Format struct {
 			FormatName string `json:"format_name"`
@@ -223,6 +293,8 @@ func parseFFprobeMetadata(raw []byte, mimeType string) (theaterMediaMetadata, er
 			metadata.Width = stream.Width
 			metadata.Height = stream.Height
 			metadata.FrameRate = parseFrameRate(stream.AvgFrameRate)
+			metadata.FrameCount, _ = strconv.Atoi(stream.NBFrames)
+			metadata.HasAlpha = strings.Contains(stream.PixelFormat, "a") || stream.Tags["alpha_mode"] == "1"
 		case "audio":
 			if metadata.AudioCodec == "" {
 				metadata.AudioCodec = stream.CodecName
@@ -234,6 +306,9 @@ func parseFFprobeMetadata(raw []byte, mimeType string) (theaterMediaMetadata, er
 	}
 	duration, _ := strconv.ParseFloat(document.Format.Duration, 64)
 	metadata.DurationMS = int64(duration * 1000)
+	if metadata.FrameCount <= 0 && metadata.DurationMS > 0 && metadata.FrameRate > 0 {
+		metadata.FrameCount = int(math.Ceil(float64(metadata.DurationMS) * metadata.FrameRate / 1000))
+	}
 	return metadata, nil
 }
 
