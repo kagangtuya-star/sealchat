@@ -84,6 +84,7 @@ const asObject = (value: unknown): JsonObject => value && typeof value === 'obje
 const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Number(value) : fallback
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
 const mutationId = (prefix: string) => `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+const objectBatchUpdateLimit = 200
 
 const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
@@ -398,17 +399,34 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     payload: { sceneId: object.sceneId || null, object: objectInput(object) },
   }))
 
+  const objectUpdates: { objectId: string, fields: JsonObject }[] = []
   Object.values(afterObjects).forEach((object) => {
     const previous = beforeObjects[object.id]
     if (!previous) return
     const fields = objectFields(object, previous)
     if (!Object.keys(fields).length) return
+    objectUpdates.push({ objectId: object.id, fields })
+  })
+  if (objectUpdates.length === 1) {
     mutations.push({
       type: 'object.update',
       permission: 'stage.object.edit',
-      payload: { objectId: object.id, fields },
+      payload: objectUpdates[0],
     })
-  })
+  } else if (objectUpdates.length > 1) {
+    for (let index = 0; index < objectUpdates.length; index += objectBatchUpdateLimit) {
+      const updates = objectUpdates.slice(index, index + objectBatchUpdateLimit)
+      mutations.push(updates.length === 1 ? {
+        type: 'object.update',
+        permission: 'stage.object.edit',
+        payload: updates[0],
+      } : {
+        type: 'object.batchUpdate',
+        permission: 'stage.object.edit',
+        payload: { updates },
+      })
+    }
+  }
 
   const removedObjectIds = new Set(Object.keys(beforeObjects).filter((id) => !afterObjects[id]))
   Object.values(beforeObjects)
@@ -606,6 +624,8 @@ export class TheaterSyncClient {
       this.baseDocument = remoteDocument
       this.applyingRemote = true
       try {
+        const selectedIds = [...this.options.store.selection.selectedIds]
+        const primaryId = this.options.store.state.selectedObjectId
         const workspace = workspaceFromDocument(nextDocument)
         if (localChange) {
           const current = this.options.store.getSnapshot()
@@ -616,6 +636,12 @@ export class TheaterSyncClient {
           ) ? current.selectedObjectId : null
         }
         this.options.store.replaceState(workspace)
+        if (this.options.store.selection.bulkMode) {
+          const validIds = selectedIds.filter((id) => (
+            workspace.persistentObjects[id] || workspace.liveState.sceneObjects[id]
+          ))
+          this.options.store.setSelectedObjectIds(validIds, primaryId)
+        }
       } finally {
         this.applyingRemote = false
       }

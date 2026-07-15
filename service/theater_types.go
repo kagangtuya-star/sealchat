@@ -6,20 +6,21 @@ import (
 )
 
 const (
-	TheaterMutationSceneCreate     = "scene.create"
-	TheaterMutationSceneUpdate     = "scene.update"
-	TheaterMutationSceneDelete     = "scene.delete"
-	TheaterMutationSceneApply      = "scene.apply"
-	TheaterMutationObjectCreate    = "object.create"
-	TheaterMutationObjectUpdate    = "object.update"
-	TheaterMutationObjectDelete    = "object.delete"
-	TheaterMutationObjectToggle    = "object.toggle"
-	TheaterMutationCharacterBind   = "character.bind"
-	TheaterMutationCharacterUpdate = "character.update"
-	TheaterMutationResourceAttach  = "resource.attach"
-	TheaterMutationResourceDetach  = "resource.detach"
-	TheaterMutationAdminRestore    = "admin.snapshot.restore"
-	TheaterMutationAdminReplace    = "admin.snapshot.replace"
+	TheaterMutationSceneCreate       = "scene.create"
+	TheaterMutationSceneUpdate       = "scene.update"
+	TheaterMutationSceneDelete       = "scene.delete"
+	TheaterMutationSceneApply        = "scene.apply"
+	TheaterMutationObjectCreate      = "object.create"
+	TheaterMutationObjectUpdate      = "object.update"
+	TheaterMutationObjectBatchUpdate = "object.batchUpdate"
+	TheaterMutationObjectDelete      = "object.delete"
+	TheaterMutationObjectToggle      = "object.toggle"
+	TheaterMutationCharacterBind     = "character.bind"
+	TheaterMutationCharacterUpdate   = "character.update"
+	TheaterMutationResourceAttach    = "resource.attach"
+	TheaterMutationResourceDetach    = "resource.detach"
+	TheaterMutationAdminRestore      = "admin.snapshot.restore"
+	TheaterMutationAdminReplace      = "admin.snapshot.replace"
 )
 
 const (

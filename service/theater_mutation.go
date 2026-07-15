@@ -281,6 +281,13 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 		return applyTheaterObjectCreate(tx, room, actorID, payload)
 	case *theaterObjectUpdatePayload:
 		return applyTheaterObjectUpdate(tx, room, actorID, payload)
+	case *theaterObjectBatchUpdatePayload:
+		for i := range payload.Updates {
+			if err := applyTheaterObjectUpdate(tx, room, actorID, &payload.Updates[i]); err != nil {
+				return err
+			}
+		}
+		return nil
 	case *theaterObjectDeletePayload:
 		return applyTheaterObjectDelete(tx, room, payload)
 	case *theaterObjectTogglePayload:

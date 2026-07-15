@@ -17,6 +17,7 @@ const (
 	theaterMaxScenes        = 200
 	theaterMaxObjects       = 5000
 	theaterMaxSceneObjects  = 2000
+	theaterMaxBatchUpdates  = 200
 	theaterMaxActions       = 32
 )
 
@@ -81,6 +82,10 @@ type theaterObjectUpdatePayload struct {
 	Fields   map[string]any `json:"fields"`
 }
 
+type theaterObjectBatchUpdatePayload struct {
+	Updates []theaterObjectUpdatePayload `json:"updates"`
+}
+
 type theaterObjectDeletePayload struct {
 	ObjectID string `json:"objectId"`
 	Cascade  bool   `json:"cascade"`
@@ -124,6 +129,8 @@ func decodeTheaterPayload(mutationType string, raw json.RawMessage) (any, json.R
 		target = &theaterObjectCreatePayload{}
 	case TheaterMutationObjectUpdate, TheaterMutationCharacterUpdate:
 		target = &theaterObjectUpdatePayload{}
+	case TheaterMutationObjectBatchUpdate:
+		target = &theaterObjectBatchUpdatePayload{}
 	case TheaterMutationObjectDelete:
 		target = &theaterObjectDeletePayload{}
 	case TheaterMutationObjectToggle:
@@ -197,6 +204,25 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 			return err
 		}
 		return validateObjectFields(payload.Fields, mutationType == TheaterMutationCharacterUpdate)
+	case *theaterObjectBatchUpdatePayload:
+		if len(payload.Updates) == 0 || len(payload.Updates) > theaterMaxBatchUpdates {
+			return theaterPayloadError("updates 数量无效")
+		}
+		seen := make(map[string]bool, len(payload.Updates))
+		for i := range payload.Updates {
+			update := &payload.Updates[i]
+			if err := validateTheaterID(update.ObjectID, "updates.objectId"); err != nil {
+				return err
+			}
+			if seen[update.ObjectID] {
+				return theaterPayloadError("updates 包含重复 objectId")
+			}
+			seen[update.ObjectID] = true
+			if err := validateObjectFields(update.Fields, false); err != nil {
+				return err
+			}
+		}
+		return nil
 	case *theaterObjectDeletePayload:
 		return validateTheaterID(payload.ObjectID, "objectId")
 	case *theaterObjectTogglePayload:

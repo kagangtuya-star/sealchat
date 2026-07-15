@@ -216,6 +216,13 @@ export interface TheaterStageStore {
   scenes: ComputedRef<StageScene[]>
   activeScene: ComputedRef<StageScene>
   activeObjects: ComputedRef<Record<string, StageObject>>
+  selection: TheaterStageSelectionState
+  selectedObjects: ComputedRef<StageObject[]>
+  setBulkSelectionMode: (enabled: boolean) => void
+  selectObject: (objectId: string | null, additive?: boolean) => void
+  setSelectedObjectIds: (objectIds: string[], primaryId?: string | null) => void
+  clearSelection: () => void
+  patchSelectedObjects: (patch: StageObjectBatchPatch) => number
   selectScene: (sceneId: string) => void
   addScene: () => void
   duplicateScene: () => void
@@ -248,11 +255,24 @@ export interface TheaterStageStore {
   replaceState: (next: StageWorkspaceState) => void
 }
 
+export interface TheaterStageSelectionState {
+  bulkMode: boolean
+  selectedIds: string[]
+}
+
+export type StageObjectBatchPatch = Partial<Pick<StageObject,
+  'visible' | 'interactive' | 'editable' | 'locked' | 'sizeLocked' | 'fill'
+>>
+
 export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore => {
   const state = reactive<StageWorkspaceState>(createInitialTheaterStageState())
   const scenes = computed(() => Object.values(state.scenes).sort((a, b) => a.order - b.order))
   const activeScene = computed(() => state.scenes[state.activeSceneId] || scenes.value[0])
   const activeObjects = computed(() => ({ ...state.liveState.sceneObjects, ...state.persistentObjects }))
+  const selection = reactive<TheaterStageSelectionState>({ bulkMode: false, selectedIds: [] })
+  const selectedObjects = computed(() => selection.selectedIds
+    .map((id) => activeObjects.value[id])
+    .filter((object): object is StageObject => Boolean(object)))
   const editingState = reactive({ historyDepth: 0, clipboardReady: false })
   const history: NonNullable<ReturnType<typeof createObjectHistoryEntry>>[] = []
   let clipboard: StageClipboardBundle | null = null
@@ -302,7 +322,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (current.before.sceneId !== state.activeSceneId) return
     state.liveState.sceneObjects = clone(current.before.sceneObjects)
     state.persistentObjects = clone(current.before.persistentObjects)
-    state.selectedObjectId = current.selectionBefore
+    setSelectedObjectIds(current.selectionBefore ? [current.selectionBefore] : [], current.selectionBefore)
   }
 
   const runObjectEdit = <T>(label: string, mutate: () => T): T => {
@@ -318,10 +338,56 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     }
   }
 
-  const canCopy = computed(() => Boolean(state.selectedObjectId && activeObjects.value[state.selectedObjectId]))
+  const canCopy = computed(() => selectedObjects.value.length === 1)
   const canCut = computed(() => canCopy.value)
   const canPaste = computed(() => editingState.clipboardReady)
   const canUndo = computed(() => editingState.historyDepth > 0)
+
+  const setSelectedObjectIds = (objectIds: string[], primaryId?: string | null) => {
+    const next = [...new Set(objectIds)].filter((id) => Boolean(activeObjects.value[id]))
+    const primary = primaryId && next.includes(primaryId) ? primaryId : next[next.length - 1] || null
+    selection.selectedIds = next
+    state.selectedObjectId = primary
+  }
+
+  const clearSelection = () => setSelectedObjectIds([])
+
+  const setBulkSelectionMode = (enabled: boolean) => {
+    selection.bulkMode = enabled
+    setSelectedObjectIds(state.selectedObjectId ? [state.selectedObjectId] : [])
+  }
+
+  const selectObject = (objectId: string | null, additive = false) => {
+    if (!objectId) {
+      clearSelection()
+      return
+    }
+    if (!activeObjects.value[objectId]) return
+    if (!selection.bulkMode || !additive) {
+      setSelectedObjectIds([objectId], objectId)
+      return
+    }
+    const selected = selection.selectedIds.includes(objectId)
+    const next = selected
+      ? selection.selectedIds.filter((id) => id !== objectId)
+      : [...selection.selectedIds, objectId]
+    setSelectedObjectIds(next, selected ? undefined : objectId)
+  }
+
+  const patchSelectedObjects = (patch: StageObjectBatchPatch) => runObjectEdit('批量修改对象', () => {
+    const entries = Object.entries(patch) as [keyof StageObjectBatchPatch, StageObjectBatchPatch[keyof StageObjectBatchPatch]][]
+    let changed = 0
+    selectedObjects.value.forEach((object) => {
+      let objectChanged = false
+      entries.forEach(([key, value]) => {
+        if (value === undefined || object[key] === value) return
+        ;(object as unknown as Record<string, unknown>)[key] = value
+        objectChanged = true
+      })
+      if (objectChanged) changed += 1
+    })
+    return changed
+  })
 
   const saveLiveState = () => {
     const scene = state.scenes[state.activeSceneId]
@@ -333,7 +399,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     saveLiveState()
     state.activeSceneId = sceneId
     state.liveState = clone(state.scenes[sceneId].state)
-    state.selectedObjectId = null
+    clearSelection()
   }
 
   const addScene = () => {
@@ -343,7 +409,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes[scene.id] = scene
     state.activeSceneId = scene.id
     state.liveState = clone(scene.state)
-    state.selectedObjectId = null
+    clearSelection()
   }
 
   const duplicateScene = () => {
@@ -370,7 +436,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes[scene.id] = scene
     state.activeSceneId = scene.id
     state.liveState = clone(scene.state)
-    state.selectedObjectId = null
+    clearSelection()
   }
 
   const removeScene = () => {
@@ -381,7 +447,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const next = remaining[Math.max(0, currentIndex - 1)] || remaining[0]
     state.activeSceneId = next.id
     state.liveState = clone(next.state)
-    state.selectedObjectId = null
+    clearSelection()
   }
 
   const addObject = (type: StageObjectType, persistent = false) => runObjectEdit('添加对象', () => {
@@ -400,7 +466,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       Object.keys(objects).length,
     )
     objects[object.id] = object
-    state.selectedObjectId = object.id
+    setSelectedObjectIds([object.id], object.id)
     return object
   })
 
@@ -427,7 +493,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!id) return
     for (const childId of collectDescendants(id)) delete getObjectCollection(childId)[childId]
     delete getObjectCollection(id)[id]
-    state.selectedObjectId = null
+    clearSelection()
   }
 
   const removeSelectedObject = (recordHistory = true) => {
@@ -476,7 +542,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
         keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null,
       )
       pasted.objects.forEach((object) => { collection[object.id] = object })
-      state.selectedObjectId = pasted.rootId
+      setSelectedObjectIds([pasted.rootId], pasted.rootId)
       return collection[pasted.rootId]
     })
   }
@@ -493,9 +559,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
         : scene.state.sceneObjects
       applyObjectHistoryEntry(entry, 'undo', sceneObjects, state.persistentObjects)
       const restoredSelection = entry.selectionBefore
-      state.selectedObjectId = restoredSelection && activeObjects.value[restoredSelection]
-        ? restoredSelection
-        : null
+      setSelectedObjectIds(restoredSelection && activeObjects.value[restoredSelection]
+        ? [restoredSelection]
+        : [], restoredSelection)
       return true
     }
     return false
@@ -584,7 +650,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const object = getObject(objectId)
     if (!object) return false
     object.visible = !object.visible
-    if (!object.visible && state.selectedObjectId === objectId) state.selectedObjectId = null
+    if (!object.visible && selection.selectedIds.includes(objectId)) {
+      setSelectedObjectIds(selection.selectedIds.filter((id) => id !== objectId))
+    }
     return true
   }
 
@@ -604,16 +672,27 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes = value.scenes
     state.persistentObjects = value.persistentObjects
     state.camera = value.camera
-    state.selectedObjectId = value.selectedObjectId
+    setSelectedObjectIds(value.selectedObjectId ? [value.selectedObjectId] : [], value.selectedObjectId)
   }
 
   watch(() => state.liveState, saveLiveState, { deep: true, flush: 'sync' })
+  watch(activeObjects, () => {
+    const valid = selection.selectedIds.filter((id) => Boolean(activeObjects.value[id]))
+    if (valid.length !== selection.selectedIds.length) setSelectedObjectIds(valid)
+  })
 
   return {
     state,
     scenes,
     activeScene,
     activeObjects,
+    selection,
+    selectedObjects,
+    setBulkSelectionMode,
+    selectObject,
+    setSelectedObjectIds,
+    clearSelection,
+    patchSelectedObjects,
     selectScene,
     addScene,
     duplicateScene,

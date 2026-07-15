@@ -24,6 +24,7 @@ import {
   Plus,
   Rectangle,
   Refresh,
+  Select,
   Stack2,
   Trash,
   X,
@@ -111,13 +112,24 @@ const handleStageShortcut = (event: KeyboardEvent) => {
   if (
     event.isComposing
     || event.altKey
-    || !(event.ctrlKey || event.metaKey)
     || isEditableShortcutTarget(event.target)
     || imageEditorVisible.value
   ) return
   const key = event.key.toLowerCase()
+  if (key === 'escape' && props.store.selection.bulkMode) {
+    if (props.store.selection.selectedIds.length) props.store.clearSelection()
+    else props.store.setBulkSelectionMode(false)
+    event.preventDefault()
+    return
+  }
+  if (!(event.ctrlKey || event.metaKey)) return
   let handled = false
-  if (key === 'c') handled = props.store.copySelectedObject()
+  if (key === 'a' && props.store.selection.bulkMode && canEditAllObjects.value) {
+    props.store.setSelectedObjectIds(Object.values(props.store.activeObjects.value)
+      .filter((object) => object.visible)
+      .map((object) => object.id))
+    handled = true
+  } else if (key === 'c') handled = props.store.copySelectedObject()
   else if (key === 'x' && canEditAllObjects.value) handled = props.store.cutSelectedObject()
   else if (key === 'v' && canEditAllObjects.value) handled = Boolean(props.store.pasteObject())
   else if (key === 'z' && !event.shiftKey && canEditAllObjects.value) handled = props.store.undo()
@@ -329,8 +341,11 @@ let foregroundCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
+let selectionRect: Konva.Rect | null = null
 let resizeObserver: ResizeObserver | null = null
 let panning = false
+let marqueeStart: { x: number, y: number } | null = null
+let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
 let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
@@ -338,6 +353,11 @@ let gridSignature = ''
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 const transformCenters = new Map<string, { x: number, y: number }>()
+let multiDrag: {
+  driverId: string
+  driverStart: { x: number, y: number }
+  nodes: Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>
+} | null = null
 
 interface SurfaceSlot {
   group: Konva.Group
@@ -357,6 +377,33 @@ const selectedObject = computed(() => {
   const id = props.store.state.selectedObjectId
   return id ? props.store.activeObjects.value[id] || null : null
 })
+const selectedObjects = props.store.selectedObjects
+const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
+const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
+const batchMoveBlocked = computed(() => isBatchSelection.value && selectedObjects.value.some((object) => object.locked))
+
+type BatchBooleanKey = 'visible' | 'interactive' | 'editable' | 'locked' | 'sizeLocked'
+const batchBooleanChecked = (key: BatchBooleanKey) => selectedObjects.value.length > 0
+  && selectedObjects.value.every((object) => object[key])
+const batchBooleanIndeterminate = (key: BatchBooleanKey) => {
+  const enabled = selectedObjects.value.filter((object) => object[key]).length
+  return enabled > 0 && enabled < selectedObjects.value.length
+}
+const updateBatchBoolean = (key: BatchBooleanKey, checked: boolean) => {
+  props.store.patchSelectedObjects({ [key]: checked })
+}
+
+const selectedMovementRootIds = () => {
+  const selected = selectedIdSet.value
+  return props.store.selection.selectedIds.filter((id) => {
+    let parentId = getObject(id)?.parentId || null
+    while (parentId) {
+      if (selected.has(parentId)) return false
+      parentId = getObject(parentId)?.parentId || null
+    }
+    return true
+  })
+}
 
 const parentOptions = computed(() => Object.values(props.store.activeObjects.value)
   .filter((object) => object.type === 'group'
@@ -440,6 +487,17 @@ const applyCamera = () => {
 
 const updateTransformer = () => {
   if (!transformer) return
+  if (isBatchSelection.value) {
+    const nodes = selectedMovementRootIds()
+      .map((id) => objectNodes.get(id))
+      .filter((node): node is Konva.Group => Boolean(node))
+    transformer.nodes(nodes)
+    transformer.keepRatio(false)
+    transformer.enabledAnchors([])
+    transformer.rotateEnabled(false)
+    interactionLayer?.batchDraw()
+    return
+  }
   const object = selectedObject.value
   const node = object && object.type !== 'group' && !object.locked && canEditObject(object) ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
@@ -453,10 +511,19 @@ const updateTransformer = () => {
   interactionLayer?.batchDraw()
 }
 
-const selectObject = (objectId: string | null) => {
+const selectObject = (objectId: string | null, additive = false) => {
   if (objectId && !canEditObject(getObject(objectId))) return
-  props.store.state.selectedObjectId = objectId
+  props.store.selectObject(objectId, additive)
   nextTick(updateTransformer)
+}
+
+const toggleBulkSelectionMode = () => {
+  if (!canEditAllObjects.value) return
+  props.store.setBulkSelectionMode(!props.store.selection.bulkMode)
+  nextTick(() => {
+    syncObjects()
+    updateTransformer()
+  })
 }
 
 const setImageFit = (
@@ -734,7 +801,13 @@ const createObjectNode = (object: StageObject) => {
     const current = getObject(object.id)
     if (!canEditObject(current)) return
     event.cancelBubble = true
-    selectObject(object.id)
+    const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
+    if (
+      props.store.selection.bulkMode
+      && selectedIdSet.value.has(object.id)
+      && !additive
+    ) return
+    selectObject(object.id, additive)
   })
   wrapper.on('click tap', () => {
     const current = getObject(object.id)
@@ -747,9 +820,57 @@ const createObjectNode = (object: StageObject) => {
     selectObject(object.id)
   })
   wrapper.on('dragstart', () => {
-    if (canEditObject(getObject(object.id))) props.store.beginObjectEdit('移动对象')
+    if (!canEditObject(getObject(object.id))) return
+    if (isBatchSelection.value && selectedIdSet.value.has(object.id)) {
+      if (batchMoveBlocked.value) {
+        wrapper.stopDrag()
+        return
+      }
+      const rootIds = selectedMovementRootIds()
+      if (!rootIds.includes(object.id)) {
+        wrapper.stopDrag()
+        return
+      }
+      const nodes = new Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>()
+      rootIds.forEach((id) => {
+        const node = objectNodes.get(id)
+        if (node) nodes.set(id, { node, absolute: node.absolutePosition() })
+      })
+      const driverStart = nodes.get(object.id)?.absolute
+      if (!driverStart) return
+      multiDrag = { driverId: object.id, driverStart, nodes }
+      props.store.beginObjectEdit('批量移动对象')
+      return
+    }
+    props.store.beginObjectEdit('移动对象')
+  })
+  wrapper.on('dragmove', () => {
+    if (!multiDrag || multiDrag.driverId !== object.id) return
+    const current = wrapper.absolutePosition()
+    const delta = {
+      x: current.x - multiDrag.driverStart.x,
+      y: current.y - multiDrag.driverStart.y,
+    }
+    multiDrag.nodes.forEach(({ node, absolute }, id) => {
+      if (id === object.id) return
+      node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
+    })
+    updateTransformer()
   })
   wrapper.on('dragend', () => {
+    if (multiDrag?.driverId === object.id) {
+      const currentDrag = multiDrag
+      multiDrag = null
+      currentDrag.nodes.forEach(({ node }, id) => {
+        const current = getObject(id)
+        if (!current) return
+        current.transform.x = Number((node.x() / WORLD_UNIT_PX).toFixed(6))
+        current.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
+      })
+      props.store.commitObjectEdit()
+      updateTransformer()
+      return
+    }
     const current = getObject(object.id)
     if (!canEditObject(current)) {
       props.store.cancelObjectEdit()
@@ -854,6 +975,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   if (wrapper.getAttr('stageObjectType') !== object.type) rebuildObjectContent(wrapper, object)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+  const multiSelected = isBatchSelection.value && selectedIdSet.value.has(object.id)
+  const selectedAncestor = multiSelected && !selectedMovementRootIds().includes(object.id)
   wrapper.setAttrs({
     x: object.transform.x * WORLD_UNIT_PX,
     y: object.transform.y * WORLD_UNIT_PX,
@@ -861,7 +984,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     offsetY: height / 2,
     rotation: object.transform.rotation,
     visible: object.visible,
-    draggable: !object.locked && canEditObject(object),
+    draggable: !object.locked && canEditObject(object) && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
     listening: canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
   })
   if (object.type === 'text') {
@@ -934,6 +1057,15 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
   if (event.evt.button !== 0 || event.target !== stage) return
   event.evt.preventDefault()
+  if (props.store.selection.bulkMode && canEditAllObjects.value) {
+    const pointer = stage.getPointerPosition()
+    if (!pointer) return
+    marqueeStart = pointer
+    marqueeAdditive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
+    selectionRect?.setAttrs({ x: pointer.x, y: pointer.y, width: 0, height: 0, visible: true })
+    interactionLayer?.batchDraw()
+    return
+  }
   selectObject(null)
   panning = true
   panPointer = { x: event.evt.clientX, y: event.evt.clientY }
@@ -941,12 +1073,43 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
 }
 
 const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
+  if (marqueeStart && stage && selectionRect) {
+    const pointer = stage.getPointerPosition()
+    if (!pointer) return
+    selectionRect.setAttrs({
+      x: Math.min(marqueeStart.x, pointer.x),
+      y: Math.min(marqueeStart.y, pointer.y),
+      width: Math.abs(pointer.x - marqueeStart.x),
+      height: Math.abs(pointer.y - marqueeStart.y),
+    })
+    interactionLayer?.batchDraw()
+    return
+  }
   if (!panning) return
   props.store.state.camera.x = panOrigin.x + event.evt.clientX - panPointer.x
   props.store.state.camera.y = panOrigin.y + event.evt.clientY - panPointer.y
 }
 
-const stopPan = () => { panning = false }
+const stopPan = () => {
+  panning = false
+  if (!marqueeStart || !selectionRect || !stage) return
+  const box = selectionRect.getClientRect({ relativeTo: stage })
+  const hits = Object.values(props.store.activeObjects.value)
+    .filter((object) => object.visible && canEditObject(object))
+    .filter((object) => {
+      const node = objectNodes.get(object.id)
+      return node && Konva.Util.haveIntersection(box, node.getClientRect({ relativeTo: stage! }))
+    })
+    .map((object) => object.id)
+  const next = marqueeAdditive
+    ? [...props.store.selection.selectedIds, ...hits]
+    : hits
+  props.store.setSelectedObjectIds(next, hits[hits.length - 1])
+  marqueeStart = null
+  marqueeAdditive = false
+  selectionRect.visible(false)
+  interactionLayer?.batchDraw()
+}
 
 const targetImageUrl = (target: ImageTarget) => target.kind === 'scene'
   ? props.store.state.liveState[target.target]?.url || ''
@@ -1123,13 +1286,21 @@ onMounted(() => {
     anchorFill: '#0f172a',
     anchorSize: 9,
   })
+  selectionRect = new Konva.Rect({
+    visible: false,
+    listening: false,
+    fill: 'rgba(56, 189, 248, 0.12)',
+    stroke: '#38bdf8',
+    strokeWidth: 1,
+    dash: [5, 4],
+  })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false)
   worldCameraGroup.add(gridGroup, objectRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
-  interactionLayer.add(transformer)
+  interactionLayer.add(selectionRect, transformer)
   stage.add(backgroundLayer, worldLayer, foregroundLayer, interactionLayer)
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
@@ -1155,12 +1326,14 @@ watch(() => props.store.state.persistentObjects, syncObjects, { deep: true })
 watch(() => props.store.state.camera, applyCamera, { deep: true })
 watch(() => [props.syncReady, ...props.permissions], () => {
   const object = selectedObject.value
-  if (object && !canEditObject(object)) props.store.state.selectedObjectId = null
+  if (object && !canEditObject(object)) props.store.clearSelection()
+  if (!canEditAllObjects.value && props.store.selection.bulkMode) props.store.setBulkSelectionMode(false)
   syncObjects()
 })
-watch(() => props.store.state.selectedObjectId, () => {
+watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
-  if (props.store.state.selectedObjectId) inspectorPanelOpen.value = true
+  if (props.store.selection.selectedIds.length) inspectorPanelOpen.value = true
+  syncObjects()
   updateTransformer()
 })
 watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen], async (open) => {
@@ -1182,6 +1355,7 @@ onBeforeUnmount(() => {
   props.store.commitObjectEdit()
   objectNodes.clear()
   imageLoadVersions.clear()
+  props.store.setBulkSelectionMode(false)
   stage?.destroy()
   stage = null
 })
@@ -1202,6 +1376,21 @@ onBeforeUnmount(() => {
       <div class="theater-stage-title" :title="store.activeScene.value.name">
         {{ store.activeScene.value.name }}
       </div>
+      <n-tooltip v-if="canEditAllObjects" trigger="hover">
+        <template #trigger>
+          <n-button
+            class="theater-bulk-select-tool"
+            :class="{ 'is-active': store.selection.bulkMode }"
+            quaternary
+            size="small"
+            aria-label="批量选择组件"
+            @click="toggleBulkSelectionMode"
+          >
+            <template #icon><n-icon><Select /></n-icon></template>
+          </n-button>
+        </template>
+        批量选择组件
+      </n-tooltip>
       <n-button-group class="theater-panel-switches" size="small">
         <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
           <template #trigger>
@@ -1331,7 +1520,52 @@ onBeforeUnmount(() => {
       </aside>
 
       <aside v-if="inspectorPanelOpen" class="theater-floating-panel theater-object-inspector" data-panel-id="inspector" :style="panelStyle('inspector')">
-        <template v-if="selectedObject">
+        <template v-if="isBatchSelection">
+          <div class="theater-panel-heading" @pointerdown="startPanelDrag('inspector', $event)">
+            <span>批量编辑</span>
+            <div class="theater-panel-heading__actions">
+              <small>{{ selectedObjects.length }} 个组件</small>
+              <n-button class="theater-panel-close" text size="tiny" aria-label="关闭组件编辑面板" @click="inspectorPanelOpen = false"><n-icon><X /></n-icon></n-button>
+            </div>
+          </div>
+          <div class="theater-inspector theater-batch-inspector">
+            <div class="theater-batch-summary">
+              <span>{{ selectedObjects.length }} 个组件</span>
+              <n-button text size="tiny" @click="store.clearSelection">清除选择</n-button>
+            </div>
+            <div v-if="batchMoveBlocked" class="theater-batch-warning">
+              选中组件包含锁定位置项
+            </div>
+            <div class="theater-object-editor__checks theater-batch-checks">
+              <n-checkbox
+                :checked="batchBooleanChecked('visible')"
+                :indeterminate="batchBooleanIndeterminate('visible')"
+                @update:checked="updateBatchBoolean('visible', $event)"
+              >显示</n-checkbox>
+              <n-checkbox
+                :checked="batchBooleanChecked('interactive')"
+                :indeterminate="batchBooleanIndeterminate('interactive')"
+                @update:checked="updateBatchBoolean('interactive', $event)"
+              >可交互</n-checkbox>
+              <n-checkbox
+                :checked="batchBooleanChecked('editable')"
+                :indeterminate="batchBooleanIndeterminate('editable')"
+                @update:checked="updateBatchBoolean('editable', $event)"
+              >可编辑</n-checkbox>
+              <n-checkbox
+                :checked="batchBooleanChecked('locked')"
+                :indeterminate="batchBooleanIndeterminate('locked')"
+                @update:checked="updateBatchBoolean('locked', $event)"
+              >锁定位置</n-checkbox>
+              <n-checkbox
+                :checked="batchBooleanChecked('sizeLocked')"
+                :indeterminate="batchBooleanIndeterminate('sizeLocked')"
+                @update:checked="updateBatchBoolean('sizeLocked', $event)"
+              >锁定尺寸</n-checkbox>
+            </div>
+          </div>
+        </template>
+        <template v-else-if="selectedObject">
           <div class="theater-panel-heading" @pointerdown="startPanelDrag('inspector', $event)">
             <span>组件编辑</span>
             <div class="theater-panel-heading__actions">
@@ -1416,7 +1650,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" :disabled="!selectedObject.parentId" @click="store.setParent(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
               </div>
               <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
-              <n-button size="small" secondary type="error" @click="store.removeSelectedObject"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
+              <n-button size="small" secondary type="error" @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
             </template>
           </div>
         </template>
@@ -1458,11 +1692,11 @@ onBeforeUnmount(() => {
             v-for="row in layerRows"
             :key="row.object.id"
             class="theater-layer-row"
-            :class="{ 'is-active': row.object.id === store.state.selectedObjectId }"
+            :class="{ 'is-active': store.selection.selectedIds.includes(row.object.id) }"
             :style="{ paddingLeft: `${10 + row.depth * 15}px` }"
             :disabled="!canEditObject(row.object)"
             :draggable="canEditAllObjects"
-            @click="selectObject(row.object.id)"
+            @click="selectObject(row.object.id, store.selection.bulkMode && ($event.shiftKey || $event.ctrlKey || $event.metaKey))"
             @dragstart="canEditAllObjects && (draggedLayerId = row.object.id, store.beginObjectEdit('调整对象顺序'))"
             @dragend="draggedLayerId = null; store.commitObjectEdit()"
             @dragover.prevent
@@ -1504,13 +1738,13 @@ onBeforeUnmount(() => {
   background: var(--sc-bg-header, #262626); scrollbar-width: none;
 }
 .theater-stage-toolbar::-webkit-scrollbar { display: none; }
-.theater-toolbar-exit, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-toolbar-exit, .theater-bulk-select-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
-.theater-panel-switches :deep(.n-button.is-active) {
+.theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
 .theater-toolbar-divider { width: 1px; height: 22px; flex: 0 0 1px; margin: 0 2px; background: var(--theater-border); }
@@ -1562,6 +1796,10 @@ onBeforeUnmount(() => {
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }
 .theater-object-editor__checks { display: flex; flex-wrap: wrap; gap: 10px 14px; padding-top: 2px; }
+.theater-batch-inspector { gap: 12px; }
+.theater-batch-summary { display: flex; align-items: center; justify-content: space-between; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }
+.theater-batch-warning { padding: 7px 8px; border: 1px solid color-mix(in srgb, #f59e0b 42%, transparent); border-radius: 6px; color: #fbbf24; background: color-mix(in srgb, #f59e0b 10%, transparent); font-size: 11px; }
+.theater-batch-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .theater-media-settings { display: grid; gap: 5px; padding: 9px; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-media-settings label, .theater-inspector label { color: var(--sc-fg-muted, #71717a); font-size: 10px; }
 .theater-image-actions { display: flex; align-items: center; gap: 4px; }
