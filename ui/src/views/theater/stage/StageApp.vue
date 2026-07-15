@@ -40,6 +40,7 @@ import {
   type StageObjectFit,
 } from '../shared/stage-types'
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
+import { syncStageObjectHierarchy } from './stage-layering'
 import type { TheaterStageStore } from './StageStore'
 
 const props = defineProps<{
@@ -326,8 +327,7 @@ let backgroundCameraGroup: Konva.Group | null = null
 let worldCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
-let sceneObjectRoot: Konva.Group | null = null
-let persistentObjectRoot: Konva.Group | null = null
+let objectRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let resizeObserver: ResizeObserver | null = null
 let panning = false
@@ -887,7 +887,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
 }
 
 const syncObjects = () => {
-  if (!sceneObjectRoot || !persistentObjectRoot) return
+  if (!objectRoot) return
   const objects = props.store.activeObjects.value
   for (const [objectId, node] of objectNodes) {
     if (objects[objectId]) continue
@@ -899,34 +899,7 @@ const syncObjects = () => {
     const node = objectNodes.get(object.id) || createObjectNode(object)
     updateObjectNode(node, object)
   }
-  const attachChildren = (parentId: string | null) => {
-    const children = Object.values(objects)
-      .filter((object) => (object.parentId && objects[object.parentId] ? object.parentId : null) === parentId)
-      .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order)
-    const childrenByParent = new Map<Konva.Group, StageObject[]>()
-    children.forEach((object) => {
-      const node = objectNodes.get(object.id)
-      if (!node) return
-      const parent = parentId
-        ? objectNodes.get(parentId)
-        : props.store.isPersistentObject(object.id) ? persistentObjectRoot : sceneObjectRoot
-      if (!parent) return
-      if (node.getParent() !== parent) node.moveTo(parent)
-      const siblings = childrenByParent.get(parent) || []
-      siblings.push(object)
-      childrenByParent.set(parent, siblings)
-    })
-    childrenByParent.forEach((siblings, parent) => siblings.forEach((object, index) => {
-      const node = objectNodes.get(object.id)
-      if (!node) return
-      const contentCount = parentId
-        ? Array.from(parent.getChildren()).filter((child) => !(child as Konva.Node).getAttr('stageObjectId')).length
-        : 0
-      node.zIndex(contentCount + index)
-      attachChildren(object.id)
-    }))
-  }
-  attachChildren(null)
+  syncStageObjectHierarchy(objects, objectNodes, objectRoot)
   worldLayer?.batchDraw()
   nextTick(updateTransformer)
 }
@@ -1139,8 +1112,7 @@ onMounted(() => {
   worldCameraGroup = new Konva.Group()
   foregroundCameraGroup = new Konva.Group()
   gridGroup = new Konva.Group({ listening: false })
-  sceneObjectRoot = new Konva.Group()
-  persistentObjectRoot = new Konva.Group()
+  objectRoot = new Konva.Group()
   transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
@@ -1153,7 +1125,7 @@ onMounted(() => {
   })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false)
-  worldCameraGroup.add(gridGroup, sceneObjectRoot, persistentObjectRoot)
+  worldCameraGroup.add(gridGroup, objectRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
