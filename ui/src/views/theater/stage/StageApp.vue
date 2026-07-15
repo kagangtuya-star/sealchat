@@ -99,6 +99,7 @@ const imageEditorTarget = ref<ImageTarget | null>(null)
 const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
 const activeCanvasTool = ref<StageCanvasTool | null>(null)
+const quickDeleteActive = ref(false)
 const drawingStyle = ref<StageDrawingStyle>({
   stroke: '#f8fafc',
   strokeWidth: 4,
@@ -143,6 +144,12 @@ const handleStageShortcut = (event: KeyboardEvent) => {
     || imageEditorVisible.value
   ) return
   const key = event.key.toLowerCase()
+  if (key === 'escape' && quickDeleteActive.value) {
+    quickDeleteActive.value = false
+    nextTick(updateTransformer)
+    event.preventDefault()
+    return
+  }
   if (key === 'escape' && activeCanvasTool.value) {
     if (drawingSession) cancelDrawingSession()
     else activeCanvasTool.value = null
@@ -154,6 +161,17 @@ const handleStageShortcut = (event: KeyboardEvent) => {
     if (props.store.selection.selectedIds.length) props.store.clearSelection()
     else props.store.setBulkSelectionMode(false)
     event.preventDefault()
+    return
+  }
+  if (
+    (key === 'delete' || key === 'backspace')
+    && !event.ctrlKey
+    && !event.metaKey
+    && canEditAllObjects.value
+    && props.store.removeSelectedObjects() > 0
+  ) {
+    event.preventDefault()
+    nextTick(updateTransformer)
     return
   }
   if (!(event.ctrlKey || event.metaKey)) return
@@ -172,6 +190,7 @@ const handleStageShortcut = (event: KeyboardEvent) => {
 
 const selectCanvasTool = (tool: StageCanvasTool) => {
   cancelDrawingSession()
+  quickDeleteActive.value = false
   const previousTool = activeCanvasTool.value
   if (isDrawingTool(previousTool)) drawingStyleMemory.set(previousTool, { ...drawingStyle.value })
   if (previousTool === tool) {
@@ -189,6 +208,16 @@ const selectCanvasTool = (tool: StageCanvasTool) => {
         ? { stroke: '#f8fafc', strokeWidth: 4, opacity: 1, fill: null, dash: 'solid' }
         : { stroke: '#f8fafc', strokeWidth: 3, opacity: 1, fill: null, dash: 'solid' })
   }
+  nextTick(updateTransformer)
+}
+
+const toggleQuickDeleteTool = () => {
+  if (!canEditAllObjects.value) return
+  cancelDrawingSession()
+  activeCanvasTool.value = null
+  quickDeleteActive.value = !quickDeleteActive.value
+  props.store.setBulkSelectionMode(false)
+  props.store.clearSelection()
   nextTick(updateTransformer)
 }
 
@@ -404,6 +433,7 @@ let objectRoot: Konva.Group | null = null
 let drawingDraftRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let selectionRect: Konva.Rect | null = null
+let quickDeleteOutline: Konva.Rect | null = null
 let resizeObserver: ResizeObserver | null = null
 let panning = false
 let marqueeStart: { x: number, y: number } | null = null
@@ -648,7 +678,7 @@ const applyCamera = () => {
 
 const updateTransformer = () => {
   if (!transformer) return
-  if (activeCanvasTool.value) {
+  if (activeCanvasTool.value || quickDeleteActive.value) {
     transformer.nodes([])
     transformer.visible(false)
     interactionLayer?.batchDraw()
@@ -710,6 +740,9 @@ const openObjectInspector = (objectId: string) => {
 
 const toggleBulkSelectionMode = () => {
   if (!canEditAllObjects.value) return
+  cancelDrawingSession()
+  activeCanvasTool.value = null
+  quickDeleteActive.value = false
   props.store.setBulkSelectionMode(!props.store.selection.bulkMode)
   nextTick(() => {
     syncObjects()
@@ -1258,6 +1291,15 @@ const createObjectNode = (object: StageObject) => {
   wrapper.on('pointerdown', (event) => {
     if (event.evt.button !== 0) return
     const current = getObject(object.id)
+    if (quickDeleteActive.value) {
+      if (!canEditAllObjects.value) return
+      const targetId = canvasSelectionTarget(object.id)
+      if (!getObject(targetId)) return
+      event.cancelBubble = true
+      quickDeleteOutline?.visible(false)
+      props.store.removeObjects([targetId])
+      return
+    }
     if (activeCanvasTool.value === 'eraser') {
       if (!canEditAllObjects.value || current?.type !== 'drawing') return
       event.cancelBubble = true
@@ -1281,22 +1323,42 @@ const createObjectNode = (object: StageObject) => {
     selectObject(selectionId, additive)
   })
   wrapper.on('dblclick dbltap', (event) => {
-    if (activeCanvasTool.value) return
+    if (activeCanvasTool.value || quickDeleteActive.value) return
     if (!canEditObject(getObject(object.id))) return
     event.cancelBubble = true
     selectObject(object.id)
   })
   wrapper.on('click tap', () => {
-    if (activeCanvasTool.value) return
+    if (activeCanvasTool.value || quickDeleteActive.value) return
     const current = getObject(object.id)
     if (current) triggerObjectActions(current)
   })
   wrapper.on('contextmenu', (event) => {
-    if (activeCanvasTool.value) return
+    if (activeCanvasTool.value || quickDeleteActive.value) return
     if (!canEditObject(getObject(object.id))) return
     event.evt.preventDefault()
     event.cancelBubble = true
     openObjectInspector(object.id)
+  })
+  wrapper.on('pointerenter pointermove', () => {
+    if (!quickDeleteActive.value || !stage || !quickDeleteOutline) return
+    const targetId = canvasSelectionTarget(object.id)
+    const node = objectNodes.get(targetId)
+    if (!node) return
+    const box = node.getClientRect({ relativeTo: stage })
+    quickDeleteOutline.setAttrs({
+      x: box.x - 4,
+      y: box.y - 4,
+      width: box.width + 8,
+      height: box.height + 8,
+      visible: true,
+    })
+    interactionLayer?.batchDraw()
+  })
+  wrapper.on('pointerleave', () => {
+    if (!quickDeleteActive.value) return
+    quickDeleteOutline?.visible(false)
+    interactionLayer?.batchDraw()
   })
   wrapper.on('dragstart', () => {
     if (!canEditObject(getObject(object.id))) return
@@ -1485,6 +1547,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     visible: object.visible,
     draggable: !object.locked
       && !activeCanvasTool.value
+      && !quickDeleteActive.value
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
@@ -1602,6 +1665,11 @@ const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
 
 const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
+  if (quickDeleteActive.value) {
+    quickDeleteOutline?.visible(false)
+    interactionLayer?.batchDraw()
+    return
+  }
   if (activeCanvasTool.value === 'eraser') return
   if (isDrawingTool(activeCanvasTool.value) && canEditAllObjects.value && event.evt.button === 0) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
@@ -1998,7 +2066,7 @@ onMounted(() => {
     anchorSize: 9,
   })
   transformer.on('contextmenu', (event) => {
-    if (activeCanvasTool.value) return
+    if (activeCanvasTool.value || quickDeleteActive.value) return
     const selectedId = props.store.state.selectedObjectId
     if (!selectedId || !canEditObject(getObject(selectedId))) return
     event.evt.preventDefault()
@@ -2013,13 +2081,20 @@ onMounted(() => {
     strokeWidth: 1,
     dash: [5, 4],
   })
+  quickDeleteOutline = new Konva.Rect({
+    visible: false,
+    listening: false,
+    stroke: '#ef4444',
+    strokeWidth: 2,
+    dash: [6, 4],
+  })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false)
   worldCameraGroup.add(gridGroup, objectRoot, drawingDraftRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
-  interactionLayer.add(selectionRect, transformer)
+  interactionLayer.add(selectionRect, quickDeleteOutline, transformer)
   stage.add(backgroundLayer, worldLayer, foregroundLayer, interactionLayer)
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
@@ -2047,10 +2122,16 @@ watch(activeCanvasTool, () => {
   syncObjects()
   updateTransformer()
 })
+watch(quickDeleteActive, (active) => {
+  if (!active) quickDeleteOutline?.visible(false)
+  syncObjects()
+  updateTransformer()
+})
 watch(() => [props.syncReady, ...props.permissions], () => {
   const object = selectedObject.value
   if (object && !canEditObject(object)) props.store.clearSelection()
   if (!canEditAllObjects.value && props.store.selection.bulkMode) props.store.setBulkSelectionMode(false)
+  if (!canEditAllObjects.value) quickDeleteActive.value = false
   syncObjects()
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
@@ -2121,6 +2202,22 @@ onBeforeUnmount(() => {
         </template>
         批量选择组件
       </n-tooltip>
+      <n-tooltip v-if="canEditAllObjects" trigger="hover">
+        <template #trigger>
+          <n-button
+            class="theater-quick-delete-tool"
+            :class="{ 'is-active': quickDeleteActive }"
+            quaternary
+            size="small"
+            :aria-pressed="quickDeleteActive"
+            :aria-label="quickDeleteActive ? '退出快速删除组件' : '启用快速删除组件'"
+            @click="toggleQuickDeleteTool"
+          >
+            <template #icon><n-icon><Trash /></n-icon></template>
+          </n-button>
+        </template>
+        {{ quickDeleteActive ? '退出快速删除组件 Esc' : '快速删除组件' }}
+      </n-tooltip>
       <n-button-group class="theater-panel-switches" size="small">
         <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
           <template #trigger>
@@ -2189,6 +2286,7 @@ onBeforeUnmount(() => {
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切组件" @click="store.cutSelectedObject"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切组件 Ctrl+X</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="store.removeSelectedObjects()"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
       </n-button-group>
       <div class="theater-stage-character-bridge" :class="{ 'is-offline': !chatBridgeOnline }">
         <img
@@ -2238,7 +2336,7 @@ onBeforeUnmount(() => {
       <div
         ref="viewportRef"
         class="theater-stage-viewport"
-        :class="{ 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser' }"
+        :class="{ 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive }"
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
       >
@@ -2313,6 +2411,10 @@ onBeforeUnmount(() => {
                 @update:checked="updateBatchBoolean('aspectRatioLocked', $event)"
               >锁定比例</n-checkbox>
             </div>
+            <n-button secondary type="error" @click="store.removeSelectedObjects()">
+              <template #icon><n-icon><Trash /></n-icon></template>
+              删除所选 {{ selectedObjects.length }} 个组件
+            </n-button>
           </div>
         </template>
         <template v-else-if="selectedObject">
@@ -2455,7 +2557,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" :disabled="!selectedObject.parentId" @click="reparentObjectPreservingTransform(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
               </div>
               <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
-              <n-button size="small" secondary type="error" @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
+              <n-button size="small" secondary type="error" @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除组件</n-button>
             </template>
           </div>
         </template>
@@ -2559,7 +2661,7 @@ onBeforeUnmount(() => {
   background: var(--sc-bg-header, #262626); scrollbar-width: none;
 }
 .theater-stage-toolbar::-webkit-scrollbar { display: none; }
-.theater-toolbar-exit, .theater-bulk-select-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
+.theater-toolbar-exit, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
@@ -2568,6 +2670,7 @@ onBeforeUnmount(() => {
 .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
+.theater-quick-delete-tool.is-active { color: #fff; background: #dc2626; border-color: #dc2626; }
 .theater-toolbar-divider { width: 1px; height: 22px; flex: 0 0 1px; margin: 0 2px; background: var(--theater-border); }
 .theater-sync-status { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--sc-fg-muted, #71717a); }
 .theater-sync-status.is-online { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .12); }
@@ -2588,6 +2691,7 @@ onBeforeUnmount(() => {
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: var(--sc-bg-page, #141418); }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
+.theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
 .theater-floating-panel {
   position: absolute; z-index: 10; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;

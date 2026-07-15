@@ -24,12 +24,17 @@ export interface StageObjectPatch {
   after?: unknown
 }
 
+export interface StageSelectionSnapshot {
+  selectedIds: string[]
+  primaryId: string | null
+}
+
 export interface StageObjectHistoryEntry {
   label: string
   sceneId: string
   patches: StageObjectPatch[]
-  selectionBefore: string | null
-  selectionAfter: string | null
+  selectionBefore: StageSelectionSnapshot
+  selectionAfter: StageSelectionSnapshot
 }
 
 const clone = <T>(value: T): T => structuredClone(toRaw(value))
@@ -91,8 +96,8 @@ export const createObjectHistoryEntry = (
   label: string,
   before: StageObjectCollectionsSnapshot,
   after: StageObjectCollectionsSnapshot,
-  selectionBefore: string | null,
-  selectionAfter: string | null,
+  selectionBefore: StageSelectionSnapshot,
+  selectionAfter: StageSelectionSnapshot,
 ): StageObjectHistoryEntry | null => {
   if (before.sceneId !== after.sceneId) return null
   const patches: StageObjectPatch[] = []

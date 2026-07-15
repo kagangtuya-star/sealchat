@@ -18,6 +18,7 @@ import {
   instantiateClipboardBundle,
   type StageClipboardBundle,
   type StageObjectCollectionsSnapshot,
+  type StageSelectionSnapshot,
 } from './stage-editing'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
@@ -296,6 +297,8 @@ export interface TheaterStageStore {
     drawing: StageDrawing,
     transform: Pick<StageObjectTransform, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
   ) => StageObject
+  removeObjects: (objectIds: string[], recordHistory?: boolean) => number
+  removeSelectedObjects: (recordHistory?: boolean) => number
   removeSelectedObject: (recordHistory?: boolean) => void
   copySelectedObject: () => boolean
   cutSelectedObject: () => boolean
@@ -353,7 +356,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   let transaction: {
     label: string
     before: StageObjectCollectionsSnapshot
-    selectionBefore: string | null
+    selectionBefore: StageSelectionSnapshot
   } | null = null
 
   const snapshotObjectCollections = (): StageObjectCollectionsSnapshot => ({
@@ -362,12 +365,17 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     persistentObjects: clone(state.persistentObjects),
   })
 
+  const snapshotSelection = (): StageSelectionSnapshot => ({
+    selectedIds: [...selection.selectedIds],
+    primaryId: state.selectedObjectId,
+  })
+
   const beginObjectEdit = (label = '修改对象') => {
     if (transaction) return
     transaction = {
       label,
       before: snapshotObjectCollections(),
-      selectionBefore: state.selectedObjectId,
+      selectionBefore: snapshotSelection(),
     }
   }
 
@@ -380,7 +388,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       current.before,
       snapshotObjectCollections(),
       current.selectionBefore,
-      state.selectedObjectId,
+      snapshotSelection(),
     )
     if (!entry) return
     history.push(entry)
@@ -395,7 +403,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (current.before.sceneId !== state.activeSceneId) return
     state.liveState.sceneObjects = clone(current.before.sceneObjects)
     state.persistentObjects = clone(current.before.persistentObjects)
-    setSelectedObjectIds(current.selectionBefore ? [current.selectionBefore] : [], current.selectionBefore)
+    setSelectedObjectIds(current.selectionBefore.selectedIds, current.selectionBefore.primaryId)
   }
 
   const runObjectEdit = <T>(label: string, mutate: () => T): T => {
@@ -590,17 +598,43 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return result
   }
 
-  const removeSelectedObjectNow = () => {
-    const id = state.selectedObjectId
-    if (!id) return
-    for (const childId of collectDescendants(id)) delete getObjectCollection(childId)[childId]
-    delete getObjectCollection(id)[id]
-    clearSelection()
+  const selectedRootIds = (objectIds: string[]) => {
+    const candidates = new Set(objectIds.filter((id) => Boolean(getObject(id))))
+    return [...candidates].filter((id) => {
+      let parentId = getObject(id)?.parentId || null
+      while (parentId) {
+        if (candidates.has(parentId)) return false
+        parentId = getObject(parentId)?.parentId || null
+      }
+      return true
+    })
   }
 
+  const removeObjectsNow = (objectIds: string[]) => {
+    const removedIds = new Set<string>()
+    selectedRootIds(objectIds).forEach((id) => {
+      removedIds.add(id)
+      collectDescendants(id).forEach((childId) => removedIds.add(childId))
+    })
+    removedIds.forEach((id) => delete getObjectCollection(id)[id])
+    if (removedIds.size) {
+      setSelectedObjectIds(selection.selectedIds.filter((id) => !removedIds.has(id)))
+    }
+    return removedIds.size
+  }
+
+  const removeObjects = (objectIds: string[], recordHistory = true) => {
+    if (!recordHistory) return removeObjectsNow(objectIds)
+    const rootCount = selectedRootIds(objectIds).length
+    if (!rootCount) return 0
+    return runObjectEdit(rootCount > 1 ? '批量删除组件' : '删除组件', () => removeObjectsNow(objectIds))
+  }
+
+  const removeSelectedObjects = (recordHistory = true) => removeObjects([...selection.selectedIds], recordHistory)
+
   const removeSelectedObject = (recordHistory = true) => {
-    if (recordHistory) runObjectEdit('删除对象', removeSelectedObjectNow)
-    else removeSelectedObjectNow()
+    const id = state.selectedObjectId
+    if (id) removeObjects([id], recordHistory)
   }
 
   const copySelectedObject = () => {
@@ -624,7 +658,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const cutSelectedObject = () => {
     if (!copySelectedObject()) return false
-    runObjectEdit('剪切对象', removeSelectedObjectNow)
+    runObjectEdit('剪切对象', () => removeObjectsNow(state.selectedObjectId ? [state.selectedObjectId] : []))
     return true
   }
 
@@ -661,9 +695,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
         : scene.state.sceneObjects
       applyObjectHistoryEntry(entry, 'undo', sceneObjects, state.persistentObjects)
       const restoredSelection = entry.selectionBefore
-      setSelectedObjectIds(restoredSelection && activeObjects.value[restoredSelection]
-        ? [restoredSelection]
-        : [], restoredSelection)
+      setSelectedObjectIds(restoredSelection.selectedIds, restoredSelection.primaryId)
       return true
     }
     return false
@@ -826,6 +858,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     removeScene,
     addObject,
     addDrawing,
+    removeObjects,
+    removeSelectedObjects,
     removeSelectedObject,
     copySelectedObject,
     cutSelectedObject,
