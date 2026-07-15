@@ -253,7 +253,7 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 		}
 	}
 	createSnapshotObject := func(item TheaterObjectSnapshot, sceneID *string) error {
-		input := theaterObjectInput{ID: item.ID, ParentID: item.ParentID, Kind: item.Kind, Name: item.Name, X: item.X, Y: item.Y, Width: item.Width, Height: item.Height, Rotation: item.Rotation, Z: item.Z, OrderKey: item.OrderKey, Visible: &item.Visible, Locked: item.Locked, SizeLocked: item.SizeLocked, Interactive: item.Interactive, OwnerUserID: item.OwnerUserID, CharacterIdentityID: item.CharacterIdentityID, Content: item.Content, Actions: item.Actions, Metadata: item.Metadata}
+		input := theaterObjectInput{ID: item.ID, ParentID: item.ParentID, Kind: item.Kind, Name: item.Name, X: item.X, Y: item.Y, Width: item.Width, Height: item.Height, Rotation: item.Rotation, Z: item.Z, OrderKey: item.OrderKey, Visible: &item.Visible, Locked: item.Locked, SizeLocked: item.SizeLocked, Interactive: item.Interactive, Editable: item.Editable, OwnerUserID: item.OwnerUserID, CharacterIdentityID: item.CharacterIdentityID, Content: item.Content, Actions: item.Actions, Metadata: item.Metadata}
 		if err := validateObjectInput(&input); err != nil {
 			return err
 		}
@@ -408,7 +408,7 @@ func theaterObjectSnapshotFromModel(object model.TheaterObjectModel) TheaterObje
 	return TheaterObjectSnapshot{
 		ID: object.ID, SceneID: sceneID, ParentID: optionalString(object.ParentID), Kind: object.Kind, Name: object.Name,
 		X: object.X, Y: object.Y, Width: object.Width, Height: object.Height, Rotation: object.Rotation, Z: object.Z, OrderKey: object.OrderKey,
-		Visible: object.Visible, Locked: object.Locked, SizeLocked: object.SizeLocked, Interactive: object.Interactive,
+		Visible: object.Visible, Locked: object.Locked, SizeLocked: object.SizeLocked, Interactive: object.Interactive, Editable: object.Editable,
 		OwnerUserID: optionalString(object.OwnerUserID), CharacterIdentityID: optionalString(object.CharacterIdentityID),
 		Content: normalizedRawJSON(object.ContentJSON, `{}`), Actions: normalizedRawJSON(object.ActionsJSON, `[]`), Metadata: normalizedRawJSON(object.MetadataJSON, `{}`),
 	}

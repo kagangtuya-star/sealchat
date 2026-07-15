@@ -49,6 +49,7 @@ const props = defineProps<{
   chatVisible: boolean
   syncReady: boolean
   syncing: boolean
+  permissions: string[]
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
@@ -87,6 +88,16 @@ const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
 const draggedLayerId = ref<string | null>(null)
 const workspaceRef = ref<HTMLDivElement | null>(null)
+const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
+const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
+const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.delegated'))
+const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
+const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
+const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
+const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
+  canEditAllObjects.value
+  || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
+)
 
 type PanelId = 'scene' | 'inspector' | 'layer'
 interface PanelLayout {
@@ -355,7 +366,7 @@ const getObject = (objectId: string) => props.store.activeObjects.value[objectId
 
 const addAction = (type: StageAction['type']) => {
   const object = selectedObject.value
-  if (!object) return
+  if (!object || !canEditAllObjects.value) return
   const action: StageAction = type === 'chat.send'
     ? { id: actionId(), type, payload: { content: '舞台消息' } }
     : type === 'chat.insert'
@@ -367,7 +378,7 @@ const addAction = (type: StageAction['type']) => {
 }
 
 const triggerObjectActions = (object: StageObject) => {
-  if (!['image', 'button'].includes(object.type) || !object.interactive || !object.visible) return
+  if (!canTriggerActions.value || !['image', 'button'].includes(object.type) || !object.interactive || !object.visible) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
   object.actions.forEach((action) => {
     const parsed = stageActionSchema.safeParse(action)
@@ -406,7 +417,7 @@ const applyCamera = () => {
 const updateTransformer = () => {
   if (!transformer) return
   const object = selectedObject.value
-  const node = object && object.type !== 'group' && !object.locked ? objectNodes.get(object.id) : null
+  const node = object && object.type !== 'group' && !object.locked && canEditObject(object) ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
   transformer.keepRatio(object?.type === 'image')
   transformer.enabledAnchors(object?.sizeLocked ? [] : [
@@ -419,6 +430,7 @@ const updateTransformer = () => {
 }
 
 const selectObject = (objectId: string | null) => {
+  if (objectId && !canEditObject(getObject(objectId))) return
   props.store.state.selectedObjectId = objectId
   nextTick(updateTransformer)
 }
@@ -696,7 +708,7 @@ const createObjectNode = (object: StageObject) => {
   rebuildObjectContent(wrapper, object)
   wrapper.on('pointerdown', (event) => {
     const current = getObject(object.id)
-    if (!current?.interactive) return
+    if (!canEditObject(current)) return
     event.cancelBubble = true
     selectObject(object.id)
   })
@@ -705,22 +717,24 @@ const createObjectNode = (object: StageObject) => {
     if (current) triggerObjectActions(current)
   })
   wrapper.on('contextmenu', (event) => {
+    if (!canEditObject(getObject(object.id))) return
     event.evt.preventDefault()
     event.cancelBubble = true
     selectObject(object.id)
   })
   wrapper.on('dragend', () => {
     const current = getObject(object.id)
-    if (!current) return
+    if (!canEditObject(current)) return
     current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
     current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
   })
   wrapper.on('transformstart', () => {
+    if (!canEditObject(getObject(object.id))) return
     transformCenters.set(object.id, { x: wrapper.x(), y: wrapper.y() })
   })
   wrapper.on('transformend', () => {
     const current = getObject(object.id)
-    if (!current) return
+    if (!canEditObject(current)) return
     const center = transformCenters.get(object.id) || { x: wrapper.x(), y: wrapper.y() }
     transformCenters.delete(object.id)
     current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
@@ -811,8 +825,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     offsetY: height / 2,
     rotation: object.transform.rotation,
     visible: object.visible,
-    draggable: !object.locked && object.interactive,
-    listening: object.interactive,
+    draggable: !object.locked && canEditObject(object),
+    listening: canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
   })
   if (object.type === 'text') {
     wrapper.findOne<Konva.Text>('.theater-object-content')?.setAttrs({
@@ -953,6 +967,7 @@ const waitForResource = async (resourceId: string) => {
 }
 
 const uploadImage = async (file: File, target: ImageTarget) => {
+  if (!canEditAllObjects.value || !canUploadResources.value) throw new Error('缺少小剧场资源编辑权限')
   if (!props.worldId || !props.channelId) throw new Error('缺少小剧场频道信息')
   resourceUploading.value = true
   resourceError.value = ''
@@ -999,6 +1014,7 @@ const handleImageInput = async (event: Event) => {
 }
 
 const clearImage = (target: ImageTarget) => {
+  if (!canEditAllObjects.value) return
   applyImageUrl(target, '')
   resourceError.value = ''
 }
@@ -1040,6 +1056,7 @@ const saveEditedImage = async (file: File) => {
 }
 
 const handleCanvasDrop = async (event: DragEvent) => {
+  if (!canEditAllObjects.value || !canUploadResources.value) return
   const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type.startsWith('image/'))
   const rect = viewportRef.value?.getBoundingClientRect()
   if (!file || !rect) return
@@ -1054,6 +1071,7 @@ const handleCanvasDrop = async (event: DragEvent) => {
 }
 
 const handleLayerDrop = (event: DragEvent, targetId: string) => {
+  if (!canEditAllObjects.value) return
   const objectId = draggedLayerId.value
   draggedLayerId.value = null
   if (!objectId || objectId === targetId) return
@@ -1126,6 +1144,11 @@ watch(() => props.store.state.liveState, () => {
 }, { deep: true })
 watch(() => props.store.state.persistentObjects, syncObjects, { deep: true })
 watch(() => props.store.state.camera, applyCamera, { deep: true })
+watch(() => [props.syncReady, ...props.permissions], () => {
+  const object = selectedObject.value
+  if (object && !canEditObject(object)) props.store.state.selectedObjectId = null
+  syncObjects()
+})
 watch(() => props.store.state.selectedObjectId, () => {
   resourceError.value = ''
   if (props.store.state.selectedObjectId) inspectorPanelOpen.value = true
@@ -1169,7 +1192,7 @@ onBeforeUnmount(() => {
         {{ store.activeScene.value.name }}
       </div>
       <n-button-group class="theater-panel-switches" size="small">
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': scenePanelOpen }" aria-label="切换场景面板" @click="togglePanel('scene')">
               <template #icon><n-icon><LayoutSidebarLeftExpand /></n-icon></template>
@@ -1177,7 +1200,7 @@ onBeforeUnmount(() => {
           </template>
           场景
         </n-tooltip>
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': inspectorPanelOpen }" aria-label="切换组件编辑面板" @click="togglePanel('inspector')">
               <template #icon><n-icon><Components /></n-icon></template>
@@ -1185,7 +1208,7 @@ onBeforeUnmount(() => {
           </template>
           组件编辑
         </n-tooltip>
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': layerPanelOpen }" aria-label="切换图层与属性面板" @click="togglePanel('layer')">
               <template #icon><n-icon><Stack2 /></n-icon></template>
@@ -1207,8 +1230,8 @@ onBeforeUnmount(() => {
         :class="{ 'is-online': syncReady && !syncing, 'is-syncing': syncing }"
         :title="syncing ? '正在同步' : syncReady ? '后端同步已连接' : '后端同步未连接'"
       />
-      <span class="theater-toolbar-divider" />
-      <n-button-group class="theater-stage-object-actions" size="small">
+      <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
+      <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('shape')"><template #icon><n-icon><Rectangle /></n-icon></template></n-button></template>添加面板</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('text')"><template #icon><n-icon><LetterT /></n-icon></template></n-button></template>添加文字</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image')"><template #icon><n-icon><Photo /></n-icon></template></n-button></template>添加图片面板</n-tooltip>
@@ -1269,7 +1292,7 @@ onBeforeUnmount(() => {
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('scene', $event)">
           <span>场景</span>
           <div class="theater-panel-heading__actions">
-            <n-button text size="tiny" aria-label="新建场景" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
+            <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
@@ -1278,12 +1301,12 @@ onBeforeUnmount(() => {
           :key="scene.id"
           class="theater-scene-card"
           :class="{ 'is-active': scene.id === store.state.activeSceneId }"
-          @click="store.selectScene(scene.id)"
+          :disabled="!canSwitchScene"
+          @click="canSwitchScene && store.selectScene(scene.id)"
         >
-          <span class="theater-scene-card__preview" :style="{ background: scene.state.backgroundColor }" />
-          <span>{{ scene.name }}</span>
+          <span class="theater-scene-card__title">{{ scene.name }}</span>
         </button>
-        <div class="theater-scene-actions">
+        <div v-if="canEditAllObjects && canSwitchScene" class="theater-scene-actions">
           <n-button size="tiny" quaternary @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
           <n-button size="tiny" quaternary :disabled="store.scenes.value.length <= 1" @click="store.removeScene"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
         </div>
@@ -1305,15 +1328,15 @@ onBeforeUnmount(() => {
               <label>内容</label>
               <n-input v-model:value="selectedObject.text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
             </template>
-            <template v-if="selectedObject.type === 'image'">
+            <template v-if="selectedObject.type === 'image' && canEditAllObjects">
               <label>图片</label>
               <div class="theater-image-actions">
-                <n-button size="small" :loading="resourceUploading" @click="requestImageUpload({ kind: 'object', objectId: selectedObject.id })">
+                <n-button size="small" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'object', objectId: selectedObject.id })">
                   <template #icon><n-icon><Photo /></n-icon></template>上传替换
                 </n-button>
                 <n-tooltip trigger="hover">
                   <template #trigger>
-                    <n-button size="small" :disabled="!selectedObject.image || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
+                    <n-button size="small" :disabled="!canUploadResources || !selectedObject.image || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
                       <template #icon><n-icon><Edit /></n-icon></template>
                     </n-button>
                   </template>
@@ -1329,16 +1352,17 @@ onBeforeUnmount(() => {
             <div class="theater-object-editor__transform">
               <label>X</label><n-input-number v-model:value="selectedObject.transform.x" :precision="2" />
               <label>Y</label><n-input-number v-model:value="selectedObject.transform.y" :precision="2" />
-              <label>宽</label><n-input-number v-model:value="selectedObject.transform.width" :min="0.5" :precision="2" />
-              <label>高</label><n-input-number v-model:value="selectedObject.transform.height" :min="0.5" :precision="2" />
+              <label>宽</label><n-input-number v-model:value="selectedObject.transform.width" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
+              <label>高</label><n-input-number v-model:value="selectedObject.transform.height" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
             </div>
-            <div class="theater-object-editor__checks">
+            <div v-if="canEditAllObjects" class="theater-object-editor__checks">
               <n-checkbox v-model:checked="selectedObject.visible">显示</n-checkbox>
               <n-checkbox v-model:checked="selectedObject.interactive">可交互</n-checkbox>
+              <n-checkbox v-model:checked="selectedObject.editable">可编辑</n-checkbox>
               <n-checkbox v-model:checked="selectedObject.locked">锁定位置</n-checkbox>
               <n-checkbox v-model:checked="selectedObject.sizeLocked">锁定尺寸</n-checkbox>
             </div>
-            <template v-if="selectedObject.type === 'image' || selectedObject.type === 'button'">
+            <template v-if="canEditAllObjects && (selectedObject.type === 'image' || selectedObject.type === 'button')">
               <label>点击动作</label>
               <div class="theater-action-add">
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>
@@ -1354,22 +1378,24 @@ onBeforeUnmount(() => {
                 <n-button text type="error" size="tiny" @click="store.removeObjectAction(selectedObject.id, action.id)">删除</n-button>
               </div>
             </template>
-            <label>父级</label>
-            <n-select
-              :value="selectedObject.parentId"
-              :options="parentOptions"
-              size="small"
-              clearable
-              placeholder="根层级"
-              @update:value="store.setParent(selectedObject.id, $event || null)"
-            />
-            <div class="theater-inspector-actions">
-              <n-button size="tiny" @click="store.moveOrder(selectedObject.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template>上移</n-button>
-              <n-button size="tiny" @click="store.moveOrder(selectedObject.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template>下移</n-button>
-              <n-button size="tiny" :disabled="!selectedObject.parentId" @click="store.setParent(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
-            </div>
-            <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
-            <n-button size="small" secondary type="error" @click="store.removeSelectedObject"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
+            <template v-if="canEditAllObjects">
+              <label>父级</label>
+              <n-select
+                :value="selectedObject.parentId"
+                :options="parentOptions"
+                size="small"
+                clearable
+                placeholder="根层级"
+                @update:value="store.setParent(selectedObject.id, $event || null)"
+              />
+              <div class="theater-inspector-actions">
+                <n-button size="tiny" @click="store.moveOrder(selectedObject.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template>上移</n-button>
+                <n-button size="tiny" @click="store.moveOrder(selectedObject.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template>下移</n-button>
+                <n-button size="tiny" :disabled="!selectedObject.parentId" @click="store.setParent(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
+              </div>
+              <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
+              <n-button size="small" secondary type="error" @click="store.removeSelectedObject"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
+            </template>
           </div>
         </template>
         <template v-else>
@@ -1389,17 +1415,17 @@ onBeforeUnmount(() => {
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭图层与属性面板" @click="layerPanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
-        <div class="theater-media-settings">
+        <div v-if="canEditAllObjects" class="theater-media-settings">
           <label>背景图片</label>
           <div class="theater-image-actions">
-            <n-button size="tiny" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!store.state.liveState.background" @click="openImageEditor({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
+            <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
+            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.background" @click="openImageEditor({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
             <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.background" @click="clearImage({ kind: 'scene', target: 'background' })">清除</n-button>
           </div>
           <label>前景图片</label>
           <div class="theater-image-actions">
-            <n-button size="tiny" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!store.state.liveState.foreground" @click="openImageEditor({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
+            <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
+            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.foreground" @click="openImageEditor({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
             <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.foreground" @click="clearImage({ kind: 'scene', target: 'foreground' })">清除</n-button>
           </div>
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
@@ -1412,9 +1438,10 @@ onBeforeUnmount(() => {
             class="theater-layer-row"
             :class="{ 'is-active': row.object.id === store.state.selectedObjectId }"
             :style="{ paddingLeft: `${10 + row.depth * 15}px` }"
-            draggable="true"
+            :disabled="!canEditObject(row.object)"
+            :draggable="canEditAllObjects"
             @click="selectObject(row.object.id)"
-            @dragstart="draggedLayerId = row.object.id"
+            @dragstart="canEditAllObjects && (draggedLayerId = row.object.id)"
             @dragend="draggedLayerId = null"
             @dragover.prevent
             @drop.prevent="handleLayerDrop($event, row.object.id)"
@@ -1490,7 +1517,7 @@ onBeforeUnmount(() => {
   resize: both; max-width: 100%; max-height: 100%; animation: theater-panel-in .16s ease-out;
 }
 @keyframes theater-panel-in { from { opacity: 0; transform: translateY(-4px); } }
-.theater-scene-rail { min-width: min(140px, 100%); min-height: min(180px, 100%); gap: 7px; padding: 7px; overflow-y: auto; }
+.theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 6px; padding: 6px; overflow-y: auto; }
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
 .theater-layer-panel { min-width: min(180px, 100%); min-height: min(220px, 100%); }
 .theater-panel-heading {
@@ -1502,13 +1529,13 @@ onBeforeUnmount(() => {
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
 .theater-scene-card {
-  width: 100%; display: grid; gap: 5px; padding: 6px; border: 1px solid transparent; border-radius: 6px;
-  color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 11px; text-align: left; cursor: pointer;
+  width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
+  color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
   transition: color .14s ease, border-color .14s ease, background .14s ease;
 }
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
-.theater-scene-card__preview { width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--theater-border); border-radius: 4px; }
+.theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theater-scene-actions { display: flex; margin-top: auto; }
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }

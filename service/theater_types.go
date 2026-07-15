@@ -23,14 +23,15 @@ const (
 )
 
 const (
-	TheaterPermissionView           = "stage.view"
-	TheaterPermissionSceneSwitch    = "stage.scene.switch"
-	TheaterPermissionObjectEdit     = "stage.object.edit"
-	TheaterPermissionCharacterEdit  = "stage.character.edit"
-	TheaterPermissionResourceUpload = "stage.resource.upload"
-	TheaterPermissionResourceDelete = "stage.resource.delete"
-	TheaterPermissionActionTrigger  = "stage.action.trigger"
-	TheaterPermissionAdminRestore   = "stage.admin.restore"
+	TheaterPermissionView                = "stage.view"
+	TheaterPermissionSceneSwitch         = "stage.scene.switch"
+	TheaterPermissionObjectEdit          = "stage.object.edit"
+	TheaterPermissionObjectEditDelegated = "stage.object.edit.delegated"
+	TheaterPermissionCharacterEdit       = "stage.character.edit"
+	TheaterPermissionResourceUpload      = "stage.resource.upload"
+	TheaterPermissionResourceDelete      = "stage.resource.delete"
+	TheaterPermissionActionTrigger       = "stage.action.trigger"
+	TheaterPermissionAdminRestore        = "stage.admin.restore"
 )
 
 type TheaterRequestMeta struct {
@@ -92,6 +93,7 @@ type TheaterObjectSnapshot struct {
 	Locked              bool            `json:"locked"`
 	SizeLocked          bool            `json:"sizeLocked"`
 	Interactive         bool            `json:"interactive"`
+	Editable            bool            `json:"editable"`
 	OwnerUserID         *string         `json:"ownerUserId"`
 	CharacterIdentityID *string         `json:"characterIdentityId"`
 	Content             json.RawMessage `json:"content"`

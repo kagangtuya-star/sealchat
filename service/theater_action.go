@@ -26,6 +26,9 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	if err != nil {
 		return nil, err
 	}
+	if !object.Visible || !object.Interactive || (object.Kind != "image" && object.Kind != "button") {
+		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
 	var actions []theaterStoredAction
 	if err := json.Unmarshal([]byte(object.ActionsJSON), &actions); err != nil {
 		return nil, theaterPayloadError("对象 actions 无效")
@@ -63,7 +66,9 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 				return nil, theaterPayloadError(err.Error())
 			}
 		}
-		payload.ObjectID = object.ID
+		if strings.TrimSpace(payload.ObjectID) == "" {
+			return nil, theaterPayloadError("object.toggle action 缺少 objectId")
+		}
 		raw, _ := json.Marshal(payload)
 		result, err := ApplyTheaterMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectToggle, Payload: raw}, meta)
 		if err != nil {

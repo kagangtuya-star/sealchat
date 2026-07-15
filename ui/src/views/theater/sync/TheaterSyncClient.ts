@@ -25,6 +25,7 @@ interface TheaterObjectSnapshot {
   locked: boolean
   sizeLocked: boolean
   interactive: boolean
+  editable: boolean
   ownerUserId?: string | null
   characterIdentityId?: string | null
   content: JsonObject
@@ -177,6 +178,7 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
     locked: value.locked === true,
     sizeLocked: value.sizeLocked === true,
     interactive: value.interactive !== false,
+    editable: value.editable === true,
     fill: typeof content.fill === 'string' ? content.fill : '#60a5fa',
     ...(typeof content.text === 'string' ? { text: content.text } : {}),
     ...(imageRef(content.image) ? { image: imageRef(content.image)! } : {}),
@@ -205,6 +207,7 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   locked: object.locked,
   sizeLocked: object.sizeLocked,
   interactive: object.interactive,
+  editable: object.editable,
   ownerUserId: object.ownerUserId || null,
   characterIdentityId: object.characterIdentityId || null,
   content: {
@@ -219,11 +222,11 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
 
 const normalizeDocument = (snapshot: TheaterSnapshotResponse['snapshot']): TheaterDocument => ({
   activeSceneId: typeof snapshot.activeSceneId === 'string' && snapshot.activeSceneId ? snapshot.activeSceneId : null,
-  liveState: asObject(snapshot.liveState),
+  liveState: serverStateFromStage(stageStateFromServer(snapshot.liveState, {})),
   scenes: Object.fromEntries(Object.entries(snapshot.scenes || {}).map(([id, scene]) => [id, {
     ...scene,
     id,
-    state: asObject(scene.state),
+    state: serverStateFromStage(stageStateFromServer(scene.state, {})),
     objects: scene.objects || {},
   }])),
   persistentObjects: snapshot.persistentObjects || {},
@@ -291,6 +294,7 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     locked: object.locked,
     sizeLocked: object.sizeLocked,
     interactive: object.interactive,
+    editable: object.editable,
     content: object.content,
     actions: object.actions,
     metadata: object.metadata,
@@ -309,6 +313,7 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     locked: previous.locked,
     sizeLocked: previous.sizeLocked,
     interactive: previous.interactive,
+    editable: previous.editable,
     content: previous.content,
     actions: previous.actions,
     metadata: previous.metadata,
@@ -332,6 +337,7 @@ const objectInput = (object: TheaterObjectSnapshot): JsonObject => ({
   locked: object.locked,
   sizeLocked: object.sizeLocked,
   interactive: object.interactive,
+  editable: object.editable,
   ownerUserId: object.ownerUserId || null,
   characterIdentityId: object.characterIdentityId || null,
   content: object.content,
@@ -394,11 +400,13 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
 
   Object.values(afterObjects).forEach((object) => {
     const previous = beforeObjects[object.id]
-    if (!previous || same(object, previous)) return
+    if (!previous) return
+    const fields = objectFields(object, previous)
+    if (!Object.keys(fields).length) return
     mutations.push({
       type: 'object.update',
       permission: 'stage.object.edit',
-      payload: { objectId: object.id, fields: objectFields(object, previous) },
+      payload: { objectId: object.id, fields },
     })
   })
 
@@ -426,6 +434,21 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     payload: { sceneId: after.activeSceneId },
   })
   return mutations
+}
+
+const delegatedObjectFields = new Set([
+  'name', 'x', 'y', 'width', 'height', 'rotation', 'z', 'orderKey', 'content',
+])
+
+const canApplyMutation = (mutation: TheaterMutation, permissions: string[], baseDocument: TheaterDocument) => {
+  if (permissions.includes(mutation.permission)) return true
+  if (mutation.type !== 'object.update' || !permissions.includes('stage.object.edit.delegated')) return false
+  const objectId = typeof mutation.payload.objectId === 'string' ? mutation.payload.objectId : ''
+  const object = allObjects(baseDocument)[objectId]
+  const fields = asObject(mutation.payload.fields)
+  return Boolean(object?.editable && !object.locked)
+    && Object.keys(fields).every((field) => delegatedObjectFields.has(field))
+    && !(object?.sizeLocked && ('width' in fields || 'height' in fields))
 }
 
 const errorMessage = (error: unknown) => {
@@ -461,8 +484,13 @@ export class TheaterSyncClient {
     if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== this.options.channelId) return
     const revision = finite(theater.revision, 0)
     if (revision <= this.revision) return
-    if (this.saving || this.flushTimer) {
+    if (this.saving) {
       this.pendingRemoteRevision = Math.max(this.pendingRemoteRevision, revision)
+      return
+    }
+    if (this.flushTimer) {
+      this.pendingRemoteRevision = Math.max(this.pendingRemoteRevision, revision)
+      void this.flushNow()
       return
     }
     void this.reload()
@@ -633,8 +661,13 @@ export class TheaterSyncClient {
     const desired = documentFromWorkspace(this.options.store.getSnapshot())
     const baseAtFlush = clone(this.baseDocument)
     const mutations = diffDocuments(this.baseDocument, desired)
-    if (!mutations.length) return
-    const denied = mutations.find((mutation) => !this.permissions.includes(mutation.permission))
+    if (!mutations.length) {
+      const shouldReload = this.pendingRemoteRevision > this.revision
+      this.pendingRemoteRevision = 0
+      if (shouldReload) await this.reload()
+      return
+    }
+    const denied = mutations.find((mutation) => !canApplyMutation(mutation, this.permissions, this.baseDocument))
     if (denied) {
       this.options.onError?.(`缺少权限：${denied.permission}`)
       await this.reload(true)
@@ -691,6 +724,7 @@ export class TheaterSyncClient {
 }
 
 export const theaterSyncTesting = {
+  canApplyMutation,
   diffDocuments,
   documentFromWorkspace,
   normalizeDocument,

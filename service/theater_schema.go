@@ -63,6 +63,7 @@ type theaterObjectInput struct {
 	Locked              bool            `json:"locked"`
 	SizeLocked          bool            `json:"sizeLocked"`
 	Interactive         bool            `json:"interactive"`
+	Editable            bool            `json:"editable"`
 	OwnerUserID         *string         `json:"ownerUserId"`
 	CharacterIdentityID *string         `json:"characterIdentityId"`
 	Content             json.RawMessage `json:"content"`
@@ -325,7 +326,7 @@ func validateObjectFields(fields map[string]any, characterOnly bool) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "sizeLocked": true, "interactive": true, "content": true, "actions": true, "metadata": true}
+	allowed := map[string]bool{"parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "sizeLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
 	if characterOnly {
 		allowed = map[string]bool{"x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "content": true, "metadata": true}
 	}

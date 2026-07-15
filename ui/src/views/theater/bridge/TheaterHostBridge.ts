@@ -97,6 +97,11 @@ export class TheaterHostBridge {
     await Promise.all([this.hostClient.connect(), this.stageClient.connect()])
   }
 
+  setPermissions(permissions: readonly string[]) {
+    const target = this.options.permissions as string[]
+    target.splice(0, target.length, ...new Set(permissions))
+  }
+
   stop() {
     if (!this.started) return
     this.started = false

@@ -162,7 +162,7 @@ const startTheaterBridge = () => {
     ? theaterPermissions.value
     : memberRole === 'owner' || memberRole === 'admin'
       ? ['stage.view', 'stage.scene.switch', 'stage.object.edit', 'stage.action.trigger']
-      : ['stage.view', 'stage.action.trigger']
+      : ['stage.view', 'stage.object.edit.delegated', 'stage.action.trigger']
   const permissions = memberRole === 'owner' || memberRole === 'admin'
     ? [
       'stage.control',
@@ -223,7 +223,10 @@ const startTheaterSync = async () => {
     channelId: channelId.value,
     store: stageStore,
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
-    onPermissionsChange: (permissions) => { theaterPermissions.value = permissions },
+    onPermissionsChange: (permissions) => {
+      theaterPermissions.value = permissions
+      theaterBridge?.setPermissions(permissions)
+    },
     onSyncingChange: (syncing) => { theaterSyncing.value = syncing },
     onError: (error) => message.warning(error),
   })
@@ -305,6 +308,7 @@ onBeforeUnmount(() => {
           :chat-visible="chatVisible"
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
+          :permissions="theaterPermissions"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"

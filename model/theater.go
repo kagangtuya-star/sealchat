@@ -73,6 +73,7 @@ type TheaterObjectModel struct {
 	Locked              bool    `json:"locked" gorm:"not null;default:false"`
 	SizeLocked          bool    `json:"sizeLocked" gorm:"not null;default:false"`
 	Interactive         bool    `json:"interactive" gorm:"not null;default:false"`
+	Editable            bool    `json:"editable" gorm:"not null;default:false"`
 	OwnerUserID         string  `json:"ownerUserId,omitempty" gorm:"size:100;index"`
 	CharacterIdentityID string  `json:"characterIdentityId,omitempty" gorm:"size:100;index"`
 	ContentJSON         string  `json:"contentJson" gorm:"not null"`

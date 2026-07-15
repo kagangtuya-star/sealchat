@@ -71,6 +71,7 @@ export interface StageObject {
   locked: boolean
   sizeLocked: boolean
   interactive: boolean
+  editable: boolean
   fill: string
   text?: string
   image?: StageImageRef

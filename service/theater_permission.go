@@ -10,14 +10,15 @@ import (
 )
 
 var theaterPermissionMap = map[string]gorbac.Permission{
-	TheaterPermissionView:           pm.PermFuncChannelTheaterView,
-	TheaterPermissionSceneSwitch:    pm.PermFuncChannelTheaterSceneSwitch,
-	TheaterPermissionObjectEdit:     pm.PermFuncChannelTheaterObjectEdit,
-	TheaterPermissionCharacterEdit:  pm.PermFuncChannelTheaterCharacterEdit,
-	TheaterPermissionResourceUpload: pm.PermFuncChannelTheaterResourceUpload,
-	TheaterPermissionResourceDelete: pm.PermFuncChannelTheaterResourceDelete,
-	TheaterPermissionActionTrigger:  pm.PermFuncChannelTheaterActionTrigger,
-	TheaterPermissionAdminRestore:   pm.PermFuncChannelTheaterAdminRestore,
+	TheaterPermissionView:                pm.PermFuncChannelTheaterView,
+	TheaterPermissionSceneSwitch:         pm.PermFuncChannelTheaterSceneSwitch,
+	TheaterPermissionObjectEdit:          pm.PermFuncChannelTheaterObjectEdit,
+	TheaterPermissionObjectEditDelegated: pm.PermFuncChannelTheaterObjectEditDelegated,
+	TheaterPermissionCharacterEdit:       pm.PermFuncChannelTheaterCharacterEdit,
+	TheaterPermissionResourceUpload:      pm.PermFuncChannelTheaterResourceUpload,
+	TheaterPermissionResourceDelete:      pm.PermFuncChannelTheaterResourceDelete,
+	TheaterPermissionActionTrigger:       pm.PermFuncChannelTheaterActionTrigger,
+	TheaterPermissionAdminRestore:        pm.PermFuncChannelTheaterAdminRestore,
 }
 
 func resolveTheaterScope(worldID, channelID string) (*model.WorldModel, *model.ChannelModel, error) {
@@ -106,7 +107,7 @@ func listTheaterPermissions(actorID, worldID, channelID string) []string {
 		return result
 	}
 	admin := pm.CanWithSystemRole(actorID, pm.PermModAdmin) || world.OwnerID == actorID || IsWorldAdmin(worldID, actorID)
-	order := []string{TheaterPermissionView, TheaterPermissionSceneSwitch, TheaterPermissionObjectEdit, TheaterPermissionCharacterEdit, TheaterPermissionResourceUpload, TheaterPermissionResourceDelete, TheaterPermissionActionTrigger, TheaterPermissionAdminRestore}
+	order := []string{TheaterPermissionView, TheaterPermissionSceneSwitch, TheaterPermissionObjectEdit, TheaterPermissionObjectEditDelegated, TheaterPermissionCharacterEdit, TheaterPermissionResourceUpload, TheaterPermissionResourceDelete, TheaterPermissionActionTrigger, TheaterPermissionAdminRestore}
 	for _, name := range order {
 		if admin || pm.CanWithChannelRole(actorID, channelID, theaterPermissionMap[name]) {
 			result = append(result, name)

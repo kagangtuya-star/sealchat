@@ -36,14 +36,15 @@ var (
 	PermFuncChannelIFormManage    = gorbac.NewStdPermission("func_channel_iform_manage")    // 频道 - iForm - 配置管理
 	PermFuncChannelIFormBroadcast = gorbac.NewStdPermission("func_channel_iform_broadcast") // 频道 - iForm - 同步推送
 
-	PermFuncChannelTheaterView           = gorbac.NewStdPermission("func_channel_theater_view")            // 频道 - 小剧场 - 查看
-	PermFuncChannelTheaterSceneSwitch    = gorbac.NewStdPermission("func_channel_theater_scene_switch")    // 频道 - 小剧场 - 切换场景
-	PermFuncChannelTheaterObjectEdit     = gorbac.NewStdPermission("func_channel_theater_object_edit")     // 频道 - 小剧场 - 编辑对象
-	PermFuncChannelTheaterCharacterEdit  = gorbac.NewStdPermission("func_channel_theater_character_edit")  // 频道 - 小剧场 - 编辑角色
-	PermFuncChannelTheaterResourceUpload = gorbac.NewStdPermission("func_channel_theater_resource_upload") // 频道 - 小剧场 - 上传资源
-	PermFuncChannelTheaterResourceDelete = gorbac.NewStdPermission("func_channel_theater_resource_delete") // 频道 - 小剧场 - 删除资源
-	PermFuncChannelTheaterActionTrigger  = gorbac.NewStdPermission("func_channel_theater_action_trigger")  // 频道 - 小剧场 - 触发动作
-	PermFuncChannelTheaterAdminRestore   = gorbac.NewStdPermission("func_channel_theater_admin_restore")   // 频道 - 小剧场 - 管理恢复
+	PermFuncChannelTheaterView                = gorbac.NewStdPermission("func_channel_theater_view")                  // 频道 - 小剧场 - 查看
+	PermFuncChannelTheaterSceneSwitch         = gorbac.NewStdPermission("func_channel_theater_scene_switch")          // 频道 - 小剧场 - 切换场景
+	PermFuncChannelTheaterObjectEdit          = gorbac.NewStdPermission("func_channel_theater_object_edit")           // 频道 - 小剧场 - 编辑对象
+	PermFuncChannelTheaterObjectEditDelegated = gorbac.NewStdPermission("func_channel_theater_object_edit_delegated") // 频道 - 小剧场 - 编辑授权对象
+	PermFuncChannelTheaterCharacterEdit       = gorbac.NewStdPermission("func_channel_theater_character_edit")        // 频道 - 小剧场 - 编辑角色
+	PermFuncChannelTheaterResourceUpload      = gorbac.NewStdPermission("func_channel_theater_resource_upload")       // 频道 - 小剧场 - 上传资源
+	PermFuncChannelTheaterResourceDelete      = gorbac.NewStdPermission("func_channel_theater_resource_delete")       // 频道 - 小剧场 - 删除资源
+	PermFuncChannelTheaterActionTrigger       = gorbac.NewStdPermission("func_channel_theater_action_trigger")        // 频道 - 小剧场 - 触发动作
+	PermFuncChannelTheaterAdminRestore        = gorbac.NewStdPermission("func_channel_theater_admin_restore")         // 频道 - 小剧场 - 管理恢复
 
 	// 准备加一个at权限
 
@@ -56,6 +57,7 @@ func TheaterChannelPermissions() []gorbac.Permission {
 		PermFuncChannelTheaterView,
 		PermFuncChannelTheaterSceneSwitch,
 		PermFuncChannelTheaterObjectEdit,
+		PermFuncChannelTheaterObjectEditDelegated,
 		PermFuncChannelTheaterCharacterEdit,
 		PermFuncChannelTheaterResourceUpload,
 		PermFuncChannelTheaterResourceDelete,

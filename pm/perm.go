@@ -184,7 +184,7 @@ func ensureObserverWhisperReadPerms(chRoles []*model.ChannelRoleModel) {
 func ensureChannelTheaterPerms(chRoles []*model.ChannelRoleModel) {
 	all := TheaterChannelPermissions()
 	viewer := []gorbac.Permission{PermFuncChannelTheaterView}
-	member := []gorbac.Permission{PermFuncChannelTheaterView, PermFuncChannelTheaterActionTrigger}
+	member := []gorbac.Permission{PermFuncChannelTheaterView, PermFuncChannelTheaterObjectEditDelegated, PermFuncChannelTheaterActionTrigger}
 	for _, role := range chRoles {
 		if role == nil {
 			continue

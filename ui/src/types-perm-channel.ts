@@ -29,6 +29,7 @@ export interface ChannelRolePermSheet {
   func_channel_theater_view: PermResult; // 频道 - 小剧场 - 查看
   func_channel_theater_scene_switch: PermResult; // 频道 - 小剧场 - 切换场景
   func_channel_theater_object_edit: PermResult; // 频道 - 小剧场 - 编辑对象
+  func_channel_theater_object_edit_delegated: PermResult; // 频道 - 小剧场 - 编辑授权对象
   func_channel_theater_character_edit: PermResult; // 频道 - 小剧场 - 编辑角色
   func_channel_theater_resource_upload: PermResult; // 频道 - 小剧场 - 上传资源
   func_channel_theater_resource_delete: PermResult; // 频道 - 小剧场 - 删除资源

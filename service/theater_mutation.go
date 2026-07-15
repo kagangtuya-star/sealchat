@@ -31,17 +31,25 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	if permission == "" {
 		return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "不支持 mutation type", 400, map[string]any{"type": command.Type})
 	}
+	decoded, normalizedPayload, err := decodeTheaterPayload(command.Type, command.Payload)
+	if err != nil {
+		return nil, err
+	}
 	_, channel, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, permission)
+	delegatedObjectEdit := false
+	if err != nil && command.Type == TheaterMutationObjectUpdate {
+		if _, delegatedChannel, delegatedErr := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionObjectEditDelegated); delegatedErr == nil {
+			channel = delegatedChannel
+			delegatedObjectEdit = true
+			err = nil
+		}
+	}
 	if err != nil {
 		RecordTheaterMetric("theater_permission_denied_total", map[string]string{"permission": permission}, 1)
 		return nil, err
 	}
 	if channel.Status != "" && channel.Status != model.ChannelStatusActive {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "归档频道不可写 Theater", 403, nil)
-	}
-	decoded, normalizedPayload, err := decodeTheaterPayload(command.Type, command.Payload)
-	if err != nil {
-		return nil, err
 	}
 	payloadHash := theaterJSONHash(normalizedPayload)
 	room, err := model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
@@ -85,6 +93,11 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 			}
 			createdMutation = true
 			return nil
+		}
+		if delegatedObjectEdit {
+			if err := validateDelegatedTheaterObjectUpdate(tx, current.ID, decoded.(*theaterObjectUpdatePayload)); err != nil {
+				return err
+			}
 		}
 		nextRevision := current.Revision + 1
 		cas := tx.Model(&model.TheaterRoomModel{}).Where("id = ? AND revision = ?", current.ID, current.Revision).
@@ -179,6 +192,30 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		RecordTheaterMetric("theater_mutation_total", map[string]string{"type": command.Type, "outcome": "applied"}, 1)
 	}
 	return result, nil
+}
+
+var delegatedTheaterObjectFields = map[string]bool{
+	"name": true, "x": true, "y": true, "width": true, "height": true,
+	"rotation": true, "z": true, "orderKey": true, "content": true,
+}
+
+func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *theaterObjectUpdatePayload) error {
+	object, err := loadTheaterObject(tx, roomID, payload.ObjectID)
+	if err != nil {
+		return err
+	}
+	if !object.Editable || object.Locked {
+		return newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员编辑", 403, map[string]any{"permission": TheaterPermissionObjectEditDelegated})
+	}
+	for field := range payload.Fields {
+		if !delegatedTheaterObjectFields[field] {
+			return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改对象管理字段", 403, map[string]any{"field": field})
+		}
+		if object.SizeLocked && (field == "width" || field == "height") {
+			return newTheaterError(TheaterErrorPermissionDenied, "对象尺寸已锁定", 403, map[string]any{"field": field})
+		}
+	}
+	return nil
 }
 
 var errTheaterConcurrentCAS = errors.New("theater revision CAS conflict")
@@ -399,11 +436,17 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 	object := model.TheaterObjectModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: input.ID}, RoomID: room.ID, SceneID: sceneValue, ParentID: derefString(input.ParentID), Kind: input.Kind, Name: input.Name,
 		X: input.X, Y: input.Y, Width: input.Width, Height: input.Height, Rotation: input.Rotation, Z: input.Z, OrderKey: input.OrderKey,
-		Visible: visible, Locked: input.Locked, SizeLocked: input.SizeLocked, Interactive: input.Interactive,
+		Visible: visible, Locked: input.Locked, SizeLocked: input.SizeLocked, Interactive: input.Interactive, Editable: input.Editable,
 		OwnerUserID: derefString(input.OwnerUserID), CharacterIdentityID: derefString(input.CharacterIdentityID), ContentJSON: defaultJSON(input.Content, `{}`), ActionsJSON: defaultJSON(input.Actions, `[]`), MetadataJSON: defaultJSON(input.Metadata, `{}`),
 		SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID,
 	}
-	return tx.Create(&object).Error
+	if err := tx.Select("*").Create(&object).Error; err != nil {
+		return err
+	}
+	if !visible {
+		return tx.Exec("UPDATE theater_objects SET visible = ? WHERE room_id = ? AND id = ?", false, room.ID, object.ID).Error
+	}
+	return nil
 }
 
 func loadTheaterObject(tx *gorm.DB, roomID, objectID string) (*model.TheaterObjectModel, error) {
@@ -426,7 +469,7 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 		return newTheaterError(TheaterErrorPermissionDenied, "对象已锁定", 403, nil)
 	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
-	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "sizeLocked": "size_locked", "interactive": "interactive"}
+	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "sizeLocked": "size_locked", "interactive": "interactive", "editable": "editable"}
 	for key, value := range payload.Fields {
 		if key == "parentId" {
 			parentID := strings.TrimSpace(fmt.Sprint(value))
