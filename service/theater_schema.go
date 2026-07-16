@@ -273,7 +273,7 @@ func validateTheaterName(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true}
+	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true}
 	for key, value := range state {
 		if !allowed[key] {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
@@ -282,9 +282,62 @@ func validateSceneState(state map[string]any) error {
 			return err
 		}
 	}
+	if styles, ok := state["surfaceStyles"]; ok {
+		if err := validateTheaterSurfaceStyles(styles); err != nil {
+			return err
+		}
+	}
 	raw, _ := json.Marshal(state)
 	if len(raw) > 64<<10 {
 		return theaterPayloadError("scene state 超过 64 KiB")
+	}
+	return nil
+}
+
+func validateTheaterSurfaceStyles(value any) error {
+	styles, ok := value.(map[string]any)
+	if !ok {
+		return theaterPayloadError("surfaceStyles 无效")
+	}
+	if len(styles) != 2 {
+		return theaterPayloadError("surfaceStyles 图层无效")
+	}
+	for _, target := range []string{"background", "foreground"} {
+		style, ok := styles[target].(map[string]any)
+		if !ok {
+			return theaterPayloadError("surfaceStyles." + target + " 无效")
+		}
+		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "fit": true, "overlay": true}
+		for key := range style {
+			if !allowed[key] {
+				return theaterPayloadError("surfaceStyles." + target + " 包含禁止字段: " + key)
+			}
+		}
+		for name, bounds := range map[string][2]float64{"brightness": {0, 2}, "blurPx": {0, 40}, "opacity": {0, 1}} {
+			number, valid := theaterNumericValue(style[name])
+			if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < bounds[0] || number > bounds[1] {
+				return theaterPayloadError("surfaceStyles." + target + "." + name + " 无效")
+			}
+		}
+		fit, ok := style["fit"].(string)
+		if !ok || !map[string]bool{"fill": true, "cover": true, "contain": true, "tile": true, "center": true}[fit] {
+			return theaterPayloadError("surfaceStyles." + target + ".fit 无效")
+		}
+		overlay, ok := style["overlay"].(map[string]any)
+		if !ok || len(overlay) != 3 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay 无效")
+		}
+		if _, ok := overlay["enabled"].(bool); !ok {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.enabled 无效")
+		}
+		color, ok := overlay["color"].(string)
+		if !ok || strings.TrimSpace(color) == "" || len(color) > 64 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.color 无效")
+		}
+		opacity, valid := theaterNumericValue(overlay["opacity"])
+		if !valid || math.IsNaN(opacity) || math.IsInf(opacity, 0) || opacity < 0 || opacity > 1 {
+			return theaterPayloadError("surfaceStyles." + target + ".overlay.opacity 无效")
+		}
 	}
 	return nil
 }

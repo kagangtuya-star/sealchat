@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Konva from 'konva'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NColorPicker, NIcon, NInput, NInputNumber, NSelect, NSlider, NTooltip } from 'naive-ui'
+import { NButton, NButtonGroup, NCheckbox, NColorPicker, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -24,6 +24,7 @@ import {
   Plus,
   Refresh,
   Select,
+  Settings,
   Stack2,
   Trash,
   X,
@@ -41,6 +42,9 @@ import {
   type StageImageRef,
   type StageObject,
   type StageObjectFit,
+  type StageSurfaceFit,
+  type StageSurfaceStyle,
+  type StageSurfaceTarget,
 } from '../shared/stage-types'
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
@@ -80,6 +84,29 @@ const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/
 type ImageTarget =
   | { kind: 'scene', target: 'background' | 'foreground' }
   | { kind: 'object', objectId: string }
+
+const surfaceSettingRows: { target: StageSurfaceTarget, label: string }[] = [
+  { target: 'background', label: '背景图片' },
+  { target: 'foreground', label: '前景图片' },
+]
+const surfaceFitOptions: { value: StageSurfaceFit, label: string }[] = [
+  { value: 'cover', label: '铺满' },
+  { value: 'contain', label: '适应' },
+  { value: 'fill', label: '拉伸' },
+  { value: 'tile', label: '平铺' },
+  { value: 'center', label: '居中' },
+]
+const surfaceStyle = (target: StageSurfaceTarget) => props.store.state.liveState.surfaceStyles[target]
+const updateSurfaceFit = (target: StageSurfaceTarget, value: string | number | boolean) => {
+  if (typeof value !== 'string' || !surfaceFitOptions.some((option) => option.value === value)) return
+  props.store.patchSceneSurfaceStyle(target, { fit: value as StageSurfaceFit })
+}
+const updateSurfacePercentage = (target: StageSurfaceTarget, key: 'brightness' | 'opacity', value: number) => {
+  props.store.patchSceneSurfaceStyle(target, { [key]: value / 100 })
+}
+const updateSurfaceOverlay = (target: StageSurfaceTarget, patch: Partial<StageSurfaceStyle['overlay']>) => {
+  props.store.patchSceneSurfaceStyle(target, { overlay: patch })
+}
 
 interface TheaterResourceResponse {
   resource?: TheaterResource
@@ -456,7 +483,7 @@ let drawingSession: DrawingSession | null = null
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
-const activeStageVideos = new Set<HTMLVideoElement>()
+const activeAnimatedMedia = new Set<StageMediaSource>()
 let mediaAnimation: Konva.Animation | null = null
 let multiDrag: {
   driverId: string
@@ -467,9 +494,11 @@ let multiDrag: {
 interface SurfaceSlot {
   group: Konva.Group
   base: Konva.Rect | null
-  image: Konva.Image
+  media: Konva.Shape
+  overlay: Konva.Rect
   placeholder: Konva.Rect
   label: Konva.Text
+  style: StageSurfaceStyle
   url: string
   version: number
   source: StageMediaSource | null
@@ -788,7 +817,7 @@ const stageMediaDimensions = (source: StageMediaSource) => isVideoSource(source)
   : { width: source.naturalWidth || source.width, height: source.naturalHeight || source.height }
 
 const syncMediaAnimation = () => {
-  if (!activeStageVideos.size) {
+  if (!activeAnimatedMedia.size) {
     mediaAnimation?.stop()
     return
   }
@@ -799,8 +828,12 @@ const syncMediaAnimation = () => {
 }
 
 const releaseStageMedia = (source: StageMediaSource | null | undefined) => {
-  if (!source || !isVideoSource(source)) return
-  activeStageVideos.delete(source)
+  if (!source) return
+  activeAnimatedMedia.delete(source)
+  if (!isVideoSource(source)) {
+    syncMediaAnimation()
+    return
+  }
   source.pause()
   source.onloadedmetadata = null
   source.onerror = null
@@ -823,7 +856,7 @@ const loadStageMedia = (
     source.playsInline = true
     source.preload = 'auto'
     source.onloadedmetadata = () => {
-      activeStageVideos.add(source)
+      activeAnimatedMedia.add(source)
       syncMediaAnimation()
       onReady(source)
       void source.play().catch(onError)
@@ -834,7 +867,13 @@ const loadStageMedia = (
     return source
   }
   const source = new Image()
-  source.onload = () => onReady(source)
+  source.onload = () => {
+    if (imageRef.animated) {
+      activeAnimatedMedia.add(source)
+      syncMediaAnimation()
+    }
+    onReady(source)
+  }
   source.onerror = onError
   source.src = resolved
   return source
@@ -869,10 +908,68 @@ const setImageFit = (
 
 const objectImageFit = (object: StageObject): StageObjectFit => object.aspectRatioLocked ? 'contain' : 'fill'
 
-const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean): SurfaceSlot => {
+const surfaceDrawRect = (
+  source: StageMediaSource,
+  width: number,
+  height: number,
+  fit: Exclude<StageSurfaceFit, 'tile'>,
+  blurPx: number,
+) => {
+  const dimensions = stageMediaDimensions(source)
+  const sourceWidth = Math.max(1, dimensions.width)
+  const sourceHeight = Math.max(1, dimensions.height)
+  if (fit === 'fill') return { x: -blurPx * 2, y: -blurPx * 2, width: width + blurPx * 4, height: height + blurPx * 4 }
+  if (fit === 'center') return { x: (width - sourceWidth) / 2, y: (height - sourceHeight) / 2, width: sourceWidth, height: sourceHeight }
+  const sourceRatio = sourceWidth / sourceHeight
+  const targetRatio = width / height
+  const useWidth = fit === 'cover' ? sourceRatio < targetRatio : sourceRatio > targetRatio
+  let renderedWidth = useWidth ? width : height * sourceRatio
+  let renderedHeight = useWidth ? width / sourceRatio : height
+  let x = (width - renderedWidth) / 2
+  let y = (height - renderedHeight) / 2
+  if (fit === 'cover' && blurPx > 0) {
+    const padding = blurPx * 2
+    const scale = Math.max((width + padding * 2) / renderedWidth, (height + padding * 2) / renderedHeight)
+    renderedWidth *= scale
+    renderedHeight *= scale
+    x = (width - renderedWidth) / 2
+    y = (height - renderedHeight) / 2
+  }
+  return { x, y, width: renderedWidth, height: renderedHeight }
+}
+
+const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
+  const source = slot.source
+  if (!source) return
+  const width = slot.placeholder.width()
+  const height = slot.placeholder.height()
+  const style = slot.style
+  context.save()
+  context.filter = `brightness(${style.brightness}) blur(${style.blurPx}px)`
+  context.imageSmoothingEnabled = true
+  if (style.fit === 'tile') {
+    const pattern = context.createPattern(source, 'repeat')
+    if (pattern) {
+      context.fillStyle = pattern
+      context.fillRect(0, 0, width, height)
+    }
+  } else {
+    const rect = surfaceDrawRect(source, width, height, style.fit, style.blurPx)
+    context.drawImage(source, 0, 0, stageMediaDimensions(source).width, stageMediaDimensions(source).height, rect.x, rect.y, rect.width, rect.height)
+  }
+  context.restore()
+}
+
+const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
   const group = new Konva.Group()
   const base = withBase ? new Konva.Rect({ listening: false }) : null
-  const image = new Konva.Image({ image: undefined, visible: false, listening: false })
+  let slot: SurfaceSlot
+  const media = new Konva.Shape({
+    visible: false,
+    listening: false,
+    sceneFunc: (context) => drawSurfaceMedia(slot, context),
+  })
+  const overlay = new Konva.Rect({ visible: false, listening: false })
   const placeholder = new Konva.Rect({
     visible: false,
     fill: 'rgba(15, 23, 42, 0.78)',
@@ -890,30 +987,39 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean): Surface
   })
   cameraGroup.add(group)
   if (base) group.add(base)
-  group.add(image, placeholder, label)
-  return { group, base, image, placeholder, label, url: '', version: 0, source: null }
+  group.add(media, overlay, placeholder, label)
+  slot = { group, base, media, overlay, placeholder, label, style, url: '', version: 0, source: null }
+  return slot
 }
 
 const updateSurfaceSlot = (
   slot: SurfaceSlot,
   imageRef: StageImageRef | null,
   box: { x: number, y: number, width: number, height: number },
-  fit: StageObjectFit,
+  style: StageSurfaceStyle,
   loadingLabel: string,
 ) => {
+  slot.style = style
   slot.group.position({ x: box.x, y: box.y })
   slot.group.clip({ x: 0, y: 0, width: box.width, height: box.height })
   slot.base?.setAttrs({ width: box.width, height: box.height, fill: props.store.state.liveState.backgroundColor })
   slot.placeholder.setAttrs({ width: box.width, height: box.height })
   slot.label.setAttrs({ width: box.width, height: box.height })
-  if (slot.source) setImageFit(slot.image, slot.source, box.width, box.height, fit)
+  slot.media.setAttrs({ width: box.width, height: box.height, opacity: style.opacity })
+  slot.overlay.setAttrs({
+    width: box.width,
+    height: box.height,
+    fill: style.overlay.color,
+    opacity: style.overlay.opacity * style.opacity,
+  })
 
   const resolved = imageRef ? resolveStageImageUrl(imageRef.url) : null
   if (!imageRef) {
     releaseStageMedia(slot.source)
     slot.url = ''
     slot.source = null
-    slot.image.visible(false)
+    slot.media.visible(false)
+    slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
     return
@@ -922,18 +1028,25 @@ const updateSurfaceSlot = (
     releaseStageMedia(slot.source)
     slot.url = imageRef.url
     slot.source = null
-    slot.image.visible(false)
+    slot.media.visible(false)
+    slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
     return
   }
-  if (slot.url === resolved) return
+  if (slot.url === resolved) {
+    slot.media.visible(Boolean(slot.source))
+    slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
+    slot.group.getLayer()?.batchDraw()
+    return
+  }
   releaseStageMedia(slot.source)
   slot.url = resolved
   slot.source = null
   slot.version += 1
   const version = slot.version
-  slot.image.visible(false)
+  slot.media.visible(false)
+  slot.overlay.visible(false)
   slot.placeholder.visible(true)
   slot.label.text(`${loadingLabel}加载中…`).visible(true)
   let source: StageMediaSource | null = null
@@ -943,22 +1056,16 @@ const updateSurfaceSlot = (
       return
     }
     slot.source = loadedSource
-    slot.image.image(loadedSource)
-    setImageFit(
-      slot.image,
-      loadedSource,
-      slot.placeholder.width(),
-      slot.placeholder.height(),
-      props.store.state.liveState.fieldObjectFit,
-    )
-    slot.image.visible(true)
+    slot.media.visible(true)
+    slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
     slot.placeholder.visible(false)
     slot.label.visible(false)
     slot.group.getLayer()?.batchDraw()
   }, () => {
     if (slot.version !== version || slot.url !== resolved) return
     releaseStageMedia(source)
-    slot.image.visible(false)
+    slot.media.visible(false)
+    slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text(`${loadingLabel}加载失败`).visible(true)
     slot.group.getLayer()?.batchDraw()
@@ -999,8 +1106,8 @@ const syncField = () => {
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
-  updateSurfaceSlot(backgroundSlot, liveState.background, box, liveState.fieldObjectFit, '背景')
-  updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.fieldObjectFit, '前景')
+  updateSurfaceSlot(backgroundSlot, liveState.background, box, liveState.surfaceStyles.background, '背景')
+  updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景')
   rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
   worldLayer?.batchDraw()
@@ -2138,8 +2245,8 @@ onMounted(() => {
     strokeWidth: 2,
     dash: [6, 4],
   })
-  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true)
-  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false)
+  backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
+  foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
   worldCameraGroup.add(gridGroup, objectRoot, drawingDraftRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
@@ -2210,7 +2317,7 @@ onBeforeUnmount(() => {
   objectNodes.forEach(releaseObjectMedia)
   releaseStageMedia(backgroundSlot?.source)
   releaseStageMedia(foregroundSlot?.source)
-  Array.from(activeStageVideos).forEach(releaseStageMedia)
+  Array.from(activeAnimatedMedia).forEach(releaseStageMedia)
   mediaAnimation?.stop()
   mediaAnimation = null
   objectNodes.clear()
@@ -2629,18 +2736,57 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-if="canEditAllObjects" class="theater-media-settings">
-          <label>背景图片</label>
-          <div class="theater-image-actions">
-            <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.background || store.state.liveState.background.animated" @click="openImageEditor({ kind: 'scene', target: 'background' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
-            <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.background" @click="clearImage({ kind: 'scene', target: 'background' })">清除</n-button>
-          </div>
-          <label>前景图片</label>
-          <div class="theater-image-actions">
-            <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
-            <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState.foreground || store.state.liveState.foreground.animated" @click="openImageEditor({ kind: 'scene', target: 'foreground' })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
-            <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState.foreground" @click="clearImage({ kind: 'scene', target: 'foreground' })">清除</n-button>
-          </div>
+          <template v-for="surface in surfaceSettingRows" :key="surface.target">
+            <label>{{ surface.label }}</label>
+            <div class="theater-image-actions">
+              <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
+              <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState[surface.target] || store.state.liveState[surface.target]?.animated" :aria-label="`编辑${surface.label}`" @click="openImageEditor({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
+              <n-popover trigger="click" placement="right-start" :width="300" :show-arrow="false">
+                <template #trigger>
+                  <n-button size="tiny" quaternary :aria-label="`设置${surface.label}`"><template #icon><n-icon><Settings /></n-icon></template></n-button>
+                </template>
+                <div class="theater-surface-settings">
+                  <div class="theater-surface-settings__heading">{{ surface.label }}设置</div>
+                  <div class="theater-surface-settings__fit">
+                    <span>填充方式</span>
+                    <n-radio-group :value="surfaceStyle(surface.target).fit" size="small" @update:value="updateSurfaceFit(surface.target, $event)">
+                      <n-radio v-for="option in surfaceFitOptions" :key="option.value" :value="option.value">{{ option.label }}</n-radio>
+                    </n-radio-group>
+                  </div>
+                  <div class="theater-surface-settings__slider">
+                    <span>透明度</span>
+                    <n-slider :value="Math.round(surfaceStyle(surface.target).opacity * 100)" :min="0" :max="100" :step="1" @update:value="updateSurfacePercentage(surface.target, 'opacity', $event)" />
+                    <output>{{ Math.round(surfaceStyle(surface.target).opacity * 100) }}%</output>
+                  </div>
+                  <div class="theater-surface-settings__slider">
+                    <span>模糊</span>
+                    <n-slider :value="surfaceStyle(surface.target).blurPx" :min="0" :max="40" :step="1" @update:value="store.patchSceneSurfaceStyle(surface.target, { blurPx: $event })" />
+                    <output>{{ Math.round(surfaceStyle(surface.target).blurPx) }}px</output>
+                  </div>
+                  <div class="theater-surface-settings__slider">
+                    <span>亮度</span>
+                    <n-slider :value="Math.round(surfaceStyle(surface.target).brightness * 100)" :min="0" :max="200" :step="1" @update:value="updateSurfacePercentage(surface.target, 'brightness', $event)" />
+                    <output>{{ Math.round(surfaceStyle(surface.target).brightness * 100) }}%</output>
+                  </div>
+                  <div class="theater-surface-settings__toggle">
+                    <span>颜色叠加</span>
+                    <n-switch :value="surfaceStyle(surface.target).overlay.enabled" size="small" @update:value="updateSurfaceOverlay(surface.target, { enabled: $event })" />
+                  </div>
+                  <div class="theater-surface-settings__overlay" :class="{ 'is-disabled': !surfaceStyle(surface.target).overlay.enabled }">
+                    <span>叠加颜色</span>
+                    <n-color-picker :value="surfaceStyle(surface.target).overlay.color" :show-alpha="false" :disabled="!surfaceStyle(surface.target).overlay.enabled" :modes="['hex']" size="small" @update:value="updateSurfaceOverlay(surface.target, { color: $event })" />
+                  </div>
+                  <div class="theater-surface-settings__slider" :class="{ 'is-disabled': !surfaceStyle(surface.target).overlay.enabled }">
+                    <span>叠加透明度</span>
+                    <n-slider :value="Math.round(surfaceStyle(surface.target).overlay.opacity * 100)" :disabled="!surfaceStyle(surface.target).overlay.enabled" :min="0" :max="100" :step="1" @update:value="updateSurfaceOverlay(surface.target, { opacity: $event / 100 })" />
+                    <output>{{ Math.round(surfaceStyle(surface.target).overlay.opacity * 100) }}%</output>
+                  </div>
+                  <n-button class="theater-surface-settings__reset" text size="small" @click="store.resetSceneSurfaceStyle(surface.target)">重置为默认</n-button>
+                </div>
+              </n-popover>
+              <n-button size="tiny" quaternary type="error" :disabled="!store.state.liveState[surface.target]" @click="clearImage({ kind: 'scene', target: surface.target })">清除</n-button>
+            </div>
+          </template>
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
         </div>
         <div class="theater-panel-heading"><span>层级</span></div>
@@ -2780,6 +2926,25 @@ onBeforeUnmount(() => {
 .theater-media-settings { display: grid; gap: 5px; padding: 9px; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-media-settings label, .theater-inspector label { color: var(--sc-fg-muted, #71717a); font-size: 10px; }
 .theater-image-actions { display: flex; align-items: center; gap: 4px; }
+.theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
+.theater-surface-settings > * { min-width: 0; }
+.theater-surface-settings__heading { color: var(--sc-text-primary, #f4f4f5); font-size: 13px; font-weight: 700; }
+.theater-surface-settings__fit { display: grid; gap: 7px; }
+.theater-surface-settings__fit > span, .theater-surface-settings__slider > span, .theater-surface-settings__toggle > span, .theater-surface-settings__overlay > span {
+  color: var(--sc-text-secondary, #b5b5c5); font-size: 11px;
+}
+.theater-surface-settings__fit :deep(.n-radio-group) {
+  width: 100%; min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 18px;
+}
+.theater-surface-settings__fit :deep(.n-radio) { min-width: 0; margin: 0; }
+.theater-surface-settings__fit :deep(.n-radio__label) { min-width: 0; padding-left: 6px; font-size: 11px; }
+.theater-surface-settings__slider { min-height: 24px; display: grid; grid-template-columns: 62px minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
+.theater-surface-settings__slider > *, .theater-surface-settings__toggle > *, .theater-surface-settings__overlay > * { min-width: 0; }
+.theater-surface-settings__slider output { color: var(--sc-text-primary, #f4f4f5); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.theater-surface-settings__toggle, .theater-surface-settings__overlay { display: grid; grid-template-columns: 86px minmax(0, 1fr); align-items: center; gap: 8px; }
+.theater-surface-settings__overlay :deep(.n-color-picker) { width: 100%; min-width: 0; }
+.theater-surface-settings .is-disabled { opacity: .48; }
+.theater-surface-settings__reset { justify-self: start; color: var(--sc-text-secondary, #b5b5c5); }
 .theater-resource-error { color: #f87171; font-size: 10px; line-height: 1.3; }
 .theater-layer-list { min-height: 100px; flex: 1; overflow: auto; padding: 4px 0; }
 .theater-layer-root-drop {

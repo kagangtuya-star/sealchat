@@ -1,6 +1,8 @@
 import { computed, reactive, toRaw, watch, type ComputedRef } from 'vue'
 import {
+  createDefaultStageSurfaceStyle,
   isSafeStageImageUrl,
+  normalizeStageSurfaceStyle,
   type StageAction,
   type StageDrawing,
   type StageImageRef,
@@ -9,6 +11,8 @@ import {
   type StageObjectTransform,
   type StageObjectType,
   type StageScene,
+  type StageSurfaceStylePatch,
+  type StageSurfaceTarget,
   type StageWorkspaceState,
 } from '../shared/stage-types'
 import {
@@ -88,6 +92,10 @@ const makeObject = (
 const createLiveState = (color: string, sceneObjects: Record<string, StageObject> = {}): StageLiveState => ({
   background: null,
   foreground: null,
+  surfaceStyles: {
+    background: createDefaultStageSurfaceStyle(),
+    foreground: createDefaultStageSurfaceStyle(),
+  },
   backgroundColor: color,
   fieldWidth: 40,
   fieldHeight: 24,
@@ -257,6 +265,10 @@ const normalizeObjects = (input: unknown) => {
 const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallbackColor = '#111827'): StageLiveState => ({
   background: normalizeImageRef(input?.background),
   foreground: normalizeImageRef(input?.foreground),
+  surfaceStyles: {
+    background: normalizeStageSurfaceStyle(input?.surfaceStyles?.background, input?.fieldObjectFit || 'cover'),
+    foreground: normalizeStageSurfaceStyle(input?.surfaceStyles?.foreground, input?.fieldObjectFit || 'cover'),
+  },
   backgroundColor: typeof input?.backgroundColor === 'string' ? input.backgroundColor : fallbackColor,
   fieldWidth: typeof input?.fieldWidth === 'number' && input.fieldWidth > 0 ? input.fieldWidth : 40,
   fieldHeight: typeof input?.fieldHeight === 'number' && input.fieldHeight > 0 ? input.fieldHeight : 24,
@@ -320,6 +332,8 @@ export interface TheaterStageStore {
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
+  patchSceneSurfaceStyle: (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => void
+  resetSceneSurfaceStyle: (target: StageSurfaceTarget) => void
   setObjectImage: (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
@@ -776,6 +790,22 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
+  const patchSceneSurfaceStyle = (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => {
+    const current = state.liveState.surfaceStyles[target]
+    state.liveState.surfaceStyles[target] = normalizeStageSurfaceStyle({
+      ...current,
+      ...patch,
+      overlay: {
+        ...current.overlay,
+        ...patch.overlay,
+      },
+    }, current.fit)
+  }
+
+  const resetSceneSurfaceStyle = (target: StageSurfaceTarget) => {
+    state.liveState.surfaceStyles[target] = createDefaultStageSurfaceStyle()
+  }
+
   const setObjectImage = (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => runObjectEdit('修改对象图片', () => {
     const object = getObject(objectId)
     if (!object || object.type !== 'image') return false
@@ -877,6 +907,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     moveOrder,
     reorderObject,
     setSceneImage,
+    patchSceneSurfaceStyle,
+    resetSceneSurfaceStyle,
     setObjectImage,
     addObjectAction,
     removeObjectAction,

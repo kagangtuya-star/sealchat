@@ -2,8 +2,8 @@ import { watch, type WatchStopHandle } from 'vue'
 
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
-import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StageScene, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl } from '../shared/stage-types'
+import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 
 type JsonObject = Record<string, unknown>
@@ -152,10 +152,16 @@ const drawingRef = (value: unknown): StageDrawing | undefined => {
 const stageStateFromServer = (value: unknown, objects: Record<string, StageObject>): StageLiveState => {
   const raw = asObject(value)
   const grid = asObject(raw.grid)
+  const surfaceStyles = asObject(raw.surfaceStyles)
   const transition = asObject(raw.transition)
+  const legacyFit: StageSurfaceFit = grid.objectFit === 'fill' || grid.objectFit === 'contain' ? grid.objectFit : 'cover'
   return {
     background: imageRef(raw.background),
     foreground: imageRef(raw.foreground),
+    surfaceStyles: {
+      background: normalizeStageSurfaceStyle(surfaceStyles.background, legacyFit),
+      foreground: normalizeStageSurfaceStyle(surfaceStyles.foreground, legacyFit),
+    },
     backgroundColor: typeof grid.backgroundColor === 'string' ? grid.backgroundColor : '#111827',
     fieldWidth: Math.max(1, finite(raw.fieldWidth, 40)),
     fieldHeight: Math.max(1, finite(raw.fieldHeight, 24)),
@@ -176,6 +182,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
   ...asObject(state.serverState),
   background: state.background,
   foreground: state.foreground,
+  surfaceStyles: clone(state.surfaceStyles),
   fieldWidth: state.fieldWidth,
   fieldHeight: state.fieldHeight,
   grid: {

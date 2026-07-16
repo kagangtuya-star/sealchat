@@ -80,6 +80,8 @@ const stageImageRefSchema = z.strictObject({
   resourceId: nonEmptyIdSchema,
   url: z.string().trim().min(1).max(8_192).refine(isSafeStageImageUrl, 'unsafe stage image URL'),
   alt: z.string().max(2_048).optional(),
+  mimeType: z.string().trim().min(1).max(256).optional(),
+  animated: z.boolean().optional(),
 })
 
 const characterDecorationSchema = z.strictObject({
@@ -268,9 +270,25 @@ const stageObjectSchema = z.strictObject({
   ) context.addIssue({ code: z.ZodIssueCode.custom, path: ['drawing', 'points'], message: '自由笔迹 points 无效' })
 })
 
+const stageSurfaceStyleSchema = z.strictObject({
+  brightness: z.number().finite().min(0).max(2),
+  blurPx: z.number().finite().min(0).max(40),
+  opacity: z.number().finite().min(0).max(1),
+  fit: z.enum(['fill', 'cover', 'contain', 'tile', 'center']),
+  overlay: z.strictObject({
+    enabled: z.boolean(),
+    color: z.string().trim().min(1).max(64),
+    opacity: z.number().finite().min(0).max(1),
+  }),
+})
+
 const stageSceneStateSchema = z.strictObject({
   background: stageImageRefSchema.nullable(),
   foreground: stageImageRefSchema.nullable(),
+  surfaceStyles: z.strictObject({
+    background: stageSurfaceStyleSchema,
+    foreground: stageSurfaceStyleSchema,
+  }),
   backgroundColor: z.string().max(256),
   fieldWidth: z.number().finite().positive(),
   fieldHeight: z.number().finite().positive(),

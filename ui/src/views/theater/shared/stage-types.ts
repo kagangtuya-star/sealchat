@@ -1,6 +1,8 @@
 export const WORLD_UNIT_PX = 24
 
 export type StageObjectFit = 'fill' | 'cover' | 'contain'
+export type StageSurfaceFit = StageObjectFit | 'tile' | 'center'
+export type StageSurfaceTarget = 'background' | 'foreground'
 export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' | 'character' | 'video'
 export type StageDrawingTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon'
 export type StageDrawingDash = 'solid' | 'dashed' | 'dotted'
@@ -71,6 +73,59 @@ export interface StageImageRef {
   animated?: boolean
 }
 
+export interface StageSurfaceStyle {
+  brightness: number
+  blurPx: number
+  opacity: number
+  fit: StageSurfaceFit
+  overlay: {
+    enabled: boolean
+    color: string
+    opacity: number
+  }
+}
+
+export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay'>> & {
+  overlay?: Partial<StageSurfaceStyle['overlay']>
+}
+
+export const createDefaultStageSurfaceStyle = (fit: StageSurfaceFit = 'cover'): StageSurfaceStyle => ({
+  brightness: 1,
+  blurPx: 0,
+  opacity: 1,
+  fit,
+  overlay: {
+    enabled: false,
+    color: '#000000',
+    opacity: 0.4,
+  },
+})
+
+const finiteRange = (value: unknown, fallback: number, min: number, max: number) => (
+  typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
+)
+
+export const normalizeStageSurfaceStyle = (input: unknown, fallbackFit: StageSurfaceFit = 'cover'): StageSurfaceStyle => {
+  const value = input && typeof input === 'object' ? input as Partial<StageSurfaceStyle> : {}
+  const overlay: Partial<StageSurfaceStyle['overlay']> = value.overlay && typeof value.overlay === 'object'
+    ? value.overlay
+    : {}
+  const fits: StageSurfaceFit[] = ['fill', 'cover', 'contain', 'tile', 'center']
+  return {
+    brightness: finiteRange(value.brightness, 1, 0, 2),
+    blurPx: finiteRange(value.blurPx, 0, 0, 40),
+    opacity: finiteRange(value.opacity, 1, 0, 1),
+    fit: value.fit && fits.includes(value.fit) ? value.fit : fallbackFit,
+    overlay: {
+      enabled: overlay.enabled === true,
+      color: typeof overlay.color === 'string' && overlay.color.trim() && overlay.color.length <= 64
+        ? overlay.color.trim()
+        : '#000000',
+      opacity: finiteRange(overlay.opacity, 0.4, 0, 1),
+    },
+  }
+}
+
 export interface StageObjectTransform {
   x: number
   y: number
@@ -108,6 +163,7 @@ export interface StageObject {
 export interface StageLiveState {
   background: StageImageRef | null
   foreground: StageImageRef | null
+  surfaceStyles: Record<StageSurfaceTarget, StageSurfaceStyle>
   backgroundColor: string
   fieldWidth: number
   fieldHeight: number
