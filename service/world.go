@@ -340,20 +340,20 @@ func pickWorldObserverEntryChannelID(world *model.WorldModel) string {
 		return ""
 	}
 	defaultChannelID := strings.TrimSpace(world.DefaultChannelID)
-	if defaultChannelID != "" {
-		if channel, err := CanObserverAccessChannel(defaultChannelID, world.ID); err == nil && channel != nil && strings.TrimSpace(channel.ID) != "" {
-			return channel.ID
-		}
-	}
 	channels, err := ChannelListByWorld(world.ID)
 	if err != nil {
 		return ""
 	}
 	for _, channel := range channels {
-		if channel == nil || strings.TrimSpace(channel.ID) == "" {
+		if channel == nil || strings.TrimSpace(channel.ID) == "" || channel.ID == defaultChannelID {
 			continue
 		}
 		return channel.ID
+	}
+	if defaultChannelID != "" {
+		if channel, err := CanObserverAccessChannel(defaultChannelID, world.ID); err == nil && channel != nil && strings.TrimSpace(channel.ID) != "" {
+			return channel.ID
+		}
 	}
 	return ""
 }

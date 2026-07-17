@@ -393,10 +393,19 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
 
         try {
+            const observerParams = chatStore.observerMode && chatStore.observerSlug
+                ? { ob_slug: chatStore.observerSlug }
+                : undefined
+            const notesEndpoint = observerParams
+                ? `api/v1/public/ob/channels/${channelId}/sticky-notes`
+                : `api/v1/channels/${channelId}/sticky-notes`
+            const foldersEndpoint = observerParams
+                ? `api/v1/public/ob/channels/${channelId}/sticky-note-folders`
+                : `api/v1/channels/${channelId}/sticky-note-folders`
             // 并行加载便签和文件夹
             const [notesResponse, foldersResponse] = await Promise.all([
-                api.get(`api/v1/channels/${channelId}/sticky-notes`),
-                api.get(`api/v1/channels/${channelId}/sticky-note-folders`).catch(() => ({ data: { folders: [] } }))
+                api.get(notesEndpoint, { params: observerParams }),
+                api.get(foldersEndpoint, { params: observerParams }).catch(() => ({ data: { folders: [] } }))
             ])
             const items: StickyNoteWithState[] = notesResponse.data.items || []
             const folderItems: StickyNoteFolder[] = foldersResponse.data.folders || []

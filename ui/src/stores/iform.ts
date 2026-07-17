@@ -228,7 +228,14 @@ export const useIFormStore = defineStore('iform', {
       }
       this.loading = true;
       try {
-        const { data } = await api.get<{ items: ChannelIForm[] }>(`api/v1/channels/${channelId}/iforms`);
+        const chat = useChatStore();
+        const observerSlug = chat.observerMode ? String(chat.observerSlug || '').trim() : '';
+        const endpoint = observerSlug
+          ? `api/v1/public/ob/channels/${channelId}/iforms`
+          : `api/v1/channels/${channelId}/iforms`;
+        const { data } = await api.get<{ items: ChannelIForm[] }>(endpoint, {
+          params: observerSlug ? { ob_slug: observerSlug } : undefined,
+        });
         this.formsByChannel = {
           ...this.formsByChannel,
           [channelId]: data?.items || [],

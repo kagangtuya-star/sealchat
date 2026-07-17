@@ -1371,9 +1371,7 @@ export const useChatStore = defineStore({
         ? observerSlug.trim()
         : this.observerSlug;
       const cachedChannelId = readObserverSessionChannel(normalizedObserverSlug, normalizedWorldId);
-      const effectiveChannelId = normalizedObserverSlug
-        ? (cachedChannelId || normalizedChannelId)
-        : (normalizedChannelId || cachedChannelId);
+      const effectiveChannelId = normalizedChannelId || cachedChannelId;
       const wasObserver = this.observerMode;
       const prevWorldId = this.observerWorldId;
       const prevObserverSlug = this.observerSlug;
@@ -1381,6 +1379,9 @@ export const useChatStore = defineStore({
       this.observerWorldId = normalizedWorldId;
       this.observerChannelId = effectiveChannelId;
       this.observerSlug = normalizedObserverSlug;
+      if (!wasObserver || prevObserverSlug !== normalizedObserverSlug) {
+        this.setFilterState({ icFilter: 'ic', showArchived: false, roleIds: [] });
+      }
       if (normalizedWorldId) {
         this.setCurrentWorld(normalizedWorldId);
         if (!this.joinedWorldIds.includes(normalizedWorldId)) {
@@ -1436,7 +1437,8 @@ export const useChatStore = defineStore({
           targetChannel = readObserverSessionChannel(this.observerSlug, worldId);
         }
         const world = this.worldMap[worldId];
-        const fallbackChannel = world?.defaultChannelId || findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
+        const firstChannelId = findFirstEnterableChannel(this.channelTreeByWorld[worldId] || [])?.id || '';
+        const fallbackChannel = firstChannelId || world?.defaultChannelId || '';
         if (!targetChannel) {
           targetChannel = fallbackChannel;
         }
