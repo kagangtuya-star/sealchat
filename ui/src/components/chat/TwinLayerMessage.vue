@@ -313,6 +313,8 @@ const skip = () => {
   refreshState();
 };
 
+defineExpose({ skip, replay });
+
 const handleOverlayClick = () => {
   if (waiting.value) {
     playback.value?.continuePlayback();

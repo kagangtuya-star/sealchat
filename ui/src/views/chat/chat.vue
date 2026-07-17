@@ -113,8 +113,19 @@ import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorationEditor.vue'
+import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
+import {
+  resolveTheaterPresentation,
+  type TheaterPresentation,
+  type TheaterPresentationPatch,
+} from '@/types/theaterPresentation'
 import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
+import {
+  cloneChannelIdentityTheaterPresentation,
+  cloneChannelIdentityTheaterPresentationPatch,
+  resolveChannelIdentityVariantTheaterPatch,
+} from '@/utils/channelIdentityTheaterPresentation'
 import {
   buildIdentityAssetKey,
   remapDecorationsForImport,
@@ -3201,6 +3212,7 @@ type IdentityAppearancePreview = {
   color: string;
   avatarAttachmentId: string;
   avatarDecorations?: AvatarDecoration[] | null;
+  theaterPresentation?: TheaterPresentation | null;
   isTemporary: boolean;
 };
 
@@ -3370,6 +3382,11 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
   if (!identity) {
     return null;
   }
+  const variantTheaterPresentation = variant?.theaterPresentation !== undefined
+    ? variant.theaterPresentation
+    : variant?.appearance?.theaterPresentation
+  const hasTheaterPresentation = Boolean(identity.theaterPresentation)
+    || variantTheaterPresentation !== undefined
   return {
     identityId: identity.id,
     variantId: variant?.id || '',
@@ -3377,6 +3394,14 @@ const resolveIdentityAppearancePreview = (identity?: ChannelIdentity | null, var
     color: variant?.color || identity.color || '',
     avatarAttachmentId: variant?.avatarAttachmentId || identity.avatarAttachmentId || '',
     avatarDecorations: cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
+    theaterPresentation: hasTheaterPresentation
+      ? resolveTheaterPresentation(
+          identity.theaterPresentation,
+          variantTheaterPresentation && typeof variantTheaterPresentation === 'object'
+            ? variantTheaterPresentation as TheaterPresentationPatch
+            : null,
+        )
+      : null,
     isTemporary: Boolean(identity.isTemporary),
   };
 };
@@ -3385,11 +3410,14 @@ const identityManageVisible = ref(false);
 const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
+const theaterPresentationEditorVisible = ref(false);
+const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
 const identityForm = reactive({
   displayName: '',
   color: '',
   avatarAttachmentId: '',
   avatarDecorations: [] as AvatarDecoration[],
+  theaterPresentation: null as TheaterPresentation | null,
   isDefault: false,
   isTemporary: false,
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
@@ -3415,6 +3443,7 @@ const identityVariantForm = reactive({
   avatarAttachmentId: '',
   displayName: '',
   color: '',
+  theaterPresentation: {} as TheaterPresentationPatch,
   enabled: true,
 });
 const identityVariantColorDraft = ref('');
@@ -4050,12 +4079,13 @@ const maybePromptIdentitySync = async () => {
   await openIdentitySyncDialog();
 };
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v4';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v5';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
   'sealchat.channel-identity/v1',
   'sealchat.channel-identity/v2',
   'sealchat.channel-identity/v3',
   'sealchat.channel-identity/v4',
+  'sealchat.channel-identity/v5',
 ];
 
 interface IdentityAssetExportIssueState {
@@ -4154,6 +4184,76 @@ const registerIdentityAsset = async (
     });
   }
   return assetKey;
+};
+
+const mapTheaterPresentationForExport = async (
+  input: Record<string, any> | null | undefined,
+  assetMap: Map<string, IdentityAssetPayload>,
+  fallbackPrefix: string,
+  issueState?: IdentityAssetExportIssueState,
+) => {
+  if (!input) return null;
+  const result = structuredClone(input);
+  const mapLayer = async (layer: any, suffix: string) => {
+    if (!layer?.media) return;
+    const resourceAssetKey = await registerIdentityAsset(assetMap, layer.media.resourceAttachmentId, `${fallbackPrefix}-${suffix}-resource`, issueState);
+    const fallbackAssetKey = await registerIdentityAsset(assetMap, layer.media.fallbackAttachmentId, `${fallbackPrefix}-${suffix}-fallback`, issueState);
+    layer.media.resourceAssetKey = resourceAssetKey || undefined;
+    layer.media.fallbackAssetKey = fallbackAssetKey || undefined;
+    delete layer.media.resourceAttachmentId;
+    delete layer.media.fallbackAttachmentId;
+    delete layer.media.assetId;
+  };
+  await mapLayer(result.portrait, 'portrait');
+  for (const [index, layer] of (result.portraitDecorations || []).entries()) {
+    await mapLayer(layer, `portrait-decoration-${index}`);
+  }
+  await mapLayer(result.dialogue?.frame, 'dialogue-frame');
+  return result;
+};
+
+const waitImportedTheaterAsset = async (channelId: string, assetId: string) => {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const response = await api.get(`api/v1/channels/${channelId}/theater-appearance-assets/${assetId}`);
+    const asset = response.data?.asset;
+    if (asset?.status === 'ready' && asset.media) return asset.media;
+    if (asset?.status === 'failed') throw new Error(asset.failureMessage || '演出资源处理失败');
+    await new Promise(resolve => window.setTimeout(resolve, 250));
+  }
+  throw new Error('演出资源处理超时');
+};
+
+const remapTheaterPresentationForImport = async (
+  input: Record<string, any> | null | undefined,
+  options: { channelId: string; identityId: string; targetUserId?: string | null; assetIdMap: Map<string, string>; mediaCache?: Map<string, any> },
+) => {
+  if (!input) return input ?? null;
+  const result = structuredClone(input);
+  const mediaCache = options.mediaCache || new Map<string, any>();
+  const mapLayer = async (layer: any, purpose: 'portrait' | 'portrait-decoration' | 'dialogue-frame') => {
+    if (!layer?.media) return;
+    const assetKey = String(layer.media.resourceAssetKey || '');
+    if (!assetKey) return;
+    const mediaCacheKey = `${options.identityId}:${assetKey}`;
+    let media = mediaCache.get(mediaCacheKey);
+    if (!media) {
+      const attachmentId = options.assetIdMap.get(assetKey) || '';
+      if (!attachmentId) throw new Error(`演出资源文件缺失: ${assetKey}`);
+      const response = await api.post(`api/v1/channels/${options.channelId}/theater-appearance-assets/import`, {
+        attachmentId,
+        purpose,
+        identityId: options.identityId,
+        targetUserId: options.targetUserId || undefined,
+      });
+      media = await waitImportedTheaterAsset(options.channelId, response.data?.asset?.id);
+      mediaCache.set(mediaCacheKey, media);
+    }
+    layer.media = media;
+  };
+  await mapLayer(result.portrait, 'portrait');
+  for (const layer of result.portraitDecorations || []) await mapLayer(layer, 'portrait-decoration');
+  await mapLayer(result.dialogue?.frame, 'dialogue-frame');
+  return result;
 };
 
 const mapDecorationsForExport = async (
@@ -4331,6 +4431,12 @@ const buildIdentityExportSnapshot = async (options: {
       safeFilename(displayName || identity.id || 'identity-decoration'),
       issueState,
     );
+    const theaterPresentation = await mapTheaterPresentationForExport(
+      identity.theaterPresentation as Record<string, any> | null | undefined,
+      assetMap,
+      safeFilename(displayName || identity.id || 'identity-theater'),
+      issueState,
+    );
     items.push({
       sourceId: identity.id,
       displayName,
@@ -4340,6 +4446,7 @@ const buildIdentityExportSnapshot = async (options: {
       folderIds: folderIds.length ? [...folderIds] : undefined,
       avatarAssetKey: avatarAssetKey || undefined,
       avatarDecorations,
+      theaterPresentation,
     });
 
     const identityVariants = (options.variantsByIdentity[identity.id] || [])
@@ -4352,6 +4459,12 @@ const buildIdentityExportSnapshot = async (options: {
         `${safeFilename(variant.keyword || variant.displayName || displayName || 'variant')}.png`,
         issueState,
       );
+      const theaterPresentation = await mapTheaterPresentationForExport(
+        variant.theaterPresentation || variant.appearance?.theaterPresentation,
+        assetMap,
+        safeFilename(variant.keyword || variant.id || 'variant-theater'),
+        issueState,
+      );
       variants.push({
         sourceId: variant.id,
         identitySourceId: identity.id,
@@ -4362,6 +4475,7 @@ const buildIdentityExportSnapshot = async (options: {
         displayName: variant.displayName,
         color: variant.color,
         appearance: variant.appearance || {},
+        theaterPresentation,
         sortOrder: variant.sortOrder,
         enabled: variant.enabled !== false,
       });
@@ -4507,6 +4621,7 @@ const importIdentityMigrationSnapshot = async (
   const targetUserId = options.targetUserId;
   const items = payload.items || [];
   const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId });
+  const theaterMediaCache = new Map<string, any>();
   const folderIdMap = new Map<string, string>();
 
   if (Array.isArray(payload.folders) && payload.folders.length) {
@@ -4574,6 +4689,15 @@ const importIdentityMigrationSnapshot = async (
       }
 
       if (matchedIdentity && options.mode === 'overwrite') {
+        const theaterPresentation = item.theaterPresentation === undefined
+          ? undefined
+          : await remapTheaterPresentationForImport(item.theaterPresentation, {
+              channelId: targetChannelId,
+              identityId: matchedIdentity.id,
+              targetUserId,
+              assetIdMap,
+              mediaCache: theaterMediaCache,
+            });
         const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
           channelId: targetChannelId,
           targetUserId: targetUserId || undefined,
@@ -4581,6 +4705,7 @@ const importIdentityMigrationSnapshot = async (
           color: item.color || '',
           avatarAttachmentId: avatarId,
           avatarDecorations,
+          theaterPresentation: theaterPresentation as any,
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -4604,6 +4729,27 @@ const importIdentityMigrationSnapshot = async (
         isDefault: !!item.isDefault,
         folderIds: mappedFolderIds,
       });
+      if (item.theaterPresentation !== undefined) {
+        const theaterPresentation = await remapTheaterPresentationForImport(item.theaterPresentation, {
+          channelId: targetChannelId,
+          identityId: created.id,
+          targetUserId,
+          assetIdMap,
+          mediaCache: theaterMediaCache,
+        });
+        await chat.channelIdentityUpdate(created.id, {
+          channelId: targetChannelId,
+          targetUserId: targetUserId || undefined,
+          displayName,
+          color: item.color || '',
+          avatarAttachmentId: avatarId,
+          avatarDecorations,
+          theaterPresentation: theaterPresentation as any,
+          isDefault: !!item.isDefault,
+          folderIds: mappedFolderIds,
+        });
+        created.theaterPresentation = theaterPresentation as any;
+      }
       identityIdMap.set(item.sourceId, created.id);
       targetList.push(created);
       createdCount += 1;
@@ -4643,6 +4789,15 @@ const importIdentityMigrationSnapshot = async (
     const sortedVariants = variants.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     for (const variant of sortedVariants) {
       try {
+        const theaterPresentation = variant.theaterPresentation === undefined
+          ? undefined
+          : await remapTheaterPresentationForImport(variant.theaterPresentation, {
+              channelId: targetChannelId,
+              identityId: targetIdentityId,
+              targetUserId,
+              assetIdMap,
+              mediaCache: theaterMediaCache,
+            });
         await chat.channelIdentityVariantCreate({
           channelId: targetChannelId,
           targetUserId: targetUserId || undefined,
@@ -4654,6 +4809,7 @@ const importIdentityMigrationSnapshot = async (
           displayName: variant.displayName || '',
           color: variant.color || '',
           appearance: variant.appearance || {},
+          theaterPresentation: theaterPresentation as any,
           enabled: variant.enabled !== false,
         });
       } catch (error) {
@@ -4982,6 +5138,7 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityColorDraft.value = identityForm.color;
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.avatarDecorations = cloneAvatarDecorations(identity?.avatarDecorations, identity?.avatarDecoration);
+  identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(identity?.theaterPresentation);
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.isTemporary = Boolean(identity?.isTemporary);
   identityForm.icOocOnActivate = identity?.isTemporary
@@ -4995,6 +5152,24 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
 
 const openIdentityDecorationEditor = () => {
   identityDecorationEditorVisible.value = true;
+};
+
+const openIdentityTheaterPresentationEditor = () => {
+  theaterPresentationEditorMode.value = 'base';
+  theaterPresentationEditorVisible.value = true;
+};
+
+const openIdentityVariantTheaterPresentationEditor = () => {
+  theaterPresentationEditorMode.value = 'variant';
+  theaterPresentationEditorVisible.value = true;
+};
+
+const handleTheaterPresentationApply = (value: TheaterPresentation | TheaterPresentationPatch) => {
+  if (theaterPresentationEditorMode.value === 'variant') {
+    identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
+    return;
+  }
+  identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
 };
 
 const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
@@ -5075,6 +5250,7 @@ const openIdentityManager = async () => {
 const closeIdentityDialog = () => {
   identityDialogVisible.value = false;
   identityDecorationEditorVisible.value = false;
+  theaterPresentationEditorVisible.value = false;
   identityVariantDialogVisible.value = false;
   identityVariantEmojiPickerVisible.value = false;
 };
@@ -5141,6 +5317,7 @@ const resetIdentityVariantForm = (variant?: ChannelIdentityVariant | null) => {
   identityVariantForm.avatarAttachmentId = variant?.avatarAttachmentId || '';
   identityVariantForm.displayName = variant?.displayName || '';
   identityVariantForm.color = normalizeHexColor(variant?.color || '') || '';
+  identityVariantForm.theaterPresentation = resolveChannelIdentityVariantTheaterPatch(variant);
   identityVariantColorDraft.value = identityVariantForm.color;
   identityVariantForm.enabled = variant?.enabled !== false;
   identityVariantAvatarPreview.value = resolveAttachmentUrl(variant?.avatarAttachmentId);
@@ -5270,6 +5447,7 @@ const submitIdentityVariantForm = async () => {
       displayName: String(identityVariantForm.displayName || '').trim(),
       color: normalizedColor,
       appearance: {},
+      theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
       enabled: identityVariantForm.enabled,
     };
     if (identityVariantDialogMode.value === 'create') {
@@ -5334,6 +5512,9 @@ const submitIdentityForm = async () => {
     avatarAttachmentId: identityForm.avatarAttachmentId,
     avatarDecorations: cloneAvatarDecorations(identityForm.avatarDecorations)
       .filter(item => item.enabled && item.resourceAttachmentId),
+    theaterPresentation: identityForm.theaterPresentation
+      ? cloneChannelIdentityTheaterPresentation(identityForm.theaterPresentation)
+      : null,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
@@ -17687,6 +17868,16 @@ onBeforeUnmount(() => {
           </n-text>
         </div>
       </n-form-item>
+      <n-form-item label="小剧场演出">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityTheaterPresentationEditor">编辑演出外观</n-button>
+            <n-tag v-if="identityForm.theaterPresentation" size="small" type="success">已配置</n-tag>
+            <n-text v-else depth="3">未配置</n-text>
+          </n-space>
+          <n-text depth="3">仅用于小剧场消息演出，不影响频道消息头像。</n-text>
+        </div>
+      </n-form-item>
       <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
@@ -17914,6 +18105,16 @@ onBeforeUnmount(() => {
           <n-button tertiary size="small" @click="clearIdentityVariantColor">清除</n-button>
         </div>
       </n-form-item>
+      <n-form-item label="小剧场演出">
+        <div class="flex flex-col gap-2">
+          <n-space align="center">
+            <n-button size="small" type="primary" secondary @click="openIdentityVariantTheaterPresentationEditor">编辑差分演出</n-button>
+            <n-tag v-if="Object.keys(identityVariantForm.theaterPresentation).length" size="small" type="success">已设置差分</n-tag>
+            <n-text v-else depth="3">全部继承</n-text>
+          </n-space>
+          <n-text depth="3">各部分可独立选择继承、自定义或清除。</n-text>
+        </div>
+      </n-form-item>
       <n-form-item>
         <n-checkbox v-model:checked="identityVariantForm.enabled">
           启用该差分
@@ -17927,6 +18128,19 @@ onBeforeUnmount(() => {
       </n-space>
     </template>
   </n-modal>
+  <TheaterPresentationEditorModal
+    v-model:show="theaterPresentationEditorVisible"
+    :mode="theaterPresentationEditorMode"
+    :presentation="identityForm.theaterPresentation"
+    :base="identityForm.theaterPresentation"
+    :patch="identityVariantForm.theaterPresentation"
+    :channel-id="chat.curChannel?.id || ''"
+    :identity-id="editingIdentity?.id || ''"
+    :variant-id="theaterPresentationEditorMode === 'variant' ? (editingIdentityVariant?.id || '') : ''"
+    :target-user-id="currentIdentityTargetUserId"
+    :preview-name="identityForm.displayName || '角色名'"
+    @apply="handleTheaterPresentationApply"
+  />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"
     mode="all"

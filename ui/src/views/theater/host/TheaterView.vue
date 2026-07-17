@@ -9,10 +9,17 @@ import { useAudioStudioStore } from '@/stores/audioStudio'
 import { useUserStore } from '@/stores/user'
 import StageApp from '../stage/StageApp.vue'
 import { createTheaterStageStore } from '../stage/StageStore'
-import { TheaterHostBridge } from '../bridge/TheaterHostBridge'
+import { mergeTheaterBridgePermissions, TheaterHostBridge } from '../bridge/TheaterHostBridge'
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
+import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
+import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
+import {
+  installTheaterBridgeDebugConsoleCommand,
+  isTheaterBridgeDebugEnabled,
+} from '../bridge/theater-bridge-debug'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +35,9 @@ const worldId = ref(routeWorldId.value)
 const channelId = ref(routeChannelId.value)
 const stageStore = createTheaterStageStore()
 const sessionId = createTheaterBridgeId('session')
+const dialogueRuntime = new TheaterDialogueRuntime()
+
+installTheaterBridgeDebugConsoleCommand()
 
 const layoutRef = ref<HTMLDivElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -41,6 +51,15 @@ const chatBridgeOnline = ref(false)
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
 const theaterPermissions = ref<string[]>([])
+type AppearancePreviewState = {
+  previewId: string
+  draft: TheaterPresentation
+  selection: TheaterSelection
+  activeSection: TheaterSection
+  previewName: string
+  previewText: string
+}
+const appearancePreview = ref<AppearancePreviewState | null>(null)
 const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
   revision: 0,
   updatedAt: 0,
@@ -151,8 +170,14 @@ const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
   characters: [],
 })
 
+const resolveBridgePermissions = (stagePermissions: readonly string[]) => {
+  const memberRole = chat.worldDetailMap[worldId.value]?.memberRole
+  return mergeTheaterBridgePermissions(stagePermissions, memberRole === 'owner' || memberRole === 'admin')
+}
+
 const startTheaterBridge = () => {
   if (!worldId.value || !channelId.value || typeof window === 'undefined') return
+  dialogueRuntime.reset()
   theaterBridge?.stop()
   theaterBridge = null
   chatBridgeOnline.value = false
@@ -163,24 +188,7 @@ const startTheaterBridge = () => {
     : memberRole === 'owner' || memberRole === 'admin'
       ? ['stage.view', 'stage.scene.switch', 'stage.object.edit', 'stage.action.trigger']
       : ['stage.view', 'stage.object.edit.delegated', 'stage.action.trigger']
-  const permissions = memberRole === 'owner' || memberRole === 'admin'
-    ? [
-      'stage.control',
-      ...stagePermissions,
-      'chat.message.send',
-      'chat.composer.insert',
-      'chat.character.read',
-      'chat.character.select',
-      'chat.character.variant.select',
-    ]
-    : [
-      ...stagePermissions,
-      'chat.message.send',
-      'chat.composer.insert',
-      'chat.character.read',
-      'chat.character.select',
-      'chat.character.variant.select',
-    ]
+  const permissions = resolveBridgePermissions(stagePermissions)
   theaterBridge = new TheaterHostBridge({
     context: { worldId: worldId.value, channelId: channelId.value, sessionId },
     stageStore,
@@ -188,9 +196,12 @@ const startTheaterBridge = () => {
     origin: window.location.origin,
     userId: user.info?.id ? String(user.info.id) : '',
     permissions,
-    debug: import.meta.env.DEV || route.query.bridgeDebug === '1',
+    debug: () => import.meta.env.DEV || route.query.bridgeDebug === '1' || isTheaterBridgeDebugEnabled(),
     onChatOnlineChange: (online) => { chatBridgeOnline.value = online },
     onCharacterSnapshotChange: (snapshot) => { characterSnapshot.value = snapshot },
+    onChatMessageCreated: dialogueRuntime.created,
+    onChatMessageUpdated: dialogueRuntime.updated,
+    onChatMessageRemoved: ({ messageId }) => dialogueRuntime.removed(messageId),
     triggerStageAction: async (payload) => {
       if (!theaterSync) return false
       try {
@@ -225,7 +236,7 @@ const startTheaterSync = async () => {
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
     onPermissionsChange: (permissions) => {
       theaterPermissions.value = permissions
-      theaterBridge?.setPermissions(permissions)
+      theaterBridge?.setPermissions(resolveBridgePermissions(permissions))
     },
     onSyncingChange: (syncing) => { theaterSyncing.value = syncing },
     onError: (error) => message.warning(error),
@@ -238,9 +249,33 @@ const startTheaterSync = async () => {
 const handleTheaterContext = (event: MessageEvent) => {
   if (event.origin !== window.location.origin || event.source !== iframeRef.value?.contentWindow) return
   const data = event.data as Record<string, unknown> | null
+  if (!data) return
+  if (data.type === 'sealchat.theater.appearance-preview.stop') {
+    appearancePreview.value = null
+    return
+  }
+  if (data.type === 'sealchat.theater.appearance.invalidated') {
+    if (data.sessionId !== sessionId || typeof data.channelId !== 'string') return
+    window.dispatchEvent(new CustomEvent('sealchat:theater-appearance-invalidated', {
+      detail: { channelId: data.channelId, targetUserId: data.targetUserId },
+    }))
+    return
+  }
+  if (data.type === 'sealchat.theater.appearance-preview.start' || data.type === 'sealchat.theater.appearance-preview.update') {
+    const parsed = theaterPresentationSchema.safeParse(data.draft)
+    if (!parsed.success || typeof data.previewId !== 'string' || !data.selection || typeof data.selection !== 'object' || typeof data.activeSection !== 'string') return
+    appearancePreview.value = {
+      previewId: data.previewId,
+      draft: parsed.data,
+      selection: data.selection as TheaterSelection,
+      activeSection: data.activeSection as TheaterSection,
+      previewName: typeof data.previewName === 'string' ? data.previewName : '角色名',
+      previewText: typeof data.previewText === 'string' ? data.previewText : '夜色正好，我们该出发了。',
+    }
+    return
+  }
   if (
-    !data
-    || data.type !== 'sealchat.theater.context'
+    data.type !== 'sealchat.theater.context'
     || data.sessionId !== sessionId
     || typeof data.worldId !== 'string'
     || typeof data.channelId !== 'string'
@@ -258,6 +293,29 @@ const handleTheaterContext = (event: MessageEvent) => {
   void startTheaterSync().catch((error) => {
     message.error(error instanceof Error ? error.message : '小剧场同步启动失败')
   })
+}
+
+const sendAppearancePreviewCommand = (command: TheaterEditorCommand, transient = false) => {
+  const preview = appearancePreview.value
+  const target = iframeRef.value?.contentWindow
+  if (!preview || !target) return
+  target.postMessage({
+    type: 'sealchat.theater.appearance-preview.command',
+    previewId: preview.previewId,
+    command,
+    transient,
+  }, window.location.origin)
+}
+
+const sendAppearancePreviewPhase = (phase: 'start' | 'end') => {
+  const preview = appearancePreview.value
+  const target = iframeRef.value?.contentWindow
+  if (!preview || !target) return
+  target.postMessage({
+    type: 'sealchat.theater.appearance-preview.command',
+    previewId: preview.previewId,
+    phase,
+  }, window.location.origin)
 }
 
 onBeforeMount(startTheaterBridge)
@@ -278,8 +336,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleTheaterContext)
+  appearancePreview.value = null
   theaterBridge?.stop()
   theaterBridge = null
+  dialogueRuntime.dispose()
   void theaterSync?.stop()
   theaterSync = null
   audioStudio.setPlaybackAuthority(true)
@@ -309,12 +369,16 @@ onBeforeUnmount(() => {
           :sync-ready="theaterSyncReady"
           :syncing="theaterSyncing"
           :permissions="theaterPermissions"
+          :dialogue-runtime="dialogueRuntime"
+          :appearance-preview="appearancePreview"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"
           @toggle-chat="toggleChat"
           @reset-layout="resetLayout"
           @exit-theater="exitTheater"
+          @appearance-preview-command="sendAppearancePreviewCommand"
+          @appearance-preview-phase="sendAppearancePreviewPhase"
         />
         <div v-if="!theaterSyncReady" class="theater-sync-loading">正在加载后端舞台……</div>
       </section>

@@ -7,21 +7,23 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
 type channelIdentityVariantPayload struct {
-	ChannelID          string         `json:"channelId"`
-	TargetUserID       string         `json:"targetUserId"`
-	IdentityID         string         `json:"identityId"`
-	SelectorEmoji      string         `json:"selectorEmoji"`
-	Keyword            string         `json:"keyword"`
-	Note               string         `json:"note"`
-	AvatarAttachmentID string         `json:"avatarAttachmentId"`
-	DisplayName        string         `json:"displayName"`
-	Color              string         `json:"color"`
-	Appearance         map[string]any `json:"appearance"`
-	Enabled            bool           `json:"enabled"`
+	ChannelID           string                                    `json:"channelId"`
+	TargetUserID        string                                    `json:"targetUserId"`
+	IdentityID          string                                    `json:"identityId"`
+	SelectorEmoji       string                                    `json:"selectorEmoji"`
+	Keyword             string                                    `json:"keyword"`
+	Note                string                                    `json:"note"`
+	AvatarAttachmentID  string                                    `json:"avatarAttachmentId"`
+	DisplayName         string                                    `json:"displayName"`
+	Color               string                                    `json:"color"`
+	Appearance          map[string]any                            `json:"appearance"`
+	Enabled             bool                                      `json:"enabled"`
+	TheaterPresentation protocol.OptionalTheaterPresentationPatch `json:"theaterPresentation"`
 }
 
 func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fiber.Map {
@@ -78,6 +80,22 @@ func ChannelIdentityVariantList(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"items": result})
 }
 
+func ChannelIdentityVariantGet(c *fiber.Ctx) error {
+	channelID := strings.TrimSpace(c.Query("channelId"))
+	if channelID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "缺少频道ID"})
+	}
+	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
+	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	item, err := service.ChannelIdentityVariantGetForUser(ctx.TargetUserID, channelID, strings.TrimSpace(c.Params("id")))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"item": serializeChannelIdentityVariant(item)})
+}
+
 func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 	payload := channelIdentityVariantPayload{}
 	if err := c.BodyParser(&payload); err != nil {
@@ -88,16 +106,18 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityVariantCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityVariantInput{
-		ChannelID:          payload.ChannelID,
-		IdentityID:         payload.IdentityID,
-		SelectorEmoji:      payload.SelectorEmoji,
-		Keyword:            payload.Keyword,
-		Note:               payload.Note,
-		AvatarAttachmentID: payload.AvatarAttachmentID,
-		DisplayName:        payload.DisplayName,
-		Color:              payload.Color,
-		Appearance:         payload.Appearance,
-		Enabled:            payload.Enabled,
+		ChannelID:              payload.ChannelID,
+		IdentityID:             payload.IdentityID,
+		SelectorEmoji:          payload.SelectorEmoji,
+		Keyword:                payload.Keyword,
+		Note:                   payload.Note,
+		AvatarAttachmentID:     payload.AvatarAttachmentID,
+		DisplayName:            payload.DisplayName,
+		Color:                  payload.Color,
+		Appearance:             payload.Appearance,
+		Enabled:                payload.Enabled,
+		TheaterPresentation:    payload.TheaterPresentation.Value,
+		TheaterPresentationSet: payload.TheaterPresentation.Set,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -125,16 +145,18 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityVariantUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, variantID, &service.ChannelIdentityVariantInput{
-		ChannelID:          payload.ChannelID,
-		IdentityID:         payload.IdentityID,
-		SelectorEmoji:      payload.SelectorEmoji,
-		Keyword:            payload.Keyword,
-		Note:               payload.Note,
-		AvatarAttachmentID: payload.AvatarAttachmentID,
-		DisplayName:        payload.DisplayName,
-		Color:              payload.Color,
-		Appearance:         payload.Appearance,
-		Enabled:            payload.Enabled,
+		ChannelID:              payload.ChannelID,
+		IdentityID:             payload.IdentityID,
+		SelectorEmoji:          payload.SelectorEmoji,
+		Keyword:                payload.Keyword,
+		Note:                   payload.Note,
+		AvatarAttachmentID:     payload.AvatarAttachmentID,
+		DisplayName:            payload.DisplayName,
+		Color:                  payload.Color,
+		Appearance:             payload.Appearance,
+		Enabled:                payload.Enabled,
+		TheaterPresentation:    payload.TheaterPresentation.Value,
+		TheaterPresentationSet: payload.TheaterPresentation.Set,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

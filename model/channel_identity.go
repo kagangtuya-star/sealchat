@@ -12,19 +12,20 @@ import (
 
 type ChannelIdentityModel struct {
 	StringPKBaseModel
-	ChannelID          string   `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1"`
-	UserID             string   `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
-	DisplayName        string   `json:"displayName"`
-	Color              string   `json:"color"`
-	AvatarAttachmentID string   `json:"avatarAttachmentId"`
-	AvatarDecorations  protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
-	CharacterCardID    string   `json:"characterCardId,omitempty" gorm:"size:100;index"`
-	IsDefault          bool     `json:"isDefault" gorm:"default:false"`
-	IsTemporary        bool     `json:"isTemporary" gorm:"default:false"`
-	IsHidden           bool     `json:"isHidden" gorm:"default:false"`
-	ICOOCOnActivate    string   `json:"icOocOnActivate,omitempty" gorm:"-"`
-	SortOrder          int      `json:"sortOrder" gorm:"index"`
-	FolderIDs          []string `json:"folderIds,omitempty" gorm:"-"`
+	ChannelID           string                        `json:"channelId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:1"`
+	UserID              string                        `json:"userId" gorm:"size:100;index:idx_channel_identity_channel_user,priority:2"`
+	DisplayName         string                        `json:"displayName"`
+	Color               string                        `json:"color"`
+	AvatarAttachmentID  string                        `json:"avatarAttachmentId"`
+	AvatarDecorations   protocol.AvatarDecorationList `json:"avatarDecorations,omitempty" gorm:"serializer:json;column:avatar_decoration"`
+	TheaterPresentation *protocol.TheaterPresentation `json:"theaterPresentation,omitempty" gorm:"serializer:json;column:theater_presentation"`
+	CharacterCardID     string                        `json:"characterCardId,omitempty" gorm:"size:100;index"`
+	IsDefault           bool                          `json:"isDefault" gorm:"default:false"`
+	IsTemporary         bool                          `json:"isTemporary" gorm:"default:false"`
+	IsHidden            bool                          `json:"isHidden" gorm:"default:false"`
+	ICOOCOnActivate     string                        `json:"icOocOnActivate,omitempty" gorm:"-"`
+	SortOrder           int                           `json:"sortOrder" gorm:"index"`
+	FolderIDs           []string                      `json:"folderIds,omitempty" gorm:"-"`
 }
 
 func (*ChannelIdentityModel) TableName() string {
@@ -38,14 +39,15 @@ func (m *ChannelIdentityModel) ToProtocolType() *protocol.ChannelIdentity {
 		legacyDecoration = &first
 	}
 	return &protocol.ChannelIdentity{
-		ID:                 m.ID,
-		DisplayName:        m.DisplayName,
-		Color:              m.Color,
-		AvatarAttachmentID: m.AvatarAttachmentID,
-		AvatarDecoration:   legacyDecoration,
-		AvatarDecorations:  m.AvatarDecorations,
-		IsDefault:          m.IsDefault,
-		IsTemporary:        m.IsTemporary,
+		ID:                  m.ID,
+		DisplayName:         m.DisplayName,
+		Color:               m.Color,
+		AvatarAttachmentID:  m.AvatarAttachmentID,
+		AvatarDecoration:    legacyDecoration,
+		AvatarDecorations:   m.AvatarDecorations,
+		TheaterPresentation: m.TheaterPresentation,
+		IsDefault:           m.IsDefault,
+		IsTemporary:         m.IsTemporary,
 	}
 }
 
@@ -157,6 +159,28 @@ func ChannelIdentityUpdate(id string, values map[string]any) error {
 				return err
 			}
 			values["avatar_decoration"] = string(encoded)
+		}
+	}
+	if rawPresentation, ok := values["theater_presentation"]; ok {
+		switch value := rawPresentation.(type) {
+		case nil:
+			values["theater_presentation"] = nil
+		case *protocol.TheaterPresentation:
+			if value == nil {
+				values["theater_presentation"] = nil
+			} else {
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					return err
+				}
+				values["theater_presentation"] = string(encoded)
+			}
+		case protocol.TheaterPresentation:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["theater_presentation"] = string(encoded)
 		}
 	}
 	return db.Model(&ChannelIdentityModel{}).Where("id = ?", id).Updates(values).Error

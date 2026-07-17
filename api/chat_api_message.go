@@ -2274,6 +2274,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			m.SenderIdentityColor = appearance.Color
 			m.SenderIdentityAvatarID = appearance.AvatarAttachmentID
 			m.SenderIdentityDecorations = appearance.AvatarDecorations
+			m.SenderTheaterPresentation = appearance.TheaterPresentation
 			if appearance.DisplayName != "" {
 				m.SenderMemberName = appearance.DisplayName
 			}
@@ -2679,7 +2680,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		return []string{i.QuoteID}
 	}, func(i *model.MessageModel, x []*model.MessageModel) {
 		i.Quote = x[0]
-	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
+	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, sender_theater_presentation, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
 	if !ctx.IsReadOnly() && !hasCursor && data.Type != "time" {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
@@ -2952,6 +2953,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 				msg.SenderIdentityColor = appearance.Color
 				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
 				msg.SenderIdentityDecorations = appearance.AvatarDecorations
+				msg.SenderTheaterPresentation = appearance.TheaterPresentation
 			}
 			resolvedIdentityProto = identity.ToProtocolType()
 			if resolvedIdentityProto != nil && appearance != nil {
@@ -3185,6 +3187,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_identity_color"] = msg.SenderIdentityColor
 		updates["sender_identity_avatar_id"] = msg.SenderIdentityAvatarID
 		updates["sender_identity_decoration"] = msg.SenderIdentityDecorations
+		updates["sender_theater_presentation"] = msg.SenderTheaterPresentation
 		updates["sender_identity_is_temporary"] = msg.SenderIdentityIsTemporary
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID

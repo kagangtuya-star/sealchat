@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{
   baseUrl?: string
   imageClass?: string
   linkClass?: string
+  attachmentResolver?: (src: string) => string
 }>(), {
   content: '',
   autoplay: false,
@@ -22,6 +23,10 @@ const props = withDefaults(defineProps<{
 })
 
 const rootRef = ref<HTMLElement | null>(null)
+const twinLayerRef = ref<InstanceType<typeof TwinLayerMessage> | null>(null)
+const emit = defineEmits<{
+  (event: 'state-change', value: { waiting: boolean; playing: boolean; completed: boolean }): void
+}>()
 const rich = computed(() => isTipTapJson(props.content))
 const performance = computed(() => {
   if (!rich.value) return false
@@ -54,17 +59,24 @@ const handleClick = (event: MouseEvent) => {
 
 watch(() => props.content, () => { void preloadFonts() })
 onMounted(() => { void preloadFonts() })
+
+defineExpose({
+  skip: () => twinLayerRef.value?.skip(),
+})
 </script>
 
 <template>
   <div ref="rootRef" class="rich-text-content" @click="handleClick">
     <TwinLayerMessage
       v-if="performance"
+      ref="twinLayerRef"
       :content="props.content"
       :autoplay="props.autoplay"
       :base-url="resolvedBaseUrl"
       :image-class="props.imageClass"
       :link-class="props.linkClass"
+      :attachment-resolver="props.attachmentResolver"
+      @state-change="emit('state-change', $event)"
     />
     <div v-else-if="rich" class="rich-text-content__body" v-html="html"></div>
     <div v-else class="rich-text-content__plain">{{ props.content }}</div>

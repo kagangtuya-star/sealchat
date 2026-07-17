@@ -2,6 +2,7 @@ import type { TheaterStageStore } from '../stage/StageStore'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
+  THEATER_CHAT_MESSAGE_EVENT_NAMES,
   THEATER_STAGE_CAPABILITIES,
   createTheaterBridgeMessage,
   isNewerCharacterSnapshot,
@@ -21,6 +22,8 @@ import {
   type StageAction,
   type StageActionTriggeredPayload,
   type TheaterBridgeContext,
+  type TheaterDialogueMessagePayload,
+  type TheaterDialogueMessageRemovedPayload,
   type TheaterBridgeMessage,
 } from './theater-bridge-protocol'
 import { MemoryTransport, PostMessageTransport } from './theater-bridge-transport'
@@ -32,14 +35,35 @@ interface TheaterHostBridgeOptions {
   origin: string
   userId: string
   permissions: readonly string[]
+  stageCapabilities?: readonly string[]
   now?: () => number
   chatQueueLimit?: number
   chatQueueTtlMs?: number
-  debug?: boolean
+  debug?: boolean | (() => boolean)
   onChatOnlineChange?: (online: boolean) => void
   onCharacterSnapshotChange?: (snapshot: ChatCharactersSnapshotPayload) => void
+  onChatMessageCreated?: (payload: TheaterDialogueMessagePayload) => void
+  onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
+  onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
   triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean>
 }
+
+const CHAT_BRIDGE_PERMISSIONS = [
+  'chat.message.send',
+  'chat.composer.insert',
+  'chat.character.read',
+  'chat.character.select',
+  'chat.character.variant.select',
+] as const
+
+export const mergeTheaterBridgePermissions = (
+  stagePermissions: readonly string[],
+  canControlStage = false,
+): string[] => [...new Set([
+  ...(canControlStage ? ['stage.control'] : []),
+  ...stagePermissions,
+  ...CHAT_BRIDGE_PERMISSIONS,
+])]
 
 export class TheaterHostBridge {
   private static readonly CHAT_QUEUE_LIMIT = 32
@@ -49,6 +73,8 @@ export class TheaterHostBridge {
   private readonly stageTransport: MemoryTransport
   private readonly hostClient: TheaterBridgeClient
   private readonly stageClient: TheaterBridgeClient
+  private readonly stageCapabilities: readonly string[]
+  private readonly stageCapabilitySet: ReadonlySet<string>
   private routerUnsubscribers: Array<() => void> = []
   private chatOnline = false
   private started = false
@@ -61,6 +87,8 @@ export class TheaterHostBridge {
   }
 
   constructor(private readonly options: TheaterHostBridgeOptions) {
+    this.stageCapabilities = options.stageCapabilities || THEATER_STAGE_CAPABILITIES
+    this.stageCapabilitySet = new Set(this.stageCapabilities)
     ;[this.hostStageTransport, this.stageTransport] = MemoryTransport.createPair()
     this.chatTransport = new PostMessageTransport({
       receiveWindow: window,
@@ -80,7 +108,7 @@ export class TheaterHostBridge {
       endpoint: 'stage',
       context: options.context,
       transport: this.stageTransport,
-      capabilities: THEATER_STAGE_CAPABILITIES,
+      capabilities: this.stageCapabilities,
       debug: options.debug,
     })
     this.registerHandlers()
@@ -165,7 +193,7 @@ export class TheaterHostBridge {
         channelId: this.options.context.channelId,
         userId: this.options.userId,
         permissions: [...this.options.permissions],
-        capabilities: [...THEATER_STAGE_CAPABILITIES],
+        capabilities: [...this.stageCapabilities],
         initialContext: {
           activeSceneId: this.options.stageStore.state.activeSceneId,
           activeCharacterId: null,
@@ -198,6 +226,15 @@ export class TheaterHostBridge {
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.selected', applyCharacterEvent)
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.appearance.updated', applyCharacterEvent)
     this.stageClient.onEvent<ChatCharactersSnapshotPayload>('chat.character.variant.selected', applyCharacterEvent)
+    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.created', (payload) => {
+      this.options.onChatMessageCreated?.(structuredClone(payload))
+    })
+    this.stageClient.onEvent<TheaterDialogueMessagePayload>('chat.message.updated', (payload) => {
+      this.options.onChatMessageUpdated?.(structuredClone(payload))
+    })
+    this.stageClient.onEvent<TheaterDialogueMessageRemovedPayload>('chat.message.removed', (payload) => {
+      this.options.onChatMessageRemoved?.(structuredClone(payload))
+    })
   }
 
   private routeFromChat(message: TheaterBridgeMessage) {
@@ -207,8 +244,21 @@ export class TheaterHostBridge {
       this.rejectCommand(message, 'ENDPOINT_OFFLINE', 'Theater chat endpoint is not initialized')
       return
     }
+    if (
+      message.kind === 'event'
+      && THEATER_CHAT_MESSAGE_EVENT_NAMES.includes(message.name as typeof THEATER_CHAT_MESSAGE_EVENT_NAMES[number])
+    ) {
+      if (!this.hostClient.supports('chat', message.name)) {
+        this.debug('chat message source capability unavailable', message.name)
+        return
+      }
+      if (!this.stageCapabilitySet.has(message.name)) {
+        this.debug('stage message capability unavailable', message.name)
+        return
+      }
+    }
     if (message.kind === 'command'
-      && !THEATER_STAGE_CAPABILITIES.includes(message.name as typeof THEATER_STAGE_CAPABILITIES[number])) {
+      && !this.stageCapabilitySet.has(message.name)) {
       this.rejectCommand(message, 'CAPABILITY_UNAVAILABLE', `Stage capability unavailable: ${message.name}`)
       return
     }
@@ -459,6 +509,7 @@ export class TheaterHostBridge {
   }
 
   private debug(message: string, detail?: unknown) {
-    if (this.options.debug) console.debug(`[theater-bridge:host-router] ${message}`, detail || '')
+    const enabled = typeof this.options.debug === 'function' ? this.options.debug() : this.options.debug
+    if (enabled) console.info(`[theater-bridge:host-router] ${message}`, detail || '')
   }
 }

@@ -47,7 +47,7 @@ interface TheaterBridgeClientOptions {
   transport: BridgeTransport
   capabilities?: readonly string[]
   requestTimeoutMs?: number
-  debug?: boolean
+  debug?: boolean | (() => boolean)
   maxDebugEntries?: number
 }
 
@@ -295,8 +295,9 @@ export class TheaterBridgeClient {
     }
     this.debugEntries.push(entry)
     if (this.debugEntries.length > this.maxDebugEntries) this.debugEntries.shift()
-    if (this.options.debug) {
-      const method = direction === 'reject' ? console.warn : console.debug
+    const debug = typeof this.options.debug === 'function' ? this.options.debug() : this.options.debug
+    if (debug) {
+      const method = direction === 'reject' ? console.warn : console.info
       method(`[theater-bridge:${this.options.endpoint}] ${direction} ${name}`, detail || '')
     }
   }

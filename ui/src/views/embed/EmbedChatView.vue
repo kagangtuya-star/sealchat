@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, toRaw } from 'vue';
 import { useRoute } from 'vue-router';
 import { throttle } from 'lodash-es';
 import Chat from '@/views/chat/chat.vue';
-import { useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore } from '@/stores/chat';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import { usePushNotificationStore } from '@/stores/pushNotification';
 import { useIFormStore } from '@/stores/iform';
@@ -32,8 +32,16 @@ import {
 } from '@/views/theater/bridge/theater-bridge-protocol';
 import { PostMessageTransport } from '@/views/theater/bridge/theater-bridge-transport';
 import { getCharacterSnapshotContentSignature } from '@/views/theater/bridge/theater-character-snapshot';
+import { subscribeTheaterChatMessageEvents } from '@/views/theater/bridge/theater-chat-message-events';
+import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import {
+  installTheaterBridgeDebugConsoleCommand,
+  isTheaterBridgeDebugEnabled,
+} from '@/views/theater/bridge/theater-bridge-debug';
 
 type PaneId = 'A' | 'B' | 'theater-chat';
+
+installTheaterBridgeDebugConsoleCommand();
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 type PresenceData = {
   lastPing: number;
@@ -97,6 +105,7 @@ const restoringSession = ref(false);
 const roleOptions = ref<RoleOption[]>([]);
 const audioOwner = ref(initialAudioOwner.value);
 let theaterBridgeClient: TheaterBridgeClient | null = null;
+let disposeTheaterMessageEvents: (() => void) | null = null;
 let theaterBridgeInitialized = false;
 let theaterCharacterRevision = 0;
 let theaterCharacterUpdatedAt = 0;
@@ -105,6 +114,7 @@ let theaterLastCharacterSnapshot: ChatCharactersSnapshotPayload | null = null;
 let theaterLastCharacterSnapshotSignature = '';
 let theaterGrantedPermissions = new Set<string>();
 let theaterPublishedContext = '';
+let forwardTheaterAppearanceInvalidation: ((event: Event) => void) | null = null;
 
 const isOwnerOrAdmin = computed(() => {
   const worldId = chat.currentWorldId;
@@ -169,6 +179,8 @@ const postToParent = (payload: any) => {
 };
 
 const stopTheaterBridge = () => {
+  disposeTheaterMessageEvents?.();
+  disposeTheaterMessageEvents = null;
   theaterBridgeInitialized = false;
   theaterGrantedPermissions = new Set();
   theaterLastCharacterSnapshot = null;
@@ -195,6 +207,8 @@ const publishTheaterContext = () => {
 };
 
 const handleTheaterChannelSwitch = () => {
+  disposeTheaterMessageEvents?.();
+  disposeTheaterMessageEvents = null;
   publishTheaterContext();
 };
 
@@ -245,7 +259,7 @@ const queueTheaterCharacterPublish = (
     }
     return snapshot;
   }).catch((error) => {
-    if (import.meta.env.DEV || route.query.bridgeDebug === '1') {
+    if (import.meta.env.DEV || route.query.bridgeDebug === '1' || isTheaterBridgeDebugEnabled()) {
       console.warn('[theater-bridge:chat] character publish failed', error);
     }
     return null;
@@ -265,7 +279,7 @@ const startTheaterBridge = async () => {
     return;
   }
 
-  const debug = import.meta.env.DEV || route.query.bridgeDebug === '1';
+  const debug = () => import.meta.env.DEV || route.query.bridgeDebug === '1' || isTheaterBridgeDebugEnabled();
   const transport = new PostMessageTransport({
     receiveWindow: window,
     targetWindow: () => window.parent,
@@ -273,7 +287,7 @@ const startTheaterBridge = async () => {
     targetOrigin: window.location.origin,
     expectedOrigin: window.location.origin,
     onRejected: (reason, error) => {
-      if (debug) console.warn('[theater-bridge:chat] rejected', reason, error || '');
+      if (debug()) console.warn('[theater-bridge:chat] rejected', reason, error || '');
     },
   });
   const client = new TheaterBridgeClient({
@@ -299,19 +313,32 @@ const startTheaterBridge = async () => {
       capabilities: [...THEATER_CHAT_CAPABILITIES],
     });
     theaterBridgeInitialized = true;
+    disposeTheaterMessageEvents?.();
+    disposeTheaterMessageEvents = subscribeTheaterChatMessageEvents({
+      eventSource: chatEvent as any,
+      client,
+      bridgeContext: { worldId, channelId, sessionId },
+      getCurrentContext: () => ({
+        worldId: String(chat.currentWorldId || '').trim(),
+        channelId: String(chat.curChannel?.id || '').trim(),
+        sessionId: theaterSessionId.value,
+      }),
+      isInitialized: () => theaterBridgeInitialized && theaterBridgeClient === client,
+      resolveAttachmentUrl,
+    });
     queueTheaterCharacterPublish('updated');
     window.setTimeout(() => {
       void client.request<Record<string, never>, StageSceneReadResult>('stage', 'stage.scene.read', {})
         .then((result) => {
-          if (debug && result.ok) console.debug('[theater-bridge:chat] stage scene ready', result.state.activeSceneId);
+          if (debug() && result.ok) console.debug('[theater-bridge:chat] stage scene ready', result.state.activeSceneId);
         })
         .catch((error) => {
-          if (debug) console.warn('[theater-bridge:chat] stage.scene.read failed', error);
+          if (debug()) console.warn('[theater-bridge:chat] stage.scene.read failed', error);
         });
     }, 0);
   });
   client.onEvent<SceneAppliedPayload>('stage.scene.applied', (payload) => {
-    if (debug) console.debug('[theater-bridge:chat] stage.scene.applied', payload);
+    if (debug()) console.debug('[theater-bridge:chat] stage.scene.applied', payload);
   });
   client.onCommand<ChatMessageSendPayload, ChatMessageSendResult>('chat.message.send', async (payload, bridgeMessage) => {
     if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
@@ -964,8 +991,23 @@ watch(
   { immediate: true },
 );
 
+watch(theaterSessionId, (sessionId, previousSessionId) => {
+  if (previousSessionId && sessionId !== previousSessionId) stopTheaterBridge();
+});
+
 onMounted(async () => {
-  (chatEvent as any).on('channel-switch-to', handleTheaterChannelSwitch);
+  chatEvent.on('channel-switch-to' as any, handleTheaterChannelSwitch as any);
+  forwardTheaterAppearanceInvalidation = (event: Event) => {
+    if (!theaterMode.value || window.parent === window) return;
+    const detail = (event as CustomEvent<{ channelId?: string; targetUserId?: string }>).detail || {};
+    window.parent.postMessage({
+      type: 'sealchat.theater.appearance.invalidated',
+      sessionId: theaterSessionId.value,
+      channelId: detail.channelId || '',
+      targetUserId: detail.targetUserId || '',
+    }, window.location.origin);
+  };
+  window.addEventListener('sealchat:theater-appearance-invalidated', forwardTheaterAppearanceInvalidation);
   window.addEventListener('message', handleMessage);
   document.addEventListener('pointerdown', handleInteraction, { capture: true });
   document.addEventListener('keydown', handleInteraction, { capture: true });
@@ -979,10 +1021,13 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  (chatEvent as any).off('channel-switch-to', handleTheaterChannelSwitch);
+  chatEvent.off('channel-switch-to' as any, handleTheaterChannelSwitch as any);
   stopTheaterBridge();
   chat.setChannelSessionRestoreFilterOverride('all');
   window.removeEventListener('message', handleMessage);
+  if (forwardTheaterAppearanceInvalidation) {
+    window.removeEventListener('sealchat:theater-appearance-invalidated', forwardTheaterAppearanceInvalidation);
+  }
   document.removeEventListener('pointerdown', handleInteraction, { capture: true } as any);
   document.removeEventListener('keydown', handleInteraction, { capture: true } as any);
 });

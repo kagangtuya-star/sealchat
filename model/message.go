@@ -64,6 +64,7 @@ type MessageModel struct {
 	SenderIdentityColor       string                        `json:"sender_identity_color"`
 	SenderIdentityAvatarID    string                        `json:"sender_identity_avatar_id"`
 	SenderIdentityDecorations protocol.AvatarDecorationList `json:"sender_identity_decorations,omitempty" gorm:"serializer:json;column:sender_identity_decoration"`
+	SenderTheaterPresentation *protocol.TheaterPresentation `json:"sender_theater_presentation,omitempty" gorm:"serializer:json;column:sender_theater_presentation"`
 	SenderIdentityIsTemporary bool                          `json:"sender_identity_is_temporary" gorm:"default:false"`
 	SenderRoleID              string                        `json:"sender_role_id" gorm:"size:100"`
 	MergedMessages            int                           `json:"-" gorm:"-"`
@@ -92,6 +93,9 @@ func (m *MessageModel) BeforeCreate(tx *gorm.DB) error {
 		if tx != nil {
 			tx.Statement.SetColumn("VisibleCharCount", m.VisibleCharCount)
 		}
+	}
+	if m.SenderTheaterPresentation == nil {
+		m.SenderTheaterPresentation = resolveMessageTheaterPresentation(tx, m)
 	}
 	return nil
 }
@@ -204,14 +208,15 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	}
 	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" || m.SenderIdentityIsTemporary || len(m.SenderIdentityDecorations) > 0 {
 		msg.Identity = &protocol.MessageIdentity{
-			ID:                m.SenderIdentityID,
-			VariantID:         m.SenderIdentityVariantID,
-			DisplayName:       m.SenderIdentityName,
-			Color:             m.SenderIdentityColor,
-			AvatarAttachment:  m.SenderIdentityAvatarID,
-			AvatarDecoration:  legacyDecoration,
-			AvatarDecorations: m.SenderIdentityDecorations,
-			IsTemporary:       m.SenderIdentityIsTemporary,
+			ID:                  m.SenderIdentityID,
+			VariantID:           m.SenderIdentityVariantID,
+			DisplayName:         m.SenderIdentityName,
+			Color:               m.SenderIdentityColor,
+			AvatarAttachment:    m.SenderIdentityAvatarID,
+			AvatarDecoration:    legacyDecoration,
+			AvatarDecorations:   m.SenderIdentityDecorations,
+			TheaterPresentation: m.SenderTheaterPresentation,
+			IsTemporary:         m.SenderIdentityIsTemporary,
 		}
 	}
 	if meta := m.buildWhisperMeta(); meta != nil {

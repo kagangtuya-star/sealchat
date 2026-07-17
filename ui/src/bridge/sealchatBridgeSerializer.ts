@@ -7,7 +7,18 @@ import type {
   SealChatBridgeMessageEvent,
   SealChatBridgeMessagePayload,
 } from './sealchatBridgeProtocol'
+import {
+  theaterPresentationPatchSchema,
+  theaterPresentationSchema,
+  type TheaterPresentation,
+  type TheaterPresentationPatch,
+} from '../types/theaterPresentation'
+import type {
+  TheaterDialogueMessagePayload,
+  TheaterDialogueMessageRemovedPayload,
+} from '../views/theater/bridge/theater-bridge-protocol'
 import { isSafeStageImageUrl } from '../views/theater/shared/stage-types'
+import { hasPerformanceContent } from '../utils/tiptap-performance-parser'
 
 type AvatarDecorationLike = {
   id?: string
@@ -43,6 +54,7 @@ type IdentityLike = {
   icOocOnActivate?: '' | 'ic' | 'ooc'
   avatarDecoration?: AvatarDecorationLike | null
   avatarDecorations?: AvatarDecorationLike[] | null
+  theaterPresentation?: TheaterPresentation | null
 }
 
 type VariantLike = {
@@ -55,6 +67,7 @@ type VariantLike = {
   color?: string
   avatarAttachmentId?: string
   appearance?: Record<string, unknown>
+  theaterPresentation?: TheaterPresentationPatch | null
   updatedAt?: string
 }
 
@@ -63,22 +76,33 @@ type ResolvedAppearanceLike = {
   color?: string
   avatarAttachmentId?: string
   avatarDecorations?: AvatarDecorationLike[] | null
+  theaterPresentation?: TheaterPresentation | null
 }
 
 type BridgeMessageLike = {
   id?: string
   content?: string
   createdAt?: number
+  timestamp?: number
+  displayOrder?: number
   icMode?: string
   ic_mode?: string
   isWhisper?: boolean
   is_whisper?: boolean
+  isArchived?: boolean
+  is_archived?: boolean
+  isDeleted?: boolean
+  is_deleted?: boolean
+  isRevoked?: boolean
+  is_revoked?: boolean
   identity?: IdentityLike | null
   senderRoleId?: string
   sender_role_id?: string
   sender_identity_name?: string
   sender_identity_color?: string
   sender_identity_avatar_id?: string
+  sender_identity_variant_id?: string
+  sender_theater_presentation?: unknown
 }
 
 const isTipTapJson = (content: string): boolean => {
@@ -127,13 +151,45 @@ const tiptapJsonToPlainText = (content: string): string => {
   }
 }
 
+const decodeHtmlEntities = (content: string): string => content.replace(
+  /&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi,
+  (match, entity: string) => {
+    const normalized = entity.toLowerCase()
+    if (normalized === 'amp') return '&'
+    if (normalized === 'lt') return '<'
+    if (normalized === 'gt') return '>'
+    if (normalized === 'quot') return '"'
+    if (normalized === 'apos') return "'"
+    if (normalized === 'nbsp') return ' '
+    const radix = normalized.startsWith('#x') ? 16 : 10
+    const codePoint = Number.parseInt(normalized.slice(radix === 16 ? 2 : 1), radix)
+    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match
+    try {
+      return String.fromCodePoint(codePoint)
+    } catch {
+      return match
+    }
+  },
+)
+
+const htmlToPlainText = (content: string): string => decodeHtmlEntities(content
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<\/(?:p|div|li|blockquote|h[1-6]|pre)>/gi, '\n')
+  .replace(/<[^>]+>/g, '')
+  .replace(/\n{3,}/g, '\n\n')
+  .replace(/\n+$/, ''))
+
 export const normalizeBridgePlainText = (raw: string): string => {
   const content = String(raw || '')
   if (!content) {
     return ''
   }
 
-  const plainText = isTipTapJson(content) ? tiptapJsonToPlainText(content) : content
+  const plainText = isTipTapJson(content)
+    ? tiptapJsonToPlainText(content)
+    : /<\/?[a-z][\s\S]*>/i.test(content)
+      ? htmlToPlainText(content)
+      : decodeHtmlEntities(content)
   const trimmedStart = plainText.trimStart()
   const withoutStateWidget = trimmedStart.startsWith(botStateWidgetPrefix)
     ? `${plainText.slice(0, plainText.length - trimmedStart.length)}${trimmedStart.slice(botStateWidgetPrefix.length).replace(/^\s*/, '')}`
@@ -223,6 +279,7 @@ const buildAppearance = ({
   avatarAttachmentId,
   avatarFallbackAttachmentIds,
   decorations,
+  theaterPresentation,
   resolveAttachmentUrl,
 }: {
   displayName?: string
@@ -230,18 +287,27 @@ const buildAppearance = ({
   avatarAttachmentId?: string
   avatarFallbackAttachmentIds?: Array<string | undefined>
   decorations?: AvatarDecorationLike[] | null
+  theaterPresentation?: TheaterPresentation | null
   resolveAttachmentUrl: (token?: string) => string
-}): BridgeCharacterAppearance => ({
-  displayName: String(displayName || ''),
-  color: String(color || ''),
-  avatar: buildFirstImageRef(
-    [avatarAttachmentId, ...(avatarFallbackAttachmentIds || [])],
-    resolveAttachmentUrl,
-    displayName,
-  ),
-  decorations: buildDecorations(decorations, resolveAttachmentUrl),
-  extensions: {},
-})
+}): BridgeCharacterAppearance => {
+  const parsedTheaterPresentation = theaterPresentation === null
+    ? { success: true as const, data: null }
+    : theaterPresentationSchema.safeParse(theaterPresentation)
+  return {
+    displayName: String(displayName || ''),
+    color: String(color || ''),
+    avatar: buildFirstImageRef(
+      [avatarAttachmentId, ...(avatarFallbackAttachmentIds || [])],
+      resolveAttachmentUrl,
+      displayName,
+    ),
+    decorations: buildDecorations(decorations, resolveAttachmentUrl),
+    ...(theaterPresentation !== undefined && parsedTheaterPresentation.success
+      ? { theaterPresentation: parsedTheaterPresentation.data }
+      : {}),
+    extensions: {},
+  }
+}
 
 const clonePublicRecord = (value: Record<string, unknown>): Record<string, unknown> => {
   try {
@@ -256,6 +322,12 @@ const buildVariantSnapshot = (
   resolveAttachmentUrl: (token?: string) => string,
 ): BridgeCharacterVariant => {
   const avatar = buildImageRef(variant.avatarAttachmentId, resolveAttachmentUrl, variant.displayName)
+  const rawTheaterPresentation = variant.theaterPresentation !== undefined
+    ? variant.theaterPresentation
+    : variant.appearance?.theaterPresentation
+  const parsedTheaterPresentation = rawTheaterPresentation === null
+    ? { success: true as const, data: null }
+    : theaterPresentationPatchSchema.safeParse(rawTheaterPresentation)
   return {
     variantId: String(variant.id || ''),
     keyword: String(variant.keyword || ''),
@@ -266,6 +338,9 @@ const buildVariantSnapshot = (
       ...(variant.displayName ? { displayName: variant.displayName } : {}),
       ...(variant.color ? { color: variant.color } : {}),
       ...(avatar ? { avatar } : {}),
+      ...(rawTheaterPresentation !== undefined && parsedTheaterPresentation.success
+        ? { theaterPresentation: structuredClone(parsedTheaterPresentation.data) }
+        : {}),
     },
     extensions: {
       ...(variant.appearance ? { appearance: clonePublicRecord(variant.appearance) } : {}),
@@ -302,11 +377,15 @@ export const buildRoleSnapshot = ({
     || identity.avatarAttachmentId
     || identity.avatarAttachment
   const resolvedDecorations = resolvedAppearance?.avatarDecorations || identityDecorations
+  const resolvedTheaterPresentation = resolvedAppearance && 'theaterPresentation' in resolvedAppearance
+    ? resolvedAppearance.theaterPresentation
+    : identity.theaterPresentation
   const baseAppearance = buildAppearance({
     displayName: identity.displayName,
     color: identity.color,
     avatarAttachmentId: identity.avatarAttachmentId || identity.avatarAttachment,
     decorations: identityDecorations,
+    theaterPresentation: identity.theaterPresentation,
     resolveAttachmentUrl,
   })
   const finalAppearance = buildAppearance({
@@ -319,6 +398,7 @@ export const buildRoleSnapshot = ({
       identity.avatarAttachment,
     ],
     decorations: resolvedDecorations,
+    theaterPresentation: resolvedTheaterPresentation,
     resolveAttachmentUrl,
   })
   return {
@@ -386,4 +466,121 @@ export const buildBridgeMessagePayload = ({
     contentRaw: rawContent,
     contentText: normalizeBridgePlainText(rawContent),
   }
+}
+
+const asRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
+)
+
+const normalizeOptionalId = (value: unknown): string | null => {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  return normalized || null
+}
+
+const normalizeTimestamp = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value)
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric)
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  }
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime()
+  return 0
+}
+
+const normalizeFrozenTheaterPresentation = (value: unknown): TheaterPresentation | null => {
+  const parsed = theaterPresentationSchema.safeParse(value)
+  return parsed.success ? structuredClone(parsed.data) : null
+}
+
+const normalizeFrozenIdentity = (
+  message: Record<string, unknown>,
+  resolveAttachmentUrl: (token?: string) => string,
+) => {
+  const identity = asRecord(message.identity)
+  const displayName = String(identity.displayName || message.sender_identity_name || '')
+  const color = String(identity.color || message.sender_identity_color || '')
+  const identityId = normalizeOptionalId(identity.id || message.senderRoleId || message.sender_role_id)
+  const variantId = normalizeOptionalId(identity.variantId || message.sender_identity_variant_id)
+  const avatarAttachmentId = String(identity.avatarAttachment || message.sender_identity_avatar_id || '').trim()
+  const decorations = Array.isArray(identity.avatarDecorations)
+    ? identity.avatarDecorations as AvatarDecorationLike[]
+    : identity.avatarDecoration && typeof identity.avatarDecoration === 'object'
+      ? [identity.avatarDecoration as AvatarDecorationLike]
+      : []
+  const theaterPresentation = normalizeFrozenTheaterPresentation(
+    identity.theaterPresentation ?? message.senderTheaterPresentation ?? message.sender_theater_presentation,
+  )
+  return {
+    identityId,
+    variantId,
+    displayName,
+    color,
+    appearance: {
+      ...buildAppearance({
+        displayName,
+        color,
+        avatarAttachmentId,
+        decorations,
+        theaterPresentation,
+        resolveAttachmentUrl,
+      }),
+      theaterPresentation,
+    },
+  }
+}
+
+export const serializeTheaterDialogueMessage = (
+  input: unknown,
+  resolveAttachmentUrl: (token?: string) => string = () => '',
+): TheaterDialogueMessagePayload | null => {
+  const message = asRecord(input)
+  const messageId = normalizeOptionalId(message.id || message.messageId)
+  if (!messageId) return null
+  const rawContent = String(message.content || '')
+  const richContent = isTipTapJson(rawContent) ? rawContent : ''
+  const actor = normalizeFrozenIdentity(message, resolveAttachmentUrl)
+  const displayOrder = typeof message.displayOrder === 'number' && Number.isFinite(message.displayOrder)
+    ? message.displayOrder
+    : typeof message.display_order === 'number' && Number.isFinite(message.display_order)
+      ? message.display_order
+      : undefined
+  return {
+    messageId,
+    createdAt: normalizeTimestamp(message.createdAt ?? message.timestamp ?? message.created_at),
+    ...(displayOrder !== undefined ? { displayOrder } : {}),
+    icMode: String(message.icMode ?? message.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic',
+    isWhisper: Boolean(message.isWhisper || message.is_whisper),
+    isArchived: Boolean(message.isArchived || message.is_archived),
+    isDeleted: Boolean(message.isDeleted || message.is_deleted || message.isRevoked || message.is_revoked),
+    contentText: normalizeBridgePlainText(rawContent),
+    ...(richContent
+      ? {
+          contentRichText: richContent,
+          hasPerformanceContent: hasPerformanceContent(richContent),
+        }
+      : {}),
+    actor,
+  }
+}
+
+export const serializeTheaterDialogueRemoved = (input: unknown): TheaterDialogueMessageRemovedPayload | null => {
+  const message = asRecord(input)
+  const messageId = normalizeOptionalId(message.id || message.messageId)
+  return messageId ? { messageId } : null
+}
+
+export const resolveTheaterChatEventChannelId = (input: unknown): string => {
+  const event = asRecord(input)
+  const message = asRecord(event.message)
+  const channel = asRecord(event.channel)
+  const messageChannel = asRecord(message.channel)
+  return String(
+    channel.id
+    || messageChannel.id
+    || message.channelId
+    || message.channel_id
+    || '',
+  ).trim()
 }

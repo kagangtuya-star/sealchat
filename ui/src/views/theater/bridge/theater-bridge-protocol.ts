@@ -1,14 +1,25 @@
 import { z } from 'zod'
+import {
+  theaterPresentationPatchSchema,
+  theaterPresentationSchema,
+} from '../../../types/theaterPresentation'
 import { isSafeStageImageUrl } from '../shared/stage-types'
 
 export const THEATER_BRIDGE_PROTOCOL = 'sealchat.theater' as const
 export const THEATER_BRIDGE_VERSION = '1.0' as const
 export const THEATER_BRIDGE_MAX_MESSAGE_BYTES = 256 * 1024
 
+export const THEATER_CHAT_MESSAGE_EVENT_NAMES = [
+  'chat.message.created',
+  'chat.message.updated',
+  'chat.message.removed',
+] as const
+
 export const THEATER_STAGE_CAPABILITIES = [
   'stage.scene.read',
   'stage.scene.apply',
   'stage.action.trigger',
+  ...THEATER_CHAT_MESSAGE_EVENT_NAMES,
 ] as const
 
 export const THEATER_CHAT_CAPABILITIES = [
@@ -23,6 +34,7 @@ export const THEATER_CHAT_CAPABILITIES = [
   'chat.character.selected',
   'chat.character.appearance.updated',
   'chat.character.variant.selected',
+  ...THEATER_CHAT_MESSAGE_EVENT_NAMES,
 ] as const
 
 export const bridgeEndpointSchema = z.enum(['host', 'stage', 'chat', 'plugin', 'broadcast'])
@@ -30,6 +42,7 @@ export const bridgeKindSchema = z.enum(['system', 'command', 'result', 'event'])
 
 const nonEmptyIdSchema = z.string().trim().min(1).max(256)
 const capabilitySchema = z.string().trim().min(1).max(128)
+const theaterChatMessageEventNameSet = new Set<string>(THEATER_CHAT_MESSAGE_EVENT_NAMES)
 const optionalSafeImageUrlSchema = z.string().max(8_192).refine(
   (value) => !value || isSafeStageImageUrl(value),
   'unsafe stage image URL',
@@ -56,6 +69,22 @@ export const bridgeMessageEnvelopeSchema = z.strictObject({
       path: ['correlationId'],
       message: 'result message requires correlationId',
     })
+  }
+  if (message.kind === 'event' && theaterChatMessageEventNameSet.has(message.name)) {
+    if (message.source !== 'chat') {
+      context.addIssue({
+        code: 'custom',
+        path: ['source'],
+        message: 'chat message events require chat source',
+      })
+    }
+    if (message.target !== 'stage') {
+      context.addIssue({
+        code: 'custom',
+        path: ['target'],
+        message: 'chat message events require stage target',
+      })
+    }
   }
 })
 
@@ -93,11 +122,12 @@ const characterDecorationSchema = z.strictObject({
   extensions: z.record(z.string(), z.unknown()),
 })
 
-const characterAppearanceSchema = z.strictObject({
+export const characterAppearanceSchema = z.strictObject({
   displayName: z.string().max(512),
   color: z.string().max(256),
   avatar: stageImageRefSchema.nullable(),
   decorations: z.array(characterDecorationSchema).max(64),
+  theaterPresentation: theaterPresentationSchema.nullable().optional(),
   extensions: z.record(z.string(), z.unknown()),
 })
 
@@ -106,6 +136,7 @@ const characterAppearancePatchSchema = z.strictObject({
   color: z.string().max(256).optional(),
   avatar: stageImageRefSchema.nullable().optional(),
   decorations: z.array(characterDecorationSchema).max(64).optional(),
+  theaterPresentation: theaterPresentationPatchSchema.nullable().optional(),
   extensions: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -425,6 +456,39 @@ export const chatComposerInsertResultSchema = z.union([
   bridgeErrorResultSchema,
 ])
 
+const theaterDialogueActorAppearanceSchema = z.strictObject({
+  displayName: z.string().max(512),
+  color: z.string().max(256),
+  avatar: stageImageRefSchema.nullable(),
+  decorations: z.array(characterDecorationSchema).max(64),
+  theaterPresentation: theaterPresentationSchema.nullable(),
+  extensions: z.record(z.string(), z.unknown()),
+})
+
+export const theaterDialogueMessagePayloadSchema = z.strictObject({
+  messageId: nonEmptyIdSchema,
+  createdAt: z.number().int().nonnegative(),
+  displayOrder: z.number().finite().optional(),
+  icMode: z.enum(['ic', 'ooc']),
+  isWhisper: z.boolean(),
+  isArchived: z.boolean(),
+  isDeleted: z.boolean(),
+  contentText: z.string().max(200_000),
+  contentRichText: z.string().max(200_000).optional(),
+  hasPerformanceContent: z.boolean().optional(),
+  actor: z.strictObject({
+    identityId: nonEmptyIdSchema.nullable(),
+    variantId: nonEmptyIdSchema.nullable(),
+    displayName: z.string().max(512),
+    color: z.string().max(256),
+    appearance: theaterDialogueActorAppearanceSchema,
+  }),
+})
+
+export const theaterDialogueMessageRemovedPayloadSchema = z.strictObject({
+  messageId: nonEmptyIdSchema,
+})
+
 export const chatCharacterReadPayloadSchema = z.strictObject({})
 export const chatCharacterReadResultSchema = z.union([
   z.strictObject({
@@ -491,6 +555,9 @@ const payloadSchemas = new Map<string, z.ZodType>([
   ['event:chat.character.selected', characterSelectedPayloadSchema],
   ['event:chat.character.appearance.updated', characterAppearanceUpdatedPayloadSchema],
   ['event:chat.character.variant.selected', characterVariantSelectedPayloadSchema],
+  ['event:chat.message.created', theaterDialogueMessagePayloadSchema],
+  ['event:chat.message.updated', theaterDialogueMessagePayloadSchema],
+  ['event:chat.message.removed', theaterDialogueMessageRemovedPayloadSchema],
 ])
 
 export type BridgeEndpoint = z.infer<typeof bridgeEndpointSchema>
@@ -509,6 +576,8 @@ export type ChatMessageSendPayload = z.infer<typeof chatMessageSendPayloadSchema
 export type ChatMessageSendResult = z.infer<typeof chatMessageSendResultSchema>
 export type ChatComposerInsertPayload = z.infer<typeof chatComposerInsertPayloadSchema>
 export type ChatComposerInsertResult = z.infer<typeof chatComposerInsertResultSchema>
+export type TheaterDialogueMessagePayload = z.infer<typeof theaterDialogueMessagePayloadSchema>
+export type TheaterDialogueMessageRemovedPayload = z.infer<typeof theaterDialogueMessageRemovedPayloadSchema>
 export type CharacterAppearance = z.infer<typeof characterAppearanceSchema>
 export type ChatCharacterVariant = z.infer<typeof chatCharacterVariantSchema>
 export type ChatCharacterSnapshot = z.infer<typeof chatCharacterSnapshotSchema>

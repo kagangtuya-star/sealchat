@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,16 +12,35 @@ import (
 	"sealchat/protocol"
 )
 
+func cloneTheaterPresentation(value *protocol.TheaterPresentation) *protocol.TheaterPresentation {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.PortraitDecorations = append([]protocol.TheaterVisualLayer(nil), value.PortraitDecorations...)
+	if value.Portrait != nil {
+		portrait := *value.Portrait
+		clone.Portrait = &portrait
+	}
+	if value.Dialogue.Frame != nil {
+		frame := *value.Dialogue.Frame
+		clone.Dialogue.Frame = &frame
+	}
+	return &clone
+}
+
 type ChannelIdentityInput struct {
-	ChannelID          string
-	DisplayName        string
-	Color              string
-	AvatarAttachmentID string
-	AvatarDecorations  protocol.AvatarDecorationList
-	IsDefault          bool
-	IsTemporary        bool
-	ICOOCOnActivate    string
-	FolderIDs          []string
+	ChannelID              string
+	DisplayName            string
+	Color                  string
+	AvatarAttachmentID     string
+	AvatarDecorations      protocol.AvatarDecorationList
+	IsDefault              bool
+	IsTemporary            bool
+	ICOOCOnActivate        string
+	FolderIDs              []string
+	TheaterPresentation    *protocol.TheaterPresentation
+	TheaterPresentationSet bool
 }
 
 type ChannelIdentityReplaceResult struct {
@@ -109,6 +129,9 @@ func ApplyTemporaryIdentityActivateModes(userID string, identities []*model.Chan
 }
 
 func validateIdentityInput(input *ChannelIdentityInput) error {
+	if input == nil {
+		return errors.New("参数不能为空")
+	}
 	if strings.TrimSpace(input.DisplayName) == "" {
 		return errors.New("频道昵称不能为空")
 	}
@@ -126,6 +149,11 @@ func validateIdentityInput(input *ChannelIdentityInput) error {
 		return errors.New("文件夹数量过多")
 	}
 	input.ICOOCOnActivate = normalizeTemporaryIdentityActivateMode(input.ICOOCOnActivate)
+	if input.TheaterPresentation != nil {
+		if err := protocol.ValidateTheaterPresentation(*input.TheaterPresentation); err != nil {
+			return fmt.Errorf("演出外观无效: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -165,6 +193,11 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return nil, err
 	}
+	if input.TheaterPresentation != nil {
+		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, "", *input.TheaterPresentation); err != nil {
+			return nil, err
+		}
+	}
 
 	sortMax, err := model.ChannelIdentityMaxSort(input.ChannelID, ownerUserID)
 	if err != nil {
@@ -172,15 +205,16 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 	}
 
 	item := &model.ChannelIdentityModel{
-		ChannelID:          input.ChannelID,
-		UserID:             ownerUserID,
-		DisplayName:        strings.TrimSpace(input.DisplayName),
-		Color:              input.Color,
-		AvatarAttachmentID: input.AvatarAttachmentID,
-		AvatarDecorations:  avatarDecorations,
-		SortOrder:          sortMax + 1,
-		IsDefault:          input.IsDefault,
-		IsTemporary:        input.IsTemporary,
+		ChannelID:           input.ChannelID,
+		UserID:              ownerUserID,
+		DisplayName:         strings.TrimSpace(input.DisplayName),
+		Color:               input.Color,
+		AvatarAttachmentID:  input.AvatarAttachmentID,
+		AvatarDecorations:   avatarDecorations,
+		SortOrder:           sortMax + 1,
+		IsDefault:           input.IsDefault,
+		IsTemporary:         input.IsTemporary,
+		TheaterPresentation: cloneTheaterPresentation(input.TheaterPresentation),
 	}
 	if item.IsDefault {
 		if err := model.ChannelIdentityEnsureSingleDefault(item.ChannelID, item.UserID, ""); err != nil {
@@ -246,6 +280,11 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return nil, err
 	}
+	if input.TheaterPresentation != nil {
+		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+			return nil, err
+		}
+	}
 
 	values := map[string]any{
 		"display_name":         strings.TrimSpace(input.DisplayName),
@@ -253,6 +292,9 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 		"avatar_attachment_id": input.AvatarAttachmentID,
 		"avatar_decoration":    avatarDecorations,
 		"is_default":           input.IsDefault,
+	}
+	if input.TheaterPresentationSet || input.TheaterPresentation != nil {
+		values["theater_presentation"] = input.TheaterPresentation
 	}
 
 	if err := model.ChannelIdentityUpdate(identity.ID, values); err != nil {
@@ -296,6 +338,9 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 			return nil, err
 		}
 	}
+	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+		return nil, err
+	}
 	return updated, nil
 }
 
@@ -324,6 +369,15 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 	if err != nil {
 		return nil, err
 	}
+	presentation := identity.TheaterPresentation
+	if input.TheaterPresentationSet || input.TheaterPresentation != nil {
+		presentation = input.TheaterPresentation
+	}
+	if presentation != nil {
+		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *presentation); err != nil {
+			return nil, err
+		}
+	}
 
 	folderIDs := sanitizeFolderIDs(input.FolderIDs)
 	if input.FolderIDs == nil {
@@ -343,17 +397,21 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 	}
 	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
 		item := &model.ChannelIdentityModel{
-			ChannelID:          identity.ChannelID,
-			UserID:             identity.UserID,
-			DisplayName:        strings.TrimSpace(input.DisplayName),
-			Color:              input.Color,
-			AvatarAttachmentID: input.AvatarAttachmentID,
-			AvatarDecorations:  avatarDecorations,
-			IsDefault:          input.IsDefault,
-			IsTemporary:        true,
-			SortOrder:          identity.SortOrder,
+			ChannelID:           identity.ChannelID,
+			UserID:              identity.UserID,
+			DisplayName:         strings.TrimSpace(input.DisplayName),
+			Color:               input.Color,
+			AvatarAttachmentID:  input.AvatarAttachmentID,
+			AvatarDecorations:   avatarDecorations,
+			IsDefault:           input.IsDefault,
+			IsTemporary:         true,
+			SortOrder:           identity.SortOrder,
+			TheaterPresentation: cloneTheaterPresentation(presentation),
 		}
 		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		if err := reassignTheaterAppearanceAssetsIdentityTx(tx, identity.ID, item.ID, identity.ChannelID, identity.UserID); err != nil {
 			return err
 		}
 		if item.IsDefault {
@@ -456,6 +514,9 @@ func ChannelIdentityReplaceTemporaryWithAccess(ownerUserID string, operatorUserI
 	if err != nil {
 		return nil, err
 	}
+	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -494,7 +555,7 @@ func ChannelIdentityDeleteWithAccess(ownerUserID string, operatorUserID string, 
 			}
 		}
 	}
-	return nil
+	return MarkTheaterAppearanceAssetOrphans(context.Background())
 }
 
 func ChannelIdentityResolve(userID string, channelID string, identityID string) (*model.ChannelIdentityModel, error) {
@@ -535,18 +596,19 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":                 item.ID,
-		"channelId":          item.ChannelID,
-		"userId":             item.UserID,
-		"displayName":        item.DisplayName,
-		"color":              item.Color,
-		"avatarAttachmentId": item.AvatarAttachmentID,
-		"avatarDecorations":  item.AvatarDecorations,
-		"isDefault":          item.IsDefault,
-		"isTemporary":        item.IsTemporary,
-		"icOocOnActivate":    item.ICOOCOnActivate,
-		"sortOrder":          item.SortOrder,
-		"folderIds":          item.FolderIDs,
+		"id":                  item.ID,
+		"channelId":           item.ChannelID,
+		"userId":              item.UserID,
+		"displayName":         item.DisplayName,
+		"color":               item.Color,
+		"avatarAttachmentId":  item.AvatarAttachmentID,
+		"avatarDecorations":   item.AvatarDecorations,
+		"theaterPresentation": item.TheaterPresentation,
+		"isDefault":           item.IsDefault,
+		"isTemporary":         item.IsTemporary,
+		"icOocOnActivate":     item.ICOOCOnActivate,
+		"sortOrder":           item.SortOrder,
+		"folderIds":           item.FolderIDs,
 	}
 }
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,25 +20,28 @@ var (
 )
 
 type ChannelIdentityVariantInput struct {
-	ChannelID          string
-	IdentityID         string
-	SelectorEmoji      string
-	Keyword            string
-	Note               string
-	AvatarAttachmentID string
-	DisplayName        string
-	Color              string
-	Appearance         map[string]any
-	Enabled            bool
+	ChannelID              string
+	IdentityID             string
+	SelectorEmoji          string
+	Keyword                string
+	Note                   string
+	AvatarAttachmentID     string
+	DisplayName            string
+	Color                  string
+	Appearance             map[string]any
+	Enabled                bool
+	TheaterPresentation    *protocol.TheaterPresentationPatch
+	TheaterPresentationSet bool
 }
 
 type ResolvedIdentityAppearance struct {
-	IdentityID         string
-	VariantID          string
-	DisplayName        string
-	Color              string
-	AvatarAttachmentID string
-	AvatarDecorations  protocol.AvatarDecorationList
+	IdentityID          string
+	VariantID           string
+	DisplayName         string
+	Color               string
+	AvatarAttachmentID  string
+	AvatarDecorations   protocol.AvatarDecorationList
+	TheaterPresentation *protocol.TheaterPresentation
 }
 
 func normalizeChannelIdentityVariantKeyword(keyword string) string {
@@ -64,7 +68,7 @@ func normalizeChannelIdentityVariantAppearance(input *ChannelIdentityVariantInpu
 	result := map[string]any{}
 	for key, value := range input.Appearance {
 		trimmedKey := strings.TrimSpace(key)
-		if trimmedKey == "" {
+		if trimmedKey == "" || trimmedKey == "theaterPresentation" {
 			continue
 		}
 		result[trimmedKey] = value
@@ -92,7 +96,33 @@ func normalizeChannelIdentityVariantAppearance(input *ChannelIdentityVariantInpu
 	if input.AvatarAttachmentID != "" {
 		result["avatarAttachmentId"] = input.AvatarAttachmentID
 	}
+	if input.TheaterPresentation != nil {
+		if err := protocol.ValidateTheaterPresentationPatch(*input.TheaterPresentation); err != nil {
+			return nil, fmt.Errorf("演出外观差分无效: %w", err)
+		}
+		result["theaterPresentation"] = input.TheaterPresentation
+	}
 	return result, nil
+}
+
+func variantTheaterPresentationPatch(item *model.ChannelIdentityVariantModel) (*protocol.TheaterPresentationPatch, bool) {
+	if item == nil || strings.TrimSpace(item.AppearanceJSON) == "" {
+		return nil, false
+	}
+	var document struct {
+		TheaterPresentation json.RawMessage `json:"theaterPresentation"`
+	}
+	if json.Unmarshal([]byte(item.AppearanceJSON), &document) != nil || len(document.TheaterPresentation) == 0 {
+		return nil, false
+	}
+	if strings.TrimSpace(string(document.TheaterPresentation)) == "null" {
+		return nil, true
+	}
+	var patch protocol.TheaterPresentationPatch
+	if json.Unmarshal(document.TheaterPresentation, &patch) != nil {
+		return nil, false
+	}
+	return &patch, true
 }
 
 func validateChannelIdentityVariantInput(input *ChannelIdentityVariantInput) error {
@@ -199,6 +229,11 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return nil, err
 	}
+	if input.TheaterPresentation != nil {
+		if err := ValidateTheaterPresentationPatchAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+			return nil, err
+		}
+	}
 	if strings.TrimSpace(operatorUserID) == "" {
 		operatorUserID = ownerUserID
 	}
@@ -211,6 +246,9 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
 	if err != nil {
 		return nil, err
+	}
+	if input.TheaterPresentationSet && input.TheaterPresentation == nil {
+		delete(appearance, "theaterPresentation")
 	}
 	appearanceJSON, err := serializeChannelIdentityVariantAppearanceJSON(appearance)
 	if err != nil {
@@ -242,6 +280,9 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err := model.ChannelIdentityVariantUpsert(item); err != nil {
 		return nil, err
 	}
+	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+		return nil, err
+	}
 	return item, nil
 }
 
@@ -271,7 +312,8 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID); err != nil {
+	identity, err := ensureChannelIdentityVariantOwnership(ownerUserID, input.ChannelID, input.IdentityID)
+	if err != nil {
 		return nil, err
 	}
 	if item.IdentityID != input.IdentityID {
@@ -283,12 +325,22 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
+	if input.TheaterPresentation != nil {
+		if err := ValidateTheaterPresentationPatchAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+			return nil, err
+		}
+	}
 	if err := ensureChannelIdentityVariantKeywordUnique(ownerUserID, input.ChannelID, input.IdentityID, input.Keyword, item.ID); err != nil {
 		return nil, err
 	}
 	appearance, err := normalizeChannelIdentityVariantAppearance(input)
 	if err != nil {
 		return nil, err
+	}
+	if !input.TheaterPresentationSet && input.TheaterPresentation == nil {
+		if patch, exists := variantTheaterPresentationPatch(item); exists {
+			appearance["theaterPresentation"] = patch
+		}
 	}
 	appearanceJSON, err := serializeChannelIdentityVariantAppearanceJSON(appearance)
 	if err != nil {
@@ -307,7 +359,14 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err := model.ChannelIdentityVariantUpdate(item.ID, values); err != nil {
 		return nil, err
 	}
-	return model.ChannelIdentityVariantGetByID(item.ID)
+	updated, err := model.ChannelIdentityVariantGetByID(item.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := MarkTheaterAppearanceAssetOrphans(context.Background()); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 func ChannelIdentityVariantDelete(userID string, channelID string, variantID string) error {
@@ -319,7 +378,10 @@ func ChannelIdentityVariantDeleteWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return err
 	}
-	return model.ChannelIdentityVariantDelete(item.ID)
+	if err := model.ChannelIdentityVariantDelete(item.ID); err != nil {
+		return err
+	}
+	return MarkTheaterAppearanceAssetOrphans(context.Background())
 }
 
 func ChannelIdentityVariantReorder(userID string, channelID string, identityID string, ids []string) error {
@@ -387,14 +449,23 @@ func ResolveChannelIdentityAppearance(identity *model.ChannelIdentityModel, vari
 		return nil
 	}
 	result := &ResolvedIdentityAppearance{
-		IdentityID:         identity.ID,
-		DisplayName:        identity.DisplayName,
-		Color:              identity.Color,
-		AvatarAttachmentID: identity.AvatarAttachmentID,
-		AvatarDecorations:  identity.AvatarDecorations,
+		IdentityID:          identity.ID,
+		DisplayName:         identity.DisplayName,
+		Color:               identity.Color,
+		AvatarAttachmentID:  identity.AvatarAttachmentID,
+		AvatarDecorations:   identity.AvatarDecorations,
+		TheaterPresentation: cloneTheaterPresentation(identity.TheaterPresentation),
 	}
 	if variant == nil {
 		return result
+	}
+	if patch, exists := variantTheaterPresentationPatch(variant); exists {
+		base := protocol.DefaultTheaterPresentation()
+		if identity.TheaterPresentation != nil {
+			base = *identity.TheaterPresentation
+		}
+		resolved := protocol.ResolveTheaterPresentation(base, patch)
+		result.TheaterPresentation = &resolved
 	}
 	result.VariantID = variant.ID
 	if value := strings.TrimSpace(variant.DisplayName); value != "" {

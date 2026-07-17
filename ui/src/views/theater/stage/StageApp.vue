@@ -57,6 +57,11 @@ import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
 import type { TheaterStageStore } from './StageStore'
+import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
+import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
+import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
+import type { TheaterPresentation } from '@/types/theaterPresentation'
+import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -68,6 +73,15 @@ const props = defineProps<{
   syncReady: boolean
   syncing: boolean
   permissions: string[]
+  dialogueRuntime: TheaterDialogueRuntime
+  appearancePreview: {
+    previewId: string
+    draft: TheaterPresentation
+    selection: TheaterSelection
+    activeSection: TheaterSection
+    previewName: string
+    previewText: string
+  } | null
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
@@ -76,6 +90,8 @@ const emit = defineEmits<{
   toggleChat: []
   resetLayout: []
   exitTheater: []
+  appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
+  appearancePreviewPhase: [phase: 'start' | 'end']
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -2572,6 +2588,20 @@ onBeforeUnmount(() => {
           :viewport-width="viewportSize.width"
           :viewport-height="viewportSize.height"
         />
+        <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :channel-id="channelId" />
+        <div v-if="appearancePreview" class="theater-appearance-preview-layer">
+          <TheaterPresentationPreview
+            :draft="appearancePreview.draft"
+            :selection="appearancePreview.selection"
+            :active-section="appearancePreview.activeSection"
+            :preview-enabled="true"
+            :preview-name="appearancePreview.previewName"
+            :preview-text="appearancePreview.previewText"
+            @dispatch="(command, options) => emit('appearancePreviewCommand', command, options?.transient)"
+            @gesture-start="emit('appearancePreviewPhase', 'start')"
+            @gesture-end="emit('appearancePreviewPhase', 'end')"
+          />
+        </div>
       </div>
 
       <aside v-if="scenePanelOpen" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')">
@@ -3077,6 +3107,8 @@ onBeforeUnmount(() => {
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: var(--sc-bg-page, #141418); }
+.theater-appearance-preview-layer { position: absolute; z-index: 8; inset: 0; overflow: hidden; }
+.theater-appearance-preview-layer :deep(.theater-preview) { min-height: 0; background: transparent; }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
 .theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }

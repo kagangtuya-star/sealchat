@@ -47,13 +47,14 @@ type TheaterResourceContent struct {
 }
 
 type theaterMediaService struct {
-	config    utils.TheaterMediaConfig
-	toolchain MediaToolchain
-	runner    MediaCommandRunner
-	queue     chan string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	once      sync.Once
+	config          utils.TheaterMediaConfig
+	toolchain       MediaToolchain
+	runner          MediaCommandRunner
+	queue           chan string
+	appearanceQueue chan string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	once            sync.Once
 }
 
 var theaterMedia = &theaterMediaService{}
@@ -65,10 +66,14 @@ func InitTheaterMediaService(config utils.TheaterMediaConfig, toolchain MediaToo
 		theaterMedia.runner = execMediaCommandRunner{}
 		theaterMedia.ctx, theaterMedia.cancel = context.WithCancel(context.Background())
 		theaterMedia.queue = make(chan string, 256)
+		theaterMedia.appearanceQueue = make(chan string, 256)
 		for index := 0; index < theaterMedia.config.WorkerConcurrency; index++ {
 			go theaterMediaWorker(theaterMedia.ctx, theaterMedia)
+			go theaterAppearanceAssetWorker(theaterMedia.ctx, theaterMedia)
 		}
 		go theaterMedia.scanPendingJobs(theaterMedia.ctx)
+		go theaterMedia.scanPendingAppearanceAssets(theaterMedia.ctx)
+		go runTheaterAppearanceOrphanScanner(theaterMedia.ctx)
 	})
 }
 

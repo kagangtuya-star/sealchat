@@ -49,6 +49,7 @@ export interface IdentityExportVariantItem {
   displayName?: string;
   color?: string;
   appearance?: Record<string, any>;
+  theaterPresentation?: Record<string, any> | null;
   sortOrder: number;
   enabled: boolean;
 }
@@ -64,6 +65,7 @@ export interface IdentityExportItem {
   avatarDecoration?: IdentityExportDecorationItem | null;
   avatarAssetKey?: string;
   avatarDecorations?: IdentityExportDecorationItem[];
+  theaterPresentation?: Record<string, any> | null;
 }
 
 export interface IdentityExportFolder {

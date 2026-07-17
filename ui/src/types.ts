@@ -1,4 +1,5 @@
 import type { User, Message, Guild, GuildMember, Opcode, GatewayPayloadStructure, Channel } from '@satorijs/protocol'
+import type { TheaterPresentation, TheaterPresentationPatch } from '@/types/theaterPresentation'
 
 export interface WhisperMeta {
   senderMemberId?: string;
@@ -848,6 +849,7 @@ export interface ChannelIdentity {
   icOocOnActivate?: '' | 'ic' | 'ooc';
   sortOrder: number;
   folderIds?: string[];
+  theaterPresentation?: TheaterPresentation | null;
 }
 
 export interface ChannelIdentityVariant {
@@ -862,6 +864,7 @@ export interface ChannelIdentityVariant {
   displayName?: string;
   color?: string;
   appearance?: Record<string, any>;
+  theaterPresentation?: TheaterPresentationPatch | null;
   sortOrder: number;
   enabled: boolean;
   createdAt?: string;
@@ -920,5 +923,6 @@ export interface MessageIdentity {
   avatarAttachment?: string;
   avatarDecoration?: AvatarDecoration | null;
   avatarDecorations?: AvatarDecoration[] | null;
+  theaterPresentation?: TheaterPresentation | null;
   isTemporary?: boolean;
 }

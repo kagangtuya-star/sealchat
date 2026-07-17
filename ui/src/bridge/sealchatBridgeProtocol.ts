@@ -1,3 +1,5 @@
+import type { TheaterPresentation, TheaterPresentationPatch } from '../types/theaterPresentation'
+
 export interface SealChatBridgeHandshakeRequest {
   type: 'sealchat.bridge.handshake'
   version: 1
@@ -64,6 +66,7 @@ export interface BridgeCharacterAppearance {
   color: string
   avatar: BridgeImageRef | null
   decorations: BridgeCharacterDecoration[]
+  theaterPresentation?: TheaterPresentation | null
   extensions: Record<string, unknown>
 }
 
@@ -73,7 +76,9 @@ export interface BridgeCharacterVariant {
   selectorEmoji: string
   note: string
   enabled: boolean
-  appearancePatch: Partial<BridgeCharacterAppearance>
+  appearancePatch: Omit<Partial<BridgeCharacterAppearance>, 'theaterPresentation'> & {
+    theaterPresentation?: TheaterPresentationPatch | null
+  }
   extensions: Record<string, unknown>
 }
 
