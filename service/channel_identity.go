@@ -30,17 +30,18 @@ func cloneTheaterPresentation(value *protocol.TheaterPresentation) *protocol.The
 }
 
 type ChannelIdentityInput struct {
-	ChannelID              string
-	DisplayName            string
-	Color                  string
-	AvatarAttachmentID     string
-	AvatarDecorations      protocol.AvatarDecorationList
-	IsDefault              bool
-	IsTemporary            bool
-	ICOOCOnActivate        string
-	FolderIDs              []string
-	TheaterPresentation    *protocol.TheaterPresentation
-	TheaterPresentationSet bool
+	ChannelID                  string
+	DisplayName                string
+	Color                      string
+	AvatarAttachmentID         string
+	AvatarDecorations          protocol.AvatarDecorationList
+	IsDefault                  bool
+	IsTemporary                bool
+	ICOOCOnActivate            string
+	FolderIDs                  []string
+	TheaterPresentation        *protocol.TheaterPresentation
+	TheaterPresentationSet     bool
+	SkipTheaterAssetValidation bool
 }
 
 type ChannelIdentityReplaceResult struct {
@@ -193,7 +194,7 @@ func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
 		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, "", *input.TheaterPresentation); err != nil {
 			return nil, err
 		}
@@ -280,7 +281,7 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 	if err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
 		if err := ValidateTheaterPresentationAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
 			return nil, err
 		}

@@ -42,6 +42,7 @@ type TheaterAppearanceAssetAttachmentInput struct {
 	AttachmentID string
 	Purpose      string
 	IdentityID   string
+	VariantID    string
 	TargetUserID string
 }
 
@@ -57,6 +58,13 @@ func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUse
 	identityID := strings.TrimSpace(input.IdentityID)
 	if _, err := model.ChannelIdentityValidateOwnership(identityID, actor.TargetUserID, channelID); err != nil {
 		return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "identity 不属于目标用户或频道", 400, nil)
+	}
+	variantID := strings.TrimSpace(input.VariantID)
+	if variantID != "" {
+		variant, variantErr := model.ChannelIdentityVariantGetByID(variantID)
+		if variantErr != nil || variant.IdentityID != identityID || variant.ChannelID != channelID || variant.UserID != actor.TargetUserID {
+			return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "variant 不属于目标 identity", 400, nil)
+		}
 	}
 	resolvedAttachment, err := ResolveAttachmentAccessible(actor.TargetUserID, actor.OperatorUserID, channelID, strings.TrimSpace(input.AttachmentID))
 	if err != nil {
@@ -83,7 +91,7 @@ func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUse
 	}
 	asset := model.TheaterAppearanceAssetModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: assetID},
-		ChannelID:         channelID, OwnerUserID: actor.TargetUserID, IdentityID: identityID, Purpose: purpose,
+		ChannelID:         channelID, OwnerUserID: actor.TargetUserID, IdentityID: identityID, VariantID: variantID, Purpose: purpose,
 		SourceAttachmentID: attachment.ID, Kind: kind, SourceMimeType: attachment.MimeType, OriginalFilename: attachment.Filename,
 		SizeBytes: attachment.Size, ContentHash: hex.EncodeToString(attachment.Hash), Status: "pending", CreatedBy: operatorUserID,
 	}
@@ -378,6 +386,14 @@ func ValidateTheaterPresentationAppearanceAssets(tx *gorm.DB, channelID, ownerUs
 }
 
 func ValidateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, patch protocol.TheaterPresentationPatch) error {
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, "", false, patch)
+}
+
+func ValidateTheaterPresentationPatchAppearanceAssetsForVariant(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, patch protocol.TheaterPresentationPatch) error {
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, variantID, true, patch)
+}
+
+func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, enforceVariant bool, patch protocol.TheaterPresentationPatch) error {
 	var refs []protocol.TheaterMediaRef
 	if patch.Portrait.Set && patch.Portrait.Value != nil {
 		refs = append(refs, patch.Portrait.Value.Media)
@@ -390,7 +406,22 @@ func ValidateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ow
 	if patch.Dialogue.Set && patch.Dialogue.Value != nil && patch.Dialogue.Value.Frame != nil {
 		refs = append(refs, patch.Dialogue.Value.Frame.Media)
 	}
-	return validateTheaterAppearanceMediaRefs(tx, channelID, ownerUserID, identityID, refs)
+	if err := validateTheaterAppearanceMediaRefs(tx, channelID, ownerUserID, identityID, refs); err != nil {
+		return err
+	}
+	if !enforceVariant {
+		return nil
+	}
+	for _, ref := range refs {
+		var asset model.TheaterAppearanceAssetModel
+		if err := tx.Where("id = ? AND deleted_at IS NULL", ref.AssetID).Limit(1).Find(&asset).Error; err != nil {
+			return err
+		}
+		if asset.ID == "" || asset.VariantID != variantID {
+			return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "演出资源不属于目标差分", 400, nil)
+		}
+	}
+	return nil
 }
 
 func theaterPresentationMediaRefs(presentation protocol.TheaterPresentation) []protocol.TheaterMediaRef {

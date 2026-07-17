@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"strings"
@@ -96,7 +97,7 @@ func uploadFiles(
 	return nil, ids, filenames
 }
 
-func UploadRaw(c *fiber.Ctx, uploadCallback func(item *model.AttachmentModel)) (fiber.Map, error) {
+func uploadRawForOwner(c *fiber.Ctx, ownerUserID string, uploadCallback func(item *model.AttachmentModel)) (fiber.Map, error) {
 	// 解析表单中的文件
 	form, err := c.MultipartForm()
 	if err != nil {
@@ -107,6 +108,12 @@ func UploadRaw(c *fiber.Ctx, uploadCallback func(item *model.AttachmentModel)) (
 	files := form.File["file"]
 
 	var ui = getCurUser(c)
+	if ui == nil {
+		return nil, errors.New("未登录")
+	}
+	if strings.TrimSpace(ownerUserID) == "" {
+		ownerUserID = ui.ID
+	}
 	getFromForm := func(key string) string {
 		if v, exists := form.Value[key]; exists {
 			if len(v) > 0 {
@@ -123,14 +130,14 @@ func UploadRaw(c *fiber.Ctx, uploadCallback func(item *model.AttachmentModel)) (
 	extra := getFromForm("extra")
 
 	// 遍历每个文件
-	err, ids, filenames := uploadFiles(files, ui.ID, func(item *model.AttachmentModel) {
+	err, ids, filenames := uploadFiles(files, ownerUserID, func(item *model.AttachmentModel) {
 		item.ParentID = parentId
 		item.ParentIDType = parentIdType
 		item.RootID = rootId
 		item.RootIDType = rootIdType
 		item.Extra = extra
 
-		item.UserID = ui.ID
+		item.UserID = ownerUserID
 		item.CreatorName = ui.Nickname
 		item.CreatorAvatar = ui.Avatar
 
@@ -156,10 +163,31 @@ func UploadRaw(c *fiber.Ctx, uploadCallback func(item *model.AttachmentModel)) (
 	}, nil
 }
 
+func UploadRaw(c *fiber.Ctx, uploadCallback func(item *model.AttachmentModel)) (fiber.Map, error) {
+	return uploadRawForOwner(c, "", uploadCallback)
+}
+
 func AttachmentUploadTempFile(c *fiber.Ctx) error {
-	// 使用 UploadRaw 重构函数
-	result, err := UploadRaw(c, func(item *model.AttachmentModel) {
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	channelID := strings.TrimSpace(c.Get("ChannelId"))
+	targetUserID := strings.TrimSpace(c.Get("TargetUserId"))
+	ownerUserID := user.ID
+	if targetUserID != "" && channelID == "" {
+		return wrapError(c, nil, "委托上传缺少频道ID")
+	}
+	if channelID != "" {
+		actor, actorErr := service.ResolveChannelIdentityActor(channelID, user.ID, targetUserID)
+		if actorErr != nil {
+			return handleChannelIdentityActorErr(c, actorErr)
+		}
+		ownerUserID = actor.TargetUserID
+	}
+	result, err := uploadRawForOwner(c, ownerUserID, func(item *model.AttachmentModel) {
 		item.IsTemp = true
+		item.ChannelID = channelID
 	})
 	if err != nil {
 		return wrapError(c, err, "")
@@ -171,8 +199,10 @@ func AttachmentUploadTempFile(c *fiber.Ctx) error {
 func AttachmentUploadQuick(c *fiber.Ctx) error {
 	ui := getCurUser(c)
 	var body struct {
-		Hash string `json:"hash"`
-		Size int64  `json:"size"`
+		Hash         string `json:"hash"`
+		Size         int64  `json:"size"`
+		ChannelID    string `json:"channelId"`
+		TargetUserID string `json:"targetUserId"`
 
 		Extra  string `json:"extra"`
 		Note   string `json:"note"`
@@ -199,6 +229,20 @@ func AttachmentUploadQuick(c *fiber.Ctx) error {
 		return wrapError(c, nil, "此项数据无法进行快速上传")
 	}
 
+	ownerUserID := ui.ID
+	body.ChannelID = strings.TrimSpace(body.ChannelID)
+	body.TargetUserID = strings.TrimSpace(body.TargetUserID)
+	if body.TargetUserID != "" && body.ChannelID == "" {
+		return wrapError(c, nil, "委托上传缺少频道ID")
+	}
+	if body.ChannelID != "" {
+		actor, actorErr := service.ResolveChannelIdentityActor(body.ChannelID, ui.ID, body.TargetUserID)
+		if actorErr != nil {
+			return handleChannelIdentityActorErr(c, actorErr)
+		}
+		ownerUserID = actor.TargetUserID
+	}
+
 	_, newItem := model.AttachmentCreate(&model.AttachmentModel{
 		Filename:    item.Filename,
 		Size:        item.Size,
@@ -217,7 +261,8 @@ func AttachmentUploadQuick(c *fiber.Ctx) error {
 		Extra: body.Extra,
 		Note:  body.Note,
 
-		UserID:        ui.ID,
+		UserID:        ownerUserID,
+		ChannelID:     body.ChannelID,
 		CreatorName:   ui.Nickname,
 		CreatorAvatar: ui.Avatar,
 	})

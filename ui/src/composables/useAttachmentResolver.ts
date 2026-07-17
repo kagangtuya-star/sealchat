@@ -57,7 +57,7 @@ const ensureAttachmentMeta = async (normalized: string) => {
     if (meta) {
       attachmentMetaStore[normalized] = meta;
       const external = meta.externalUrl || meta.publicUrl;
-      if (external) {
+      if (external && /^(https?:|blob:|data:|\/\/|\/)/i.test(external)) {
         attachmentUrlStore[normalized] = external;
       }
     }
@@ -122,7 +122,7 @@ export const resolveAttachmentUrl = (value?: string) => {
     return '';
   }
   const cached = attachmentUrlStore[normalized];
-  if (cached) {
+  if (cached && /^(https?:|blob:|data:|\/\/|\/)/i.test(cached)) {
     return cached;
   }
   void ensureAttachmentMeta(normalized);

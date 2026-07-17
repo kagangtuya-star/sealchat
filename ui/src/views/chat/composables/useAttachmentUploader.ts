@@ -6,6 +6,7 @@ import { useImageCompressor } from '@/composables/useImageCompressor';
 
 interface UploadImageOptions {
   channelId?: string;
+  targetUserId?: string | null;
   /** Skip image compression (e.g., already compressed by AvatarEditor) */
   skipCompression?: boolean;
 }
@@ -43,6 +44,9 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   };
   if (channelId) {
     headers.ChannelId = channelId;
+  }
+  if (options?.targetUserId) {
+    headers.TargetUserId = options.targetUserId;
   }
 
   let resp;

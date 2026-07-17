@@ -20,18 +20,19 @@ var (
 )
 
 type ChannelIdentityVariantInput struct {
-	ChannelID              string
-	IdentityID             string
-	SelectorEmoji          string
-	Keyword                string
-	Note                   string
-	AvatarAttachmentID     string
-	DisplayName            string
-	Color                  string
-	Appearance             map[string]any
-	Enabled                bool
-	TheaterPresentation    *protocol.TheaterPresentationPatch
-	TheaterPresentationSet bool
+	ChannelID                  string
+	IdentityID                 string
+	SelectorEmoji              string
+	Keyword                    string
+	Note                       string
+	AvatarAttachmentID         string
+	DisplayName                string
+	Color                      string
+	Appearance                 map[string]any
+	Enabled                    bool
+	TheaterPresentation        *protocol.TheaterPresentationPatch
+	TheaterPresentationSet     bool
+	SkipTheaterAssetValidation bool
 }
 
 type ResolvedIdentityAppearance struct {
@@ -229,7 +230,7 @@ func ChannelIdentityVariantCreateWithAccess(ownerUserID string, operatorUserID s
 	if err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
 		if err := ValidateTheaterPresentationPatchAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
 			return nil, err
 		}
@@ -325,8 +326,8 @@ func ChannelIdentityVariantUpdateWithAccess(ownerUserID string, operatorUserID s
 	if err := ensureIdentityVariantAttachmentAccessible(ownerUserID, operatorUserID, input.ChannelID, input.AvatarAttachmentID); err != nil {
 		return nil, err
 	}
-	if input.TheaterPresentation != nil {
-		if err := ValidateTheaterPresentationPatchAppearanceAssets(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, *input.TheaterPresentation); err != nil {
+	if input.TheaterPresentation != nil && !input.SkipTheaterAssetValidation {
+		if err := ValidateTheaterPresentationPatchAppearanceAssetsForVariant(model.GetDB(), input.ChannelID, ownerUserID, identity.ID, item.ID, *input.TheaterPresentation); err != nil {
 			return nil, err
 		}
 	}

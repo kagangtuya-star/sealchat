@@ -571,7 +571,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		return nil, err
 	}
 	identityMap := map[string]string{}
-	appearanceMediaMaps := map[string]map[string]protocol.TheaterMediaRef{}
+	attachmentMap := map[string]string{}
 	for _, identity := range identities {
 		if identity.UserID == "" {
 			continue
@@ -583,16 +583,14 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		}
 		newID := utils.NewID()
 		identityMap[identity.ID] = newID
-		mediaMap, err := cloneTheaterAppearanceAssetsForIdentityTx(tx, sourceID, targetID, identity.UserID, identity.ID, newID)
+		presentation := cloneTheaterPresentation(identity.TheaterPresentation)
+		avatarAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, identity.UserID, identity.AvatarAttachmentID, attachmentMap)
 		if err != nil {
 			return nil, err
 		}
-		appearanceMediaMaps[identity.ID] = mediaMap
-		presentation := cloneTheaterPresentation(identity.TheaterPresentation)
-		if presentation != nil {
-			if err := remapTheaterPresentationMedia(presentation, mediaMap); err != nil {
-				return nil, err
-			}
+		avatarDecorations, err := cloneChannelIdentityDecorationsTx(tx, sourceID, targetID, identity.UserID, identity.AvatarDecorations, attachmentMap)
+		if err != nil {
+			return nil, err
 		}
 		clone := model.ChannelIdentityModel{
 			StringPKBaseModel:   model.StringPKBaseModel{ID: newID},
@@ -600,8 +598,8 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			UserID:              identity.UserID,
 			DisplayName:         identity.DisplayName,
 			Color:               identity.Color,
-			AvatarAttachmentID:  identity.AvatarAttachmentID,
-			AvatarDecorations:   identity.AvatarDecorations,
+			AvatarAttachmentID:  avatarAttachmentID,
+			AvatarDecorations:   avatarDecorations,
 			IsDefault:           identity.IsDefault,
 			IsTemporary:         identity.IsTemporary,
 			IsHidden:            identity.IsHidden,
@@ -740,7 +738,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if newIdentityID == "" {
 			continue
 		}
-		appearanceJSON, err := remapVariantTheaterPresentationJSON(variant.AppearanceJSON, appearanceMediaMaps[variant.IdentityID])
+		avatarAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, variant.UserID, variant.AvatarAttachmentID, attachmentMap)
 		if err != nil {
 			return nil, err
 		}
@@ -752,10 +750,10 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			SelectorEmoji:      variant.SelectorEmoji,
 			Keyword:            variant.Keyword,
 			Note:               variant.Note,
-			AvatarAttachmentID: variant.AvatarAttachmentID,
+			AvatarAttachmentID: avatarAttachmentID,
 			DisplayName:        variant.DisplayName,
 			Color:              variant.Color,
-			AppearanceJSON:     appearanceJSON,
+			AppearanceJSON:     variant.AppearanceJSON,
 			SortOrder:          variant.SortOrder,
 			Enabled:            variant.Enabled,
 		}
@@ -766,6 +764,66 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 
 	summary.addCopied("identities")
 	return identityMap, nil
+}
+
+// cloneChannelIdentityAttachmentTx gives copied identities their own channel-scoped attachment IDs.
+// Storage objects are immutable and therefore safely shared by the cloned attachment records.
+func cloneChannelIdentityAttachmentTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID, attachmentID string, attachmentMap map[string]string) (string, error) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID == "" {
+		return "", nil
+	}
+	cacheKey := ownerUserID + "\x00" + attachmentID
+	if clonedID := attachmentMap[cacheKey]; clonedID != "" {
+		return clonedID, nil
+	}
+
+	var source model.AttachmentModel
+	query := tx.Where("id = ?", attachmentID)
+	if err := query.Limit(1).Find(&source).Error; err != nil {
+		return "", err
+	}
+	if source.ID == "" {
+		return "", fmt.Errorf("频道角色附件不存在: %s", attachmentID)
+	}
+	if source.UserID != ownerUserID && source.ChannelID != sourceChannelID {
+		return "", fmt.Errorf("频道角色附件不属于源角色或源频道: %s", attachmentID)
+	}
+
+	clone := source
+	clone.StringPKBaseModel = model.StringPKBaseModel{ID: utils.NewID()}
+	clone.ChannelID = targetChannelID
+	clone.UserID = ownerUserID
+	clone.RootID = ""
+	clone.RootIDType = ""
+	clone.ParentID = ""
+	clone.ParentIDType = ""
+	if err := tx.Create(&clone).Error; err != nil {
+		return "", err
+	}
+	attachmentMap[cacheKey] = clone.ID
+	return clone.ID, nil
+}
+
+func cloneChannelIdentityDecorationsTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID string, decorations protocol.AvatarDecorationList, attachmentMap map[string]string) (protocol.AvatarDecorationList, error) {
+	if len(decorations) == 0 {
+		return nil, nil
+	}
+	cloned := make(protocol.AvatarDecorationList, len(decorations))
+	for index, decoration := range decorations {
+		resourceAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceChannelID, targetChannelID, ownerUserID, decoration.ResourceAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		fallbackAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceChannelID, targetChannelID, ownerUserID, decoration.FallbackAttachmentID, attachmentMap)
+		if err != nil {
+			return nil, err
+		}
+		cloned[index] = decoration
+		cloned[index].ResourceAttachmentID = resourceAttachmentID
+		cloned[index].FallbackAttachmentID = fallbackAttachmentID
+	}
+	return cloned, nil
 }
 
 func cloneTheaterAppearanceAssetsForIdentityTx(tx *gorm.DB, sourceChannelID, targetChannelID, ownerUserID, sourceIdentityID, targetIdentityID string) (map[string]protocol.TheaterMediaRef, error) {
@@ -804,7 +862,8 @@ func cloneTheaterAppearanceAssetsForIdentityTx(tx *gorm.DB, sourceChannelID, tar
 		clone.StringPKBaseModel = model.StringPKBaseModel{ID: newAssetID}
 		clone.ChannelID = targetChannelID
 		clone.IdentityID = targetIdentityID
-		clone.VariantID = ""
+		// Preserve source ID until variants have been cloned; caller remaps it afterwards.
+		clone.VariantID = source.VariantID
 		clone.SourceAttachmentID = attachmentMap[source.SourceAttachmentID]
 		clone.DisplayAttachmentID = attachmentMap[source.DisplayAttachmentID]
 		clone.FallbackAttachmentID = attachmentMap[source.FallbackAttachmentID]

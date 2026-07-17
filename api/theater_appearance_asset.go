@@ -46,13 +46,14 @@ func TheaterAppearanceAssetImport(c *fiber.Ctx) error {
 		AttachmentID string `json:"attachmentId"`
 		Purpose      string `json:"purpose"`
 		IdentityID   string `json:"identityId"`
+		VariantID    string `json:"variantId"`
 		TargetUserID string `json:"targetUserId"`
 	}
 	if err := c.BodyParser(&payload); err != nil {
 		return theaterErrorResponse(c, requestID, service.NewTheaterPayloadErrorForAPI("请求参数解析失败"))
 	}
 	asset, err := service.CreateTheaterAppearanceAssetFromAttachment(c.Context(), user.ID, c.Params("channelId"), service.TheaterAppearanceAssetAttachmentInput{
-		AttachmentID: payload.AttachmentID, Purpose: payload.Purpose, IdentityID: payload.IdentityID, TargetUserID: payload.TargetUserID,
+		AttachmentID: payload.AttachmentID, Purpose: payload.Purpose, IdentityID: payload.IdentityID, VariantID: payload.VariantID, TargetUserID: payload.TargetUserID,
 	})
 	if err != nil {
 		return theaterAppearanceAssetErrorResponse(c, requestID, err)

@@ -128,6 +128,8 @@ import {
 } from '@/utils/channelIdentityTheaterPresentation'
 import {
   buildIdentityAssetKey,
+  normalizeIdentityExportFileForImport,
+  resolveIdentityExportVariantTheaterPresentation,
   remapDecorationsForImport,
   resolveIdentityMatchByName,
   resolveIdentityAssetFetchUrl,
@@ -4096,6 +4098,9 @@ interface IdentityAssetExportIssueState {
 
 const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
 
+// Theater settings come from Vue reactive state; structuredClone rejects Proxy values.
+const cloneIdentityMigrationValue = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
 const downloadAttachmentAsPayload = async (
   attachmentId: string,
   fallbackFilename: string,
@@ -4190,72 +4195,20 @@ const registerIdentityAsset = async (
 
 const mapTheaterPresentationForExport = async (
   input: Record<string, any> | null | undefined,
-  assetMap: Map<string, IdentityAssetPayload>,
-  fallbackPrefix: string,
-  issueState?: IdentityAssetExportIssueState,
+  _assetMap: Map<string, IdentityAssetPayload>,
+  _fallbackPrefix: string,
+  _issueState?: IdentityAssetExportIssueState,
 ) => {
   if (!input) return null;
-  const result = structuredClone(input);
-  const mapLayer = async (layer: any, suffix: string) => {
-    if (!layer?.media) return;
-    const resourceAssetKey = await registerIdentityAsset(assetMap, layer.media.resourceAttachmentId, `${fallbackPrefix}-${suffix}-resource`, issueState);
-    const fallbackAssetKey = await registerIdentityAsset(assetMap, layer.media.fallbackAttachmentId, `${fallbackPrefix}-${suffix}-fallback`, issueState);
-    layer.media.resourceAssetKey = resourceAssetKey || undefined;
-    layer.media.fallbackAssetKey = fallbackAssetKey || undefined;
-    delete layer.media.resourceAttachmentId;
-    delete layer.media.fallbackAttachmentId;
-    delete layer.media.assetId;
-  };
-  await mapLayer(result.portrait, 'portrait');
-  for (const [index, layer] of (result.portraitDecorations || []).entries()) {
-    await mapLayer(layer, `portrait-decoration-${index}`);
-  }
-  await mapLayer(result.dialogue?.frame, 'dialogue-frame');
-  return result;
-};
-
-const waitImportedTheaterAsset = async (channelId: string, assetId: string) => {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    const response = await api.get(`api/v1/channels/${channelId}/theater-appearance-assets/${assetId}`);
-    const asset = response.data?.asset;
-    if (asset?.status === 'ready' && asset.media) return asset.media;
-    if (asset?.status === 'failed') throw new Error(asset.failureMessage || '演出资源处理失败');
-    await new Promise(resolve => window.setTimeout(resolve, 250));
-  }
-  throw new Error('演出资源处理超时');
+  return cloneIdentityMigrationValue(input);
 };
 
 const remapTheaterPresentationForImport = async (
   input: Record<string, any> | null | undefined,
-  options: { channelId: string; identityId: string; targetUserId?: string | null; assetIdMap: Map<string, string>; mediaCache?: Map<string, any> },
+  options: { channelId: string; identityId: string; variantId?: string | null; targetUserId?: string | null; assetIdMap: Map<string, string>; mediaCache?: Map<string, any> },
 ) => {
-  if (!input) return input ?? null;
-  const result = structuredClone(input);
-  const mediaCache = options.mediaCache || new Map<string, any>();
-  const mapLayer = async (layer: any, purpose: 'portrait' | 'portrait-decoration' | 'dialogue-frame') => {
-    if (!layer?.media) return;
-    const assetKey = String(layer.media.resourceAssetKey || '');
-    if (!assetKey) return;
-    const mediaCacheKey = `${options.identityId}:${assetKey}`;
-    let media = mediaCache.get(mediaCacheKey);
-    if (!media) {
-      const attachmentId = options.assetIdMap.get(assetKey) || '';
-      if (!attachmentId) throw new Error(`演出资源文件缺失: ${assetKey}`);
-      const response = await api.post(`api/v1/channels/${options.channelId}/theater-appearance-assets/import`, {
-        attachmentId,
-        purpose,
-        identityId: options.identityId,
-        targetUserId: options.targetUserId || undefined,
-      });
-      media = await waitImportedTheaterAsset(options.channelId, response.data?.asset?.id);
-      mediaCache.set(mediaCacheKey, media);
-    }
-    layer.media = media;
-  };
-  await mapLayer(result.portrait, 'portrait');
-  for (const layer of result.portraitDecorations || []) await mapLayer(layer, 'portrait-decoration');
-  await mapLayer(result.dialogue?.frame, 'dialogue-frame');
-  return result;
+  void options;
+  return input == null ? input ?? null : cloneIdentityMigrationValue(input);
 };
 
 const mapDecorationsForExport = async (
@@ -4279,11 +4232,20 @@ const mapDecorationsForExport = async (
       `${fallbackPrefix}-fallback`,
       issueState,
     );
-    result.push({
+    if (item.resourceAttachmentId && !resourceAssetKey) {
+      throw new Error(`头像装饰资源无法导出: ${fallbackPrefix}`);
+    }
+    if (item.fallbackAttachmentId && !fallbackAssetKey) {
+      throw new Error(`头像装饰兜底资源无法导出: ${fallbackPrefix}`);
+    }
+    const exported: IdentityExportDecorationItem = {
       ...item,
       resourceAssetKey: resourceAssetKey || undefined,
       fallbackAssetKey: fallbackAssetKey || undefined,
-    });
+    };
+    delete exported.resourceAttachmentId;
+    delete exported.fallbackAttachmentId;
+    result.push(exported);
   }
   return result;
 };
@@ -4300,7 +4262,7 @@ const normalizeExportItemDecorations = (item: IdentityExportItem) => {
 
 const importAttachmentFromRemoteUrl = async (
   avatar: IdentityAvatarPayload,
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ): Promise<string> => {
   const transferUrl = resolveIdentityAssetTransferUrl(avatar);
   if (!transferUrl) {
@@ -4311,13 +4273,14 @@ const importAttachmentFromRemoteUrl = async (
     filename: avatar.filename,
     contentType: avatar.mimeType,
     channelId: options?.channelId || chat.curChannel?.id,
+    targetUserId: options?.targetUserId || undefined,
   });
   return normalizeAttachmentId(resp.data?.file?.id || '');
 };
 
 const ensureImportAttachment = async (
   avatar?: IdentityAvatarPayload | null,
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ): Promise<string> => {
   if (!avatar) {
     return '';
@@ -4328,6 +4291,8 @@ const ensureImportAttachment = async (
         hash: avatar.hash,
         size: avatar.size,
         extra: 'channel-identity-avatar',
+        channelId: options?.channelId || chat.curChannel?.id,
+        targetUserId: options?.targetUserId || undefined,
       });
       const quickId = quickResp.data?.file?.id;
       if (quickId) {
@@ -4356,7 +4321,10 @@ const ensureImportAttachment = async (
   }
 
   if (!avatar.hash || !avatar.data || !avatar.size) {
-    return normalizeAttachmentId(avatar.attachmentId || '');
+    if (avatar.attachmentId) {
+      throw new Error('角色素材仅含源附件 ID，无法安全导入到目标频道');
+    }
+    throw new Error('角色素材缺少可重建数据');
   }
 
   try {
@@ -4364,7 +4332,11 @@ const ensureImportAttachment = async (
     const blob = new Blob([bytes], { type: avatar.mimeType || 'application/octet-stream' });
     const fileName = avatar.filename || `identity-avatar-${avatar.hash.slice(0, 8)}`;
     const file = new File([blob], fileName, { type: avatar.mimeType || 'application/octet-stream' });
-    const uploadResult = await uploadImageAttachment(file, { channelId: options?.channelId || chat.curChannel?.id });
+    const uploadResult = await uploadImageAttachment(file, {
+      channelId: options?.channelId || chat.curChannel?.id,
+      targetUserId: options?.targetUserId,
+      skipCompression: true,
+    });
     return normalizeAttachmentId(uploadResult.attachmentId);
   } catch (error) {
     console.error('上传身份头像失败', error);
@@ -4374,7 +4346,7 @@ const ensureImportAttachment = async (
 
 const ensureImportAssets = async (
   assets?: IdentityAssetPayload[],
-  options?: { channelId?: string },
+  options?: { channelId?: string; targetUserId?: string | null },
 ) => {
   const result = new Map<string, string>();
   for (const asset of assets || []) {
@@ -4394,6 +4366,8 @@ const ensureImportAssets = async (
     }, options);
     if (attachmentId) {
       result.set(asset.assetKey, attachmentId);
+    } else {
+      throw new Error(`角色素材无法重建: ${asset.assetKey}`);
     }
   }
   return result;
@@ -4427,6 +4401,9 @@ const buildIdentityExportSnapshot = async (options: {
       `${safeFilename(displayName || 'identity')}.png`,
       issueState,
     );
+    if (identity.avatarAttachmentId && !avatarAssetKey) {
+      throw new Error(`角色头像无法导出: ${displayName || identity.id}`);
+    }
     const avatarDecorations = await mapDecorationsForExport(
       cloneAvatarDecorations(identity.avatarDecorations, identity.avatarDecoration),
       assetMap,
@@ -4461,8 +4438,11 @@ const buildIdentityExportSnapshot = async (options: {
         `${safeFilename(variant.keyword || variant.displayName || displayName || 'variant')}.png`,
         issueState,
       );
+      if (variant.avatarAttachmentId && !avatarVariantAssetKey) {
+        throw new Error(`差分头像无法导出: ${variant.keyword || variant.id}`);
+      }
       const theaterPresentation = await mapTheaterPresentationForExport(
-        variant.theaterPresentation || variant.appearance?.theaterPresentation,
+        resolveIdentityExportVariantTheaterPresentation(variant),
         assetMap,
         safeFilename(variant.keyword || variant.id || 'variant-theater'),
         issueState,
@@ -4511,13 +4491,6 @@ const buildIdentityExportSnapshot = async (options: {
     } as IdentityExportFile,
     missingAssetCount: issueState.missingAssets,
   };
-};
-
-const clearIdentityVariants = async (channelId: string, identityId: string, targetUserId?: string | null) => {
-  const variants = chat.getIdentityVariants(channelId, identityId, targetUserId).slice();
-  for (const variant of variants) {
-    await chat.channelIdentityVariantDelete(channelId, variant.id, targetUserId);
-  }
 };
 
 const buildIdentityMigrationSnapshotFromChannel = async (
@@ -4622,16 +4595,36 @@ const importIdentityMigrationSnapshot = async (
   const targetChannelId = options.targetChannelId;
   const targetUserId = options.targetUserId;
   const items = payload.items || [];
-  const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId });
+  const assetIdMap = await ensureImportAssets(payload.assets, { channelId: targetChannelId, targetUserId });
   const theaterMediaCache = new Map<string, any>();
   const folderIdMap = new Map<string, string>();
+
+  for (const item of items) {
+    if (item.avatarAssetKey && !assetIdMap.has(item.avatarAssetKey)) {
+      throw new Error(`角色头像资源文件缺失: ${item.avatarAssetKey}`);
+    }
+    if (item.avatar && !item.avatar.data && !resolveIdentityAssetTransferUrl(item.avatar)) {
+      throw new Error(`旧版角色头像缺少可重建数据: ${item.displayName || item.sourceId}`);
+    }
+    remapDecorationsForImport(normalizeExportItemDecorations(item), assetIdMap);
+  }
+  for (const variant of payload.variants || []) {
+    if (variant.avatarAssetKey && !assetIdMap.has(variant.avatarAssetKey)) {
+      throw new Error(`差分头像资源文件缺失: ${variant.avatarAssetKey}`);
+    }
+  }
+
+  const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, targetUserId);
+  await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
+  const targetFolders = chat.getScopedChannelIdentityFolders(targetChannelId, targetUserId);
 
   if (Array.isArray(payload.folders) && payload.folders.length) {
     const sortedFolders = payload.folders.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     for (const folder of sortedFolders) {
       if (!folder?.name) continue;
       try {
-        const created = await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, targetUserId);
+        const existing = targetFolders.find(item => String(item.name || '').trim().toLowerCase() === String(folder.name || '').trim().toLowerCase());
+        const created = existing || await chat.createChannelIdentityFolder(targetChannelId, folder.name, folder.sortOrder, targetUserId);
         if (folder.sourceId) {
           folderIdMap.set(folder.sourceId, created.id);
         }
@@ -4644,8 +4637,6 @@ const importIdentityMigrationSnapshot = async (
     }
   }
 
-  const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true, targetUserId);
-  await chat.loadChannelIdentityVariants(targetChannelId, true, targetUserId);
   const targetList = Array.isArray(targetIdentities) ? [...targetIdentities] : [];
   const duplicateTargetNames = new Set<string>();
   const seenTargetNames = new Set<string>();
@@ -4667,6 +4658,7 @@ const importIdentityMigrationSnapshot = async (
   let mappingChanged = false;
   const identityIdMap = new Map<string, string>();
   const overwriteIdentityIds = new Set<string>();
+  const overwriteIdentitySnapshots = new Map<string, ChannelIdentity>();
 
   for (const item of items) {
     const displayName = String(item.displayName || '').trim();
@@ -4680,17 +4672,17 @@ const importIdentityMigrationSnapshot = async (
       .filter((id): id is string => !!id);
     const avatarId = item.avatarAssetKey
       ? (assetIdMap.get(item.avatarAssetKey) || '')
-      : await ensureImportAttachment(item.avatar, { channelId: targetChannelId });
+      : await ensureImportAttachment(item.avatar, { channelId: targetChannelId, targetUserId });
     const avatarDecorations = remapDecorationsForImport(normalizeExportItemDecorations(item), assetIdMap) as AvatarDecoration[];
 
     try {
       if (matchedIdentity && options.mode === 'append') {
-        identityIdMap.set(item.sourceId, matchedIdentity.id);
         skippedCount += 1;
         continue;
       }
 
       if (matchedIdentity && options.mode === 'overwrite') {
+        overwriteIdentitySnapshots.set(item.sourceId, cloneIdentityMigrationValue(matchedIdentity));
         const theaterPresentation = item.theaterPresentation === undefined
           ? undefined
           : await remapTheaterPresentationForImport(item.theaterPresentation, {
@@ -4708,6 +4700,7 @@ const importIdentityMigrationSnapshot = async (
           avatarAttachmentId: avatarId,
           avatarDecorations,
           theaterPresentation: theaterPresentation as any,
+          skipTheaterAssetValidation: true,
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -4747,6 +4740,7 @@ const importIdentityMigrationSnapshot = async (
           avatarAttachmentId: avatarId,
           avatarDecorations,
           theaterPresentation: theaterPresentation as any,
+          skipTheaterAssetValidation: true,
           isDefault: !!item.isDefault,
           folderIds: mappedFolderIds,
         });
@@ -4772,51 +4766,118 @@ const importIdentityMigrationSnapshot = async (
     variantsByIdentity.set(sourceIdentityId, list);
   }
 
-  const clearedVariantIdentityIds = new Set<string>();
-  if (options.mode === 'overwrite') {
-    for (const targetIdentityId of overwriteIdentityIds) {
-      if (!targetIdentityId || clearedVariantIdentityIds.has(targetIdentityId)) {
-        continue;
-      }
-      await clearIdentityVariants(targetChannelId, targetIdentityId, targetUserId);
-      clearedVariantIdentityIds.add(targetIdentityId);
-    }
-  }
-  for (const [sourceIdentityId, variants] of variantsByIdentity.entries()) {
+  const sourceIdentityIds = new Set<string>(items.map(item => String(item.sourceId || '')).filter(Boolean));
+  for (const sourceIdentityId of sourceIdentityIds) {
+    const variants = variantsByIdentity.get(sourceIdentityId) || [];
     const targetIdentityId = identityIdMap.get(sourceIdentityId);
     if (!targetIdentityId) {
       continue;
     }
 
     const sortedVariants = variants.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    for (const variant of sortedVariants) {
-      try {
-        const theaterPresentation = variant.theaterPresentation === undefined
-          ? undefined
-          : await remapTheaterPresentationForImport(variant.theaterPresentation, {
-              channelId: targetChannelId,
-              identityId: targetIdentityId,
-              targetUserId,
-              assetIdMap,
-              mediaCache: theaterMediaCache,
-            });
-        await chat.channelIdentityVariantCreate({
+    const overwriteExisting = options.mode === 'overwrite' && overwriteIdentityIds.has(targetIdentityId);
+    const oldVariants = overwriteExisting
+      ? chat.getIdentityVariants(targetChannelId, targetIdentityId, targetUserId).slice()
+      : [];
+    const stagedVariants: Array<{ item: IdentityExportVariantItem; id: string; temporaryKeyword: string }> = [];
+    try {
+      for (const variant of sortedVariants) {
+        const temporaryKeyword = overwriteExisting ? `import-${nanoid(16)}` : variant.keyword;
+        const created = await chat.channelIdentityVariantCreate({
           channelId: targetChannelId,
           targetUserId: targetUserId || undefined,
           identityId: targetIdentityId,
           selectorEmoji: variant.selectorEmoji,
-          keyword: variant.keyword,
+          keyword: temporaryKeyword,
           note: variant.note || '',
           avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
           displayName: variant.displayName || '',
           color: variant.color || '',
           appearance: variant.appearance || {},
-          theaterPresentation: theaterPresentation as any,
           enabled: variant.enabled !== false,
         });
-      } catch (error) {
-        failedCount += 1;
-        console.warn('导入单个差分失败', error);
+        stagedVariants.push({ item: variant, id: created.id, temporaryKeyword });
+        if (variant.theaterPresentation !== undefined) {
+          const theaterPresentation = await remapTheaterPresentationForImport(variant.theaterPresentation, {
+            channelId: targetChannelId,
+            identityId: targetIdentityId,
+            variantId: created.id,
+            targetUserId,
+            assetIdMap,
+            mediaCache: theaterMediaCache,
+          });
+          await chat.channelIdentityVariantUpdate(created.id, {
+            channelId: targetChannelId,
+            targetUserId: targetUserId || undefined,
+            identityId: targetIdentityId,
+            selectorEmoji: variant.selectorEmoji,
+            keyword: temporaryKeyword,
+            note: variant.note || '',
+            avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
+            displayName: variant.displayName || '',
+            color: variant.color || '',
+            appearance: variant.appearance || {},
+            theaterPresentation: theaterPresentation as any,
+            skipTheaterAssetValidation: true,
+            enabled: variant.enabled !== false,
+          });
+        }
+      }
+
+      if (overwriteExisting) {
+        for (const oldVariant of oldVariants) {
+          await chat.channelIdentityVariantDelete(targetChannelId, oldVariant.id, targetUserId);
+        }
+        for (const staged of stagedVariants) {
+          const variant = staged.item;
+          await chat.channelIdentityVariantUpdate(staged.id, {
+            channelId: targetChannelId,
+            targetUserId: targetUserId || undefined,
+            identityId: targetIdentityId,
+            selectorEmoji: variant.selectorEmoji,
+            keyword: variant.keyword,
+            note: variant.note || '',
+            avatarAttachmentId: variant.avatarAssetKey ? (assetIdMap.get(variant.avatarAssetKey) || '') : '',
+            displayName: variant.displayName || '',
+            color: variant.color || '',
+            appearance: variant.appearance || {},
+            enabled: variant.enabled !== false,
+          });
+        }
+      }
+    } catch (error) {
+      failedCount += Math.max(1, sortedVariants.length);
+      console.warn('导入角色差分失败', error);
+      for (const staged of stagedVariants) {
+        try {
+          await chat.channelIdentityVariantDelete(targetChannelId, staged.id, targetUserId);
+        } catch (cleanupError) {
+          console.warn('清理暂存差分失败', cleanupError);
+        }
+      }
+      if (overwriteExisting && oldVariants.every(old => chat.getIdentityVariants(targetChannelId, targetIdentityId, targetUserId).some(item => item.id === old.id))) {
+        const snapshot = overwriteIdentitySnapshots.get(sourceIdentityId);
+        if (snapshot) {
+          try {
+            await chat.channelIdentityUpdate(snapshot.id, {
+              channelId: targetChannelId,
+              targetUserId: targetUserId || undefined,
+              displayName: snapshot.displayName,
+              color: snapshot.color || '',
+              avatarAttachmentId: snapshot.avatarAttachmentId || '',
+              avatarDecorations: cloneAvatarDecorations(snapshot.avatarDecorations, snapshot.avatarDecoration),
+              theaterPresentation: snapshot.theaterPresentation,
+              isDefault: !!snapshot.isDefault,
+              isTemporary: !!snapshot.isTemporary,
+              icOocOnActivate: snapshot.icOocOnActivate || '',
+              folderIds: snapshot.folderIds || [],
+            });
+            updatedCount = Math.max(0, updatedCount - 1);
+            identityIdMap.delete(sourceIdentityId);
+          } catch (restoreError) {
+            console.warn('恢复覆盖前角色失败', restoreError);
+          }
+        }
       }
     }
   }
@@ -4871,27 +4932,40 @@ const handleIdentityImportChange = async (event: globalThis.Event) => {
 
   try {
     const text = await file.text();
-    const payload = JSON.parse(text) as IdentityExportFile;
-    if (!IDENTITY_EXPORT_COMPATIBLE_VERSIONS.includes(payload.version)) {
-      throw new Error('无法识别的导入文件版本');
-    }
+    const payload = normalizeIdentityExportFileForImport(
+      JSON.parse(text) as IdentityExportFile,
+      IDENTITY_EXPORT_COMPATIBLE_VERSIONS,
+    );
     const items = payload.items || [];
     if (!items.length) {
       message.warning('导入文件中没有可用的频道角色');
       return;
     }
-    const confirmed = await dialogAskConfirm(dialog, {
-      title: '导入频道角色',
-      content: `检测到 ${items.length} 个角色配置，确定导入到当前频道吗？`,
+    const importMode = await new Promise<'append' | 'overwrite' | null>((resolve) => {
+      let settled = false;
+      const settle = (value: 'append' | 'overwrite' | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      dialog.warning({
+        title: '导入频道角色',
+        content: `检测到 ${items.length} 个角色配置。追加会完整跳过同名角色；覆盖会替换同名角色及其差分。`,
+        positiveText: '覆盖同名角色',
+        negativeText: '追加新角色',
+        onPositiveClick: () => settle('overwrite'),
+        onNegativeClick: () => settle('append'),
+        onClose: () => settle(null),
+      });
     });
-    if (!confirmed) {
+    if (!importMode) {
       return;
     }
 
     identityImporting.value = true;
     const result = await importIdentityMigrationSnapshot(payload, {
       targetChannelId: chat.curChannel.id,
-      mode: 'append',
+      mode: importMode,
       targetUserId: currentIdentityTargetUserId.value,
     });
     const importedCount = result.createdCount + result.updatedCount;

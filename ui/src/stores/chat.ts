@@ -3287,6 +3287,7 @@ export const useChatStore = defineStore({
       color?: string;
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
+      skipTheaterAssetValidation?: boolean;
       enabled: boolean;
     }) {
       const resp = await api.post<{ item: ChannelIdentityVariant }>('api/v1/channel-identity-variants', payload);
@@ -3306,6 +3307,7 @@ export const useChatStore = defineStore({
       color?: string;
       appearance?: Record<string, any>;
       theaterPresentation?: TheaterPresentationPatch | null;
+      skipTheaterAssetValidation?: boolean;
       enabled: boolean;
     }) {
       const resp = await api.put<{ item: ChannelIdentityVariant }>(`api/v1/channel-identity-variants/${variantId}`, payload);
@@ -3339,7 +3341,7 @@ export const useChatStore = defineStore({
       return current[identityId];
     },
 
-    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityCreate(payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.post<{ item: ChannelIdentity }>('api/v1/channel-identities', payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);
@@ -3347,7 +3349,7 @@ export const useChatStore = defineStore({
       return identity;
     },
 
-    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
+    async channelIdentityUpdate(identityId: string, payload: { channelId: string; targetUserId?: string; displayName: string; color: string; avatarAttachmentId: string; avatarDecorations?: AvatarDecoration[] | null; theaterPresentation?: TheaterPresentation | null; skipTheaterAssetValidation?: boolean; isDefault: boolean; isTemporary?: boolean; icOocOnActivate?: '' | 'ic' | 'ooc'; folderIds?: string[]; }) {
       const resp = await api.put<{ item: ChannelIdentity }>(`api/v1/channel-identities/${identityId}`, payload);
       const identity = resp.data.item;
       this.upsertChannelIdentity(identity, payload.targetUserId);

@@ -12,25 +12,27 @@ import (
 )
 
 type channelIdentityVariantPayload struct {
-	ChannelID           string                                    `json:"channelId"`
-	TargetUserID        string                                    `json:"targetUserId"`
-	IdentityID          string                                    `json:"identityId"`
-	SelectorEmoji       string                                    `json:"selectorEmoji"`
-	Keyword             string                                    `json:"keyword"`
-	Note                string                                    `json:"note"`
-	AvatarAttachmentID  string                                    `json:"avatarAttachmentId"`
-	DisplayName         string                                    `json:"displayName"`
-	Color               string                                    `json:"color"`
-	Appearance          map[string]any                            `json:"appearance"`
-	Enabled             bool                                      `json:"enabled"`
-	TheaterPresentation protocol.OptionalTheaterPresentationPatch `json:"theaterPresentation"`
+	ChannelID                  string                                    `json:"channelId"`
+	TargetUserID               string                                    `json:"targetUserId"`
+	IdentityID                 string                                    `json:"identityId"`
+	SelectorEmoji              string                                    `json:"selectorEmoji"`
+	Keyword                    string                                    `json:"keyword"`
+	Note                       string                                    `json:"note"`
+	AvatarAttachmentID         string                                    `json:"avatarAttachmentId"`
+	DisplayName                string                                    `json:"displayName"`
+	Color                      string                                    `json:"color"`
+	Appearance                 map[string]any                            `json:"appearance"`
+	Enabled                    bool                                      `json:"enabled"`
+	TheaterPresentation        protocol.OptionalTheaterPresentationPatch `json:"theaterPresentation"`
+	SkipTheaterAssetValidation bool                                      `json:"skipTheaterAssetValidation"`
 }
 
 func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fiber.Map {
 	if item == nil {
 		return fiber.Map{}
 	}
-	return fiber.Map{
+	appearance := item.Appearance()
+	result := fiber.Map{
 		"id":                 item.ID,
 		"identityId":         item.IdentityID,
 		"channelId":          item.ChannelID,
@@ -41,12 +43,16 @@ func serializeChannelIdentityVariant(item *model.ChannelIdentityVariantModel) fi
 		"avatarAttachmentId": item.AvatarAttachmentID,
 		"displayName":        item.DisplayName,
 		"color":              item.Color,
-		"appearance":         item.Appearance(),
+		"appearance":         appearance,
 		"sortOrder":          item.SortOrder,
 		"enabled":            item.Enabled,
 		"createdAt":          item.CreatedAt,
 		"updatedAt":          item.UpdatedAt,
 	}
+	if theaterPresentation, exists := appearance["theaterPresentation"]; exists {
+		result["theaterPresentation"] = theaterPresentation
+	}
+	return result
 }
 
 func ChannelIdentityVariantList(c *fiber.Ctx) error {
@@ -106,18 +112,19 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityVariantCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityVariantInput{
-		ChannelID:              payload.ChannelID,
-		IdentityID:             payload.IdentityID,
-		SelectorEmoji:          payload.SelectorEmoji,
-		Keyword:                payload.Keyword,
-		Note:                   payload.Note,
-		AvatarAttachmentID:     payload.AvatarAttachmentID,
-		DisplayName:            payload.DisplayName,
-		Color:                  payload.Color,
-		Appearance:             payload.Appearance,
-		Enabled:                payload.Enabled,
-		TheaterPresentation:    payload.TheaterPresentation.Value,
-		TheaterPresentationSet: payload.TheaterPresentation.Set,
+		ChannelID:                  payload.ChannelID,
+		IdentityID:                 payload.IdentityID,
+		SelectorEmoji:              payload.SelectorEmoji,
+		Keyword:                    payload.Keyword,
+		Note:                       payload.Note,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		Appearance:                 payload.Appearance,
+		Enabled:                    payload.Enabled,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -145,18 +152,19 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityVariantUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, variantID, &service.ChannelIdentityVariantInput{
-		ChannelID:              payload.ChannelID,
-		IdentityID:             payload.IdentityID,
-		SelectorEmoji:          payload.SelectorEmoji,
-		Keyword:                payload.Keyword,
-		Note:                   payload.Note,
-		AvatarAttachmentID:     payload.AvatarAttachmentID,
-		DisplayName:            payload.DisplayName,
-		Color:                  payload.Color,
-		Appearance:             payload.Appearance,
-		Enabled:                payload.Enabled,
-		TheaterPresentation:    payload.TheaterPresentation.Value,
-		TheaterPresentationSet: payload.TheaterPresentation.Set,
+		ChannelID:                  payload.ChannelID,
+		IdentityID:                 payload.IdentityID,
+		SelectorEmoji:              payload.SelectorEmoji,
+		Keyword:                    payload.Keyword,
+		Note:                       payload.Note,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		Appearance:                 payload.Appearance,
+		Enabled:                    payload.Enabled,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

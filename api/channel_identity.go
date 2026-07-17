@@ -12,18 +12,19 @@ import (
 )
 
 type channelIdentityPayload struct {
-	ChannelID           string                               `json:"channelId"`
-	TargetUserID        string                               `json:"targetUserId"`
-	DisplayName         string                               `json:"displayName"`
-	Color               string                               `json:"color"`
-	AvatarAttachmentID  string                               `json:"avatarAttachmentId"`
-	AvatarDecoration    *protocol.AvatarDecoration           `json:"avatarDecoration"`
-	AvatarDecorations   protocol.AvatarDecorationList        `json:"avatarDecorations"`
-	IsDefault           bool                                 `json:"isDefault"`
-	IsTemporary         bool                                 `json:"isTemporary"`
-	ICOOCOnActivate     string                               `json:"icOocOnActivate"`
-	FolderIDs           []string                             `json:"folderIds"`
-	TheaterPresentation protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
+	ChannelID                  string                               `json:"channelId"`
+	TargetUserID               string                               `json:"targetUserId"`
+	DisplayName                string                               `json:"displayName"`
+	Color                      string                               `json:"color"`
+	AvatarAttachmentID         string                               `json:"avatarAttachmentId"`
+	AvatarDecoration           *protocol.AvatarDecoration           `json:"avatarDecoration"`
+	AvatarDecorations          protocol.AvatarDecorationList        `json:"avatarDecorations"`
+	IsDefault                  bool                                 `json:"isDefault"`
+	IsTemporary                bool                                 `json:"isTemporary"`
+	ICOOCOnActivate            string                               `json:"icOocOnActivate"`
+	FolderIDs                  []string                             `json:"folderIds"`
+	TheaterPresentation        protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
+	SkipTheaterAssetValidation bool                                 `json:"skipTheaterAssetValidation"`
 }
 
 func ChannelIdentityList(c *fiber.Ctx) error {
@@ -97,17 +98,18 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityInput{
-		ChannelID:              payload.ChannelID,
-		DisplayName:            payload.DisplayName,
-		Color:                  payload.Color,
-		AvatarAttachmentID:     payload.AvatarAttachmentID,
-		AvatarDecorations:      resolveChannelIdentityPayloadDecorations(payload),
-		IsDefault:              payload.IsDefault,
-		IsTemporary:            payload.IsTemporary,
-		ICOOCOnActivate:        payload.ICOOCOnActivate,
-		FolderIDs:              payload.FolderIDs,
-		TheaterPresentation:    payload.TheaterPresentation.Value,
-		TheaterPresentationSet: payload.TheaterPresentation.Set,
+		ChannelID:                  payload.ChannelID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:                  payload.IsDefault,
+		IsTemporary:                payload.IsTemporary,
+		ICOOCOnActivate:            payload.ICOOCOnActivate,
+		FolderIDs:                  payload.FolderIDs,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -149,17 +151,18 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
-		ChannelID:              payload.ChannelID,
-		DisplayName:            payload.DisplayName,
-		Color:                  payload.Color,
-		AvatarAttachmentID:     payload.AvatarAttachmentID,
-		AvatarDecorations:      resolveChannelIdentityPayloadDecorations(payload),
-		IsDefault:              payload.IsDefault,
-		IsTemporary:            payload.IsTemporary,
-		ICOOCOnActivate:        payload.ICOOCOnActivate,
-		FolderIDs:              payload.FolderIDs,
-		TheaterPresentation:    payload.TheaterPresentation.Value,
-		TheaterPresentationSet: payload.TheaterPresentation.Set,
+		ChannelID:                  payload.ChannelID,
+		DisplayName:                payload.DisplayName,
+		Color:                      payload.Color,
+		AvatarAttachmentID:         payload.AvatarAttachmentID,
+		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
+		IsDefault:                  payload.IsDefault,
+		IsTemporary:                payload.IsTemporary,
+		ICOOCOnActivate:            payload.ICOOCOnActivate,
+		FolderIDs:                  payload.FolderIDs,
+		TheaterPresentation:        payload.TheaterPresentation.Value,
+		TheaterPresentationSet:     payload.TheaterPresentation.Set,
+		SkipTheaterAssetValidation: payload.SkipTheaterAssetValidation,
 	})
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
