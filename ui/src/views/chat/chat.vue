@@ -1537,6 +1537,7 @@ const showActionRibbon = ref(isTheaterEmbedMode.value);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const exportManagerRefreshVersion = ref(0);
 const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
@@ -6222,6 +6223,7 @@ const handleExportMessages = async (params: {
     };
     const result = await chat.createExportTask(payload);
     message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);
+    exportManagerRefreshVersion.value += 1;
     exportDialogVisible.value = false;
     const shouldAutoUpload = Boolean(params.autoUpload && params.format === 'json' && canUseCloudUpload.value);
     void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, format: params.format });
@@ -18673,6 +18675,7 @@ onBeforeUnmount(() => {
   <ExportManagerModal
     v-model:visible="exportManagerVisible"
     :channel-id="chat.curChannel?.id"
+    :refresh-version="exportManagerRefreshVersion"
     @request-export="exportDialogVisible = true"
   />
   <ExportDialog

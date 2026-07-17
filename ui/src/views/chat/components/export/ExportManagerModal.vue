@@ -10,6 +10,7 @@ import { useDisplayStore } from '@/stores/display';
 interface Props {
   visible: boolean;
   channelId?: string;
+  refreshVersion?: number;
 }
 
 interface Emits {
@@ -369,6 +370,16 @@ watch(
       total.value = 0;
       totalSize.value = 0;
     }
+  },
+);
+
+watch(
+  () => props.refreshVersion,
+  () => {
+    if (!props.visible || !props.channelId) {
+      return;
+    }
+    fetchTasks();
   },
 );
 </script>
