@@ -27,7 +27,6 @@ import {
   Pin,
   Pencil,
   Plus,
-  Refresh,
   Select,
   Settings,
   Stack2,
@@ -2428,37 +2427,6 @@ onBeforeUnmount(() => {
       <div class="theater-stage-title" :title="store.activeScene.value.name">
         {{ store.activeScene.value.name }}
       </div>
-      <n-tooltip v-if="canEditAllObjects" trigger="hover">
-        <template #trigger>
-          <n-button
-            class="theater-bulk-select-tool"
-            :class="{ 'is-active': store.selection.bulkMode }"
-            quaternary
-            size="small"
-            aria-label="批量选择组件"
-            @click="toggleBulkSelectionMode"
-          >
-            <template #icon><n-icon><Select /></n-icon></template>
-          </n-button>
-        </template>
-        批量选择组件
-      </n-tooltip>
-      <n-tooltip v-if="canEditAllObjects" trigger="hover">
-        <template #trigger>
-          <n-button
-            class="theater-quick-delete-tool"
-            :class="{ 'is-active': quickDeleteActive }"
-            quaternary
-            size="small"
-            :aria-pressed="quickDeleteActive"
-            :aria-label="quickDeleteActive ? '退出快速删除组件' : '启用快速删除组件'"
-            @click="toggleQuickDeleteTool"
-          >
-            <template #icon><n-icon><Trash /></n-icon></template>
-          </n-button>
-        </template>
-        {{ quickDeleteActive ? '退出快速删除组件 Esc' : '快速删除组件' }}
-      </n-tooltip>
       <n-button-group class="theater-panel-switches" size="small">
         <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
           <template #trigger>
@@ -2524,51 +2492,45 @@ onBeforeUnmount(() => {
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCopy.value" aria-label="复制组件" @click="store.copySelectedObject"><template #icon><n-icon><Copy /></n-icon></template></n-button></template>复制组件 Ctrl+C</n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              class="theater-bulk-select-tool"
+              :class="{ 'is-active': store.selection.bulkMode }"
+              aria-label="批量选择组件"
+              @click="toggleBulkSelectionMode"
+            >
+              <template #icon><n-icon><Select /></n-icon></template>
+            </n-button>
+          </template>
+          批量选择组件
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              class="theater-quick-delete-tool"
+              :class="{ 'is-active': quickDeleteActive }"
+              :aria-pressed="quickDeleteActive"
+              :aria-label="quickDeleteActive ? '退出快速删除组件' : '启用快速删除组件'"
+              @click="toggleQuickDeleteTool"
+            >
+              <template #icon><n-icon><Trash /></n-icon></template>
+            </n-button>
+          </template>
+          {{ quickDeleteActive ? '退出快速删除组件 Esc' : '快速删除组件' }}
+        </n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切组件" @click="store.cutSelectedObject"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切组件 Ctrl+X</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="store.removeSelectedObjects()"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
       </n-button-group>
-      <div class="theater-stage-character-bridge" :class="{ 'is-offline': !chatBridgeOnline }">
-        <img
-          v-if="activeChatCharacter?.resolvedAppearance.avatar"
-          :src="activeChatCharacter.resolvedAppearance.avatar.url"
-          :alt="activeChatCharacter.resolvedAppearance.displayName"
-        >
-        <span v-else class="theater-stage-character-bridge__placeholder">角</span>
-        <div class="theater-stage-character-bridge__selects">
-          <n-select
-            :value="characterSnapshot.activeIdentityId"
-            :options="chatCharacterOptions"
-            :disabled="!chatBridgeOnline || !chatCharacterOptions.length"
-            size="tiny"
-            placeholder="聊天角色"
-            @update:value="handleChatCharacterSelect"
-          />
-          <n-select
-            :value="activeChatCharacter?.activeVariantId || ''"
-            :options="chatCharacterVariantOptions"
-            :disabled="!chatBridgeOnline || !activeChatCharacter"
-            size="tiny"
-            placeholder="头像差分"
-            @update:value="handleChatCharacterVariantSelect"
-          />
-        </div>
-        <small v-if="activeChatCharacter?.resolvedAppearance.decorations.length">
-          佩饰 {{ activeChatCharacter.resolvedAppearance.decorations.length }} 层
-        </small>
-      </div>
-      <n-button class="theater-stage-reset-camera" size="small" quaternary @click="store.resetCamera">
-        <template #icon><n-icon><Focus /></n-icon></template>
-        复位视角
-      </n-button>
       <n-tooltip trigger="hover">
         <template #trigger>
-          <n-button quaternary size="small" aria-label="恢复默认布局" @click="resetWorkspaceLayout">
-            <template #icon><n-icon><Refresh /></n-icon></template>
+          <n-button class="theater-stage-reset-camera" size="small" quaternary aria-label="复位视角" @click="store.resetCamera">
+            <template #icon><n-icon><Focus /></n-icon></template>
           </n-button>
         </template>
-        恢复默认布局
+        复位视角
       </n-tooltip>
       <span class="theater-stage-zoom">{{ Math.round(store.state.camera.zoom * 100) }}%</span>
     </header>
