@@ -57,6 +57,12 @@ const setPlaybackRate = (value: number | null) => {
 const setFontScale = (value: number) => {
   emit('dispatch', { type: 'set-layer-property', target: props.selection, property: 'fontScale', value }, { transient: true })
 }
+const setContentColor = (value: string) => {
+  emit('dispatch', { type: 'set-dialogue-property', property: 'contentColor', value })
+}
+const setNarration = (property: 'enabled' | 'backdropColor' | 'backdropOpacity', value: boolean | string | number) => {
+  emit('dispatch', { type: 'set-narration-property', property, value }, { transient: property === 'backdropOpacity' })
+}
 const setPadding = (key: typeof paddingKeys[number], value: number | null) => {
   if (value === null) return
   emit('dispatch', { type: 'set-dialogue-padding', padding: { [key]: value } }, { transient: true })
@@ -151,6 +157,15 @@ const reorder = (direction: -1 | 1) => {
         />
         <span>{{ Math.round(textLayer.fontScale * 100) }}%</span>
       </div>
+      <template v-if="selection.kind === 'content'">
+        <div class="theater-inspector__label">默认文本颜色</div>
+        <n-color-picker
+          :value="draft.dialogue.contentColor"
+          :show-alpha="false"
+          :modes="['hex']"
+          @update:value="setContentColor"
+        />
+      </template>
     </template>
 
     <template v-if="layer">
@@ -191,6 +206,49 @@ const reorder = (direction: -1 | 1) => {
       </n-radio-group>
     </template>
 
+    <section v-if="section === 'portrait'" class="theater-inspector__narration">
+      <div v-if="mode === 'variant'" class="theater-inspector__mode">
+        <div class="theater-inspector__label">旁白模式配置</div>
+        <n-radio-group
+          :value="sectionModes.narration"
+          @update:value="emit('dispatch', { type: 'set-section-mode', section: 'narration', mode: $event as TheaterSectionMode })"
+        >
+          <n-radio-button value="inherit">继承</n-radio-button>
+          <n-radio-button value="custom">自定义</n-radio-button>
+          <n-radio-button value="clear">清除</n-radio-button>
+        </n-radio-group>
+      </div>
+      <div class="theater-inspector__narration-switch">
+        <span>旁白模式</span>
+        <n-switch size="large" :value="draft.narration.enabled" @update:value="setNarration('enabled', $event)" />
+      </div>
+      <template v-if="draft.narration.enabled">
+        <div class="theater-inspector__label">幕布颜色</div>
+        <n-color-picker
+          :value="draft.narration.backdropColor"
+          :show-alpha="false"
+          :modes="['hex']"
+          @update:value="setNarration('backdropColor', $event)"
+        />
+        <div class="theater-inspector__slider-field">
+          <span>透明度</span>
+          <n-slider
+            :value="draft.narration.backdropOpacity"
+            :min="0"
+            :max="1"
+            :step="0.01"
+            :tooltip="false"
+            @pointerdown="emit('transactionStart')"
+            @pointerup="emit('transactionEnd')"
+            @focus="emit('transactionStart')"
+            @blur="emit('transactionEnd')"
+            @update:value="setNarration('backdropOpacity', $event)"
+          />
+          <span>{{ Math.round(draft.narration.backdropOpacity * 100) }}%</span>
+        </div>
+      </template>
+    </section>
+
     <div class="theater-inspector__actions">
       <n-tooltip><template #trigger><n-button quaternary circle @click="emit('dispatch', { type: 'reset-section', section })"><template #icon><n-icon><Refresh /></n-icon></template></n-button></template>重置当前部分</n-tooltip>
       <template v-if="selection.kind === 'decoration'">
@@ -212,5 +270,7 @@ const reorder = (direction: -1 | 1) => {
 .theater-inspector__sync-values { color: var(--sc-text-secondary, #64748b); font-size: 12px; font-variant-numeric: tabular-nums; }
 .theater-inspector__decoration-list { display: flex; flex-direction: column; gap: 6px; }
 .theater-inspector__actions { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--sc-border-mute, rgba(148,163,184,.24)); padding-top: 8px; }
+.theater-inspector__narration { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--sc-border-mute, rgba(148,163,184,.24)); }
+.theater-inspector__narration-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 700; }
 @media (max-width: 720px) { .theater-inspector__number-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 </style>

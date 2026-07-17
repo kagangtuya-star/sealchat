@@ -1,6 +1,7 @@
 import {
   MAX_THEATER_PORTRAIT_DECORATIONS,
   createDefaultTheaterDialogueStyle,
+  createDefaultTheaterNarrationStyle,
   createDefaultTheaterPresentation,
   normalizeTheaterPresentation,
   normalizeTheaterTransform,
@@ -14,7 +15,7 @@ import {
   type TheaterVisualLayer,
 } from '@/types/theaterPresentation'
 
-export type TheaterSection = 'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue'
+export type TheaterSection = 'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue' | 'narration'
 export type TheaterSectionMode = 'inherit' | 'custom' | 'clear'
 export type TheaterSelection =
   | { kind: 'portrait' }
@@ -33,7 +34,8 @@ export type TheaterEditorCommand =
   | { type: 'remove-decoration'; id: string }
   | { type: 'reorder-decoration'; id: string; beforeId: string | null }
   | { type: 'set-dialogue-padding'; padding: Partial<TheaterDialogueStyle['padding']> }
-  | { type: 'set-dialogue-property'; property: 'nameGap' | 'textAlign'; value: number | string }
+  | { type: 'set-dialogue-property'; property: 'nameGap' | 'textAlign' | 'contentColor'; value: number | string }
+  | { type: 'set-narration-property'; property: 'enabled' | 'backdropColor' | 'backdropOpacity'; value: boolean | string | number }
   | { type: 'reset-section'; section: TheaterSection }
   | { type: 'set-section-mode'; section: TheaterSection; mode: TheaterSectionMode }
 
@@ -87,8 +89,9 @@ export const createTheaterPresentationEditorState = (input: {
         content: inferSectionMode(input.patch, 'content'),
         decorations: inferSectionMode(input.patch, 'decorations'),
         dialogue: inferSectionMode(input.patch, 'dialogue'),
+        narration: inferSectionMode(input.patch, 'narration'),
       }
-    : { portrait: 'custom', speaker: 'custom', content: 'custom', decorations: 'custom', dialogue: 'custom' } as const
+    : { portrait: 'custom', speaker: 'custom', content: 'custom', decorations: 'custom', dialogue: 'custom', narration: 'custom' } as const
   return {
     mode: input.mode,
     base: clone(base),
@@ -147,6 +150,7 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
         : { ...clone(createDefaultTheaterDialogueStyle().content), enabled: command.mode !== 'clear' }
       if (command.section === 'decorations') state.draft.portraitDecorations = command.mode === 'inherit' ? clone(state.base.portraitDecorations) : []
       if (command.section === 'dialogue') state.draft.dialogue = command.mode === 'inherit' ? clone(state.base.dialogue) : createDefaultTheaterDialogueStyle()
+      if (command.section === 'narration') state.draft.narration = command.mode === 'inherit' ? clone(state.base.narration) : createDefaultTheaterNarrationStyle()
     }
     return true
   }
@@ -232,12 +236,18 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
     markCustom(state, 'dialogue')
     return true
   }
+  if (command.type === 'set-narration-property') {
+    state.draft.narration = { ...state.draft.narration, [command.property]: command.value }
+    markCustom(state, 'narration')
+    return true
+  }
   if (command.type === 'reset-section') {
     if (command.section === 'portrait') state.draft.portrait = null
     if (command.section === 'speaker') state.draft.dialogue.speaker = clone(createDefaultTheaterDialogueStyle().speaker)
     if (command.section === 'content') state.draft.dialogue.content = clone(createDefaultTheaterDialogueStyle().content)
     if (command.section === 'decorations') state.draft.portraitDecorations = []
     if (command.section === 'dialogue') state.draft.dialogue = createDefaultTheaterDialogueStyle()
+    if (command.section === 'narration') state.draft.narration = createDefaultTheaterNarrationStyle()
     markCustom(state, command.section)
     return true
   }
@@ -315,6 +325,8 @@ export const buildTheaterPresentationPatch = (state: TheaterEditorState): Theate
   )
   if (dialogueCustom) patch.dialogue = clone(state.draft.dialogue)
   if (dialogueClear) patch.dialogue = null
+  if (state.sectionModes.narration === 'custom') patch.narration = clone(state.draft.narration)
+  if (state.sectionModes.narration === 'clear') patch.narration = null
   return patch
 }
 

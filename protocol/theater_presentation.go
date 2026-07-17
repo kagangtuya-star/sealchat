@@ -110,21 +110,49 @@ func (layer *TheaterTextLayer) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type TheaterNarrationStyle struct {
+	Enabled         bool    `json:"enabled"`
+	BackdropColor   string  `json:"backdropColor"`
+	BackdropOpacity float64 `json:"backdropOpacity"`
+}
+
 type TheaterDialogueStyle struct {
-	Transform TheaterTransform    `json:"transform"`
-	Frame     *TheaterVisualLayer `json:"frame"`
-	Speaker   TheaterTextLayer    `json:"speaker"`
-	Content   TheaterTextLayer    `json:"content"`
-	Padding   TheaterSpacing      `json:"padding"`
-	NameGap   float64             `json:"nameGap"`
-	TextAlign TheaterTextAlign    `json:"textAlign"`
+	Transform    TheaterTransform    `json:"transform"`
+	Frame        *TheaterVisualLayer `json:"frame"`
+	Speaker      TheaterTextLayer    `json:"speaker"`
+	Content      TheaterTextLayer    `json:"content"`
+	Padding      TheaterSpacing      `json:"padding"`
+	NameGap      float64             `json:"nameGap"`
+	TextAlign    TheaterTextAlign    `json:"textAlign"`
+	ContentColor string              `json:"contentColor"`
+}
+
+func (dialogue *TheaterDialogueStyle) UnmarshalJSON(data []byte) error {
+	type theaterDialogueStyle TheaterDialogueStyle
+	value := theaterDialogueStyle{ContentColor: "#F4F4F5"}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*dialogue = TheaterDialogueStyle(value)
+	return nil
 }
 
 type TheaterPresentation struct {
-	SchemaVersion       int                  `json:"schemaVersion"`
-	Portrait            *TheaterVisualLayer  `json:"portrait"`
-	PortraitDecorations []TheaterVisualLayer `json:"portraitDecorations"`
-	Dialogue            TheaterDialogueStyle `json:"dialogue"`
+	SchemaVersion       int                   `json:"schemaVersion"`
+	Portrait            *TheaterVisualLayer   `json:"portrait"`
+	PortraitDecorations []TheaterVisualLayer  `json:"portraitDecorations"`
+	Dialogue            TheaterDialogueStyle  `json:"dialogue"`
+	Narration           TheaterNarrationStyle `json:"narration"`
+}
+
+func (presentation *TheaterPresentation) UnmarshalJSON(data []byte) error {
+	type theaterPresentation TheaterPresentation
+	value := theaterPresentation{Narration: DefaultTheaterNarrationStyle()}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*presentation = TheaterPresentation(value)
+	return nil
 }
 
 // TheaterPatchField preserves omitted, null, and value as distinct JSON states.
@@ -137,6 +165,7 @@ type TheaterPresentationPatch struct {
 	Portrait            TheaterPatchField[TheaterVisualLayer]
 	PortraitDecorations TheaterPatchField[[]TheaterVisualLayer]
 	Dialogue            TheaterPatchField[TheaterDialogueStyle]
+	Narration           TheaterPatchField[TheaterNarrationStyle]
 }
 
 // OptionalTheaterPresentation preserves omitted, null, and value request states.
@@ -188,10 +217,15 @@ func DefaultTheaterDialogueStyle() TheaterDialogueStyle {
 			Transform: TheaterTransform{X: 0.08, Y: 0.30, Width: 0.84, Height: 0.56, Opacity: 1, ZIndex: 2},
 			FontScale: 1,
 		},
-		Padding:   TheaterSpacing{Top: 0.16, Right: 0.08, Bottom: 0.12, Left: 0.08},
-		NameGap:   0.04,
-		TextAlign: TheaterTextAlignLeft,
+		Padding:      TheaterSpacing{Top: 0.16, Right: 0.08, Bottom: 0.12, Left: 0.08},
+		NameGap:      0.04,
+		TextAlign:    TheaterTextAlignLeft,
+		ContentColor: "#F4F4F5",
 	}
+}
+
+func DefaultTheaterNarrationStyle() TheaterNarrationStyle {
+	return TheaterNarrationStyle{BackdropColor: "#000000", BackdropOpacity: 1}
 }
 
 func DefaultTheaterPresentation() TheaterPresentation {
@@ -199,6 +233,7 @@ func DefaultTheaterPresentation() TheaterPresentation {
 		SchemaVersion:       TheaterPresentationSchemaVersion,
 		PortraitDecorations: []TheaterVisualLayer{},
 		Dialogue:            DefaultTheaterDialogueStyle(),
+		Narration:           DefaultTheaterNarrationStyle(),
 	}
 }
 
@@ -211,6 +246,11 @@ func NormalizeTheaterPresentation(value TheaterPresentation) TheaterPresentation
 	}
 	if value.Dialogue == (TheaterDialogueStyle{}) {
 		value.Dialogue = DefaultTheaterDialogueStyle()
+	} else if value.Dialogue.ContentColor == "" {
+		value.Dialogue.ContentColor = DefaultTheaterDialogueStyle().ContentColor
+	}
+	if value.Narration.BackdropColor == "" {
+		value.Narration = DefaultTheaterNarrationStyle()
 	}
 	return value
 }
@@ -238,6 +278,12 @@ func ResolveTheaterPresentation(base TheaterPresentation, patch *TheaterPresenta
 			resolved.Dialogue = *patch.Dialogue.Value
 		}
 	}
+	if patch.Narration.Set {
+		resolved.Narration = DefaultTheaterNarrationStyle()
+		if patch.Narration.Value != nil {
+			resolved.Narration = *patch.Narration.Value
+		}
+	}
 	return NormalizeTheaterPresentation(resolved)
 }
 
@@ -262,6 +308,7 @@ func ValidateTheaterPresentation(value TheaterPresentation) error {
 		seen[layer.ID] = struct{}{}
 	}
 	problems = appendError(problems, validateTheaterDialogue(value.Dialogue))
+	problems = appendError(problems, validateTheaterNarration(value.Narration))
 	return errors.Join(problems...)
 }
 
@@ -288,6 +335,9 @@ func ValidateTheaterPresentationPatch(patch TheaterPresentationPatch) error {
 	if patch.Dialogue.Set && patch.Dialogue.Value != nil {
 		problems = appendError(problems, validateTheaterDialogue(*patch.Dialogue.Value))
 	}
+	if patch.Narration.Set && patch.Narration.Value != nil {
+		problems = appendError(problems, validateTheaterNarration(*patch.Narration.Value))
+	}
 	return errors.Join(problems...)
 }
 
@@ -301,7 +351,7 @@ func (patch *TheaterPresentationPatch) UnmarshalJSON(data []byte) error {
 	}
 	*patch = TheaterPresentationPatch{}
 	for key := range fields {
-		if key != "portrait" && key != "portraitDecorations" && key != "dialogue" {
+		if key != "portrait" && key != "portraitDecorations" && key != "dialogue" && key != "narration" {
 			return fmt.Errorf("unknown theater presentation patch field %q", key)
 		}
 	}
@@ -332,11 +382,20 @@ func (patch *TheaterPresentationPatch) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
+	if raw, ok := fields["narration"]; ok {
+		patch.Narration.Set = true
+		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			patch.Narration.Value = new(TheaterNarrationStyle)
+			if err := json.Unmarshal(raw, patch.Narration.Value); err != nil {
+				return fmt.Errorf("narration: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
 func (patch TheaterPresentationPatch) MarshalJSON() ([]byte, error) {
-	fields := make(map[string]any, 3)
+	fields := make(map[string]any, 4)
 	if patch.Portrait.Set {
 		fields["portrait"] = patch.Portrait.Value
 	}
@@ -345,6 +404,9 @@ func (patch TheaterPresentationPatch) MarshalJSON() ([]byte, error) {
 	}
 	if patch.Dialogue.Set {
 		fields["dialogue"] = patch.Dialogue.Value
+	}
+	if patch.Narration.Set {
+		fields["narration"] = patch.Narration.Value
 	}
 	return json.Marshal(fields)
 }
@@ -359,6 +421,9 @@ func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 	}
 	if !finiteInRange(dialogue.Content.FontScale, 0.25, 4) {
 		problems = append(problems, errors.New("dialogue.content.fontScale must be finite and between 0.25 and 4"))
+	}
+	if !validTheaterColor(dialogue.ContentColor) {
+		problems = append(problems, errors.New("dialogue.contentColor must be a hex color"))
 	}
 	if dialogue.Frame != nil {
 		problems = appendError(problems, validateTheaterLayer(*dialogue.Frame, TheaterLayerSpaceDialogue, "dialogue.frame"))
@@ -378,6 +443,29 @@ func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 		problems = append(problems, errors.New("dialogue.textAlign must be left, center, or right"))
 	}
 	return errors.Join(problems...)
+}
+
+func validateTheaterNarration(narration TheaterNarrationStyle) error {
+	var problems []error
+	if !validTheaterColor(narration.BackdropColor) {
+		problems = append(problems, errors.New("narration.backdropColor must be a hex color"))
+	}
+	if !finiteInRange(narration.BackdropOpacity, 0, 1) {
+		problems = append(problems, errors.New("narration.backdropOpacity must be finite and between 0 and 1"))
+	}
+	return errors.Join(problems...)
+}
+
+func validTheaterColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTheaterLayer(layer TheaterVisualLayer, expectedSpace TheaterLayerSpace, path string) error {

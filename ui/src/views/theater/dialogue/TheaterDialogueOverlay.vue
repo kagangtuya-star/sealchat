@@ -5,7 +5,7 @@ import { PlayerSkipForward, X } from '@vicons/tabler'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
-import { createDefaultTheaterPresentation, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { isTipTapJson } from '@/utils/tiptap-render'
 import { hasPerformanceContent } from '@/utils/tiptap-performance-parser'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
@@ -49,6 +49,13 @@ const portraitDecorations = computed(() => presentation.value.portraitDecoration
   .filter((layer) => layer.enabled)
   .sort((left, right) => left.transform.zIndex - right.transform.zIndex))
 const frame = computed(() => presentation.value.dialogue.frame?.enabled ? presentation.value.dialogue.frame : null)
+const narration = computed(() => presentation.value.narration)
+const narrationStyle = computed<CSSProperties>(() => ({
+  backgroundColor: resolveTheaterBackdropColor(
+    narration.value.backdropColor,
+    narration.value.backdropOpacity,
+  ),
+}))
 const revealedText = computed(() => Array.from(message.value?.contentText || '')
   .slice(0, current.value?.revealedCharacters || 0)
   .join(''))
@@ -74,6 +81,10 @@ const textLayerStyle = (kind: 'speaker' | 'content'): CSSProperties => ({
   textAlign: presentation.value.dialogue.textAlign,
   '--theater-font-scale': String(presentation.value.dialogue[kind].fontScale),
 })
+const contentStyle = computed<CSSProperties>(() => ({
+  ...textLayerStyle('content'),
+  color: presentation.value.dialogue.contentColor,
+}))
 
 const layerStyle = (layer: TheaterVisualLayer): CSSProperties => ({
   ...resolveTheaterTransformStyle(layer.transform),
@@ -157,8 +168,9 @@ onBeforeUnmount(() => {
     :class="{ 'is-open': current, 'is-reduced-motion': snapshot.reducedMotion }"
     aria-live="polite"
   >
+    <div v-if="current && narration.enabled" class="theater-dialogue-narration" :style="narrationStyle" />
     <div v-if="current" class="theater-composition">
-      <div v-if="portrait" class="theater-dialogue-portrait" :style="portraitStyle">
+      <div v-if="portrait && !narration.enabled" class="theater-dialogue-portrait" :style="portraitStyle">
         <TheaterPresentationMedia
           class="theater-dialogue-portrait__base"
           :media="portrait.media"
@@ -180,8 +192,8 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="theater-dialogue-shell" :style="dialogueStyle">
-        <div v-if="!frame" class="theater-dialogue-shell__default" />
-        <div v-if="frame" class="theater-dialogue-frame" :style="frameStyle">
+        <div v-if="!frame && !narration.enabled" class="theater-dialogue-shell__default" />
+        <div v-if="frame && !narration.enabled" class="theater-dialogue-frame" :style="frameStyle">
           <TheaterPresentationMedia
             :media="frame.media"
             :playback-rate="frame.playbackRate"
@@ -189,10 +201,10 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="theater-dialogue-content" @click="completeCurrent">
-          <div class="theater-dialogue-speaker" :style="{ ...textLayerStyle('speaker'), color: speakerColor }">
+          <div v-if="!narration.enabled" class="theater-dialogue-speaker" :style="{ ...textLayerStyle('speaker'), color: speakerColor }">
             <span class="theater-dialogue-speaker__value">{{ message?.actor.displayName || '角色' }}</span>
           </div>
-          <div class="theater-dialogue-body" :style="textLayerStyle('content')">
+          <div class="theater-dialogue-body" :style="contentStyle">
             <RichTextContent
               v-if="showRichContent"
               ref="richTextRef"
@@ -232,7 +244,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-  .theater-dialogue-overlay {
+.theater-dialogue-overlay {
   position: absolute;
   z-index: 5;
   inset: 0;
@@ -241,6 +253,17 @@ onBeforeUnmount(() => {
   color: #f4f4f5;
   font-size: 16px;
   line-height: 1.5;
+}
+
+.theater-dialogue-narration {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+}
+
+.theater-dialogue-overlay > .theater-composition {
+  z-index: 1;
 }
 
 .theater-dialogue-portrait,

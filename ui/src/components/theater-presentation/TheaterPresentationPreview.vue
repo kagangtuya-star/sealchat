@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, type CSSProperties } from 'vue'
-import { resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolveTheaterBackdropColor, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from './theaterPresentationEditorState'
 import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
 import './theaterComposition.css'
@@ -166,17 +166,25 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
   display: props.draft.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   '--theater-font-scale': String(props.draft.dialogue[kind].fontScale),
 }) as CSSProperties
+const narrationStyle = computed<CSSProperties>(() => ({
+  backgroundColor: resolveTheaterBackdropColor(
+    props.draft.narration.backdropColor,
+    props.draft.narration.backdropOpacity,
+  ),
+}))
 </script>
 
 <template>
   <div class="theater-preview-wrap">
-    <div ref="viewportRef" class="theater-preview theater-composition-host" :class="{ 'is-disabled': previewEnabled === false }" data-testid="theater-presentation-preview">
+    <div ref="viewportRef" class="theater-preview theater-composition-host" :class="{ 'is-disabled': previewEnabled === false, 'is-narration': draft.narration.enabled }" data-testid="theater-presentation-preview">
       <div v-if="previewEnabled === false" class="theater-preview__disabled">编辑预览已关闭</div>
+      <div v-if="draft.narration.enabled" class="theater-preview__narration" :style="narrationStyle" />
 
       <div ref="compositionRef" class="theater-composition">
         <div
           data-transform-target
           data-portrait-root="1"
+          v-show="!draft.narration.enabled"
           class="theater-preview__layer"
           :class="{ 'is-selected': selection.kind === 'portrait' && draft.portrait, 'is-locked': activeSection !== 'portrait' }"
           :style="portraitRootStyle"
@@ -212,9 +220,9 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
           :style="dialogueStyle"
           @pointerdown="beginGesture($event, 'drag', { kind: 'dialogue' }, draft.dialogue.transform)"
         >
-        <div v-if="!draft.dialogue.frame?.enabled" class="theater-preview__default-frame" />
+        <div v-if="!draft.narration.enabled && !draft.dialogue.frame?.enabled" class="theater-preview__default-frame" />
         <div
-          v-if="draft.dialogue.frame?.enabled"
+          v-if="!draft.narration.enabled && draft.dialogue.frame?.enabled"
           class="theater-preview__frame"
           :style="layerStyle(draft.dialogue.frame)"
         >
@@ -224,7 +232,7 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
           data-transform-target
           class="theater-preview__dialogue-content theater-preview__name"
           :class="{ 'is-selected': selection.kind === 'speaker', 'is-locked': activeSection !== 'speaker' }"
-          :style="textLayerStyle('speaker')"
+          :style="{ ...textLayerStyle('speaker'), display: draft.narration.enabled ? 'none' : textLayerStyle('speaker').display }"
           @pointerdown="beginGesture($event, 'drag', { kind: 'speaker' }, draft.dialogue.speaker.transform)"
         >
           <span class="theater-preview__name-value">{{ previewName || '角色名' }}</span>
@@ -237,7 +245,7 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
           data-transform-target
           class="theater-preview__dialogue-content theater-preview__text"
           :class="{ 'is-selected': selection.kind === 'content', 'is-locked': activeSection !== 'content' }"
-          :style="{ ...textLayerStyle('content'), textAlign: draft.dialogue.textAlign }"
+          :style="{ ...textLayerStyle('content'), textAlign: draft.dialogue.textAlign, color: draft.dialogue.contentColor }"
           @pointerdown="beginGesture($event, 'drag', { kind: 'content' }, draft.dialogue.content.transform)"
         >
           {{ previewText || '夜色正好，我们该出发了。' }}
@@ -259,8 +267,20 @@ const textLayerStyle = (kind: 'speaker' | 'content') => ({
 <style scoped>
 .theater-preview-wrap { width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .theater-preview { width: 100%; height: 100%; min-height: 420px; background: #202329; touch-action: none; user-select: none; }
+.theater-preview.is-narration {
+  background-color: #202329;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.08) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
 .theater-preview.is-disabled > :not(.theater-preview__disabled) { visibility: hidden; }
 .theater-preview__disabled { position: absolute; z-index: 1000; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.58); }
+.theater-preview__narration { position: absolute; z-index: 0; inset: 0; pointer-events: none; }
+.theater-preview .theater-composition { z-index: 1; }
 .theater-preview__layer, .theater-preview__dialogue { cursor: move; box-sizing: border-box; }
 .theater-preview .is-locked { cursor: default; }
 .theater-preview__layer.is-selected, .theater-preview__dialogue.is-selected, .theater-preview__frame.is-selected { outline: 2px solid #60a5fa; outline-offset: -2px; }

@@ -7,6 +7,7 @@ export const theaterMediaKindSchema = z.enum(['static_image', 'animated_image', 
 export const theaterObjectFitSchema = z.literal('cover')
 export const theaterLayerSpaceSchema = z.enum(['viewport', 'portrait', 'dialogue'])
 export const theaterBlendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay'])
+export const theaterColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/)
 
 export const theaterTransformSchema = z.strictObject({
   x: z.number().finite().min(-1).max(2),
@@ -62,6 +63,12 @@ export const theaterTextLayerSchema = z.strictObject({
   fontScale: z.number().finite().min(0.25).max(4).default(1),
 })
 
+export const theaterNarrationStyleSchema = z.strictObject({
+  enabled: z.boolean(),
+  backdropColor: theaterColorSchema,
+  backdropOpacity: z.number().finite().min(0).max(1),
+})
+
 export const theaterDialogueStyleSchema = z.strictObject({
   transform: theaterTransformSchema,
   frame: theaterVisualLayerSchema.nullable(),
@@ -70,6 +77,7 @@ export const theaterDialogueStyleSchema = z.strictObject({
   padding: theaterSpacingSchema,
   nameGap: z.number().finite().min(0).max(1),
   textAlign: z.enum(['left', 'center', 'right']),
+  contentColor: theaterColorSchema.default('#F4F4F5'),
 }).superRefine((dialogue, context) => {
   if (dialogue.frame && dialogue.frame.space !== 'dialogue') {
     context.addIssue({ code: 'custom', path: ['frame', 'space'], message: 'dialogue frame must use dialogue space' })
@@ -96,6 +104,11 @@ export const theaterPresentationSchema = z.strictObject({
   portrait: theaterVisualLayerSchema.nullable(),
   portraitDecorations: portraitDecorationsSchema,
   dialogue: theaterDialogueStyleSchema,
+  narration: theaterNarrationStyleSchema.default({
+    enabled: false,
+    backdropColor: '#000000',
+    backdropOpacity: 1,
+  }),
 }).superRefine((presentation, context) => {
   if (presentation.portrait && presentation.portrait.space !== 'viewport') {
     context.addIssue({ code: 'custom', path: ['portrait', 'space'], message: 'portrait must use viewport space' })
@@ -106,6 +119,7 @@ export const theaterPresentationPatchSchema = z.strictObject({
   portrait: theaterVisualLayerSchema.nullable().optional(),
   portraitDecorations: portraitDecorationsSchema.nullable().optional(),
   dialogue: theaterDialogueStyleSchema.nullable().optional(),
+  narration: theaterNarrationStyleSchema.nullable().optional(),
 }).superRefine((patch, context) => {
   if (patch.portrait && patch.portrait.space !== 'viewport') {
     context.addIssue({ code: 'custom', path: ['portrait', 'space'], message: 'portrait must use viewport space' })
@@ -119,6 +133,7 @@ export type TheaterTransform = z.infer<typeof theaterTransformSchema>
 export type TheaterMediaRef = z.infer<typeof theaterMediaRefSchema>
 export type TheaterVisualLayer = z.infer<typeof theaterVisualLayerSchema>
 export type TheaterTextLayer = z.infer<typeof theaterTextLayerSchema>
+export type TheaterNarrationStyle = z.infer<typeof theaterNarrationStyleSchema>
 export type TheaterDialogueStyle = z.infer<typeof theaterDialogueStyleSchema>
 export type TheaterPresentation = z.infer<typeof theaterPresentationSchema>
 export type TheaterPresentationPatch = z.infer<typeof theaterPresentationPatchSchema>
@@ -158,6 +173,13 @@ export const createDefaultTheaterDialogueStyle = (): TheaterDialogueStyle => ({
   padding: { top: 0.16, right: 0.08, bottom: 0.12, left: 0.08 },
   nameGap: 0.04,
   textAlign: 'left',
+  contentColor: '#F4F4F5',
+})
+
+export const createDefaultTheaterNarrationStyle = (): TheaterNarrationStyle => ({
+  enabled: false,
+  backdropColor: '#000000',
+  backdropOpacity: 1,
 })
 
 export const createDefaultTheaterPresentation = (): TheaterPresentation => ({
@@ -165,6 +187,7 @@ export const createDefaultTheaterPresentation = (): TheaterPresentation => ({
   portrait: null,
   portraitDecorations: [],
   dialogue: createDefaultTheaterDialogueStyle(),
+  narration: createDefaultTheaterNarrationStyle(),
 })
 
 export const normalizeTheaterPresentation = (input: unknown): TheaterPresentation => {
@@ -176,6 +199,7 @@ export const normalizeTheaterPresentation = (input: unknown): TheaterPresentatio
     portrait: value.portrait ?? null,
     portraitDecorations: value.portraitDecorations ?? [],
     dialogue: value.dialogue ?? createDefaultTheaterDialogueStyle(),
+    narration: value.narration ?? createDefaultTheaterNarrationStyle(),
   })
 }
 
@@ -197,6 +221,9 @@ export const resolveTheaterPresentation = (
   if (validatedPatch.dialogue !== undefined) {
     resolved.dialogue = structuredClone(validatedPatch.dialogue ?? createDefaultTheaterDialogueStyle())
   }
+  if (validatedPatch.narration !== undefined) {
+    resolved.narration = structuredClone(validatedPatch.narration ?? createDefaultTheaterNarrationStyle())
+  }
   return theaterPresentationSchema.parse(resolved)
 }
 
@@ -205,6 +232,16 @@ const clampFinite = (value: unknown, fallback: number, minimum: number, maximum:
     ? Math.min(maximum, Math.max(minimum, value))
     : fallback
 )
+
+export const resolveTheaterBackdropColor = (color: string, opacity: number) => {
+  const normalized = theaterColorSchema.safeParse(color)
+  const hex = normalized.success ? normalized.data.slice(1) : '000000'
+  const red = Number.parseInt(hex.slice(0, 2), 16)
+  const green = Number.parseInt(hex.slice(2, 4), 16)
+  const blue = Number.parseInt(hex.slice(4, 6), 16)
+  const alpha = clampFinite(opacity, 1, 0, 1)
+  return 'rgba(' + red + ', ' + green + ', ' + blue + ', ' + alpha + ')'
+}
 
 export const normalizeTheaterTransform = (
   input: Partial<TheaterTransform> | null | undefined,

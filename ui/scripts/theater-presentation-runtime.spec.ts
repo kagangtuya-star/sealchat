@@ -6,6 +6,7 @@ import {
   normalizeTheaterPresentation,
   normalizeTheaterTransform,
   resolveTheaterPresentation,
+  resolveTheaterBackdropColor,
   resolveTheaterTransformStyle,
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
@@ -39,12 +40,17 @@ assert.equal(defaults.dialogue.speaker.enabled, true)
 assert.equal(defaults.dialogue.content.enabled, true)
 assert.equal(defaults.dialogue.speaker.fontScale, 1)
 assert.equal(defaults.dialogue.content.fontScale, 1)
+assert.equal(defaults.dialogue.contentColor, '#F4F4F5')
+assert.deepEqual(defaults.narration, { enabled: false, backdropColor: '#000000', backdropOpacity: 1 })
 assert.deepEqual(normalizeTheaterPresentation({ schemaVersion: 1 }), defaults)
 
 const legacyDefaults = structuredClone(defaults) as any
 delete legacyDefaults.dialogue.speaker.fontScale
 delete legacyDefaults.dialogue.content.fontScale
+delete legacyDefaults.dialogue.contentColor
+delete legacyDefaults.narration
 assert.deepEqual(normalizeTheaterPresentation(legacyDefaults), defaults)
+assert.deepEqual(theaterPresentationSchema.parse(legacyDefaults), defaults)
 
 const invalid = structuredClone(defaults)
 invalid.portrait = layer('portrait', 'portrait')
@@ -99,6 +105,9 @@ assert.deepEqual(replaced.portraitDecorations, [replacement])
 assert.equal(replaced.portrait?.id, 'base')
 assert.equal(replaced.dialogue.textAlign, 'right')
 assert.equal(theaterPresentationPatchSchema.safeParse({ dialogue: null }).success, true)
+assert.equal(theaterPresentationPatchSchema.safeParse({ narration: { enabled: true, backdropColor: '#101010', backdropOpacity: 0.75 } }).success, true)
+assert.equal(resolveTheaterBackdropColor('#336699', 0.4), 'rgba(51, 102, 153, 0.4)')
+assert.equal(resolveTheaterBackdropColor('#FFFFFF', 2), 'rgba(255, 255, 255, 1)')
 
 const normalizedTransform = normalizeTheaterTransform({
   x: -10,

@@ -75,6 +75,12 @@ state = dispatchTheaterEditorCommand(state, { type: 'set-layer-property', target
 assert.equal(state.draft.dialogue.speaker.fontScale, 1.5, 'speaker font scale must update independently')
 state = dispatchTheaterEditorCommand(state, { type: 'set-layer-property', target: { kind: 'content' }, property: 'fontScale', value: 0.8 })
 assert.equal(state.draft.dialogue.content.fontScale, 0.8, 'content font scale must update independently')
+state = dispatchTheaterEditorCommand(state, { type: 'set-dialogue-property', property: 'contentColor', value: '#DDEEFF' })
+assert.equal(state.draft.dialogue.contentColor, '#DDEEFF', 'content color must update independently')
+state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'enabled', value: true })
+state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'backdropColor', value: '#121212' })
+state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'backdropOpacity', value: 0.7 })
+assert.deepEqual(state.draft.narration, { enabled: true, backdropColor: '#121212', backdropOpacity: 0.7 })
 
 const transactionStart = captureTheaterEditorSnapshot(state)
 state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'portrait' }, transform: { x: 0.3 } }, { recordHistory: false })
@@ -109,6 +115,9 @@ assert.deepEqual(buildTheaterPresentationPatch(variant), {
   portrait: null,
   portraitDecorations: base.portraitDecorations,
 })
+variant = dispatchTheaterEditorCommand(variant, { type: 'set-section-mode', section: 'narration', mode: 'custom' })
+variant = dispatchTheaterEditorCommand(variant, { type: 'set-narration-property', property: 'enabled', value: true })
+assert.equal(buildTheaterPresentationPatch(variant).narration?.enabled, true)
 assert.deepEqual(resolveChannelIdentityVariantTheaterPatch({ theaterPresentation: undefined, appearance: { theaterPresentation: { portrait: null } } }), { portrait: null })
 assert.deepEqual(resolveChannelIdentityVariantTheaterPatch({ theaterPresentation: { dialogue: null }, appearance: { theaterPresentation: { portrait: null } } }), { dialogue: null })
 
