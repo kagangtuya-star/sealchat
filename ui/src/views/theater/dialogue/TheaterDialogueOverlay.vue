@@ -7,6 +7,7 @@ import TheaterPresentationMedia from '@/components/theater-presentation/TheaterP
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { createDefaultTheaterPresentation, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { isTipTapJson } from '@/utils/tiptap-render'
+import { hasPerformanceContent } from '@/utils/tiptap-performance-parser'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import {
   resolveTheaterDialoguePresentation,
@@ -56,7 +57,11 @@ const richContent = computed(() => {
   const content = message.value?.contentRichText || ''
   return content && isTipTapJson(content) ? content : ''
 })
-const useRichPlayback = computed(() => Boolean(richContent.value && message.value?.hasPerformanceContent))
+const useRichPlayback = computed(() => {
+  if (!richContent.value) return false
+  // Bridge payloads from older clients may omit optional flag; derive from document.
+  return hasPerformanceContent(richContent.value)
+})
 const showRichContent = computed(() => Boolean(richContent.value && (!typing.value || useRichPlayback.value)))
 const mediaActive = computed(() => Boolean(current.value && visibleInViewport.value))
 const speakerColor = computed(() => {
@@ -341,6 +346,11 @@ onBeforeUnmount(() => {
 .theater-dialogue-overlay.is-reduced-motion *::before,
 .theater-dialogue-overlay.is-reduced-motion *::after {
   transition: none !important;
+}
+
+/* Keep persistent text effects visible; reduced motion only removes entrance motion. */
+.theater-dialogue-overlay.is-reduced-motion .theater-dialogue-rich-text :deep(.enter-blur),
+.theater-dialogue-overlay.is-reduced-motion .theater-dialogue-rich-text :deep(.enter-typewriter) {
   animation: none !important;
 }
 </style>

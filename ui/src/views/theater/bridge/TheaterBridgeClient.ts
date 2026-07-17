@@ -173,14 +173,30 @@ export class TheaterBridgeClient {
   }
 
   sendResult<T>(request: TheaterBridgeMessage, name: string, payload: T) {
+    const normalizedPayload = this.normalizeResultPayload(payload)
     this.sendMessage(createTheaterBridgeMessage(this.options.context, {
       kind: 'result',
       source: this.options.endpoint,
       target: request.source,
       correlationId: request.id,
       name,
-      payload,
+      payload: normalizedPayload,
     }))
+  }
+
+  private normalizeResultPayload<T>(payload: T): T {
+    if (!payload || typeof payload !== 'object') return payload
+    const candidate = payload as { error?: { message?: unknown } }
+    if (!candidate.error || typeof candidate.error !== 'object') return payload
+    const message = String(candidate.error.message || '')
+    if (message.length <= 2048) return payload
+    return {
+      ...payload,
+      error: {
+        ...candidate.error,
+        message: `${message.slice(0, 2045)}...`,
+      },
+    } as T
   }
 
   private send<T>(kind: BridgeKind, target: BridgeEndpoint, name: string, payload: T) {

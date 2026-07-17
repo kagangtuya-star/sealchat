@@ -570,9 +570,11 @@ const sendMessageForTheater = async (payload: TheaterMessageSendRequest) => {
     identityIdOverride = payload.characterId;
   }
 
-  inputMode.value = 'plain';
   textToSend.value = payload.content;
-  const outcome = await performSend({ identityIdOverride });
+  const outcome = await performSend({
+    identityIdOverride,
+    mode: isTipTapJson(payload.content) ? 'rich' : 'plain',
+  });
   return outcome || {
     ok: false as const,
     error: { code: 'MESSAGE_SEND_REJECTED', message: '聊天发送流程拒绝了消息' },
@@ -12751,7 +12753,11 @@ const retrySendMessage = async (target?: Message) => {
   }
 };
 
-const performSend = async (options?: { identityIdOverride?: string; identityVariantIdOverride?: string }) => {
+const performSend = async (options?: {
+  identityIdOverride?: string
+  identityVariantIdOverride?: string
+  mode?: 'plain' | 'rich'
+}) => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
     return;
@@ -12764,7 +12770,7 @@ const performSend = async (options?: { identityIdOverride?: string; identityVari
     message.error('尚未连接，请稍等');
     return;
   }
-  const sendMode = inputMode.value;
+  const sendMode = options?.mode || inputMode.value;
   const sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
   let draft = textToSend.value;
   let identityIdOverride = options?.identityIdOverride;
@@ -12786,7 +12792,7 @@ const performSend = async (options?: { identityIdOverride?: string; identityVari
   // 仅纯文本模式支持 `触发字符 + 角色名` 或 `触发字符 + 角色名 内容` 快捷切换
   if (shouldResolveTheaterIdentityShortcut({
     identityIdOverride,
-    inputMode: inputMode.value,
+    inputMode: sendMode,
     channelId: identityQuickSwitchChannelId,
     draft,
     trigger: identityQuickSwitchTrigger,
@@ -12814,7 +12820,7 @@ const performSend = async (options?: { identityIdOverride?: string; identityVari
   }
 
   const identityVariantQuickSwitchTrigger = display.settings.identityVariantQuickSwitchTrigger || '=';
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
+  if (sendMode === 'plain' && chat.curChannel?.id && draft.startsWith(identityVariantQuickSwitchTrigger)) {
     const activeIdentityId = identityIdOverride || chat.getActiveIdentityId(chat.curChannel.id);
     const variants = chat.getIdentityVariants(chat.curChannel.id, activeIdentityId);
     const shortcutResult = resolveIdentityVariantShortcutMatch(draft, variants, identityVariantQuickSwitchTrigger);

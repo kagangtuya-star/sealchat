@@ -81,7 +81,8 @@ type ResolvedAppearanceLike = {
 
 type BridgeMessageLike = {
   id?: string
-  content?: string
+  content?: unknown
+  contentRichText?: unknown
   createdAt?: number
   timestamp?: number
   displayOrder?: number
@@ -110,11 +111,41 @@ const isTipTapJson = (content: string): boolean => {
     return false
   }
   try {
-    const parsed = JSON.parse(content)
+    let parsed = JSON.parse(content)
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        return false
+      }
+    }
     return Boolean(parsed && typeof parsed === 'object' && parsed.type === 'doc')
   } catch {
     return false
   }
+}
+
+const normalizeMessageContent = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.startsWith('"{') || trimmed.startsWith("'{")) {
+      try {
+        const decoded = JSON.parse(trimmed)
+        if (typeof decoded === 'string' && decoded.trim().startsWith('{')) return decoded
+      } catch {
+        // Keep original string for non-JSON message content.
+      }
+    }
+    return value
+  }
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return ''
+    }
+  }
+  return String(value || '')
 }
 
 const extractTipTapText = (node: TipTapNode | null | undefined): string => {
@@ -439,7 +470,7 @@ export const buildBridgeMessagePayload = ({
   liveVariant?: VariantLike | null
   resolveAttachmentUrl: (token?: string) => string
 }): SealChatBridgeMessagePayload => {
-  const rawContent = String(message.content || '')
+  const rawContent = normalizeMessageContent(message.contentRichText ?? message.content)
   const identity = message.identity || null
   const displayIdentity = liveIdentity || identity
   const normalizedMode = String(message.icMode ?? message.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic'
@@ -538,7 +569,7 @@ export const serializeTheaterDialogueMessage = (
   const message = asRecord(input)
   const messageId = normalizeOptionalId(message.id || message.messageId)
   if (!messageId) return null
-  const rawContent = String(message.content || '')
+  const rawContent = normalizeMessageContent(message.contentRichText ?? message.content)
   const richContent = isTipTapJson(rawContent) ? rawContent : ''
   const actor = normalizeFrozenIdentity(message, resolveAttachmentUrl)
   const displayOrder = typeof message.displayOrder === 'number' && Number.isFinite(message.displayOrder)
