@@ -12,6 +12,7 @@ import {
   NRadioGroup,
   NSelect,
   NSlider,
+  useDialog,
 } from 'naive-ui'
 import { ArrowDown, ArrowUp, Eye, EyeOff, Photo, PlayerPlay, Stars, Trash, Upload } from '@vicons/tabler'
 
@@ -61,6 +62,7 @@ const keywordDraft = ref('')
 const targetActorNameDraft = ref('')
 const audioInputRef = ref<HTMLInputElement | null>(null)
 const pendingAudioEffectId = ref('')
+const dialog = useDialog()
 
 watch(
   [
@@ -109,6 +111,18 @@ const addEffect = (kind: TheaterEffectKind) => {
 }
 
 const selectEffect = (object: StageObject) => props.store.selectObject(object.id)
+
+const removeSelectedEffect = () => {
+  const object = selectedEffect.value
+  if (!object || !props.canEdit) return
+  dialog.warning({
+    title: '删除特效',
+    content: `确定删除特效“${object.name}”？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: () => props.store.removeObjects([object.id]),
+  })
+}
 
 const updateKeywords = (value: string) => editConfig('修改特效关键词', (next) => {
   next.keywords = value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)
@@ -290,7 +304,7 @@ const handleAudioInput = (event: Event) => {
         <n-button size="small" secondary @click="runtime.preview(selectedEffect)"><template #icon><n-icon><PlayerPlay /></n-icon></template>测试</n-button>
         <n-button size="small" quaternary @click="store.moveOrder(selectedEffect.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template></n-button>
         <n-button size="small" quaternary @click="store.moveOrder(selectedEffect.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template></n-button>
-        <n-button v-if="canEdit" size="small" type="error" secondary @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
+        <n-button v-if="canEdit" size="small" type="error" secondary @click="removeSelectedEffect"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
       </div>
     </div>
   </div>

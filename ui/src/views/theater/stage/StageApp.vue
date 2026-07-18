@@ -148,6 +148,7 @@ const theaterAudioMasterVolume = ref(readTheaterAudioMasterVolume())
 let theaterAudioRefreshTimer: number | null = null
 const packageMessage = useMessage()
 const packageDialog = useDialog()
+const stageDialog = useDialog()
 const packageBusy = ref(false)
 let packagePollTimer: number | null = null
 let packagePollGeneration = 0
@@ -513,6 +514,42 @@ const canEditObject = (object: StageObject | null | undefined) => Boolean(object
   || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
 )
 
+const confirmDelete = (title: string, content: string, onPositiveClick: () => void) => {
+  stageDialog.warning({
+    title,
+    content,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick,
+  })
+}
+
+const removeObjectsWithConfirm = (objectIds: string[]) => {
+  const ids = objectIds.filter((id) => Boolean(props.store.activeObjects.value[id]))
+  if (!ids.length || !canEditAllObjects.value) return false
+  confirmDelete(
+    '删除组件',
+    ids.length > 1 ? `确定删除选中的 ${ids.length} 个组件？其子组件也会一并删除。` : '确定删除选中的组件？其子组件也会一并删除。',
+    () => {
+      props.store.removeObjects(ids)
+      nextTick(updateTransformer)
+    },
+  )
+  return true
+}
+
+const removeSelectedObjectsWithConfirm = () => removeObjectsWithConfirm([...props.store.selection.selectedIds])
+
+const removeObjectActionWithConfirm = (objectId: string, actionId: string) => {
+  confirmDelete('删除点击动作', '确定删除这个点击动作？', () => props.store.removeObjectAction(objectId, actionId))
+}
+
+const removeActiveSceneWithConfirm = () => {
+  if (!canEditAllObjects.value || !canSwitchScene.value || props.store.scenes.value.length <= 1) return
+  const scene = props.store.activeScene.value
+  confirmDelete('删除场景', `确定删除场景“${scene.name}”？场景内组件也会一并删除。`, () => props.store.removeScene())
+}
+
 const isEditableShortcutTarget = (target: EventTarget | null) => {
   const element = target instanceof HTMLElement ? target : null
   return Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'))
@@ -550,11 +587,11 @@ const handleStageShortcut = (event: KeyboardEvent) => {
     && !event.ctrlKey
     && !event.metaKey
     && canEditAllObjects.value
-    && props.store.removeSelectedObjects() > 0
   ) {
-    event.preventDefault()
-    nextTick(updateTransformer)
-    return
+    if (removeSelectedObjectsWithConfirm()) {
+      event.preventDefault()
+      return
+    }
   }
   if (!(event.ctrlKey || event.metaKey)) return
   let handled = false
@@ -1859,14 +1896,14 @@ const createObjectNode = (object: StageObject) => {
       if (!getObject(targetId)) return
       event.cancelBubble = true
       quickDeleteOutline?.visible(false)
-      props.store.removeObjects([targetId])
+      removeObjectsWithConfirm([targetId])
       return
     }
     if (activeCanvasTool.value === 'eraser') {
       if (!canEditAllObjects.value || current?.type !== 'drawing') return
       event.cancelBubble = true
       props.store.selectObject(object.id)
-      props.store.removeSelectedObject()
+      removeObjectsWithConfirm([object.id])
       return
     }
     if (isDrawingTool(activeCanvasTool.value)) {
@@ -2960,7 +2997,7 @@ onBeforeUnmount(() => {
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切组件" @click="store.cutSelectedObject"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切组件 Ctrl+X</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
-        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="store.removeSelectedObjects()"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="removeSelectedObjectsWithConfirm"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
       </n-button-group>
       <n-tooltip trigger="hover">
         <template #trigger>
@@ -3036,7 +3073,7 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="canEditAllObjects && canSwitchScene" class="theater-scene-actions">
           <n-button size="tiny" quaternary @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
-          <n-button size="tiny" quaternary :disabled="store.scenes.value.length <= 1" @click="store.removeScene"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
+          <n-button size="tiny" quaternary :disabled="store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
         </div>
       </aside>
 
@@ -3084,7 +3121,7 @@ onBeforeUnmount(() => {
                 @update:checked="updateBatchBoolean('aspectRatioLocked', $event)"
               >锁定比例</n-checkbox>
             </div>
-            <n-button secondary type="error" @click="store.removeSelectedObjects()">
+            <n-button secondary type="error" @click="removeSelectedObjectsWithConfirm">
               <template #icon><n-icon><Trash /></n-icon></template>
               删除所选 {{ selectedObjects.length }} 个组件
             </n-button>
@@ -3221,7 +3258,7 @@ onBeforeUnmount(() => {
                 <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
                 <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" />
                 <n-select v-else v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" />
-                <n-button text type="error" size="tiny" @click="store.removeObjectAction(selectedObject.id, action.id)">删除</n-button>
+                <n-button text type="error" size="tiny" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)">删除</n-button>
               </div>
             </template>
             <template v-if="canEditAllObjects">
@@ -3240,7 +3277,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" :disabled="!selectedObject.parentId" @click="reparentObjectPreservingTransform(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
               </div>
               <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
-              <n-button size="small" secondary type="error" @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除组件</n-button>
+              <n-button size="small" secondary type="error" @click="removeObjectsWithConfirm([selectedObject.id])"><template #icon><n-icon><Trash /></n-icon></template>删除组件</n-button>
             </template>
           </div>
         </template>
