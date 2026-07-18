@@ -14,9 +14,7 @@ import {
   type TheaterDialogueQueueState,
 } from '../bridge/theater-dialogue-queue'
 
-export const THEATER_DIALOGUE_CHARACTERS_PER_SECOND = 32
-export const THEATER_DIALOGUE_MIN_TYPING_MS = 400
-export const THEATER_DIALOGUE_MAX_TYPING_MS = 8_000
+export const THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND = 6
 export const THEATER_DIALOGUE_HOLD_MS = 900
 
 export type TheaterDialoguePlaybackPhase = 'idle' | 'typing' | 'hold'
@@ -41,13 +39,21 @@ const defaultScheduler: TheaterDialogueScheduler = {
   clearTimeout: (timer) => globalThis.clearTimeout(timer),
 }
 
-export const getTheaterDialogueTypingDuration = (characterCount: number) => {
+export const getTheaterDialogueTypingDuration = (
+  characterCount: number,
+  charactersPerSecond = THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND,
+) => {
   if (characterCount <= 0) return 0
-  return Math.min(
-    THEATER_DIALOGUE_MAX_TYPING_MS,
-    Math.max(THEATER_DIALOGUE_MIN_TYPING_MS, characterCount / THEATER_DIALOGUE_CHARACTERS_PER_SECOND * 1_000),
-  )
+  const speed = Number.isFinite(charactersPerSecond)
+    ? Math.min(60, Math.max(1, charactersPerSecond))
+    : THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND
+  return characterCount / speed * 1_000
 }
+
+const getTheaterDialogueCharactersPerSecond = (message: TheaterDialogueMessage) => (
+  message.actor.appearance.theaterPresentation?.dialogue.charactersPerSecond
+  || THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND
+)
 
 export const resolveTheaterDialoguePresentation = (
   message: TheaterDialogueMessage | null | undefined,
@@ -78,6 +84,7 @@ export class TheaterDialogueRuntime {
   private timer: ReturnType<typeof setTimeout> | null = null
   private timerGeneration = 0
   private disposed = false
+  private charactersPerSecond: number | null = null
   private readonly listeners = new Set<(snapshot: TheaterDialogueRuntimeSnapshot) => void>()
 
   constructor(options: TheaterDialogueRuntimeOptions = {}) {
@@ -178,6 +185,15 @@ export class TheaterDialogueRuntime {
     this.armCurrent()
   }
 
+  setCharactersPerSecond = (charactersPerSecond: number) => {
+    const normalized = Number.isFinite(charactersPerSecond)
+      ? Math.min(60, Math.max(1, charactersPerSecond))
+      : THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND
+    if (this.disposed || this.charactersPerSecond === normalized) return
+    this.charactersPerSecond = normalized
+    if (this.phase === 'typing') this.armCurrent()
+  }
+
   reset = () => {
     if (this.disposed) return
     this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'reset' })
@@ -232,8 +248,12 @@ export class TheaterDialogueRuntime {
     }
     this.phase = 'typing'
     this.emit()
+    if (current.message.hasPerformanceContent) return
     const length = getTheaterDialogueTextLength(current.message)
-    const interval = getTheaterDialogueTypingDuration(length) / Math.max(1, length)
+    const interval = getTheaterDialogueTypingDuration(
+      length,
+      this.charactersPerSecond ?? getTheaterDialogueCharactersPerSecond(current.message),
+    ) / Math.max(1, length)
     this.schedule(() => {
       if (!this.queue.current) return
       this.queue = reduceTheaterDialogueQueue(this.queue, {

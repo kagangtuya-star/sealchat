@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { reactive } from 'vue'
 
 import { resolveTheaterMediaCandidates } from '../src/components/theater-presentation/theaterPresentationMedia'
+import { resolveCharactersPerSecondDelay } from '../src/components/chat/twinLayerPlayback'
 import { createDefaultTheaterPresentation } from '../src/types/theaterPresentation'
 import {
   THEATER_DIALOGUE_HOLD_MS,
@@ -60,9 +61,11 @@ const message = (messageId: string, contentText = messageId): TheaterDialogueMes
   },
 })
 
-assert.equal(getTheaterDialogueTypingDuration(1), 400)
-assert.equal(getTheaterDialogueTypingDuration(32), 1_000)
-assert.equal(getTheaterDialogueTypingDuration(10_000), 8_000)
+assert.equal(getTheaterDialogueTypingDuration(6), 1_000)
+assert.equal(getTheaterDialogueTypingDuration(12, 12), 1_000)
+assert.equal(getTheaterDialogueTypingDuration(6, Number.NaN), 1_000)
+assert.equal(resolveCharactersPerSecondDelay(6), 1_000 / 6)
+assert.equal(resolveCharactersPerSecondDelay(undefined), null)
 
 const scheduler = new FakeScheduler()
 const runtime = new TheaterDialogueRuntime({ scheduler })
@@ -72,7 +75,7 @@ assert.equal(runtime.getSnapshot().queue.current?.message.messageId, 'one')
 assert.deepEqual(runtime.getSnapshot().queue.waiting.map((item) => item.message.messageId), ['two'])
 scheduler.tick(399)
 assert.equal(runtime.getSnapshot().queue.current?.revealedCharacters, 2)
-scheduler.tick(1)
+scheduler.tick(101)
 assert.equal(runtime.getSnapshot().queue.current?.revealedCharacters, 3)
 assert.equal(runtime.getSnapshot().phase, 'hold')
 scheduler.tick(THEATER_DIALOGUE_HOLD_MS)
@@ -121,11 +124,30 @@ assert.equal(runtime.getSnapshot().queue.current?.revealedCharacters, 7)
 
 const customPresentation = createDefaultTheaterPresentation()
 customPresentation.dialogue.textAlign = 'right'
+customPresentation.dialogue.charactersPerSecond = 12
 const customMessage = message('presentation')
 customMessage.actor.appearance.theaterPresentation = customPresentation
 assert.equal(resolveTheaterDialoguePresentation(customMessage).dialogue.textAlign, 'right')
+assert.equal(resolveTheaterDialoguePresentation(customMessage).dialogue.charactersPerSecond, 12)
 customPresentation.dialogue.textAlign = 'left'
 assert.equal(resolveTheaterDialoguePresentation(customMessage).dialogue.textAlign, 'left')
+
+const speedScheduler = new FakeScheduler()
+const speedRuntime = new TheaterDialogueRuntime({ scheduler: speedScheduler })
+speedRuntime.created(customMessage)
+speedScheduler.tick(83)
+assert.equal(speedRuntime.getSnapshot().queue.current?.revealedCharacters, 0)
+speedScheduler.tick(1)
+assert.equal(speedRuntime.getSnapshot().queue.current?.revealedCharacters, 1)
+
+const performanceScheduler = new FakeScheduler()
+const performanceRuntime = new TheaterDialogueRuntime({ scheduler: performanceScheduler })
+const performanceMessage = message('performance', 'animated')
+performanceMessage.hasPerformanceContent = true
+performanceRuntime.created(performanceMessage)
+performanceScheduler.tick(10_000)
+assert.equal(performanceRuntime.getSnapshot().phase, 'typing')
+assert.equal(performanceRuntime.getSnapshot().queue.current?.revealedCharacters, 0)
 assert.equal(resolveTheaterDialoguePresentation(message('legacy')).dialogue.frame, null)
 const snapshotPresentation = createDefaultTheaterPresentation()
 snapshotPresentation.dialogue.textAlign = 'center'

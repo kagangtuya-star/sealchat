@@ -38,9 +38,10 @@ assert.deepEqual(normalizeTheaterPresentation({}), defaults)
 assert.notEqual(createDefaultTheaterPresentation().dialogue, createDefaultTheaterPresentation().dialogue)
 assert.equal(defaults.dialogue.speaker.enabled, true)
 assert.equal(defaults.dialogue.content.enabled, true)
-assert.equal(defaults.dialogue.speaker.fontScale, 1)
-assert.equal(defaults.dialogue.content.fontScale, 1)
+assert.equal(defaults.dialogue.speaker.fontScale, 0.85)
+assert.equal(defaults.dialogue.content.fontScale, 1.2)
 assert.equal(defaults.dialogue.contentColor, '#F4F4F5')
+assert.equal(defaults.dialogue.charactersPerSecond, 6)
 assert.deepEqual(defaults.narration, { enabled: false, backdropColor: '#000000', backdropOpacity: 1 })
 assert.deepEqual(normalizeTheaterPresentation({ schemaVersion: 1 }), defaults)
 
@@ -48,9 +49,24 @@ const legacyDefaults = structuredClone(defaults) as any
 delete legacyDefaults.dialogue.speaker.fontScale
 delete legacyDefaults.dialogue.content.fontScale
 delete legacyDefaults.dialogue.contentColor
+delete legacyDefaults.dialogue.charactersPerSecond
 delete legacyDefaults.narration
 assert.deepEqual(normalizeTheaterPresentation(legacyDefaults), defaults)
 assert.deepEqual(theaterPresentationSchema.parse(legacyDefaults), defaults)
+
+const legacyLayout = structuredClone(defaults)
+legacyLayout.dialogue.transform.x = 0.02
+legacyLayout.dialogue.transform.width = 0.96
+legacyLayout.dialogue.speaker.transform = { x: 0.08, y: 0.12, width: 0.34, height: 0.12, rotation: 0, opacity: 1, zIndex: 2 }
+legacyLayout.dialogue.speaker.fontScale = 1
+legacyLayout.dialogue.content.transform = { x: 0.08, y: 0.3, width: 0.84, height: 0.56, rotation: 0, opacity: 1, zIndex: 2 }
+legacyLayout.dialogue.content.fontScale = 1
+assert.deepEqual(normalizeTheaterPresentation(legacyLayout), defaults)
+
+const previousLayout = structuredClone(defaults)
+previousLayout.dialogue.speaker.transform = { x: 0.075, y: 0.12, width: 0.34, height: 0.12, rotation: 0, opacity: 1, zIndex: 2 }
+previousLayout.dialogue.content.transform = { x: 0.075, y: 0.3, width: 0.85, height: 0.56, rotation: 0, opacity: 1, zIndex: 2 }
+assert.deepEqual(normalizeTheaterPresentation(previousLayout), defaults)
 
 const invalid = structuredClone(defaults)
 invalid.portrait = layer('portrait', 'portrait')
@@ -128,18 +144,18 @@ assert.deepEqual(normalizedTransform, {
   zIndex: 100,
 })
 assert.deepEqual(resolveTheaterTransformStyle({
-  x: 0.02,
+  x: 0.05,
   y: 0.69,
-  width: 0.96,
+  width: 0.9,
   height: 0.28,
   rotation: 12,
   opacity: 0.8,
   zIndex: 5,
 }), {
   position: 'absolute',
-  left: '2%',
+  left: '5%',
   top: '69%',
-  width: '96%',
+  width: '90%',
   height: '28%',
   transform: 'rotate(12deg)',
   transformOrigin: 'center center',

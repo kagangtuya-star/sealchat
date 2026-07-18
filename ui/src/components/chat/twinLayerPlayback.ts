@@ -16,6 +16,7 @@ export type TwinLayerPlaybackChar = {
 };
 
 type TwinLayerPlaybackOptions = {
+  charactersPerSecond?: number;
   onChar?: (entry: TwinLayerPlaybackChar) => void;
   onInstantText?: (entries: TwinLayerPlaybackChar[]) => void;
   onBreak?: () => void;
@@ -31,6 +32,11 @@ const wait = (ms: number) => new Promise<void>((resolve) => {
 const isTruthyNumber = (value: unknown) => Number.isFinite(Number(value)) && Number(value) > 0;
 const isAnimatedEnterMode = (mode?: PerformanceEnterMode) => mode === 'blur' || mode === 'typewriter';
 const isImmediateEnterMode = (mode?: PerformanceEnterMode) => !mode || mode === 'normal';
+export const resolveCharactersPerSecondDelay = (charactersPerSecond?: number) => (
+  Number.isFinite(charactersPerSecond) && Number(charactersPerSecond) > 0
+    ? 1_000 / Math.min(60, Math.max(1, Number(charactersPerSecond)))
+    : null
+);
 export const resolveEnterDelay = (mode?: PerformanceEnterMode, speed?: number) => {
   if (!Number.isFinite(Number(speed))) {
     return mode === 'typewriter' ? 120 : 60;
@@ -86,6 +92,7 @@ export const createTwinLayerPlayback = (
   instructions: PerformanceInstruction[],
   options: TwinLayerPlaybackOptions = {},
 ) => {
+  const characterDelay = resolveCharactersPerSecondDelay(options.charactersPerSecond);
   let visibleText = '';
   let state: PlaybackState = 'idle';
   let fastForward = false;
@@ -187,15 +194,15 @@ export const createTwinLayerPlayback = (
         }
         if (entry.type === 'char') {
           const mode = entry.effects.enterMode;
-          if (isImmediateEnterMode(mode)) {
+          if (isImmediateEnterMode(mode) && characterDelay === null) {
             appendInstantChars([entry as TwinLayerPlaybackChar]);
             continue;
           }
           visibleText += entry.char;
           options.onChar?.(entry as TwinLayerPlaybackChar);
           if (!fastForward) {
-            const baseDelay = resolveEnterDelay(mode, entry.effects.enterSpeed);
-            const extraDelay = mode === 'typewriter'
+            const baseDelay = characterDelay ?? resolveEnterDelay(mode, entry.effects.enterSpeed);
+            const extraDelay = characterDelay === null && mode === 'typewriter'
               ? resolveTypewriterPauseExtra(entry.char, entry.effects.enterSpeed)
               : 0;
             await wait(baseDelay + extraDelay);

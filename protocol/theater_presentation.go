@@ -100,16 +100,6 @@ type TheaterTextLayer struct {
 	FontScale float64          `json:"fontScale"`
 }
 
-func (layer *TheaterTextLayer) UnmarshalJSON(data []byte) error {
-	type theaterTextLayer TheaterTextLayer
-	value := theaterTextLayer{FontScale: 1}
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
-	}
-	*layer = TheaterTextLayer(value)
-	return nil
-}
-
 type TheaterNarrationStyle struct {
 	Enabled         bool    `json:"enabled"`
 	BackdropColor   string  `json:"backdropColor"`
@@ -117,19 +107,25 @@ type TheaterNarrationStyle struct {
 }
 
 type TheaterDialogueStyle struct {
-	Transform    TheaterTransform    `json:"transform"`
-	Frame        *TheaterVisualLayer `json:"frame"`
-	Speaker      TheaterTextLayer    `json:"speaker"`
-	Content      TheaterTextLayer    `json:"content"`
-	Padding      TheaterSpacing      `json:"padding"`
-	NameGap      float64             `json:"nameGap"`
-	TextAlign    TheaterTextAlign    `json:"textAlign"`
-	ContentColor string              `json:"contentColor"`
+	Transform           TheaterTransform    `json:"transform"`
+	Frame               *TheaterVisualLayer `json:"frame"`
+	Speaker             TheaterTextLayer    `json:"speaker"`
+	Content             TheaterTextLayer    `json:"content"`
+	Padding             TheaterSpacing      `json:"padding"`
+	NameGap             float64             `json:"nameGap"`
+	TextAlign           TheaterTextAlign    `json:"textAlign"`
+	ContentColor        string              `json:"contentColor"`
+	CharactersPerSecond float64             `json:"charactersPerSecond"`
 }
 
 func (dialogue *TheaterDialogueStyle) UnmarshalJSON(data []byte) error {
 	type theaterDialogueStyle TheaterDialogueStyle
-	value := theaterDialogueStyle{ContentColor: "#F4F4F5"}
+	value := theaterDialogueStyle{
+		ContentColor:        "#F4F4F5",
+		CharactersPerSecond: 6,
+		Speaker:             TheaterTextLayer{FontScale: 0.85},
+		Content:             TheaterTextLayer{FontScale: 1.2},
+	}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
@@ -206,21 +202,22 @@ func DefaultTheaterTransform() TheaterTransform {
 
 func DefaultTheaterDialogueStyle() TheaterDialogueStyle {
 	return TheaterDialogueStyle{
-		Transform: TheaterTransform{X: 0.02, Y: 0.69, Width: 0.96, Height: 0.28, Opacity: 1},
+		Transform: TheaterTransform{X: 0.05, Y: 0.69, Width: 0.9, Height: 0.28, Opacity: 1},
 		Speaker: TheaterTextLayer{
 			Enabled:   true,
-			Transform: TheaterTransform{X: 0.08, Y: 0.12, Width: 0.34, Height: 0.12, Opacity: 1, ZIndex: 2},
-			FontScale: 1,
+			Transform: TheaterTransform{X: 0.025, Y: 0.065, Width: 0.34, Height: 0.12, Opacity: 1, ZIndex: 2},
+			FontScale: 0.85,
 		},
 		Content: TheaterTextLayer{
 			Enabled:   true,
-			Transform: TheaterTransform{X: 0.08, Y: 0.30, Width: 0.84, Height: 0.56, Opacity: 1, ZIndex: 2},
-			FontScale: 1,
+			Transform: TheaterTransform{X: 0.025, Y: 0.28, Width: 0.95, Height: 0.68, Opacity: 1, ZIndex: 2},
+			FontScale: 1.2,
 		},
-		Padding:      TheaterSpacing{Top: 0.16, Right: 0.08, Bottom: 0.12, Left: 0.08},
-		NameGap:      0.04,
-		TextAlign:    TheaterTextAlignLeft,
-		ContentColor: "#F4F4F5",
+		Padding:             TheaterSpacing{Top: 0.16, Right: 0.08, Bottom: 0.12, Left: 0.08},
+		NameGap:             0.04,
+		TextAlign:           TheaterTextAlignLeft,
+		ContentColor:        "#F4F4F5",
+		CharactersPerSecond: 6,
 	}
 }
 
@@ -246,13 +243,60 @@ func NormalizeTheaterPresentation(value TheaterPresentation) TheaterPresentation
 	}
 	if value.Dialogue == (TheaterDialogueStyle{}) {
 		value.Dialogue = DefaultTheaterDialogueStyle()
-	} else if value.Dialogue.ContentColor == "" {
-		value.Dialogue.ContentColor = DefaultTheaterDialogueStyle().ContentColor
+	} else {
+		defaults := DefaultTheaterDialogueStyle()
+		if value.Dialogue.ContentColor == "" {
+			value.Dialogue.ContentColor = defaults.ContentColor
+		}
+		if value.Dialogue.CharactersPerSecond == 0 {
+			value.Dialogue.CharactersPerSecond = defaults.CharactersPerSecond
+		}
 	}
 	if value.Narration.BackdropColor == "" {
 		value.Narration = DefaultTheaterNarrationStyle()
 	}
+	value.Dialogue = migrateLegacyDefaultTheaterDialogue(value.Dialogue)
 	return value
+}
+
+func migrateLegacyDefaultTheaterDialogue(dialogue TheaterDialogueStyle) TheaterDialogueStyle {
+	legacyOuter := matchesTheaterTransformSize(dialogue.Transform, 0.02, 0.69, 0.96, 0.28)
+	firstRevisionOuter := matchesTheaterTransformSize(dialogue.Transform, 0.1, 0.69, 0.8, 0.28)
+	secondRevisionOuter := matchesTheaterTransformSize(dialogue.Transform, 0.05, 0.69, 0.9, 0.28)
+	if !legacyOuter && !firstRevisionOuter && !secondRevisionOuter {
+		return dialogue
+	}
+	dialogue.Transform.X = 0.05
+	dialogue.Transform.Width = 0.9
+	speakerX := 0.075
+	speakerScale := 1.0
+	if legacyOuter {
+		speakerX = 0.08
+	}
+	if secondRevisionOuter {
+		speakerScale = 0.85
+	}
+	if matchesTheaterTransformSize(dialogue.Speaker.Transform, speakerX, 0.12, 0.34, 0.12) && dialogue.Speaker.FontScale == speakerScale {
+		dialogue.Speaker.Transform.X = 0.025
+		dialogue.Speaker.Transform.Y = 0.065
+		dialogue.Speaker.FontScale = 0.85
+	}
+	contentX, contentWidth, contentScale := 0.075, 0.85, 1.2
+	if legacyOuter {
+		contentX, contentWidth, contentScale = 0.08, 0.84, 1
+	}
+	if matchesTheaterTransformSize(dialogue.Content.Transform, contentX, 0.3, contentWidth, 0.56) && dialogue.Content.FontScale == contentScale {
+		dialogue.Content.Transform.X = 0.025
+		dialogue.Content.Transform.Y = 0.28
+		dialogue.Content.Transform.Width = 0.95
+		dialogue.Content.Transform.Height = 0.68
+		dialogue.Content.FontScale = 1.2
+	}
+	return dialogue
+}
+
+func matchesTheaterTransformSize(transform TheaterTransform, x, y, width, height float64) bool {
+	return transform.X == x && transform.Y == y && transform.Width == width && transform.Height == height
 }
 
 func ResolveTheaterPresentation(base TheaterPresentation, patch *TheaterPresentationPatch) TheaterPresentation {
@@ -424,6 +468,9 @@ func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 	}
 	if !validTheaterColor(dialogue.ContentColor) {
 		problems = append(problems, errors.New("dialogue.contentColor must be a hex color"))
+	}
+	if !finiteInRange(dialogue.CharactersPerSecond, 1, 60) {
+		problems = append(problems, errors.New("dialogue.charactersPerSecond must be finite and between 1 and 60"))
 	}
 	if dialogue.Frame != nil {
 		problems = appendError(problems, validateTheaterLayer(*dialogue.Frame, TheaterLayerSpaceDialogue, "dialogue.frame"))

@@ -10,6 +10,7 @@ import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 const props = withDefaults(defineProps<{
   content: string
   autoplay?: boolean
+  charactersPerSecond?: number
   baseUrl?: string
   imageClass?: string
   linkClass?: string
@@ -72,6 +73,7 @@ defineExpose({
       ref="twinLayerRef"
       :content="props.content"
       :autoplay="props.autoplay"
+      :characters-per-second="props.charactersPerSecond"
       :base-url="resolvedBaseUrl"
       :image-class="props.imageClass"
       :link-class="props.linkClass"

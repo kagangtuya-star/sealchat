@@ -63,6 +63,14 @@ export const theaterTextLayerSchema = z.strictObject({
   fontScale: z.number().finite().min(0.25).max(4).default(1),
 })
 
+const theaterSpeakerTextLayerSchema = theaterTextLayerSchema.extend({
+  fontScale: z.number().finite().min(0.25).max(4).default(0.85),
+})
+
+const theaterContentTextLayerSchema = theaterTextLayerSchema.extend({
+  fontScale: z.number().finite().min(0.25).max(4).default(1.2),
+})
+
 export const theaterNarrationStyleSchema = z.strictObject({
   enabled: z.boolean(),
   backdropColor: theaterColorSchema,
@@ -72,12 +80,13 @@ export const theaterNarrationStyleSchema = z.strictObject({
 export const theaterDialogueStyleSchema = z.strictObject({
   transform: theaterTransformSchema,
   frame: theaterVisualLayerSchema.nullable(),
-  speaker: theaterTextLayerSchema,
-  content: theaterTextLayerSchema,
+  speaker: theaterSpeakerTextLayerSchema,
+  content: theaterContentTextLayerSchema,
   padding: theaterSpacingSchema,
   nameGap: z.number().finite().min(0).max(1),
   textAlign: z.enum(['left', 'center', 'right']),
   contentColor: theaterColorSchema.default('#F4F4F5'),
+  charactersPerSecond: z.number().finite().min(1).max(60).default(6),
 }).superRefine((dialogue, context) => {
   if (dialogue.frame && dialogue.frame.space !== 'dialogue') {
     context.addIssue({ code: 'custom', path: ['frame', 'space'], message: 'dialogue frame must use dialogue space' })
@@ -151,9 +160,9 @@ export const createDefaultTheaterTransform = (): TheaterTransform => ({
 
 export const createDefaultTheaterDialogueStyle = (): TheaterDialogueStyle => ({
   transform: {
-    x: 0.02,
+    x: 0.05,
     y: 0.69,
-    width: 0.96,
+    width: 0.9,
     height: 0.28,
     rotation: 0,
     opacity: 1,
@@ -162,18 +171,19 @@ export const createDefaultTheaterDialogueStyle = (): TheaterDialogueStyle => ({
   frame: null,
   speaker: {
     enabled: true,
-    transform: { x: 0.08, y: 0.12, width: 0.34, height: 0.12, rotation: 0, opacity: 1, zIndex: 2 },
-    fontScale: 1,
+    transform: { x: 0.025, y: 0.065, width: 0.34, height: 0.12, rotation: 0, opacity: 1, zIndex: 2 },
+    fontScale: 0.85,
   },
   content: {
     enabled: true,
-    transform: { x: 0.08, y: 0.30, width: 0.84, height: 0.56, rotation: 0, opacity: 1, zIndex: 2 },
-    fontScale: 1,
+    transform: { x: 0.025, y: 0.28, width: 0.95, height: 0.68, rotation: 0, opacity: 1, zIndex: 2 },
+    fontScale: 1.2,
   },
   padding: { top: 0.16, right: 0.08, bottom: 0.12, left: 0.08 },
   nameGap: 0.04,
   textAlign: 'left',
   contentColor: '#F4F4F5',
+  charactersPerSecond: 6,
 })
 
 export const createDefaultTheaterNarrationStyle = (): TheaterNarrationStyle => ({
@@ -190,17 +200,70 @@ export const createDefaultTheaterPresentation = (): TheaterPresentation => ({
   narration: createDefaultTheaterNarrationStyle(),
 })
 
+const matchesTransform = (
+  transform: TheaterTransform,
+  expected: Pick<TheaterTransform, 'x' | 'y' | 'width' | 'height'>,
+) => transform.x === expected.x
+  && transform.y === expected.y
+  && transform.width === expected.width
+  && transform.height === expected.height
+
+const migrateLegacyDefaultDialogue = (dialogue: TheaterDialogueStyle): TheaterDialogueStyle => {
+  const migrated = structuredClone(dialogue)
+  const legacyOuter = matchesTransform(migrated.transform, { x: 0.02, y: 0.69, width: 0.96, height: 0.28 })
+  const firstRevisionOuter = matchesTransform(migrated.transform, { x: 0.1, y: 0.69, width: 0.8, height: 0.28 })
+  const secondRevisionOuter = matchesTransform(migrated.transform, { x: 0.05, y: 0.69, width: 0.9, height: 0.28 })
+  if (!legacyOuter && !firstRevisionOuter && !secondRevisionOuter) return migrated
+
+  migrated.transform.x = 0.05
+  migrated.transform.width = 0.9
+  const previousSpeaker = legacyOuter
+    ? { x: 0.08, y: 0.12, width: 0.34, height: 0.12 }
+    : { x: 0.075, y: 0.12, width: 0.34, height: 0.12 }
+  if (
+    matchesTransform(migrated.speaker.transform, previousSpeaker)
+    && migrated.speaker.fontScale === (secondRevisionOuter ? 0.85 : 1)
+  ) {
+    migrated.speaker.transform = {
+      ...migrated.speaker.transform,
+      x: 0.025,
+      y: 0.065,
+      width: 0.34,
+      height: 0.12,
+    }
+    migrated.speaker.fontScale = 0.85
+  }
+  if (
+    matchesTransform(migrated.content.transform, legacyOuter
+      ? { x: 0.08, y: 0.3, width: 0.84, height: 0.56 }
+      : { x: 0.075, y: 0.3, width: 0.85, height: 0.56 })
+    && (legacyOuter ? migrated.content.fontScale === 1 : migrated.content.fontScale === 1.2)
+  ) {
+    migrated.content.transform = {
+      ...migrated.content.transform,
+      x: 0.025,
+      y: 0.28,
+      width: 0.95,
+      height: 0.68,
+    }
+    migrated.content.fontScale = 1.2
+  }
+  return migrated
+}
+
 export const normalizeTheaterPresentation = (input: unknown): TheaterPresentation => {
   if (!input || typeof input !== 'object') return createDefaultTheaterPresentation()
   const value = input as Partial<TheaterPresentation>
   if (value.schemaVersion !== THEATER_PRESENTATION_SCHEMA_VERSION) return createDefaultTheaterPresentation()
-  return theaterPresentationSchema.parse({
+  const normalized = theaterPresentationSchema.parse({
     schemaVersion: THEATER_PRESENTATION_SCHEMA_VERSION,
     portrait: value.portrait ?? null,
     portraitDecorations: value.portraitDecorations ?? [],
     dialogue: value.dialogue ?? createDefaultTheaterDialogueStyle(),
     narration: value.narration ?? createDefaultTheaterNarrationStyle(),
   })
+  normalized.dialogue = migrateLegacyDefaultDialogue(normalized.dialogue)
+  return normalized
 }
 
 export const validateTheaterPresentation = (input: unknown) => theaterPresentationSchema.safeParse(input)
@@ -224,7 +287,7 @@ export const resolveTheaterPresentation = (
   if (validatedPatch.narration !== undefined) {
     resolved.narration = structuredClone(validatedPatch.narration ?? createDefaultTheaterNarrationStyle())
   }
-  return theaterPresentationSchema.parse(resolved)
+  return normalizeTheaterPresentation(resolved)
 }
 
 const clampFinite = (value: unknown, fallback: number, minimum: number, maximum: number) => (

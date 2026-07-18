@@ -9,6 +9,7 @@ import type { TwinLayerPlaybackChar } from './twinLayerPlayback';
 const props = withDefaults(defineProps<{
   content: string
   autoplay?: boolean
+  charactersPerSecond?: number
   baseUrl?: string
   imageClass?: string
   linkClass?: string
@@ -289,6 +290,7 @@ const startPlayback = async () => {
     return;
   }
   const engine = createTwinLayerPlayback(instructions.value, {
+    charactersPerSecond: props.charactersPerSecond,
     onChar: (entry) => {
       appendChar(entry);
     },
@@ -331,7 +333,7 @@ const renderCurrentContent = () => {
   void replay();
 };
 
-watch(() => [props.content, props.autoplay], () => {
+watch(() => [props.content, props.autoplay, props.charactersPerSecond], () => {
   if (!mounted.value) {
     return;
   }

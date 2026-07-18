@@ -60,6 +60,10 @@ const setFontScale = (value: number) => {
 const setContentColor = (value: string) => {
   emit('dispatch', { type: 'set-dialogue-property', property: 'contentColor', value })
 }
+const setCharactersPerSecond = (value: number | null) => {
+  if (value === null) return
+  emit('dispatch', { type: 'set-dialogue-property', property: 'charactersPerSecond', value }, { transient: true })
+}
 const setNarration = (property: 'enabled' | 'backdropColor' | 'backdropOpacity', value: boolean | string | number) => {
   emit('dispatch', { type: 'set-narration-property', property, value }, { transient: property === 'backdropOpacity' })
 }
@@ -158,6 +162,18 @@ const reorder = (direction: -1 | 1) => {
         <span>{{ Math.round(textLayer.fontScale * 100) }}%</span>
       </div>
       <template v-if="selection.kind === 'content'">
+        <div class="theater-inspector__label">播放速度</div>
+        <n-input-number
+          :value="draft.dialogue.charactersPerSecond"
+          :step="1"
+          :min="1"
+          :max="60"
+          @focus="emit('transactionStart')"
+          @blur="emit('transactionEnd')"
+          @update:value="setCharactersPerSecond"
+        >
+          <template #suffix>字/秒</template>
+        </n-input-number>
         <div class="theater-inspector__label">默认文本颜色</div>
         <n-color-picker
           :value="draft.dialogue.contentColor"

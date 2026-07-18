@@ -34,7 +34,7 @@ export type TheaterEditorCommand =
   | { type: 'remove-decoration'; id: string }
   | { type: 'reorder-decoration'; id: string; beforeId: string | null }
   | { type: 'set-dialogue-padding'; padding: Partial<TheaterDialogueStyle['padding']> }
-  | { type: 'set-dialogue-property'; property: 'nameGap' | 'textAlign' | 'contentColor'; value: number | string }
+  | { type: 'set-dialogue-property'; property: 'nameGap' | 'textAlign' | 'contentColor' | 'charactersPerSecond'; value: number | string }
   | { type: 'set-narration-property'; property: 'enabled' | 'backdropColor' | 'backdropOpacity'; value: boolean | string | number }
   | { type: 'reset-section'; section: TheaterSection }
   | { type: 'set-section-mode'; section: TheaterSection; mode: TheaterSectionMode }

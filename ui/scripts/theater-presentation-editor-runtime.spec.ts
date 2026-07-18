@@ -38,6 +38,9 @@ const media = (id: string, mimeType: TheaterMediaRef['mimeType'] = 'image/png'):
 
 const outer = createDefaultTheaterPresentation()
 assert.equal(outer.dialogue.speaker.transform.width, 0.34, 'default speaker width must fit about ten characters')
+assert.equal(outer.dialogue.speaker.transform.x, outer.dialogue.content.transform.x, 'speaker and content must share left edge')
+assert.deepEqual(outer.dialogue.speaker.transform, { x: 0.025, y: 0.065, width: 0.34, height: 0.12, rotation: 0, opacity: 1, zIndex: 2 })
+assert.deepEqual(outer.dialogue.content.transform, { x: 0.025, y: 0.28, width: 0.95, height: 0.68, rotation: 0, opacity: 1, zIndex: 2 })
 const defaultPortrait = createTheaterVisualLayer(media('default-portrait'), 'viewport', 'default-portrait')
 assert.deepEqual(defaultPortrait.transform, {
   x: 0.13,
@@ -77,6 +80,8 @@ state = dispatchTheaterEditorCommand(state, { type: 'set-layer-property', target
 assert.equal(state.draft.dialogue.content.fontScale, 0.8, 'content font scale must update independently')
 state = dispatchTheaterEditorCommand(state, { type: 'set-dialogue-property', property: 'contentColor', value: '#DDEEFF' })
 assert.equal(state.draft.dialogue.contentColor, '#DDEEFF', 'content color must update independently')
+state = dispatchTheaterEditorCommand(state, { type: 'set-dialogue-property', property: 'charactersPerSecond', value: 12 })
+assert.equal(state.draft.dialogue.charactersPerSecond, 12, 'content playback speed must update')
 state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'enabled', value: true })
 state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'backdropColor', value: '#121212' })
 state = dispatchTheaterEditorCommand(state, { type: 'set-narration-property', property: 'backdropOpacity', value: 0.7 })

@@ -87,6 +87,12 @@ const contentStyle = computed<CSSProperties>(() => ({
   color: presentation.value.dialogue.contentColor,
 }))
 
+watch(
+  () => presentation.value.dialogue.charactersPerSecond,
+  (speed) => props.runtime.setCharactersPerSecond(speed),
+  { immediate: true },
+)
+
 const layerStyle = (layer: TheaterVisualLayer): CSSProperties => ({
   ...resolveTheaterTransformStyle(layer.transform),
   mixBlendMode: layer.blendMode,
@@ -213,6 +219,7 @@ onBeforeUnmount(() => {
               class="theater-dialogue-rich-text"
               :content="richContent"
               :autoplay="useRichPlayback && typing && !snapshot.reducedMotion"
+              :characters-per-second="presentation.dialogue.charactersPerSecond"
               :attachment-resolver="resolveAttachmentUrl"
               @state-change="state => { if (state.completed && typing) props.runtime.completeCurrent() }"
             />
