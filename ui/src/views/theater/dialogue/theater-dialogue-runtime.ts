@@ -5,6 +5,7 @@ import {
   type ResolvedTheaterPresentation,
 } from '../../../types/theaterPresentation'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
+import { hasPerformanceContent } from '../../../utils/tiptap-performance-parser'
 import {
   createTheaterDialogueQueueState,
   getTheaterDialogueTextLength,
@@ -53,6 +54,13 @@ export const getTheaterDialogueTypingDuration = (
 const getTheaterDialogueCharactersPerSecond = (message: TheaterDialogueMessage) => (
   message.actor.appearance.theaterPresentation?.dialogue.charactersPerSecond
   || THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND
+)
+
+export const hasTheaterDialoguePerformanceContent = (
+  message: TheaterDialogueMessage | null | undefined,
+) => Boolean(
+  message?.hasPerformanceContent
+  || (message?.contentRichText && hasPerformanceContent(message.contentRichText)),
 )
 
 export const resolveTheaterDialoguePresentation = (
@@ -182,7 +190,7 @@ export class TheaterDialogueRuntime {
   setReducedMotion = (reducedMotion: boolean) => {
     if (this.disposed || this.reducedMotion === reducedMotion) return
     this.reducedMotion = reducedMotion
-    this.armCurrent()
+    this.emit()
   }
 
   setCharactersPerSecond = (charactersPerSecond: number) => {
@@ -233,13 +241,6 @@ export class TheaterDialogueRuntime {
       this.emit()
       return
     }
-    if (this.reducedMotion) {
-      this.queue = reduceTheaterDialogueQueue(this.queue, { type: 'complete-current' })
-      this.phase = 'hold'
-      this.emit()
-      this.scheduleAdvance()
-      return
-    }
     if (!isTheaterDialogueTyping(current)) {
       this.phase = 'hold'
       this.emit()
@@ -248,7 +249,7 @@ export class TheaterDialogueRuntime {
     }
     this.phase = 'typing'
     this.emit()
-    if (current.message.hasPerformanceContent) return
+    if (hasTheaterDialoguePerformanceContent(current.message)) return
     const length = getTheaterDialogueTextLength(current.message)
     const interval = getTheaterDialogueTypingDuration(
       length,

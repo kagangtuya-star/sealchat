@@ -23,7 +23,7 @@ type TwinLayerPlaybackOptions = {
   onStateChange?: () => void;
 };
 
-type PlaybackState = 'idle' | 'playing' | 'waiting' | 'completed';
+type PlaybackState = 'idle' | 'playing' | 'waiting' | 'completed' | 'cancelled';
 
 const wait = (ms: number) => new Promise<void>((resolve) => {
   setTimeout(resolve, Math.max(0, ms));
@@ -92,7 +92,7 @@ export const createTwinLayerPlayback = (
   instructions: PerformanceInstruction[],
   options: TwinLayerPlaybackOptions = {},
 ) => {
-  const characterDelay = resolveCharactersPerSecondDelay(options.charactersPerSecond);
+  let characterDelay = resolveCharactersPerSecondDelay(options.charactersPerSecond);
   let visibleText = '';
   let state: PlaybackState = 'idle';
   let fastForward = false;
@@ -125,12 +125,19 @@ export const createTwinLayerPlayback = (
   };
 
   const dispose = () => {
+    if (disposed) {
+      return;
+    }
     disposed = true;
     waitingForClick = false;
     continueResolver?.();
     continueResolver = null;
-    state = 'completed';
+    state = 'cancelled';
     notifyStateChange();
+  };
+
+  const setCharactersPerSecond = (charactersPerSecond?: number) => {
+    characterDelay = resolveCharactersPerSecondDelay(charactersPerSecond);
   };
 
   const continuePlayback = () => {
@@ -241,6 +248,7 @@ export const createTwinLayerPlayback = (
     skip,
     reset,
     dispose,
+    setCharactersPerSecond,
     continuePlayback,
     isWaiting: () => waitingForClick,
     getVisibleText: () => visibleText,

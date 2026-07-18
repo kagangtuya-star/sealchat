@@ -7,9 +7,9 @@ import TheaterPresentationMedia from '@/components/theater-presentation/TheaterP
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { isTipTapJson } from '@/utils/tiptap-render'
-import { hasPerformanceContent } from '@/utils/tiptap-performance-parser'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import {
+  hasTheaterDialoguePerformanceContent,
   resolveTheaterDialoguePresentation,
   type TheaterDialogueRuntime,
   type TheaterDialogueRuntimeSnapshot,
@@ -67,8 +67,7 @@ const richContent = computed(() => {
 })
 const useRichPlayback = computed(() => {
   if (!richContent.value) return false
-  // Bridge payloads from older clients may omit optional flag; derive from document.
-  return hasPerformanceContent(richContent.value)
+  return hasTheaterDialoguePerformanceContent(message.value)
 })
 const showRichContent = computed(() => Boolean(richContent.value && (!typing.value || useRichPlayback.value)))
 const mediaActive = computed(() => Boolean(current.value && visibleInViewport.value))
@@ -218,7 +217,7 @@ onBeforeUnmount(() => {
               :key="message?.messageId"
               class="theater-dialogue-rich-text"
               :content="richContent"
-              :autoplay="useRichPlayback && typing && !snapshot.reducedMotion"
+              :autoplay="useRichPlayback && typing"
               :characters-per-second="presentation.dialogue.charactersPerSecond"
               :attachment-resolver="resolveAttachmentUrl"
               @state-change="state => { if (state.completed && typing) props.runtime.completeCurrent() }"

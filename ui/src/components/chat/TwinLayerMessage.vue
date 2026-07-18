@@ -263,14 +263,8 @@ const renderFinalOverlay = () => {
   syncDom();
 };
 
-const refreshState = () => {
-  const engine = playback.value;
-  if (!engine) {
-    waiting.value = false;
-    playing.value = false;
-    completed.value = false;
-    return;
-  }
+const refreshState = (engine = playback.value) => {
+  if (!engine || engine !== playback.value) return;
   waiting.value = engine.isWaiting();
   playing.value = engine.getState() === 'playing';
   completed.value = engine.getState() === 'completed';
@@ -289,22 +283,28 @@ const startPlayback = async () => {
     syncDom();
     return;
   }
-  const engine = createTwinLayerPlayback(instructions.value, {
+  let engine!: ReturnType<typeof createTwinLayerPlayback>;
+  engine = createTwinLayerPlayback(instructions.value, {
     charactersPerSecond: props.charactersPerSecond,
     onChar: (entry) => {
       appendChar(entry);
     },
     onBreak: appendBreak,
-    onStateChange: refreshState,
+    onStateChange: () => refreshState(engine),
   });
   playback.value = engine;
   await engine.play();
-  refreshState();
+  refreshState(engine);
+};
+
+const disposePlayback = () => {
+  const engine = playback.value;
+  playback.value = null;
+  engine?.dispose();
 };
 
 const replay = async () => {
-  playback.value?.dispose();
-  playback.value = null;
+  disposePlayback();
   clearOverlayDom();
   syncDom();
   await startPlayback();
@@ -325,19 +325,22 @@ const handleOverlayClick = () => {
 
 const renderCurrentContent = () => {
   if (!props.autoplay) {
-    playback.value?.dispose();
-    playback.value = null;
+    disposePlayback();
     renderFinalOverlay();
     return;
   }
   void replay();
 };
 
-watch(() => [props.content, props.autoplay, props.charactersPerSecond], () => {
+watch(() => [props.content, props.autoplay], () => {
   if (!mounted.value) {
     return;
   }
   void nextTick(renderCurrentContent);
+});
+
+watch(() => props.charactersPerSecond, (charactersPerSecond) => {
+  playback.value?.setCharactersPerSecond(charactersPerSecond);
 });
 
 onMounted(() => {
@@ -346,7 +349,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  playback.value?.dispose();
+  disposePlayback();
 });
 </script>
 
