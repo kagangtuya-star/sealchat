@@ -58,6 +58,17 @@ func TheaterAdminReplace(c *fiber.Ctx) error {
 func BindTheaterRoutes(router fiber.Router) {
 	base := "/worlds/:worldId/channels/:channelId/theater"
 	bindTheaterRoutes(router, base)
+	bindTheaterAudioRoutes(router, base)
+}
+
+func BindTheaterAudioRoutes(router fiber.Router) {
+	bindTheaterAudioRoutes(router, "/worlds/:worldId/channels/:channelId/theater")
+}
+
+func bindTheaterAudioRoutes(router fiber.Router, base string) {
+	router.Get(base+"/audio-assets", TheaterAudioAssetList)
+	router.Post(base+"/audio-assets", TheaterAudioAssetUpload)
+	router.Delete(base+"/audio-assets/:assetId", TheaterAudioAssetDelete)
 }
 
 func BindWorldTheaterRoutes(router fiber.Router) {

@@ -603,6 +603,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
 	BindWorldTheaterRoutes(v1Auth)
+	BindTheaterAudioRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")

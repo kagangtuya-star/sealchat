@@ -63,6 +63,7 @@ func validTheaterEffectContent(t *testing.T) json.RawMessage {
 		"effect": map[string]any{
 			"version": 1, "kind": "builtin", "keywords": []string{"爆击"}, "targetActorName": "法师",
 			"durationMs": 3500, "cooldownMs": 0, "media": nil,
+			"audio": map[string]any{"assetId": "audio-1", "name": "世界-特性音频-爆击", "volume": 0.8},
 			"builtin": map[string]any{
 				"theme": "brush", "format": "popout", "text": "CRITICAL HIT", "subText": "",
 				"accentColor": "#e61c34", "mainTextColor": "#ffffff", "subTextColor": "#000000",
@@ -85,6 +86,20 @@ func TestValidateTheaterEffectContent(t *testing.T) {
 	effect["builtin"].(map[string]any)["theme"] = "missing-assets"
 	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
 		t.Fatal("unknown effect theme accepted")
+	}
+	effect["builtin"].(map[string]any)["theme"] = "brush"
+	effect["audio"].(map[string]any)["volume"] = 2
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
+		t.Fatal("invalid effect audio volume accepted")
+	}
+}
+
+func TestTheaterAudioAssetName(t *testing.T) {
+	if got := theaterAudioAssetName("迷雾世界", "", "thunder.mp3"); got != "迷雾世界-特性音频-thunder" {
+		t.Fatalf("unexpected theater audio name: %q", got)
+	}
+	if got := theaterChannelAudioTag(" channel-1 "); got != "theater-channel:channel-1" {
+		t.Fatalf("unexpected theater channel tag: %q", got)
 	}
 }
 

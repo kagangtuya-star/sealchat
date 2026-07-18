@@ -13,9 +13,10 @@ import {
   NSelect,
   NSlider,
 } from 'naive-ui'
-import { ArrowDown, ArrowUp, Eye, EyeOff, Photo, PlayerPlay, Stars, Trash } from '@vicons/tabler'
+import { ArrowDown, ArrowUp, Eye, EyeOff, Photo, PlayerPlay, Stars, Trash, Upload } from '@vicons/tabler'
 
 import type { StageObject } from '../shared/stage-types'
+import type { AudioAsset } from '@/types/audio'
 import type { TheaterStageStore } from '../stage/StageStore'
 import type { TheaterEffectRuntime } from './theater-effect-runtime'
 import {
@@ -34,10 +35,15 @@ const props = defineProps<{
   canEdit: boolean
   canUpload: boolean
   editingTarget: 'frame' | 'media'
+  audioAssets: AudioAsset[]
+  audioLoading: boolean
+  audioUploading: boolean
+  audioError: string
 }>()
 
 const emit = defineEmits<{
   upload: [objectId: string]
+  uploadAudio: [objectId: string, file: File]
   'update:editingTarget': [value: 'frame' | 'media']
 }>()
 
@@ -53,6 +59,8 @@ const config = computed(() => selectedEffect.value ? theaterEffectConfigFromObje
 const hasMedia = computed(() => Boolean(config.value?.media || selectedEffect.value?.image))
 const keywordDraft = ref('')
 const targetActorNameDraft = ref('')
+const audioInputRef = ref<HTMLInputElement | null>(null)
+const pendingAudioEffectId = ref('')
 
 watch(
   [
@@ -72,6 +80,16 @@ const kindOptions = [
   { label: '内置特效', value: 'builtin' },
   { label: '媒体', value: 'media' },
 ]
+const audioOptions = computed(() => {
+  const options = props.audioAssets
+  .filter((asset) => !asset.transcodeStatus || asset.transcodeStatus === 'ready')
+    .map((asset) => ({ label: asset.name, value: asset.id }))
+  const selected = config.value?.audio
+  if (selected && !options.some((option) => option.value === selected.assetId)) {
+    options.unshift({ label: selected.name || selected.assetId, value: selected.assetId })
+  }
+  return options
+})
 
 const editConfig = (label: string, mutate: (value: TheaterEffectConfig) => void) => {
   const object = selectedEffect.value
@@ -100,10 +118,30 @@ const updateTargetActorName = () => editConfig('修改触发角色', (next) => {
   next.targetActorName = targetActorNameDraft.value.trim() || null
 })
 
+const updateAudioAsset = (assetId: string | null) => editConfig('修改特效音效', (next) => {
+  const asset = props.audioAssets.find((item) => item.id === assetId)
+  next.audio = asset ? { assetId: asset.id, name: asset.name, volume: next.audio?.volume ?? 1 } : null
+})
+
+const requestAudioUpload = (objectId: string) => {
+  pendingAudioEffectId.value = objectId
+  audioInputRef.value?.click()
+}
+
+const handleAudioInput = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const objectId = pendingAudioEffectId.value
+  input.value = ''
+  pendingAudioEffectId.value = ''
+  if (file && objectId) emit('uploadAudio', objectId, file)
+}
+
 </script>
 
 <template>
   <div class="theater-effect-panel-content">
+    <input ref="audioInputRef" class="theater-effect-audio-input" type="file" accept="audio/ogg,audio/mpeg,audio/wav,.ogg,.mp3,.wav" @change="handleAudioInput">
     <div v-if="canEdit" class="theater-effect-add-row">
       <n-button size="tiny" secondary @click="addEffect('builtin')"><template #icon><n-icon><Stars /></n-icon></template>内置</n-button>
       <n-button size="tiny" secondary @click="addEffect('media')"><template #icon><n-icon><Photo /></n-icon></template>媒体</n-button>
@@ -172,6 +210,31 @@ const updateTargetActorName = () => editConfig('修改触发角色', (next) => {
           {{ hasMedia ? '图片' : '上传' }}
         </n-button>
       </div>
+
+      <label>音效</label>
+      <div class="theater-effect-audio-row">
+        <n-select
+          :value="config.audio?.assetId || null"
+          :options="audioOptions"
+          :loading="audioLoading"
+          size="small"
+          clearable
+          filterable
+          placeholder="从频道素材选择"
+          @update:value="updateAudioAsset"
+        />
+        <n-button size="small" secondary :disabled="!canUpload" :loading="audioUploading" @click="requestAudioUpload(selectedEffect.id)">
+          <template #icon><n-icon><Upload /></n-icon></template>
+          上传
+        </n-button>
+      </div>
+
+      <template v-if="config.audio">
+        <label>声音大小 {{ Math.round(config.audio.volume * 100) }}%</label>
+        <n-slider :value="config.audio.volume" :min="0" :max="1" :step="0.05" @update:value="value => editConfig('修改特效音量', next => { if (next.audio) next.audio.volume = value })" />
+      </template>
+
+      <p v-if="audioError" class="theater-effect-audio-error">{{ audioError }}</p>
 
       <template v-if="config.kind === 'builtin'">
         <label>主题</label>
@@ -248,6 +311,9 @@ const updateTargetActorName = () => editConfig('修改触发角色', (next) => {
 .theater-effect-editor { min-height: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 8px; overflow: auto; padding: 10px; }
 .theater-effect-editor > label { color: var(--sc-text-secondary); font-size: 12px; }
 .theater-effect-media-row, .theater-effect-actions { display: flex; gap: 5px; }
+.theater-effect-audio-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.theater-effect-audio-input { display: none; }
+.theater-effect-audio-error { grid-column: 1 / -1; margin: 0; color: #f87171; font-size: 11px; }
 .theater-effect-colors { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .theater-effect-colors label { display: grid; gap: 4px; color: var(--sc-text-secondary); font-size: 11px; }
 .theater-effect-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 4px; }

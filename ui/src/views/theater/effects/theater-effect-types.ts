@@ -38,6 +38,12 @@ export interface TheaterEffectBuiltinConfig {
   mediaTransform: TheaterEffectMediaTransform
 }
 
+export interface TheaterEffectAudioRef {
+  assetId: string
+  name: string
+  volume: number
+}
+
 export interface TheaterEffectConfig {
   version: 1
   kind: TheaterEffectKind
@@ -46,6 +52,7 @@ export interface TheaterEffectConfig {
   durationMs: number
   cooldownMs: number
   media: StageImageRef | null
+  audio: TheaterEffectAudioRef | null
   builtin: TheaterEffectBuiltinConfig
 }
 
@@ -72,6 +79,7 @@ export const createDefaultTheaterEffectConfig = (kind: TheaterEffectKind = 'buil
   durationMs: 3500,
   cooldownMs: 0,
   media: null,
+  audio: null,
   builtin: {
     theme: 'brush',
     format: 'popout',
@@ -111,6 +119,16 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
   const media = value.media && typeof value.media === 'object' && typeof value.media.url === 'string'
     ? value.media as StageImageRef
     : null
+  const rawAudio = value.audio && typeof value.audio === 'object'
+    ? value.audio as Partial<TheaterEffectAudioRef>
+    : null
+  const audio = rawAudio && typeof rawAudio.assetId === 'string' && rawAudio.assetId.trim()
+    ? {
+        assetId: rawAudio.assetId.trim().slice(0, 256),
+        name: text(rawAudio.name, '', 512),
+        volume: finiteRange(rawAudio.volume, 1, 0, 1),
+      }
+    : null
 
   return {
     version: 1,
@@ -122,6 +140,7 @@ export const normalizeTheaterEffectConfig = (input: unknown): TheaterEffectConfi
     durationMs: Math.round(finiteRange(value.durationMs, fallback.durationMs, 300, 30_000)),
     cooldownMs: Math.round(finiteRange(value.cooldownMs, fallback.cooldownMs, 0, 300_000)),
     media,
+    audio,
     builtin: {
       theme,
       format: builtin.format === 'boxed' ? 'boxed' : 'popout',

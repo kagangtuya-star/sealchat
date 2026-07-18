@@ -28,6 +28,7 @@ interface TheaterEffectRuntimeOptions {
   getObjects: () => StageObject[]
   scheduler?: TheaterEffectScheduler
   maximumActive?: number
+  onStart?: (playback: TheaterEffectPlayback) => void
 }
 
 const defaultScheduler: TheaterEffectScheduler = {
@@ -167,6 +168,7 @@ export class TheaterEffectRuntime {
     }
     this.active = [...this.active, playback]
     this.timers.set(object.id, this.scheduler.setTimeout(() => this.stop(object.id), config.durationMs))
+    this.options.onStart?.(cloneStageData(playback))
     this.emit()
   }
 

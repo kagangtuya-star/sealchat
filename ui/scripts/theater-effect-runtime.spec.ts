@@ -85,10 +85,17 @@ assert.equal(theaterEffectMatchesMessage(config, message('all-actors', 'critical
 const scheduler = new FakeScheduler()
 const dialogueRuntime = new TheaterDialogueRuntime({ reducedMotion: true })
 const objects = [effectObject('global', ['爆击']), effectObject('actor-only', ['爆击'], '法师')]
-const runtime = new TheaterEffectRuntime({ dialogueRuntime, getObjects: () => objects, scheduler })
+const startedEffectIds: string[] = []
+const runtime = new TheaterEffectRuntime({
+  dialogueRuntime,
+  getObjects: () => objects,
+  scheduler,
+  onStart: (playback) => startedEffectIds.push(playback.effectId),
+})
 
 dialogueRuntime.created(message('one', '发生爆击'))
 assert.deepEqual(runtime.getActive().map((item) => item.effectId), ['global'])
+assert.deepEqual(startedEffectIds, ['global'])
 
 dialogueRuntime.updated(message('one', '发生爆击并更新'))
 assert.deepEqual(runtime.getActive().map((item) => item.effectId), ['global'])

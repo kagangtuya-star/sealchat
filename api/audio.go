@@ -1762,9 +1762,16 @@ func streamFileWithRange(c *fiber.Ctx, file *os.File, size int64, contentType st
 	c.Set(fiber.HeaderContentType, contentType)
 	if rangeHeader == "" {
 		c.Set("Content-Length", strconv.FormatInt(size, 10))
-		err := c.SendStream(file)
-		_ = file.Close()
-		return err
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer file.Close()
+			if _, err := io.CopyN(w, file, size); err != nil && err != io.EOF {
+				fmt.Printf("audio stream copy error: %v\n", err)
+			}
+			if err := w.Flush(); err != nil {
+				fmt.Printf("audio stream flush error: %v\n", err)
+			}
+		})
+		return nil
 	}
 	start, end, err := parseRange(rangeHeader, size)
 	if err != nil {

@@ -426,7 +426,7 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 	if !ok {
 		return theaterPayloadError("effect 配置缺失")
 	}
-	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "cooldownMs": true, "media": true, "builtin": true}
+	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "cooldownMs": true, "media": true, "audio": true, "builtin": true}
 	for key := range effect {
 		if !allowed[key] {
 			return theaterPayloadError("effect 包含禁止字段: " + key)
@@ -466,6 +466,29 @@ func validateTheaterEffectContent(raw json.RawMessage) error {
 		value, valid := theaterNumericValue(effect[name])
 		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
 			return theaterPayloadError("effect." + name + " 无效")
+		}
+	}
+	if audio, exists := effect["audio"]; exists && audio != nil {
+		value, ok := audio.(map[string]any)
+		if !ok {
+			return theaterPayloadError("effect.audio 无效")
+		}
+		for key := range value {
+			if key != "assetId" && key != "name" && key != "volume" {
+				return theaterPayloadError("effect.audio 包含禁止字段: " + key)
+			}
+		}
+		assetID, ok := value["assetId"].(string)
+		if !ok || strings.TrimSpace(assetID) == "" || len(assetID) > 256 {
+			return theaterPayloadError("effect.audio.assetId 无效")
+		}
+		name, ok := value["name"].(string)
+		if !ok || len([]rune(name)) > 512 {
+			return theaterPayloadError("effect.audio.name 无效")
+		}
+		volume, valid := theaterNumericValue(value["volume"])
+		if !valid || volume < 0 || volume > 1 {
+			return theaterPayloadError("effect.audio.volume 无效")
 		}
 	}
 	builtin, ok := effect["builtin"].(map[string]any)

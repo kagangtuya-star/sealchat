@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Konva from 'konva'
+import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NButtonGroup, NCheckbox, NColorPicker, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip } from 'naive-ui'
 import {
@@ -7,6 +8,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Archive,
   Bolt,
   Clipboard,
   Components,
@@ -35,7 +37,9 @@ import {
   X,
 } from '@vicons/tabler'
 import { api, urlBase } from '@/stores/_config'
+import { useAudioStudioStore } from '@/stores/audioStudio'
 import { compressImage } from '@/composables/useImageCompressor'
+import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import {
   WORLD_UNIT_PX,
   resolveStageImageUrl,
@@ -108,14 +112,194 @@ const scenePanelOpen = ref(false)
 const inspectorPanelOpen = ref(false)
 const layerPanelOpen = ref(false)
 const effectPanelOpen = ref(false)
+const assetPanelOpen = ref(false)
 const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
 const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
+const TheaterAssetManager = defineAsyncComponent(() => import('../effects/TheaterAssetManager.vue'))
 const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
+const audioStudio = useAudioStudioStore()
+const theaterAudioAssets = ref<AudioAsset[]>([])
+const theaterAudioQuota = ref<AudioQuotaSummary | null>(null)
+const theaterAudioLoading = ref(false)
+const theaterAudioUploading = ref(false)
+const theaterAudioError = ref('')
+const theaterAudioPlayers = new Map<string, Howl>()
+const theaterAudioBaseVolumes = new Map<string, number>()
+const theaterAudioRetryIds = new Map<string, number>()
+const theaterAudioSequences = new Map<string, number>()
+const theaterAudioMasterVolumeKey = 'sealchat:theater-audio-volume:v1'
+const previousHowlerVolumeValue = Howler.volume()
+const previousHowlerVolume = typeof previousHowlerVolumeValue === 'number' ? previousHowlerVolumeValue : 1
+Howler.volume(1)
+const readTheaterAudioMasterVolume = () => {
+  try {
+    const stored = window.localStorage.getItem(theaterAudioMasterVolumeKey)
+    if (stored === null) return 1
+    const value = Number(stored)
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
+  } catch {
+    return 1
+  }
+}
+const theaterAudioMasterVolume = ref(readTheaterAudioMasterVolume())
+let theaterAudioRefreshTimer: number | null = null
+
+const unlockTheaterAudio = () => {
+  if (!Howler.ctx) void Howler.volume()
+  const context = Howler.ctx
+  const resume = context?.state === 'suspended'
+    ? context.resume().catch(() => undefined)
+    : Promise.resolve()
+  return resume.then(() => {
+    theaterAudioRetryIds.forEach((soundId, key) => {
+      const player = theaterAudioPlayers.get(key)
+      if (!player) return
+      theaterAudioRetryIds.delete(key)
+      player.play(soundId)
+    })
+  })
+}
+
+const theaterAudioPath = (assetId = '') => {
+  const base = `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/audio-assets`
+  return assetId ? `${base}/${encodeURIComponent(assetId)}` : base
+}
+
+const theaterAudioErrorMessage = (error: unknown, fallback: string) => {
+  const value = error as { response?: { data?: string | { error?: { message?: string }, message?: string } }, message?: string }
+  const data = value?.response?.data
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  if (data && typeof data === 'object') return data.error?.message || data.message || value?.message || fallback
+  return value?.message || fallback
+}
+
+const fetchTheaterAudioAssets = async () => {
+  if (!props.worldId || !props.channelId) return
+  theaterAudioLoading.value = true
+  theaterAudioError.value = ''
+  try {
+    const response = await api.get<{ items?: AudioAsset[], quota?: AudioQuotaSummary }>(theaterAudioPath())
+    theaterAudioAssets.value = response.data?.items || []
+    theaterAudioQuota.value = response.data?.quota || null
+    if (theaterAudioRefreshTimer !== null) window.clearTimeout(theaterAudioRefreshTimer)
+    theaterAudioRefreshTimer = theaterAudioAssets.value.some((asset) => asset.transcodeStatus === 'pending')
+      ? window.setTimeout(() => { void fetchTheaterAudioAssets() }, 2_000)
+      : null
+  } catch (error) {
+    theaterAudioError.value = theaterAudioErrorMessage(error, '读取频道音频素材失败')
+  } finally {
+    theaterAudioLoading.value = false
+  }
+}
+
+const uploadTheaterAudio = async (file: File, targetEffectId = '') => {
+  if (!canUploadResources.value) return
+  theaterAudioUploading.value = true
+  theaterAudioError.value = ''
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await api.post<{ item?: AudioAsset }>(theaterAudioPath(), formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const asset = response.data?.item
+    const target = targetEffectId ? props.store.activeObjects.value[targetEffectId] : null
+    if (asset && isTheaterEffectObject(target) && canEditAllObjects.value) {
+      props.store.beginObjectEdit('上传并绑定特效音效')
+      const config = theaterEffectConfigFromObject(target)
+      config.audio = { assetId: asset.id, name: asset.name, volume: config.audio?.volume ?? 1 }
+      setTheaterEffectConfig(target, config)
+      props.store.commitObjectEdit()
+    }
+    await fetchTheaterAudioAssets()
+  } catch (error) {
+    theaterAudioError.value = theaterAudioErrorMessage(error, '上传音频素材失败')
+  } finally {
+    theaterAudioUploading.value = false
+  }
+}
+
+const stopTheaterAudioPlayer = (key: string) => {
+  const player = theaterAudioPlayers.get(key)
+  if (!player) return
+  player.stop()
+  player.unload()
+  theaterAudioPlayers.delete(key)
+  theaterAudioBaseVolumes.delete(key)
+  theaterAudioRetryIds.delete(key)
+}
+
+const theaterAudioFormat = (assetId: string) => {
+  const asset = theaterAudioAssets.value.find((item) => item.id === assetId)
+  const source = asset?.objectKey || asset?.name || ''
+  const extension = source.split(/[?#]/, 1)[0].match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase()
+  if (extension === 'mpeg') return 'mp3'
+  if (extension === 'oga') return 'ogg'
+  return extension || undefined
+}
+
+const playTheaterAudioAsset = async (assetId: string, volume: number, key: string) => {
+  const unlock = unlockTheaterAudio()
+  const sequence = (theaterAudioSequences.get(key) || 0) + 1
+  theaterAudioSequences.set(key, sequence)
+  stopTheaterAudioPlayer(key)
+  theaterAudioError.value = ''
+  try {
+    const src = await audioStudio.fetchPlayableStreamUrl(assetId)
+    await unlock
+    if (theaterAudioSequences.get(key) !== sequence) return
+    const baseVolume = Math.max(0, Math.min(1, volume))
+    const player = new Howl({
+      src: [src],
+      format: theaterAudioFormat(assetId),
+      preload: true,
+      volume: baseVolume * theaterAudioMasterVolume.value,
+      onplay: () => {
+        theaterAudioRetryIds.delete(key)
+        if (theaterAudioError.value.startsWith('音频播放失败')) theaterAudioError.value = ''
+      },
+      onend: () => {
+        if (theaterAudioPlayers.get(key) === player) stopTheaterAudioPlayer(key)
+      },
+      onloaderror: (_soundId, error) => {
+        if (theaterAudioPlayers.get(key) !== player) return
+        theaterAudioError.value = `音频加载失败（${String(error)}）`
+        stopTheaterAudioPlayer(key)
+      },
+      onplayerror: (soundId, error) => {
+        if (theaterAudioPlayers.get(key) !== player) return
+        theaterAudioError.value = `音频播放失败（${String(error)}），点击页面后将重试`
+        theaterAudioRetryIds.set(key, soundId)
+      },
+    })
+    theaterAudioPlayers.set(key, player)
+    theaterAudioBaseVolumes.set(key, baseVolume)
+    player.play()
+  } catch (error) {
+    theaterAudioError.value = theaterAudioErrorMessage(error, '音频播放失败')
+  }
+}
+
+const previewTheaterAudio = (asset: AudioAsset) => playTheaterAudioAsset(asset.id, 1, 'preview')
+const deleteTheaterAudio = async (asset: AudioAsset) => {
+  if (!canDeleteResources.value || !window.confirm(`删除音频素材“${asset.name}”？`)) return
+  theaterAudioError.value = ''
+  try {
+    await api.delete(theaterAudioPath(asset.id))
+    await fetchTheaterAudioAssets()
+  } catch (error) {
+    theaterAudioError.value = theaterAudioErrorMessage(error, '删除音频素材失败')
+  }
+}
+
 const effectRuntime = new TheaterEffectRuntime({
   dialogueRuntime: props.dialogueRuntime,
   getObjects: () => Object.values(props.store.activeObjects.value),
+  onStart: (playback) => {
+    if (playback.config.audio?.assetId) {
+      void playTheaterAudioAsset(playback.config.audio.assetId, playback.config.audio.volume, `effect:${playback.effectId}`)
+    }
+  },
 })
 const unsubscribeEffectRuntime = effectRuntime.subscribe((playbacks) => { effectPlaybacks.value = playbacks })
 const theaterPopoverThemeOverrides = {
@@ -202,6 +386,11 @@ const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.
 const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
 const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
 const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
+const canDeleteResources = computed(() => hasPermission('stage.resource.delete'))
+const referencedTheaterAudioAssetIds = computed(() => [...new Set(Object.values(props.store.activeObjects.value)
+  .filter(isTheaterEffectObject)
+  .map((object) => theaterEffectConfigFromObject(object).audio?.assetId)
+  .filter((assetId): assetId is string => Boolean(assetId)))])
 const isDrawingTool = (tool: StageCanvasTool | null): tool is StageDrawingTool => Boolean(tool && tool !== 'eraser')
 const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
   canEditAllObjects.value
@@ -303,7 +492,7 @@ const updateDrawingStyle = (style: StageDrawingStyle) => {
   if (isDrawingTool(activeCanvasTool.value)) drawingStyleMemory.set(activeCanvasTool.value, { ...style })
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
 interface PanelLayout {
   x: number
   y: number
@@ -318,6 +507,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   inspector: { width: 240, height: 240 },
   layer: { width: 280, height: 220 },
   effect: { width: 320, height: 320 },
+  asset: { width: 320, height: 280 },
 }
 const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
   try {
@@ -335,7 +525,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'effect' ? 340 : 300
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'effect' || id === 'asset' ? 340 : 300
   const height = Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
@@ -391,7 +581,8 @@ const togglePanel = (id: PanelId) => {
   if (id === 'scene') scenePanelOpen.value = !scenePanelOpen.value
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
-  else effectPanelOpen.value = !effectPanelOpen.value
+  else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
+  else assetPanelOpen.value = !assetPanelOpen.value
 }
 
 const resetWorkspaceLayout = async () => {
@@ -404,6 +595,7 @@ const resetWorkspaceLayout = async () => {
     ['inspector', inspectorPanelOpen.value],
     ['layer', layerPanelOpen.value],
     ['effect', effectPanelOpen.value],
+    ['asset', assetPanelOpen.value],
   ]
   openPanels.forEach(([id, open]) => {
     if (open) ensurePanelLayout(id)
@@ -443,7 +635,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'asset']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -2337,6 +2529,9 @@ const handleRootLayerDrop = (event: DragEvent) => {
 
 onMounted(() => {
   if (!containerRef.value) return
+  document.addEventListener('pointerdown', unlockTheaterAudio, true)
+  document.addEventListener('touchstart', unlockTheaterAudio, { passive: true, capture: true })
+  document.addEventListener('keydown', unlockTheaterAudio, true)
   panelResizeObserver = new ResizeObserver((entries) => {
     entries.forEach((entry) => {
       const element = entry.target as HTMLElement
@@ -2423,6 +2618,7 @@ onMounted(() => {
   window.addEventListener('pointerup', stopPanelDrag)
   window.addEventListener('pointercancel', stopPanelDrag)
   window.addEventListener('keydown', handleStageShortcut)
+  void fetchTheaterAudioAssets()
 })
 
 watch(() => props.store.state.liveState, () => {
@@ -2456,24 +2652,43 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, assetPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect', 'asset']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
   observeOpenPanels()
 })
+watch(() => [props.worldId, props.channelId], () => { void fetchTheaterAudioAssets() })
+watch(theaterAudioMasterVolume, (volume) => {
+  const normalized = Math.max(0, Math.min(1, volume))
+  try {
+    window.localStorage.setItem(theaterAudioMasterVolumeKey, String(normalized))
+  } catch {
+    // Playback remains available when browser storage is disabled.
+  }
+  theaterAudioPlayers.forEach((player, key) => {
+    player.volume((theaterAudioBaseVolumes.get(key) ?? 1) * normalized)
+  })
+})
 
 onBeforeUnmount(() => {
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
+  theaterAudioSequences.clear()
+  if (theaterAudioRefreshTimer !== null) window.clearTimeout(theaterAudioRefreshTimer)
+  Array.from(theaterAudioPlayers.keys()).forEach(stopTheaterAudioPlayer)
+  Howler.volume(previousHowlerVolume)
   resizeObserver?.disconnect()
   panelResizeObserver?.disconnect()
   window.removeEventListener('pointermove', movePanel)
   window.removeEventListener('pointerup', stopPanelDrag)
   window.removeEventListener('pointercancel', stopPanelDrag)
   window.removeEventListener('keydown', handleStageShortcut)
+  document.removeEventListener('pointerdown', unlockTheaterAudio, true)
+  document.removeEventListener('touchstart', unlockTheaterAudio, true)
+  document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
   cancelDrawingSession()
   objectNodes.forEach(releaseObjectMedia)
@@ -2549,6 +2764,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           特效层
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': assetPanelOpen }" aria-label="切换素材管理器" @click="togglePanel('asset')">
+              <template #icon><n-icon><Archive /></n-icon></template>
+            </n-button>
+          </template>
+          素材管理器
         </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -3093,8 +3316,39 @@ onBeforeUnmount(() => {
           :can-edit="canEditAllObjects"
           :can-upload="canUploadResources"
           :editing-target="effectEditingTarget"
+          :audio-assets="theaterAudioAssets"
+          :audio-loading="theaterAudioLoading"
+          :audio-uploading="theaterAudioUploading"
+          :audio-error="theaterAudioError"
           @update:editing-target="effectEditingTarget = $event"
           @upload="objectId => requestImageUpload({ kind: 'object', objectId })"
+          @upload-audio="(objectId, file) => uploadTheaterAudio(file, objectId)"
+        />
+      </aside>
+
+      <aside v-if="assetPanelOpen" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('asset', $event)">
+          <span>素材管理器</span>
+          <div class="theater-panel-heading__actions">
+            <small>{{ theaterAudioAssets.length }}</small>
+            <n-button class="theater-panel-close" text size="tiny" aria-label="关闭素材管理器" @click="assetPanelOpen = false"><n-icon><X /></n-icon></n-button>
+          </div>
+        </div>
+        <TheaterAssetManager
+          :assets="theaterAudioAssets"
+          :quota="theaterAudioQuota"
+          :loading="theaterAudioLoading"
+          :uploading="theaterAudioUploading"
+          :error="theaterAudioError"
+          :can-upload="canUploadResources"
+          :can-delete="canDeleteResources"
+          :referenced-asset-ids="referencedTheaterAudioAssetIds"
+          :master-volume="theaterAudioMasterVolume"
+          @update:master-volume="theaterAudioMasterVolume = $event"
+          @refresh="fetchTheaterAudioAssets"
+          @upload="uploadTheaterAudio"
+          @preview="previewTheaterAudio"
+          @delete="deleteTheaterAudio"
         />
       </aside>
     </div>
@@ -3211,6 +3465,7 @@ onBeforeUnmount(() => {
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
+.theater-asset-panel { min-width: min(320px, 100%); min-height: min(280px, 100%); }
 .theater-panel-heading {
   height: 32px; flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px;
   color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; font-weight: 700; cursor: move; user-select: none; touch-action: none;
