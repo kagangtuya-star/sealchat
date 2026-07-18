@@ -43,6 +43,7 @@ const message: TheaterDialogueMessage = {
   contentText: '甲乙丙',
   contentRichText: JSON.stringify(richDocument),
   actor: {
+    userId: 'user-1',
     identityId: 'identity-1',
     variantId: null,
     displayName: 'Actor',

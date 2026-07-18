@@ -20,6 +20,7 @@ const message = (messageId: string, contentText = `message ${messageId}`): Theat
   isDeleted: false,
   contentText,
   actor: {
+    userId: 'user-1',
     identityId: 'identity-1',
     variantId: null,
     displayName: 'Actor',

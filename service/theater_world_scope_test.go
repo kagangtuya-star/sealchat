@@ -57,6 +57,37 @@ func worldTheaterPayload(t *testing.T, value any) json.RawMessage {
 	return raw
 }
 
+func validTheaterEffectContent(t *testing.T) json.RawMessage {
+	t.Helper()
+	return worldTheaterPayload(t, map[string]any{
+		"effect": map[string]any{
+			"version": 1, "kind": "builtin", "keywords": []string{"爆击"}, "targetActorName": "法师",
+			"durationMs": 3500, "cooldownMs": 0, "media": nil,
+			"builtin": map[string]any{
+				"theme": "brush", "format": "popout", "text": "CRITICAL HIT", "subText": "",
+				"accentColor": "#e61c34", "mainTextColor": "#ffffff", "subTextColor": "#000000",
+				"dimIntensity": 70, "shakeIntensity": 0,
+				"mediaTransform": map[string]any{"x": 0, "y": 0, "scale": 1, "rotation": 0, "mirror": false},
+			},
+		},
+	})
+}
+
+func TestValidateTheaterEffectContent(t *testing.T) {
+	if err := validateTheaterEffectContent(validTheaterEffectContent(t)); err != nil {
+		t.Fatalf("valid effect rejected: %v", err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(validTheaterEffectContent(t), &value); err != nil {
+		t.Fatal(err)
+	}
+	effect := value["effect"].(map[string]any)
+	effect["builtin"].(map[string]any)["theme"] = "missing-assets"
+	if err := validateTheaterEffectContent(worldTheaterPayload(t, value)); err == nil {
+		t.Fatal("unknown effect theme accepted")
+	}
+}
+
 func worldTheaterRoom(t *testing.T, worldID, channelID string) *model.TheaterRoomModel {
 	t.Helper()
 	room, err := model.TheaterRoomFindByScope(worldID, channelID)

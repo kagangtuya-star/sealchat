@@ -15,6 +15,7 @@ export interface TheaterDialogueMessage {
   contentRichText?: string
   hasPerformanceContent?: boolean
   actor: {
+    userId: string | null
     identityId: string | null
     variantId: string | null
     displayName: string

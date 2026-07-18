@@ -37,7 +37,30 @@ export interface StageObjectHistoryEntry {
   selectionAfter: StageSelectionSnapshot
 }
 
-const clone = <T>(value: T): T => structuredClone(toRaw(value))
+const unwrapCloneable = (value: unknown, seen: WeakMap<object, unknown>): unknown => {
+  const raw = toRaw(value)
+  if (!raw || typeof raw !== 'object') return raw
+  const existing = seen.get(raw)
+  if (existing) return existing
+  if (Array.isArray(raw)) {
+    const result: unknown[] = []
+    seen.set(raw, result)
+    raw.forEach((item) => result.push(unwrapCloneable(item, seen)))
+    return result
+  }
+  const result: Record<string, unknown> = {}
+  seen.set(raw, result)
+  Object.entries(raw).forEach(([key, item]) => {
+    result[key] = unwrapCloneable(item, seen)
+  })
+  return result
+}
+
+export const cloneStageData = <T>(value: T): T => (
+  structuredClone(unwrapCloneable(value, new WeakMap())) as T
+)
+
+const clone = cloneStageData
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
 

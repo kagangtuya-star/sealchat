@@ -536,6 +536,11 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 		switch key {
 		case "content":
 			raw, _ := json.Marshal(value)
+			if object.Kind == "effect" {
+				if err := validateTheaterEffectContent(raw); err != nil {
+					return err
+				}
+			}
 			updates["content_json"] = string(raw)
 		case "actions":
 			raw, _ := json.Marshal(value)

@@ -13604,6 +13604,7 @@ const scrollToBottom = () => {
 const emit = defineEmits(['drawer-show'])
 
 let firstLoad = false;
+let disposeChatMessageHandlers: (() => void) | null = null;
 const handleChannelSwitchEvent = (e: any) => {
   if (!firstLoad) return;
   const payload = (e as any)?.argv || {};
@@ -13716,8 +13717,7 @@ onMounted(async () => {
     }
   });
 
-chatEvent.off('message-removed', '*');
-chatEvent.on('message-removed', (e?: Event) => {
+const handleMessageRemoved = (e?: Event) => {
   const targetId = e?.message?.id;
     if (!targetId) {
       return;
@@ -13750,10 +13750,9 @@ chatEvent.on('message-removed', (e?: Event) => {
         archivedMessagesRaw.value.splice(index, 1);
       }
     }
-  });
+  };
 
-chatEvent.off('message-created', '*');
-chatEvent.on('message-created', (e?: Event) => {
+const handleMessageCreated = (e?: Event) => {
   if (!e?.message) {
     return;
   }
@@ -13900,7 +13899,7 @@ chatEvent.on('message-created', (e?: Event) => {
       scrollToBottom();
     });
   }
-});
+};
 
 chatEvent.off('channel-image-layout-updated' as any, '*');
 chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
@@ -13915,8 +13914,7 @@ chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
   channelImageLayout.applyRealtimeUpdate(payload);
 });
 
-chatEvent.off('message-updated', '*');
-chatEvent.on('message-updated', (e?: Event) => {
+const handleMessageUpdated = (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
@@ -13958,7 +13956,34 @@ chatEvent.on('message-updated', (e?: Event) => {
     syncSessionDraftSnapshot();
     ensureInputFocus();
   }
-});
+};
+
+const chatViewMessageHandlers = {
+  created: handleMessageCreated,
+  updated: handleMessageUpdated,
+  removed: handleMessageRemoved,
+};
+// 只替换聊天视图自己的监听器，避免清空小剧场桥接监听，并兼容 HMR。
+const chatEventWithMessageOwner = chatEvent as typeof chatEvent & {
+  __chatViewMessageHandlers?: typeof chatViewMessageHandlers
+};
+const previousChatViewMessageHandlers = chatEventWithMessageOwner.__chatViewMessageHandlers;
+if (previousChatViewMessageHandlers) {
+  chatEvent.off('message-created', previousChatViewMessageHandlers.created);
+  chatEvent.off('message-updated', previousChatViewMessageHandlers.updated);
+  chatEvent.off('message-removed', previousChatViewMessageHandlers.removed);
+}
+chatEventWithMessageOwner.__chatViewMessageHandlers = chatViewMessageHandlers;
+chatEvent.on('message-created', chatViewMessageHandlers.created);
+chatEvent.on('message-updated', chatViewMessageHandlers.updated);
+chatEvent.on('message-removed', chatViewMessageHandlers.removed);
+disposeChatMessageHandlers = () => {
+  if (chatEventWithMessageOwner.__chatViewMessageHandlers !== chatViewMessageHandlers) return;
+  chatEvent.off('message-created', chatViewMessageHandlers.created);
+  chatEvent.off('message-updated', chatViewMessageHandlers.updated);
+  chatEvent.off('message-removed', chatViewMessageHandlers.removed);
+  delete chatEventWithMessageOwner.__chatViewMessageHandlers;
+};
 
 chatEvent.off('message-reordered', '*');
 chatEvent.on('message-reordered', (e?: Event) => {
@@ -14300,6 +14325,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 })
 
 onBeforeUnmount(() => {
+  disposeChatMessageHandlers?.();
+  disposeChatMessageHandlers = null;
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleVisibilityResume);
   }

@@ -532,6 +532,17 @@ const normalizeFrozenIdentity = (
   const identity = asRecord(message.identity)
   const displayName = String(identity.displayName || message.sender_identity_name || '')
   const color = String(identity.color || message.sender_identity_color || '')
+  const user = asRecord(message.user)
+  const member = asRecord(message.member)
+  const userId = normalizeOptionalId(
+    user.id
+    || member.userId
+    || member.user_id
+    || message.userId
+    || message.user_id
+    || message.senderUserId
+    || message.sender_user_id,
+  )
   const identityId = normalizeOptionalId(identity.id || message.senderRoleId || message.sender_role_id)
   const variantId = normalizeOptionalId(identity.variantId || message.sender_identity_variant_id)
   const avatarAttachmentId = String(identity.avatarAttachment || message.sender_identity_avatar_id || '').trim()
@@ -544,6 +555,7 @@ const normalizeFrozenIdentity = (
     identity.theaterPresentation ?? message.senderTheaterPresentation ?? message.sender_theater_presentation,
   )
   return {
+    userId,
     identityId,
     variantId,
     displayName,

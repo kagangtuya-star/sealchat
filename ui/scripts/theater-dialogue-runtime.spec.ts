@@ -53,6 +53,7 @@ const message = (messageId: string, contentText = messageId): TheaterDialogueMes
   isDeleted: false,
   contentText,
   actor: {
+    userId: 'user-1',
     identityId: 'identity-1',
     variantId: null,
     displayName: 'Actor',
@@ -77,8 +78,10 @@ runtime.created(message('one', 'AB😀'))
 runtime.created(message('two', 'second'))
 assert.equal(runtime.getSnapshot().queue.current?.message.messageId, 'one')
 assert.deepEqual(runtime.getSnapshot().queue.waiting.map((item) => item.message.messageId), ['two'])
+const firstMessageSnapshot = runtime.getSnapshot().queue.current?.message
 scheduler.tick(399)
 assert.equal(runtime.getSnapshot().queue.current?.revealedCharacters, 2)
+assert.equal(runtime.getSnapshot().queue.current?.message, firstMessageSnapshot)
 scheduler.tick(101)
 assert.equal(runtime.getSnapshot().queue.current?.revealedCharacters, 3)
 assert.equal(runtime.getSnapshot().phase, 'hold')

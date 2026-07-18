@@ -200,7 +200,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
 const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
   const content = asObject(value.content)
   const legacyScale = finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1
-  const kind = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video'].includes(value.kind)
+  const kind = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video', 'effect'].includes(value.kind)
     ? value.kind as StageObjectType
     : null
   if (!kind) return null

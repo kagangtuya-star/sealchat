@@ -41,6 +41,14 @@ const defaultScheduler: TheaterDialogueScheduler = {
   clearTimeout: (timer) => globalThis.clearTimeout(timer),
 }
 
+const snapshotDialogueQueue = (queue: TheaterDialogueQueueState): TheaterDialogueQueueState => ({
+  current: queue.current ? { ...queue.current } : null,
+  waiting: queue.waiting.map((item) => ({ ...item })),
+  recentMessageIds: [...queue.recentMessageIds],
+  lastSequence: queue.lastSequence,
+  dismissedThroughSequence: queue.dismissedThroughSequence,
+})
+
 export const getTheaterDialogueTypingDuration = (
   characterCount: number,
   charactersPerSecond = THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND,
@@ -102,7 +110,7 @@ export class TheaterDialogueRuntime {
   }
 
   getSnapshot = (): TheaterDialogueRuntimeSnapshot => ({
-    queue: structuredClone(this.queue),
+    queue: snapshotDialogueQueue(this.queue),
     phase: this.phase,
     reducedMotion: this.reducedMotion,
   })

@@ -29,6 +29,7 @@ import {
   Plus,
   Select,
   Settings,
+  Stars,
   Stack2,
   Trash,
   X,
@@ -61,6 +62,9 @@ import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtim
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import type { TheaterPresentation } from '@/types/theaterPresentation'
 import TheaterPresentationPreview from '@/components/theater-presentation/TheaterPresentationPreview.vue'
+import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
+import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
+import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -103,8 +107,17 @@ const resourceUploading = ref(false)
 const scenePanelOpen = ref(false)
 const inspectorPanelOpen = ref(false)
 const layerPanelOpen = ref(false)
+const effectPanelOpen = ref(false)
+const effectEditingTarget = ref<'frame' | 'media'>('frame')
 const toolbarColorsVisible = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
+const TheaterEffectPanel = defineAsyncComponent(() => import('../effects/TheaterEffectPanel.vue'))
+const effectPlaybacks = ref<TheaterEffectPlayback[]>([])
+const effectRuntime = new TheaterEffectRuntime({
+  dialogueRuntime: props.dialogueRuntime,
+  getObjects: () => Object.values(props.store.activeObjects.value),
+})
+const unsubscribeEffectRuntime = effectRuntime.subscribe((playbacks) => { effectPlaybacks.value = playbacks })
 const theaterPopoverThemeOverrides = {
   color: 'color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent)',
   boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
@@ -290,7 +303,7 @@ const updateDrawingStyle = (style: StageDrawingStyle) => {
   if (isDrawingTool(activeCanvasTool.value)) drawingStyleMemory.set(activeCanvasTool.value, { ...style })
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer'
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect'
 interface PanelLayout {
   x: number
   y: number
@@ -304,6 +317,7 @@ const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   scene: { width: 140, height: 180 },
   inspector: { width: 240, height: 240 },
   layer: { width: 280, height: 220 },
+  effect: { width: 320, height: 320 },
 }
 const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
   try {
@@ -321,7 +335,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : 300
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : id === 'effect' ? 340 : 300
   const height = Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
@@ -376,7 +390,8 @@ const panelStyle = (id: PanelId) => {
 const togglePanel = (id: PanelId) => {
   if (id === 'scene') scenePanelOpen.value = !scenePanelOpen.value
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
-  else layerPanelOpen.value = !layerPanelOpen.value
+  else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
+  else effectPanelOpen.value = !effectPanelOpen.value
 }
 
 const resetWorkspaceLayout = async () => {
@@ -388,6 +403,7 @@ const resetWorkspaceLayout = async () => {
     ['scene', scenePanelOpen.value],
     ['inspector', inspectorPanelOpen.value],
     ['layer', layerPanelOpen.value],
+    ['effect', effectPanelOpen.value],
   ]
   openPanels.forEach(([id, open]) => {
     if (open) ensurePanelLayout(id)
@@ -427,7 +443,7 @@ const observeOpenPanels = () => {
 }
 
 const clampOpenPanels = () => {
-  const ids: PanelId[] = ['scene', 'inspector', 'layer']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect']
   let changed = false
   const next = { ...panelLayouts.value }
   ids.forEach((id) => {
@@ -550,8 +566,36 @@ let foregroundSlot: SurfaceSlot | null = null
 
 const selectedObject = computed(() => {
   const id = props.store.state.selectedObjectId
-  return id ? props.store.activeObjects.value[id] || null : null
+  const object = id ? props.store.activeObjects.value[id] || null : null
+  return isTheaterEffectObject(object) ? null : object
 })
+const selectedEffectObject = computed(() => {
+  const id = props.store.state.selectedObjectId
+  const object = id ? props.store.activeObjects.value[id] || null : null
+  return isTheaterEffectObject(object) ? object : null
+})
+const beginEffectTransform = () => {
+  if (!selectedEffectObject.value || !canEditAllObjects.value) return
+  props.store.beginObjectEdit('变换特效')
+}
+const updateEffectTransform = (transform: StageObject['transform']) => {
+  if (!selectedEffectObject.value || !canEditAllObjects.value) return
+  selectedEffectObject.value.transform = transform
+}
+const endEffectTransform = () => props.store.commitObjectEdit()
+const beginEffectMediaTransform = () => {
+  if (!selectedEffectObject.value || !canEditAllObjects.value) return
+  props.store.beginObjectEdit('移动特效媒体')
+}
+const updateEffectMediaTransform = (patch: { x: number, y: number }) => {
+  const object = selectedEffectObject.value
+  if (!object || !canEditAllObjects.value) return
+  const config = theaterEffectConfigFromObject(object)
+  config.builtin.mediaTransform.x = patch.x
+  config.builtin.mediaTransform.y = patch.y
+  setTheaterEffectConfig(object, config)
+}
+const endEffectMediaTransform = () => props.store.commitObjectEdit()
 const stageObjects = props.store.activeObjects
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
@@ -670,7 +714,7 @@ interface LayerRow {
 }
 
 const layerRows = computed<LayerRow[]>(() => {
-  const objects = Object.values(props.store.activeObjects.value)
+  const objects = Object.values(props.store.activeObjects.value).filter((object) => !isTheaterEffectObject(object))
   const rows: LayerRow[] = []
   const append = (parentId: string | null, depth: number) => {
     objects
@@ -1786,7 +1830,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
 
 const syncObjects = () => {
   if (!objectRoot) return
-  const objects = props.store.activeObjects.value
+  const objects = Object.fromEntries(Object.entries(props.store.activeObjects.value)
+    .filter(([, object]) => !isTheaterEffectObject(object)))
   for (const [objectId, node] of objectNodes) {
     if (objects[objectId]) continue
     imageLoadVersions.delete(objectId)
@@ -2004,9 +2049,16 @@ const targetImageRef = (target: ImageTarget) => target.kind === 'scene'
 
 const targetImageUrl = (target: ImageTarget) => targetImageRef(target)?.url || ''
 
-const applyImageUrl = (target: ImageTarget, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => {
+const applyImageUrl = (
+  target: ImageTarget,
+  url: string,
+  resourceId?: string,
+  mimeType?: string,
+  animated?: boolean,
+  dimensions?: { width: number, height: number },
+) => {
   if (target.kind === 'scene') return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated)
-  return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated)
+  return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, dimensions)
 }
 
 const theaterResourcePath = (resourceId = '') => {
@@ -2056,6 +2108,26 @@ const prepareTheaterMedia = async (file: File) => {
   return compressImage(file, { mimeType: 'image/webp' })
 }
 
+const theaterMediaDimensions = (file: File): Promise<{ width: number, height: number } | undefined> => new Promise((resolve) => {
+  const url = URL.createObjectURL(file)
+  const finish = (width?: number, height?: number) => {
+    URL.revokeObjectURL(url)
+    resolve(width && height ? { width, height } : undefined)
+  }
+  if (normalizedFileType(file) === 'video/webm') {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => finish(video.videoWidth, video.videoHeight)
+    video.onerror = () => finish()
+    video.src = url
+    return
+  }
+  const image = new Image()
+  image.onload = () => finish(image.naturalWidth, image.naturalHeight)
+  image.onerror = () => finish()
+  image.src = url
+})
+
 const uploadImage = async (file: File, target: ImageTarget) => {
   if (!canEditAllObjects.value || !canUploadResources.value) throw new Error('缺少小剧场资源编辑权限')
   if (!props.worldId || !props.channelId) throw new Error('缺少小剧场频道信息')
@@ -2063,6 +2135,11 @@ const uploadImage = async (file: File, target: ImageTarget) => {
   resourceError.value = ''
   try {
     const prepared = await prepareTheaterMedia(file)
+    const targetObject = target.kind === 'object' ? props.store.activeObjects.value[target.objectId] : null
+    const targetEffectConfig = isTheaterEffectObject(targetObject) ? theaterEffectConfigFromObject(targetObject) : null
+    const dimensions = targetEffectConfig?.kind === 'media' && !targetObject?.image && !targetEffectConfig.media
+      ? await theaterMediaDimensions(prepared)
+      : undefined
     const formData = new FormData()
     formData.append('file', prepared)
     formData.append('mediaKind', 'image')
@@ -2077,7 +2154,7 @@ const uploadImage = async (file: File, target: ImageTarget) => {
     const variant = resource?.playbackVariant || 'original'
     const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
     const url = `${urlBase}/${theaterResourcePath(resourceId)}/variants/${encodeURIComponent(variant)}/content`
-    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true)) throw new Error('图片目标已失效')
+    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, dimensions)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
     throw error
@@ -2351,8 +2428,12 @@ onMounted(() => {
 watch(() => props.store.state.liveState, () => {
   syncField()
   syncObjects()
+  effectRuntime.reconcile()
 }, { deep: true })
-watch(() => props.store.state.persistentObjects, syncObjects, { deep: true })
+watch(() => props.store.state.persistentObjects, () => {
+  syncObjects()
+  effectRuntime.reconcile()
+}, { deep: true })
 watch(() => props.store.state.camera, applyCamera, { deep: true })
 watch(activeCanvasTool, () => {
   syncObjects()
@@ -2375,9 +2456,9 @@ watch(() => props.store.selection.selectedIds.slice(), () => {
   syncObjects()
   updateTransformer()
 })
-watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen], async (open) => {
+watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen], async (open) => {
   await nextTick()
-  const ids: PanelId[] = ['scene', 'inspector', 'layer']
+  const ids: PanelId[] = ['scene', 'inspector', 'layer', 'effect']
   open.forEach((isOpen, index) => {
     if (isOpen) ensurePanelLayout(ids[index])
   })
@@ -2385,6 +2466,8 @@ watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen], async (open) => {
 })
 
 onBeforeUnmount(() => {
+  unsubscribeEffectRuntime()
+  effectRuntime.dispose()
   resizeObserver?.disconnect()
   panelResizeObserver?.disconnect()
   window.removeEventListener('pointermove', movePanel)
@@ -2458,6 +2541,14 @@ onBeforeUnmount(() => {
             </n-button>
           </template>
           图层与属性
+        </n-tooltip>
+        <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
+          <template #trigger>
+            <n-button :class="{ 'is-active': effectPanelOpen }" aria-label="切换特效层面板" @click="togglePanel('effect')">
+              <template #icon><n-icon><Stars /></n-icon></template>
+            </n-button>
+          </template>
+          特效层
         </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -2554,6 +2645,18 @@ onBeforeUnmount(() => {
           :viewport-height="viewportSize.height"
         />
         <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
+        <TheaterEffectOverlay
+          :playbacks="effectPlaybacks"
+          :selected-object="selectedEffectObject"
+          :editing="effectPanelOpen && canEditAllObjects"
+          :editing-target="effectEditingTarget"
+          @transform-start="beginEffectTransform"
+          @transform-update="updateEffectTransform"
+          @transform-end="endEffectTransform"
+          @media-transform-start="beginEffectMediaTransform"
+          @media-transform-update="updateEffectMediaTransform"
+          @media-transform-end="endEffectMediaTransform"
+        />
         <div v-if="appearancePreview" class="theater-appearance-preview-layer">
           <TheaterPresentationPreview
             :draft="appearancePreview.draft"
@@ -2975,6 +3078,25 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </aside>
+
+      <aside v-if="effectPanelOpen" class="theater-floating-panel theater-effect-panel" data-panel-id="effect" :style="panelStyle('effect')">
+        <div class="theater-panel-heading" @pointerdown="startPanelDrag('effect', $event)">
+          <span>特效层</span>
+          <div class="theater-panel-heading__actions">
+            <small>{{ Object.values(store.activeObjects.value).filter(isTheaterEffectObject).length }}</small>
+            <n-button class="theater-panel-close" text size="tiny" aria-label="关闭特效层面板" @click="effectPanelOpen = false"><n-icon><X /></n-icon></n-button>
+          </div>
+        </div>
+        <TheaterEffectPanel
+          :store="store"
+          :runtime="effectRuntime"
+          :can-edit="canEditAllObjects"
+          :can-upload="canUploadResources"
+          :editing-target="effectEditingTarget"
+          @update:editing-target="effectEditingTarget = $event"
+          @upload="objectId => requestImageUpload({ kind: 'object', objectId })"
+        />
+      </aside>
     </div>
 
     <MessageImageEditor
@@ -3088,6 +3210,7 @@ onBeforeUnmount(() => {
 .theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 6px; padding: 6px; overflow-y: auto; }
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
 .theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
+.theater-effect-panel { min-width: min(320px, 100%); min-height: min(320px, 100%); }
 .theater-panel-heading {
   height: 32px; flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px;
   color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; font-weight: 700; cursor: move; user-select: none; touch-action: none;

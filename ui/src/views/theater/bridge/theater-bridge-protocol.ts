@@ -276,17 +276,21 @@ const stageDrawingSchema = z.strictObject({
 const stageObjectSchema = z.strictObject({
   id: nonEmptyIdSchema,
   parentId: nonEmptyIdSchema.nullable(),
-  type: z.enum(['group', 'drawing', 'text', 'image', 'button']),
+  type: z.enum(['group', 'drawing', 'text', 'image', 'button', 'effect']),
   name: z.string().max(512),
   transform: stageObjectTransformSchema,
   visible: z.boolean(),
   locked: z.boolean(),
   aspectRatioLocked: z.boolean(),
   interactive: z.boolean(),
+  editable: z.boolean(),
   fill: z.string().max(256),
   drawing: stageDrawingSchema.optional(),
   text: z.string().max(100_000).optional(),
   image: stageImageRefSchema.optional(),
+  content: z.record(z.string(), z.unknown()).optional(),
+  ownerUserId: nonEmptyIdSchema.nullable().optional(),
+  characterIdentityId: nonEmptyIdSchema.nullable().optional(),
   actions: z.array(stageActionSchema).max(32),
   metadata: z.record(z.string(), z.unknown()),
 }).superRefine((object, context) => {
@@ -332,6 +336,7 @@ const stageSceneStateSchema = z.strictObject({
     type: z.enum(['none', 'crossfade']),
     durationMs: z.number().int().min(0).max(60_000),
   }),
+  serverState: z.record(z.string(), z.unknown()).optional(),
 })
 
 const stageSceneSchema = z.strictObject({
@@ -477,6 +482,7 @@ export const theaterDialogueMessagePayloadSchema = z.strictObject({
   contentRichText: z.string().max(200_000).optional(),
   hasPerformanceContent: z.boolean().optional(),
   actor: z.strictObject({
+    userId: nonEmptyIdSchema.nullable(),
     identityId: nonEmptyIdSchema.nullable(),
     variantId: nonEmptyIdSchema.nullable(),
     displayName: z.string().max(512),

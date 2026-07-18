@@ -367,7 +367,7 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if err := validateTheaterID(object.ID, "object.id"); err != nil {
 		return err
 	}
-	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true}
+	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true, "effect": true}
 	if !allowedKinds[object.Kind] {
 		return theaterPayloadError("object.kind 无效")
 	}
@@ -405,6 +405,112 @@ func validateObjectInput(object *theaterObjectInput) error {
 		if err := validateTheaterActions(object.Actions); err != nil {
 			return err
 		}
+	}
+	if object.Kind == "effect" {
+		if object.ParentID != nil && strings.TrimSpace(*object.ParentID) != "" {
+			return theaterPayloadError("effect 不能设置 parent")
+		}
+		if err := validateTheaterEffectContent(object.Content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTheaterEffectContent(raw json.RawMessage) error {
+	var content map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &content) != nil {
+		return theaterPayloadError("effect content 无效")
+	}
+	effect, ok := content["effect"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect 配置缺失")
+	}
+	allowed := map[string]bool{"version": true, "kind": true, "keywords": true, "targetActorName": true, "targetUserId": true, "durationMs": true, "cooldownMs": true, "media": true, "builtin": true}
+	for key := range effect {
+		if !allowed[key] {
+			return theaterPayloadError("effect 包含禁止字段: " + key)
+		}
+	}
+	version, valid := theaterNumericValue(effect["version"])
+	if !valid || version != 1 {
+		return theaterPayloadError("effect.version 无效")
+	}
+	kind, ok := effect["kind"].(string)
+	if !ok || (kind != "media" && kind != "builtin") {
+		return theaterPayloadError("effect.kind 无效")
+	}
+	keywords, ok := effect["keywords"].([]any)
+	if !ok || len(keywords) > 32 {
+		return theaterPayloadError("effect.keywords 无效")
+	}
+	for _, keyword := range keywords {
+		value, ok := keyword.(string)
+		if !ok || strings.TrimSpace(value) == "" || len([]rune(value)) > 128 {
+			return theaterPayloadError("effect.keyword 无效")
+		}
+	}
+	if target, exists := effect["targetUserId"]; exists && target != nil {
+		value, ok := target.(string)
+		if !ok || len(value) > 256 {
+			return theaterPayloadError("effect.targetUserId 无效")
+		}
+	}
+	if target, exists := effect["targetActorName"]; exists && target != nil {
+		value, ok := target.(string)
+		if !ok || len([]rune(value)) > 512 {
+			return theaterPayloadError("effect.targetActorName 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{"durationMs": {300, 30000}, "cooldownMs": {0, 300000}} {
+		value, valid := theaterNumericValue(effect[name])
+		if !valid || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect." + name + " 无效")
+		}
+	}
+	builtin, ok := effect["builtin"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect.builtin 无效")
+	}
+	theme, ok := builtin["theme"].(string)
+	allowedThemes := map[string]bool{"brush": true, "cyber": true, "cinematic": true, "impact": true, "glitch": true, "neon": true, "cleave": true, "eclipse": true}
+	if !ok || !allowedThemes[theme] {
+		return theaterPayloadError("effect.builtin.theme 无效")
+	}
+	format, ok := builtin["format"].(string)
+	if !ok || (format != "popout" && format != "boxed") {
+		return theaterPayloadError("effect.builtin.format 无效")
+	}
+	for _, name := range []string{"text", "subText"} {
+		value, ok := builtin[name].(string)
+		if !ok || len([]rune(value)) > 512 {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	for _, name := range []string{"accentColor", "mainTextColor", "subTextColor"} {
+		value, ok := builtin[name].(string)
+		if !ok || strings.TrimSpace(value) == "" || len(value) > 64 {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	for name, bounds := range map[string][2]float64{"dimIntensity": {0, 100}, "shakeIntensity": {0, 10}} {
+		value, valid := theaterNumericValue(builtin[name])
+		if !valid || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect.builtin." + name + " 无效")
+		}
+	}
+	mediaTransform, ok := builtin["mediaTransform"].(map[string]any)
+	if !ok {
+		return theaterPayloadError("effect.builtin.mediaTransform 无效")
+	}
+	for name, bounds := range map[string][2]float64{"x": {-1920, 1920}, "y": {-1080, 1080}, "scale": {0.1, 5}, "rotation": {-360, 360}} {
+		value, valid := theaterNumericValue(mediaTransform[name])
+		if !valid || value < bounds[0] || value > bounds[1] {
+			return theaterPayloadError("effect.builtin.mediaTransform." + name + " 无效")
+		}
+	}
+	if _, ok := mediaTransform["mirror"].(bool); !ok {
+		return theaterPayloadError("effect.builtin.mediaTransform.mirror 无效")
 	}
 	return nil
 }

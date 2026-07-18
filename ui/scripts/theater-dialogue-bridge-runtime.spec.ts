@@ -64,6 +64,7 @@ const messagePayload = (messageId = 'message-1'): TheaterDialogueMessagePayload 
   isDeleted: false,
   contentText: 'hello',
   actor: {
+    userId: 'user-1',
     identityId: 'identity-1',
     variantId: 'variant-1',
     displayName: 'Actor',
@@ -165,6 +166,7 @@ const serialized = serializeTheaterDialogueMessage({
   createdAt: 1234,
   icMode: 'ic',
   content: tiptap,
+  user: { id: 'user-frozen' },
   identity: {
     id: 'identity-frozen',
     variantId: 'variant-frozen',
@@ -174,6 +176,7 @@ const serialized = serializeTheaterDialogueMessage({
   },
 })
 assert.ok(serialized)
+assert.equal(serialized.actor.userId, 'user-frozen')
 assert.equal(serialized.actor.displayName, 'Frozen Actor')
 assert.equal(serialized.actor.variantId, 'variant-frozen')
 assert.equal(serialized.actor.appearance.theaterPresentation?.dialogue.textAlign, 'right')

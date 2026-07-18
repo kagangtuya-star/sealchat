@@ -1,4 +1,4 @@
-import { computed, reactive, toRaw, watch, type ComputedRef } from 'vue'
+import { computed, reactive, watch, type ComputedRef } from 'vue'
 import {
   createDefaultStageSurfaceStyle,
   isSafeStageImageUrl,
@@ -17,6 +17,7 @@ import {
 } from '../shared/stage-types'
 import {
   applyObjectHistoryEntry,
+  cloneStageData,
   collectObjectSubtree,
   createObjectHistoryEntry,
   instantiateClipboardBundle,
@@ -24,9 +25,10 @@ import {
   type StageObjectCollectionsSnapshot,
   type StageSelectionSnapshot,
 } from './stage-editing'
+import { createDefaultTheaterEffectConfig, normalizeTheaterEffectConfig } from '../effects/theater-effect-types'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
-const stageObjectTypes: StageObjectType[] = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video']
+const stageObjectTypes: StageObjectType[] = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video', 'effect']
 type StageInsertableObjectType = Exclude<StageObjectType, 'drawing'>
 
 const uid = (prefix: string) => {
@@ -36,7 +38,7 @@ const uid = (prefix: string) => {
   return `${prefix}-${id}`
 }
 
-const clone = <T>(value: T): T => structuredClone(toRaw(value))
+const clone = cloneStageData
 
 const isRichTextValue = (value: unknown) => {
   if (typeof value !== 'string' || !value.trim()) return false
@@ -76,10 +78,10 @@ const makeObject = (
   type,
   name,
   transform: {
-    x: order * 1.5 - 3,
-    y: order - 2,
-    width: type === 'group' ? 12 : type === 'image' ? 9 : 7,
-    height: type === 'group' ? 8 : type === 'image' ? 6 : 4.5,
+    x: type === 'effect' ? 960 : order * 1.5 - 3,
+    y: type === 'effect' ? 540 : order - 2,
+    width: type === 'effect' ? 1600 : type === 'group' ? 12 : type === 'image' ? 9 : 7,
+    height: type === 'effect' ? 900 : type === 'group' ? 8 : type === 'image' ? 6 : 4.5,
     rotation: 0,
     scaleX: 1,
     scaleY: 1,
@@ -88,11 +90,12 @@ const makeObject = (
   },
   visible: true,
   locked: false,
-  aspectRatioLocked: true,
-  interactive: true,
+  aspectRatioLocked: type !== 'effect',
+  interactive: type !== 'effect',
   editable: false,
   fill: type === 'text' ? '#ffffff' : palette[order % palette.length],
   text: type === 'text' ? name : undefined,
+  content: type === 'effect' ? { effect: createDefaultTheaterEffectConfig() } : {},
   metadata: type === 'text' ? { textEditorMode: 'plain' } : {},
   actions: [],
   ...overrides,
@@ -256,7 +259,12 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     fill: input.type === 'text' ? '#ffffff' : typeof input.fill === 'string' ? input.fill : '#60a5fa',
     drawing,
     image: normalizeImageRef(input.image) || undefined,
-    content: input.content && typeof input.content === 'object' ? input.content : {},
+    content: input.type === 'effect'
+      ? {
+          ...(input.content && typeof input.content === 'object' ? input.content : {}),
+          effect: normalizeTheaterEffectConfig(input.content?.effect),
+        }
+      : input.content && typeof input.content === 'object' ? input.content : {},
     actions: normalizeActions(input.actions),
     metadata: input.type === 'text'
       ? {
@@ -350,7 +358,14 @@ export interface TheaterStageStore {
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
   patchSceneSurfaceStyle: (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => void
   resetSceneSurfaceStyle: (target: StageSurfaceTarget) => void
-  setObjectImage: (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
+  setObjectImage: (
+    objectId: string,
+    url: string,
+    resourceId?: string,
+    mimeType?: string,
+    animated?: boolean,
+    dimensions?: { width: number, height: number },
+  ) => boolean
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
   toggleObject: (objectId: string) => boolean
@@ -581,7 +596,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
             ? '新建图片'
             : type === 'button'
               ? '新建按钮'
-              : '新建对象',
+              : type === 'effect'
+                ? '新建特效'
+                : '新建对象',
       type,
       Object.keys(objects).length,
     )
@@ -831,16 +848,64 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.liveState.surfaceStyles[target] = createDefaultStageSurfaceStyle()
   }
 
-  const setObjectImage = (objectId: string, url: string, resourceId?: string, mimeType?: string, animated?: boolean) => runObjectEdit('修改对象图片', () => {
+  const setObjectImage = (
+    objectId: string,
+    url: string,
+    resourceId?: string,
+    mimeType?: string,
+    animated?: boolean,
+    dimensions?: { width: number, height: number },
+  ) => runObjectEdit('修改对象图片', () => {
     const object = getObject(objectId)
-    if (!object || object.type !== 'image') return false
+    if (!object || (object.type !== 'image' && object.type !== 'effect')) return false
     if (!url.trim()) {
       object.image = undefined
+      if (object.type === 'effect') {
+        const config = normalizeTheaterEffectConfig(object.content?.effect)
+        config.media = null
+        object.content = { ...object.content, effect: config }
+      }
       return true
     }
     const image = createImageRef(url, object.name, resourceId, mimeType, animated)
     if (!image) return false
+    const effectConfig = object.type === 'effect'
+      ? normalizeTheaterEffectConfig(object.content?.effect)
+      : null
+    const initializeMediaFrame = Boolean(
+      effectConfig?.kind === 'media'
+      && !object.image
+      && !effectConfig.media
+      && dimensions
+      && Number.isFinite(dimensions.width)
+      && Number.isFinite(dimensions.height)
+      && dimensions.width > 0
+      && dimensions.height > 0,
+    )
     object.image = image
+    if (effectConfig) {
+      effectConfig.media = image
+      if (initializeMediaFrame && dimensions) {
+        object.transform = {
+          ...object.transform,
+          x: 960,
+          y: 540,
+          width: Math.round(dimensions.width),
+          height: Math.round(dimensions.height),
+          rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
+        }
+        effectConfig.builtin.mediaTransform = {
+          x: 0,
+          y: 0,
+          scale: 1,
+          rotation: 0,
+          mirror: false,
+        }
+      }
+      object.content = { ...object.content, effect: effectConfig }
+    }
     return true
   })
 

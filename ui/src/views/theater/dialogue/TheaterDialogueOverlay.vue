@@ -70,7 +70,7 @@ const useRichPlayback = computed(() => {
   return hasTheaterDialoguePerformanceContent(message.value)
 })
 const showRichContent = computed(() => Boolean(richContent.value && (!typing.value || useRichPlayback.value)))
-const mediaActive = computed(() => Boolean(current.value && visibleInViewport.value))
+const mediaActive = computed(() => Boolean(current.value && typing.value && visibleInViewport.value))
 const speakerColor = computed(() => {
   const color = String(message.value?.actor.color || '').trim()
   return typeof CSS !== 'undefined' && CSS.supports('color', color) ? color : 'var(--sc-text-primary, #f4f4f5)'
