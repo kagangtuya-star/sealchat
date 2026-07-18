@@ -1662,11 +1662,13 @@ func apiMessagePinList(ctx *ChatContext, data *struct {
 	}, nil
 }
 
-func apiMessageArchive(ctx *ChatContext, data *struct {
+type messageArchivePayload struct {
 	ChannelID  string   `json:"channel_id"`
 	MessageIDs []string `json:"message_ids"`
 	Reason     string   `json:"reason"`
-}) (any, error) {
+}
+
+func apiMessageArchive(ctx *ChatContext, data *messageArchivePayload) (any, error) {
 	if strings.TrimSpace(data.ChannelID) == "" {
 		return nil, fmt.Errorf("channel_id 不能为空")
 	}
@@ -1742,6 +1744,70 @@ func apiMessageArchive(ctx *ChatContext, data *struct {
 		MessageIDs []string `json:"message_ids"`
 		Archived   bool     `json:"archived"`
 	}{MessageIDs: lo.Uniq(ids), Archived: true}, nil
+}
+
+type messageArchiveBeforePayload struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}
+
+func apiMessageArchiveBefore(ctx *ChatContext, data *messageArchiveBeforePayload) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	messageID := strings.TrimSpace(data.MessageID)
+	if channelID == "" || messageID == "" {
+		return nil, fmt.Errorf("channel_id 和 message_id 不能为空")
+	}
+
+	channel, targets, err := loadArchiveContext(channelID, []string{messageID})
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("目标消息不存在或已删除")
+	}
+	target := targets[0]
+
+	operatorID := ctx.User.ID
+	hasArchivePerm := pm.CanWithChannelRole(operatorID, channelID,
+		pm.PermFuncChannelMessageArchive,
+		pm.PermFuncChannelManageInfo,
+	)
+	operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+	if !hasArchivePerm || operatorRank < channelMemberRoleRankAdmin {
+		return nil, fmt.Errorf("无权限批量归档更早消息")
+	}
+
+	var ids []string
+	err = model.GetDB().
+		Model(&model.MessageModel{}).
+		Where("channel_id = ? AND is_deleted = ? AND is_archived = ?", channelID, false, false).
+		Where(
+			"(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
+			target.DisplayOrder,
+			target.DisplayOrder,
+			target.CreatedAt,
+			target.DisplayOrder,
+			target.CreatedAt,
+			target.ID,
+		).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		_, err = apiMessageArchive(ctx, &messageArchivePayload{
+			ChannelID:  channelID,
+			MessageIDs: ids,
+			Reason:     "归档目标消息之前的所有消息",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &struct {
+		ArchivedCount int `json:"archived_count"`
+	}{ArchivedCount: len(ids)}, nil
 }
 
 func apiMessageUnarchive(ctx *ChatContext, data *struct {

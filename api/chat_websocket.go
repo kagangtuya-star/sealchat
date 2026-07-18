@@ -1097,6 +1097,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "message.archive":
 						apiWrap(ctx, msg, apiMessageArchive)
 						solved = true
+					case "message.archive.before":
+						apiWrap(ctx, msg, apiMessageArchiveBefore)
+						solved = true
 					case "message.unarchive":
 						apiWrap(ctx, msg, apiMessageUnarchive)
 						solved = true

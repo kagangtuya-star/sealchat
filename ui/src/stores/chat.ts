@@ -6022,6 +6022,23 @@ export const useChatStore = defineStore({
       return payload;
     },
 
+    async archiveMessagesBefore(messageId: string) {
+      const channelId = this.curChannel?.id;
+      const normalizedMessageId = String(messageId || '').trim();
+      if (!channelId || !normalizedMessageId) {
+        throw new Error('归档失败：缺少频道或目标消息');
+      }
+      const resp = await this.sendAPI('message.archive.before', {
+        channel_id: channelId,
+        message_id: normalizedMessageId,
+      });
+      const archivedCount = resp?.data?.archived_count;
+      if (typeof archivedCount !== 'number') {
+        throw new Error('归档失败：服务端未返回有效结果');
+      }
+      return archivedCount;
+    },
+
     async unarchiveMessages(messageIds: string[]) {
       if (!this.curChannel?.id || messageIds.length === 0) return;
       const resp = await this.sendAPI('message.unarchive', {
