@@ -795,9 +795,10 @@ const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
 const botOptionsLoading = ref(false);
 const botOptionsFetched = ref(false);
-const isMobileUa = (typeof navigator !== 'undefined'
+const isActualMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-  : false)
+  : false;
+const isMobileUa = isActualMobileUa
   || (route.path === '/embed' && route.query.viewport === 'mobile');
 const hasTouchPoints = typeof navigator !== 'undefined'
   ? (navigator.maxTouchPoints || 0) > 0
@@ -15015,7 +15016,7 @@ const keyDown = function (e: KeyboardEvent) {
   }
 
   // 移动端不触发桌面快捷键
-  if (isMobileUa) {
+  if (isActualMobileUa) {
     return;
   }
 
