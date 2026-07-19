@@ -332,7 +332,7 @@ const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState =
     liveState: clone(scenes[activeSceneId].state),
     scenes,
     persistentObjects,
-    camera: { x: 0, y: 0, zoom: 1 },
+    camera: { x: 0, y: 0, zoom: 0.5 },
     selectedObjectId: null,
   }
 }

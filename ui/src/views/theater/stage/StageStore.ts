@@ -143,7 +143,7 @@ export const createInitialTheaterStageState = (): StageWorkspaceState => {
     liveState: clone(opening.state),
     scenes: { [opening.id]: opening, [tavern.id]: tavern },
     persistentObjects: {},
-    camera: { x: 0, y: 0, zoom: 1 },
+    camera: { x: 0, y: 0, zoom: 0.5 },
     selectedObjectId: null,
   }
 }
@@ -938,7 +938,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   }
 
   const isPersistentObject = (objectId: string) => !!state.persistentObjects[objectId]
-  const resetCamera = () => Object.assign(state.camera, { x: 0, y: 0, zoom: 1 })
+  const resetCamera = () => Object.assign(state.camera, { x: 0, y: 0, zoom: 0.5 })
   const getSnapshot = () => clone(state)
   const applyScene = (sceneId: string) => {
     if (!state.scenes[sceneId]) return false

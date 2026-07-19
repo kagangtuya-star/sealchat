@@ -4,6 +4,11 @@ import { createTheaterStageStore } from '../src/views/theater/stage/StageStore'
 import { setTheaterEffectConfig, theaterEffectConfigFromObject } from '../src/views/theater/effects/theater-effect-types'
 
 const store = createTheaterStageStore()
+assert.equal(store.state.camera.zoom, 0.5)
+store.state.camera.zoom = 1
+store.resetCamera()
+assert.deepEqual(store.state.camera, { x: 0, y: 0, zoom: 0.5 })
+
 const created = store.addObject('effect')
 const mediaUrl = 'https://example.com/effect.webp'
 
