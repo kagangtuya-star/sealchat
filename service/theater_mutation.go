@@ -145,7 +145,13 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		if nextRevision%100 == 0 {
 			snapshotJSON, snapshotHash, err := canonicalTheaterJSON(snapshot)
 			if err == nil {
-				_ = tx.Create(&model.TheaterSnapshotModel{RoomID: current.ID, Revision: nextRevision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(snapshotJSON), SnapshotHash: snapshotHash, SnapshotBytes: int64(len(snapshotJSON)), Kind: "automatic", CreatedBy: actorID}).Error
+				item := &model.TheaterSnapshotModel{RoomID: current.ID, Revision: nextRevision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(snapshotJSON), SnapshotHash: snapshotHash, SnapshotBytes: int64(len(snapshotJSON)), Kind: "automatic", CreatedBy: actorID}
+				if err := tx.Create(item).Error; err != nil {
+					return err
+				}
+				if err := createTheaterResourceHolds(tx, item, nil); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -703,6 +709,12 @@ func recalculateTheaterResourceReferences(tx *gorm.DB, roomID string) error {
 	if err := tx.Where("id = ?", roomID).First(&room).Error; err != nil {
 		return err
 	}
+	var previouslyReferencedIDs []string
+	if err := tx.Model(&model.TheaterResourceModel{}).
+		Where("room_id = ? AND reference_count > 0", roomID).
+		Pluck("id", &previouslyReferencedIDs).Error; err != nil {
+		return err
+	}
 	counts := map[string]int64{}
 	countResourceIDsInJSON(room.StateJSON, counts)
 	var scenes []model.TheaterSceneModel
@@ -726,6 +738,42 @@ func recalculateTheaterResourceReferences(tx *gorm.DB, roomID string) error {
 		if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id = ? AND id = ?", roomID, resourceID).Update("reference_count", count).Error; err != nil {
 			return err
 		}
+	}
+	now := time.Now()
+	if len(previouslyReferencedIDs) > 0 {
+		if err := tx.Model(&model.TheaterResourceModel{}).
+			Where("room_id = ? AND id IN ? AND reference_count = 0 AND status = ?", roomID, previouslyReferencedIDs, "ready").
+			Updates(map[string]any{
+				"status":             "deleting",
+				"deleted_at":         &now,
+				"cleanup_reason":     theaterResourceCleanupOrphan,
+				"cleanup_after":      now.Add(theaterResourceDeleteGrace),
+				"cleanup_attempts":   0,
+				"cleanup_last_error": "",
+			}).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&model.TheaterResourceModel{}).
+		Where("room_id = ? AND reference_count > 0 AND status = ? AND cleanup_reason = ?", roomID, "deleting", theaterResourceCleanupOrphan).
+		Updates(map[string]any{
+			"status":             "ready",
+			"deleted_at":         nil,
+			"cleanup_reason":     "",
+			"cleanup_after":      nil,
+			"cleanup_attempts":   0,
+			"cleanup_last_error": "",
+		}).Error; err != nil {
+		return err
+	}
+	var purgingReferences int64
+	if err := tx.Model(&model.TheaterResourceModel{}).
+		Where("room_id = ? AND reference_count > 0 AND status = ?", roomID, "purging").
+		Count(&purgingReferences).Error; err != nil {
+		return err
+	}
+	if purgingReferences > 0 {
+		return newTheaterError(TheaterErrorResourceNotReady, "资源正在清理，无法重新引用", 409, nil)
 	}
 	return nil
 }

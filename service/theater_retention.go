@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/gorm"
+
 	"sealchat/model"
 )
 
@@ -23,12 +25,13 @@ type TheaterRetentionResult struct {
 	AuditDeleted    int64 `json:"auditDeleted"`
 	SnapshotDeleted int64 `json:"snapshotDeleted"`
 	JobDeleted      int64 `json:"jobDeleted"`
+	HoldsDeleted    int64 `json:"holdsDeleted"`
 	ResourcesQueued int64 `json:"resourcesQueued"`
 	ResourcesGC     int   `json:"resourcesGc"`
 }
 
 func (result TheaterRetentionResult) Total() int64 {
-	return result.AppliedDeleted + result.RejectedDeleted + result.AuditDeleted + result.SnapshotDeleted + result.JobDeleted + result.ResourcesQueued + int64(result.ResourcesGC)
+	return result.AppliedDeleted + result.RejectedDeleted + result.AuditDeleted + result.SnapshotDeleted + result.JobDeleted + result.HoldsDeleted + result.ResourcesQueued + int64(result.ResourcesGC)
 }
 
 func RunTheaterRetention(now time.Time, batch int) (*TheaterRetentionResult, error) {
@@ -64,11 +67,19 @@ func RunTheaterRetention(now time.Time, batch int) (*TheaterRetentionResult, err
 			return result, err
 		}
 		if len(snapshotIDs) > 0 {
-			deleted := model.GetDB().Unscoped().Where("id IN ?", snapshotIDs).Delete(&model.TheaterSnapshotModel{})
-			if deleted.Error != nil {
-				return result, deleted.Error
+			if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+				if err := deleteTheaterResourceHoldsForSnapshots(tx, snapshotIDs); err != nil {
+					return err
+				}
+				deleted := tx.Unscoped().Where("id IN ?", snapshotIDs).Delete(&model.TheaterSnapshotModel{})
+				if deleted.Error != nil {
+					return deleted.Error
+				}
+				result.SnapshotDeleted += deleted.RowsAffected
+				return nil
+			}); err != nil {
+				return result, err
 			}
-			result.SnapshotDeleted += deleted.RowsAffected
 		}
 	}
 	deleted := model.GetDB().Unscoped().Where("status = ? AND created_at < ?", "rejected", now.Add(-theaterRejectedRetention)).Limit(batch).Delete(&model.TheaterMutationModel{})
@@ -86,14 +97,27 @@ func RunTheaterRetention(now time.Time, batch int) (*TheaterRetentionResult, err
 		return result, deleted.Error
 	}
 	result.JobDeleted = deleted.RowsAffected
+	deleted = model.GetDB().Unscoped().Where("expires_at IS NOT NULL AND expires_at <= ?", now).Delete(&model.TheaterResourceHoldModel{})
+	if deleted.Error != nil {
+		return result, deleted.Error
+	}
+	result.HoldsDeleted = deleted.RowsAffected
 	queued := model.GetDB().Model(&model.TheaterResourceModel{}).
 		Where("status = ? AND created_at < ?", "failed", now.Add(-theaterFailedRetention)).Limit(batch).
-		Updates(map[string]any{"status": "deleting", "reference_count": 0, "deleted_at": now})
+		Updates(map[string]any{
+			"status":             "deleting",
+			"reference_count":    0,
+			"deleted_at":         now,
+			"cleanup_reason":     theaterResourceCleanupFailed,
+			"cleanup_after":      now.Add(theaterResourceDeleteGrace),
+			"cleanup_attempts":   0,
+			"cleanup_last_error": "",
+		})
 	if queued.Error != nil {
 		return result, queued.Error
 	}
 	result.ResourcesQueued = queued.RowsAffected
-	gc, err := RunTheaterResourceGC(context.Background(), 7*24*time.Hour, batch)
+	gc, err := RunTheaterResourceGC(context.Background(), theaterResourceDeleteGrace, batch)
 	if err != nil {
 		return result, err
 	}

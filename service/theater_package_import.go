@@ -202,11 +202,16 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 		if err != nil {
 			return err
 		}
-		if err := tx.Create(&model.TheaterSnapshotModel{
+		preImport := &model.TheaterSnapshotModel{
 			RoomID: current.ID, Revision: current.Revision, SchemaVersion: current.SchemaVersion,
 			SnapshotJSON: string(currentJSON), SnapshotHash: currentHash, SnapshotBytes: int64(len(currentJSON)),
 			Kind: "pre-import", Reason: "舞台包导入", CreatedBy: job.ActorUserID,
-		}).Error; err != nil {
+		}
+		if err := tx.Create(preImport).Error; err != nil {
+			return err
+		}
+		preImportExpiresAt := time.Now().Add(theaterSnapshotRetention)
+		if err := createTheaterResourceHolds(tx, preImport, &preImportExpiresAt); err != nil {
 			return err
 		}
 

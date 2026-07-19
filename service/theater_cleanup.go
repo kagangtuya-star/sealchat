@@ -39,13 +39,28 @@ func cleanupTheaterChannels(tx *gorm.DB, channelIDs []string) error {
 		return nil
 	}
 	now := time.Now()
-	if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id IN ?", roomIDs).Updates(map[string]any{"status": "deleting", "reference_count": 0, "deleted_at": &now}).Error; err != nil {
+	if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id IN ?", roomIDs).Updates(map[string]any{
+		"status":             "deleting",
+		"reference_count":    0,
+		"deleted_at":         &now,
+		"cleanup_reason":     theaterResourceCleanupScopeDelete,
+		"cleanup_after":      now.Add(theaterResourceDeleteGrace),
+		"cleanup_attempts":   0,
+		"cleanup_last_error": "",
+	}).Error; err != nil {
 		return err
 	}
 	if err := tx.Unscoped().Where("room_id IN ?", roomIDs).Delete(&model.TheaterObjectModel{}).Error; err != nil {
 		return err
 	}
 	if err := tx.Unscoped().Where("room_id IN ?", roomIDs).Delete(&model.TheaterSceneModel{}).Error; err != nil {
+		return err
+	}
+	var snapshotIDs []string
+	if err := tx.Model(&model.TheaterSnapshotModel{}).Where("room_id IN ?", roomIDs).Pluck("id", &snapshotIDs).Error; err != nil {
+		return err
+	}
+	if err := deleteTheaterResourceHoldsForSnapshots(tx, snapshotIDs); err != nil {
 		return err
 	}
 	if err := tx.Unscoped().Where("room_id IN ?", roomIDs).Delete(&model.TheaterSnapshotModel{}).Error; err != nil {

@@ -242,6 +242,13 @@ func MergeTheaterRoomsToWorld(worldID string) error {
 			if err := tx.Unscoped().Where("room_id = ?", room.ID).Delete(&model.TheaterSceneModel{}).Error; err != nil {
 				return err
 			}
+			var snapshotIDs []string
+			if err := tx.Model(&model.TheaterSnapshotModel{}).Where("room_id = ?", room.ID).Pluck("id", &snapshotIDs).Error; err != nil {
+				return err
+			}
+			if err := deleteTheaterResourceHoldsForSnapshots(tx, snapshotIDs); err != nil {
+				return err
+			}
 			if err := tx.Unscoped().Where("room_id = ?", room.ID).Delete(&model.TheaterSnapshotModel{}).Error; err != nil {
 				return err
 			}

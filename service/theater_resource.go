@@ -136,7 +136,7 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 	}
 	config := normalizeTheaterMediaConfig(theaterMedia.config)
 	var used int64
-	if err := model.GetDB().Model(&model.TheaterResourceModel{}).Where("room_id = ? AND status NOT IN ?", room.ID, []string{"failed", "deleting"}).Select("COALESCE(SUM(size_bytes), 0)").Scan(&used).Error; err != nil {
+	if err := model.GetDB().Model(&model.TheaterResourceModel{}).Where("room_id = ? AND status NOT IN ?", room.ID, []string{"failed", "deleting", "purging"}).Select("COALESCE(SUM(size_bytes), 0)").Scan(&used).Error; err != nil {
 		return nil, err
 	}
 	if used >= config.RoomQuotaMB<<20 {
@@ -202,7 +202,7 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 		}
 	}
 	var duplicate model.TheaterResourceModel
-	if err := model.GetDB().Where("room_id = ? AND content_hash = ? AND size_bytes = ? AND status <> ?", room.ID, hashHex, written, "deleting").Order("created_at ASC").Limit(1).Find(&duplicate).Error; err != nil {
+	if err := model.GetDB().Where("room_id = ? AND content_hash = ? AND size_bytes = ? AND status NOT IN ?", room.ID, hashHex, written, []string{"deleting", "purging"}).Order("created_at ASC").Limit(1).Find(&duplicate).Error; err != nil {
 		return nil, err
 	}
 	if duplicate.ID != "" {
@@ -252,7 +252,7 @@ func GetTheaterResource(ctx context.Context, actorID, worldID, channelID, resour
 	if err != nil {
 		return nil, err
 	}
-	if resource == nil || resource.Status == "deleting" {
+	if resource == nil || resource.Status == "deleting" || resource.Status == "purging" {
 		return nil, newTheaterError(TheaterErrorResourceNotFound, "资源不存在", 404, nil)
 	}
 	public, err := theaterResourcePublicFromModel(model.GetDB(), *resource)
@@ -271,7 +271,7 @@ func GetTheaterResourceForObserver(ctx context.Context, observerWorldID, channel
 	if err != nil {
 		return nil, err
 	}
-	if resource == nil || resource.Status == "deleting" {
+	if resource == nil || resource.Status == "deleting" || resource.Status == "purging" {
 		return nil, newTheaterError(TheaterErrorResourceNotFound, "资源不存在", 404, nil)
 	}
 	public, err := theaterResourcePublicFromModel(model.GetDB(), *resource)
@@ -324,14 +324,28 @@ func DeleteTheaterResource(ctx context.Context, actorID, worldID, channelID, res
 	if err != nil {
 		return err
 	}
-	if resource == nil || resource.Status == "deleting" {
+	if resource == nil || resource.Status == "deleting" || resource.Status == "purging" {
 		return nil
 	}
 	if resource.ReferenceCount > 0 {
 		return newTheaterError(TheaterErrorResourceInUse, "资源仍被共享状态引用", 409, map[string]any{"referenceCount": resource.ReferenceCount})
 	}
 	now := time.Now()
-	if err := model.GetDB().Model(resource).Updates(map[string]any{"status": "deleting", "deleted_at": &now}).Error; err != nil {
+	held, err := theaterResourceHasActiveHold(model.GetDB(), resource.ID, now)
+	if err != nil {
+		return err
+	}
+	if held {
+		return newTheaterError(TheaterErrorResourceInUse, "资源仍被可恢复快照引用", 409, map[string]any{"snapshotHold": true})
+	}
+	if err := model.GetDB().Model(resource).Updates(map[string]any{
+		"status":             "deleting",
+		"deleted_at":         &now,
+		"cleanup_reason":     theaterResourceCleanupExplicit,
+		"cleanup_after":      now.Add(theaterResourceDeleteGrace),
+		"cleanup_attempts":   0,
+		"cleanup_last_error": "",
+	}).Error; err != nil {
 		return err
 	}
 	auditTheaterResourceState(resource.ID, "deleting", "")

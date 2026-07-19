@@ -157,7 +157,12 @@ func replaceTheaterSnapshot(ctx context.Context, actorID string, command Theater
 		if err != nil {
 			return err
 		}
-		if err := tx.Create(&model.TheaterSnapshotModel{RoomID: current.ID, Revision: current.Revision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(currentJSON), SnapshotHash: currentHash, SnapshotBytes: int64(len(currentJSON)), Kind: "pre-replace", Reason: command.Reason, CreatedBy: actorID}).Error; err != nil {
+		preReplace := &model.TheaterSnapshotModel{RoomID: current.ID, Revision: current.Revision, SchemaVersion: current.SchemaVersion, SnapshotJSON: string(currentJSON), SnapshotHash: currentHash, SnapshotBytes: int64(len(currentJSON)), Kind: "pre-replace", Reason: command.Reason, CreatedBy: actorID}
+		if err := tx.Create(preReplace).Error; err != nil {
+			return err
+		}
+		preReplaceExpiresAt := time.Now().Add(theaterSnapshotRetention)
+		if err := createTheaterResourceHolds(tx, preReplace, &preReplaceExpiresAt); err != nil {
 			return err
 		}
 		nextRevision := current.Revision + 1
@@ -287,7 +292,11 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 	if err := recalculateTheaterResourceReferences(tx, room.ID); err != nil {
 		return err
 	}
-	for resourceID := range snapshot.Resources {
+	referencedResources := map[string]int64{}
+	if snapshotJSON, err := json.Marshal(snapshot); err == nil {
+		countResourceIDsInJSON(string(snapshotJSON), referencedResources)
+	}
+	for resourceID := range referencedResources {
 		var count int64
 		if err := tx.Model(&model.TheaterResourceModel{}).Where("room_id = ? AND id = ? AND status = ?", room.ID, resourceID, "ready").Count(&count).Error; err != nil {
 			return err
@@ -316,7 +325,13 @@ func CreateTheaterCheckpoint(actorID, worldID, channelID, kind, reason string) (
 		return nil, err
 	}
 	item := &model.TheaterSnapshotModel{StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()}, RoomID: room.ID, Revision: room.Revision, SchemaVersion: room.SchemaVersion, SnapshotJSON: string(raw), SnapshotHash: hash, SnapshotBytes: int64(len(raw)), Kind: kind, Reason: reason, CreatedBy: actorID}
-	return item, model.GetDB().Create(item).Error
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		return createTheaterResourceHolds(tx, item, nil)
+	})
+	return item, err
 }
 
 func ListTheaterCheckpoints(actorID, worldID, channelID string, limit int) ([]model.TheaterSnapshotModel, error) {
@@ -375,7 +390,7 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 	}
 	if includeResources {
 		var resources []model.TheaterResourceModel
-		if err := conn.Where("room_id = ? AND status <> ?", room.ID, "deleting").Find(&resources).Error; err != nil {
+		if err := conn.Where("room_id = ? AND status NOT IN ?", room.ID, []string{"deleting", "purging"}).Find(&resources).Error; err != nil {
 			return result, "", err
 		}
 		for _, resource := range resources {

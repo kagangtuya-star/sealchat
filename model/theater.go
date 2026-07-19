@@ -125,6 +125,10 @@ type TheaterResourceModel struct {
 	ReferenceCount     int64      `json:"referenceCount" gorm:"not null;default:0;index"`
 	CreatedBy          string     `json:"createdBy" gorm:"size:100;index"`
 	ReadyAt            *time.Time `json:"readyAt,omitempty"`
+	CleanupReason      string     `json:"cleanupReason,omitempty" gorm:"size:32;index"`
+	CleanupAfter       *time.Time `json:"cleanupAfter,omitempty" gorm:"index"`
+	CleanupAttempts    int        `json:"cleanupAttempts,omitempty" gorm:"not null;default:0"`
+	CleanupLastError   string     `json:"cleanupLastError,omitempty" gorm:"size:2048"`
 }
 
 func (*TheaterResourceModel) TableName() string { return "theater_resources" }
@@ -160,6 +164,15 @@ type TheaterResourceJobModel struct {
 }
 
 func (*TheaterResourceJobModel) TableName() string { return "theater_resource_jobs" }
+
+type TheaterResourceHoldModel struct {
+	StringPKBaseModel
+	ResourceID string     `json:"resourceId" gorm:"size:100;not null;uniqueIndex:udx_theater_resource_hold,priority:1;index"`
+	SnapshotID string     `json:"snapshotId" gorm:"size:100;not null;uniqueIndex:udx_theater_resource_hold,priority:2;index"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty" gorm:"index"`
+}
+
+func (*TheaterResourceHoldModel) TableName() string { return "theater_resource_holds" }
 
 type TheaterMutationModel struct {
 	StringPKBaseModel
@@ -221,6 +234,7 @@ func theaterModels() []any {
 		&TheaterResourceModel{},
 		&TheaterResourceVariantModel{},
 		&TheaterResourceJobModel{},
+		&TheaterResourceHoldModel{},
 		&TheaterAppearanceAssetModel{},
 		&TheaterPackageJobModel{},
 		&TheaterMutationModel{},
