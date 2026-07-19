@@ -105,7 +105,7 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
   background: null,
   foreground: null,
   surfaceStyles: {
-    background: createDefaultStageSurfaceStyle(),
+    background: createDefaultStageSurfaceStyle('cover', { opacity: 0.9, blurPx: 10, brightness: 1, overlay: { enabled: false, color: '#000000', opacity: 0.4 } }),
     foreground: createDefaultStageSurfaceStyle(),
   },
   backgroundColor: color,
@@ -289,7 +289,7 @@ const normalizeLiveState = (input: Partial<StageLiveState> | undefined, fallback
   background: normalizeImageRef(input?.background),
   foreground: normalizeImageRef(input?.foreground),
   surfaceStyles: {
-    background: normalizeStageSurfaceStyle(input?.surfaceStyles?.background, input?.fieldObjectFit || 'cover'),
+    background: normalizeStageSurfaceStyle(input?.surfaceStyles?.background, input?.fieldObjectFit || 'cover', { opacity: 0.9, blurPx: 10 }),
     foreground: normalizeStageSurfaceStyle(input?.surfaceStyles?.foreground, input?.fieldObjectFit || 'cover'),
   },
   backgroundColor: typeof input?.backgroundColor === 'string' ? input.backgroundColor : fallbackColor,
@@ -845,7 +845,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   }
 
   const resetSceneSurfaceStyle = (target: StageSurfaceTarget) => {
-    state.liveState.surfaceStyles[target] = createDefaultStageSurfaceStyle()
+    state.liveState.surfaceStyles[target] = target === 'background'
+      ? createDefaultStageSurfaceStyle('cover', { opacity: 0.9, blurPx: 10 })
+      : createDefaultStageSurfaceStyle()
   }
 
   const setObjectImage = (

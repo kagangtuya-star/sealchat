@@ -77,6 +77,7 @@ export interface StageSurfaceStyle {
   brightness: number
   blurPx: number
   opacity: number
+  zoom: number
   fit: StageSurfaceFit
   overlay: {
     enabled: boolean
@@ -89,39 +90,47 @@ export type StageSurfaceStylePatch = Partial<Omit<StageSurfaceStyle, 'overlay'>>
   overlay?: Partial<StageSurfaceStyle['overlay']>
 }
 
-export const createDefaultStageSurfaceStyle = (fit: StageSurfaceFit = 'cover'): StageSurfaceStyle => ({
+export const createDefaultStageSurfaceStyle = (fit: StageSurfaceFit = 'cover', overrides: Partial<StageSurfaceStyle> = {}): StageSurfaceStyle => ({
   brightness: 1,
   blurPx: 0,
   opacity: 1,
+  zoom: 1,
   fit,
   overlay: {
     enabled: false,
     color: '#000000',
     opacity: 0.4,
   },
+  ...overrides,
 })
 
 const finiteRange = (value: unknown, fallback: number, min: number, max: number) => (
   typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
 )
 
-export const normalizeStageSurfaceStyle = (input: unknown, fallbackFit: StageSurfaceFit = 'cover'): StageSurfaceStyle => {
+export const normalizeStageSurfaceStyle = (
+  input: unknown,
+  fallbackFit: StageSurfaceFit = 'cover',
+  defaults: Partial<StageSurfaceStyle> = {},
+): StageSurfaceStyle => {
+  const base = createDefaultStageSurfaceStyle(fallbackFit, defaults)
   const value = input && typeof input === 'object' ? input as Partial<StageSurfaceStyle> : {}
   const overlay: Partial<StageSurfaceStyle['overlay']> = value.overlay && typeof value.overlay === 'object'
     ? value.overlay
     : {}
   const fits: StageSurfaceFit[] = ['fill', 'cover', 'contain', 'tile', 'center']
   return {
-    brightness: finiteRange(value.brightness, 1, 0, 2),
-    blurPx: finiteRange(value.blurPx, 0, 0, 40),
-    opacity: finiteRange(value.opacity, 1, 0, 1),
+    brightness: finiteRange(value.brightness, base.brightness, 0, 2),
+    blurPx: finiteRange(value.blurPx, base.blurPx, 0, 40),
+    opacity: finiteRange(value.opacity, base.opacity, 0, 1),
+    zoom: finiteRange(value.zoom, base.zoom, 0.1, 5),
     fit: value.fit && fits.includes(value.fit) ? value.fit : fallbackFit,
     overlay: {
       enabled: overlay.enabled === true,
       color: typeof overlay.color === 'string' && overlay.color.trim() && overlay.color.length <= 64
         ? overlay.color.trim()
         : '#000000',
-      opacity: finiteRange(overlay.opacity, 0.4, 0, 1),
+      opacity: finiteRange(overlay.opacity, base.overlay.opacity, 0, 1),
     },
   }
 }

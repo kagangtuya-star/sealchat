@@ -996,11 +996,14 @@ func ccfoliaStageState(backgroundRef, foregroundRef *string, width, height float
 		}
 	}
 	style := func() map[string]any {
-		return map[string]any{"brightness": 1, "blurPx": 0, "opacity": 1, "fit": targetFit, "overlay": map[string]any{"enabled": false, "color": "#000000", "opacity": 0.4}}
+		return map[string]any{"brightness": 1, "blurPx": 0, "opacity": 1, "zoom": 1, "fit": targetFit, "overlay": map[string]any{"enabled": false, "color": "#000000", "opacity": 0.4}}
 	}
+	backgroundStyle := style()
+	backgroundStyle["blurPx"] = 10
+	backgroundStyle["opacity"] = 0.9
 	state := map[string]any{
 		"background": background, "foreground": foreground,
-		"surfaceStyles": map[string]any{"background": style(), "foreground": style()},
+		"surfaceStyles": map[string]any{"background": backgroundStyle, "foreground": style()},
 		"fieldWidth":    targetWidth, "fieldHeight": targetHeight,
 		"grid":       map[string]any{"backgroundColor": color, "objectFit": targetFit, "display": displayGrid, "size": targetGridSize, "align": align},
 		"transition": map[string]any{"type": transitionType, "durationMs": durationMS}, "ccfolia": metadata,

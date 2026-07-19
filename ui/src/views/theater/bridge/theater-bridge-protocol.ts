@@ -309,6 +309,7 @@ const stageSurfaceStyleSchema = z.strictObject({
   brightness: z.number().finite().min(0).max(2),
   blurPx: z.number().finite().min(0).max(40),
   opacity: z.number().finite().min(0).max(1),
+  zoom: z.number().finite().min(0.1).max(5),
   fit: z.enum(['fill', 'cover', 'contain', 'tile', 'center']),
   overlay: z.strictObject({
     enabled: z.boolean(),

@@ -1562,17 +1562,28 @@ const surfaceDrawRect = (
   height: number,
   fit: Exclude<StageSurfaceFit, 'tile'>,
   blurPx: number,
+  zoom = 1,
 ) => {
   const dimensions = stageMediaDimensions(source)
   const sourceWidth = Math.max(1, dimensions.width)
   const sourceHeight = Math.max(1, dimensions.height)
-  if (fit === 'fill') return { x: -blurPx * 2, y: -blurPx * 2, width: width + blurPx * 4, height: height + blurPx * 4 }
-  if (fit === 'center') return { x: (width - sourceWidth) / 2, y: (height - sourceHeight) / 2, width: sourceWidth, height: sourceHeight }
+  if (fit === 'fill') {
+    const fillWidth = width + blurPx * 4
+    const fillHeight = height + blurPx * 4
+    const renderedWidth = fillWidth * zoom
+    const renderedHeight = fillHeight * zoom
+    return { x: (width - renderedWidth) / 2, y: (height - renderedHeight) / 2, width: renderedWidth, height: renderedHeight }
+  }
+  if (fit === 'center') {
+    const renderedWidth = sourceWidth * zoom
+    const renderedHeight = sourceHeight * zoom
+    return { x: (width - renderedWidth) / 2, y: (height - renderedHeight) / 2, width: renderedWidth, height: renderedHeight }
+  }
   const sourceRatio = sourceWidth / sourceHeight
   const targetRatio = width / height
   const useWidth = fit === 'cover' ? sourceRatio < targetRatio : sourceRatio > targetRatio
-  let renderedWidth = useWidth ? width : height * sourceRatio
-  let renderedHeight = useWidth ? width / sourceRatio : height
+  let renderedWidth = (useWidth ? width : height * sourceRatio) * zoom
+  let renderedHeight = (useWidth ? width / sourceRatio : height) * zoom
   let x = (width - renderedWidth) / 2
   let y = (height - renderedHeight) / 2
   if (fit === 'cover' && blurPx > 0) {
@@ -1613,10 +1624,15 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
     const pattern = context.createPattern(source, 'repeat')
     if (pattern) {
       context.fillStyle = pattern
+      if (style.zoom !== 1) {
+        context.translate(width / 2, height / 2)
+        context.scale(style.zoom, style.zoom)
+        context.translate(-width / 2, -height / 2)
+      }
       context.fillRect(0, 0, width, height)
     }
   } else {
-    const rect = surfaceDrawRect(source, width, height, style.fit, style.blurPx)
+    const rect = surfaceDrawRect(source, width, height, style.fit, style.blurPx, style.zoom)
     context.drawImage(source, 0, 0, stageMediaDimensions(source).width, stageMediaDimensions(source).height, rect.x, rect.y, rect.width, rect.height)
   }
   context.restore()
@@ -1678,7 +1694,7 @@ const updateDirectSurfaceImage = (
     return
   }
   const dimensions = stageMediaDimensions(source)
-  const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0)
+  const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0, slot.style.zoom)
   slot.directImage.image(source)
   slot.directImage.position({ x: rect.x, y: rect.y })
   slot.directImage.size({ width: rect.width, height: rect.height })
@@ -3654,6 +3670,11 @@ onBeforeUnmount(() => {
                     <n-radio-group :value="surfaceStyle(surface.target).fit" size="small" @update:value="updateSurfaceFit(surface.target, $event)">
                       <n-radio v-for="option in surfaceFitOptions" :key="option.value" :value="option.value">{{ option.label }}</n-radio>
                     </n-radio-group>
+                  </div>
+                  <div class="theater-surface-settings__slider">
+                    <span>放大</span>
+                    <n-slider :value="Math.round(surfaceStyle(surface.target).zoom * 100)" :min="10" :max="500" :step="1" @update:value="store.patchSceneSurfaceStyle(surface.target, { zoom: $event / 100 })" />
+                    <output>{{ Math.round(surfaceStyle(surface.target).zoom * 100) }}%</output>
                   </div>
                   <div class="theater-surface-settings__slider">
                     <span>透明度</span>

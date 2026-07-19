@@ -161,7 +161,7 @@ const stageStateFromServer = (value: unknown, objects: Record<string, StageObjec
     background: imageRef(raw.background),
     foreground: imageRef(raw.foreground),
     surfaceStyles: {
-      background: normalizeStageSurfaceStyle(surfaceStyles.background, legacyFit),
+      background: normalizeStageSurfaceStyle(surfaceStyles.background, legacyFit, { opacity: 0.9, blurPx: 10 }),
       foreground: normalizeStageSurfaceStyle(surfaceStyles.foreground, legacyFit),
     },
     backgroundColor: typeof grid.backgroundColor === 'string' ? grid.backgroundColor : '#111827',

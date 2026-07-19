@@ -307,7 +307,7 @@ func validateTheaterSurfaceStyles(value any) error {
 		if !ok {
 			return theaterPayloadError("surfaceStyles." + target + " 无效")
 		}
-		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "fit": true, "overlay": true}
+		allowed := map[string]bool{"brightness": true, "blurPx": true, "opacity": true, "zoom": true, "fit": true, "overlay": true}
 		for key := range style {
 			if !allowed[key] {
 				return theaterPayloadError("surfaceStyles." + target + " 包含禁止字段: " + key)
@@ -317,6 +317,12 @@ func validateTheaterSurfaceStyles(value any) error {
 			number, valid := theaterNumericValue(style[name])
 			if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < bounds[0] || number > bounds[1] {
 				return theaterPayloadError("surfaceStyles." + target + "." + name + " 无效")
+			}
+		}
+		if zoom, present := style["zoom"]; present {
+			number, valid := theaterNumericValue(zoom)
+			if !valid || math.IsNaN(number) || math.IsInf(number, 0) || number < 0.1 || number > 5 {
+				return theaterPayloadError("surfaceStyles." + target + ".zoom 无效")
 			}
 		}
 		fit, ok := style["fit"].(string)
