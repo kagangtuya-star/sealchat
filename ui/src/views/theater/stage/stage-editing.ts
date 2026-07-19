@@ -194,6 +194,7 @@ export const instantiateClipboardBundle = (
   const objects = bundle.objects.map((source) => {
     const object = clone(source)
     object.id = idMap.get(source.id)!
+    object.metadata = { ...object.metadata, transitionKey: object.id }
     object.parentId = source.id === bundle.rootId
       ? rootParentId
       : source.parentId ? idMap.get(source.parentId) || null : null

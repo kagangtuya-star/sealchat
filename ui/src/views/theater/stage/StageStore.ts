@@ -554,10 +554,15 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     Object.keys(source.state.sceneObjects).forEach((id) => idMap.set(id, uid('object')))
     const objects = Object.values(source.state.sceneObjects).reduce<Record<string, StageObject>>((result, object) => {
       const id = idMap.get(object.id)!
+      const transitionKey = typeof object.metadata.transitionKey === 'string' && object.metadata.transitionKey.trim()
+        ? object.metadata.transitionKey.trim()
+        : object.id
+      object.metadata = { ...object.metadata, transitionKey }
       result[id] = {
         ...clone(object),
         id,
         parentId: object.parentId ? idMap.get(object.parentId) || null : null,
+        metadata: { ...clone(object.metadata), transitionKey },
       }
       return result
     }, {})

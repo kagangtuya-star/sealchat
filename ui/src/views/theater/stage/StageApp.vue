@@ -917,6 +917,7 @@ let worldCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
+let sceneMorphRoot: Konva.Group | null = null
 let drawingDraftRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let selectionRect: Konva.Rect | null = null
@@ -1643,9 +1644,293 @@ interface SceneMediaBatch {
 }
 
 let sceneMediaBatch: SceneMediaBatch | null = null
+const sceneTransitionDurationMs = ref(400)
+let sceneTransitionTimer: number | null = null
 
-const beginSceneMediaBatch = (sceneId: string) => {
+interface SceneMorphVisual {
+  x: number
+  y: number
+  rotation: number
+  scaleX: number
+  scaleY: number
+  opacity: number
+  width: number
+  height: number
+}
+
+interface SceneMorphItem {
+  object: StageObject
+  visual: SceneMorphVisual
+  ghost: Konva.Group | null
+}
+
+interface SceneMorphSnapshot {
+  sceneId: string
+  previous: Map<string, SceneMorphItem>
+  matches: Map<string, SceneMorphItem>
+  targetAttrs: Map<string, SceneMorphVisual>
+  backgroundGhost: Konva.Group | null
+  textGhost: HTMLElement | null
+  started: boolean
+}
+
+let sceneMorphSnapshot: SceneMorphSnapshot | null = null
+let sceneMorphTweens: Konva.Tween[] = []
+let sceneMorphDelayTimers: number[] = []
+const sceneMorphTextHidden = ref(false)
+const sceneMorphTextAnimating = ref(false)
+
+const stageObjectTransitionKey = (object: StageObject) => {
+  const value = object.metadata?.transitionKey
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+const stageObjectFallbackKey = (object: StageObject) => `${object.type}\u0000${object.name.trim().toLocaleLowerCase()}`
+
+const uniqueObjectIndex = (objects: StageObject[], key: (object: StageObject) => string) => {
+  const grouped = new Map<string, StageObject[]>()
+  objects.forEach((object) => {
+    const value = key(object)
+    if (!value) return
+    grouped.set(value, [...(grouped.get(value) || []), object])
+  })
+  return new Map(Array.from(grouped.entries())
+    .filter(([, entries]) => entries.length === 1)
+    .map(([value, entries]) => [value, entries[0]]))
+}
+
+const matchSceneMorphObjects = (previous: Map<string, SceneMorphItem>, next: StageObject[]) => {
+  const matches = new Map<string, SceneMorphItem>()
+  const used = new Set<string>()
+  const previousObjects = Array.from(previous.values()).map((item) => item.object)
+  const previousTransitionKeys = uniqueObjectIndex(previousObjects, stageObjectTransitionKey)
+  const nextTransitionKeys = uniqueObjectIndex(next, stageObjectTransitionKey)
+
+  next.forEach((object) => {
+    const key = stageObjectTransitionKey(object)
+    if (!key || nextTransitionKeys.get(key)?.id !== object.id) return
+    const candidate = previousTransitionKeys.get(key)
+    if (!candidate || used.has(candidate.id)) return
+    matches.set(object.id, previous.get(candidate.id)!)
+    used.add(candidate.id)
+  })
+  next.forEach((object) => {
+    if (matches.has(object.id) || used.has(object.id) || !previous.has(object.id)) return
+    matches.set(object.id, previous.get(object.id)!)
+    used.add(object.id)
+  })
+
+  const unmatchedPrevious = previousObjects.filter((object) => !used.has(object.id))
+  const unmatchedNext = next.filter((object) => !matches.has(object.id))
+  const previousFallback = uniqueObjectIndex(unmatchedPrevious, stageObjectFallbackKey)
+  const nextFallback = uniqueObjectIndex(unmatchedNext, stageObjectFallbackKey)
+  unmatchedNext.forEach((object) => {
+    const key = stageObjectFallbackKey(object)
+    if (nextFallback.get(key)?.id !== object.id) return
+    const candidate = previousFallback.get(key)
+    if (!candidate || used.has(candidate.id)) return
+    matches.set(object.id, previous.get(candidate.id)!)
+    used.add(candidate.id)
+  })
+  return matches
+}
+
+const finishSceneMorph = () => {
+  if (sceneTransitionTimer !== null) window.clearTimeout(sceneTransitionTimer)
+  sceneTransitionTimer = null
+  sceneMorphDelayTimers.forEach((timer) => window.clearTimeout(timer))
+  sceneMorphDelayTimers = []
+  sceneMorphTweens.forEach((tween) => tween.destroy())
+  sceneMorphTweens = []
+  const snapshot = sceneMorphSnapshot
+  if (snapshot) {
+    snapshot.targetAttrs.forEach((attrs, objectId) => objectNodes.get(objectId)?.setAttrs(attrs))
+    snapshot.previous.forEach((item) => item.ghost?.destroy())
+    snapshot.backgroundGhost?.destroy()
+    snapshot.textGhost?.remove()
+  }
+  sceneMorphSnapshot = null
+  sceneMorphTextHidden.value = false
+  sceneMorphTextAnimating.value = false
+  backgroundLayer?.batchDraw()
+  worldLayer?.batchDraw()
+  foregroundLayer?.batchDraw()
+}
+
+const prepareSceneMorph = (captureCurrent: boolean, sceneId: string) => {
+  finishSceneMorph()
+  const transition = props.store.state.scenes[sceneId]?.state.transition
+  sceneTransitionDurationMs.value = transition?.type === 'crossfade' && transition.durationMs > 0
+    ? Math.min(2_000, Math.max(150, transition.durationMs))
+    : 400
+  if (!captureCurrent || !sceneMorphRoot) return
+
+  const previous = new Map<string, SceneMorphItem>()
+  const sceneObjects = props.store.state.liveState.sceneObjects
+  Object.values(sceneObjects).forEach((object) => {
+    if (isTheaterEffectObject(object)) return
+    const node = objectNodes.get(object.id)
+    if (!node) return
+    const root = !object.parentId || !sceneObjects[object.parentId]
+    const ghost = root ? node.clone({ listening: false }) as Konva.Group : null
+    if (ghost) sceneMorphRoot!.add(ghost)
+    previous.set(object.id, {
+      object: { ...object, transform: { ...object.transform }, metadata: { ...object.metadata } },
+      visual: {
+        x: node.x(),
+        y: node.y(),
+        rotation: node.rotation(),
+        scaleX: node.scaleX(),
+        scaleY: node.scaleY(),
+        opacity: node.opacity(),
+        width: Math.max(0.5, object.transform.width),
+        height: Math.max(0.5, object.transform.height),
+      },
+      ghost,
+    })
+  })
+
+  let backgroundGhost: Konva.Group | null = null
+  backgroundLayer?.draw()
+  const backgroundCanvas = backgroundLayer?.getCanvas()._canvas
+  if (backgroundCanvas && stage) {
+    const snapshotCanvas = document.createElement('canvas')
+    snapshotCanvas.width = backgroundCanvas.width
+    snapshotCanvas.height = backgroundCanvas.height
+    snapshotCanvas.getContext('2d')?.drawImage(backgroundCanvas, 0, 0)
+    backgroundGhost = new Konva.Group({ listening: false })
+    backgroundGhost.add(new Konva.Image({
+      image: snapshotCanvas,
+      width: stage.width(),
+      height: stage.height(),
+      listening: false,
+    }))
+    backgroundLayer?.add(backgroundGhost)
+  }
+
+  const textOverlay = viewportRef.value?.querySelector<HTMLElement>('.theater-text-overlay')
+  const textGhost = textOverlay?.cloneNode(true) as HTMLElement | undefined
+  if (textGhost) {
+    textGhost.style.pointerEvents = 'none'
+    viewportRef.value?.append(textGhost)
+  }
+  sceneMorphTextHidden.value = true
+  sceneMorphSnapshot = {
+    sceneId,
+    previous,
+    matches: new Map(),
+    targetAttrs: new Map(),
+    backgroundGhost,
+    textGhost: textGhost || null,
+    started: false,
+  }
+}
+
+const primeSceneMorphTargets = () => {
+  const snapshot = sceneMorphSnapshot
+  if (!snapshot || snapshot.started || snapshot.sceneId !== props.store.state.activeSceneId) return
+  const sceneObjects = Object.values(props.store.state.liveState.sceneObjects)
+    .filter((object) => !isTheaterEffectObject(object))
+  snapshot.matches = matchSceneMorphObjects(snapshot.previous, sceneObjects)
+  snapshot.targetAttrs.clear()
+  sceneObjects.forEach((object) => {
+    if (object.parentId && props.store.state.liveState.sceneObjects[object.parentId]) return
+    const node = objectNodes.get(object.id)
+    if (!node) return
+    const target: SceneMorphVisual = {
+      x: object.transform.x * WORLD_UNIT_PX,
+      y: object.transform.y * WORLD_UNIT_PX,
+      rotation: object.transform.rotation,
+      scaleX: object.transform.scaleX,
+      scaleY: object.transform.scaleY,
+      opacity: 1,
+      width: Math.max(0.5, object.transform.width),
+      height: Math.max(0.5, object.transform.height),
+    }
+    snapshot.targetAttrs.set(object.id, target)
+    const previous = snapshot.matches.get(object.id)
+    node.setAttrs(previous
+      ? {
+          x: previous.visual.x,
+          y: previous.visual.y,
+          rotation: previous.visual.rotation,
+          scaleX: previous.visual.scaleX * previous.visual.width / target.width,
+          scaleY: previous.visual.scaleY * previous.visual.height / target.height,
+          opacity: 0,
+        }
+      : { opacity: 0 })
+  })
+  backgroundLayer?.batchDraw()
+  worldLayer?.batchDraw()
+  foregroundLayer?.batchDraw()
+}
+
+const tweenSceneMorphNode = (node: Konva.Node, attrs: Record<string, number>, duration: number) => {
+  const tween = new Konva.Tween({
+    node,
+    duration,
+    easing: Konva.Easings.EaseInOut,
+    ...attrs,
+  })
+  sceneMorphTweens.push(tween)
+  tween.play()
+}
+
+const startSceneMorph = (sceneId: string) => {
+  const snapshot = sceneMorphSnapshot
+  if (!snapshot || snapshot.sceneId !== sceneId || snapshot.started) return
+  primeSceneMorphTargets()
+  snapshot.started = true
+  const duration = sceneTransitionDurationMs.value / 1_000
+  const matchedPrevious = new Set(snapshot.matches.values())
+  snapshot.targetAttrs.forEach((target, objectId) => {
+    const node = objectNodes.get(objectId)
+    if (!node) return
+    const previous = snapshot.matches.get(objectId)
+    const coversScene = target.width >= props.store.state.liveState.fieldWidth * 0.9
+      && target.height >= props.store.state.liveState.fieldHeight * 0.9
+    if (previous || coversScene) node.opacity(1)
+    tweenSceneMorphNode(node, {
+      x: target.x,
+      y: target.y,
+      rotation: target.rotation,
+      scaleX: target.scaleX,
+      scaleY: target.scaleY,
+      opacity: target.opacity,
+    }, previous ? duration : duration * 0.6)
+    if (!previous?.ghost) return
+    tweenSceneMorphNode(previous.ghost, {
+      x: target.x,
+      y: target.y,
+      rotation: target.rotation,
+      scaleX: target.scaleX * target.width / previous.visual.width,
+      scaleY: target.scaleY * target.height / previous.visual.height,
+      opacity: 0,
+    }, duration)
+  })
+  snapshot.previous.forEach((item) => {
+    if (!item.ghost || matchedPrevious.has(item)) return
+    const timer = window.setTimeout(() => {
+      sceneMorphDelayTimers = sceneMorphDelayTimers.filter((value) => value !== timer)
+      if (sceneMorphSnapshot !== snapshot) return
+      tweenSceneMorphNode(item.ghost!, { opacity: 0 }, duration * 0.6)
+    }, sceneTransitionDurationMs.value * 0.4)
+    sceneMorphDelayTimers.push(timer)
+  })
+  if (snapshot.backgroundGhost) tweenSceneMorphNode(snapshot.backgroundGhost, { opacity: 0 }, duration)
+  sceneMorphTextAnimating.value = true
+  sceneMorphTextHidden.value = false
+  snapshot.textGhost?.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: sceneTransitionDurationMs.value,
+    easing: 'ease-in-out',
+    fill: 'forwards',
+  })
+  sceneTransitionTimer = window.setTimeout(finishSceneMorph, sceneTransitionDurationMs.value + 50)
+}
+
+const beginSceneMediaBatch = (sceneId: string, captureCurrent = true) => {
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
+  prepareSceneMorph(captureCurrent, sceneId)
   sceneMediaBatch = {
     sceneId,
     expected: new Map(collectSceneMediaItems(sceneId).map((item) => [item.key, item.location.url])),
@@ -1655,6 +1940,10 @@ const beginSceneMediaBatch = (sceneId: string) => {
     timeout: null,
   }
   const batch = sceneMediaBatch
+  if (!batch.expected.size) {
+    releaseSceneMediaBatch(batch)
+    return
+  }
   batch.timeout = window.setTimeout(() => releaseSceneMediaBatch(batch), 10_000)
 }
 
@@ -1675,7 +1964,14 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
   if (batch.timeout !== null) window.clearTimeout(batch.timeout)
   batch.timeout = null
   const reveals = batch.reveals.splice(0)
-  requestAnimationFrame(() => reveals.forEach((reveal) => reveal()))
+  requestAnimationFrame(() => {
+    reveals.forEach((reveal) => reveal())
+    if (sceneMediaBatch !== batch) return
+    backgroundLayer?.draw()
+    foregroundLayer?.draw()
+    worldLayer?.draw()
+    startSceneMorph(batch.sceneId)
+  })
 }
 
 const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
@@ -1891,20 +2187,24 @@ const updateSurfaceSlot = (
   loadingLabel: string,
   mediaKey: string,
 ) => {
-  slot.style = style
-  slot.group.position({ x: box.x, y: box.y })
-  slot.group.clip({ x: 0, y: 0, width: box.width, height: box.height })
-  slot.base?.setAttrs({ width: box.width, height: box.height, fill: props.store.state.liveState.backgroundColor })
-  slot.placeholder.setAttrs({ width: box.width, height: box.height })
-  slot.label.setAttrs({ width: box.width, height: box.height })
-  slot.media.setAttrs({ width: box.width, height: box.height, opacity: style.opacity })
-  slot.directImage.setAttrs({ width: box.width, height: box.height, opacity: style.opacity })
-  slot.overlay.setAttrs({
-    width: box.width,
-    height: box.height,
-    fill: style.overlay.color,
-    opacity: style.overlay.opacity * style.opacity,
-  })
+  const renderedStyle = slot.style
+  const applyStyle = (nextStyle: StageSurfaceStyle) => {
+    slot.style = nextStyle
+    slot.group.position({ x: box.x, y: box.y })
+    slot.group.clip({ x: 0, y: 0, width: box.width, height: box.height })
+    slot.base?.setAttrs({ width: box.width, height: box.height, fill: props.store.state.liveState.backgroundColor })
+    slot.placeholder.setAttrs({ width: box.width, height: box.height })
+    slot.label.setAttrs({ width: box.width, height: box.height })
+    slot.media.setAttrs({ width: box.width, height: box.height, opacity: nextStyle.opacity })
+    slot.directImage.setAttrs({ width: box.width, height: box.height, opacity: nextStyle.opacity })
+    slot.overlay.setAttrs({
+      width: box.width,
+      height: box.height,
+      fill: nextStyle.overlay.color,
+      opacity: nextStyle.overlay.opacity * nextStyle.opacity,
+    })
+  }
+  applyStyle(style)
 
   const location = imageRef ? resolveTheaterStageMedia(imageRef) : null
   const resolved = location?.url || null
@@ -1952,17 +2252,20 @@ const updateSurfaceSlot = (
     settleSceneMedia(mediaKey, resolved)
     return
   }
-  if (slot.url === resolved && slot.source) return
-  releaseStageMedia(slot.source)
+  if (slot.url === resolved && !slot.ready) {
+    applyStyle(renderedStyle)
+    return
+  }
+  const previousUrl = slot.url
+  const previousSource = slot.source
+  const previousReady = slot.ready
   slot.url = resolved
-  slot.source = null
   slot.ready = false
   slot.version += 1
   const version = slot.version
-  slot.media.visible(false)
-  slot.overlay.visible(false)
-  slot.placeholder.visible(true)
-  slot.label.text(`${loadingLabel}加载中…`).visible(true)
+  slot.placeholder.visible(false)
+  slot.label.visible(false)
+  if (previousSource) applyStyle(renderedStyle)
   let source: StageMediaSource | null = null
   source = loadStageMedia(imageRef, location!, (loadedSource) => {
     if (slot.version !== version || slot.url !== resolved) {
@@ -1974,8 +2277,10 @@ const updateSurfaceSlot = (
         releaseStageMedia(loadedSource)
         return
       }
+      if (previousSource !== loadedSource) releaseStageMedia(previousSource)
       slot.source = loadedSource
       slot.ready = true
+      applyStyle(style)
       activateStageMedia(loadedSource, imageRef)
       theaterMediaDebug('surface ready', {
         resourceId: imageRef.resourceId,
@@ -2034,16 +2339,25 @@ const updateSurfaceSlot = (
     if (slot.version !== version || slot.url !== resolved) return
     settleSceneMedia(mediaKey, resolved)
     releaseStageMedia(source)
-    slot.source = null
-    slot.ready = false
-    slot.media.visible(false)
-    slot.overlay.visible(false)
-    slot.placeholder.visible(true)
-    slot.label.text(`${loadingLabel}加载失败：${errorMessage}`).visible(true)
+    slot.url = previousUrl
+    slot.source = previousSource
+    slot.ready = previousReady
+    applyStyle(renderedStyle)
+    if (previousSource) {
+      updateDirectSurfaceImage(slot, previousSource, box)
+      slot.media.visible(!slot.directImage.visible())
+      slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
+      slot.placeholder.visible(false)
+      slot.label.visible(false)
+    } else {
+      slot.media.visible(false)
+      slot.overlay.visible(false)
+      slot.placeholder.visible(true)
+      slot.label.text(`${loadingLabel}加载失败：${errorMessage}`).visible(true)
+    }
     theaterMediaDebug('surface error', { resourceId: imageRef.resourceId, errorMessage, box })
     slot.group.getLayer()?.batchDraw()
   })
-  slot.source = source
 }
 
 const rebuildGrid = (fieldX: number, fieldY: number, fieldWidth: number, fieldHeight: number) => {
@@ -2608,8 +2922,8 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   const version = (imageLoadVersions.get(object.id) || 0) + 1
   imageLoadVersions.set(object.id, version)
   image.visible(false)
-  placeholder.visible(true)
-  label.text('图片加载中…').visible(true)
+  placeholder.visible(false)
+  label.visible(false)
   let source: StageMediaSource | null = null
   source = loadStageMedia(object.image, location!, (loadedSource) => {
     if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) {
@@ -2761,6 +3075,7 @@ const syncObjects = () => {
     })
   }
   worldLayer?.batchDraw()
+  primeSceneMorphTargets()
   nextTick(updateTransformer)
 }
 
@@ -3288,7 +3603,8 @@ onMounted(() => {
   })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
-  worldCameraGroup.add(gridGroup, objectRoot, drawingDraftRoot)
+  sceneMorphRoot = new Konva.Group({ listening: false })
+  worldCameraGroup.add(gridGroup, objectRoot, sceneMorphRoot, drawingDraftRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
@@ -3308,7 +3624,7 @@ onMounted(() => {
   resizeObserver = new ResizeObserver(resizeStage)
   resizeObserver.observe(viewportRef.value!)
   resizeStage()
-  beginSceneMediaBatch(props.store.state.activeSceneId)
+  beginSceneMediaBatch(props.store.state.activeSceneId, false)
   syncField()
   syncObjects()
   window.addEventListener('pointermove', movePanel)
@@ -3390,8 +3706,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
   cancelDrawingSession()
-  objectNodes.forEach(releaseObjectMedia)
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
+  sceneMediaBatch = null
+  finishSceneMorph()
+  objectNodes.forEach(releaseObjectMedia)
   releaseStageMedia(backgroundSlot?.source)
   releaseStageMedia(foregroundSlot?.source)
   Array.from(activeAnimatedMedia).forEach(releaseStageMedia)
@@ -3404,6 +3722,7 @@ onBeforeUnmount(() => {
   stage?.destroy()
   stage = null
   drawingDraftRoot = null
+  sceneMorphRoot = null
 })
 </script>
 
@@ -3568,6 +3887,11 @@ onBeforeUnmount(() => {
       >
         <div ref="containerRef" class="theater-stage-canvas" />
         <StageTextOverlay
+          :class="{
+            'is-scene-morph-hidden': sceneMorphTextHidden,
+            'is-scene-morph-active': sceneMorphTextAnimating,
+          }"
+          :style="{ '--theater-scene-transition-duration': `${sceneTransitionDurationMs}ms` }"
           :objects="stageObjects"
           :camera="store.state.camera"
           :viewport-width="viewportSize.width"
@@ -4180,7 +4504,11 @@ onBeforeUnmount(() => {
 .theater-stage-reset-camera { flex: 0 0 auto; }
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
-.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: var(--sc-bg-page, #141418); }
+.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: #343435; }
+.theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-hidden) { opacity: 0; }
+.theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-active) {
+  transition: opacity var(--theater-scene-transition-duration, 400ms) ease-in-out;
+}
 .theater-appearance-preview-layer { position: absolute; z-index: 8; inset: 0; overflow: hidden; }
 .theater-appearance-preview-layer :deep(.theater-preview) { min-height: 0; background: transparent; }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
