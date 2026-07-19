@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -35,6 +37,7 @@ var (
 	ErrWorldDefaultDiceMode       = errors.New("world default dice mode invalid")
 	ErrWorldDefaultDiceBotEmpty   = errors.New("world default dice bot required")
 	ErrWorldDefaultDiceBotInvalid = errors.New("world default dice bot invalid")
+	ErrWorldStickyNoteAppearance  = errors.New("world sticky note appearance invalid")
 )
 
 const (
@@ -77,6 +80,7 @@ type WorldUpdateParams struct {
 	ChannelDefaultBotIDs                  *[]string
 	ChannelDefaultEventBotIDs             *[]string
 	CharacterCardBadgeTemplate            *string
+	StickyNoteDefaultAppearance           *protocol.StickyNoteAppearance
 }
 
 type WorldChannelDefaultDiceConfig struct {
@@ -732,6 +736,16 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 			return nil, err
 		}
 		updates["character_card_badge_template"] = template
+	}
+	if params.StickyNoteDefaultAppearance != nil {
+		if err := ValidateStickyNoteAppearanceForWorld(worldID, actorID, params.StickyNoteDefaultAppearance); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldStickyNoteAppearance, err)
+		}
+		raw, err := json.Marshal(params.StickyNoteDefaultAppearance)
+		if err != nil {
+			return nil, err
+		}
+		updates["sticky_note_default_appearance_json"] = string(raw)
 	}
 	if len(updates) > 0 {
 		updates["updated_at"] = time.Now()

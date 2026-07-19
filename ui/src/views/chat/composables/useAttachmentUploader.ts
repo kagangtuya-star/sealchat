@@ -7,6 +7,9 @@ import { useImageCompressor } from '@/composables/useImageCompressor';
 interface UploadImageOptions {
   channelId?: string;
   targetUserId?: string | null;
+  rootId?: string;
+  rootIdType?: string;
+  confirm?: boolean;
   /** Skip image compression (e.g., already compressed by AvatarEditor) */
   skipCompression?: boolean;
 }
@@ -48,6 +51,8 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   if (options?.targetUserId) {
     headers.TargetUserId = options.targetUserId;
   }
+  if (options?.rootId) formData.append('rootId', options.rootId);
+  if (options?.rootIdType) formData.append('rootIdType', options.rootIdType);
 
   let resp;
   try {
@@ -86,6 +91,15 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
       throw new Error('服务端未返回附件ID，已停止兼容旧数据，请升级后端接口');
     }
     throw new Error('上传失败，请稍后重试');
+  }
+
+  if (options?.confirm) {
+    await api.post('/api/v1/attachment-confirm', {
+      ids: [rawId],
+      isTemp: false,
+      rootId: options.rootId || '',
+      rootIdType: options.rootIdType || '',
+    });
   }
 
   const attachmentRef = `id:${rawId}`;

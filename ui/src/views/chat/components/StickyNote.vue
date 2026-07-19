@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div
-      v-if="note && !userState?.minimized"
+      v-if="note && !userState?.minimized && backgroundImageReady"
       ref="noteEl"
       class="sticky-note"
       data-sc-font-surface="true"
@@ -304,6 +304,7 @@ const noteEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
 const inlineImageInputRef = ref<HTMLInputElement | null>(null)
+const backgroundImageReady = ref(true)
 
 // 本地编辑状态
 const localTitle = ref('')
@@ -910,6 +911,34 @@ const sanitizedContent = computed(() => {
   return processed
 })
 
+const backgroundAttachmentId = computed(() =>
+  normalizeAttachmentId(note.value?.appearance?.background?.attachmentId || '')
+)
+
+watch(backgroundAttachmentId, (attachmentId, _, onCleanup) => {
+  if (!attachmentId || typeof window === 'undefined') {
+    backgroundImageReady.value = true
+    return
+  }
+
+  backgroundImageReady.value = false
+  let active = true
+  const image = new Image()
+  const revealNote = () => {
+    if (active && backgroundAttachmentId.value === attachmentId) {
+      backgroundImageReady.value = true
+    }
+  }
+  image.onload = revealNote
+  image.onerror = revealNote
+  image.src = `/api/v1/attachment/${attachmentId}`
+  onCleanup(() => {
+    active = false
+    image.onload = null
+    image.onerror = null
+  })
+}, { immediate: true })
+
 async function preloadReadOnlyPlatformFonts() {
   if (isEditing.value) return
   await nextTick()
@@ -937,13 +966,22 @@ const noteStyle = computed(() => {
   const w = state?.width || n?.defaultW || 300
   const h = state?.height || n?.defaultH || 250
   const z = state?.zIndex || 1000
+  const background = n?.appearance?.background
+  const attachmentId = normalizeAttachmentId(background?.attachmentId || '')
+  const fit = background?.fit || 'cover'
 
   return {
     left: `${x}px`,
     top: `${y}px`,
     width: `${w}px`,
     height: `${h}px`,
-    zIndex: z
+    zIndex: z,
+    '--sticky-note-bg-image': attachmentId ? `url("/api/v1/attachment/${attachmentId}")` : 'none',
+    '--sticky-note-bg-opacity': String(background?.opacity ?? 0),
+    '--sticky-note-bg-size': fit === 'stretch' ? '100% 100%' : fit === 'tile' ? 'auto' : fit,
+    '--sticky-note-bg-repeat': fit === 'tile' ? 'repeat' : 'no-repeat',
+    '--sticky-note-bg-position': `${background?.positionX ?? 50}% ${background?.positionY ?? 50}%`,
+    '--sticky-note-bg-wash': String(background?.contentWashOpacity ?? 0)
   }
 })
 
@@ -1272,6 +1310,29 @@ if (typeof window !== 'undefined') {
   font-family: var(--sc-font-family);
   user-select: none;
   transition: box-shadow 0.2s;
+  isolation: isolate;
+}
+
+.sticky-note::before,
+.sticky-note::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sticky-note::before {
+  z-index: -2;
+  background-image: var(--sticky-note-bg-image, none);
+  background-size: var(--sticky-note-bg-size, cover);
+  background-repeat: var(--sticky-note-bg-repeat, no-repeat);
+  background-position: var(--sticky-note-bg-position, 50% 50%);
+  opacity: var(--sticky-note-bg-opacity, 0);
+}
+
+.sticky-note::after {
+  z-index: -1;
+  background: rgba(255, 255, 255, var(--sticky-note-bg-wash, 0));
 }
 
 .sticky-note:hover {

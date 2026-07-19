@@ -2,11 +2,13 @@
   <div class="sticky-note-manager">
     <template v-if="stickyNoteStore.uiVisible">
       <!-- 渲染所有活跃的便签 -->
-      <StickyNote
-        v-for="noteId in stickyNoteStore.activeNoteIds"
-        :key="noteId"
-        :note-id="noteId"
-      />
+      <template v-if="stickyNoteStore.remoteNotesReady">
+        <StickyNote
+          v-for="noteId in stickyNoteStore.activeNoteIds"
+          :key="noteId"
+          :note-id="noteId"
+        />
+      </template>
 
       <!-- 最小化的便签列表 -->
       <Transition name="slide-up">
@@ -95,6 +97,15 @@
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                </svg>
+              </button>
+              <button
+                class="sticky-note-rail__action"
+                title="便签背景"
+                @click="openBackgroundModal"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 7A1.5 1.5 0 1 1 7 8.5 1.5 1.5 0 0 1 8.5 7zm10.5 12H5l4-5 3 3 2-2 5 4z"/>
                 </svg>
               </button>
               <button
@@ -401,18 +412,33 @@
         </n-form-item>
       </n-form>
     </n-modal>
+    <StickyNoteBackgroundModal
+      v-if="backgroundModalVisible"
+      v-model:show="backgroundModalVisible"
+      v-model:target-note-id="backgroundTargetNoteId"
+      :world-id="chatStore.currentWorldId"
+      :channel-id="props.channelId"
+      :notes="stickyNoteStore.noteList"
+      :initial-appearance="backgroundInitialAppearance"
+      :world-appearance="worldBackgroundAppearance"
+      :can-set-world-default="canSetWorldBackground"
+      @apply-note="applyBackgroundToNote"
+      @apply-world="applyBackgroundToWorld"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useStickyNoteStore, type StickyNoteType, type StickyNote as StickyNoteModel } from '@/stores/stickyNote'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { useStickyNoteStore, type StickyNoteType, type StickyNote as StickyNoteModel, type StickyNoteAppearance } from '@/stores/stickyNote'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { matchText } from '@/utils/pinyinMatch'
 import StickyNote from './StickyNote.vue'
 import StickyNoteTypeSelector from './sticky-notes/StickyNoteTypeSelector.vue'
 import { useMessage } from 'naive-ui'
+
+const StickyNoteBackgroundModal = defineAsyncComponent(() => import('./StickyNoteBackgroundModal.vue'))
 
 const props = defineProps<{
   channelId: string
@@ -447,6 +473,8 @@ const pushPopupAnchor = ref<DOMRect | null>(null)
 const pushPopupRef = ref<HTMLElement | null>(null)
 const railPanelRef = ref<HTMLElement | null>(null)
 const migrationModalVisible = ref(false)
+const backgroundModalVisible = ref(false)
+const backgroundTargetNoteId = ref('')
 const migrationTargets = ref<string[]>([])
 const migrationMode = ref<'copy' | 'move'>('copy')
 const migrationNoteIds = ref<string[]>([])
@@ -511,6 +539,44 @@ const folderColors = [
   { value: '#607d8b', label: '灰色' },
   { value: '#f44336', label: '红色' }
 ]
+
+const worldBackgroundAppearance = computed<StickyNoteAppearance | undefined>(() =>
+  chatStore.currentWorld?.stickyNoteDefaultAppearance as StickyNoteAppearance | undefined
+)
+const canSetWorldBackground = computed(() => {
+  const worldId = chatStore.currentWorldId
+  const world = chatStore.currentWorld
+  const role = chatStore.worldDetailMap[worldId]?.memberRole
+  return world?.ownerId === userStore.info?.id || role === 'owner' || role === 'admin'
+})
+const backgroundInitialAppearance = computed(() =>
+  backgroundTargetNoteId.value
+    ? stickyNoteStore.notes[backgroundTargetNoteId.value]?.appearance
+    : worldBackgroundAppearance.value
+)
+
+function openBackgroundModal() {
+  const activeIds = stickyNoteStore.activeNoteIds
+  backgroundTargetNoteId.value = activeIds[activeIds.length - 1] || stickyNoteStore.noteList[0]?.id || ''
+  backgroundModalVisible.value = true
+}
+
+async function applyBackgroundToNote(appearance: StickyNoteAppearance) {
+  if (!backgroundTargetNoteId.value) return
+  const result = await stickyNoteStore.updateNote(backgroundTargetNoteId.value, { appearance })
+  result.ok ? message.success('便签背景已更新') : message.error('便签背景更新失败')
+}
+
+async function applyBackgroundToWorld(appearance: StickyNoteAppearance) {
+  const worldId = chatStore.currentWorldId
+  if (!worldId) return
+  try {
+    await chatStore.worldUpdate(worldId, { stickyNoteDefaultAppearance: appearance })
+    message.success('已设为当前世界默认背景')
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '世界默认背景更新失败')
+  }
+}
 
 // 计算最小化的便签
 const minimizedNotes = computed(() => {
@@ -1287,9 +1353,10 @@ onUnmounted(() => {
 
 .sticky-note-rail__actions {
   display: flex;
+  flex-wrap: wrap;
   padding: 10px 12px;
   border-bottom: 1px solid var(--sc-border-mute, rgba(15, 23, 42, 0.1));
-  gap: 8px;
+  gap: 6px;
 }
 
 .sticky-note-rail__action-wrapper {

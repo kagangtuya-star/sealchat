@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 
 	"sealchat/protocol"
@@ -34,17 +35,18 @@ const (
 // StickyNoteModel 便签数据模型
 type StickyNoteModel struct {
 	StringPKBaseModel
-	ChannelID   string `json:"channel_id" gorm:"size:100;index:idx_sticky_channel_order,priority:1" binding:"required"`
-	WorldID     string `json:"world_id" gorm:"size:100;index"`
-	FolderID    string `json:"folder_id" gorm:"size:100;index"` // 所属文件夹
-	Title       string `json:"title" gorm:"size:255"`
-	Content     string `json:"content" gorm:"type:text"`      // HTML 富文本
-	ContentText string `json:"content_text" gorm:"type:text"` // 纯文本版本（用于搜索）
-	Color       string `json:"color" gorm:"size:32;default:'yellow'"`
-	CreatorID   string `json:"creator_id" gorm:"size:100;index"`
-	IsPublic    bool   `json:"is_public" gorm:"default:true"`
-	IsPinned    bool   `json:"is_pinned" gorm:"default:false"`
-	OrderIndex  int    `json:"order_index" gorm:"default:0;index:idx_sticky_channel_order,priority:2"`
+	ChannelID      string `json:"channel_id" gorm:"size:100;index:idx_sticky_channel_order,priority:1" binding:"required"`
+	WorldID        string `json:"world_id" gorm:"size:100;index"`
+	FolderID       string `json:"folder_id" gorm:"size:100;index"` // 所属文件夹
+	Title          string `json:"title" gorm:"size:255"`
+	Content        string `json:"content" gorm:"type:text"`      // HTML 富文本
+	ContentText    string `json:"content_text" gorm:"type:text"` // 纯文本版本（用于搜索）
+	Color          string `json:"color" gorm:"size:32;default:'yellow'"`
+	AppearanceJSON string `json:"-" gorm:"type:text"` // 版本化背景外观 JSON
+	CreatorID      string `json:"creator_id" gorm:"size:100;index"`
+	IsPublic       bool   `json:"is_public" gorm:"default:true"`
+	IsPinned       bool   `json:"is_pinned" gorm:"default:false"`
+	OrderIndex     int    `json:"order_index" gorm:"default:0;index:idx_sticky_channel_order,priority:2"`
 
 	// 便签类型相关
 	NoteType StickyNoteType `json:"note_type" gorm:"size:32;default:'text';index"` // text/counter/list/slider/chat/timer/clock/roundCounter
@@ -226,6 +228,7 @@ func (s *StickyNoteModel) ToProtocolType() *protocol.StickyNote {
 		Content:     s.Content,
 		ContentText: s.ContentText,
 		Color:       s.Color,
+		Appearance:  stickyNoteAppearanceMap(s.AppearanceJSON),
 		CreatorID:   s.CreatorID,
 		IsPublic:    s.IsPublic,
 		IsPinned:    s.IsPinned,
@@ -267,6 +270,17 @@ func (s *StickyNoteModel) ToProtocolType() *protocol.StickyNote {
 		note.EditingLock = lock
 	}
 	return note
+}
+
+func stickyNoteAppearanceMap(raw string) *protocol.StickyNoteAppearance {
+	if raw == "" {
+		return nil
+	}
+	var value protocol.StickyNoteAppearance
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return nil
+	}
+	return &value
 }
 
 // ToProtocolUserState 转换用户状态为协议类型

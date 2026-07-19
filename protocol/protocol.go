@@ -605,6 +605,7 @@ type StickyNote struct {
 	Content     string                 `json:"content"`
 	ContentText string                 `json:"contentText"`
 	Color       string                 `json:"color"`
+	Appearance  *StickyNoteAppearance  `json:"appearance,omitempty"`
 	CreatorID   string                 `json:"creatorId"`
 	IsPublic    bool                   `json:"isPublic"`
 	IsPinned    bool                   `json:"isPinned"`

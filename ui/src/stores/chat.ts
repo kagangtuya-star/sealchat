@@ -2186,6 +2186,7 @@ export const useChatStore = defineStore({
       channelDefaultBotId?: string;
       channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
+      stickyNoteDefaultAppearance?: unknown;
     }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {

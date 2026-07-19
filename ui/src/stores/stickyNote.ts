@@ -11,6 +11,21 @@ export type StickyNoteType = 'text' | 'counter' | 'list' | 'slider' | 'chat' | '
 // 便签可见性
 export type StickyNoteVisibility = 'all' | 'owner' | 'editors' | 'viewers'
 
+export interface StickyNoteAppearanceBackground {
+    kind: 'image'
+    attachmentId: string
+    opacity: number
+    fit: 'cover' | 'contain' | 'stretch' | 'tile'
+    positionX: number
+    positionY: number
+    contentWashOpacity: number
+}
+
+export interface StickyNoteAppearance {
+    version: 1
+    background?: StickyNoteAppearanceBackground
+}
+
 export interface StickyNoteUserBrief {
     id: string
     nickname?: string
@@ -93,6 +108,7 @@ export interface StickyNote {
     content: string
     contentText: string
     color: string
+    appearance?: StickyNoteAppearance
     creatorId: string
     isPublic: boolean
     isPinned: boolean
@@ -189,6 +205,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     const maxZIndex = ref(1000)
     // 加载状态
     const loading = ref(false)
+    // 首轮远端数据确认前，不渲染可能缺少外观字段的本地缓存便签
+    const remoteNotesReady = ref(false)
     // 便签界面可见状态
     const uiVisible = ref(false)
     // 新建便签仅自己可见开关
@@ -366,6 +384,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         if (!channelId) return
         currentChannelId.value = channelId
         loading.value = true
+        remoteNotesReady.value = false
 
         const localCache = readLocalCache(channelId)
         const hasLocalCache = !!localCache
@@ -468,7 +487,10 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
             }
             console.error('加载便签失败:', err)
         } finally {
-            loading.value = false
+            if (currentChannelId.value === channelId) {
+                loading.value = false
+                remoteNotesReady.value = true
+            }
         }
     }
 
@@ -477,6 +499,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         title?: string
         content?: string
         color?: string
+        appearance?: StickyNoteAppearance
         noteType?: StickyNoteType
         typeData?: string
         visibility?: StickyNoteVisibility
@@ -1000,6 +1023,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         currentChannelId.value = ''
         maxZIndex.value = 1000
         loading.value = false
+        remoteNotesReady.value = false
         uiVisible.value = false
         privateCreateEnabled.value = false
     }
@@ -1196,6 +1220,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         editingNoteId,
         currentChannelId,
         loading,
+        remoteNotesReady,
         maxZIndex,
         uiVisible,
         privateCreateEnabled,
