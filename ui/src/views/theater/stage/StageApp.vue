@@ -107,6 +107,7 @@ const viewportRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const packageInputRef = ref<HTMLInputElement | null>(null)
+const ccfoliaInputRef = ref<HTMLInputElement | null>(null)
 const resourceError = ref('')
 const resourceUploading = ref(false)
 const scenePanelOpen = ref(false)
@@ -155,18 +156,19 @@ let packagePollGeneration = 0
 
 type TheaterPackageJob = {
   id: string
-  type: 'export' | 'import'
+  type: 'export' | 'import' | 'import_ccfolia'
   status: 'pending' | 'running' | 'done' | 'failed'
   progress: number
   outputFileName?: string
   errorMessage?: string
-  summary?: { scenes?: number, objects?: number, resources?: number, audioAssets?: number, warnings?: string[] }
+  summary?: { scenes?: number, objects?: number, resources?: number, audioAssets?: number, animatedResources?: number, warnings?: string[] }
 }
 
 const canManagePackages = computed(() => props.syncReady && props.permissions.includes('stage.admin.restore'))
 const packageMenuOptions = computed<DropdownOption[]>(() => [
   { label: packageBusy.value ? '任务处理中…' : '导出小剧场 ZIP', key: 'export', disabled: packageBusy.value },
   { label: '导入小剧场 ZIP', key: 'import', disabled: packageBusy.value },
+  { label: '导入 CCFOLIA ZIP', key: 'import-ccfolia', disabled: packageBusy.value },
 ])
 
 const theaterPackagePath = (suffix: string) => `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/packages/${suffix}`
@@ -258,10 +260,47 @@ const handlePackageInput = (event: Event) => {
   })
 }
 
+const importCCFOLIAPackageFile = async (file: File) => {
+  packageBusy.value = true
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('inputChannelId', props.channelId)
+    const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath('import/ccfolia'), body, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+    packageMessage.info('CCFOLIA 导入任务已启动')
+    const job = await pollTheaterPackageJob(response.data.job.id)
+    const warnings = job.summary?.warnings?.filter(Boolean) || []
+    packageMessage.success(`已导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件、${job.summary?.resources ?? 0} 个资源`)
+    if (warnings.length) packageMessage.warning(warnings.join('；'))
+  } catch (error) {
+    packageMessage.error(theaterAudioErrorMessage(error, 'CCFOLIA 导入失败'))
+  } finally {
+    packageBusy.value = false
+  }
+}
+
+const handleCCFOLIAInput = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  packageDialog.warning({
+    title: '导入 CCFOLIA 房间',
+    content: `将“${file.name}”转换为小剧场场景并追加到当前世界。现有场景不会被覆盖。`,
+    positiveText: '开始导入',
+    negativeText: '取消',
+    onPositiveClick: () => { void importCCFOLIAPackageFile(file) },
+  })
+}
+
 const handlePackageMenuSelect = (key: string | number) => {
   if (!canManagePackages.value || packageBusy.value) return
   if (key === 'export') void exportTheaterPackage()
   if (key === 'import') packageInputRef.value?.click()
+  if (key === 'import-ccfolia') ccfoliaInputRef.value?.click()
 }
 
 const unlockTheaterAudio = () => {
@@ -1077,7 +1116,7 @@ const layerRows = computed<LayerRow[]>(() => {
 
 const layerPreviewUrl = (object: StageObject) => {
   if (object.type !== 'image' || !object.image || object.image.mimeType?.startsWith('video/')) return null
-  return resolveStageImageUrl(object.image.url)
+  return resolveTheaterStageImageUrl(object.image.url)
 }
 
 const layerPreviewIcon = (object: StageObject) => {
@@ -1277,6 +1316,14 @@ const toggleBulkSelectionMode = () => {
 }
 
 const isVideoSource = (source: StageMediaSource): source is HTMLVideoElement => source instanceof HTMLVideoElement
+
+const resolveTheaterStageImageUrl = (value: string) => {
+  const normalized = value.trim()
+  if (normalized.startsWith('/api/')) {
+    return resolveStageImageUrl(`${String(urlBase).replace(/\/$/, '')}${normalized}`)
+  }
+  return resolveStageImageUrl(normalized)
+}
 
 const stageMediaDimensions = (source: StageMediaSource) => isVideoSource(source)
   ? { width: source.videoWidth, height: source.videoHeight }
@@ -1479,7 +1526,7 @@ const updateSurfaceSlot = (
     opacity: style.overlay.opacity * style.opacity,
   })
 
-  const resolved = imageRef ? resolveStageImageUrl(imageRef.url) : null
+  const resolved = imageRef ? resolveTheaterStageImageUrl(imageRef.url) : null
   if (!imageRef) {
     releaseStageMedia(slot.source)
     slot.url = ''
@@ -2063,7 +2110,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   placeholder?.size({ width, height })
   label?.size({ width, height })
   if (!image || !placeholder || !label) return
-  const resolved = object.image ? resolveStageImageUrl(object.image.url) : null
+  const resolved = object.image ? resolveTheaterStageImageUrl(object.image.url) : null
   if (!object.image) {
     releaseStageMedia(image.image() as StageMediaSource | undefined)
     image.image(undefined)
@@ -2865,6 +2912,7 @@ onBeforeUnmount(() => {
   <section class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/webm,.webm" @change="handleImageInput">
     <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
+    <input ref="ccfoliaInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handleCCFOLIAInput">
     <header
       class="theater-stage-toolbar"
       :class="{ 'is-controls-visible': toolbarColorsVisible }"

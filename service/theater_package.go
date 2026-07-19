@@ -130,6 +130,11 @@ type TheaterPackageSummary struct {
 	WorldPresentationImported bool     `json:"worldPresentationImported"`
 	Warnings                  []string `json:"warnings,omitempty"`
 	ImportedSceneIDs          []string `json:"importedSceneIds,omitempty"`
+	SourceFormat              string   `json:"sourceFormat,omitempty"`
+	SourceVersion             string   `json:"sourceVersion,omitempty"`
+	CurrentRoomObjects        int      `json:"currentRoomObjects,omitempty"`
+	AnimatedResources         int      `json:"animatedResources,omitempty"`
+	UnsupportedEntities       []string `json:"unsupportedEntities,omitempty"`
 }
 
 type theaterPackageWorkerConfig struct {
@@ -230,11 +235,17 @@ func processTheaterPackageJob(ctx context.Context, job *model.TheaterPackageJobM
 		summary, err = exportTheaterPackage(ctx, job)
 	case model.TheaterPackageJobTypeImport:
 		summary, err = importTheaterPackage(ctx, job)
+	case model.TheaterPackageJobTypeImportCCFOLIA:
+		summary, err = importCCFOLIATheaterPackage(ctx, job)
 	default:
 		err = fmt.Errorf("未知舞台包任务类型: %s", job.Type)
 	}
 	if err != nil {
-		_ = failTheaterPackageJob(job.ID, "PACKAGE_PROCESS_FAILED", err)
+		code := "PACKAGE_PROCESS_FAILED"
+		if job.Type == model.TheaterPackageJobTypeImportCCFOLIA {
+			code = "CCFOLIA_IMPORT_FAILED"
+		}
+		_ = failTheaterPackageJob(job.ID, code, err)
 		return err
 	}
 	raw, _ := json.Marshal(summary)
@@ -286,6 +297,14 @@ func CreateTheaterPackageExportJob(actorID, worldID, inputChannelID string) (*mo
 }
 
 func CreateTheaterPackageImportJob(actorID, targetWorldID, inputChannelID, filename string, reader io.Reader, size int64) (*model.TheaterPackageJobModel, error) {
+	return createTheaterPackageImportJob(model.TheaterPackageJobTypeImport, actorID, targetWorldID, inputChannelID, filename, reader, size)
+}
+
+func CreateTheaterCCFOLIAImportJob(actorID, targetWorldID, inputChannelID, filename string, reader io.Reader, size int64) (*model.TheaterPackageJobModel, error) {
+	return createTheaterPackageImportJob(model.TheaterPackageJobTypeImportCCFOLIA, actorID, targetWorldID, inputChannelID, filename, reader, size)
+}
+
+func createTheaterPackageImportJob(jobType, actorID, targetWorldID, inputChannelID, filename string, reader io.Reader, size int64) (*model.TheaterPackageJobModel, error) {
 	if _, _, err := requireTheaterPermission(actorID, targetWorldID, "", TheaterPermissionAdminRestore); err != nil {
 		return nil, err
 	}
@@ -299,7 +318,7 @@ func CreateTheaterPackageImportJob(actorID, targetWorldID, inputChannelID, filen
 	}
 	job := &model.TheaterPackageJobModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()},
-		Type:              model.TheaterPackageJobTypeImport, Status: model.TheaterPackageJobStatusPending,
+		Type:              jobType, Status: model.TheaterPackageJobStatusPending,
 		ActorUserID: actorID, TargetWorldID: strings.TrimSpace(targetWorldID), InputChannelID: strings.TrimSpace(inputChannelID),
 		OriginalName: sanitizeTheaterPackageFilename(filename),
 	}
@@ -341,7 +360,7 @@ func GetTheaterPackageJob(actorID, jobID string) (*model.TheaterPackageJobModel,
 		return nil, newTheaterError(TheaterErrorNotFound, "舞台包任务不存在", 404, nil)
 	}
 	worldID := job.SourceWorldID
-	if job.Type == model.TheaterPackageJobTypeImport {
+	if isTheaterPackageImportJob(job.Type) {
 		worldID = job.TargetWorldID
 	}
 	if job.ActorUserID != actorID {
@@ -350,6 +369,10 @@ func GetTheaterPackageJob(actorID, jobID string) (*model.TheaterPackageJobModel,
 		}
 	}
 	return &job, nil
+}
+
+func isTheaterPackageImportJob(jobType string) bool {
+	return jobType == model.TheaterPackageJobTypeImport || jobType == model.TheaterPackageJobTypeImportCCFOLIA
 }
 
 func DeleteTheaterPackageJob(actorID, jobID string) error {

@@ -3,8 +3,9 @@ package model
 import "time"
 
 const (
-	TheaterPackageJobTypeExport = "export"
-	TheaterPackageJobTypeImport = "import"
+	TheaterPackageJobTypeExport        = "export"
+	TheaterPackageJobTypeImport        = "import"
+	TheaterPackageJobTypeImportCCFOLIA = "import_ccfolia"
 
 	TheaterPackageJobStatusPending = "pending"
 	TheaterPackageJobStatusRunning = "running"

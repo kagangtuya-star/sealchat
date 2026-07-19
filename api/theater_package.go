@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 
@@ -33,6 +34,14 @@ func TheaterPackageExportCreate(c *fiber.Ctx) error {
 }
 
 func TheaterPackageImportCreate(c *fiber.Ctx) error {
+	return createTheaterPackageImport(c, service.CreateTheaterPackageImportJob)
+}
+
+func TheaterPackageCCFOLIAImportCreate(c *fiber.Ctx) error {
+	return createTheaterPackageImport(c, service.CreateTheaterCCFOLIAImportJob)
+}
+
+func createTheaterPackageImport(c *fiber.Ctx, create func(string, string, string, string, io.Reader, int64) (*model.TheaterPackageJobModel, error)) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
 	file, err := c.FormFile("file")
@@ -48,7 +57,7 @@ func TheaterPackageImportCreate(c *fiber.Ctx) error {
 	if inputChannelID == "" {
 		inputChannelID = c.Params("channelId")
 	}
-	job, err := service.CreateTheaterPackageImportJob(user.ID, c.Params("worldId"), inputChannelID, file.Filename, input, file.Size)
+	job, err := create(user.ID, c.Params("worldId"), inputChannelID, file.Filename, input, file.Size)
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
@@ -105,7 +114,7 @@ func theaterPackageJobMatchesWorld(job *model.TheaterPackageJobModel, worldID st
 	if job == nil {
 		return false
 	}
-	if job.Type == model.TheaterPackageJobTypeImport {
+	if job.Type == model.TheaterPackageJobTypeImport || job.Type == model.TheaterPackageJobTypeImportCCFOLIA {
 		return job.TargetWorldID == worldID
 	}
 	return job.SourceWorldID == worldID

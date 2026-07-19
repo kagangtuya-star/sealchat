@@ -195,6 +195,18 @@ func (processor *VisualMediaProcessor) transcodeTransparentWebM(ctx context.Cont
 		"-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "4", "-crf", "30", "-b:v", "0",
 		"-row-mt", "1", "-auto-alt-ref", "0", "-metadata:s:v:0", "alpha_mode=1", outputPath,
 	)
+	if err != nil && metadata.MimeType == "image/webp" && transcodeCtx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		concatPath, decodeErr := decodeAnimatedWebPFrames(transcodeCtx, sourcePath, filepath.Dir(outputPath), metadata)
+		if decodeErr != nil {
+			return VisualMediaOutput{}, fmt.Errorf("animated display: %s; Animated WebP fallback: %w", truncateTheaterBroadcastError(string(output)), decodeErr)
+		}
+		output, err = processor.runner.Run(transcodeCtx, processor.toolchain.FFmpegPath,
+			"-y", "-f", "concat", "-safe", "0", "-i", concatPath, "-map", "0:v:0", "-an",
+			"-vf", filter, "-vsync", "vfr",
+			"-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "4", "-crf", "30", "-b:v", "0",
+			"-row-mt", "1", "-auto-alt-ref", "0", "-metadata:s:v:0", "alpha_mode=1", outputPath,
+		)
+	}
 	if err != nil {
 		return VisualMediaOutput{}, fmt.Errorf("animated display: %s: %w", truncateTheaterBroadcastError(string(output)), err)
 	}

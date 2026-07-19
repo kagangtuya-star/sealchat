@@ -273,7 +273,7 @@ func validateTheaterName(value string) error {
 }
 
 func validateSceneState(state map[string]any) error {
-	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true}
+	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
 		if !allowed[key] {
 			return theaterPayloadError("scene state 包含禁止字段: " + key)
