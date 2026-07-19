@@ -12,6 +12,7 @@ import {
   Bolt,
   Clipboard,
   Components,
+  CloudDownload,
   Copy,
   Cut,
   Edit,
@@ -105,6 +106,7 @@ const emit = defineEmits<{
   exitTheater: []
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
   appearancePreviewPhase: [phase: 'start' | 'end']
+  preloadRequested: [sceneIds: string[]]
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -961,6 +963,7 @@ interface SurfaceSlot {
   url: string
   version: number
   source: StageMediaSource | null
+  ready: boolean
   debugDrawCount: number
 }
 
@@ -1381,6 +1384,37 @@ const syncMediaAnimation = () => {
 
 const stageMediaRequestControllers = new WeakMap<StageMediaSource, AbortController>()
 const stageMediaObjectUrls = new WeakMap<StageMediaSource, string>()
+const stageMediaBlobCache = new Map<string, Blob>()
+const stageMediaBlobRequests = new Map<string, Promise<Blob>>()
+
+const cacheStageMediaBlob = (url: string, blob: Blob) => {
+  stageMediaBlobCache.delete(url)
+  stageMediaBlobCache.set(url, blob)
+  while (stageMediaBlobCache.size > 128) {
+    const oldest = stageMediaBlobCache.keys().next().value
+    if (typeof oldest !== 'string') break
+    stageMediaBlobCache.delete(oldest)
+  }
+  return blob
+}
+
+const fetchStageMediaBlob = (url: string, force = false) => {
+  if (!force) {
+    const cached = stageMediaBlobCache.get(url)
+    if (cached) return Promise.resolve(cached)
+    const pending = stageMediaBlobRequests.get(url)
+    if (pending) return pending
+  }
+  const requestUrl = force ? `${url}${url.includes('?') ? '&' : '?'}theaterRetry=${Date.now()}` : url
+  const request = api.get<Blob>(requestUrl, { responseType: 'blob' }).then((response) => {
+    if (!(response.data instanceof Blob) || response.data.size === 0) throw new Error('资源响应为空')
+    return cacheStageMediaBlob(url, response.data)
+  }).finally(() => {
+    if (stageMediaBlobRequests.get(url) === request) stageMediaBlobRequests.delete(url)
+  })
+  stageMediaBlobRequests.set(url, request)
+  return request
+}
 
 const stageMediaErrorMessage = (error: unknown) => {
   const status = Number((error as { response?: { status?: number } })?.response?.status || 0)
@@ -1431,7 +1465,7 @@ const loadStageMedia = (
     : new Image()
   const controller = new AbortController()
   stageMediaRequestControllers.set(source, controller)
-  let authenticatedRetryStarted = false
+  let authenticatedAttempt = 0
 
   // 舞台与 API 可能跨端口，显式携带凭据并保持 Canvas 可安全绘制。
   if (location.managed) source.crossOrigin = 'use-credentials'
@@ -1449,18 +1483,17 @@ const loadStageMedia = (
     if (isVideoSource(source)) source.load()
   }
 
-  const loadAuthenticatedSource = () => {
-    authenticatedRetryStarted = true
-    void api.get<Blob>(location.url, { responseType: 'blob', signal: controller.signal }).then((response) => {
+  const loadAuthenticatedSource = (force = false) => {
+    authenticatedAttempt += 1
+    void fetchStageMediaBlob(location.url, force).then((blob) => {
       theaterMediaDebug('blob response', {
-        status: response.status,
-        contentType: response.headers?.['content-type'],
-        size: response.data instanceof Blob ? response.data.size : null,
-        blobType: response.data instanceof Blob ? response.data.type : typeof response.data,
+        size: blob.size,
+        blobType: blob.type,
         url: location.url,
       })
-      if (!(response.data instanceof Blob) || response.data.size === 0) throw new Error('资源响应为空')
-      const sourceUrl = URL.createObjectURL(response.data)
+      const previousUrl = stageMediaObjectUrls.get(source)
+      if (previousUrl) URL.revokeObjectURL(previousUrl)
+      const sourceUrl = URL.createObjectURL(blob)
       if (controller.signal.aborted) {
         URL.revokeObjectURL(sourceUrl)
         return
@@ -1468,36 +1501,41 @@ const loadStageMedia = (
       stageMediaObjectUrls.set(source, sourceUrl)
       assignSourceUrl(sourceUrl)
     }).catch((error) => {
-      if (!controller.signal.aborted) {
-        theaterMediaDebug('blob error', error)
-        onError(stageMediaErrorMessage(error))
+      if (controller.signal.aborted) return
+      theaterMediaDebug('blob error', error)
+      if (authenticatedAttempt < 3) {
+        window.setTimeout(() => {
+          if (!controller.signal.aborted) loadAuthenticatedSource(true)
+        }, authenticatedAttempt * 250)
+        return
       }
-    }).finally(() => {
       stageMediaRequestControllers.delete(source)
+      onError(stageMediaErrorMessage(error))
     })
   }
 
   const handleSourceError = (decodeMessage: string) => {
-    if (!location.managed || authenticatedRetryStarted) {
+    if (!location.managed) {
       onError(decodeMessage)
       return
     }
-    loadAuthenticatedSource()
+    if (authenticatedAttempt < 3) {
+      loadAuthenticatedSource(true)
+      return
+    }
+    onError(decodeMessage)
   }
 
   if (isVideoSource(source)) {
     source.muted = true
     source.loop = true
-    source.autoplay = true
+    source.autoplay = false
     source.playsInline = true
     source.preload = 'auto'
     source.onloadedmetadata = () => {
       theaterMediaDebug('video loadedmetadata', { width: source.videoWidth, height: source.videoHeight, url: location.url })
       stageMediaRequestControllers.delete(source)
-      activeAnimatedMedia.add(source)
-      syncMediaAnimation()
       onReady(source)
-      void source.play().catch((error) => onError(stageMediaErrorMessage(error)))
     }
     source.onerror = () => {
       theaterMediaDebug('video error', { error: source.error, url: location.url })
@@ -1507,10 +1545,6 @@ const loadStageMedia = (
     source.onload = () => {
       theaterMediaDebug('image load', { width: source.naturalWidth, height: source.naturalHeight, url: location.url })
       stageMediaRequestControllers.delete(source)
-      if (imageRef.animated) {
-        activeAnimatedMedia.add(source)
-        syncMediaAnimation()
-      }
       onReady(source)
     }
     source.onerror = () => {
@@ -1519,13 +1553,143 @@ const loadStageMedia = (
     }
   }
 
-  if (location.managed && !isVideoSource(source)) {
+  if (location.managed) {
     loadAuthenticatedSource()
   } else {
     assignSourceUrl(location.url)
   }
   return source
 }
+
+type ScenePreloadStatus = 'loading' | 'ready' | 'error'
+const scenePreloadStatus = ref<Record<string, ScenePreloadStatus>>({})
+const handledPreloadRequestIds = new Set<string>()
+
+const collectSceneMediaItems = (sceneId: string) => {
+  const scene = props.store.state.scenes[sceneId]
+  if (!scene) return []
+  const refs: Array<{ key: string, imageRef: StageImageRef }> = []
+  if (scene.state.background) refs.push({ key: 'surface:background', imageRef: scene.state.background })
+  if (scene.state.foreground) refs.push({ key: 'surface:foreground', imageRef: scene.state.foreground })
+  Object.values({ ...scene.state.sceneObjects, ...props.store.state.persistentObjects })
+    .filter((object) => object.type === 'image' && Boolean(object.image))
+    .forEach((object) => refs.push({ key: `object:${object.id}`, imageRef: object.image! }))
+  return refs.flatMap(({ key, imageRef }) => {
+    const location = resolveTheaterStageMedia(imageRef)
+    return location ? [{ key, imageRef, location }] : []
+  })
+}
+
+const collectSceneMedia = (sceneId: string) => {
+  const unique = new Map<string, { imageRef: StageImageRef, location: TheaterStageMediaLocation }>()
+  collectSceneMediaItems(sceneId).forEach(({ imageRef, location }) => unique.set(location.url, { imageRef, location }))
+  return [...unique.values()]
+}
+
+const preloadStageMedia = ({ imageRef, location }: { imageRef: StageImageRef, location: TheaterStageMediaLocation }) => (
+  new Promise<void>((resolve, reject) => {
+    let source: StageMediaSource | null = null
+    source = loadStageMedia(imageRef, location, (loadedSource) => {
+      releaseStageMedia(loadedSource)
+      resolve()
+    }, (message) => {
+      releaseStageMedia(source)
+      reject(new Error(message))
+    })
+  })
+)
+
+const preloadSceneMedia = async (sceneId: string) => {
+  if (!props.store.state.scenes[sceneId]) return
+  scenePreloadStatus.value[sceneId] = 'loading'
+  const queue = collectSceneMedia(sceneId)
+  let cursor = 0
+  let failed = false
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const item = queue[cursor++]
+      try {
+        await preloadStageMedia(item)
+      } catch {
+        failed = true
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(6, Math.max(1, queue.length)) }, worker))
+  scenePreloadStatus.value[sceneId] = failed ? 'error' : 'ready'
+}
+
+const preloadScenes = async (sceneIds: string[], requestId = '') => {
+  if (requestId) {
+    if (handledPreloadRequestIds.has(requestId)) return
+    handledPreloadRequestIds.add(requestId)
+    if (handledPreloadRequestIds.size > 100) handledPreloadRequestIds.delete(handledPreloadRequestIds.values().next().value!)
+  }
+  for (const sceneId of [...new Set(sceneIds)]) await preloadSceneMedia(sceneId)
+}
+
+const requestScenePreload = (sceneIds: string[]) => {
+  const valid = [...new Set(sceneIds)].filter((sceneId) => Boolean(props.store.state.scenes[sceneId]))
+  if (valid.length) emit('preloadRequested', valid)
+}
+
+interface SceneMediaBatch {
+  sceneId: string
+  expected: Map<string, string>
+  settled: Set<string>
+  reveals: Array<() => void>
+  released: boolean
+  timeout: number | null
+}
+
+let sceneMediaBatch: SceneMediaBatch | null = null
+
+const beginSceneMediaBatch = (sceneId: string) => {
+  if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
+  sceneMediaBatch = {
+    sceneId,
+    expected: new Map(collectSceneMediaItems(sceneId).map((item) => [item.key, item.location.url])),
+    settled: new Set(),
+    reveals: [],
+    released: false,
+    timeout: null,
+  }
+  const batch = sceneMediaBatch
+  batch.timeout = window.setTimeout(() => releaseSceneMediaBatch(batch), 10_000)
+}
+
+const activateStageMedia = (source: StageMediaSource, imageRef: StageImageRef) => {
+  if (isVideoSource(source)) {
+    source.currentTime = 0
+    activeAnimatedMedia.add(source)
+    void source.play().catch((error) => theaterMediaDebug('video play error', stageMediaErrorMessage(error)))
+  } else if (imageRef.animated) {
+    activeAnimatedMedia.add(source)
+  }
+  syncMediaAnimation()
+}
+
+const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
+  if (batch.released) return
+  batch.released = true
+  if (batch.timeout !== null) window.clearTimeout(batch.timeout)
+  batch.timeout = null
+  const reveals = batch.reveals.splice(0)
+  requestAnimationFrame(() => reveals.forEach((reveal) => reveal()))
+}
+
+const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
+  const batch = sceneMediaBatch
+  if (!batch || batch.sceneId !== props.store.state.activeSceneId || batch.expected.get(key) !== url || batch.released) {
+    reveal?.()
+    return
+  }
+  if (reveal) batch.reveals.push(reveal)
+  batch.settled.add(key)
+  if (batch.settled.size >= batch.expected.size) releaseSceneMediaBatch(batch)
+}
+
+defineExpose({ preloadScenes })
 
 const setImageFit = (
   node: Konva.Image,
@@ -1667,7 +1831,7 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   cameraGroup.add(group)
   if (base) group.add(base)
   group.add(media, directImage, overlay, placeholder, label)
-  slot = { group, base, media, directImage, overlay, placeholder, label, style, url: '', version: 0, source: null, debugDrawCount: 0 }
+  slot = { group, base, media, directImage, overlay, placeholder, label, style, url: '', version: 0, source: null, ready: false, debugDrawCount: 0 }
   return slot
 }
 
@@ -1725,6 +1889,7 @@ const updateSurfaceSlot = (
   box: { x: number, y: number, width: number, height: number },
   style: StageSurfaceStyle,
   loadingLabel: string,
+  mediaKey: string,
 ) => {
   slot.style = style
   slot.group.position({ x: box.x, y: box.y })
@@ -1759,6 +1924,7 @@ const updateSurfaceSlot = (
     releaseStageMedia(slot.source)
     slot.url = ''
     slot.source = null
+    slot.ready = false
     slot.media.visible(false)
     slot.directImage.visible(false)
     slot.overlay.visible(false)
@@ -1770,6 +1936,7 @@ const updateSurfaceSlot = (
     releaseStageMedia(slot.source)
     slot.url = imageRef.url
     slot.source = null
+    slot.ready = false
     slot.media.visible(false)
     slot.directImage.visible(false)
     slot.overlay.visible(false)
@@ -1777,16 +1944,19 @@ const updateSurfaceSlot = (
     slot.label.text('图片地址被安全策略拒绝').visible(true)
     return
   }
-  if (slot.url === resolved && slot.source) {
+  if (slot.url === resolved && slot.source && slot.ready) {
     updateDirectSurfaceImage(slot, slot.source, box)
     slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
     slot.group.getLayer()?.batchDraw()
+    settleSceneMedia(mediaKey, resolved)
     return
   }
+  if (slot.url === resolved && slot.source) return
   releaseStageMedia(slot.source)
   slot.url = resolved
   slot.source = null
+  slot.ready = false
   slot.version += 1
   const version = slot.version
   slot.media.visible(false)
@@ -1799,63 +1969,73 @@ const updateSurfaceSlot = (
       releaseStageMedia(loadedSource)
       return
     }
-    slot.source = loadedSource
-    theaterMediaDebug('surface ready', {
-      resourceId: imageRef.resourceId,
-      width: stageMediaDimensions(loadedSource).width,
-      height: stageMediaDimensions(loadedSource).height,
-      visible: slot.media.visible(),
-      box,
-    })
-    updateDirectSurfaceImage(slot, loadedSource, box)
-    slot.media.visible(!slot.directImage.visible())
-    slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
-    slot.placeholder.visible(false)
-    slot.label.visible(false)
-    theaterMediaDebug('surface visible', {
-      resourceId: imageRef.resourceId,
-      visible: slot.media.visible(),
-      layer: Boolean(slot.group.getLayer()),
-    })
-    const layer = slot.group.getLayer()
-    layer?.batchDraw()
-    if (layer) {
-      requestAnimationFrame(() => {
-        if (!theaterMediaDebug) return
-        try {
-          const canvas = layer.getCanvas()._canvas
-          const context = canvas.getContext('2d')
-          const sampleAt = (x: number, y: number) => context
-            ? Array.from(context.getImageData(Math.floor(canvas.width * x), Math.floor(canvas.height * y), 1, 1).data)
-            : null
-          theaterMediaDebug('surface pixels', {
-            resourceId: imageRef.resourceId,
-            canvas: { width: canvas.width, height: canvas.height },
-            group: {
-              position: slot.group.getAbsolutePosition(),
-              clip: slot.group.clip(),
-            },
-            directImage: {
-              visible: slot.directImage.visible(),
-              position: slot.directImage.getAbsolutePosition(),
-              size: slot.directImage.size(),
-              hasImage: Boolean(slot.directImage.image()),
-            },
-            pixels: {
-              topLeft: sampleAt(0.25, 0.25),
-              center: sampleAt(0.5, 0.5),
-              bottomRight: sampleAt(0.75, 0.75),
-            },
-          })
-        } catch (error) {
-          theaterMediaDebug('surface pixels error', { resourceId: imageRef.resourceId, error })
-        }
+    settleSceneMedia(mediaKey, resolved, () => {
+      if (slot.version !== version || slot.url !== resolved) {
+        releaseStageMedia(loadedSource)
+        return
+      }
+      slot.source = loadedSource
+      slot.ready = true
+      activateStageMedia(loadedSource, imageRef)
+      theaterMediaDebug('surface ready', {
+        resourceId: imageRef.resourceId,
+        width: stageMediaDimensions(loadedSource).width,
+        height: stageMediaDimensions(loadedSource).height,
+        visible: slot.media.visible(),
+        box,
       })
-    }
+      updateDirectSurfaceImage(slot, loadedSource, box)
+      slot.media.visible(!slot.directImage.visible())
+      slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
+      slot.placeholder.visible(false)
+      slot.label.visible(false)
+      theaterMediaDebug('surface visible', {
+        resourceId: imageRef.resourceId,
+        visible: slot.media.visible(),
+        layer: Boolean(slot.group.getLayer()),
+      })
+      const layer = slot.group.getLayer()
+      layer?.batchDraw()
+      if (layer) {
+        requestAnimationFrame(() => {
+          if (!theaterMediaDebug) return
+          try {
+            const canvas = layer.getCanvas()._canvas
+            const context = canvas.getContext('2d')
+            const sampleAt = (x: number, y: number) => context
+              ? Array.from(context.getImageData(Math.floor(canvas.width * x), Math.floor(canvas.height * y), 1, 1).data)
+              : null
+            theaterMediaDebug('surface pixels', {
+              resourceId: imageRef.resourceId,
+              canvas: { width: canvas.width, height: canvas.height },
+              group: {
+                position: slot.group.getAbsolutePosition(),
+                clip: slot.group.clip(),
+              },
+              directImage: {
+                visible: slot.directImage.visible(),
+                position: slot.directImage.getAbsolutePosition(),
+                size: slot.directImage.size(),
+                hasImage: Boolean(slot.directImage.image()),
+              },
+              pixels: {
+                topLeft: sampleAt(0.25, 0.25),
+                center: sampleAt(0.5, 0.5),
+                bottomRight: sampleAt(0.75, 0.75),
+              },
+            })
+          } catch (error) {
+            theaterMediaDebug('surface pixels error', { resourceId: imageRef.resourceId, error })
+          }
+        })
+      }
+    })
   }, (errorMessage) => {
     if (slot.version !== version || slot.url !== resolved) return
+    settleSceneMedia(mediaKey, resolved)
     releaseStageMedia(source)
     slot.source = null
+    slot.ready = false
     slot.media.visible(false)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
@@ -1900,8 +2080,8 @@ const syncField = () => {
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
   const viewportBox = { x: 0, y: 0, width: viewportSize.value.width, height: viewportSize.value.height }
-  updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景')
-  updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景')
+  updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景', 'surface:background')
+  updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景', 'surface:foreground')
   rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
   worldLayer?.batchDraw()
@@ -2417,6 +2597,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   const currentSource = image.image() as StageMediaSource | undefined
   if (wrapper.getAttr('stageImageUrl') === resolved && currentSource) {
     setImageFit(image, currentSource, width, height, objectImageFit(object))
+    settleSceneMedia(`object:${object.id}`, resolved)
     return
   }
   if (wrapper.getAttr('stageImageUrl') === resolved) return
@@ -2435,24 +2616,32 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
       releaseStageMedia(loadedSource)
       return
     }
-    image.image(loadedSource)
-    setImageFit(
-      image,
-      loadedSource,
-      frame?.width() || width,
-      frame?.height() || height,
-      objectImageFit(object),
-    )
-    image.visible(true)
-    if (!isVideoSource(loadedSource)) {
-      const previewUrl = stageMediaObjectUrls.get(loadedSource) || location!.url
-      if (previewUrl) setLayerPreviewUrl(object.id, previewUrl)
-    }
-    placeholder.visible(false)
-    label.visible(false)
-    wrapper.getLayer()?.batchDraw()
+    settleSceneMedia(`object:${object.id}`, resolved, () => {
+      if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) {
+        releaseStageMedia(loadedSource)
+        return
+      }
+      image.image(loadedSource)
+      activateStageMedia(loadedSource, object.image!)
+      setImageFit(
+        image,
+        loadedSource,
+        frame?.width() || width,
+        frame?.height() || height,
+        objectImageFit(object),
+      )
+      image.visible(true)
+      if (!isVideoSource(loadedSource)) {
+        const previewUrl = stageMediaObjectUrls.get(loadedSource) || location!.url
+        if (previewUrl) setLayerPreviewUrl(object.id, previewUrl)
+      }
+      placeholder.visible(false)
+      label.visible(false)
+      wrapper.getLayer()?.batchDraw()
+    })
   }, (errorMessage) => {
     if (imageLoadVersions.get(object.id) !== version || wrapper.getAttr('stageImageUrl') !== resolved) return
+    settleSceneMedia(`object:${object.id}`, resolved)
     releaseStageMedia(source)
     wrapper.setAttr('stageImageUrl', '')
     clearLayerPreviewUrl(object.id)
@@ -3119,6 +3308,7 @@ onMounted(() => {
   resizeObserver = new ResizeObserver(resizeStage)
   resizeObserver.observe(viewportRef.value!)
   resizeStage()
+  beginSceneMediaBatch(props.store.state.activeSceneId)
   syncField()
   syncObjects()
   window.addEventListener('pointermove', movePanel)
@@ -3128,6 +3318,7 @@ onMounted(() => {
   void fetchTheaterAudioAssets()
 })
 
+watch(() => props.store.state.activeSceneId, (sceneId) => beginSceneMediaBatch(sceneId), { flush: 'sync' })
 watch(() => props.store.state.liveState, () => {
   syncField()
   syncObjects()
@@ -3200,6 +3391,7 @@ onBeforeUnmount(() => {
   props.store.commitObjectEdit()
   cancelDrawingSession()
   objectNodes.forEach(releaseObjectMedia)
+  if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
   releaseStageMedia(backgroundSlot?.source)
   releaseStageMedia(foregroundSlot?.source)
   Array.from(activeAnimatedMedia).forEach(releaseStageMedia)
@@ -3207,6 +3399,7 @@ onBeforeUnmount(() => {
   mediaAnimation = null
   objectNodes.clear()
   imageLoadVersions.clear()
+  stageMediaBlobCache.clear()
   props.store.setBulkSelectionMode(false)
   stage?.destroy()
   stage = null
@@ -3412,20 +3605,36 @@ onBeforeUnmount(() => {
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('scene', $event)">
           <span>场景</span>
           <div class="theater-panel-heading__actions">
+            <n-tooltip v-if="canSwitchScene" trigger="hover">
+              <template #trigger>
+                <n-button text size="tiny" aria-label="预加载全部场景" :loading="store.scenes.value.some((scene) => scenePreloadStatus[scene.id] === 'loading')" @click="requestScenePreload(store.scenes.value.map((scene) => scene.id))"><n-icon><CloudDownload /></n-icon></n-button>
+              </template>
+              预加载全部场景到所有设备
+            </n-tooltip>
             <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
-        <button
+        <div
           v-for="scene in store.scenes.value"
           :key="scene.id"
-          class="theater-scene-card"
-          :class="{ 'is-active': scene.id === store.state.activeSceneId }"
-          :disabled="!canSwitchScene"
-          @click="canSwitchScene && store.selectScene(scene.id)"
+          class="theater-scene-row"
         >
-          <span class="theater-scene-card__title">{{ scene.name }}</span>
-        </button>
+          <button
+            class="theater-scene-card"
+            :class="{ 'is-active': scene.id === store.state.activeSceneId }"
+            :disabled="!canSwitchScene"
+            @click="canSwitchScene && store.selectScene(scene.id)"
+          >
+            <span class="theater-scene-card__title">{{ scene.name }}</span>
+          </button>
+          <n-tooltip v-if="canSwitchScene" trigger="hover">
+            <template #trigger>
+              <n-button class="theater-scene-preload" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
+            </template>
+            在所有设备预加载此场景
+          </n-tooltip>
+        </div>
         <div v-if="canEditAllObjects && canSwitchScene" class="theater-scene-actions">
           <n-button size="tiny" quaternary @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
           <n-button size="tiny" quaternary :disabled="store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
@@ -3998,6 +4207,7 @@ onBeforeUnmount(() => {
 .theater-panel-heading small { font-weight: 400; }
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
+.theater-scene-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; gap: 2px; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
@@ -4006,6 +4216,7 @@ onBeforeUnmount(() => {
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
 .theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theater-scene-preload { width: 28px; height: 28px; padding: 0; }
 .theater-scene-actions { display: flex; margin-top: auto; }
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }

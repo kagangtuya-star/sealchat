@@ -437,6 +437,7 @@ const (
 	EventTheaterResourceProcessing EventName = "theater.resource.processing"
 	EventTheaterResourceReady      EventName = "theater.resource.ready"
 	EventTheaterResourceFailed     EventName = "theater.resource.failed"
+	EventTheaterPreloadRequested   EventName = "theater.preload.requested"
 )
 
 type TheaterEventPayload struct {

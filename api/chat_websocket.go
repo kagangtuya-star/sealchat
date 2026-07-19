@@ -985,6 +985,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "theater.unsubscribe":
 						apiTheaterUnsubscribeWs(ctx, msg)
 						solved = true
+					case "theater.preload":
+						apiTheaterPreloadWs(ctx, msg)
+						solved = true
 					// Sticky Note APIs
 					case "sticky-note.update":
 						apiWrap(ctx, msg, apiStickyNoteUpdateWs)

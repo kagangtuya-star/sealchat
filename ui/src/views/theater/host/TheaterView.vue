@@ -41,6 +41,7 @@ installTheaterBridgeDebugConsoleCommand()
 
 const layoutRef = ref<HTMLDivElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+const stageAppRef = ref<InstanceType<typeof StageApp> | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
 const chatHidden = ref(false)
@@ -161,6 +162,14 @@ const selectChatCharacterVariant = async (payload: { identityId: string, variant
   }
 }
 
+const requestTheaterPreload = async (sceneIds: string[]) => {
+  try {
+    await theaterSync?.requestPreload(sceneIds)
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '场景预加载请求失败')
+  }
+}
+
 watch(width, () => { splitRatio.value = clampRatio(splitRatio.value) })
 
 const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
@@ -241,6 +250,7 @@ const startTheaterSync = async () => {
       theaterBridge?.setPermissions(resolveBridgePermissions(permissions))
     },
     onSyncingChange: (syncing) => { theaterSyncing.value = syncing },
+    onPreloadRequested: (sceneIds, requestId) => { void stageAppRef.value?.preloadScenes(sceneIds, requestId) },
     onError: (error) => message.warning(error),
   })
   theaterSync = client
@@ -362,6 +372,7 @@ onBeforeUnmount(() => {
         :style="!isNarrow && !chatHidden ? { width: `${splitRatio * 100}%` } : undefined"
       >
         <StageApp
+          ref="stageAppRef"
           :store="stageStore"
           :world-id="worldId"
           :channel-id="channelId"
@@ -375,6 +386,7 @@ onBeforeUnmount(() => {
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
+          @preload-requested="requestTheaterPreload"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"
           @toggle-chat="toggleChat"

@@ -79,6 +79,7 @@ interface TheaterSyncOptions {
   sendGatewayAPI: (apiName: string, data: Record<string, unknown>) => Promise<any>
   onPermissionsChange?: (permissions: string[]) => void
   onSyncingChange?: (syncing: boolean) => void
+  onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onError?: (message: string) => void
 }
 
@@ -583,6 +584,17 @@ export class TheaterSyncClient {
     void this.reload()
   }
 
+  private readonly onPreloadRequested = (event: any) => {
+    const theater = event?.theater
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    const payload = asObject(theater.payload)
+    const sceneIds = Array.isArray(payload.sceneIds)
+      ? [...new Set(payload.sceneIds.filter((sceneId): sceneId is string => typeof sceneId === 'string' && Boolean(sceneId.trim())).map((sceneId) => sceneId.trim()))]
+      : []
+    if (!sceneIds.length) return
+    this.options.onPreloadRequested?.(sceneIds, typeof payload.requestId === 'string' ? payload.requestId : '')
+  }
+
   private readonly onGatewayConnected = () => {
     void this.subscribe()
   }
@@ -595,6 +607,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.rejected' as any, this.onGatewayEvent)
+    chatEvent.on('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
     this.stopWatch = watch(() => [
@@ -620,6 +633,7 @@ export class TheaterSyncClient {
     chatEvent.off('theater.snapshot' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
+    chatEvent.off('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.off('connected' as any, this.onGatewayConnected)
     try {
       await this.options.sendGatewayAPI('theater.unsubscribe', {})
@@ -638,6 +652,17 @@ export class TheaterSyncClient {
     } finally {
       release()
     }
+  }
+
+  async requestPreload(sceneIds: string[]) {
+    const normalized = [...new Set(sceneIds.map((sceneId) => sceneId.trim()).filter(Boolean))]
+    if (!normalized.length) return
+    await this.options.sendGatewayAPI('theater.preload', {
+      worldId: this.options.worldId,
+      channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
+      requestId: mutationId('preload'),
+      sceneIds: normalized,
+    })
   }
 
   private async triggerActionNow(payload: StageActionTriggeredPayload) {

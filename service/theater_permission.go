@@ -122,6 +122,11 @@ func CanAdministerTheater(actorID, worldID, channelID string) bool {
 	return err == nil
 }
 
+func CanSwitchTheaterScene(actorID, worldID, channelID string) bool {
+	_, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionSceneSwitch)
+	return err == nil
+}
+
 func theaterPermissionForMutation(mutationType string) string {
 	switch mutationType {
 	case TheaterMutationSceneApply:

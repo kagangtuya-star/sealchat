@@ -8,12 +8,20 @@ import (
 	"sealchat/model"
 	"sealchat/protocol"
 	"sealchat/service"
+	"sealchat/utils"
 )
 
 type theaterSubscribeRequest struct {
 	WorldID       string `json:"worldId"`
 	ChannelID     string `json:"channelId"`
 	KnownRevision int64  `json:"knownRevision"`
+}
+
+type theaterPreloadRequest struct {
+	WorldID   string   `json:"worldId"`
+	ChannelID string   `json:"channelId"`
+	RequestID string   `json:"requestId"`
+	SceneIDs  []string `json:"sceneIds"`
 }
 
 type theaterSnapshotDescriptor struct {
@@ -155,6 +163,76 @@ func apiTheaterUnsubscribeWs(ctx *ChatContext, _ []byte) {
 		ctx.ConnInfo.closeTheaterQueue()
 	}
 	writeTheaterWSResponse(ctx, map[string]any{"subscribed": false}, nil)
+}
+
+func apiTheaterPreloadWs(ctx *ChatContext, msg []byte) {
+	var envelope struct {
+		Data theaterPreloadRequest `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	request := envelope.Data
+	request.WorldID = strings.TrimSpace(request.WorldID)
+	request.ChannelID = strings.TrimSpace(request.ChannelID)
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	if ctx == nil || ctx.User == nil || ctx.ConnInfo == nil || request.WorldID == "" || request.RequestID == "" {
+		writeTheaterWSResponse(ctx, nil, errors.New("invalid theater preload request"))
+		return
+	}
+	if !service.CanSwitchTheaterScene(ctx.User.ID, request.WorldID, request.ChannelID) {
+		writeTheaterWSResponse(ctx, nil, errors.New("missing permission: stage.scene.switch"))
+		return
+	}
+	subscription, _ := ctx.ConnInfo.theaterState()
+	if subscription == nil || subscription.WorldID != request.WorldID || subscription.ChannelID != request.ChannelID {
+		writeTheaterWSResponse(ctx, nil, errors.New("theater preload scope does not match subscription"))
+		return
+	}
+	seen := map[string]bool{}
+	sceneIDs := make([]string, 0, len(request.SceneIDs))
+	for _, sceneID := range request.SceneIDs {
+		sceneID = strings.TrimSpace(sceneID)
+		if sceneID == "" || len(sceneID) > 128 || seen[sceneID] || len(sceneIDs) >= 200 {
+			continue
+		}
+		seen[sceneID] = true
+		sceneIDs = append(sceneIDs, sceneID)
+	}
+	if len(sceneIDs) == 0 {
+		writeTheaterWSResponse(ctx, nil, errors.New("theater preload requires sceneIds"))
+		return
+	}
+	room, err := model.TheaterRoomFindByScope(request.WorldID, request.ChannelID)
+	if err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	event := theaterGatewayEvent(protocol.EventTheaterPreloadRequested, request.WorldID, request.ChannelID, room.ID, room.Revision, request.RequestID, map[string]any{
+		"requestId": request.RequestID,
+		"sceneIds":  sceneIDs,
+	})
+	// WebSocket API responses and theater events share one connection. Finish the
+	// synchronous response before the theater queue starts writing events.
+	writeTheaterWSResponse(ctx, map[string]any{"requestId": request.RequestID, "accepted": true}, nil)
+	if userId2ConnInfoGlobal != nil {
+		userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+			connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+				if !canConnectionViewTheater(userID, info, request.WorldID, request.ChannelID) {
+					return true
+				}
+				targetSubscription, queue := info.theaterState()
+				if targetSubscription == nil || queue == nil || targetSubscription.WorldID != request.WorldID || targetSubscription.ChannelID != request.ChannelID {
+					return true
+				}
+				gap := theaterSnapshotEventForConnection(info, request.WorldID, request.ChannelID, room.ID, room.Revision, room.SchemaVersion, room.StateHash, "gap")
+				queue.Enqueue(event, gap)
+				return true
+			})
+			return true
+		})
+	}
 }
 
 func writeTheaterWSResponse(ctx *ChatContext, data any, err error) {
