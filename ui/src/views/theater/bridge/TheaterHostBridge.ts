@@ -56,6 +56,23 @@ const CHAT_BRIDGE_PERMISSIONS = [
   'chat.character.variant.select',
 ] as const
 
+const sameStageAction = (left: StageAction, right: StageAction) => {
+  if (left.id !== right.id || left.type !== right.type) return false
+  switch (left.type) {
+    case 'chat.send':
+      return right.type === 'chat.send'
+        && left.payload.content === right.payload.content
+        && left.payload.channelId === right.payload.channelId
+        && left.payload.characterId === right.payload.characterId
+    case 'chat.insert':
+      return right.type === 'chat.insert' && left.payload.content === right.payload.content
+    case 'scene.apply':
+      return right.type === 'scene.apply' && left.payload.sceneId === right.payload.sceneId
+    case 'object.toggle':
+      return right.type === 'object.toggle' && left.payload.objectId === right.payload.objectId
+  }
+}
+
 export const mergeTheaterBridgePermissions = (
   stagePermissions: readonly string[],
   canControlStage = false,
@@ -335,7 +352,7 @@ export class TheaterHostBridge {
       return
     }
     const action = object.actions.find((item) => item.id === payload.actionId)
-    if (!action || JSON.stringify(action) !== JSON.stringify(payload.action)) {
+    if (!action || !sameStageAction(action, payload.action)) {
       this.debug('stage action payload rejected', payload.actionId)
       return
     }

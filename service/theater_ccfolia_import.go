@@ -76,10 +76,11 @@ func (item *ccfoliaMeta) UnmarshalJSON(data []byte) error {
 }
 
 type ccfoliaEntities struct {
-	Room        ccfoliaRoom                `json:"room"`
-	Items       map[string]ccfoliaItem     `json:"items"`
-	Scenes      map[string]ccfoliaScene    `json:"scenes"`
-	Unsupported map[string]json.RawMessage `json:"-"`
+	Room        ccfoliaRoom                 `json:"room"`
+	Items       map[string]ccfoliaItem      `json:"items"`
+	Characters  map[string]ccfoliaCharacter `json:"characters"`
+	Scenes      map[string]ccfoliaScene     `json:"scenes"`
+	Unsupported map[string]json.RawMessage  `json:"-"`
 }
 
 func (item *ccfoliaEntities) UnmarshalJSON(data []byte) error {
@@ -94,11 +95,15 @@ func (item *ccfoliaEntities) UnmarshalJSON(data []byte) error {
 	}
 	delete(unsupported, "room")
 	delete(unsupported, "items")
+	delete(unsupported, "characters")
 	delete(unsupported, "scenes")
 	*item = ccfoliaEntities(value)
 	item.Unsupported = unsupported
 	if item.Items == nil {
 		item.Items = map[string]ccfoliaItem{}
+	}
+	if item.Characters == nil {
+		item.Characters = map[string]ccfoliaCharacter{}
 	}
 	if item.Scenes == nil {
 		item.Scenes = map[string]ccfoliaScene{}
@@ -195,6 +200,35 @@ type ccfoliaClickAction struct {
 	Text string `json:"text"`
 }
 
+type ccfoliaCharacter struct {
+	Name       string          `json:"name"`
+	PlayerName string          `json:"playerName"`
+	Memo       string          `json:"memo"`
+	IconURL    *string         `json:"iconUrl"`
+	X          float64         `json:"x"`
+	Y          float64         `json:"y"`
+	Z          float64         `json:"z"`
+	Angle      float64         `json:"angle"`
+	Width      float64         `json:"width"`
+	Height     float64         `json:"height"`
+	Active     bool            `json:"active"`
+	Secret     bool            `json:"secret"`
+	Invisible  bool            `json:"invisible"`
+	Color      string          `json:"color"`
+	Raw        json.RawMessage `json:"-"`
+}
+
+func (item *ccfoliaCharacter) UnmarshalJSON(data []byte) error {
+	type plain ccfoliaCharacter
+	var value plain
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*item = ccfoliaCharacter(value)
+	item.Raw = append(item.Raw[:0], data...)
+	return nil
+}
+
 type ccfoliaItem struct {
 	X             float64             `json:"x"`
 	Y             float64             `json:"y"`
@@ -250,6 +284,8 @@ type ccfoliaAssetTarget struct {
 	Animated        bool
 	PlaybackVariant string
 	LoopCount       *int
+	Width           int
+	Height          int
 }
 
 type ccfoliaConversion struct {
@@ -673,7 +709,7 @@ func loadCCFOLIAResources(root string, backup ccfoliaBackup) ([]TheaterPackageRe
 			Variants: []TheaterPackageResourceVariant{},
 		}
 		resources = append(resources, resource)
-		targets[ref] = ccfoliaAssetTarget{ResourceID: resourceID, MimeType: mediaMIME, Animated: isAnimated, LoopCount: metadata.LoopCount}
+		targets[ref] = ccfoliaAssetTarget{ResourceID: resourceID, MimeType: mediaMIME, Animated: isAnimated, LoopCount: metadata.LoopCount, Width: metadata.Width, Height: metadata.Height}
 	}
 	warnings := []string{}
 	entries, err := os.ReadDir(root)
@@ -875,7 +911,7 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 	for _, entry := range sceneEntries {
 		targetID := utils.NewID()
 		sceneTargetIDs[entry.SourceID] = targetID
-		name := strings.TrimSpace(entry.Scene.Name)
+		name := entry.Scene.Name
 		sceneNameIDs[name] = append(sceneNameIDs[name], targetID)
 	}
 
@@ -885,6 +921,14 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 		return ccfoliaConversion{}, err
 	}
 	warnings = append(warnings, stateWarnings...)
+	characters, characterWarnings, err := ccfoliaCharacters(backup.Entities.Characters, currentSceneID, worldID, targets)
+	if err != nil {
+		return ccfoliaConversion{}, err
+	}
+	for objectID, character := range characters {
+		currentObjects[objectID] = character
+	}
+	warnings = append(warnings, characterWarnings...)
 	snapshot := TheaterSharedSnapshot{
 		ActiveSceneID: &currentSceneID, LiveState: currentState,
 		Scenes: map[string]TheaterSceneSnapshot{}, PersistentObjects: map[string]TheaterObjectSnapshot{},
@@ -932,25 +976,25 @@ func ccfoliaRoomState(backup ccfoliaBackup, worldID, sceneID string, targets map
 		"unsupportedEntities": ccfoliaRawMapStrings(backup.Entities.Unsupported),
 		"resourceDescriptors": ccfoliaResourceRawMap(backup.Resources),
 	}
-	state, warnings, err := ccfoliaStageState(room.BackgroundURL, room.ForegroundURL, room.FieldWidth, room.FieldHeight, room.FieldObjectFit, room.BackgroundColor, room.DisplayGrid, room.GridSize, room.AlignWithGrid, room.EnableCrossfade, room.CrossfadeDuration, metadata, worldID, targets)
+	state, warnings, err := ccfoliaStageState(room.BackgroundURL, room.ForegroundURL, room.FieldWidth, room.FieldHeight, room.FieldObjectFit, room.BackgroundColor, room.DisplayGrid, room.GridSize, room.AlignWithGrid, room.EnableCrossfade, room.CrossfadeDuration, ccfoliaRoomCanvasBounds(backup), metadata, worldID, targets)
 	if err != nil {
 		return nil, nil, warnings, err
 	}
-	objects, objectWarnings, err := ccfoliaMarkers(room.Markers, "current", "current", sceneID, worldID, targets, sceneNameIDs)
+	objects, objectWarnings, err := ccfoliaMarkers(room.Markers, "current", "current", sceneID, worldID, targets, sceneNameIDs, false)
 	return state, objects, append(warnings, objectWarnings...), err
 }
 
 func ccfoliaSceneState(sourceID string, scene ccfoliaScene, worldID, sceneID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (json.RawMessage, map[string]TheaterObjectSnapshot, []string, error) {
 	metadata := map[string]any{"sourceType": "scene", "sourceSceneId": sourceID, "sourceOrder": scene.Order, "sourceRaw": ccfoliaRawWithout(scene.Raw, "markers")}
-	state, warnings, err := ccfoliaStageState(scene.BackgroundURL, scene.ForegroundURL, scene.FieldWidth, scene.FieldHeight, scene.FieldObjectFit, "", scene.DisplayGrid, scene.GridSize, false, false, 0, metadata, worldID, targets)
+	state, warnings, err := ccfoliaStageState(scene.BackgroundURL, scene.ForegroundURL, scene.FieldWidth, scene.FieldHeight, scene.FieldObjectFit, "", scene.DisplayGrid, scene.GridSize, false, false, 0, ccfoliaMarkerCanvasBounds(scene.Markers), metadata, worldID, targets)
 	if err != nil {
 		return nil, nil, warnings, err
 	}
-	objects, objectWarnings, err := ccfoliaMarkers(scene.Markers, "scene", sourceID, sceneID, worldID, targets, sceneNameIDs)
+	objects, objectWarnings, err := ccfoliaMarkers(scene.Markers, "scene", sourceID, sceneID, worldID, targets, sceneNameIDs, true)
 	return state, objects, append(warnings, objectWarnings...), err
 }
 
-func ccfoliaStageState(backgroundRef, foregroundRef *string, width, height float64, fit, backgroundColor string, displayGrid bool, gridSize float64, align, crossfade bool, crossfadeDuration float64, metadata map[string]any, worldID string, targets map[string]ccfoliaAssetTarget) (json.RawMessage, []string, error) {
+func ccfoliaStageState(backgroundRef, foregroundRef *string, width, height float64, fit, backgroundColor string, displayGrid bool, gridSize float64, align, crossfade bool, crossfadeDuration float64, bounds ccfoliaCanvasBounds, metadata map[string]any, worldID string, targets map[string]ccfoliaAssetTarget) (json.RawMessage, []string, error) {
 	warnings := []string{}
 	background, err := ccfoliaImageRef(backgroundRef, "背景", worldID, targets)
 	if err != nil {
@@ -960,15 +1004,16 @@ func ccfoliaStageState(backgroundRef, foregroundRef *string, width, height float
 	if err != nil {
 		return nil, warnings, err
 	}
-	targetWidth := width
-	if targetWidth <= 0 {
-		targetWidth = 1
-		warnings = appendWarning(warnings, "存在零或负画布宽度；源值已保留，SealChat 渲染宽度使用 1")
-	}
-	targetHeight := height
-	if targetHeight <= 0 {
-		targetHeight = 1
-		warnings = appendWarning(warnings, "存在零或负画布高度；源值已保留，SealChat 渲染高度使用 1")
+	targetWidth, targetHeight := width, height
+	if targetWidth <= 0 || targetHeight <= 0 {
+		autoWidth, autoHeight := ccfoliaAutoCanvasSize(backgroundRef, bounds, targets)
+		if targetWidth <= 0 {
+			targetWidth = autoWidth
+		}
+		if targetHeight <= 0 {
+			targetHeight = autoHeight
+		}
+		metadata["autoCanvasSize"] = map[string]any{"width": targetWidth, "height": targetHeight}
 	}
 	targetGridSize := gridSize
 	if targetGridSize <= 0 {
@@ -1014,7 +1059,63 @@ func ccfoliaStageState(backgroundRef, foregroundRef *string, width, height float
 	return raw, warnings, err
 }
 
-func ccfoliaMarkers(markers map[string]ccfoliaMarker, scopeType, scopeID, sceneID, worldID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (map[string]TheaterObjectSnapshot, []string, error) {
+type ccfoliaCanvasBounds struct {
+	minX, minY    float64
+	maxX, maxY    float64
+	hasComponents bool
+}
+
+func (bounds *ccfoliaCanvasBounds) add(x, y, width, height float64) {
+	if width < 0 || height < 0 {
+		return
+	}
+	maxX, maxY := x+width, y+height
+	if !bounds.hasComponents {
+		bounds.minX, bounds.minY, bounds.maxX, bounds.maxY = x, y, maxX, maxY
+		bounds.hasComponents = true
+		return
+	}
+	bounds.minX = math.Min(bounds.minX, x)
+	bounds.minY = math.Min(bounds.minY, y)
+	bounds.maxX = math.Max(bounds.maxX, maxX)
+	bounds.maxY = math.Max(bounds.maxY, maxY)
+}
+
+func ccfoliaMarkerCanvasBounds(markers map[string]ccfoliaMarker) ccfoliaCanvasBounds {
+	var bounds ccfoliaCanvasBounds
+	for _, marker := range markers {
+		bounds.add(marker.X, marker.Y, marker.Width, marker.Height)
+	}
+	return bounds
+}
+
+func ccfoliaRoomCanvasBounds(backup ccfoliaBackup) ccfoliaCanvasBounds {
+	bounds := ccfoliaMarkerCanvasBounds(backup.Entities.Room.Markers)
+	for _, item := range backup.Entities.Items {
+		bounds.add(item.X, item.Y, item.Width, item.Height)
+	}
+	for _, character := range backup.Entities.Characters {
+		bounds.add(character.X, character.Y, character.Width, character.Height)
+	}
+	return bounds
+}
+
+func ccfoliaAutoCanvasSize(backgroundRef *string, bounds ccfoliaCanvasBounds, targets map[string]ccfoliaAssetTarget) (float64, float64) {
+	width, height := 1024.0, 768.0
+	if backgroundRef != nil {
+		if target, ok := targets[strings.TrimSpace(*backgroundRef)]; ok {
+			width = math.Max(width, float64(target.Width))
+			height = math.Max(height, float64(target.Height))
+		}
+	}
+	if bounds.hasComponents {
+		width = math.Max(width, bounds.maxX-bounds.minX+192)
+		height = math.Max(height, bounds.maxY-bounds.minY+192)
+	}
+	return math.Ceil(width), math.Ceil(height)
+}
+
+func ccfoliaMarkers(markers map[string]ccfoliaMarker, scopeType, scopeID, sceneID, worldID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string, importActions bool) (map[string]TheaterObjectSnapshot, []string, error) {
 	type entry struct {
 		SourceID string
 		Marker   ccfoliaMarker
@@ -1044,9 +1145,17 @@ func ccfoliaMarkers(markers map[string]ccfoliaMarker, scopeType, scopeID, sceneI
 			return nil, warnings, fmt.Errorf("CCFOLIA marker %s/%s: %w", scopeID, entry.SourceID, err)
 		}
 		content, _ := json.Marshal(map[string]any{"image": imageRef, "text": marker.Text})
-		actions, actionWarnings := ccfoliaActions(marker.ClickAction, sceneNameIDs)
-		warnings = append(warnings, actionWarnings...)
-		metadata, _ := json.Marshal(map[string]any{"ccfolia": map[string]any{"scopeType": scopeType, "scopeId": scopeID, "sourceMarkerId": entry.SourceID, "freezed": marker.Freezed, "sourceRaw": string(marker.Raw)}})
+		actions := json.RawMessage(`[]`)
+		markerMetadata := map[string]any{"scopeType": scopeType, "scopeId": scopeID, "sourceMarkerId": entry.SourceID, "freezed": marker.Freezed, "sourceRaw": string(marker.Raw)}
+		if importActions {
+			actionMetadata, actionWarnings := ccfoliaActions(marker.ClickAction, sceneNameIDs)
+			actions = actionMetadata.Actions
+			if actionMetadata.Metadata != nil {
+				markerMetadata["clickAction"] = actionMetadata.Metadata
+			}
+			warnings = append(warnings, actionWarnings...)
+		}
+		metadata, _ := json.Marshal(map[string]any{"ccfolia": markerMetadata})
 		objectID := utils.NewID()
 		aspect := true
 		objects[objectID] = TheaterObjectSnapshot{
@@ -1058,6 +1167,49 @@ func ccfoliaMarkers(markers map[string]ccfoliaMarker, scopeType, scopeID, sceneI
 		}
 	}
 	return objects, warnings, nil
+}
+
+func ccfoliaCharacters(characters map[string]ccfoliaCharacter, sceneID, worldID string, targets map[string]ccfoliaAssetTarget) (map[string]TheaterObjectSnapshot, []string, error) {
+	type entry struct {
+		SourceID  string
+		Character ccfoliaCharacter
+	}
+	entries := make([]entry, 0, len(characters))
+	for sourceID, character := range characters {
+		entries = append(entries, entry{SourceID: sourceID, Character: character})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Character.Z == entries[j].Character.Z {
+			return entries[i].SourceID < entries[j].SourceID
+		}
+		return entries[i].Character.Z < entries[j].Character.Z
+	})
+	objects := make(map[string]TheaterObjectSnapshot, len(entries))
+	for index, entry := range entries {
+		character := entry.Character
+		if character.Width < 0 || character.Height < 0 {
+			return nil, nil, fmt.Errorf("CCFOLIA character 尺寸无效: %s", entry.SourceID)
+		}
+		imageRef, err := ccfoliaImageRef(character.IconURL, character.Name, worldID, targets)
+		if err != nil {
+			return nil, nil, fmt.Errorf("CCFOLIA character %s: %w", entry.SourceID, err)
+		}
+		content, _ := json.Marshal(map[string]any{"image": imageRef, "text": character.Name})
+		metadata, _ := json.Marshal(map[string]any{"ccfolia": map[string]any{
+			"sourceCharacterId": entry.SourceID, "playerName": character.PlayerName, "memo": character.Memo,
+			"secret": character.Secret, "color": character.Color, "sourceRaw": string(character.Raw),
+		}})
+		objectID := utils.NewID()
+		aspect := true
+		objects[objectID] = TheaterObjectSnapshot{
+			ID: objectID, SceneID: &sceneID, Kind: "image", Name: ccfoliaName(character.Name, "CCFOLIA Character"),
+			X: character.X + character.Width/2, Y: character.Y + character.Height/2, Width: character.Width, Height: character.Height,
+			Rotation: character.Angle, Scale: 1, ScaleX: 1, ScaleY: 1, Z: character.Z, OrderKey: strconv.Itoa(index + 1),
+			Visible: character.Active && !character.Invisible, Locked: false, AspectRatioLocked: &aspect, Interactive: false, Editable: false,
+			Content: content, Actions: json.RawMessage(`[]`), Metadata: metadata,
+		}
+	}
+	return objects, nil, nil
 }
 
 func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[string]ccfoliaAssetTarget, sceneNameIDs map[string][]string) (map[string]TheaterObjectSnapshot, []string, error) {
@@ -1090,7 +1242,8 @@ func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[stri
 			return nil, warnings, fmt.Errorf("CCFOLIA item %s: %w", entry.SourceID, err)
 		}
 		content, _ := json.Marshal(map[string]any{"image": imageRef, "text": item.Memo})
-		actions, actionWarnings := ccfoliaActions(item.ClickAction, sceneNameIDs)
+		actionMetadata, actionWarnings := ccfoliaActions(item.ClickAction, sceneNameIDs)
+		actions := actionMetadata.Actions
 		warnings = append(warnings, actionWarnings...)
 		if item.CoverImageURL != nil && strings.TrimSpace(*item.CoverImageURL) != "" {
 			if _, err := ccfoliaImageRef(item.CoverImageURL, item.Memo+"封面", worldID, targets); err != nil {
@@ -1098,7 +1251,11 @@ func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[stri
 			}
 			warnings = appendWarning(warnings, "item.coverImageUrl 暂不映射，已保存在对象元数据")
 		}
-		metadata, _ := json.Marshal(map[string]any{"ccfolia": map[string]any{"sourceItemId": entry.SourceID, "sourceOrder": item.Order, "sourceRaw": string(item.Raw)}})
+		itemMetadata := map[string]any{"sourceItemId": entry.SourceID, "sourceOrder": item.Order, "sourceRaw": string(item.Raw)}
+		if actionMetadata.Metadata != nil {
+			itemMetadata["clickAction"] = actionMetadata.Metadata
+		}
+		metadata, _ := json.Marshal(map[string]any{"ccfolia": itemMetadata})
 		objectID := utils.NewID()
 		aspect := true
 		objects[objectID] = TheaterObjectSnapshot{
@@ -1112,23 +1269,62 @@ func ccfoliaItems(items map[string]ccfoliaItem, worldID string, targets map[stri
 	return objects, warnings, nil
 }
 
-func ccfoliaActions(action *ccfoliaClickAction, sceneNameIDs map[string][]string) (json.RawMessage, []string) {
+type ccfoliaActionConversion struct {
+	Actions  json.RawMessage
+	Metadata map[string]any
+}
+
+func ccfoliaActions(action *ccfoliaClickAction, sceneNameIDs map[string][]string) (ccfoliaActionConversion, []string) {
 	if action == nil {
-		return json.RawMessage(`[]`), nil
+		return ccfoliaActionConversion{Actions: json.RawMessage(`[]`)}, nil
 	}
-	text := strings.TrimSpace(action.Text)
-	if action.Type == "message" && strings.HasPrefix(text, "/scene ") {
-		name := strings.TrimSpace(strings.TrimPrefix(text, "/scene "))
+	conversion := ccfoliaActionConversion{
+		Actions: json.RawMessage(`[]`),
+		Metadata: map[string]any{
+			"source":   map[string]any{"format": "ccfolia", "type": action.Type, "text": action.Text},
+			"resolved": false,
+		},
+	}
+	if action.Type != "message" {
+		conversion.Metadata["reason"] = "unsupported-action-type"
+		return conversion, []string{"存在未映射 clickAction，已保留为未解析源元数据"}
+	}
+	if strings.HasPrefix(action.Text, "/scene ") {
+		name := strings.TrimPrefix(action.Text, "/scene ")
+		conversion.Metadata["type"] = "scene-switch"
+		conversion.Metadata["targetSceneName"] = name
+		if name == "" {
+			conversion.Metadata["reason"] = "empty-target-scene-name"
+			return conversion, []string{"存在空 /scene 点击动作，已保留为未解析源元数据"}
+		}
 		ids := sceneNameIDs[name]
 		if len(ids) == 1 {
-			raw, _ := json.Marshal([]map[string]any{{"id": utils.NewID(), "type": TheaterMutationSceneApply, "payload": map[string]any{"sceneId": ids[0]}}})
-			return raw, nil
+			conversion.Actions, _ = json.Marshal([]map[string]any{{"id": utils.NewID(), "type": TheaterMutationSceneApply, "payload": map[string]any{"sceneId": ids[0]}}})
+			conversion.Metadata["targetSceneId"] = ids[0]
+			conversion.Metadata["resolved"] = true
+			return conversion, nil
 		}
 		if len(ids) > 1 {
-			return json.RawMessage(`[]`), []string{"存在重名场景，/scene 点击动作仅保留为源元数据"}
+			conversion.Metadata["reason"] = "ambiguous-target-scene-name"
+			return conversion, []string{"存在重名场景，/scene 点击动作已保留为未解析源元数据"}
 		}
+		conversion.Metadata["reason"] = "target-scene-not-found"
+		return conversion, []string{"/scene 点击动作目标场景不存在，已保留为未解析源元数据"}
 	}
-	return json.RawMessage(`[]`), []string{"存在未映射 clickAction，已作为惰性源元数据保留"}
+	if strings.HasPrefix(action.Text, "/send ") {
+		content := strings.TrimPrefix(action.Text, "/send ")
+		conversion.Metadata["type"] = "chat-send"
+		payload, err := normalizeTheaterChatSendPayload(theaterChatSendPayload{Content: content})
+		if err != nil {
+			conversion.Metadata["reason"] = "invalid-send-content"
+			return conversion, []string{"/send 点击动作内容无效，已保留为未解析源元数据"}
+		}
+		conversion.Actions, _ = json.Marshal([]map[string]any{{"id": utils.NewID(), "type": "chat.send", "payload": map[string]any{"content": payload.Content}}})
+		conversion.Metadata["resolved"] = true
+		return conversion, nil
+	}
+	conversion.Metadata["reason"] = "unsupported-message-command"
+	return conversion, []string{"存在未映射 clickAction，已保留为未解析源元数据"}
 }
 
 func ccfoliaImageRef(sourceRef *string, alt, worldID string, targets map[string]ccfoliaAssetTarget) (any, error) {
@@ -1214,6 +1410,9 @@ func ccfoliaAssetReferences(backup ccfoliaBackup) map[string][]string {
 	for itemID, item := range backup.Entities.Items {
 		add(&item.ImageURL, "entities.items."+itemID+".imageUrl")
 		add(item.CoverImageURL, "entities.items."+itemID+".coverImageUrl")
+	}
+	for characterID, character := range backup.Entities.Characters {
+		add(character.IconURL, "entities.characters."+characterID+".iconUrl")
 	}
 	return result
 }

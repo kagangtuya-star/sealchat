@@ -315,6 +315,214 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	}
 }
 
+func TestConvertCCFOLIAClickActions(t *testing.T) {
+	const targetSceneName = "第二幕 - next "
+	backup := ccfoliaBackup{
+		Meta: ccfoliaMeta{Version: ccfoliaBackupVersion},
+		Entities: ccfoliaEntities{
+			Room: ccfoliaRoom{
+				FieldWidth: 100, FieldHeight: 100, GridSize: 10,
+				Markers: map[string]ccfoliaMarker{
+					"shared-marker": {Width: 10, Height: 10, ImageURL: "marker.png", ClickAction: &ccfoliaClickAction{Type: "message", Text: "/scene " + targetSceneName}},
+				},
+			},
+			Scenes: map[string]ccfoliaScene{
+				"source": {
+					Name: "第一幕", Order: 1, FieldWidth: 100, FieldHeight: 100, GridSize: 10,
+					Markers: map[string]ccfoliaMarker{
+						"shared-marker":  {Width: 10, Height: 10, ImageURL: "marker.png", ClickAction: &ccfoliaClickAction{Type: "message", Text: "/scene " + targetSceneName}},
+						"send-marker":    {Width: 10, Height: 10, ImageURL: "marker.png", ClickAction: &ccfoliaClickAction{Type: "message", Text: "/send 发送内容"}},
+						"missing-marker": {Width: 10, Height: 10, ImageURL: "marker.png", ClickAction: &ccfoliaClickAction{Type: "message", Text: "/scene 不存在"}},
+					},
+				},
+				"target": {Name: targetSceneName, Order: 2, FieldWidth: 100, FieldHeight: 100, GridSize: 10},
+			},
+			Items: map[string]ccfoliaItem{},
+			Characters: map[string]ccfoliaCharacter{
+				"character": {Name: "调查员棋子", X: -615, Y: -59, Width: 13, Height: 13, Active: true},
+			},
+		},
+	}
+	conversion, err := convertCCFOLIABackup(backup, "world", map[string]ccfoliaAssetTarget{
+		"marker.png": {ResourceID: "resource", MimeType: "image/png"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTheaterSharedSnapshot(conversion.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	current := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "CCFOLIA 当前房间")
+	if len(current.Objects) != 2 {
+		t.Fatalf("current room object count = %d, want 2", len(current.Objects))
+	}
+	var currentMarkerID string
+	var character TheaterObjectSnapshot
+	for _, object := range current.Objects {
+		if string(object.Actions) != "[]" {
+			t.Fatalf("current room object actions = %s, want []", object.Actions)
+		}
+		if object.Name == "调查员棋子" {
+			character = object
+		} else {
+			currentMarkerID = object.ID
+		}
+	}
+	if character.ID == "" || character.Kind != "image" || !character.Visible {
+		t.Fatalf("character not converted: %#v", character)
+	}
+	if metadata := ccfoliaTestCCFOLIAMetadata(t, character); metadata["sourceCharacterId"] != "character" {
+		t.Fatalf("character metadata = %#v", metadata)
+	}
+	if width, height := ccfoliaTestSceneSize(t, current); width <= 1 || height <= 1 {
+		t.Fatalf("room auto canvas size = %gx%g", width, height)
+	}
+
+	source := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "第一幕")
+	target := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "第二幕 - next")
+	if len(source.Objects) != 3 {
+		t.Fatalf("source marker count = %d, want 3", len(source.Objects))
+	}
+
+	var sceneSwitch, sendAction, unresolved TheaterObjectSnapshot
+	for _, object := range source.Objects {
+		actions := ccfoliaTestActions(t, object.Actions)
+		switch {
+		case len(actions) == 1 && actions[0].Type == TheaterMutationSceneApply:
+			sceneSwitch = object
+			var payload theaterSceneApplyPayload
+			if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.SceneID != target.ID {
+				t.Fatalf("scene target = %q, want %q", payload.SceneID, target.ID)
+			}
+		case len(actions) == 1 && actions[0].Type == "chat.send":
+			sendAction = object
+			var payload theaterChatSendPayload
+			if err := json.Unmarshal(actions[0].Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Content != "发送内容" {
+				t.Fatalf("send content = %q", payload.Content)
+			}
+		case len(actions) == 0:
+			unresolved = object
+		}
+	}
+	if sceneSwitch.ID == "" || sendAction.ID == "" || unresolved.ID == "" {
+		t.Fatal("missing converted scene, send, or unresolved click action")
+	}
+	if sceneSwitch.ID == currentMarkerID {
+		t.Fatal("same source marker in room and scene must remain independent")
+	}
+	if metadata := ccfoliaTestClickActionMetadata(t, sceneSwitch); metadata["targetSceneName"] != targetSceneName || metadata["targetSceneId"] != target.ID || metadata["resolved"] != true {
+		t.Fatalf("scene metadata = %#v", metadata)
+	} else if source, ok := metadata["source"].(map[string]any); !ok || source["text"] != "/scene "+targetSceneName {
+		t.Fatalf("scene source metadata = %#v", metadata["source"])
+	}
+	if metadata := ccfoliaTestClickActionMetadata(t, sendAction); metadata["type"] != "chat-send" || metadata["resolved"] != true {
+		t.Fatalf("send metadata = %#v", metadata)
+	}
+	if metadata := ccfoliaTestClickActionMetadata(t, unresolved); metadata["targetSceneName"] != "不存在" || metadata["resolved"] != false || metadata["reason"] != "target-scene-not-found" {
+		t.Fatalf("unresolved metadata = %#v", metadata)
+	}
+}
+
+func TestConvertCCFOLIADemoAutoCanvasAndCharacters(t *testing.T) {
+	backup, err := loadCCFOLIABackup(filepath.Join("..", "docs", "ccf-demo2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := make(map[string]ccfoliaAssetTarget, len(backup.Resources))
+	for ref := range backup.Resources {
+		targets[ref] = ccfoliaAssetTarget{ResourceID: utils.NewID(), MimeType: "image/png"}
+	}
+	conversion, err := convertCCFOLIABackup(backup, "world", targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTheaterSharedSnapshot(conversion.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+	warnings := strings.Join(conversion.Summary.Warnings, "\n")
+	if strings.Contains(warnings, "characters") || strings.Contains(warnings, "零或负画布") {
+		t.Fatalf("unexpected compatibility warning: %s", warnings)
+	}
+	current := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "CCFOLIA 当前房间")
+	if width, height := ccfoliaTestSceneSize(t, current); width <= 1 || height <= 1 {
+		t.Fatalf("current auto canvas size = %gx%g", width, height)
+	}
+	for _, scene := range conversion.Snapshot.Scenes {
+		if width, height := ccfoliaTestSceneSize(t, scene); width <= 1 || height <= 1 {
+			t.Fatalf("scene %q canvas size = %gx%g", scene.Name, width, height)
+		}
+	}
+	characterFound := false
+	for _, object := range current.Objects {
+		if ccfoliaTestCCFOLIAMetadata(t, object)["sourceCharacterId"] == "zuEOpg8nnxygzlVEXe6k" {
+			characterFound = true
+			if object.Kind != "image" || object.Name != "调查员棋子" {
+				t.Fatalf("character object = %#v", object)
+			}
+		}
+	}
+	if !characterFound {
+		t.Fatal("demo character was not imported")
+	}
+}
+
+func ccfoliaSnapshotSceneByName(t *testing.T, snapshot TheaterSharedSnapshot, name string) TheaterSceneSnapshot {
+	t.Helper()
+	for _, scene := range snapshot.Scenes {
+		if scene.Name == name {
+			return scene
+		}
+	}
+	t.Fatalf("scene %q not found", name)
+	return TheaterSceneSnapshot{}
+}
+
+func ccfoliaTestActions(t *testing.T, raw json.RawMessage) []theaterStoredAction {
+	t.Helper()
+	var actions []theaterStoredAction
+	if err := json.Unmarshal(raw, &actions); err != nil {
+		t.Fatal(err)
+	}
+	return actions
+}
+
+func ccfoliaTestClickActionMetadata(t *testing.T, object TheaterObjectSnapshot) map[string]any {
+	t.Helper()
+	value, ok := ccfoliaTestCCFOLIAMetadata(t, object)["clickAction"].(map[string]any)
+	if !ok {
+		t.Fatalf("clickAction metadata missing: %s", object.Metadata)
+	}
+	return value
+}
+
+func ccfoliaTestCCFOLIAMetadata(t *testing.T, object TheaterObjectSnapshot) map[string]any {
+	t.Helper()
+	var raw map[string]map[string]any
+	if err := json.Unmarshal(object.Metadata, &raw); err != nil {
+		t.Fatal(err)
+	}
+	return raw["ccfolia"]
+}
+
+func ccfoliaTestSceneSize(t *testing.T, scene TheaterSceneSnapshot) (float64, float64) {
+	t.Helper()
+	var state struct {
+		FieldWidth  float64 `json:"fieldWidth"`
+		FieldHeight float64 `json:"fieldHeight"`
+	}
+	if err := json.Unmarshal(scene.State, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state.FieldWidth, state.FieldHeight
+}
+
 func assertTheaterPackageTarget(t *testing.T, roomID, activeSceneID string, scenes, objects, resources int64) {
 	t.Helper()
 	var room model.TheaterRoomModel
