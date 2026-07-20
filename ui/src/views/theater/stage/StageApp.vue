@@ -3015,7 +3015,7 @@ const createObjectNode = (object: StageObject) => {
     selectObject(object.id)
   })
   wrapper.on('click tap', () => {
-    if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
+    if (activeCanvasTool.value || quickDeleteActive.value) return
     const current = getObject(object.id)
     if (current) triggerObjectActions(current)
   })
@@ -3258,7 +3258,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
-    listening: !viewToolActive.value && (canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type))),
+    listening: (!viewToolActive.value && canEditObject(object))
+      || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
   })
   if (object.type === 'drawing') {
     return
