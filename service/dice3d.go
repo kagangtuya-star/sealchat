@@ -13,6 +13,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/protocol"
+	"sealchat/utils"
 )
 
 var (
@@ -27,10 +28,11 @@ const (
 
 func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 	return protocol.Dice3DWorldConfig{
-		Version:       1,
-		Enabled:       true,
-		SurfaceMode:   "auto",
-		CustomSurface: protocol.Dice3DCustomSurface{X: 0.1, Y: 0.1, Width: 0.8, Height: 0.8},
+		Version:         1,
+		PlatformStyleID: "",
+		Enabled:         true,
+		SurfaceMode:     "auto",
+		CustomSurface:   protocol.Dice3DCustomSurface{X: 0.1, Y: 0.1, Width: 0.8, Height: 0.8},
 		DefaultSkin: protocol.Dice3DSkin{
 			FaceBackground: "#f5f6fa",
 			FaceForeground: "#111827",
@@ -43,6 +45,7 @@ func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 			Speed:       1,
 			ThrowForce:  1,
 			WallBounce:  0.48,
+			EntryEdge:   "random",
 			LingerMS:    8000,
 			MaxDice:     60,
 			Interactive: true,
@@ -67,6 +70,10 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 		return defaults, nil
 	}
 	value.Version = 1
+	value.PlatformStyleID = strings.TrimSpace(value.PlatformStyleID)
+	if len(value.PlatformStyleID) > 100 {
+		return value, fmt.Errorf("%w: platformStyleId", ErrDice3DConfigInvalid)
+	}
 	if value.SurfaceMode == "" {
 		value.SurfaceMode = defaults.SurfaceMode
 	}
@@ -89,6 +96,14 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	value.Motion.Speed = dice3DClampFloat(value.Motion.Speed, 0.25, 3, defaults.Motion.Speed)
 	value.Motion.ThrowForce = dice3DClampFloat(value.Motion.ThrowForce, 0.25, 3, defaults.Motion.ThrowForce)
 	value.Motion.WallBounce = dice3DClampFloat(value.Motion.WallBounce, 0, 0.95, defaults.Motion.WallBounce)
+	if value.Motion.EntryEdge == "" {
+		value.Motion.EntryEdge = defaults.Motion.EntryEdge
+	}
+	switch value.Motion.EntryEdge {
+	case "random", "top", "right", "bottom", "left":
+	default:
+		return value, fmt.Errorf("%w: motion.entryEdge", ErrDice3DConfigInvalid)
+	}
 	value.Motion.LingerMS = dice3DClampInt(value.Motion.LingerMS, 500, 30000, defaults.Motion.LingerMS)
 	value.Motion.MaxDice = dice3DClampInt(value.Motion.MaxDice, 1, 100, defaults.Motion.MaxDice)
 	value.Audio.Volume = dice3DClampFloat(value.Audio.Volume, 0, 1, defaults.Audio.Volume)
@@ -195,7 +210,53 @@ func ResolveDice3DWorldConfig(worldID string) (protocol.Dice3DWorldConfig, error
 	if world.ID == "" {
 		return protocol.Dice3DWorldConfig{}, ErrWorldNotFound
 	}
-	return NormalizeDice3DWorldConfig(world.GetDice3DConfig())
+	worldConfig := world.GetDice3DConfig()
+	if worldConfig.Version == 0 {
+		if platformConfig, ok := resolvePlatformDice3DConfig(""); ok {
+			return platformConfig, nil
+		}
+	}
+	return NormalizeDice3DWorldConfig(worldConfig)
+}
+
+func resolvePlatformDice3DConfig(styleID string) (protocol.Dice3DWorldConfig, bool) {
+	config := utils.GetConfig()
+	if config == nil {
+		return protocol.Dice3DWorldConfig{}, false
+	}
+	management := config.ThemeManagement
+	targetID := strings.TrimSpace(styleID)
+	if targetID == "" {
+		targetID = strings.TrimSpace(management.DefaultPlatformDice3DStyleID)
+	}
+	if targetID == "" {
+		return protocol.Dice3DWorldConfig{}, false
+	}
+	for _, item := range management.PlatformDice3DStyles {
+		if item.ID != targetID {
+			continue
+		}
+		normalized, err := NormalizeDice3DWorldConfig(item.Config)
+		if err != nil {
+			return protocol.Dice3DWorldConfig{}, false
+		}
+		normalized.PlatformStyleID = item.ID
+		return normalized, true
+	}
+	return protocol.Dice3DWorldConfig{}, false
+}
+
+func NormalizePlatformDice3DStyles(management utils.ThemeManagementConfig) (utils.ThemeManagementConfig, error) {
+	for index := range management.PlatformDice3DStyles {
+		item := &management.PlatformDice3DStyles[index]
+		normalized, err := NormalizeDice3DWorldConfig(item.Config)
+		if err != nil {
+			return management, fmt.Errorf("平台 3D 骰子样式 %q 无效: %w", item.Name, err)
+		}
+		normalized.PlatformStyleID = item.ID
+		item.Config = normalized
+	}
+	return management, nil
 }
 
 func SaveDice3DWorldConfig(worldID, actorID string, value protocol.Dice3DWorldConfig) (protocol.Dice3DWorldConfig, error) {

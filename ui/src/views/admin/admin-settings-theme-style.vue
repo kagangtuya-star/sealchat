@@ -3,7 +3,7 @@ import { cloneDeep } from 'lodash-es'
 import { computed, onMounted, ref } from 'vue'
 import { Photo as ImageIcon, X } from '@vicons/tabler'
 import { NIcon, useMessage } from 'naive-ui'
-import type { LoginBackgroundConfig, ServerConfig, ThemeManagementConfig, UITextReplaceConfig, UITextReplaceRule } from '@/types'
+import type { Dice3DStylePreset, LoginBackgroundConfig, ServerConfig, ThemeManagementConfig, UITextReplaceConfig, UITextReplaceRule } from '@/types'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
 import { useImageCompressor } from '@/composables/useImageCompressor'
 import { useLoginGlass } from '@/composables/useLoginGlass'
@@ -16,6 +16,9 @@ import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUpl
 import CursorThemeEditorModal from '@/components/cursor/CursorThemeEditorModal.vue'
 import { normalizeCursorTheme } from '@/services/cursor/cursorRuntime'
 import type { CursorThemeConfig } from '@/services/cursor/cursorTypes'
+import DicePlatformStyleEditor from '@/features/dice3d/components/DicePlatformStyleEditor.vue'
+import { downloadDiceSkinTemplate, importDiceSkinPackage } from '@/features/dice3d/diceSkinTransfer'
+import { createDefaultDice3DWorldConfig } from '@/features/dice3d/defaults'
 
 type AdminThemeStyleExpose = {
   save: () => Promise<void>
@@ -34,12 +37,16 @@ const utils = useUtilsStore()
 const model = ref<ThemeManagementConfig>({
   platformThemes: [],
   defaultPlatformThemeId: '',
+  platformDice3DStyles: [],
+  defaultPlatformDice3DStyleId: '',
 })
 const originalSnapshot = ref('')
 const saving = ref(false)
 const importFileInputRef = ref<HTMLInputElement | null>(null)
 const selectedPersonalThemeId = ref<string | null>(null)
 const loginBgFileInputRef = ref<HTMLInputElement | null>(null)
+const diceSkinFileInputRef = ref<HTMLInputElement | null>(null)
+const diceSkinUploading = ref(false)
 const expandedNames = ref<string[]>([])
 const loginBackground = ref<LoginBackgroundConfig>({})
 const uiTextReplace = ref<UITextReplaceConfig>(normalizeUITextReplaceConfig())
@@ -50,6 +57,7 @@ const { compress: compressImage } = useImageCompressor()
 const loginBgUploading = ref(false)
 
 const platformThemes = computed(() => model.value.platformThemes || [])
+const platformDice3DStyles = computed(() => model.value.platformDice3DStyles || [])
 const personalThemeOptions = computed(() =>
   display.settings.customThemes.map((theme) => ({
     label: theme.name,
@@ -69,10 +77,101 @@ const isModified = computed(() =>
   }) !== originalSnapshot.value,
 )
 
+const normalizeDicePresetConfig = (item: any) => {
+  const defaults = createDefaultDice3DWorldConfig()
+  const source = item?.config || {}
+  return {
+    ...defaults,
+    ...source,
+    customSurface: { ...defaults.customSurface, ...(source.customSurface || {}) },
+    defaultSkin: { ...defaults.defaultSkin, ...(item?.skin || {}), ...(source.defaultSkin || {}), textures: { ...(item?.skin?.textures || {}), ...(source.defaultSkin?.textures || {}) } },
+    motion: { ...defaults.motion, ...(source.motion || {}) },
+    audio: { ...defaults.audio, ...(source.audio || {}) },
+    botRules: Array.isArray(source.botRules) && source.botRules.length ? source.botRules : defaults.botRules,
+  }
+}
+
 const normalizeThemeManagement = (value?: ThemeManagementConfig | null): ThemeManagementConfig => ({
   platformThemes: Array.isArray(value?.platformThemes) ? cloneDeep(value?.platformThemes || []) : [],
   defaultPlatformThemeId: value?.defaultPlatformThemeId || '',
+  platformDice3DStyles: Array.isArray(value?.platformDice3DStyles)
+    ? cloneDeep(value?.platformDice3DStyles || []).map((item: any) => {
+      const { skin: _legacySkin, ...rest } = item
+      return { ...rest, config: normalizeDicePresetConfig(item) }
+    })
+    : [],
+  defaultPlatformDice3DStyleId: value?.defaultPlatformDice3DStyleId || '',
 })
+
+const buildUniqueDiceStyleName = (rawName: string) => {
+  const baseName = rawName.trim() || `骰子样式 ${platformDice3DStyles.value.length + 1}`
+  const names = new Set(platformDice3DStyles.value.map(item => item.name.trim()))
+  if (!names.has(baseName)) return baseName
+  let index = 2
+  while (names.has(`${baseName} ${index}`)) index += 1
+  return `${baseName} ${index}`
+}
+
+const appendDiceStyle = (name = '') => {
+  if (platformDice3DStyles.value.length >= 50) {
+    message.warning('平台 3D 骰子样式不能超过 50 个')
+    return null
+  }
+  const now = Date.now()
+  const item: Dice3DStylePreset = {
+    id: `platform-dice3d-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    name: buildUniqueDiceStyleName(name),
+    config: createDefaultDice3DWorldConfig(),
+    createdAt: now,
+    updatedAt: now,
+  }
+  model.value = {
+    ...model.value,
+    platformDice3DStyles: [...platformDice3DStyles.value, item],
+    defaultPlatformDice3DStyleId: model.value.defaultPlatformDice3DStyleId || item.id,
+  }
+  return item
+}
+
+const handleDiceSkinImport = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (platformDice3DStyles.value.length >= 50) {
+    message.warning('平台 3D 骰子样式不能超过 50 个')
+    return
+  }
+  diceSkinUploading.value = true
+  try {
+    const imported = await importDiceSkinPackage(file, async assetFile => {
+      const uploaded = await uploadImageAttachment(assetFile, {
+        channelId: 'platform-dice3d-skin', rootId: 'platform', rootIdType: 'platform_dice3d_skin', confirm: true, skipCompression: true,
+      })
+      return uploaded.attachmentId
+    })
+		const item = appendDiceStyle(imported.name)
+		if (!item) return
+		item.config.defaultSkin = imported.skin
+    message.success(`已导入平台骰子样式：${item.name}`)
+  } catch (error: any) {
+    message.error(error?.message || '导入平台骰子样式失败')
+  } finally {
+    diceSkinUploading.value = false
+  }
+}
+
+const deleteDiceStyle = (styleId: string) => {
+  model.value = {
+    ...model.value,
+    platformDice3DStyles: platformDice3DStyles.value.filter(item => item.id !== styleId),
+    defaultPlatformDice3DStyleId: model.value.defaultPlatformDice3DStyleId === styleId ? '' : model.value.defaultPlatformDice3DStyleId,
+  }
+}
+
+const toggleDefaultDiceStyle = (styleId: string) => {
+  model.value = { ...model.value, defaultPlatformDice3DStyleId: model.value.defaultPlatformDice3DStyleId === styleId ? '' : styleId }
+}
 const ensureLoginBackground = () => {
   if (!loginBackground.value) {
     loginBackground.value = {}
@@ -501,6 +600,7 @@ defineExpose<AdminThemeStyleExpose>({
       class="admin-theme-style__hidden-input"
       @change="handleLoginBgFileChange"
     >
+    <input ref="diceSkinFileInputRef" type="file" accept=".zip,application/zip" class="admin-theme-style__hidden-input" @change="handleDiceSkinImport">
 
     <n-form label-placement="left" label-width="120">
       <n-collapse v-model:expanded-names="expandedNames" class="settings-collapse">
@@ -569,6 +669,33 @@ defineExpose<AdminThemeStyleExpose>({
             <div class="flex flex-wrap items-center gap-2 w-full">
               <n-button secondary @click="cursorThemeVisible = true">管理鼠标样式</n-button>
               <span class="text-sm text-gray-600 dark:text-gray-400">最多六种；未配置时使用浏览器默认样式</span>
+            </div>
+          </n-form-item>
+        </n-collapse-item>
+
+        <n-collapse-item title="3D 骰子样式" name="dice3d-style">
+          <n-form-item label="样式包">
+            <div class="flex flex-wrap items-center gap-2 w-full">
+              <n-button secondary :loading="diceSkinUploading" @click="diceSkinFileInputRef?.click()">上传骰面 ZIP</n-button>
+              <n-button secondary @click="appendDiceStyle()">新增配置</n-button>
+              <n-button quaternary @click="downloadDiceSkinTemplate">下载模板 ZIP</n-button>
+              <span class="text-sm text-gray-600 dark:text-gray-400">管理员预设将出现在个人与世界骰子设置下拉框</span>
+            </div>
+          </n-form-item>
+          <n-form-item label="预设列表">
+            <div class="dice-style-list">
+              <n-empty v-if="platformDice3DStyles.length === 0" description="暂无平台骰子样式" />
+              <n-collapse v-else class="dice-style-collapse">
+                <n-collapse-item v-for="item in platformDice3DStyles" :key="item.id" :name="item.id">
+                  <template #header><div class="dice-style-title"><strong>{{ item.name }}</strong><n-tag v-if="model.defaultPlatformDice3DStyleId === item.id" type="success" size="small">平台默认</n-tag></div></template>
+                  <template #header-extra><div class="dice-style-item__actions" @click.stop>
+                    <n-button size="tiny" secondary @click="toggleDefaultDiceStyle(item.id)">{{ model.defaultPlatformDice3DStyleId === item.id ? '取消默认' : '设为默认' }}</n-button>
+                    <n-popconfirm @positive-click="deleteDiceStyle(item.id)"><template #trigger><n-button size="tiny" quaternary type="error">删除</n-button></template>删除此平台骰子样式？</n-popconfirm>
+                  </div></template>
+                  <n-form-item label="配置名称"><n-input v-model:value="item.name" maxlength="32" /></n-form-item>
+                  <DicePlatformStyleEditor :config="item.config" :label="item.name" />
+                </n-collapse-item>
+              </n-collapse>
             </div>
           </n-form-item>
         </n-collapse-item>
@@ -1035,6 +1162,10 @@ defineExpose<AdminThemeStyleExpose>({
 .ui-text-replace-rule :deep(.n-input-wrapper) {
   background-color: var(--sc-bg-input, #f3f4f6);
 }
+
+.dice-style-list, .dice-style-collapse { width: 100%; }
+.dice-style-title { display: flex; align-items: center; gap: 8px; }
+.dice-style-item__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 720px) {
   .theme-list-item {

@@ -1,22 +1,73 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 
 import type { Dice3DBotRule, Dice3DMemberProfile, Dice3DWorldConfig } from '@/types'
+import { useUtilsStore } from '@/stores/utils'
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { loadDice3DSettings, saveDice3DProfile, saveDice3DWorldSettings } from '../api'
+import { downloadDiceSkinTemplate, importDiceSkinPackage } from '../diceSkinTransfer'
 import { dice3dRuntime } from '../runtime'
+import DiceSurfaceSelector from './DiceSurfaceSelector.vue'
+import DiceTextureGrid from './DiceTextureGrid.vue'
+import DiceAttachmentPicker from './DiceAttachmentPicker.vue'
+
+const DiceSkinPreview = defineAsyncComponent(() => import('./DiceSkinPreview.vue'))
 
 const props = defineProps<{ show: boolean, worldId: string, canManageWorld?: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void, (event: 'profile-saved', profile: Dice3DMemberProfile): void }>()
 const message = useMessage()
+const utils = useUtilsStore()
 const loading = ref(false)
 const saving = ref(false)
 const tab = ref<'world' | 'personal'>('personal')
 const config = ref<Dice3DWorldConfig | null>(null)
 const profile = ref<Dice3DMemberProfile | null>(null)
 
-const diceTypes = ['d2', 'd4', 'd6', 'd8', 'd10', 'd12', 'd20', 'd100'] as const
 const ruleTestText = ref('[2d6=2+1]')
+const skinPackageInputRef = ref<HTMLInputElement | null>(null)
+const importingSkin = ref(false)
+const selectedPresetId = ref<string | null>(null)
+const activeSkin = computed(() => tab.value === 'world' ? config.value?.defaultSkin : profile.value?.skin)
+const platformDiceStyles = computed(() => utils.config?.themeManagement?.platformDice3DStyles || [])
+const platformDiceStyleOptions = computed(() => platformDiceStyles.value.map(item => ({ label: item.name, value: item.id })))
+
+const applyPlatformPreset = (presetId: string | null) => {
+	selectedPresetId.value = presetId
+	const preset = platformDiceStyles.value.find(item => item.id === presetId)
+	if (!preset || !activeSkin.value) return
+	if (tab.value === 'world' && config.value) {
+		config.value = { ...structuredClone(preset.config), version: 1, platformStyleId: preset.id }
+	}
+	if (tab.value === 'personal' && profile.value) {
+		profile.value.skin = structuredClone(preset.config.defaultSkin)
+		profile.value.audio = structuredClone(preset.config.audio)
+	}
+}
+
+const handleSkinPackage = async (event: Event) => {
+	const input = event.target as HTMLInputElement
+	const file = input.files?.[0]
+	input.value = ''
+	if (!file || !activeSkin.value) return
+	importingSkin.value = true
+	try {
+		const result = await importDiceSkinPackage(file, async assetFile => {
+			const uploaded = await uploadImageAttachment(assetFile, {
+				channelId: 'dice3d-skin', rootId: props.worldId, rootIdType: 'dice3d_skin', confirm: true, skipCompression: true,
+			})
+			return uploaded.attachmentId
+		})
+		if (tab.value === 'world' && config.value) config.value.defaultSkin = result.skin
+		if (tab.value === 'personal' && profile.value) profile.value.skin = result.skin
+		selectedPresetId.value = null
+		message.success(`已导入骰面合集：${result.name}；保存后生效`)
+	} catch (error: any) {
+		message.error(error?.message || '导入骰面合集失败')
+	} finally {
+		importingSkin.value = false
+	}
+}
 
 const addBotRule = () => {
 	if (!config.value) return
@@ -74,8 +125,10 @@ const load = async () => {
   loading.value = true
   try {
     const result = await loadDice3DSettings(props.worldId)
-    config.value = structuredClone(result.config)
-    profile.value = structuredClone(result.profile)
+	    config.value = structuredClone(result.config)
+	    profile.value = structuredClone(result.profile)
+			selectedPresetId.value = result.config.platformStyleId || null
+		if (!utils.config) void utils.configGet()
   } catch (error: any) {
     message.error(error?.response?.data?.message || '加载 3D 骰子配置失败')
   } finally {
@@ -96,15 +149,20 @@ const save = async () => {
   saving.value = true
   try {
     if (tab.value === 'world') {
+			config.value.version = 1
       config.value = await saveDice3DWorldSettings(props.worldId, config.value)
 		  if (config.value.enabled) dice3dRuntime.requestLoad()
       message.success('世界 3D 骰子配置已保存')
     } else {
+			profile.value.version = 1
       const result = await saveDice3DProfile(props.worldId, profile.value)
       profile.value = result.profile
-      emit('profile-saved', result.profile)
       message.success('个人骰子已保存')
     }
+		const persisted = await loadDice3DSettings(props.worldId)
+		config.value = structuredClone(persisted.config)
+		profile.value = structuredClone(persisted.profile)
+		emit('profile-saved', persisted.profile)
   } catch (error: any) {
     message.error(error?.response?.data?.message || '保存失败')
   } finally {
@@ -114,35 +172,39 @@ const save = async () => {
 </script>
 
 <template>
-  <n-drawer :show="show" width="min(520px, 94vw)" placement="right" @update:show="emit('update:show', $event)">
+  <n-drawer :show="show" width="min(720px, 96vw)" placement="right" @update:show="emit('update:show', $event)">
     <n-drawer-content title="3D 骰子" closable>
+      <input ref="skinPackageInputRef" type="file" accept=".zip,application/zip" hidden @change="handleSkinPackage">
       <n-spin :show="loading">
-        <n-tabs v-if="config && profile" v-model:value="tab" type="segment">
+        <template v-if="config && profile">
+          <DiceSkinPreview v-if="activeSkin" :skin="activeSkin" :label="tab === 'world' ? '世界默认预览' : '我的骰子预览'" />
+          <n-tabs v-model:value="tab" type="segment" class="dice-settings-tabs">
           <n-tab-pane name="personal" tab="我的骰子">
             <n-form label-placement="top" size="small">
               <n-form-item label="使用个人骰子覆盖世界默认">
                 <n-switch v-model:value="profile.useOverride" />
               </n-form-item>
+				  <n-form-item label="平台骰子样式">
+					<div class="dice-style-toolbar">
+					  <n-select :value="selectedPresetId" :options="platformDiceStyleOptions" clearable placeholder="选择管理员预设" @update:value="applyPlatformPreset" />
+					  <n-button secondary :loading="importingSkin" @click="skinPackageInputRef?.click()">上传骰面 ZIP</n-button>
+					  <n-button quaternary @click="downloadDiceSkinTemplate">下载模板</n-button>
+					</div>
+				  </n-form-item>
 			  <n-grid :cols="2" :x-gap="12">
                 <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="profile.skin.faceBackground" /></n-form-item-gi>
                 <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="profile.skin.faceForeground" /></n-form-item-gi>
                 <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="profile.skin.edgeColor" /></n-form-item-gi>
                 <n-form-item-gi label="骰子大小"><n-slider v-model:value="profile.skin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
 			  </n-grid>
-			  <n-collapse>
-				<n-collapse-item title="自定义骰面图集（附件 ID 或 URL）">
-				  <n-form-item v-for="type in diceTypes" :key="type" :label="type">
-					<n-input :value="profile.skin.textures?.[type] || ''" @update:value="profile.skin.textures = { ...(profile.skin.textures || {}), [type]: $event }" />
-				  </n-form-item>
-				</n-collapse-item>
-				  </n-collapse>
+				  <n-form-item label="单独上传骰面图集"><DiceTextureGrid v-model="profile.skin" :world-id="worldId" /></n-form-item>
 			  <n-form-item label="覆盖世界投掷音效">
 				<n-switch :value="Boolean(profile.audio)" @update:value="setPersonalAudioOverride" />
 			  </n-form-item>
 			  <template v-if="profile.audio">
 				<n-form-item label="个人投掷音效"><n-switch v-model:value="profile.audio.enabled" /></n-form-item>
 				<n-form-item label="个人音量"><n-slider v-model:value="profile.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
-				<n-form-item label="个人音效附件 ID"><n-input v-model:value="profile.audio.soundAssetId" clearable /></n-form-item>
+					<n-form-item label="个人投掷音效文件"><DiceAttachmentPicker v-model="profile.audio.soundAssetId" :world-id="worldId" accept="audio/*" /></n-form-item>
 			  </template>
               <n-form-item label="屏幕角骰子堆"><n-switch v-model:value="profile.dockEnabled" /></n-form-item>
               <n-form-item label="默认位置">
@@ -153,19 +215,26 @@ const save = async () => {
               </n-form-item>
 			  <n-card v-for="(stack, index) in profile.dockStacks" :key="stack.id" size="small" :title="`骰子堆 ${index + 1}`" style="margin-bottom: 10px">
 				<template #header-extra><n-button text type="error" @click="profile.dockStacks.splice(index, 1)">删除</n-button></template>
-				<n-grid :cols="2" :x-gap="12">
+				  <n-grid :cols="2" :x-gap="12">
 				  <n-form-item-gi label="标签"><n-input v-model:value="stack.label" /></n-form-item-gi>
 				  <n-form-item-gi label="表达式"><n-input v-model:value="stack.expression" /></n-form-item-gi>
-				</n-grid>
+				  </n-grid>
 				<n-form-item label="颜色"><n-color-picker v-model:value="stack.color" /></n-form-item>
 			  </n-card>
 			  <n-button dashed block :disabled="profile.dockStacks.length >= 8" @click="addDockStack">增加骰子堆</n-button>
             </n-form>
           </n-tab-pane>
 
-		  <n-tab-pane v-if="canManageWorld" name="world" tab="世界默认">
+			  <n-tab-pane v-if="canManageWorld" name="world" tab="世界默认">
             <n-form label-placement="top" size="small">
               <n-form-item label="启用 3D 骰子"><n-switch v-model:value="config.enabled" /></n-form-item>
+				  <n-form-item label="平台骰子样式">
+					<div class="dice-style-toolbar">
+					  <n-select :value="selectedPresetId" :options="platformDiceStyleOptions" clearable placeholder="选择管理员预设" @update:value="applyPlatformPreset" />
+					  <n-button secondary :loading="importingSkin" @click="skinPackageInputRef?.click()">上传骰面 ZIP</n-button>
+					  <n-button quaternary @click="downloadDiceSkinTemplate">下载模板</n-button>
+					</div>
+				  </n-form-item>
 				  <n-form-item label="显示区域">
                 <n-select v-model:value="config.surfaceMode" :options="[
                   { label: '自动：聊天区 / 小剧场左侧', value: 'auto' }, { label: '聊天区域', value: 'chat' },
@@ -173,30 +242,33 @@ const save = async () => {
 					  { label: '自定义区域', value: 'custom' },
 					]" />
 				  </n-form-item>
-				  <n-card v-if="config.surfaceMode === 'custom'" size="small" title="自定义显示区域" style="margin-bottom: 12px">
-					<n-grid :cols="2" :x-gap="12">
+					  <section v-if="config.surfaceMode === 'custom'" class="dice-surface-panel">
+						<DiceSurfaceSelector v-model="config.customSurface" />
+						<n-grid :cols="2" :x-gap="12">
 					  <n-form-item-gi label="左侧位置"><n-slider v-model:value="config.customSurface.x" :min="0" :max="0.9" :step="0.01" /></n-form-item-gi>
 					  <n-form-item-gi label="顶部位置"><n-slider v-model:value="config.customSurface.y" :min="0" :max="0.9" :step="0.01" /></n-form-item-gi>
 					  <n-form-item-gi label="宽度"><n-slider v-model:value="config.customSurface.width" :min="0.1" :max="1" :step="0.01" /></n-form-item-gi>
 					  <n-form-item-gi label="高度"><n-slider v-model:value="config.customSurface.height" :min="0.1" :max="1" :step="0.01" /></n-form-item-gi>
-					</n-grid>
-				  </n-card>
+						</n-grid>
+					  </section>
 			  <n-grid :cols="2" :x-gap="12">
 				<n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" /></n-form-item-gi>
 				<n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" /></n-form-item-gi>
 				<n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" /></n-form-item-gi>
-				<n-form-item-gi label="骰子大小"><n-slider v-model:value="config.defaultSkin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
+					<n-form-item-gi label="骰子大小"><n-slider v-model:value="config.defaultSkin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
 			  </n-grid>
+			  <n-form-item label="单独上传骰面图集"><DiceTextureGrid v-model="config.defaultSkin" :world-id="worldId" /></n-form-item>
               <n-grid :cols="2" :x-gap="12">
                 <n-form-item-gi label="运动速度"><n-slider v-model:value="config.motion.speed" :min="0.25" :max="3" :step="0.05" /></n-form-item-gi>
                 <n-form-item-gi label="投掷力度"><n-slider v-model:value="config.motion.throwForce" :min="0.25" :max="3" :step="0.05" /></n-form-item-gi>
+					<n-form-item-gi label="骰子入场方向"><n-select v-model:value="config.motion.entryEdge" :options="[{ label: '随机', value: 'random' }, { label: '从上方', value: 'top' }, { label: '从右侧', value: 'right' }, { label: '从下方', value: 'bottom' }, { label: '从左侧', value: 'left' }]" /></n-form-item-gi>
                 <n-form-item-gi label="停留时间（毫秒）"><n-input-number v-model:value="config.motion.lingerMs" :min="500" :max="30000" /></n-form-item-gi>
                 <n-form-item-gi label="最大同时骰子"><n-input-number v-model:value="config.motion.maxDice" :min="1" :max="100" /></n-form-item-gi>
               </n-grid>
               <n-form-item label="允许结算后物理交互"><n-switch v-model:value="config.motion.interactive" /></n-form-item>
 			  <n-form-item label="投掷音效"><n-switch v-model:value="config.audio.enabled" /></n-form-item>
 			  <n-form-item label="音量"><n-slider v-model:value="config.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
-			  <n-form-item label="自定义音效附件 ID"><n-input v-model:value="config.audio.soundAssetId" clearable placeholder="留空使用内置轻量音效" /></n-form-item>
+				  <n-form-item label="自定义投掷音效文件"><DiceAttachmentPicker v-model="config.audio.soundAssetId" :world-id="worldId" accept="audio/*" /></n-form-item>
 			  <n-divider>BOT 骰点匹配</n-divider>
 			  <n-form-item label="规则测试文本"><n-input v-model:value="ruleTestText" /></n-form-item>
 			  <n-card v-for="(rule, index) in config.botRules" :key="rule.id" size="small" :title="rule.name || `规则 ${index + 1}`" style="margin-bottom: 12px">
@@ -220,9 +292,17 @@ const save = async () => {
 			  <n-button dashed block @click="addBotRule">增加 BOT 匹配规则</n-button>
             </n-form>
           </n-tab-pane>
-        </n-tabs>
+          </n-tabs>
+        </template>
       </n-spin>
       <template #footer><n-button type="primary" :loading="saving" :disabled="loading || !config || !profile" @click="save">保存</n-button></template>
     </n-drawer-content>
   </n-drawer>
 </template>
+
+<style scoped>
+.dice-settings-tabs { margin-top: 14px; }
+.dice-style-toolbar { width: 100%; display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; }
+.dice-surface-panel { margin-bottom: 14px; padding: 12px; border: 1px solid var(--sc-border-muted, rgba(148,163,184,.22)); border-radius: 11px; background: color-mix(in srgb, var(--sc-bg-surface, #18181b) 96%, transparent); }
+@media (max-width: 560px) { .dice-style-toolbar { grid-template-columns: 1fr 1fr; }.dice-style-toolbar :deep(.n-select) { grid-column: 1 / -1; } }
+</style>

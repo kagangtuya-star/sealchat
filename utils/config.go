@@ -669,8 +669,10 @@ func ReadConfig() *AppConfig {
 			PanelShadowStrength: 22,
 		},
 		ThemeManagement: ThemeManagementConfig{
-			PlatformThemes:         []PlatformThemeConfig{},
-			DefaultPlatformThemeID: "",
+			PlatformThemes:               []PlatformThemeConfig{},
+			DefaultPlatformThemeID:       "",
+			PlatformDice3DStyles:         []PlatformDice3DStyleConfig{},
+			DefaultPlatformDice3DStyleID: "",
 		},
 		CursorTheme: NormalizeCursorThemeConfig(CursorThemeConfig{}, false),
 		UITextReplace: UITextReplaceConfig{
@@ -1898,6 +1900,8 @@ func WriteConfig(config *AppConfig) {
 		config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 		_ = k.Set("themeManagement.platformThemes", config.ThemeManagement.PlatformThemes)
 		_ = k.Set("themeManagement.defaultPlatformThemeId", config.ThemeManagement.DefaultPlatformThemeID)
+		_ = k.Set("themeManagement.platformDice3DStyles", config.ThemeManagement.PlatformDice3DStyles)
+		_ = k.Set("themeManagement.defaultPlatformDice3DStyleId", config.ThemeManagement.DefaultPlatformDice3DStyleID)
 		config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 		_ = k.Set("cursorTheme.version", config.CursorTheme.Version)
 		_ = k.Set("cursorTheme.slots", config.CursorTheme.Slots)

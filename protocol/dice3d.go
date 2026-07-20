@@ -14,6 +14,7 @@ type Dice3DMotionConfig struct {
 	Speed       float64 `json:"speed"`
 	ThrowForce  float64 `json:"throwForce"`
 	WallBounce  float64 `json:"wallBounce"`
+	EntryEdge   string  `json:"entryEdge"`
 	LingerMS    int     `json:"lingerMs"`
 	MaxDice     int     `json:"maxDice"`
 	Interactive bool    `json:"interactive"`
@@ -54,14 +55,15 @@ type Dice3DBotRule struct {
 }
 
 type Dice3DWorldConfig struct {
-	Version       int                 `json:"version"`
-	Enabled       bool                `json:"enabled"`
-	SurfaceMode   string              `json:"surfaceMode"`
-	CustomSurface Dice3DCustomSurface `json:"customSurface"`
-	DefaultSkin   Dice3DSkin          `json:"defaultSkin"`
-	Motion        Dice3DMotionConfig  `json:"motion"`
-	Audio         Dice3DAudioConfig   `json:"audio"`
-	BotRules      []Dice3DBotRule     `json:"botRules,omitempty"`
+	Version         int                 `json:"version"`
+	PlatformStyleID string              `json:"platformStyleId,omitempty"`
+	Enabled         bool                `json:"enabled"`
+	SurfaceMode     string              `json:"surfaceMode"`
+	CustomSurface   Dice3DCustomSurface `json:"customSurface"`
+	DefaultSkin     Dice3DSkin          `json:"defaultSkin"`
+	Motion          Dice3DMotionConfig  `json:"motion"`
+	Audio           Dice3DAudioConfig   `json:"audio"`
+	BotRules        []Dice3DBotRule     `json:"botRules,omitempty"`
 }
 
 type Dice3DMemberProfile struct {

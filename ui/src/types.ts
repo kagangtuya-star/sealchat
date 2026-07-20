@@ -60,6 +60,7 @@ export interface Dice3DMotionConfig {
   speed: number;
   throwForce: number;
   wallBounce: number;
+  entryEdge: 'random' | 'top' | 'right' | 'bottom' | 'left';
   lingerMs: number;
   maxDice: number;
   interactive: boolean;
@@ -101,6 +102,7 @@ export interface Dice3DBotRule {
 
 export interface Dice3DWorldConfig {
   version: number;
+  platformStyleId?: string;
   enabled: boolean;
   surfaceMode: 'auto' | 'chat' | 'theater' | 'fullscreen' | 'custom';
   customSurface: Dice3DCustomSurface;
@@ -120,6 +122,14 @@ export interface Dice3DMemberProfile {
   dockX: number;
   dockY: number;
   dockStacks: Dice3DDockStack[];
+}
+
+export interface Dice3DStylePreset {
+  id: string;
+  name: string;
+  config: Dice3DWorldConfig;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface DiceVisualPayload {
@@ -381,6 +391,8 @@ export interface BackupInfo {
 export interface ThemeManagementConfig {
   platformThemes?: PlatformTheme[];
   defaultPlatformThemeId?: string;
+  platformDice3DStyles?: Dice3DStylePreset[];
+  defaultPlatformDice3DStyleId?: string;
 }
 
 export type CursorSlot = 'default' | 'pointer' | 'text' | 'grab' | 'grabbing' | 'not-allowed';

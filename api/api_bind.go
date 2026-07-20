@@ -944,6 +944,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
+		normalizedDice3DStyles, validateErr := service.NormalizePlatformDice3DStyles(newConfig.ThemeManagement)
+		if validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
+		newConfig.ThemeManagement = normalizedDice3DStyles
 		newConfig.CursorTheme = utils.NormalizeCursorThemeConfig(newConfig.CursorTheme, false)
 		if validateErr := utils.ValidateCursorThemeConfig(newConfig.CursorTheme, false); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})

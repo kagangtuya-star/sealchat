@@ -173,7 +173,7 @@ export class DiceArena {
 			const spawned: ActiveDie[] = []
 		    const total = Math.min(requested, Math.max(0, maxDice - this.dice.length))
 		    const random = seededRandom(payload.seed)
-				const throwPlan = this.buildThrowPlan(random)
+				const throwPlan = this.buildThrowPlan(random, payload.motion.entryEdge)
 				for (const group of payload.groups) {
 					for (const result of group.results) {
 	        if (index >= total) break
@@ -227,8 +227,10 @@ export class DiceArena {
 	    this.dice = []
 	  }
 
-		private buildThrowPlan(random: () => number): ThrowPlan {
-			const edgeIndex = Math.floor(random() * 4)
+		private buildThrowPlan(random: () => number, requestedEdge?: DiceVisualPayload['motion']['entryEdge']): ThrowPlan {
+			const edgeIndex = requestedEdge && requestedEdge !== 'random'
+				? ['top', 'right', 'bottom', 'left'].indexOf(requestedEdge)
+				: Math.floor(random() * 4)
 			if (edgeIndex === 0) return {
 				edge: 'top',
 				inward: new THREE.Vector3(0, 0, 1),
@@ -910,5 +912,5 @@ const seededRandom = (seed: number) => {
 
 const resolveDiceAssetURL = (source: string) => {
 	if (/^(?:https?:|data:|blob:|\/)/i.test(source)) return source
-	return `/api/v1/attachment/${encodeURIComponent(source)}`
+	return `/api/v1/attachment/${encodeURIComponent(source.replace(/^id:/, ''))}`
 }

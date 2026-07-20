@@ -39,7 +39,7 @@ export interface DiceGeometryResource {
 	radius: number
 }
 
-type DiceAtlasType = StandardDiceType | 'd100'
+export type DiceAtlasType = StandardDiceType | 'd100'
 
 const UP_SCREEN = new THREE.Vector3(0, 0, -1)
 const tempA = new THREE.Vector3()
@@ -443,7 +443,7 @@ const polygonPath = (context: CanvasRenderingContext2D, points: Array<{ u: numbe
 	context.closePath()
 }
 
-export const createDiceAtlasTexture = (type: DiceAtlasType, skin: Dice3DSkin) => {
+export const createDiceAtlasCanvas = (type: DiceAtlasType, skin: Dice3DSkin) => {
 	const meta = TYPE_META[type]
 	const cell = 192
 	const canvas = document.createElement('canvas')
@@ -491,7 +491,11 @@ export const createDiceAtlasTexture = (type: DiceAtlasType, skin: Dice3DSkin) =>
 		context.strokeText(label, x + cell / 2, y + cell / 2 + (kite ? 4 : 2), cell * (kite ? 0.48 : 0.64))
 		context.fillText(label, x + cell / 2, y + cell / 2 + (kite ? 4 : 2), cell * (kite ? 0.48 : 0.64))
 	}
-	const texture = new THREE.CanvasTexture(canvas)
+	return canvas
+}
+
+export const createDiceAtlasTexture = (type: DiceAtlasType, skin: Dice3DSkin) => {
+	const texture = new THREE.CanvasTexture(createDiceAtlasCanvas(type, skin))
 	texture.colorSpace = THREE.SRGBColorSpace
 	texture.wrapS = THREE.ClampToEdgeWrapping
 	texture.wrapT = THREE.ClampToEdgeWrapping
