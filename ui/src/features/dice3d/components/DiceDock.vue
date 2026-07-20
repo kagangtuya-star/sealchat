@@ -31,11 +31,11 @@ const position = ref(resolvePosition())
 let start = { x: 0, y: 0, px: 0, py: 0 }
 let lastMove = { x: 0, y: 0, time: 0 }
 let flingSpeed = 0
-let selectedExpression = '2d6'
+let selectedExpression = '.r2d6'
 
 const stacks = computed<Dice3DDockStack[]>(() => props.stacks?.length
   ? props.stacks.slice(0, 8)
-  : [{ id: 'default-2d6', label: '2d6', expression: '2d6', color: '#f5f6fa' }])
+  : [{ id: 'default-2d6', label: '2d6', expression: '.r2d6', color: '#f5f6fa' }])
 const style = computed(() => ({ left: `${position.value.x * 100}%`, top: `${position.value.y * 100}%` }))
 
 watch(() => [props.x, props.y, props.corner] as const, () => {

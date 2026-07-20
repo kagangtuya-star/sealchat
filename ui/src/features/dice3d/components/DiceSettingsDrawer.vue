@@ -91,7 +91,7 @@ const addDockStack = () => {
 	profile.value.dockStacks.push({
 		id: `stack-${Date.now()}`,
 		label: 'd20',
-		expression: '1d20',
+		expression: '.r1d20',
 		color: profile.value.skin.faceBackground || '#f5f6fa',
 	})
 }

@@ -179,7 +179,7 @@ func NormalizeDice3DMemberProfile(value protocol.Dice3DMemberProfile) (protocol.
 	value.DockX = dice3DClampFloat(value.DockX, 0, 1, 0.9)
 	value.DockY = dice3DClampFloat(value.DockY, 0, 1, 0.82)
 	if len(value.DockStacks) == 0 {
-		value.DockStacks = []protocol.Dice3DDockStack{{ID: "default-2d6", Label: "2d6", Expression: "2d6", Color: "#f5f6fa"}}
+		value.DockStacks = []protocol.Dice3DDockStack{{ID: "default-2d6", Label: "2d6", Expression: ".r2d6", Color: "#f5f6fa"}}
 	}
 	if len(value.DockStacks) > 8 {
 		value.DockStacks = value.DockStacks[:8]
@@ -192,6 +192,9 @@ func NormalizeDice3DMemberProfile(value protocol.Dice3DMemberProfile) (protocol.
 		}
 		stack.Label = strings.TrimSpace(stack.Label)
 		stack.Expression = strings.TrimSpace(stack.Expression)
+		if stack.ID == "default-2d6" && stack.Expression == "2d6" {
+			stack.Expression = ".r2d6"
+		}
 		if stack.Expression == "" || len(stack.Expression) > 100 {
 			return value, fmt.Errorf("%w: 骰子堆表达式为空或过长", ErrDice3DProfileInvalid)
 		}
