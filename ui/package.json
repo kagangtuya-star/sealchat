@@ -13,6 +13,7 @@
     "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@icon-park/vue-next": "^1.4.2",
@@ -54,6 +55,7 @@
     "queueing-subject": "^1.0.0",
     "rxjs": "^7.8.1",
     "tailwindcss": "^3.4.14",
+    "three": "^0.185.1",
     "viewerjs": "^1.11.7",
     "vue": "^3.4.38",
     "vue-cropper": "^0.6.5",
@@ -73,6 +75,7 @@
     "@types/dompurify": "^3.0.5",
     "@types/js-cookie": "^3.0.6",
     "@types/node": "^18.18.5",
+    "@types/three": "^0.180.0",
     "@types/viewerjs": "^1.0.2",
     "@vicons/ionicons5": "^0.12.0",
     "@vicons/tabler": "^0.12.0",
