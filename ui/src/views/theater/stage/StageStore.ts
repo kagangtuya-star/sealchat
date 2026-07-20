@@ -541,6 +541,14 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     clearSelection()
   }
 
+  const renameScene = (sceneId: string, name: string) => {
+    const scene = state.scenes[sceneId]
+    const nextName = name.trim()
+    if (!scene || !nextName || scene.name === nextName) return false
+    scene.name = nextName
+    return true
+  }
+
   const addScene = () => {
     saveLiveState()
     const order = scenes.value.length
@@ -986,6 +994,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     patchSelectedObjects,
     setObjectFlag,
     selectScene,
+    renameScene,
     addScene,
     duplicateScene,
     removeScene,

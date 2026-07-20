@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption, type InputInst } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -53,6 +53,7 @@ import {
   type StageObjectFit,
   type StagePointerTrace,
   type StagePointerTraceInput,
+  type StageScene,
   type StageSurfaceFit,
   type StageSurfaceStyle,
   type StageSurfaceTarget,
@@ -158,6 +159,7 @@ const readTheaterAudioMasterVolume = () => {
 const theaterAudioMasterVolume = ref(readTheaterAudioMasterVolume())
 let theaterAudioRefreshTimer: number | null = null
 const packageMessage = useMessage()
+const stageMessage = useMessage()
 const packageDialog = useDialog()
 const stageDialog = useDialog()
 const packageBusy = ref(false)
@@ -611,6 +613,40 @@ const removeActiveSceneWithConfirm = () => {
   if (!canEditAllObjects.value || !canSwitchScene.value || props.store.scenes.value.length <= 1) return
   const scene = props.store.activeScene.value
   confirmDelete('删除场景', `确定删除场景“${scene.name}”？场景内组件也会一并删除。`, () => props.store.removeScene())
+}
+
+const editingSceneId = ref<string | null>(null)
+const editingSceneName = ref('')
+const sceneNameInputRef = ref<InputInst | null>(null)
+
+const beginSceneNameEdit = (scene: StageScene) => {
+  if (!canEditAllObjects.value) return
+  editingSceneId.value = scene.id
+  editingSceneName.value = scene.name
+  void nextTick(() => sceneNameInputRef.value?.focus())
+}
+
+const cancelSceneNameEdit = () => {
+  editingSceneId.value = null
+  editingSceneName.value = ''
+}
+
+const saveSceneName = () => {
+  const sceneId = editingSceneId.value
+  const name = editingSceneName.value.trim()
+  if (!sceneId) return
+  if (!name) {
+    stageMessage.warning('场景名称不能为空')
+    void nextTick(() => sceneNameInputRef.value?.focus())
+    return
+  }
+  if (Array.from(name).length > 512) {
+    stageMessage.warning('场景名称不能超过 512 个字符')
+    void nextTick(() => sceneNameInputRef.value?.focus())
+    return
+  }
+  props.store.renameScene(sceneId, name)
+  cancelSceneNameEdit()
 }
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -1742,7 +1778,23 @@ const loadStageMedia = (
 
 type ScenePreloadStatus = 'loading' | 'ready' | 'error'
 const scenePreloadStatus = ref<Record<string, ScenePreloadStatus>>({})
+const scenePreloadPulse = ref<Record<string, boolean>>({})
+const scenePreloadPulseTimers = new Map<string, number>()
 const handledPreloadRequestIds = new Set<string>()
+
+const pulseScenePreload = (sceneId: string) => {
+  const existingTimer = scenePreloadPulseTimers.get(sceneId)
+  if (existingTimer !== undefined) window.clearTimeout(existingTimer)
+  scenePreloadPulse.value[sceneId] = false
+  void nextTick(() => {
+    scenePreloadPulse.value[sceneId] = true
+    const timer = window.setTimeout(() => {
+      scenePreloadPulse.value[sceneId] = false
+      scenePreloadPulseTimers.delete(sceneId)
+    }, 420)
+    scenePreloadPulseTimers.set(sceneId, timer)
+  })
+}
 
 const collectSceneMediaItems = (sceneId: string) => {
   const scene = props.store.state.scenes[sceneId]
@@ -1778,7 +1830,7 @@ const preloadStageMedia = ({ imageRef, location }: { imageRef: StageImageRef, lo
   })
 )
 
-const preloadSceneMedia = async (sceneId: string) => {
+const preloadSceneMedia = async (sceneId: string, pulseOnCompletion = false) => {
   if (!props.store.state.scenes[sceneId]) return
   scenePreloadStatus.value[sceneId] = 'loading'
   const queue = collectSceneMedia(sceneId)
@@ -1796,6 +1848,7 @@ const preloadSceneMedia = async (sceneId: string) => {
   }
   await Promise.all(Array.from({ length: Math.min(6, Math.max(1, queue.length)) }, worker))
   scenePreloadStatus.value[sceneId] = failed ? 'error' : 'ready'
+  if (!failed && pulseOnCompletion) pulseScenePreload(sceneId)
 }
 
 const preloadScenes = async (sceneIds: string[], requestId = '') => {
@@ -1804,7 +1857,9 @@ const preloadScenes = async (sceneIds: string[], requestId = '') => {
     handledPreloadRequestIds.add(requestId)
     if (handledPreloadRequestIds.size > 100) handledPreloadRequestIds.delete(handledPreloadRequestIds.values().next().value!)
   }
-  for (const sceneId of [...new Set(sceneIds)]) await preloadSceneMedia(sceneId)
+  const uniqueSceneIds = [...new Set(sceneIds)]
+  const pulseOnCompletion = uniqueSceneIds.length > 1
+  for (const sceneId of uniqueSceneIds) await preloadSceneMedia(sceneId, pulseOnCompletion)
 }
 
 const requestScenePreload = (sceneIds: string[]) => {
@@ -3932,6 +3987,8 @@ onBeforeUnmount(() => {
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
   theaterAudioSequences.clear()
+  scenePreloadPulseTimers.forEach((timer) => window.clearTimeout(timer))
+  scenePreloadPulseTimers.clear()
   if (theaterAudioRefreshTimer !== null) window.clearTimeout(theaterAudioRefreshTimer)
   Array.from(theaterAudioPlayers.keys()).forEach(stopTheaterAudioPlayer)
   Howler.volume(previousHowlerVolume)
@@ -4200,8 +4257,15 @@ onBeforeUnmount(() => {
           v-for="scene in store.scenes.value"
           :key="scene.id"
           class="theater-scene-row"
+          :class="{ 'has-preload-pulse': scenePreloadPulse[scene.id] }"
         >
+          <div v-if="editingSceneId === scene.id" class="theater-scene-name-editor">
+            <n-input ref="sceneNameInputRef" v-model:value="editingSceneName" size="small" maxlength="512" :aria-label="`编辑场景名称 ${scene.name}`" @keydown.enter.prevent="saveSceneName" @keydown.esc.prevent="cancelSceneNameEdit" />
+            <n-button text size="tiny" :disabled="!editingSceneName.trim()" @click="saveSceneName">保存</n-button>
+            <n-button text size="tiny" @click="cancelSceneNameEdit">取消</n-button>
+          </div>
           <button
+            v-else
             class="theater-scene-card"
             :class="{ 'is-active': scene.id === store.state.activeSceneId }"
             :disabled="!canSwitchScene"
@@ -4209,12 +4273,20 @@ onBeforeUnmount(() => {
           >
             <span class="theater-scene-card__title">{{ scene.name }}</span>
           </button>
-          <n-tooltip v-if="canSwitchScene" trigger="hover">
-            <template #trigger>
-              <n-button class="theater-scene-preload" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
-            </template>
-            在所有设备预加载此场景
-          </n-tooltip>
+          <div class="theater-scene-row__actions">
+            <n-tooltip v-if="canSwitchScene" trigger="hover">
+              <template #trigger>
+                <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
+              </template>
+              在所有设备预加载此场景
+            </n-tooltip>
+            <n-tooltip v-if="canEditAllObjects && editingSceneId !== scene.id" trigger="hover">
+              <template #trigger>
+                <n-button class="theater-scene-edit" text size="tiny" :aria-label="`编辑场景 ${scene.name}`" @click="beginSceneNameEdit(scene)"><n-icon><Edit /></n-icon></n-button>
+              </template>
+              编辑场景名称
+            </n-tooltip>
+          </div>
         </div>
         <div v-if="canEditAllObjects && canSwitchScene" class="theater-scene-actions">
           <n-button size="tiny" quaternary @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
@@ -4796,7 +4868,15 @@ onBeforeUnmount(() => {
 .theater-panel-heading small { font-weight: 400; }
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
-.theater-scene-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; gap: 2px; }
+.theater-scene-row { position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; }
+.theater-scene-row__actions, .theater-scene-name-editor { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.theater-scene-row__actions {
+  position: absolute; right: 0; padding-left: 6px; opacity: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--theater-panel) 10px); transition: opacity .14s ease;
+}
+.theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
+.theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 64px; }
+.theater-scene-name-editor :deep(.n-input) { flex: 1; min-width: 0; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
@@ -4805,7 +4885,14 @@ onBeforeUnmount(() => {
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
 .theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theater-scene-preload { width: 28px; height: 28px; padding: 0; }
+.theater-scene-preload, .theater-scene-edit { width: 28px; height: 28px; padding: 0; }
+.theater-scene-preload.is-ready-pulse { animation: theater-scene-preload-ready .42s ease-out; }
+@keyframes theater-scene-preload-ready {
+  0%, 100% { transform: translateY(0) scale(1); }
+  42% { transform: translateY(-4px) scale(1.14); }
+  68% { transform: translateY(1px) scale(.96); }
+}
+@media (prefers-reduced-motion: reduce) { .theater-scene-preload.is-ready-pulse { animation: none; } }
 .theater-scene-actions { display: flex; margin-top: auto; }
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }
