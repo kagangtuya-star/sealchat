@@ -3010,7 +3010,6 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	identityChanged := false
 	var resolvedIdentityProto *protocol.ChannelIdentity
 	if (data.IdentityID != nil || data.IdentityVariantID != nil) && isAuthor {
-		identityChanged = true
 		rawIdentityID := strings.TrimSpace(msg.SenderIdentityID)
 		if data.IdentityID != nil {
 			rawIdentityID = strings.TrimSpace(*data.IdentityID)
@@ -3032,49 +3031,60 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		}
 		appearance := service.ResolveChannelIdentityAppearance(identity, variant)
 		if identity != nil {
-			msg.SenderIdentityID = identity.ID
-			msg.SenderRoleID = identity.ID
-			msg.SenderIdentityIsTemporary = identity.IsTemporary
+			nextVariantID := ""
 			if appearance != nil {
-				msg.SenderIdentityVariantID = appearance.VariantID
-				msg.SenderIdentityName = appearance.DisplayName
-				msg.SenderIdentityColor = appearance.Color
-				msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
-				msg.SenderIdentityDecorations = appearance.AvatarDecorations
-				msg.SenderTheaterPresentation = appearance.TheaterPresentation
+				nextVariantID = appearance.VariantID
 			}
-			resolvedIdentityProto = identity.ToProtocolType()
-			if resolvedIdentityProto != nil && appearance != nil {
-				resolvedIdentityProto.DisplayName = appearance.DisplayName
-				resolvedIdentityProto.Color = appearance.Color
-				resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
-				resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
-				if len(appearance.AvatarDecorations) > 0 {
-					first := appearance.AvatarDecorations[0]
-					resolvedIdentityProto.AvatarDecoration = &first
-				} else {
-					resolvedIdentityProto.AvatarDecoration = nil
+			identityChanged = identity.ID != msg.SenderIdentityID || nextVariantID != msg.SenderIdentityVariantID
+			if identityChanged {
+				msg.SenderIdentityID = identity.ID
+				msg.SenderRoleID = identity.ID
+				msg.SenderIdentityIsTemporary = identity.IsTemporary
+				msg.SenderIdentityVariantID = nextVariantID
+				if appearance != nil {
+					msg.SenderIdentityName = appearance.DisplayName
+					msg.SenderIdentityColor = appearance.Color
+					msg.SenderIdentityAvatarID = appearance.AvatarAttachmentID
+					msg.SenderIdentityDecorations = appearance.AvatarDecorations
+					msg.SenderTheaterPresentation = appearance.TheaterPresentation
+				}
+				resolvedIdentityProto = identity.ToProtocolType()
+				if resolvedIdentityProto != nil && appearance != nil {
+					resolvedIdentityProto.DisplayName = appearance.DisplayName
+					resolvedIdentityProto.Color = appearance.Color
+					resolvedIdentityProto.AvatarAttachmentID = appearance.AvatarAttachmentID
+					resolvedIdentityProto.AvatarDecorations = appearance.AvatarDecorations
+					if len(appearance.AvatarDecorations) > 0 {
+						first := appearance.AvatarDecorations[0]
+						resolvedIdentityProto.AvatarDecoration = &first
+					} else {
+						resolvedIdentityProto.AvatarDecoration = nil
+					}
+				}
+				if appearance != nil && appearance.DisplayName != "" {
+					msg.SenderMemberName = appearance.DisplayName
 				}
 			}
-			if appearance != nil && appearance.DisplayName != "" {
-				msg.SenderMemberName = appearance.DisplayName
-			}
 		} else {
-			msg.SenderIdentityID = ""
-			msg.SenderIdentityVariantID = ""
-			msg.SenderIdentityName = ""
-			msg.SenderIdentityColor = ""
-			msg.SenderIdentityAvatarID = ""
-			msg.SenderIdentityDecorations = nil
-			msg.SenderIdentityIsTemporary = false
-			msg.SenderRoleID = ""
-			resolvedIdentityProto = nil
-			if authorMember != nil && authorMember.Nickname != "" {
-				msg.SenderMemberName = authorMember.Nickname
-			} else if authorUser != nil && authorUser.Nickname != "" {
-				msg.SenderMemberName = authorUser.Nickname
-			} else if authorUser != nil {
-				msg.SenderMemberName = authorUser.Username
+			identityChanged = msg.SenderIdentityID != "" || msg.SenderIdentityVariantID != ""
+			if identityChanged {
+				msg.SenderIdentityID = ""
+				msg.SenderIdentityVariantID = ""
+				msg.SenderIdentityName = ""
+				msg.SenderIdentityColor = ""
+				msg.SenderIdentityAvatarID = ""
+				msg.SenderIdentityDecorations = nil
+				msg.SenderTheaterPresentation = nil
+				msg.SenderIdentityIsTemporary = false
+				msg.SenderRoleID = ""
+				resolvedIdentityProto = nil
+				if authorMember != nil && authorMember.Nickname != "" {
+					msg.SenderMemberName = authorMember.Nickname
+				} else if authorUser != nil && authorUser.Nickname != "" {
+					msg.SenderMemberName = authorUser.Nickname
+				} else if authorUser != nil {
+					msg.SenderMemberName = authorUser.Username
+				}
 			}
 		}
 	}

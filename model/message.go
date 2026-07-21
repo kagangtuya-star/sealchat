@@ -135,6 +135,28 @@ func MessageUpdate(id string, values map[string]any) error {
 			values["sender_identity_decoration"] = string(encoded)
 		}
 	}
+	if rawPresentation, ok := values["sender_theater_presentation"]; ok {
+		switch value := rawPresentation.(type) {
+		case nil:
+			values["sender_theater_presentation"] = nil
+		case *protocol.TheaterPresentation:
+			if value == nil {
+				values["sender_theater_presentation"] = nil
+			} else {
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					return err
+				}
+				values["sender_theater_presentation"] = string(encoded)
+			}
+		case protocol.TheaterPresentation:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			values["sender_theater_presentation"] = string(encoded)
+		}
+	}
 	return db.Model(&MessageModel{}).Where("id = ?", id).Updates(values).Error
 }
 

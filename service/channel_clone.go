@@ -572,6 +572,7 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 	}
 	identityMap := map[string]string{}
 	attachmentMap := map[string]string{}
+	theaterMediaMaps := map[string]map[string]protocol.TheaterMediaRef{}
 	for _, identity := range identities {
 		if identity.UserID == "" {
 			continue
@@ -584,6 +585,14 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		newID := utils.NewID()
 		identityMap[identity.ID] = newID
 		presentation := cloneTheaterPresentation(identity.TheaterPresentation)
+		theaterMediaMap, err := cloneTheaterAppearanceAssetsForIdentityTx(tx, sourceID, targetID, identity.UserID, identity.ID, newID)
+		if err != nil {
+			return nil, err
+		}
+		if err := remapTheaterPresentationMedia(presentation, theaterMediaMap); err != nil {
+			return nil, err
+		}
+		theaterMediaMaps[identity.ID] = theaterMediaMap
 		avatarAttachmentID, err := cloneChannelIdentityAttachmentTx(tx, sourceID, targetID, identity.UserID, identity.AvatarAttachmentID, attachmentMap)
 		if err != nil {
 			return nil, err
@@ -742,6 +751,10 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 		if err != nil {
 			return nil, err
 		}
+		appearanceJSON, err := remapVariantTheaterPresentationJSON(variant.AppearanceJSON, theaterMediaMaps[variant.IdentityID])
+		if err != nil {
+			return nil, err
+		}
 		clone := model.ChannelIdentityVariantModel{
 			StringPKBaseModel:  model.StringPKBaseModel{ID: utils.NewID()},
 			IdentityID:         newIdentityID,
@@ -753,11 +766,16 @@ func copyChannelIdentities(tx *gorm.DB, sourceID, targetID string, allowedUserID
 			AvatarAttachmentID: avatarAttachmentID,
 			DisplayName:        variant.DisplayName,
 			Color:              variant.Color,
-			AppearanceJSON:     variant.AppearanceJSON,
+			AppearanceJSON:     appearanceJSON,
 			SortOrder:          variant.SortOrder,
 			Enabled:            variant.Enabled,
 		}
 		if err := tx.Create(&clone).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Model(&model.TheaterAppearanceAssetModel{}).
+			Where("channel_id = ? AND identity_id = ? AND variant_id = ?", targetID, newIdentityID, variant.ID).
+			Update("variant_id", clone.ID).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -909,9 +927,9 @@ func remapTheaterLayerMedia(layer *protocol.TheaterVisualLayer, mediaMap map[str
 	}
 	if media, ok := mediaMap[layer.Media.AssetID]; ok {
 		layer.Media = media
-		return nil
 	}
-	return fmt.Errorf("演出资源无法复制: %s", layer.Media.AssetID)
+	// Pending or legacy media remains untouched when no ready cloned asset exists.
+	return nil
 }
 
 func remapVariantTheaterPresentationJSON(raw string, mediaMap map[string]protocol.TheaterMediaRef) (string, error) {

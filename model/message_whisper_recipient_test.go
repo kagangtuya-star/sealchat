@@ -5,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -67,5 +68,35 @@ func TestReplaceWhisperRecipientsClearsRecipientsWhenEmpty(t *testing.T) {
 	got := GetWhisperRecipientIDs(messageID)
 	if len(got) != 0 {
 		t.Fatalf("recipient count = %d, want 0; got=%v", len(got), got)
+	}
+}
+
+func TestMessageUpdateSerializesSenderTheaterPresentation(t *testing.T) {
+	initMessageWhisperRecipientTestDB(t)
+
+	message := &MessageModel{
+		StringPKBaseModel: StringPKBaseModel{ID: "message-" + utils.NewIDWithLength(8)},
+		ChannelID:         "channel-" + utils.NewIDWithLength(8),
+		UserID:            "user-" + utils.NewIDWithLength(8),
+		Content:           "before",
+	}
+	if err := GetDB().Create(message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	presentation := protocol.DefaultTheaterPresentation()
+	presentation.Dialogue.NameGap = 0.42
+	if err := MessageUpdate(message.ID, map[string]any{
+		"sender_theater_presentation": &presentation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored MessageModel
+	if err := GetDB().Where("id = ?", message.ID).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.SenderTheaterPresentation == nil || stored.SenderTheaterPresentation.Dialogue.NameGap != presentation.Dialogue.NameGap {
+		t.Fatalf("stored presentation = %#v", stored.SenderTheaterPresentation)
 	}
 }
