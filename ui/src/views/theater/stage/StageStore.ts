@@ -602,6 +602,25 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     clearSelection()
   }
 
+  const placeObjectAbove = (
+    object: StageObject,
+    collection: Record<string, StageObject>,
+    referenceId: string | null = state.selectedObjectId,
+  ) => {
+    const reference = referenceId ? activeObjects.value[referenceId] : undefined
+    if (reference && collection[reference.id]) {
+      object.parentId = reference.parentId
+      reorderObject(object.id, reference.id, 'before')
+      return
+    }
+
+    object.parentId = null
+    const topObject = Object.values(activeObjects.value)
+      .filter((item) => item.parentId === null && item.id !== object.id)
+      .sort((a, b) => b.transform.z - a.transform.z || b.transform.order - a.transform.order)[0]
+    if (topObject) reorderObject(object.id, topObject.id, 'before')
+  }
+
   const addObject = (type: StageInsertableObjectType, persistent = false) => runObjectEdit('添加对象', () => {
     const objects = persistent ? state.persistentObjects : state.liveState.sceneObjects
     const object = makeObject(
@@ -620,6 +639,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       Object.keys(objects).length,
     )
     objects[object.id] = object
+    placeObjectAbove(object, objects)
     setSelectedObjectIds([object.id], object.id)
     return object
   })
@@ -649,6 +669,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       transform: { ...transform, scaleX: 1, scaleY: 1, z: 0, order },
     })
     objects[object.id] = object
+    placeObjectAbove(object, objects)
     setSelectedObjectIds([object.id], object.id)
     return object
   })
@@ -751,6 +772,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
         keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null,
       )
       pasted.objects.forEach((object) => { collection[object.id] = object })
+      placeObjectAbove(collection[pasted.rootId], collection, sourceRoot?.id || null)
       setSelectedObjectIds([pasted.rootId], pasted.rootId)
       return collection[pasted.rootId]
     })
