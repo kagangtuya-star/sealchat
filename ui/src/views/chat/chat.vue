@@ -5331,6 +5331,19 @@ const handleSetWorldTheaterTemplate = async (
   try {
     const template = mergeWorldTheaterPresentationTemplate(currentWorldTheaterTemplate.value, presentation, sections);
     await chat.worldTheaterPresentationTemplateSet(worldId, template);
+    // 后端会级联刷新仍使用旧默认的角色；强制重载当前频道角色列表以同步 UI。
+    const channelId = String(chat.curChannel?.id || '').trim();
+    if (channelId) {
+      await chat.loadChannelIdentities(channelId, true, currentIdentityTargetUserId.value || undefined);
+      if (editingIdentity.value?.id) {
+        const refreshed = chat.getScopedChannelIdentities(channelId, currentIdentityTargetUserId.value)
+          .find((item) => item.id === editingIdentity.value?.id);
+        if (refreshed) {
+          editingIdentity.value = refreshed;
+          identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(refreshed.theaterPresentation);
+        }
+      }
+    }
     message.success('世界默认演出外观已更新');
   } catch (error: any) {
     message.error(error?.response?.data?.message || '更新世界默认演出外观失败');

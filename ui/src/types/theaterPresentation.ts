@@ -218,7 +218,8 @@ export const createDefaultTheaterDialogueStyle = (): TheaterDialogueStyle => ({
   nameGap: 0.04,
   textAlign: 'left',
   contentColor: '#F4F4F5',
-  charactersPerSecond: 10,
+  // Keep in sync with protocol.DefaultTheaterDialogueStyle (backend stock default is 6).
+  charactersPerSecond: 6,
 })
 
 export const createDefaultTheaterNarrationStyle = (): TheaterNarrationStyle => ({

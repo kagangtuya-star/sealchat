@@ -296,6 +296,232 @@ func ApplyWorldTheaterPresentationTemplate(value TheaterPresentation, template W
 	return NormalizeTheaterPresentation(value)
 }
 
+// TheaterVisualStyleFromLayer extracts reusable style fields, ignoring media.
+func TheaterVisualStyleFromLayer(layer *TheaterVisualLayer) *TheaterVisualStyle {
+	if layer == nil {
+		return nil
+	}
+	return &TheaterVisualStyle{
+		Enabled:      layer.Enabled,
+		Transform:    layer.Transform,
+		Fit:          layer.Fit,
+		PlaybackRate: layer.PlaybackRate,
+		BlendMode:    layer.BlendMode,
+	}
+}
+
+func theaterVisualStylesEqual(left, right *TheaterVisualStyle) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return *left == *right
+}
+
+func theaterLayersEqual(left, right *TheaterVisualLayer) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	if left.ID != right.ID || left.Enabled != right.Enabled || left.Space != right.Space ||
+		left.Transform != right.Transform || left.Fit != right.Fit ||
+		left.PlaybackRate != right.PlaybackRate || left.BlendMode != right.BlendMode {
+		return false
+	}
+	return theaterMediaRefsEqual(left.Media, right.Media)
+}
+
+func theaterMediaRefsEqual(left, right TheaterMediaRef) bool {
+	if left.AssetID != right.AssetID || left.ResourceAttachmentID != right.ResourceAttachmentID ||
+		left.FallbackAttachmentID != right.FallbackAttachmentID || left.MIMEType != right.MIMEType ||
+		left.Kind != right.Kind || left.Width != right.Width || left.Height != right.Height {
+		return false
+	}
+	if left.DurationMS == nil && right.DurationMS == nil {
+		return true
+	}
+	if left.DurationMS == nil || right.DurationMS == nil {
+		return false
+	}
+	return *left.DurationMS == *right.DurationMS
+}
+
+// theaterDialogueBoxEqual compares dialogue box chrome, excluding speaker/content text layers.
+func theaterDialogueBoxEqual(left, right TheaterDialogueStyle) bool {
+	if left.Transform != right.Transform {
+		return false
+	}
+	if left.Padding != right.Padding {
+		return false
+	}
+	if left.NameGap != right.NameGap {
+		return false
+	}
+	if left.TextAlign != right.TextAlign {
+		return false
+	}
+	if left.ContentColor != right.ContentColor {
+		return false
+	}
+	if left.CharactersPerSecond != right.CharactersPerSecond {
+		return false
+	}
+	return theaterLayersEqual(left.Frame, right.Frame)
+}
+
+func applyTheaterDialogueBox(dialogue *TheaterDialogueStyle, source TheaterDialogueStyle) {
+	if dialogue == nil {
+		return
+	}
+	dialogue.Transform = source.Transform
+	dialogue.Frame = cloneTheaterLayer(source.Frame)
+	dialogue.Padding = source.Padding
+	dialogue.NameGap = source.NameGap
+	dialogue.TextAlign = source.TextAlign
+	dialogue.ContentColor = source.ContentColor
+	dialogue.CharactersPerSecond = source.CharactersPerSecond
+}
+
+// frontendCompatTheaterPresentation mirrors the historical UI default that used
+// charactersPerSecond=10 while the backend stock default used 6.
+func frontendCompatTheaterPresentation() TheaterPresentation {
+	value := DefaultTheaterPresentation()
+	value.Dialogue.CharactersPerSecond = 10
+	return value
+}
+
+func defaultPortraitVisualStyle() TheaterVisualStyle {
+	return TheaterVisualStyle{
+		Enabled:      true,
+		Transform:    DefaultTheaterTransform(),
+		Fit:          TheaterObjectFitCover,
+		PlaybackRate: 1,
+		BlendMode:    TheaterBlendModeNormal,
+	}
+}
+
+// worldTheaterDefaultBaselines are presentations treated as "still on default"
+// when cascading a world template update.
+func worldTheaterDefaultBaselines(oldTemplate WorldTheaterPresentationTemplate) []TheaterPresentation {
+	system := NormalizeTheaterPresentation(DefaultTheaterPresentation())
+	frontend := NormalizeTheaterPresentation(frontendCompatTheaterPresentation())
+	return []TheaterPresentation{
+		system,
+		frontend,
+		ApplyWorldTheaterPresentationTemplate(system, oldTemplate),
+		ApplyWorldTheaterPresentationTemplate(frontend, oldTemplate),
+	}
+}
+
+func speakerMatchesAnyBaseline(value TheaterTextLayer, baselines []TheaterPresentation) bool {
+	for _, baseline := range baselines {
+		if value == baseline.Dialogue.Speaker {
+			return true
+		}
+	}
+	return false
+}
+
+func contentMatchesAnyBaseline(value TheaterTextLayer, baselines []TheaterPresentation) bool {
+	for _, baseline := range baselines {
+		if value == baseline.Dialogue.Content {
+			return true
+		}
+	}
+	return false
+}
+
+func dialogueBoxMatchesAnyBaseline(value TheaterDialogueStyle, baselines []TheaterPresentation) bool {
+	for _, baseline := range baselines {
+		if theaterDialogueBoxEqual(value, baseline.Dialogue) {
+			return true
+		}
+	}
+	return false
+}
+
+func portraitStyleMatchesAnyBaseline(style *TheaterVisualStyle, baselines []TheaterPresentation, oldTemplate WorldTheaterPresentationTemplate) bool {
+	if style == nil {
+		return false
+	}
+	for _, baseline := range baselines {
+		if theaterVisualStylesEqual(style, TheaterVisualStyleFromLayer(baseline.Portrait)) {
+			return true
+		}
+	}
+	if oldTemplate.Portrait != nil && theaterVisualStylesEqual(style, oldTemplate.Portrait) {
+		return true
+	}
+	def := defaultPortraitVisualStyle()
+	return theaterVisualStylesEqual(style, &def)
+}
+
+// ReplaceMatchingWorldTheaterDefaults rewrites presentation sections that still look
+// like a default (system default, historical UI default, or previous world default)
+// so they pick up newTemplate. Customized sections are preserved. Portrait media is kept.
+func ReplaceMatchingWorldTheaterDefaults(presentation TheaterPresentation, oldTemplate, newTemplate WorldTheaterPresentationTemplate) (TheaterPresentation, bool) {
+	presentation = NormalizeTheaterPresentation(presentation)
+	newDefaults := ApplyWorldTheaterPresentationTemplate(DefaultTheaterPresentation(), newTemplate)
+	baselines := worldTheaterDefaultBaselines(oldTemplate)
+	changed := false
+
+	// Portrait style lives on the identity layer; world template only stores style.
+	// Match against baseline styles, previous template style, and stock portrait chrome.
+	if presentation.Portrait != nil {
+		currentStyle := TheaterVisualStyleFromLayer(presentation.Portrait)
+		targetStyle := newTemplate.Portrait
+		if targetStyle == nil {
+			// Fall back to style implied by newDefaults when template clears portrait.
+			targetStyle = TheaterVisualStyleFromLayer(newDefaults.Portrait)
+		}
+		if portraitStyleMatchesAnyBaseline(currentStyle, baselines, oldTemplate) {
+			if targetStyle != nil && !theaterVisualStylesEqual(currentStyle, targetStyle) {
+				applyTheaterVisualStyle(presentation.Portrait, targetStyle)
+				changed = true
+			} else if targetStyle == nil && oldTemplate.Portrait != nil {
+				def := defaultPortraitVisualStyle()
+				applyTheaterVisualStyle(presentation.Portrait, &def)
+				changed = true
+			}
+		}
+	}
+
+	if speakerMatchesAnyBaseline(presentation.Dialogue.Speaker, baselines) &&
+		presentation.Dialogue.Speaker != newDefaults.Dialogue.Speaker {
+		presentation.Dialogue.Speaker = newDefaults.Dialogue.Speaker
+		changed = true
+	}
+	if contentMatchesAnyBaseline(presentation.Dialogue.Content, baselines) &&
+		presentation.Dialogue.Content != newDefaults.Dialogue.Content {
+		presentation.Dialogue.Content = newDefaults.Dialogue.Content
+		changed = true
+	}
+	if dialogueBoxMatchesAnyBaseline(presentation.Dialogue, baselines) &&
+		!theaterDialogueBoxEqual(presentation.Dialogue, newDefaults.Dialogue) {
+		applyTheaterDialogueBox(&presentation.Dialogue, newDefaults.Dialogue)
+		changed = true
+	}
+
+	if !changed {
+		return presentation, false
+	}
+	return NormalizeTheaterPresentation(presentation), true
+}
+
+// MaterializeWorldTheaterPresentationDefaults returns the presentation to store for
+// identities that have no theater presentation yet.
+func MaterializeWorldTheaterPresentationDefaults(template WorldTheaterPresentationTemplate) *TheaterPresentation {
+	if template.Portrait == nil && template.Speaker == nil && template.Content == nil && template.Dialogue == nil {
+		return nil
+	}
+	defaults := ApplyWorldTheaterPresentationTemplate(DefaultTheaterPresentation(), template)
+	return &defaults
+}
+
 func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationTemplate) error {
 	var problems []error
 	validateStyle := func(style *TheaterVisualStyle, path string) {

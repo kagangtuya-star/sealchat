@@ -88,4 +88,35 @@ delete legacySnapshot.liveState.sceneObjects[initialChild.id].aspectRatioLocked
 store.replaceState(legacySnapshot)
 assert.equal(store.activeObjects.value[initialChild.id].aspectRatioLocked, true)
 
+const placementStore = createTheaterStageStore()
+const baseObject = placementStore.addObject('text')
+placementStore.selectObject(baseObject.id)
+const insertedObject = placementStore.addObject('image')
+assert.equal(insertedObject.parentId, null)
+assert.ok(insertedObject.transform.z > baseObject.transform.z)
+
+placementStore.selectObject(null)
+const topObject = placementStore.addObject('button')
+assert.ok(topObject.transform.z > insertedObject.transform.z)
+
+const groupObject = placementStore.addObject('group')
+placementStore.selectObject(groupObject.id)
+const groupedObject = placementStore.addObject('text')
+assert.equal(groupedObject.parentId, groupObject.id)
+
+placementStore.selectObject(baseObject.id)
+assert.equal(placementStore.copySelectedObject(), true)
+const copiedObject = placementStore.pasteObject()!
+assert.equal(copiedObject.parentId, baseObject.parentId)
+assert.ok(copiedObject.transform.z > baseObject.transform.z)
+
+placementStore.selectObject(groupObject.id)
+assert.equal(placementStore.copySelectedObject(), true)
+const copiedGroup = placementStore.pasteObject()!
+const copiedGroupChild = Object.values(placementStore.activeObjects.value)
+  .find((object) => object.parentId === copiedGroup.id)
+assert.equal(copiedGroup.parentId, groupObject.parentId)
+assert.ok(copiedGroup.transform.z > groupObject.transform.z)
+assert.equal(copiedGroupChild?.transform.z, groupedObject.transform.z)
+
 console.log('theater stage layering runtime tests passed')
