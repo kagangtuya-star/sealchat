@@ -5,7 +5,7 @@ import { PlayerSkipForward, X } from '@vicons/tabler'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import TheaterPresentationMedia from '@/components/theater-presentation/TheaterPresentationMedia.vue'
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver'
-import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { createDefaultTheaterPresentation, resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import { isTipTapJson } from '@/utils/tiptap-render'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import {
@@ -76,7 +76,7 @@ const speakerColor = computed(() => {
   return typeof CSS !== 'undefined' && CSS.supports('color', color) ? color : 'var(--sc-text-primary, #f4f4f5)'
 })
 const textLayerStyle = (kind: 'speaker' | 'content'): CSSProperties => ({
-  ...resolveTheaterTransformStyle(presentation.value.dialogue[kind].transform),
+  ...resolveTheaterTextTransformStyle(presentation.value.dialogue[kind].transform),
   display: presentation.value.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   textAlign: presentation.value.dialogue.textAlign,
   '--theater-font-scale': String(presentation.value.dialogue[kind].fontScale),

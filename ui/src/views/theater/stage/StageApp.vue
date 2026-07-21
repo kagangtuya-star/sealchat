@@ -398,13 +398,22 @@ const stopTheaterAudioPlayer = (key: string) => {
   theaterAudioRetryIds.delete(key)
 }
 
-const theaterAudioFormat = (assetId: string) => {
-  const asset = theaterAudioAssets.value.find((item) => item.id === assetId)
+const theaterAudioFormatFromAsset = (asset?: AudioAsset) => {
   const source = asset?.objectKey || asset?.name || ''
   const extension = source.split(/[?#]/, 1)[0].match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase()
   if (extension === 'mpeg') return 'mp3'
   if (extension === 'oga') return 'ogg'
   return extension || undefined
+}
+
+const theaterAudioFormat = async (assetId: string) => {
+  const currentChannelAsset = theaterAudioAssets.value.find((item) => item.id === assetId)
+  if (currentChannelAsset) return theaterAudioFormatFromAsset(currentChannelAsset)
+  try {
+    return theaterAudioFormatFromAsset(await audioStudio.fetchSingleAsset(assetId))
+  } catch {
+    return undefined
+  }
 }
 
 const playTheaterAudioAsset = async (assetId: string, volume: number, key: string) => {
@@ -415,12 +424,13 @@ const playTheaterAudioAsset = async (assetId: string, volume: number, key: strin
   theaterAudioError.value = ''
   try {
     const src = await audioStudio.fetchPlayableStreamUrl(assetId)
+    const format = await theaterAudioFormat(assetId)
     await unlock
     if (theaterAudioSequences.get(key) !== sequence) return
     const baseVolume = Math.max(0, Math.min(1, volume))
     const player = new Howl({
       src: [src],
-      format: theaterAudioFormat(assetId),
+      format,
       preload: true,
       volume: baseVolume * theaterAudioMasterVolume.value,
       onplay: () => {

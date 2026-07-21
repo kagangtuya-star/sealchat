@@ -19,6 +19,10 @@ export const theaterTransformSchema = z.strictObject({
   zIndex: z.number().int().min(-100).max(100),
 })
 
+const theaterTextTransformSchema = theaterTransformSchema.extend({
+  y: z.number().finite().max(2),
+})
+
 export const theaterMediaRefSchema = z.strictObject({
   assetId: z.string().min(1).max(128),
   resourceAttachmentId: z.string().min(1).max(128),
@@ -67,7 +71,7 @@ export const theaterSpacingSchema = z.strictObject({
 
 export const theaterTextLayerSchema = z.strictObject({
   enabled: z.boolean(),
-  transform: theaterTransformSchema,
+  transform: theaterTextTransformSchema,
   fontScale: z.number().finite().min(0.25).max(4).default(1),
 })
 
@@ -419,6 +423,16 @@ export const normalizeTheaterTransform = (
   zIndex: Math.round(clampFinite(input?.zIndex, fallback.zIndex, -100, 100)),
 })
 
+export const normalizeTheaterTextTransform = (
+  input: Partial<TheaterTransform> | null | undefined,
+  fallback: TheaterTransform = createDefaultTheaterTransform(),
+): TheaterTransform => ({
+  ...normalizeTheaterTransform(input, fallback),
+  y: typeof input?.y === 'number' && Number.isFinite(input.y)
+    ? Math.min(2, input.y)
+    : fallback.y,
+})
+
 export interface TheaterTransformStyle {
   position: 'absolute'
   left: string
@@ -433,8 +447,7 @@ export interface TheaterTransformStyle {
 
 const formatPercentage = (value: number) => `${Number((value * 100).toFixed(6))}%`
 
-export const resolveTheaterTransformStyle = (input: TheaterTransform): TheaterTransformStyle => {
-  const transform = normalizeTheaterTransform(input)
+const resolveNormalizedTheaterTransformStyle = (transform: TheaterTransform): TheaterTransformStyle => {
   return {
     position: 'absolute',
     left: formatPercentage(transform.x),
@@ -447,3 +460,11 @@ export const resolveTheaterTransformStyle = (input: TheaterTransform): TheaterTr
     zIndex: String(transform.zIndex),
   }
 }
+
+export const resolveTheaterTransformStyle = (input: TheaterTransform): TheaterTransformStyle => (
+  resolveNormalizedTheaterTransformStyle(normalizeTheaterTransform(input))
+)
+
+export const resolveTheaterTextTransformStyle = (input: TheaterTransform): TheaterTransformStyle => (
+  resolveNormalizedTheaterTransformStyle(normalizeTheaterTextTransform(input))
+)

@@ -5,6 +5,7 @@ import {
   createDefaultTheaterPresentation,
   applyWorldTheaterPresentationTemplate,
   normalizeTheaterPresentation,
+  normalizeTheaterTextTransform,
   normalizeTheaterTransform,
   resolveTheaterPresentation,
   theaterPresentationSchema,
@@ -162,9 +163,9 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
   }
   if (command.type === 'set-transform') {
     if (command.target.kind === 'speaker') {
-      state.draft.dialogue.speaker.transform = normalizeTheaterTransform(command.transform, state.draft.dialogue.speaker.transform)
+      state.draft.dialogue.speaker.transform = normalizeTheaterTextTransform(command.transform, state.draft.dialogue.speaker.transform)
     } else if (command.target.kind === 'content') {
-      state.draft.dialogue.content.transform = normalizeTheaterTransform(command.transform, state.draft.dialogue.content.transform)
+      state.draft.dialogue.content.transform = normalizeTheaterTextTransform(command.transform, state.draft.dialogue.content.transform)
     } else if (command.target.kind === 'dialogue') {
       state.draft.dialogue.transform = normalizeTheaterTransform(command.transform, state.draft.dialogue.transform)
     } else {

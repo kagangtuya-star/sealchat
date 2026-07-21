@@ -48,6 +48,7 @@ const setTransform = (key: keyof TheaterTransform, value: number | null) => {
 const textLayer = computed(() => props.selection.kind === 'speaker' || props.selection.kind === 'content'
   ? props.draft.dialogue[props.selection.kind]
   : null)
+const textLayerCanMoveAboveViewport = computed(() => props.selection.kind === 'speaker' || props.selection.kind === 'content')
 const setRotation = (value: number) => setTransform('rotation', value)
 const setOpacity = (value: number) => setTransform('opacity', value)
 const setPlaybackRate = (value: number | null) => {
@@ -105,7 +106,7 @@ const reorder = (direction: -1 | 1) => {
       <div class="theater-inspector__label">变换</div>
       <div v-if="selection.kind !== 'decoration'" class="theater-inspector__number-grid">
         <n-input-number :value="transform.x" :step="0.01" :min="-1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('x', $event)" ><template #prefix>X</template></n-input-number>
-        <n-input-number :value="transform.y" :step="0.01" :min="-1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('y', $event)" ><template #prefix>Y</template></n-input-number>
+        <n-input-number :value="transform.y" :step="0.01" :min="textLayerCanMoveAboveViewport ? undefined : -1" :max="2" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('y', $event)" ><template #prefix>Y</template></n-input-number>
         <n-input-number :value="transform.width" :step="0.01" :min="0.01" :max="3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('width', $event)" ><template #prefix>W</template></n-input-number>
         <n-input-number :value="transform.height" :step="0.01" :min="0.01" :max="3" @focus="emit('transactionStart')" @blur="emit('transactionEnd')" @update:value="setTransform('height', $event)" ><template #prefix>H</template></n-input-number>
       </div>

@@ -19,7 +19,7 @@ import {
   isTheaterAppearanceAssetProcessing,
   type TheaterAppearanceAsset,
 } from '../src/components/theater-presentation/theaterAppearanceAssetState'
-import { createDefaultTheaterPresentation, type TheaterMediaRef } from '../src/types/theaterPresentation'
+import { createDefaultTheaterPresentation, resolveTheaterTextTransformStyle, type TheaterMediaRef } from '../src/types/theaterPresentation'
 import {
   cloneChannelIdentityTheaterPresentation,
   cloneChannelIdentityTheaterPresentationPatch,
@@ -74,6 +74,11 @@ state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { k
 assert.equal(state.draft.dialogue.speaker.transform.x, 0.2, 'speaker must have an independent transform')
 state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'content' }, transform: { y: 0.4 } })
 assert.equal(state.draft.dialogue.content.transform.y, 0.4, 'content must have an independent transform')
+state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'speaker' }, transform: { y: -2 } })
+assert.equal(state.draft.dialogue.speaker.transform.y, -2, 'speaker must allow an unrestricted negative Y position')
+state = dispatchTheaterEditorCommand(state, { type: 'set-transform', target: { kind: 'content' }, transform: { y: -3 } })
+assert.equal(state.draft.dialogue.content.transform.y, -3, 'content must allow an unrestricted negative Y position')
+assert.equal(resolveTheaterTextTransformStyle(state.draft.dialogue.content.transform).top, '-300%', 'text layer style must preserve negative Y position')
 state = dispatchTheaterEditorCommand(state, { type: 'set-layer-property', target: { kind: 'speaker' }, property: 'fontScale', value: 1.5 })
 assert.equal(state.draft.dialogue.speaker.fontScale, 1.5, 'speaker font scale must update independently')
 state = dispatchTheaterEditorCommand(state, { type: 'set-layer-property', target: { kind: 'content' }, property: 'fontScale', value: 0.8 })

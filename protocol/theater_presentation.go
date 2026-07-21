@@ -315,13 +315,13 @@ func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationT
 	}
 	validateStyle(template.Portrait, "portrait")
 	if template.Speaker != nil {
-		problems = appendError(problems, validateTheaterTransform(template.Speaker.Transform, "speaker.transform"))
+		problems = appendError(problems, validateTheaterTextTransform(template.Speaker.Transform, "speaker.transform"))
 		if template.Speaker.FontScale < 0.25 || template.Speaker.FontScale > 4 {
 			problems = append(problems, errors.New("speaker.fontScale is invalid"))
 		}
 	}
 	if template.Content != nil {
-		problems = appendError(problems, validateTheaterTransform(template.Content.Transform, "content.transform"))
+		problems = appendError(problems, validateTheaterTextTransform(template.Content.Transform, "content.transform"))
 		if template.Content.FontScale < 0.25 || template.Content.FontScale > 4 {
 			problems = append(problems, errors.New("content.fontScale is invalid"))
 		}
@@ -564,8 +564,8 @@ func (patch TheaterPresentationPatch) MarshalJSON() ([]byte, error) {
 func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 	var problems []error
 	problems = appendError(problems, validateTheaterTransform(dialogue.Transform, "dialogue.transform"))
-	problems = appendError(problems, validateTheaterTransform(dialogue.Speaker.Transform, "dialogue.speaker.transform"))
-	problems = appendError(problems, validateTheaterTransform(dialogue.Content.Transform, "dialogue.content.transform"))
+	problems = appendError(problems, validateTheaterTextTransform(dialogue.Speaker.Transform, "dialogue.speaker.transform"))
+	problems = appendError(problems, validateTheaterTextTransform(dialogue.Content.Transform, "dialogue.content.transform"))
 	if !finiteInRange(dialogue.Speaker.FontScale, 0.25, 4) {
 		problems = append(problems, errors.New("dialogue.speaker.fontScale must be finite and between 0.25 and 4"))
 	}
@@ -677,12 +677,23 @@ func validateTheaterMedia(media TheaterMediaRef, path string) error {
 }
 
 func validateTheaterTransform(transform TheaterTransform, path string) error {
+	return validateTheaterTransformWithYMinimum(transform, path, -1)
+}
+
+func validateTheaterTextTransform(transform TheaterTransform, path string) error {
+	return validateTheaterTransformWithYMinimum(transform, path, math.Inf(-1))
+}
+
+func validateTheaterTransformWithYMinimum(transform TheaterTransform, path string, minimumY float64) error {
 	var problems []error
-	for name, value := range map[string]float64{
-		"x": transform.X, "y": transform.Y,
-	} {
-		if !finiteInRange(value, -1, 2) {
-			problems = append(problems, fmt.Errorf("%s.%s must be finite and between -1 and 2", path, name))
+	if !finiteInRange(transform.X, -1, 2) {
+		problems = append(problems, fmt.Errorf("%s.x must be finite and between -1 and 2", path))
+	}
+	if !finiteInRange(transform.Y, minimumY, 2) {
+		if math.IsInf(minimumY, -1) {
+			problems = append(problems, fmt.Errorf("%s.y must be finite and at most 2", path))
+		} else {
+			problems = append(problems, fmt.Errorf("%s.y must be finite and between -1 and 2", path))
 		}
 	}
 	for name, value := range map[string]float64{

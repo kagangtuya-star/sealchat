@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, type CSSProperties } from 'vue'
-import { resolveTheaterBackdropColor, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from './theaterPresentationEditorState'
 import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
 import './theaterComposition.css'
@@ -162,7 +162,7 @@ const portraitRootStyle = computed<CSSProperties>(() => props.draft.portrait
   ? layerStyle(props.draft.portrait)
   : ({ position: 'absolute', inset: '0' } as CSSProperties))
 const textLayerStyle = (kind: 'speaker' | 'content') => ({
-  ...resolveTheaterTransformStyle(props.draft.dialogue[kind].transform),
+  ...resolveTheaterTextTransformStyle(props.draft.dialogue[kind].transform),
   display: props.draft.dialogue[kind].enabled ? (kind === 'speaker' ? 'grid' : 'block') : 'none',
   '--theater-font-scale': String(props.draft.dialogue[kind].fontScale),
 }) as CSSProperties
