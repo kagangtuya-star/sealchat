@@ -114,6 +114,7 @@ let theaterLastCharacterSnapshot: ChatCharactersSnapshotPayload | null = null;
 let theaterLastCharacterSnapshotSignature = '';
 let theaterGrantedPermissions = new Set<string>();
 let theaterPublishedContext = '';
+let theaterBridgeGeneration = 0;
 let forwardTheaterAppearanceInvalidation: ((event: Event) => void) | null = null;
 
 const isOwnerOrAdmin = computed(() => {
@@ -179,6 +180,7 @@ const postToParent = (payload: any) => {
 };
 
 const stopTheaterBridge = () => {
+  theaterBridgeGeneration += 1;
   disposeTheaterMessageEvents?.();
   disposeTheaterMessageEvents = null;
   theaterBridgeInitialized = false;
@@ -278,6 +280,7 @@ const startTheaterBridge = async () => {
     console.warn('[theater-bridge] chat context does not match iframe context');
     return;
   }
+  const generation = ++theaterBridgeGeneration;
 
   const debug = () => import.meta.env.DEV || route.query.bridgeDebug === '1' || isTheaterBridgeDebugEnabled();
   const transport = new PostMessageTransport({
@@ -426,6 +429,10 @@ const startTheaterBridge = async () => {
     return { ok: true, snapshot };
   });
   await client.connect();
+  if (generation !== theaterBridgeGeneration || initialWorldId.value.trim() !== worldId || initialChannelId.value.trim() !== channelId) {
+    client.disconnect();
+    return;
+  }
   theaterBridgeClient = client;
   client.sendSystem('host', 'system.ready', {
     endpoint: 'chat',
@@ -994,6 +1001,18 @@ watch(
 watch(theaterSessionId, (sessionId, previousSessionId) => {
   if (previousSessionId && sessionId !== previousSessionId) stopTheaterBridge();
 });
+
+watch(
+  () => [initialWorldId.value, initialChannelId.value] as const,
+  ([worldId, channelId], previous) => {
+    if (!previous || (worldId === previous[0] && channelId === previous[1])) return;
+    stopTheaterBridge();
+    void startTheaterBridge().catch((error) => {
+      console.warn('[theater-bridge] chat context restart failed', error);
+      stopTheaterBridge();
+    });
+  },
+);
 
 onMounted(async () => {
   chatEvent.on('channel-switch-to' as any, handleTheaterChannelSwitch as any);
