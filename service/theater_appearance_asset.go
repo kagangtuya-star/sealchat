@@ -379,21 +379,18 @@ func classifyTheaterAppearanceError(err error) string {
 
 func ValidateTheaterPresentationAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, presentation protocol.TheaterPresentation) error {
 	refs := filterWorldTheaterTemplateMediaRefs(tx, channelID, theaterPresentationMediaRefs(presentation))
-	if identityID == "" && len(refs) > 0 {
-		return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "新 identity 尚不能引用已有演出资源", 400, nil)
-	}
-	return validateTheaterAppearanceMediaRefs(tx, channelID, ownerUserID, identityID, refs)
+	return validateTheaterAppearanceMediaRefs(tx, refs)
 }
 
 func ValidateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, patch protocol.TheaterPresentationPatch) error {
-	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, "", false, patch)
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, patch)
 }
 
 func ValidateTheaterPresentationPatchAppearanceAssetsForVariant(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, patch protocol.TheaterPresentationPatch) error {
-	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, variantID, true, patch)
+	return validateTheaterPresentationPatchAppearanceAssets(tx, channelID, ownerUserID, identityID, patch)
 }
 
-func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID, variantID string, enforceVariant bool, patch protocol.TheaterPresentationPatch) error {
+func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, patch protocol.TheaterPresentationPatch) error {
 	var refs []protocol.TheaterMediaRef
 	if patch.Portrait.Set && patch.Portrait.Value != nil {
 		refs = append(refs, patch.Portrait.Value.Media)
@@ -407,22 +404,7 @@ func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ow
 		refs = append(refs, patch.Dialogue.Value.Frame.Media)
 	}
 	refs = filterWorldTheaterTemplateMediaRefs(tx, channelID, refs)
-	if err := validateTheaterAppearanceMediaRefs(tx, channelID, ownerUserID, identityID, refs); err != nil {
-		return err
-	}
-	if !enforceVariant {
-		return nil
-	}
-	for _, ref := range refs {
-		var asset model.TheaterAppearanceAssetModel
-		if err := tx.Where("id = ? AND deleted_at IS NULL", ref.AssetID).Limit(1).Find(&asset).Error; err != nil {
-			return err
-		}
-		if asset.ID == "" || asset.VariantID != variantID {
-			return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "演出资源不属于目标差分", 400, nil)
-		}
-	}
-	return nil
+	return validateTheaterAppearanceMediaRefs(tx, refs)
 }
 
 func theaterPresentationMediaRefs(presentation protocol.TheaterPresentation) []protocol.TheaterMediaRef {
@@ -486,7 +468,7 @@ func theaterMediaRefMatchesAsset(ref protocol.TheaterMediaRef, asset model.Theat
 		((ref.DurationMS == nil && asset.DurationMS == 0) || ref.DurationMS != nil && *ref.DurationMS == asset.DurationMS)
 }
 
-func validateTheaterAppearanceMediaRefs(tx *gorm.DB, channelID, ownerUserID, identityID string, refs []protocol.TheaterMediaRef) error {
+func validateTheaterAppearanceMediaRefs(tx *gorm.DB, refs []protocol.TheaterMediaRef) error {
 	if tx == nil {
 		tx = model.GetDB()
 	}
@@ -495,9 +477,10 @@ func validateTheaterAppearanceMediaRefs(tx *gorm.DB, channelID, ownerUserID, ide
 		if err := tx.Where("id = ? AND deleted_at IS NULL", ref.AssetID).Limit(1).Find(&asset).Error; err != nil {
 			return err
 		}
-		if asset.ID == "" || asset.ChannelID != channelID || asset.OwnerUserID != ownerUserID || identityID != "" && asset.IdentityID != identityID {
-			return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "演出资源不属于目标用户或频道", 400, nil)
+		if asset.ID == "" {
+			return newTheaterError(TheaterAppearanceAssetErrorNotFound, "演出资源不存在", 404, nil)
 		}
+		// Appearance assets intentionally share backing attachments across users and channels.
 		if asset.Status != "ready" {
 			return newTheaterError(TheaterAppearanceAssetErrorNotReady, "演出资源尚未 ready", 409, nil)
 		}
