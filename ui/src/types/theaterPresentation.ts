@@ -445,6 +445,8 @@ export interface TheaterTransformStyle {
   zIndex: string
 }
 
+export type TheaterTransformLayoutStyle = Omit<TheaterTransformStyle, 'opacity'>
+
 const formatPercentage = (value: number) => `${Number((value * 100).toFixed(6))}%`
 
 const resolveNormalizedTheaterTransformStyle = (transform: TheaterTransform): TheaterTransformStyle => {
@@ -464,6 +466,11 @@ const resolveNormalizedTheaterTransformStyle = (transform: TheaterTransform): Th
 export const resolveTheaterTransformStyle = (input: TheaterTransform): TheaterTransformStyle => (
   resolveNormalizedTheaterTransformStyle(normalizeTheaterTransform(input))
 )
+
+export const resolveTheaterTransformLayoutStyle = (input: TheaterTransform): TheaterTransformLayoutStyle => {
+  const { opacity: _opacity, ...style } = resolveTheaterTransformStyle(input)
+  return style
+}
 
 export const resolveTheaterTextTransformStyle = (input: TheaterTransform): TheaterTransformStyle => (
   resolveNormalizedTheaterTransformStyle(normalizeTheaterTextTransform(input))

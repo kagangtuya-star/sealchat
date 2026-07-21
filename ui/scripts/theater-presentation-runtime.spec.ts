@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   createDefaultTheaterPresentation,
@@ -7,6 +8,7 @@ import {
   normalizeTheaterTransform,
   resolveTheaterPresentation,
   resolveTheaterBackdropColor,
+  resolveTheaterTransformLayoutStyle,
   resolveTheaterTransformStyle,
   theaterPresentationPatchSchema,
   theaterPresentationSchema,
@@ -162,5 +164,27 @@ assert.deepEqual(resolveTheaterTransformStyle({
   opacity: '0.8',
   zIndex: '5',
 })
+assert.deepEqual(resolveTheaterTransformLayoutStyle({
+  x: 0.05,
+  y: 0.69,
+  width: 0.9,
+  height: 0.28,
+  rotation: 12,
+  opacity: 0.8,
+  zIndex: 5,
+}), {
+  position: 'absolute',
+  left: '5%',
+  top: '69%',
+  width: '90%',
+  height: '28%',
+  transform: 'rotate(12deg)',
+  transformOrigin: 'center center',
+  zIndex: '5',
+})
+
+const previewSource = readFileSync('src/components/theater-presentation/TheaterPresentationPreview.vue', 'utf8')
+assert.match(previewSource, /resolveTheaterTransformLayoutStyle\(props\.draft\.dialogue\.transform\)/)
+assert.match(previewSource, /theater-preview__default-frame" :style="dialogueSurfaceStyle"/)
 
 console.log('theater presentation runtime tests passed')

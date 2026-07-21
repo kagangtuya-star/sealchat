@@ -208,6 +208,8 @@ assert.deepEqual(resolveTheaterMediaCandidates(videoMedia, { supportsVideo: fals
 
 const overlaySource = readFileSync('src/views/theater/dialogue/TheaterDialogueOverlay.vue', 'utf8')
 assert.match(overlaySource, /theater-dialogue-shell__default/)
+assert.match(overlaySource, /resolveTheaterTransformLayoutStyle\(presentation\.value\.dialogue\.transform\)/)
+assert.match(overlaySource, /theater-dialogue-shell__default" :style="dialogueSurfaceStyle"/)
 assert.match(overlaySource, /<RichTextContent/)
 assert.doesNotMatch(overlaySource, /v-html/)
 assert.match(overlaySource, /PlayerSkipForward/)

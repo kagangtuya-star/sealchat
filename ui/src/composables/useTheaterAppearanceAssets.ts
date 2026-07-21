@@ -24,6 +24,24 @@ export const uploadTheaterAppearanceAsset = async (input: {
   return unwrapAsset(response.data)
 }
 
+export const importTheaterAppearanceAsset = async (input: {
+  channelId: string
+  identityId: string
+  variantId?: string
+  targetUserId?: string
+  purpose: TheaterAppearanceAsset['purpose']
+  attachmentId: string
+}): Promise<TheaterAppearanceAsset> => {
+  const response = await api.post(`api/v1/channels/${input.channelId}/theater-appearance-assets/import`, {
+    attachmentId: input.attachmentId,
+    identityId: input.identityId,
+    variantId: input.variantId,
+    targetUserId: input.targetUserId,
+    purpose: input.purpose,
+  })
+  return unwrapAsset(response.data)
+}
+
 export const getTheaterAppearanceAsset = async (channelId: string, assetId: string): Promise<TheaterAppearanceAsset> => {
   const response = await api.get(`api/v1/channels/${channelId}/theater-appearance-assets/${assetId}`)
   return unwrapAsset(response.data)

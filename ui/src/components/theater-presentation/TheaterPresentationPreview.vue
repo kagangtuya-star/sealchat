@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, type CSSProperties } from 'vue'
-import { resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
+import { resolveTheaterBackdropColor, resolveTheaterTextTransformStyle, resolveTheaterTransformLayoutStyle, resolveTheaterTransformStyle, type TheaterPresentation, type TheaterTransform, type TheaterVisualLayer } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from './theaterPresentationEditorState'
 import TheaterPresentationMedia from './TheaterPresentationMedia.vue'
 import './theaterComposition.css'
@@ -157,7 +157,14 @@ const layerStyle = (layer: TheaterVisualLayer) => ({
   display: layer.enabled ? 'block' : 'none',
 }) as CSSProperties
 
-const dialogueStyle = computed(() => resolveTheaterTransformStyle(props.draft.dialogue.transform) as CSSProperties)
+const dialogueStyle = computed(() => resolveTheaterTransformLayoutStyle(props.draft.dialogue.transform) as CSSProperties)
+const dialogueSurfaceStyle = computed<CSSProperties>(() => ({
+  opacity: String(props.draft.dialogue.transform.opacity),
+}))
+const dialogueFrameStyle = (frame: TheaterVisualLayer): CSSProperties => ({
+  ...layerStyle(frame),
+  opacity: String(frame.transform.opacity * props.draft.dialogue.transform.opacity),
+})
 const portraitRootStyle = computed<CSSProperties>(() => props.draft.portrait
   ? layerStyle(props.draft.portrait)
   : ({ position: 'absolute', inset: '0' } as CSSProperties))
@@ -220,11 +227,11 @@ const narrationStyle = computed<CSSProperties>(() => ({
           :style="dialogueStyle"
           @pointerdown="beginGesture($event, 'drag', { kind: 'dialogue' }, draft.dialogue.transform)"
         >
-        <div v-if="!draft.narration.enabled && !draft.dialogue.frame?.enabled" class="theater-preview__default-frame" />
+        <div v-if="!draft.narration.enabled && !draft.dialogue.frame?.enabled" class="theater-preview__default-frame" :style="dialogueSurfaceStyle" />
         <div
           v-if="!draft.narration.enabled && draft.dialogue.frame?.enabled"
           class="theater-preview__frame"
-          :style="layerStyle(draft.dialogue.frame)"
+          :style="dialogueFrameStyle(draft.dialogue.frame)"
         >
           <TheaterPresentationMedia :media="draft.dialogue.frame.media" :playback-rate="draft.dialogue.frame.playbackRate" />
         </div>
