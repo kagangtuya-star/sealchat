@@ -590,13 +590,31 @@ const canEditObject = (object: StageObject | null | undefined) => Boolean(object
 )
 
 const confirmDelete = (title: string, content: string, onPositiveClick: () => void) => {
-  stageDialog.warning({
+  let destroyDialog = () => {}
+  const removeKeydownListener = () => window.removeEventListener('keydown', handleKeydown, true)
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (event.isComposing || (event.key !== 'Enter' && event.key !== 'Escape')) return
+    event.preventDefault()
+    event.stopPropagation()
+    removeKeydownListener()
+    if (event.key === 'Enter') onPositiveClick()
+    destroyDialog()
+  }
+  const dialogReactive = stageDialog.warning({
     title,
     content,
     positiveText: '确认删除',
     negativeText: '取消',
-    onPositiveClick,
+    onPositiveClick: () => {
+      removeKeydownListener()
+      onPositiveClick()
+    },
+    onNegativeClick: removeKeydownListener,
+    onEsc: removeKeydownListener,
+    onAfterEnter: () => window.addEventListener('keydown', handleKeydown, true),
+    onAfterLeave: removeKeydownListener,
   })
+  destroyDialog = () => dialogReactive.destroy()
 }
 
 const removeObjectsWithConfirm = (objectIds: string[]) => {
@@ -4298,7 +4316,7 @@ onBeforeUnmount(() => {
             <span class="theater-scene-card__title">{{ scene.name }}</span>
           </button>
           <div class="theater-scene-row__actions">
-            <n-tooltip v-if="canSwitchScene" trigger="hover">
+            <n-tooltip v-if="canSwitchScene && editingSceneId !== scene.id" trigger="hover">
               <template #trigger>
                 <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
               </template>
