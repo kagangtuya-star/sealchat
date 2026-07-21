@@ -23,6 +23,74 @@ func TestNormalizeBotCommandContentWithPrefixes_ConvertsTipTapCommand(t *testing
 	}
 }
 
+func TestResolveDiceVisualActorUserID(t *testing.T) {
+	tests := []struct {
+		name            string
+		messageAuthorID string
+		isBot           bool
+		messageContext  *protocol.MessageContext
+		want            string
+	}{
+		{
+			name:            "user roll uses message author",
+			messageAuthorID: "user-1",
+			messageContext:  &protocol.MessageContext{SenderUserID: "stale-user"},
+			want:            "user-1",
+		},
+		{
+			name:            "bot response uses triggering user",
+			messageAuthorID: "bot-1",
+			isBot:           true,
+			messageContext:  &protocol.MessageContext{SenderUserID: " user-1 "},
+			want:            "user-1",
+		},
+		{
+			name:            "unsolicited bot roll uses bot",
+			messageAuthorID: " bot-1 ",
+			isBot:           true,
+			messageContext:  &protocol.MessageContext{},
+			want:            "bot-1",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := resolveDiceVisualActorUserID(test.messageAuthorID, test.isBot, test.messageContext)
+			if got != test.want {
+				t.Fatalf("resolveDiceVisualActorUserID() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParseChannelDefaultDiceSetCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		prefixes []string
+		want     string
+		matched  bool
+	}{
+		{name: "configured prefix", content: ".set 20", prefixes: []string{".", "。"}, want: "d20", matched: true},
+		{name: "case and whitespace", content: " \t/set\tD100\n", prefixes: []string{"/"}, want: "d100", matched: true},
+		{name: "longest prefix wins", content: "!!set 6", prefixes: []string{"!", "!!"}, want: "d6", matched: true},
+		{name: "rich text", content: `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"。set 12"}]}]}`, prefixes: []string{"。"}, want: "d12", matched: true},
+		{name: "missing separator", content: ".set20", prefixes: []string{"."}},
+		{name: "additional argument", content: ".set 20 now", prefixes: []string{"."}},
+		{name: "invalid sides", content: ".set 0", prefixes: []string{"."}},
+		{name: "unconfigured prefix", content: "#set 20", prefixes: []string{"."}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, matched := parseChannelDefaultDiceSetCommand(tt.content, tt.prefixes)
+			if matched != tt.matched || got != tt.want {
+				t.Fatalf("parseChannelDefaultDiceSetCommand() = (%q, %t), want (%q, %t)", got, matched, tt.want, tt.matched)
+			}
+		})
+	}
+}
+
 func TestNormalizeBotCommandContentWithPrefixes_SupportsCustomPrefix(t *testing.T) {
 	input := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"/bot "},{"type":"text","marks":[{"type":"bold"}],"text":"help"}]}]}`
 	got := normalizeBotCommandContentWithPrefixes(input, []string{"/"})

@@ -2416,8 +2416,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			diceRolls = renderResult.Rolls
 		}
 		if len(diceRolls) > 0 || ctx.User.IsBot {
+			diceActorUserID := resolveDiceVisualActorUserID(ctx.User.ID, ctx.User.IsBot, botMsgContext)
 			payload, payloadErr := service.BuildDiceVisualPayload(
-				m.ID, channel.WorldID, data.ChannelID, ctx.User.ID, content, diceRolls, ctx.User.IsBot, m.CreatedAt,
+				m.ID, channel.WorldID, data.ChannelID, diceActorUserID, content, diceRolls, ctx.User.IsBot, m.CreatedAt,
 			)
 			if payloadErr != nil {
 				log.Printf("构建 3D 骰子事件失败 message=%s err=%v", m.ID, payloadErr)
@@ -4151,6 +4152,15 @@ func resolveBotMessageContext(ctx *ChatContext, channelId string) *protocol.Mess
 		return nil
 	}
 	return msgContext
+}
+
+func resolveDiceVisualActorUserID(messageAuthorID string, isBot bool, messageContext *protocol.MessageContext) string {
+	if isBot && messageContext != nil {
+		if senderUserID := strings.TrimSpace(messageContext.SenderUserID); senderUserID != "" {
+			return senderUserID
+		}
+	}
+	return strings.TrimSpace(messageAuthorID)
 }
 
 func resolveBotWhisperRecipients(ctx *ChatContext, channelId, senderID string) []string {

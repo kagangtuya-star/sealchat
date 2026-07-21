@@ -16,6 +16,7 @@ interface ActiveDie {
 	mesh: THREE.Mesh
 	body: RAPIER.RigidBody
 	collider: RAPIER.Collider
+	settleDeadline: number
 	expiresAt: number
 	interactive: boolean
 	stableTime: number
@@ -59,6 +60,7 @@ const AIR_LINEAR_DAMPING = 0.06
 const AIR_ANGULAR_DAMPING = 0.14
 const HELD_LINEAR_DAMPING = 0.35
 const HELD_ANGULAR_DAMPING = 1.8
+const MAX_SETTLE_MS = 2600
 const UP = new THREE.Vector3(0, 1, 0)
 const SCREEN_UP = new THREE.Vector3(0, 0, -1)
 const tempQuaternion = new THREE.Quaternion()
@@ -360,12 +362,14 @@ export class DiceArena {
 				z: (random() * 2 - 1) * angularSpeed,
 			}, true)
 
+			const spawnedAt = performance.now()
 			const activeDie: ActiveDie = {
 	      id: `${payload.rollId}:${index}`,
 					mesh,
 					body,
 					collider: createdCollider,
-				expiresAt: performance.now() + Math.max(1500, payload.motion.lingerMs || 8000) + 2600,
+				settleDeadline: spawnedAt + MAX_SETTLE_MS,
+				expiresAt: spawnedAt + MAX_SETTLE_MS + Math.max(1500, payload.motion.lingerMs || 8000),
 				interactive: payload.motion.interactive !== false,
 				stableTime: 0,
 				stableFace: null,
@@ -447,6 +451,7 @@ export class DiceArena {
 		}
 		die.settled = false
 		die.stableTime = 0
+		die.settleDeadline = performance.now() + MAX_SETTLE_MS
 			// 用户抓取发生在权威出目已经结算之后；此后只表现自由物理。
 			die.authoritative = false
 			die.expiresAt = Math.max(die.expiresAt, performance.now() + 5000)
@@ -870,12 +875,13 @@ export class DiceArena {
 				const angularNormalized = Math.hypot(angular.x, angular.y, angular.z) * Math.sqrt(radius / GRAVITY)
 				const rawFace = detectTopFace(die.resource.registryType, tempQuaternion)
 				const sameFace = die.stableFace === rawFace
+				const contact = this.hasContact(die)
 					const stable = sameFace && (die.authoritative
 						? die.body.isSleeping()
-						: die.body.isSleeping() || (this.hasContact(die) && linearNormalized < 0.035 && angularNormalized < 0.055))
+						: die.body.isSleeping() || (contact && linearNormalized < 0.035 && angularNormalized < 0.055))
 				die.stableFace = rawFace
 				die.stableTime = stable ? die.stableTime + elapsed : 0
-				die.settled = die.stableTime >= 0.45
+				die.settled = die.stableTime >= 0.45 || (contact && now >= die.settleDeadline)
 					if (die.settled) {
 						this.ensureAuthoritativeFace(die, tempQuaternion)
 						die.authoritative = false
@@ -885,8 +891,9 @@ export class DiceArena {
 			if (this.activeThrowDice.length > 0 && this.activeThrowDice.every(die => die.settled)) {
 				this.activeThrowDice = []
 			}
-			const allSettled = this.dice.every(die => die.settled)
-			const expired = allSettled && !this.drag
+			// 单个未休眠刚体不能阻塞整批清理；到期骰子同时从 activeThrowDice 移除，
+			// 让已排队投掷继续启动。
+			const expired = !this.drag
 				? this.dice.filter(die => now >= die.expiresAt)
 				: []
 	    expired.forEach(die => this.removeDie(die))
