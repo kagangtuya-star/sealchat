@@ -2030,6 +2030,26 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		return nil, nil
 	}
 	channelData := channel.ToProtocolType()
+	if !ctx.User.IsBot {
+		if defaultDiceExpr, matched := parseConfiguredChannelDefaultDiceSetCommand(content); matched {
+			if _, err := updateChannelDefaultDice(ctx, channel.ID, defaultDiceExpr); err != nil {
+				return nil, err
+			}
+			if !service.IsBotFeatureEffectivelyEnabled(channel) {
+				now := time.Now()
+				return &protocol.Message{
+					ID:        channelDefaultDiceCommandMessageIDPrefix + utils.NewID(),
+					Channel:   channelData,
+					Content:   defaultDiceExpr,
+					User:      ctx.User.ToProtocolType(),
+					ClientID:  trimmedClientID,
+					Timestamp: now.Unix(),
+					CreatedAt: now.UnixMilli(),
+					UpdatedAt: now.UnixMilli(),
+				}, nil
+			}
+		}
+	}
 	effectiveBotFeatureEnabled := service.IsBotFeatureEffectivelyEnabled(channel)
 	effectiveBuiltInDiceEnabled := service.IsBuiltInDiceEffectivelyEnabled(channel)
 	if effectiveBotFeatureEnabled {

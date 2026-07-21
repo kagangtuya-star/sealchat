@@ -13019,6 +13019,12 @@ const retrySendMessage = async (target?: Message) => {
   }
 };
 
+const isChannelDefaultDiceCommandResponse = (messageData: unknown): messageData is Record<string, unknown> => (
+  !!messageData
+  && typeof messageData === 'object'
+  && String((messageData as Record<string, unknown>).id || '').startsWith('channel-default-dice-command:')
+);
+
 const performSend = async (options?: {
   identityIdOverride?: string
   identityVariantIdOverride?: string
@@ -13288,6 +13294,23 @@ const performSend = async (options?: {
     );
     if (!newMsg) {
       throw new Error('message.create returned empty result');
+    }
+    if (isChannelDefaultDiceCommandResponse(newMsg)) {
+      setMessageSendStatus(tmpMsg as any, 'sent');
+      instantMessages.delete(tmpMsg);
+      const index = rows.value.findIndex(item => item.id === tmpMsg.id);
+      if (index !== -1) {
+        rows.value.splice(index, 1);
+      }
+      resetInlineImages();
+      pendingInlineSelection = null;
+      textToSend.value = '';
+      syncSessionDraftSnapshot();
+      clearInputModeCache();
+      ensureInputFocus();
+      message.success(`默认骰已设为 ${String(newMsg.content || '')}`);
+      sendOutcome = { ok: true, messageId: String(newMsg.id) };
+      return sendOutcome;
     }
     for (const [k, v] of Object.entries(newMsg as Record<string, any>)) {
       (tmpMsg as any)[k] = v;
