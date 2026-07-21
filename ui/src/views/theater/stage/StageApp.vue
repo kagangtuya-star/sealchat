@@ -1520,7 +1520,7 @@ const updateTransformer = () => {
     return
   }
   const object = selectedObject.value
-  const node = object && canEditObject(object) ? objectNodes.get(object.id) : null
+  const node = object && canEditObject(object) && !object.locked ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
   transformer.visible(Boolean(node))
   const groupSelected = object?.type === 'group'
