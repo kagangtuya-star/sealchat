@@ -164,7 +164,7 @@ func persistTheaterDerivedVariant(resource *model.TheaterResourceModel, name, pa
 		Hash: hash[:], Filename: name + filepath.Ext(path), Size: int64(len(data)), MimeType: mimeType,
 		IsAnimated: strings.HasPrefix(mimeType, "video/"),
 		UserID:     resource.CreatedBy, StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL,
-		RootID: resource.ID, RootIDType: "theater_resource_variant", IsTemp: false,
+		RootID: resource.ID, RootIDType: theaterAttachmentRootResourceVariant, IsTemp: false,
 	}
 	if tx, _ := model.AttachmentCreate(attachment); tx.Error != nil {
 		return model.TheaterResourceVariantModel{}, tx.Error

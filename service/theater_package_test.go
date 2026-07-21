@@ -106,7 +106,7 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 					"object-child": {
 						ID: "object-child", ParentID: &parent, Kind: "image", Width: 10, Height: 10, Visible: true,
 						OwnerUserID: &owner, CharacterIdentityID: &identity,
-						Content: json.RawMessage(`{"resourceId":"resource-old","url":"/theater/resources/resource-old/content"}`),
+						Content: json.RawMessage(`{"resourceId":"resource-old","url":"/api/v1/worlds/world-old/channels/channel-old/theater/resources/resource-old/variants/display/content","fallback":{"resourceId":"resource-old","url":"https://old-s3.example.test/attachments/image.webp"}}`),
 						Actions: json.RawMessage(`[{"sceneId":"scene-old","objectId":"object-parent","assetId":"audio-old","resourceAttachmentId":"attachment-old","identityId":"identity-old"}]`), Metadata: json.RawMessage(`{}`),
 					},
 				},
@@ -118,7 +118,8 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 		scenes:    map[string]string{"scene-old": "scene-new"},
 		objects:   map[string]string{"object-parent": "parent-new", "object-child": "child-new"},
 		resources: map[string]string{"resource-old": "resource-new"},
-		audio:     map[string]string{"audio-old": "audio-new"}, appearance: map[string]string{}, attachments: map[string]string{"attachment-old": "attachment-new"}, worldID: "world-new", channelID: "channel-new",
+		audio:     map[string]string{"audio-old": "audio-new"}, appearance: map[string]string{}, attachments: map[string]string{"attachment-old": "attachment-new"},
+		sourceWorldID: "world-old", sourceChannelID: "channel-old", worldID: "world-new", channelID: "channel-new",
 	}
 	result, warnings, err := remapTheaterPackageSnapshot(snapshot, remap)
 	if err != nil {
@@ -142,6 +143,62 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 	}
 	if len(warnings) == 0 {
 		t.Fatal("expected identity remap warning")
+	}
+	if !strings.Contains(string(child.Content), `/api/v1/worlds/world-new/channels/channel-new/theater/resources/resource-new/variants/display/content`) {
+		t.Fatalf("resource URL not canonicalized: %s", child.Content)
+	}
+	if !strings.Contains(string(child.Content), `/api/v1/worlds/world-new/channels/channel-new/theater/resources/resource-new/content`) {
+		t.Fatalf("S3 resource URL not canonicalized: %s", child.Content)
+	}
+}
+
+func TestTheaterStoragePreviewFindsAllReferencedMediaAndImageMigrationExcludesIt(t *testing.T) {
+	actorID, worldID, channelID := initTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceAttachment := model.AttachmentModel{Filename: "scene.png", Size: 10, MimeType: "image/png", UserID: actorID, ChannelID: channelID, StorageType: model.StorageLocal, ObjectKey: "attachments/scene.png"}
+	if err := model.GetDB().Create(&resourceAttachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	readyAt := time.Now()
+	if err := model.GetDB().Create(&model.TheaterResourceModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()}, RoomID: room.ID,
+		AttachmentID: resourceAttachment.ID, Kind: "static_image", ContentHash: "hash", SizeBytes: 10,
+		MimeType: "image/png", OriginalFilename: "scene.png", Status: "ready", ProcessingProgress: 1,
+		VariantsJSON: "[]", CreatedBy: actorID, ReadyAt: &readyAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	legacyTheaterAttachment := model.AttachmentModel{Filename: "effect.webm", Size: 20, MimeType: "video/webm", UserID: actorID, ChannelID: channelID, StorageType: model.StorageLocal, ObjectKey: "attachments/effect.webm", RootID: utils.NewID(), RootIDType: "theater-appearance"}
+	if err := model.GetDB().Create(&legacyTheaterAttachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	unrelated := model.AttachmentModel{Filename: "message.png", Size: 30, MimeType: "image/png", UserID: actorID, ChannelID: channelID, StorageType: model.StorageLocal, ObjectKey: "attachments/message.png"}
+	if err := model.GetDB().Create(&unrelated).Error; err != nil {
+		t.Fatal(err)
+	}
+	theaterStats, err := GetStorageMigrationPreview(S3MigrationKindTheater, StorageMigrationTargetS3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theaterStats.Pending != 2 {
+		t.Fatalf("unexpected theater migration count: %d", theaterStats.Pending)
+	}
+	imageStats, err := GetMigrationPreview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageStats.Pending != 1 {
+		t.Fatalf("theater image must be excluded from compression migration, pending=%d", imageStats.Pending)
+	}
+	s3ImageStats, err := GetS3MigrationPreview(S3MigrationKindImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s3ImageStats.Pending != 1 {
+		t.Fatalf("theater image must use theater storage migration, pending=%d", s3ImageStats.Pending)
 	}
 }
 

@@ -329,6 +329,21 @@ func AttachmentPublicURL(att *model.AttachmentModel) string {
 	return ""
 }
 
+// AttachmentReadURL returns a browser-readable CDN or signed URL.
+func AttachmentReadURL(ctx context.Context, att *model.AttachmentModel) string {
+	if att == nil {
+		return ""
+	}
+	manager := GetStorageManager()
+	if manager != nil && strings.TrimSpace(att.ObjectKey) != "" {
+		backend := convertModelToBackend(att.StorageType)
+		if target := manager.ResolveReadURL(ctx, backend, att.ObjectKey); target != "" {
+			return target
+		}
+	}
+	return strings.TrimSpace(att.ExternalURL)
+}
+
 func AttachmentExportURL(att *model.AttachmentModel) string {
 	if att == nil {
 		return ""

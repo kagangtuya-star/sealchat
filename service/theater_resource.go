@@ -19,11 +19,15 @@ import (
 )
 
 const (
-	TheaterMediaErrorUnsupported          = "UNSUPPORTED_MEDIA_TYPE"
-	TheaterMediaErrorProcessorUnavailable = "MEDIA_PROCESSOR_UNAVAILABLE"
-	TheaterMediaErrorProbeFailed          = "MEDIA_PROBE_FAILED"
-	TheaterMediaErrorTranscodeFailed      = "MEDIA_TRANSCODE_FAILED"
-	TheaterMediaErrorLimitExceeded        = "MEDIA_LIMIT_EXCEEDED"
+	TheaterMediaErrorUnsupported           = "UNSUPPORTED_MEDIA_TYPE"
+	TheaterMediaErrorProcessorUnavailable  = "MEDIA_PROCESSOR_UNAVAILABLE"
+	TheaterMediaErrorProbeFailed           = "MEDIA_PROBE_FAILED"
+	TheaterMediaErrorTranscodeFailed       = "MEDIA_TRANSCODE_FAILED"
+	TheaterMediaErrorLimitExceeded         = "MEDIA_LIMIT_EXCEEDED"
+	theaterAttachmentRootResource          = "theater_resource"
+	theaterAttachmentRootResourceVariant   = "theater_resource_variant"
+	theaterAttachmentRootAppearance        = "theater_appearance_asset"
+	theaterAttachmentRootAppearanceVariant = "theater_appearance_asset_variant"
 )
 
 type TheaterResourceUploadInput struct {
@@ -219,7 +223,7 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 	if err != nil {
 		return nil, err
 	}
-	attachment := &model.AttachmentModel{Hash: hashBytes, Filename: sanitizeTheaterFilename(input.Filename), Size: written, MimeType: mimeType, IsAnimated: kind == "animated_image", UserID: actorID, ChannelID: channelID, StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL, RootID: room.ID, RootIDType: "theater_resource", IsTemp: false}
+	attachment := &model.AttachmentModel{Hash: hashBytes, Filename: sanitizeTheaterFilename(input.Filename), Size: written, MimeType: mimeType, IsAnimated: kind == "animated_image", UserID: actorID, ChannelID: channelID, StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL, RootID: room.ID, RootIDType: theaterAttachmentRootResource, IsTemp: false}
 	if tx, _ := model.AttachmentCreate(attachment); tx.Error != nil {
 		return nil, tx.Error
 	}

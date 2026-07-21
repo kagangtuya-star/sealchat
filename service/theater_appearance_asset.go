@@ -80,7 +80,7 @@ func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUse
 		attachment.ChannelID = channelID
 		attachment.UserID = actor.TargetUserID
 		attachment.RootID = assetID
-		attachment.RootIDType = "theater_appearance_asset"
+		attachment.RootIDType = theaterAttachmentRootAppearance
 		if err := model.GetDB().Create(&attachment).Error; err != nil {
 			return nil, err
 		}
@@ -192,7 +192,7 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 		Hash:              hashBytes, Filename: sanitizeTheaterFilename(input.Filename), Size: written, MimeType: mimeType,
 		IsAnimated: kind == "animated_image", UserID: actor.TargetUserID, ChannelID: channelID,
 		StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL,
-		RootID: assetID, RootIDType: "theater_appearance_asset", IsTemp: false,
+		RootID: assetID, RootIDType: theaterAttachmentRootAppearance, IsTemp: false,
 	}
 	asset := model.TheaterAppearanceAssetModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: assetID},
@@ -337,7 +337,7 @@ func persistTheaterAppearanceOutput(asset *model.TheaterAppearanceAssetModel, ou
 		Hash: hash[:], Filename: output.Name + filepath.Ext(output.Path), Size: int64(len(data)), MimeType: output.MimeType,
 		IsAnimated: strings.HasPrefix(output.MimeType, "video/"), UserID: asset.OwnerUserID, ChannelID: asset.ChannelID,
 		StorageType: location.StorageType, ObjectKey: location.ObjectKey, ExternalURL: location.ExternalURL,
-		RootID: asset.ID, RootIDType: "theater_appearance_asset_variant", IsTemp: false,
+		RootID: asset.ID, RootIDType: theaterAttachmentRootAppearanceVariant, IsTemp: false,
 	}
 	if tx, _ := model.AttachmentCreate(&attachment); tx.Error != nil {
 		return "", tx.Error

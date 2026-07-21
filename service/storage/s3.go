@@ -25,6 +25,7 @@ type s3Backend struct {
 	client         *minio.Client
 	bucket         string
 	publicBaseURL  string
+	publicExplicit bool
 	forcePathStyle bool
 	presignURLFunc func(context.Context, string, time.Duration) (string, error)
 }
@@ -50,6 +51,7 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 		return nil, fmt.Errorf("S3 自检失败: %w", err)
 	}
 	publicBase := strings.TrimSpace(cfg.PublicBaseURL)
+	publicExplicit := publicBase != ""
 	if publicBase == "" {
 		publicBase = derivePublicURL(endpoint, secure, cfg.Bucket, cfg.ForcePathStyle)
 	}
@@ -57,6 +59,7 @@ func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
 		client:         client,
 		bucket:         cfg.Bucket,
 		publicBaseURL:  strings.TrimRight(publicBase, "/"),
+		publicExplicit: publicExplicit,
 		forcePathStyle: cfg.ForcePathStyle,
 	}, nil
 }

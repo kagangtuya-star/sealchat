@@ -933,7 +933,8 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	if variant.StorageType == model.StorageS3 {
 		target := strings.TrimSpace(variant.ObjectKey)
 		if manager := service.GetStorageManager(); manager != nil && target != "" && !strings.HasPrefix(strings.ToLower(target), "http") {
-			if resolved := manager.PublicURL(storage.BackendS3, variant.ObjectKey); resolved != "" {
+			resolved := manager.ResolveReadURL(c.Context(), storage.BackendS3, variant.ObjectKey)
+			if resolved != "" {
 				target = resolved
 			}
 		}

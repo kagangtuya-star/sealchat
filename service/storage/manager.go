@@ -266,6 +266,22 @@ func (m *Manager) ResolveAttachmentExportURL(ctx context.Context, backend Backen
 	return m.PresignedURL(ctx, backend, objectKey)
 }
 
+func (m *Manager) ResolveReadURL(ctx context.Context, backend BackendType, objectKey string) string {
+	if m == nil {
+		return ""
+	}
+	if backend != BackendS3 || m.remote == nil {
+		return m.PublicURL(backend, objectKey)
+	}
+	if m.remote.publicExplicit {
+		return m.remote.publicURL(objectKey)
+	}
+	if target := m.PresignedURL(ctx, backend, objectKey); target != "" {
+		return target
+	}
+	return m.remote.publicURL(objectKey)
+}
+
 func (m *Manager) ResolveLocalPath(objectKey string) (string, error) {
 	if m.local == nil {
 		return "", fmt.Errorf("本地存储未初始化")

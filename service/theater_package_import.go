@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -578,7 +579,7 @@ func validateTheaterPackageImportLimits(roomID string, snapshot TheaterSharedSna
 }
 
 func importTheaterPackageResource(tx *gorm.DB, root string, room *model.TheaterRoomModel, job *model.TheaterPackageJobModel, item TheaterPackageResource, remap theaterPackageRemap, persisted *[]AttachmentLocation) error {
-	attachmentID, err := importTheaterPackageAttachment(tx, root, item.Original, job, room.ID, "theater-resource", "", persisted)
+	attachmentID, err := importTheaterPackageAttachment(tx, root, item.Original, job, room.ID, theaterAttachmentRootResource, "", persisted)
 	if err != nil {
 		return err
 	}
@@ -602,7 +603,7 @@ func importTheaterPackageResource(tx *gorm.DB, root string, room *model.TheaterR
 		return err
 	}
 	for _, variant := range item.Variants {
-		variantAttachmentID, err := importTheaterPackageAttachment(tx, root, variant.File, job, room.ID, "theater-resource-variant", "", persisted)
+		variantAttachmentID, err := importTheaterPackageAttachment(tx, root, variant.File, job, room.ID, theaterAttachmentRootResourceVariant, "", persisted)
 		if err != nil {
 			return err
 		}
@@ -618,20 +619,20 @@ func importTheaterPackageResource(tx *gorm.DB, root string, room *model.TheaterR
 }
 
 func importTheaterPackageAppearanceAsset(tx *gorm.DB, root string, job *model.TheaterPackageJobModel, item TheaterPackageAppearanceAsset, remap theaterPackageRemap, persisted *[]AttachmentLocation) error {
-	sourceID, err := importTheaterPackageAttachment(tx, root, item.Source, job, job.TargetWorldID, "theater-appearance", remap.attachments[item.SourceAttachmentID], persisted)
+	sourceID, err := importTheaterPackageAttachment(tx, root, item.Source, job, job.TargetWorldID, theaterAttachmentRootAppearance, remap.attachments[item.SourceAttachmentID], persisted)
 	if err != nil {
 		return err
 	}
 	displayID := ""
 	if item.Display != nil {
-		displayID, err = importTheaterPackageAttachment(tx, root, *item.Display, job, job.TargetWorldID, "theater-appearance", remap.attachments[item.DisplayAttachmentID], persisted)
+		displayID, err = importTheaterPackageAttachment(tx, root, *item.Display, job, job.TargetWorldID, theaterAttachmentRootAppearanceVariant, remap.attachments[item.DisplayAttachmentID], persisted)
 		if err != nil {
 			return err
 		}
 	}
 	fallbackID := ""
 	if item.Fallback != nil {
-		fallbackID, err = importTheaterPackageAttachment(tx, root, *item.Fallback, job, job.TargetWorldID, "theater-appearance", remap.attachments[item.FallbackAttachmentID], persisted)
+		fallbackID, err = importTheaterPackageAttachment(tx, root, *item.Fallback, job, job.TargetWorldID, theaterAttachmentRootAppearanceVariant, remap.attachments[item.FallbackAttachmentID], persisted)
 		if err != nil {
 			return err
 		}
@@ -855,6 +856,7 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 				}
 				typed[key] = walk(child)
 			}
+			canonicalizeImportedTheaterResourceURL(typed, remap)
 			return typed
 		case []any:
 			for index, child := range typed {
@@ -868,6 +870,57 @@ func remapTheaterPackageJSON(raw []byte, remap theaterPackageRemap) (json.RawMes
 	value = walk(value)
 	result, err := json.Marshal(value)
 	return result, changed, err
+}
+
+func canonicalizeImportedTheaterResourceURL(value map[string]any, remap theaterPackageRemap) {
+	resourceID, ok := value["resourceId"].(string)
+	if !ok || strings.TrimSpace(resourceID) == "" {
+		return
+	}
+	known := false
+	for _, mapped := range remap.resources {
+		if mapped == resourceID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return
+	}
+	if _, hasURL := value["url"].(string); !hasURL {
+		return
+	}
+	variant := importedTheaterResourceVariant(value["url"])
+	base := "/api/v1/worlds/" + url.PathEscape(remap.worldID)
+	if remap.channelID != "" {
+		base += "/channels/" + url.PathEscape(remap.channelID)
+	}
+	base += "/theater/resources/" + url.PathEscape(resourceID)
+	if variant != "" {
+		base += "/variants/" + url.PathEscape(variant)
+	}
+	value["url"] = base + "/content"
+}
+
+func importedTheaterResourceVariant(raw any) string {
+	text, ok := raw.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(text)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for index := 0; index+1 < len(parts); index++ {
+		if parts[index] == "variants" {
+			variant, err := url.PathUnescape(parts[index+1])
+			if err == nil {
+				return strings.TrimSpace(variant)
+			}
+		}
+	}
+	return ""
 }
 
 func remapTheaterPackageString(value string, remap theaterPackageRemap) string {

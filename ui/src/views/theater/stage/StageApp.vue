@@ -1619,10 +1619,23 @@ const fetchStageMediaBlob = (url: string, force = false) => {
     if (pending) return pending
   }
   const requestUrl = force ? `${url}${url.includes('?') ? '&' : '?'}theaterRetry=${Date.now()}` : url
-  const request = api.get<Blob>(requestUrl, { responseType: 'blob' }).then((response) => {
+  const request = (async () => {
+    const contentURL = new URL(requestUrl, window.location.href)
+    contentURL.pathname = contentURL.pathname.replace(/\/content\/?$/, '/content-url')
+    contentURL.search = ''
+    const resolved = await api.get<{ url?: unknown }>(contentURL.toString())
+    const directURL = typeof resolved.data?.url === 'string' ? resolved.data.url.trim() : ''
+    if (directURL) {
+      const response = await fetch(directURL, { credentials: 'omit' })
+      if (!response.ok) throw new Error(`资源请求失败（HTTP ${response.status}）`)
+      const blob = await response.blob()
+      if (blob.size === 0) throw new Error('资源响应为空')
+      return cacheStageMediaBlob(url, blob)
+    }
+    const response = await api.get<Blob>(requestUrl, { responseType: 'blob' })
     if (!(response.data instanceof Blob) || response.data.size === 0) throw new Error('资源响应为空')
     return cacheStageMediaBlob(url, response.data)
-  }).finally(() => {
+  })().finally(() => {
     if (stageMediaBlobRequests.get(url) === request) stageMediaBlobRequests.delete(url)
   })
   stageMediaBlobRequests.set(url, request)

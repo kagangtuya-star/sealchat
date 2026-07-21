@@ -83,6 +83,30 @@ func TheaterResourceVariantContent(c *fiber.Ctx) error {
 	return theaterResourceContent(c, c.Params("variant"))
 }
 
+func TheaterResourceContentURL(c *fiber.Ctx) error {
+	return theaterResourceContentURL(c, "")
+}
+
+func TheaterResourceVariantContentURL(c *fiber.Ctx) error {
+	return theaterResourceContentURL(c, c.Params("variant"))
+}
+
+func theaterResourceContentURL(c *fiber.Ctx, variant string) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	content, err := service.ResolveTheaterResourceContent(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("resourceId"), variant)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	if content.Attachment.StorageType != model.StorageS3 {
+		return c.JSON(fiber.Map{"url": ""})
+	}
+	if target := service.AttachmentReadURL(c.Context(), content.Attachment); target != "" {
+		return c.JSON(fiber.Map{"url": target})
+	}
+	return theaterErrorResponse(c, requestID, errors.New("S3 content unavailable"))
+}
+
 func theaterResourceContent(c *fiber.Ctx, variant string) error {
 	requestID := theaterRequestID(c)
 	user := getCurUser(c)
@@ -96,7 +120,7 @@ func theaterResourceContent(c *fiber.Ctx, variant string) error {
 func serveTheaterResourceContent(c *fiber.Ctx, requestID string, content *service.TheaterResourceContent) error {
 	attachment := content.Attachment
 	if attachment.StorageType == model.StorageS3 {
-		if target := service.AttachmentPublicURL(attachment); target != "" {
+		if target := service.AttachmentReadURL(c.Context(), attachment); target != "" {
 			return c.Redirect(target, fiber.StatusFound)
 		}
 		return theaterErrorResponse(c, requestID, errors.New("S3 content unavailable"))

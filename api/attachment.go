@@ -259,7 +259,7 @@ func AttachmentMeta(c *fiber.Ctx) error {
 		})
 	}
 
-	publicURL := service.AttachmentPublicURL(&att)
+	publicURL := service.AttachmentReadURL(c.Context(), &att)
 	return c.JSON(fiber.Map{
 		"message": "ok",
 		"item": fiber.Map{
@@ -401,7 +401,7 @@ func redirectAttachmentToRemote(c *fiber.Ctx, att *model.AttachmentModel) bool {
 	if att == nil {
 		return false
 	}
-	target := service.AttachmentPublicURL(att)
+	target := service.AttachmentReadURL(c.Context(), att)
 	if target == "" {
 		return false
 	}

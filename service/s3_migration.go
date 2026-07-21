@@ -22,8 +22,9 @@ import (
 type S3MigrationKind string
 
 const (
-	S3MigrationKindImages S3MigrationKind = "images"
-	S3MigrationKindAudio  S3MigrationKind = "audio"
+	S3MigrationKindImages  S3MigrationKind = "images"
+	S3MigrationKindAudio   S3MigrationKind = "audio"
+	S3MigrationKindTheater S3MigrationKind = "theater"
 )
 
 var (
@@ -61,6 +62,7 @@ func GetS3MigrationPreview(kind S3MigrationKind) (*S3MigrationStats, error) {
 	switch kind {
 	case S3MigrationKindImages:
 		if err := db.Model(&model.AttachmentModel{}).
+			Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id")).
 			Where("storage_type = ? OR storage_type = ?", "local", "").
 			Where("filename NOT LIKE ?", "%.gif").
 			Where("filename LIKE ? OR filename LIKE ? OR filename LIKE ? OR filename LIKE ?",
@@ -119,7 +121,8 @@ func ExecuteS3Migration(kind S3MigrationKind, batchSize int, dryRun bool, delete
 
 func executeS3ImageMigration(db *gorm.DB, manager *storage.Manager, batchSize int, dryRun bool, deleteSource bool) (*S3MigrationStats, []S3MigrationItemResult, error) {
 	var attachments []*model.AttachmentModel
-	if err := db.
+	if err := db.Model(&model.AttachmentModel{}).
+		Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id")).
 		Where("storage_type = ? OR storage_type = ?", "local", "").
 		Where("filename NOT LIKE ?", "%.gif").
 		Where("filename LIKE ? OR filename LIKE ? OR filename LIKE ? OR filename LIKE ?",

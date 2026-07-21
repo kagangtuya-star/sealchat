@@ -72,7 +72,9 @@ func GetMigrationPreview() (*MigrationStats, error) {
 
 	// Count total attachments that are images
 	var total int64
-	if err := db.Model(&model.AttachmentModel{}).
+	totalQuery := db.Model(&model.AttachmentModel{}).
+		Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id"))
+	if err := totalQuery.
 		Where("filename LIKE ? OR filename LIKE ? OR filename LIKE ? OR filename LIKE ?",
 			"%.jpg", "%.jpeg", "%.png", "%.webp").
 		Count(&total).Error; err != nil {
@@ -82,7 +84,9 @@ func GetMigrationPreview() (*MigrationStats, error) {
 
 	// Count pending (non-webp, local storage, not GIF)
 	var pending int64
-	if err := db.Model(&model.AttachmentModel{}).
+	pendingQuery := db.Model(&model.AttachmentModel{}).
+		Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id"))
+	if err := pendingQuery.
 		Where("storage_type = ? OR storage_type = ?", "local", "").
 		Where("filename NOT LIKE ?", "%.webp").
 		Where("filename NOT LIKE ?", "%.gif").
@@ -113,7 +117,9 @@ func MigrateImages(batchSize int, dryRun bool) (*MigrationStats, []MigrationItem
 
 	// Find pending images
 	var attachments []*model.AttachmentModel
-	if err := db.
+	query := db.Model(&model.AttachmentModel{}).
+		Where("id NOT IN (?)", theaterAttachmentScope(db).Select("id"))
+	if err := query.
 		Where("storage_type = ? OR storage_type = ?", "local", "").
 		Where("filename NOT LIKE ?", "%.webp").
 		Where("filename NOT LIKE ?", "%.gif").
