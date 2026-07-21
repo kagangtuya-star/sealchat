@@ -52,6 +52,7 @@ const chatHidden = ref(false)
 const mobileTab = ref<'stage' | 'chat'>('stage')
 const isNarrow = computed(() => width.value < 840)
 const chatVisible = computed(() => isNarrow.value ? mobileTab.value === 'chat' : !chatHidden.value)
+const theaterDividerWidth = 7
 const chatBridgeOnline = ref(false)
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
@@ -92,24 +93,20 @@ const iframeSrc = computed(() => {
   return url.toString()
 })
 
-const ratioLimits = () => {
-  const total = layoutRef.value?.getBoundingClientRect().width || width.value || 1200
-  if (total < 840) return { min: 0.4, max: 0.85 }
-  return {
-    min: Math.max(480 / total, 1 - 480 / total),
-    max: Math.min(0.85, 1 - 360 / total),
-  }
-}
+const normalizeRatio = (value: number) => Math.min(1, Math.max(0, value))
 
-const clampRatio = (value: number) => {
-  const limits = ratioLimits()
-  return Math.min(limits.max, Math.max(limits.min, value))
+const splitPaneWidth = (ratio: number) => {
+  const normalized = normalizeRatio(ratio)
+  return `calc(${normalized * 100}% - ${normalized * theaterDividerWidth}px)`
 }
 
 const updateRatio = (clientX: number) => {
   const rect = layoutRef.value?.getBoundingClientRect()
   if (!rect?.width) return
-  splitRatio.value = clampRatio((clientX - rect.left) / rect.width)
+  const availableWidth = Math.max(0, rect.width - theaterDividerWidth)
+  if (!availableWidth) return
+  const stageWidth = Math.min(availableWidth, Math.max(0, clientX - rect.left))
+  splitRatio.value = stageWidth / availableWidth
 }
 
 const handleDividerDown = (event: PointerEvent) => {
@@ -130,7 +127,7 @@ const stopDivider = (event: PointerEvent) => {
 }
 
 const resetLayout = () => {
-  splitRatio.value = clampRatio(0.7)
+  splitRatio.value = 0.7
   chatHidden.value = false
   mobileTab.value = 'stage'
 }
@@ -180,7 +177,7 @@ const publishTheaterPointerTrace = (trace: StagePointerTraceInput) => {
   })
 }
 
-watch(width, () => { splitRatio.value = clampRatio(splitRatio.value) })
+watch(width, () => { splitRatio.value = normalizeRatio(splitRatio.value) })
 
 const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
   revision: 0,
@@ -388,7 +385,7 @@ function handleDice3DMessage(event: MessageEvent) {
         v-show="!isNarrow || mobileTab === 'stage'"
         class="theater-host-stage"
         :class="{ 'is-sync-pending': !theaterSyncReady }"
-        :style="!isNarrow && !chatHidden ? { width: `${splitRatio * 100}%` } : undefined"
+        :style="!isNarrow && !chatHidden ? { width: splitPaneWidth(splitRatio) } : undefined"
       >
         <StageApp
           ref="stageAppRef"
@@ -433,7 +430,7 @@ function handleDice3DMessage(event: MessageEvent) {
       <section
         v-show="!chatHidden && (!isNarrow || mobileTab === 'chat')"
         class="theater-host-chat"
-        :style="!isNarrow ? { width: `${(1 - splitRatio) * 100}%` } : undefined"
+        :style="!isNarrow ? { width: splitPaneWidth(1 - splitRatio) } : undefined"
       >
         <n-button
           v-if="isNarrow"
