@@ -585,6 +585,19 @@ const drawingDashOptions = [
 const draggedLayerId = ref<string | null>(null)
 type LayerDropPlacement = 'before' | 'inside' | 'after'
 const layerDropTarget = ref<{ id: string | null, placement: LayerDropPlacement } | null>(null)
+const layerListRef = ref<HTMLDivElement | null>(null)
+let layerDragSession: {
+  objectId: string
+  pointerId: number
+  clientX: number
+  clientY: number
+  ghost: HTMLElement
+} | null = null
+let layerDragFrame: number | null = null
+let layerExpandTimer: number | null = null
+let layerExpandTargetId: string | null = null
+let layerHierarchyMovePending = false
+let layerHierarchyUpdatedObjectIds = new Set<string>()
 const workspaceRef = ref<HTMLDivElement | null>(null)
 const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
@@ -3486,22 +3499,10 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   }
 }
 
-const syncObjects = () => {
-  if (!objectRoot) return
-  const objects = Object.fromEntries(Object.entries(props.store.activeObjects.value)
-    .filter(([, object]) => !isTheaterEffectObject(object)))
-  for (const [objectId, node] of objectNodes) {
-    if (objects[objectId]) continue
-    imageLoadVersions.delete(objectId)
-    releaseObjectMedia(node)
-    node.destroy()
-    objectNodes.delete(objectId)
-  }
-  for (const object of Object.values(objects)) {
-    const node = objectNodes.get(object.id) || createObjectNode(object)
-    updateObjectNode(node, object)
-  }
-  syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+const canvasStageObjects = () => Object.fromEntries(Object.entries(props.store.activeObjects.value)
+  .filter(([, object]) => !isTheaterEffectObject(object)))
+
+const syncGroupControls = (objects: Record<string, StageObject>) => {
   const selectedId = props.store.state.selectedObjectId
   const groupControls: Array<{
     object: StageObject
@@ -3550,6 +3551,38 @@ const syncObjects = () => {
       opacity: 0.65,
     })
   }
+}
+
+const syncLayerHierarchy = () => {
+  if (!objectRoot) return
+  const objects = canvasStageObjects()
+  layerHierarchyUpdatedObjectIds.forEach((objectId) => {
+    const object = objects[objectId]
+    const node = objectNodes.get(objectId)
+    if (object && node) updateObjectNode(node, object)
+  })
+  syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+  syncGroupControls(objects)
+  worldLayer?.batchDraw()
+  nextTick(updateTransformer)
+}
+
+const syncObjects = () => {
+  if (!objectRoot) return
+  const objects = canvasStageObjects()
+  for (const [objectId, node] of objectNodes) {
+    if (objects[objectId]) continue
+    imageLoadVersions.delete(objectId)
+    releaseObjectMedia(node)
+    node.destroy()
+    objectNodes.delete(objectId)
+  }
+  for (const object of Object.values(objects)) {
+    const node = objectNodes.get(object.id) || createObjectNode(object)
+    updateObjectNode(node, object)
+  }
+  syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+  syncGroupControls(objects)
   worldLayer?.batchDraw()
   primeSceneMorphTargets()
   nextTick(updateTransformer)
@@ -3979,66 +4012,223 @@ const reparentObjectPreservingTransform = (objectId: string, parentId: string | 
   return changed
 }
 
-const startLayerDrag = (event: DragEvent, objectId: string) => {
-  if (!canEditAllObjects.value) return
-  draggedLayerId.value = objectId
-  layerDropTarget.value = null
-  event.dataTransfer?.setData('application/x-sealchat-stage-object', objectId)
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-  props.store.beginObjectEdit('调整对象分组')
+const moveLayerObjectPreservingTransform = (
+  objectId: string,
+  parentId: string | null,
+  targetId: string | null = null,
+  placement: 'before' | 'after' = 'after',
+) => {
+  const object = getObject(objectId)
+  const node = objectNodes.get(objectId)
+  const parentNode = parentId ? objectNodes.get(parentId) : objectRoot
+  if (!object || !node || !parentNode || !props.store.canSetParent(objectId, parentId)) return false
+  if (object.parentId !== parentId) {
+    const absolutePosition = node.absolutePosition()
+    const absoluteRotation = node.getAbsoluteRotation()
+    const absoluteScale = node.getAbsoluteScale()
+    node.moveTo(parentNode)
+    const parentScale = parentNode.getAbsoluteScale()
+    node.rotation(absoluteRotation - parentNode.getAbsoluteRotation())
+    node.scale({
+      x: absoluteScale.x / Math.max(0.000001, parentScale.x),
+      y: absoluteScale.y / Math.max(0.000001, parentScale.y),
+    })
+    node.absolutePosition(absolutePosition)
+  }
+  layerHierarchyMovePending = true
+  layerHierarchyUpdatedObjectIds = new Set([...props.store.selection.selectedIds, objectId])
+  const changed = props.store.moveObject(objectId, parentId, {
+    x: Number((node.x() / WORLD_UNIT_PX).toFixed(6)),
+    y: Number((node.y() / WORLD_UNIT_PX).toFixed(6)),
+    rotation: Number(node.rotation().toFixed(6)),
+    scaleX: Number(node.scaleX().toFixed(6)),
+    scaleY: Number(node.scaleY().toFixed(6)),
+  }, targetId, placement)
+  void nextTick(() => {
+    layerHierarchyMovePending = false
+    layerHierarchyUpdatedObjectIds.clear()
+  })
+  if (!changed) {
+    layerHierarchyMovePending = false
+    layerHierarchyUpdatedObjectIds.clear()
+    syncObjects()
+  }
+  return changed
 }
 
-const finishLayerDrag = () => {
-  draggedLayerId.value = null
-  layerDropTarget.value = null
-  props.store.commitObjectEdit()
+const setLayerDropTarget = (target: typeof layerDropTarget.value) => {
+  if (layerDropTarget.value?.id === target?.id && layerDropTarget.value?.placement === target?.placement) return
+  layerDropTarget.value = target
 }
 
-const handleLayerDragOver = (event: DragEvent, targetId: string) => {
-  const target = getObject(targetId)
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const ratio = (event.clientY - rect.top) / Math.max(1, rect.height)
-  const placement: LayerDropPlacement = target?.type === 'group' && ratio >= 0.25 && ratio <= 0.75
-    ? 'inside'
-    : ratio < 0.5 ? 'before' : 'after'
-  layerDropTarget.value = { id: targetId, placement }
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+const clearLayerExpandTimer = () => {
+  if (layerExpandTimer !== null) window.clearTimeout(layerExpandTimer)
+  layerExpandTimer = null
+  layerExpandTargetId = null
 }
 
-const handleLayerDragLeave = (event: DragEvent, targetId: string | null) => {
-  const currentTarget = event.currentTarget as HTMLElement
-  if (event.relatedTarget && currentTarget.contains(event.relatedTarget as Node)) return
-  if (layerDropTarget.value?.id === targetId) layerDropTarget.value = null
+const scheduleLayerGroupExpand = (target: StageObject | undefined, placement: LayerDropPlacement) => {
+  const targetId = placement === 'inside' && target?.type === 'group' && isLayerGroupCollapsed(target) ? target.id : null
+  if (targetId === layerExpandTargetId) return
+  clearLayerExpandTimer()
+  if (!targetId) return
+  layerExpandTargetId = targetId
+  layerExpandTimer = window.setTimeout(() => {
+    temporaryExpandedGroupIds.value = new Set([...temporaryExpandedGroupIds.value, targetId])
+    clearLayerExpandTimer()
+  }, 350)
 }
 
-const handleLayerDrop = (event: DragEvent, targetId: string) => {
-  if (!canEditAllObjects.value) return
-  const objectId = draggedLayerId.value || event.dataTransfer?.getData('application/x-sealchat-stage-object')
-  if (!objectId || objectId === targetId) return
-  const target = getObject(targetId)
-  const placement = layerDropTarget.value?.id === targetId ? layerDropTarget.value.placement : 'after'
-  if (!target) return
-  if (placement === 'inside' && target.type === 'group') {
-    if (!reparentObjectPreservingTransform(objectId, target.id)) {
-      stageMessage.warning('组内不能混合场景固定组件与当前场景组件')
-      return
-    }
-    selectObject(objectId)
+const updateLayerDropTarget = (clientX: number, clientY: number) => {
+  const session = layerDragSession
+  const list = layerListRef.value
+  if (!session || !list) return
+  const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+  if (!element || !list.contains(element)) {
+    setLayerDropTarget(null)
+    scheduleLayerGroupExpand(undefined, 'after')
     return
   }
-  const object = getObject(objectId)
-  if (!object) return
-  if (object.parentId !== target.parentId && !reparentObjectPreservingTransform(objectId, target.parentId)) return
-  props.store.reorderObject(objectId, targetId, placement === 'before' ? 'before' : 'after')
-  selectObject(objectId)
+  const rootDrop = element.closest<HTMLElement>('.theater-layer-root-drop')
+  if (rootDrop) {
+    setLayerDropTarget(props.store.canSetParent(session.objectId, null) ? { id: null, placement: 'inside' } : null)
+    scheduleLayerGroupExpand(undefined, 'after')
+    return
+  }
+  const row = element.closest<HTMLElement>('.theater-layer-row')
+  const targetId = row?.dataset.objectId
+  const target = targetId ? getObject(targetId) : undefined
+  if (!row || !target || target.id === session.objectId) {
+    setLayerDropTarget(null)
+    scheduleLayerGroupExpand(undefined, 'after')
+    return
+  }
+  const rect = row.getBoundingClientRect()
+  const ratio = (clientY - rect.top) / Math.max(1, rect.height)
+  const placement: LayerDropPlacement = target.type === 'group' && ratio >= 0.25 && ratio <= 0.75
+    ? 'inside'
+    : ratio < 0.5 ? 'before' : 'after'
+  const parentId = placement === 'inside' ? target.id : target.parentId
+  const valid = props.store.canSetParent(session.objectId, parentId)
+  setLayerDropTarget(valid ? { id: target.id, placement } : null)
+  scheduleLayerGroupExpand(target, valid ? placement : 'after')
 }
 
-const handleRootLayerDrop = (event: DragEvent) => {
-  if (!canEditAllObjects.value) return
-  const objectId = draggedLayerId.value || event.dataTransfer?.getData('application/x-sealchat-stage-object')
-  if (!objectId) return
-  reparentObjectPreservingTransform(objectId, null)
-  selectObject(objectId)
+const runLayerDragFrame = () => {
+  layerDragFrame = null
+  const session = layerDragSession
+  if (!session) return
+  session.ghost.style.transform = `translate3d(${session.clientX + 12}px, ${session.clientY + 12}px, 0)`
+  updateLayerDropTarget(session.clientX, session.clientY)
+  const list = layerListRef.value
+  if (!list) return
+  const rect = list.getBoundingClientRect()
+  const edge = Math.min(44, rect.height / 4)
+  const topDistance = session.clientY - rect.top
+  const bottomDistance = rect.bottom - session.clientY
+  const speed = topDistance >= 0 && topDistance < edge
+    ? -Math.ceil((edge - topDistance) / 4)
+    : bottomDistance >= 0 && bottomDistance < edge
+      ? Math.ceil((edge - bottomDistance) / 4)
+      : 0
+  if (speed) {
+    list.scrollTop += speed
+    layerDragFrame = window.requestAnimationFrame(runLayerDragFrame)
+  }
+}
+
+const scheduleLayerDragFrame = () => {
+  if (layerDragFrame === null) layerDragFrame = window.requestAnimationFrame(runLayerDragFrame)
+}
+
+const startLayerPointerDrag = (event: PointerEvent, objectId: string) => {
+  if (!canEditAllObjects.value || event.button !== 0 || layerDragSession) return
+  const grip = event.currentTarget as HTMLElement
+  const row = grip.closest<HTMLElement>('.theater-layer-row')
+  if (!row) return
+  event.preventDefault()
+  grip.setPointerCapture(event.pointerId)
+  const rect = row.getBoundingClientRect()
+  const ghost = row.cloneNode(true) as HTMLElement
+  ghost.classList.add('is-drag-preview')
+  ghost.setAttribute('aria-hidden', 'true')
+  ghost.style.width = `${rect.width}px`
+  document.body.appendChild(ghost)
+  layerDragSession = { objectId, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, ghost }
+  draggedLayerId.value = objectId
+  setLayerDropTarget(null)
+  scheduleLayerDragFrame()
+}
+
+const moveLayerPointerDrag = (event: PointerEvent) => {
+  if (!layerDragSession || event.pointerId !== layerDragSession.pointerId) return
+  layerDragSession.clientX = event.clientX
+  layerDragSession.clientY = event.clientY
+  scheduleLayerDragFrame()
+}
+
+const applyLayerDrop = (objectId: string, dropTarget: typeof layerDropTarget.value) => {
+  if (!dropTarget) return
+  const previousPositions = new Map(Array.from(layerListRef.value?.querySelectorAll<HTMLElement>('.theater-layer-row') || [])
+    .map((row) => [row.dataset.objectId || '', row.getBoundingClientRect().top]))
+  const animateRows = () => {
+    void nextTick(() => {
+      layerListRef.value?.querySelectorAll<HTMLElement>('.theater-layer-row').forEach((row) => {
+        const previousTop = previousPositions.get(row.dataset.objectId || '')
+        if (previousTop === undefined) return
+        const delta = previousTop - row.getBoundingClientRect().top
+        if (!delta) return
+        row.style.transition = 'none'
+        row.style.transform = `translateY(${delta}px)`
+        window.requestAnimationFrame(() => {
+          row.style.transition = 'transform 120ms ease-out, color .14s ease, background .14s ease'
+          row.style.transform = ''
+          window.setTimeout(() => { row.style.transition = '' }, 140)
+        })
+      })
+    })
+  }
+  if (dropTarget.id === null) {
+    moveLayerObjectPreservingTransform(objectId, null)
+    animateRows()
+    return
+  }
+  const target = getObject(dropTarget.id)
+  if (!target) return
+  if (dropTarget.placement === 'inside' && target.type === 'group') {
+    const topChild = Object.values(props.store.activeObjects.value)
+      .filter((object) => object.parentId === target.id && object.id !== objectId)
+      .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)[0]
+    if (!moveLayerObjectPreservingTransform(objectId, target.id, topChild?.id || null, 'before')) {
+      stageMessage.warning('组内不能混合场景固定组件与当前场景组件')
+    }
+    animateRows()
+    return
+  }
+  moveLayerObjectPreservingTransform(
+    objectId,
+    target.parentId,
+    target.id,
+    dropTarget.placement === 'before' ? 'before' : 'after',
+  )
+  animateRows()
+}
+
+const finishLayerPointerDrag = (event: PointerEvent, cancelled = false) => {
+  const session = layerDragSession
+  if (!session || event.pointerId !== session.pointerId) return
+  if (!cancelled) updateLayerDropTarget(event.clientX, event.clientY)
+  const dropTarget = layerDropTarget.value
+  layerDragSession = null
+  const grip = event.currentTarget as HTMLElement
+  if (grip.hasPointerCapture(event.pointerId)) grip.releasePointerCapture(event.pointerId)
+  if (layerDragFrame !== null) window.cancelAnimationFrame(layerDragFrame)
+  layerDragFrame = null
+  clearLayerExpandTimer()
+  session.ghost.remove()
+  draggedLayerId.value = null
+  setLayerDropTarget(null)
+  if (!cancelled) applyLayerDrop(session.objectId, dropTarget)
 }
 
 onMounted(() => {
@@ -4139,13 +4329,26 @@ onMounted(() => {
 })
 
 watch(() => props.store.state.activeSceneId, (sceneId) => beginSceneMediaBatch(sceneId), { flush: 'sync' })
-watch(() => props.store.state.liveState, () => {
-  syncField()
-  syncObjects()
+watch(() => props.store.state.liveState.sceneObjects, () => {
+  if (layerHierarchyMovePending) syncLayerHierarchy()
+  else syncObjects()
   effectRuntime.reconcile()
 }, { deep: true })
+watch(() => ({
+  background: props.store.state.liveState.background,
+  foreground: props.store.state.liveState.foreground,
+  surfaceStyles: props.store.state.liveState.surfaceStyles,
+  backgroundColor: props.store.state.liveState.backgroundColor,
+  fieldWidth: props.store.state.liveState.fieldWidth,
+  fieldHeight: props.store.state.liveState.fieldHeight,
+  fieldObjectFit: props.store.state.liveState.fieldObjectFit,
+  displayGrid: props.store.state.liveState.displayGrid,
+  gridSize: props.store.state.liveState.gridSize,
+  alignWithGrid: props.store.state.liveState.alignWithGrid,
+}), syncField, { deep: true })
 watch(() => props.store.state.persistentObjects, () => {
-  syncObjects()
+  if (layerHierarchyMovePending) syncLayerHierarchy()
+  else syncObjects()
   effectRuntime.reconcile()
 }, { deep: true })
 watch(() => props.store.state.camera, applyCamera, { deep: true })
@@ -4188,7 +4391,8 @@ watch(
 )
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
-  syncObjects()
+  if (layerHierarchyMovePending) syncLayerHierarchy()
+  else syncObjects()
   updateTransformer()
 })
 watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, assetPanelOpen], async (open) => {
@@ -4215,6 +4419,10 @@ watch(theaterAudioMasterVolume, (volume) => {
 })
 
 onBeforeUnmount(() => {
+  if (layerDragFrame !== null) window.cancelAnimationFrame(layerDragFrame)
+  clearLayerExpandTimer()
+  layerDragSession?.ghost.remove()
+  layerDragSession = null
   stopPackagePolling()
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
@@ -4842,39 +5050,37 @@ onBeforeUnmount(() => {
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
         </div>
         <div class="theater-panel-heading"><span>层级</span></div>
-        <div class="theater-layer-list">
+        <div ref="layerListRef" class="theater-layer-list">
           <button
             v-if="canEditAllObjects"
             class="theater-layer-root-drop"
             :class="{ 'is-drop-target': layerDropTarget?.id === null }"
-            @dragover.prevent="layerDropTarget = { id: null, placement: 'inside' }"
-            @dragleave="handleLayerDragLeave($event, null)"
-            @drop.prevent="handleRootLayerDrop"
           >
             根层级
           </button>
           <div
             v-for="row in layerRows"
             :key="row.object.id"
+            :data-object-id="row.object.id"
             class="theater-layer-row"
             :class="{
               'is-active': store.selection.selectedIds.includes(row.object.id),
               'is-hidden': !row.object.visible,
               'is-disabled': !canEditObject(row.object),
+              'is-dragging': draggedLayerId === row.object.id,
               'is-drop-before': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'before',
               'is-drop-inside': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'inside',
               'is-drop-after': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'after',
             }"
             :style="{ paddingLeft: `${10 + row.depth * 15}px` }"
-            @dragover.prevent="handleLayerDragOver($event, row.object.id)"
-            @dragleave="handleLayerDragLeave($event, row.object.id)"
-            @drop.prevent="handleLayerDrop($event, row.object.id)"
           >
             <span
               class="theater-layer-row__grip"
-              :draggable="canEditAllObjects"
-              @dragstart.stop="startLayerDrag($event, row.object.id)"
-              @dragend.stop="finishLayerDrag"
+              @pointerdown.stop="startLayerPointerDrag($event, row.object.id)"
+              @pointermove.stop="moveLayerPointerDrag"
+              @pointerup.stop="finishLayerPointerDrag($event)"
+              @pointercancel.stop="finishLayerPointerDrag($event, true)"
+              @lostpointercapture.stop="finishLayerPointerDrag($event, true)"
             >
               <n-icon><GripVertical /></n-icon>
             </span>
@@ -5246,6 +5452,12 @@ onBeforeUnmount(() => {
 }
 .theater-layer-row:hover { background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-layer-row.is-active { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-accent) 18%, transparent); }
+.theater-layer-row.is-dragging { opacity: .36; }
+.theater-layer-row.is-drag-preview {
+  position: fixed; z-index: 10000; top: 0; left: 0; pointer-events: none; opacity: .92;
+  border: 1px solid color-mix(in srgb, var(--theater-accent, #38bdf8) 58%, transparent); border-radius: 5px;
+  background: var(--sc-bg-panel, #26262b); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); will-change: transform;
+}
 .theater-layer-row.is-disabled .theater-layer-row__select { cursor: default; }
 .theater-layer-row.is-hidden .theater-layer-row__preview,
 .theater-layer-row.is-hidden .theater-layer-row__name { opacity: .46; }
@@ -5255,7 +5467,7 @@ onBeforeUnmount(() => {
 }
 .theater-layer-row.is-drop-before::before { top: 0; }
 .theater-layer-row.is-drop-after::after { bottom: 0; }
-.theater-layer-row__grip { width: 16px; height: 100%; flex: 0 0 16px; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; }
+.theater-layer-row__grip { width: 16px; height: 100%; flex: 0 0 16px; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; touch-action: none; user-select: none; }
 .theater-layer-row__grip:active { cursor: grabbing; }
 .theater-layer-row__select {
   min-width: 0; height: 100%; flex: 1; display: flex; align-items: center; gap: 7px; padding: 0; border: 0;

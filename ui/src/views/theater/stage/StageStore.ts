@@ -360,6 +360,13 @@ export interface TheaterStageStore {
     parentId: string | null,
     transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'>,
   ) => boolean
+  moveObject: (
+    objectId: string,
+    parentId: string | null,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'>,
+    targetId?: string | null,
+    placement?: 'before' | 'after',
+  ) => boolean
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean, loopCount?: number) => boolean
@@ -420,6 +427,16 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     persistentObjects: clone(state.persistentObjects),
   })
 
+  const snapshotObjectSubset = (objectIds: Iterable<string>): StageObjectCollectionsSnapshot => {
+    const sceneObjects: Record<string, StageObject> = {}
+    const persistentObjects: Record<string, StageObject> = {}
+    for (const id of objectIds) {
+      if (state.liveState.sceneObjects[id]) sceneObjects[id] = clone(state.liveState.sceneObjects[id])
+      if (state.persistentObjects[id]) persistentObjects[id] = clone(state.persistentObjects[id])
+    }
+    return { sceneId: state.activeSceneId, sceneObjects, persistentObjects }
+  }
+
   const snapshotSelection = (): StageSelectionSnapshot => ({
     selectedIds: [...selection.selectedIds],
     primaryId: state.selectedObjectId,
@@ -443,6 +460,25 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       current.before,
       snapshotObjectCollections(),
       current.selectionBefore,
+      snapshotSelection(),
+    )
+    if (!entry) return
+    history.push(entry)
+    if (history.length > 100) history.shift()
+    editingState.historyDepth = history.length
+  }
+
+  const commitObjectSubsetEdit = (
+    label: string,
+    before: StageObjectCollectionsSnapshot,
+    selectionBefore: StageSelectionSnapshot,
+    objectIds: Iterable<string>,
+  ) => {
+    const entry = createObjectHistoryEntry(
+      label,
+      before,
+      snapshotObjectSubset(objectIds),
+      selectionBefore,
       snapshotSelection(),
     )
     if (!entry) return
@@ -693,11 +729,20 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const collectDescendants = (objectId: string): string[] => {
     const result: string[] = []
+    const visited = new Set<string>([objectId])
+    const childrenByParent = new Map<string, string[]>()
+    Object.values(activeObjects.value).forEach((object) => {
+      if (!object.parentId) return
+      const children = childrenByParent.get(object.parentId) || []
+      children.push(object.id)
+      childrenByParent.set(object.parentId, children)
+    })
     const visit = (id: string) => {
-      Object.values(activeObjects.value).forEach((object) => {
-        if (object.parentId !== id) return
-        result.push(object.id)
-        visit(object.id)
+      childrenByParent.get(id)?.forEach((childId) => {
+        if (visited.has(childId)) return
+        visited.add(childId)
+        result.push(childId)
+        visit(childId)
       })
     }
     visit(objectId)
@@ -729,17 +774,44 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   }
 
   const reconcileGroupScopes = () => {
-    const groups = Object.values(activeObjects.value).filter((object) => object.type === 'group')
+    const objects = Object.values(activeObjects.value)
+    const groups = objects.filter((object) => object.type === 'group')
     const roots = [...new Set(groups.map((group) => rootGroupId(group.id)))]
+    const childrenByParent = new Map<string, StageObject[]>()
+    objects.forEach((object) => {
+      if (!object.parentId) return
+      const children = childrenByParent.get(object.parentId) || []
+      children.push(object)
+      childrenByParent.set(object.parentId, children)
+    })
     roots.forEach((rootId) => {
-      const componentScope = componentScopeInSubtree(rootId)
+      const subtree: StageObject[] = []
+      const visited = new Set<string>()
+      const visit = (id: string) => {
+        if (visited.has(id)) return
+        visited.add(id)
+        const object = getObject(id)
+        if (!object) return
+        subtree.push(object)
+        childrenByParent.get(id)?.forEach((child) => visit(child.id))
+      }
+      visit(rootId)
+      let componentScope: HierarchyComponentScope = null
+      for (const object of subtree) {
+        if (object.type === 'group') continue
+        const next: StageObjectScope = isSceneFixedObject(object.id) ? 'scene-fixed' : 'scene'
+        if (componentScope && componentScope !== next) {
+          componentScope = 'mixed'
+          break
+        }
+        componentScope = next
+      }
       if (componentScope === 'mixed') return
       const target = objectCollectionForScope(componentScope === 'scene-fixed' ? 'scene-fixed' : 'scene')
-      const groupIds = [rootId, ...collectDescendants(rootId)]
-        .filter((id) => getObject(id)?.type === 'group')
-      groupIds.forEach((id) => {
-        const group = getObject(id)
-        if (!group || target[id]) return
+      subtree.forEach((group) => {
+        if (group.type !== 'group') return
+        const id = group.id
+        if (target[id]) return
         delete state.liveState.sceneObjects[id]
         delete state.persistentObjects[id]
         target[id] = group
@@ -891,6 +963,74 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     reconcileGroupScopes()
     return true
   })
+
+  const moveObject = (
+    objectId: string,
+    parentId: string | null,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'>,
+    targetId: string | null = null,
+    placement: 'before' | 'after' = 'after',
+  ) => {
+    const object = getObject(objectId)
+    const target = targetId ? getObject(targetId) : null
+    if (!object || !canSetParent(objectId, parentId)) return false
+    if (targetId && (!target || target.id === objectId || target.parentId !== parentId)) return false
+
+    let siblings: StageObject[] = []
+    let insertIndex = -1
+    let rank = 0
+    let normalizeRanks = false
+    if (target) {
+      siblings = Object.values(activeObjects.value)
+        .filter((item) => item.parentId === parentId && item.id !== objectId)
+        .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)
+      const targetIndex = siblings.findIndex((item) => item.id === target.id)
+      insertIndex = targetIndex + (placement === 'after' ? 1 : 0)
+      const above = siblings[insertIndex - 1]
+      const below = siblings[insertIndex]
+      rank = above && below
+        ? (above.transform.z + below.transform.z) / 2
+        : above ? above.transform.z - 1 : below ? below.transform.z + 1 : 1
+      normalizeRanks = !Number.isFinite(rank)
+        || Boolean(above && below && (rank === above.transform.z || rank === below.transform.z))
+    }
+
+    const affectedIds = new Set<string>([objectId])
+    Object.values(activeObjects.value).forEach((item) => {
+      if (item.type === 'group') affectedIds.add(item.id)
+    })
+    if (normalizeRanks) siblings.forEach((item) => affectedIds.add(item.id))
+    const before = snapshotObjectSubset(affectedIds)
+    const selectionBefore = snapshotSelection()
+
+    object.parentId = parentId
+    Object.assign(object.transform, {
+      x: transform.x,
+      y: transform.y,
+      rotation: transform.rotation,
+      scaleX: Math.min(100, Math.max(0.01, transform.scaleX)),
+      scaleY: Math.min(100, Math.max(0.01, transform.scaleY)),
+    })
+
+    if (target) {
+      if (normalizeRanks) {
+        siblings.splice(insertIndex, 0, object)
+        siblings.forEach((item, index) => {
+          const normalizedRank = siblings.length - index
+          item.transform.z = normalizedRank
+          item.transform.order = normalizedRank
+        })
+      } else {
+        object.transform.z = rank
+        object.transform.order = rank
+      }
+    }
+
+    reconcileGroupScopes()
+    setSelectedObjectIds([objectId], objectId)
+    commitObjectSubsetEdit('调整对象层级', before, selectionBefore, affectedIds)
+    return true
+  }
 
   const moveOrder = (objectId: string, direction: -1 | 1) => runObjectEdit('调整对象顺序', () => {
     const object = getObject(objectId)
@@ -1059,7 +1199,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setSelectedObjectIds(value.selectedObjectId ? [value.selectedObjectId] : [], value.selectedObjectId)
   }
 
-  watch(() => state.liveState, saveLiveState, { deep: true, flush: 'sync' })
+  watch(() => state.liveState, saveLiveState, { deep: true })
   watch(activeObjects, () => {
     const valid = selection.selectedIds.filter((id) => Boolean(activeObjects.value[id]))
     if (valid.length !== selection.selectedIds.length) setSelectedObjectIds(valid)
@@ -1102,6 +1242,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     canSetParent,
     setParent,
     reparentObject,
+    moveObject,
     moveOrder,
     reorderObject,
     setSceneImage,

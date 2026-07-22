@@ -12,19 +12,25 @@ export const buildStageLayerRows = (
 ): StageLayerRow[] => {
   const rows: StageLayerRow[] = []
   const visited = new Set<string>()
+  const childrenByParent = new Map<string | null, StageObject[]>()
+  objects.forEach((object) => {
+    const children = childrenByParent.get(object.parentId) || []
+    children.push(object)
+    childrenByParent.set(object.parentId, children)
+  })
+  childrenByParent.forEach((children) => {
+    children.sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)
+  })
   const append = (parentId: string | null, depth: number) => {
-    objects
-      .filter((object) => object.parentId === parentId)
-      .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)
-      .forEach((object) => {
-        if (visited.has(object.id)) return
-        visited.add(object.id)
-        rows.push({ object, depth })
-        const collapsed = object.type === 'group'
-          && persistedCollapsedIds.has(object.id)
-          && !temporaryExpandedIds.has(object.id)
-        if (!collapsed) append(object.id, depth + 1)
-      })
+    childrenByParent.get(parentId)?.forEach((object) => {
+      if (visited.has(object.id)) return
+      visited.add(object.id)
+      rows.push({ object, depth })
+      const collapsed = object.type === 'group'
+        && persistedCollapsedIds.has(object.id)
+        && !temporaryExpandedIds.has(object.id)
+      if (!collapsed) append(object.id, depth + 1)
+    })
   }
   append(null, 0)
   return rows

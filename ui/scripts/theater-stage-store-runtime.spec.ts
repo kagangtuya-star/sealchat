@@ -88,4 +88,29 @@ assert.equal(store.isSceneFixedObject(fixedMemberB.id), true)
 assert.equal(store.setParent(sceneMember.id, adaptiveGroup.id), true)
 assert.equal(store.isSceneFixedObject(adaptiveGroup.id), false)
 
+store.clearSelection()
+const moveTargetGroup = store.addObject('group')
+const moveTargetChild = store.addObject('image')
+assert.equal(store.setParent(moveTargetChild.id, moveTargetGroup.id), true)
+store.clearSelection()
+const movedObject = store.addObject('image')
+const movedObjectOriginal = structuredClone(movedObject.transform)
+const moveTargetChildOriginal = structuredClone(moveTargetChild.transform)
+assert.equal(store.moveObject(movedObject.id, moveTargetGroup.id, {
+  x: 12,
+  y: 18,
+  rotation: 7,
+  scaleX: 1.2,
+  scaleY: 0.8,
+}, moveTargetChild.id, 'before'), true)
+assert.equal(store.activeObjects.value[movedObject.id].parentId, moveTargetGroup.id)
+assert.equal(store.activeObjects.value[movedObject.id].transform.x, 12)
+assert.ok(store.activeObjects.value[movedObject.id].transform.z > store.activeObjects.value[moveTargetChild.id].transform.z)
+assert.deepEqual(store.activeObjects.value[moveTargetChild.id].transform, moveTargetChildOriginal)
+assert.deepEqual(store.selection.selectedIds, [movedObject.id])
+assert.equal(store.undo(), true)
+assert.equal(store.activeObjects.value[movedObject.id].parentId, null)
+assert.deepEqual(store.activeObjects.value[movedObject.id].transform, movedObjectOriginal)
+assert.deepEqual(store.selection.selectedIds, [movedObject.id])
+
 console.log('theater stage store runtime tests passed')

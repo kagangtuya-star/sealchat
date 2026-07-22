@@ -7,12 +7,20 @@ export const syncStageObjectHierarchy = (
   objectNodes: Map<string, Konva.Group>,
   objectRoot: Konva.Group,
 ) => {
+  const childrenByParent = new Map<string | null, StageObject[]>()
+  Object.values(objects).forEach((object) => {
+    const parentId = object.parentId && objects[object.parentId] ? object.parentId : null
+    const children = childrenByParent.get(parentId) || []
+    children.push(object)
+    childrenByParent.set(parentId, children)
+  })
+  childrenByParent.forEach((children) => {
+    children.sort((left, right) => left.transform.z - right.transform.z || left.transform.order - right.transform.order)
+  })
   const attachChildren = (parentId: string | null) => {
     const parent = parentId ? objectNodes.get(parentId) : objectRoot
     if (!parent) return
-    const children = Object.values(objects)
-      .filter((object) => (object.parentId && objects[object.parentId] ? object.parentId : null) === parentId)
-      .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order)
+    const children = childrenByParent.get(parentId) || []
     const contentCount = parentId
       ? Array.from(parent.getChildren()).filter((child) => !(child as Konva.Node).getAttr('stageObjectId')).length
       : 0
