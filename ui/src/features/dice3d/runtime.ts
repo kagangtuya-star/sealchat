@@ -1,5 +1,6 @@
 import type { DiceVisualPayload } from '@/types'
 import { useDisplayStore } from '@/stores/display'
+import { diceAudio } from './diceAudio'
 
 type Listener = (payload: DiceVisualPayload) => void
 type ActivationListener = () => void
@@ -49,6 +50,8 @@ export const dice3dRuntime = {
     seenRollIds.set(payload.rollId, Date.now())
 		loadRequested = true
     pruneSeen()
+		// 各端收到广播后立即预加载音效，播放发生在动画开始时
+		diceAudio.prefetch(payload.audio)
 		if (listeners.size === 0) pendingPayloads.push(payload)
 		activationListeners.forEach(listener => listener())
 		listeners.forEach(listener => listener(payload))

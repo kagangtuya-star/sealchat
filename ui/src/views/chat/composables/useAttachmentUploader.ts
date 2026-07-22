@@ -56,12 +56,17 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
 
   let resp;
   try {
-    resp = await api.post('/api/v1/attachment-upload', formData, { headers });
+    // 相对路径，避免 baseURL 含子路径时绝对路径丢前缀
+    resp = await api.post('api/v1/attachment-upload', formData, { headers });
   } catch (error: any) {
-    // Extract backend error message from response
-    const backendMessage = error?.response?.data?.message;
+    const data = error?.response?.data;
+    const backendMessage = data?.message || data?.error;
     if (backendMessage) {
       throw new Error(backendMessage);
+    }
+    const status = error?.response?.status;
+    if (status === 404) {
+      throw new Error('上传接口不可用或频道无效，请刷新后重试');
     }
     throw new Error('上传失败，请稍后重试');
   }
@@ -94,7 +99,7 @@ export const uploadImageAttachment = async (file: File, options?: UploadImageOpt
   }
 
   if (options?.confirm) {
-    await api.post('/api/v1/attachment-confirm', {
+    await api.post('api/v1/attachment-confirm', {
       ids: [rawId],
       isTemp: false,
       rootId: options.rootId || '',

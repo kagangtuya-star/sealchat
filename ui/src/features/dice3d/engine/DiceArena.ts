@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 
 import type { Dice3DSkin, DiceVisualPayload } from '@/types'
+import { diceAudio } from '../diceAudio'
 import {
 	createDiceAtlasTexture,
 	DICE_GEOMETRY_RESOURCES,
@@ -604,32 +605,8 @@ export class DiceArena {
 	}
 
 	private playThrowSound(payload: DiceVisualPayload) {
-		if (!payload.audio?.enabled || payload.audio.volume <= 0) return
-		const volume = Math.max(0, Math.min(1, payload.audio.volume))
-		if (payload.audio.soundAssetId) {
-			const audio = new Audio(resolveDiceAssetURL(payload.audio.soundAssetId))
-			audio.volume = volume
-			void audio.play().catch(() => undefined)
-			return
-		}
-		try {
-			const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-			if (!AudioContextClass) return
-			const context = new AudioContextClass()
-			const oscillator = context.createOscillator()
-			const gain = context.createGain()
-			oscillator.type = 'triangle'
-			oscillator.frequency.setValueAtTime(150, context.currentTime)
-			oscillator.frequency.exponentialRampToValueAtTime(55, context.currentTime + 0.11)
-			gain.gain.setValueAtTime(volume * 0.12, context.currentTime)
-			gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12)
-			oscillator.connect(gain).connect(context.destination)
-			oscillator.start()
-			oscillator.stop(context.currentTime + 0.12)
-			oscillator.addEventListener('ended', () => void context.close(), { once: true })
-		} catch {
-			// 浏览器禁止自动音频时静默降级，不影响骰点消息。
-		}
+		// 无自定义音效时不播放。自动播放被拦时会排队到用户下次点击页面再播。
+		void diceAudio.play(payload.audio, { queueIfBlocked: true })
 	}
 
 		private buildFaceCanonicalQuaternion(type: DiceGeometryResource['registryType'], value: number) {

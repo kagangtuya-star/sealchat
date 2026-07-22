@@ -7,6 +7,7 @@ import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { loadDice3DSettings, saveDice3DProfile, saveDice3DWorldSettings } from '../api'
+import { diceAudio } from '../diceAudio'
 import { downloadDiceSkinTemplate, importDiceSkinPackage } from '../diceSkinTransfer'
 import { dice3dRuntime } from '../runtime'
 import DiceSurfaceSelector from './DiceSurfaceSelector.vue'
@@ -96,7 +97,7 @@ const handleSkinPackage = async (event: Event) => {
 	try {
 		const result = await importDiceSkinPackage(file, async assetFile => {
 			const uploaded = await uploadImageAttachment(assetFile, {
-				channelId: 'dice3d-skin', rootId: props.worldId, rootIdType: 'dice3d_skin', confirm: true, skipCompression: true,
+				rootId: props.worldId, rootIdType: 'dice3d_skin', confirm: true, skipCompression: true,
 			})
 			return uploaded.attachmentId
 		})
@@ -148,6 +149,49 @@ const setPersonalAudioOverride = (enabled: boolean) => {
 	profile.value.audio = enabled
 		? cloneSettingsValue(config.value?.audio || { enabled: true, volume: 0.65 })
 		: undefined
+}
+
+const activeAudioConfig = computed(() => {
+	if (tab.value === 'personal' && profile.value?.audio) return profile.value.audio
+	return config.value?.audio || null
+})
+const personalAudioStatus = computed(() => diceAudio.inspect(profile.value?.audio))
+const worldAudioStatus = computed(() => diceAudio.inspect(config.value?.audio))
+
+const previewAudio = async () => {
+	const audio = activeAudioConfig.value
+	if (!audio) {
+		message.warning('当前没有可试听的音效配置')
+		return
+	}
+	await diceAudio.unlock()
+	const result = await diceAudio.play(audio, { queueIfBlocked: false })
+	if (result.ok) message.success('试听播放中')
+	else message.warning(result.message)
+}
+
+/**
+ * 试听「世界默认」掷骰音：世界已上传文件则播该文件；
+ * 否则播本机探测音（仅验证能否出声，不写入配置、不参与投掷）。
+ */
+const previewDefaultAudio = async () => {
+	const worldAudio = config.value?.audio
+	const worldAsset = (worldAudio?.soundAssetId || '').trim()
+	if (worldAsset) {
+		await diceAudio.unlock()
+		const result = await diceAudio.play({
+			enabled: true,
+			volume: worldAudio?.volume ?? 0.65,
+			soundAssetId: worldAsset,
+		}, { queueIfBlocked: false })
+		if (result.ok) message.success('已播放世界掷骰音效')
+		else message.warning(result.message)
+		return
+	}
+	const volume = worldAudio?.volume ?? 0.65
+	const result = await diceAudio.playDefaultProbe(volume)
+	if (result.ok) message.success('世界尚未上传音效，已播放探测音（投掷仍需上传自定义文件）')
+	else message.warning(result.message)
 }
 
 const testBotRule = (rule: Dice3DBotRule) => {
@@ -288,12 +332,52 @@ const save = async () => {
 			  </n-grid>
 				  <n-form-item label="单独上传骰面图集"><DiceTextureGrid v-model="profile.skin" :world-id="worldId" /></n-form-item>
 			  <n-form-item label="覆盖世界投掷音效">
-				<n-switch :value="Boolean(profile.audio)" @update:value="setPersonalAudioOverride" />
+				<div class="dice-audio-field">
+				  <n-switch :value="Boolean(profile.audio)" @update:value="setPersonalAudioOverride" />
+				  <span class="dice-audio-field__hint">{{ profile.audio ? '使用下方个人音效配置' : '关闭：使用世界默认音效配置' }}</span>
+				</div>
 			  </n-form-item>
 			  <template v-if="profile.audio">
-				<n-form-item label="个人投掷音效"><n-switch v-model:value="profile.audio.enabled" /></n-form-item>
-				<n-form-item label="个人音量"><n-slider v-model:value="profile.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
-					<n-form-item label="个人投掷音效文件"><DiceAttachmentPicker v-model="profile.audio.soundAssetId" :world-id="worldId" accept="audio/*" /></n-form-item>
+				<n-form-item label="个人投掷音效">
+				  <div class="dice-audio-field">
+					<n-switch v-model:value="profile.audio.enabled" />
+					<span class="dice-audio-field__hint">{{ profile.audio.enabled ? '已开启；需上传自定义文件才会发声' : '已关闭，投掷时不播放音效' }}</span>
+				  </div>
+				</n-form-item>
+				<n-form-item label="个人音量">
+				  <n-slider
+					v-model:value="profile.audio.volume"
+					:min="0"
+					:max="1"
+					:step="0.05"
+					:disabled="!profile.audio.enabled"
+				  />
+				  <p v-if="!profile.audio.enabled" class="dice-audio-field__hint">已禁用：请先开启个人投掷音效</p>
+				</n-form-item>
+				<n-form-item label="个人投掷音效文件">
+				  <DiceAttachmentPicker
+					v-model="profile.audio.soundAssetId"
+					:world-id="worldId"
+					accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/aac,audio/flac,.mp3,.ogg,.wav,.webm,.aac,.flac,.m4a"
+					:disabled="!profile.audio.enabled"
+					disabled-reason="已禁用：请先开启个人投掷音效"
+				  />
+				</n-form-item>
+				<n-alert :type="personalAudioStatus.ok ? 'success' : 'warning'" :show-icon="false" class="dice-audio-status">
+				  {{ personalAudioStatus.message }}
+				</n-alert>
+				<div class="dice-audio-preview">
+				  <n-button secondary size="small" @click="previewDefaultAudio">试听默认音效</n-button>
+				  <n-button secondary size="small" @click="previewAudio">试听当前音效</n-button>
+				</div>
+			  </template>
+			  <template v-else>
+				<n-alert type="info" :show-icon="false" class="dice-audio-status">
+				  当前使用世界默认音效。世界未上传自定义文件时，投掷不会播放声音。
+				</n-alert>
+				<div class="dice-audio-preview">
+				  <n-button secondary size="small" @click="previewDefaultAudio">试听默认音效</n-button>
+				</div>
 			  </template>
               <n-form-item label="屏幕角骰子堆"><n-switch v-model:value="profile.dockEnabled" /></n-form-item>
               <n-form-item label="默认位置">
@@ -356,9 +440,38 @@ const save = async () => {
                 <n-form-item-gi label="最大同时骰子"><n-input-number v-model:value="config.motion.maxDice" :min="1" :max="100" /></n-form-item-gi>
               </n-grid>
               <n-form-item label="允许结算后物理交互"><n-switch v-model:value="config.motion.interactive" /></n-form-item>
-			  <n-form-item label="投掷音效"><n-switch v-model:value="config.audio.enabled" /></n-form-item>
-			  <n-form-item label="音量"><n-slider v-model:value="config.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
-				  <n-form-item label="自定义投掷音效文件"><DiceAttachmentPicker v-model="config.audio.soundAssetId" :world-id="worldId" accept="audio/*" /></n-form-item>
+			  <n-form-item label="投掷音效">
+				<div class="dice-audio-field">
+				  <n-switch v-model:value="config.audio.enabled" />
+				  <span class="dice-audio-field__hint">{{ config.audio.enabled ? '已开启；需上传自定义文件才会发声' : '已关闭，投掷时不播放音效' }}</span>
+				</div>
+			  </n-form-item>
+			  <n-form-item label="音量">
+				<n-slider
+				  v-model:value="config.audio.volume"
+				  :min="0"
+				  :max="1"
+				  :step="0.05"
+				  :disabled="!config.audio.enabled"
+				/>
+				<p v-if="!config.audio.enabled" class="dice-audio-field__hint">已禁用：请先开启投掷音效</p>
+			  </n-form-item>
+			  <n-form-item label="自定义投掷音效文件">
+				<DiceAttachmentPicker
+				  v-model="config.audio.soundAssetId"
+				  :world-id="worldId"
+				  accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/aac,audio/flac,.mp3,.ogg,.wav,.webm,.aac,.flac,.m4a"
+				  :disabled="!config.audio.enabled"
+				  disabled-reason="已禁用：请先开启投掷音效"
+				/>
+			  </n-form-item>
+			  <n-alert :type="worldAudioStatus.ok ? 'success' : 'warning'" :show-icon="false" class="dice-audio-status">
+				{{ worldAudioStatus.message }}
+			  </n-alert>
+			  <div class="dice-audio-preview">
+				<n-button secondary size="small" @click="previewDefaultAudio">试听默认音效</n-button>
+				<n-button secondary size="small" @click="previewAudio">试听当前音效</n-button>
+			  </div>
 			  <n-divider>BOT 骰点匹配</n-divider>
 			  <n-form-item label="规则测试文本"><n-input v-model:value="ruleTestText" /></n-form-item>
 			  <n-card v-for="(rule, index) in config.botRules" :key="rule.id" size="small" :title="rule.name || `规则 ${index + 1}`" style="margin-bottom: 12px">
@@ -395,6 +508,10 @@ const save = async () => {
 .dice-preview-actions { margin-top: 8px; }
 .dice-local-enable { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; width: 100%; }
 .dice-local-enable__hint { color: var(--sc-text-secondary, #71717a); font-size: 12px; line-height: 1.4; }
+.dice-audio-field { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; width: 100%; }
+.dice-audio-field__hint { margin: 4px 0 0; color: var(--sc-text-secondary, #71717a); font-size: 12px; line-height: 1.4; }
+.dice-audio-status { margin: 0 0 8px; }
+.dice-audio-preview { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .dice-style-toolbar { width: 100%; display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; }
 .dice-surface-panel { margin-bottom: 14px; padding: 12px; border: 1px solid var(--sc-border-muted, rgba(148,163,184,.22)); border-radius: 11px; background: color-mix(in srgb, var(--sc-bg-surface, #18181b) 96%, transparent); }
 @media (max-width: 560px) { .dice-style-toolbar { grid-template-columns: 1fr 1fr; }.dice-style-toolbar :deep(.n-select) { grid-column: 1 / -1; } }

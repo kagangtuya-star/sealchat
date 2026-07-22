@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
+import { useMessage } from 'naive-ui'
 
 import type { Dice3DBotRule, Dice3DWorldConfig } from '@/types'
+import { diceAudio } from '../diceAudio'
 import DiceAttachmentPicker from './DiceAttachmentPicker.vue'
 import DiceSurfaceSelector from './DiceSurfaceSelector.vue'
 import DiceTextureGrid from './DiceTextureGrid.vue'
@@ -9,6 +11,8 @@ import DiceTextureGrid from './DiceTextureGrid.vue'
 const DiceSkinPreview = defineAsyncComponent(() => import('./DiceSkinPreview.vue'))
 
 const props = defineProps<{ config: Dice3DWorldConfig; label: string }>()
+const message = useMessage()
+const audioStatus = computed(() => diceAudio.inspect(props.config.audio))
 
 const addRule = () => props.config.botRules.push({
   id: `platform-rule-${Date.now()}`, name: '自定义规则', enabled: true,
@@ -18,6 +22,30 @@ const addRule = () => props.config.botRules.push({
 })
 const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', value: string) => {
   rule[field] = value.split(',').map(item => item.trim()).filter(Boolean)
+}
+const previewAudio = async () => {
+  await diceAudio.unlock()
+  const result = await diceAudio.play(props.config.audio, { queueIfBlocked: false })
+  if (result.ok) message.success('试听播放中')
+  else message.warning(result.message)
+}
+const previewDefaultAudio = async () => {
+  const worldAudio = props.config.audio
+  const worldAsset = (worldAudio?.soundAssetId || '').trim()
+  if (worldAsset) {
+    await diceAudio.unlock()
+    const result = await diceAudio.play({
+      enabled: true,
+      volume: worldAudio?.volume ?? 0.65,
+      soundAssetId: worldAsset,
+    }, { queueIfBlocked: false })
+    if (result.ok) message.success('已播放世界掷骰音效')
+    else message.warning(result.message)
+    return
+  }
+  const result = await diceAudio.playDefaultProbe(worldAudio?.volume ?? 0.65)
+  if (result.ok) message.success('尚未上传音效，已播放探测音（投掷仍需上传自定义文件）')
+  else message.warning(result.message)
 }
 </script>
 
@@ -46,10 +74,31 @@ const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', 
       <n-form-item-gi label="结算后可交互"><n-switch v-model:value="config.motion.interactive" /></n-form-item-gi>
     </n-grid>
     <n-grid :cols="2" :x-gap="12">
-      <n-form-item-gi label="投掷音效"><n-switch v-model:value="config.audio.enabled" /></n-form-item-gi>
-      <n-form-item-gi label="音量"><n-slider v-model:value="config.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item-gi>
+      <n-form-item-gi label="投掷音效">
+        <div class="platform-audio-field">
+          <n-switch v-model:value="config.audio.enabled" />
+          <span class="platform-audio-field__hint">{{ config.audio.enabled ? '已开启；需上传自定义文件才会发声' : '已关闭' }}</span>
+        </div>
+      </n-form-item-gi>
+      <n-form-item-gi label="音量">
+        <n-slider v-model:value="config.audio.volume" :min="0" :max="1" :step="0.05" :disabled="!config.audio.enabled" />
+        <p v-if="!config.audio.enabled" class="platform-audio-field__hint">已禁用：请先开启投掷音效</p>
+      </n-form-item-gi>
     </n-grid>
-    <n-form-item label="自定义音效"><DiceAttachmentPicker v-model="config.audio.soundAssetId" platform accept="audio/*" /></n-form-item>
+    <n-form-item label="自定义音效">
+      <DiceAttachmentPicker
+        v-model="config.audio.soundAssetId"
+        platform
+        accept="audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/aac,audio/flac,.mp3,.ogg,.wav,.webm,.aac,.flac,.m4a"
+        :disabled="!config.audio.enabled"
+        disabled-reason="已禁用：请先开启投掷音效"
+      />
+    </n-form-item>
+    <n-alert :type="audioStatus.ok ? 'success' : 'warning'" :show-icon="false">{{ audioStatus.message }}</n-alert>
+    <div class="platform-audio-preview">
+      <n-button secondary size="small" @click="previewDefaultAudio">试听默认音效</n-button>
+      <n-button secondary size="small" @click="previewAudio">试听当前音效</n-button>
+    </div>
     <n-collapse>
       <n-collapse-item title="BOT 骰点匹配规则" name="bot-rules">
         <n-card v-for="(rule, index) in config.botRules" :key="rule.id" size="small" :title="rule.name || `规则 ${index + 1}`" class="platform-rule">
@@ -76,5 +125,10 @@ const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', 
 </template>
 
 <style scoped>
-.platform-dice-editor { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }.platform-dice-editor :deep(.n-form-item) { margin-bottom: 4px; }.platform-rule { margin-bottom: 10px; }
+.platform-dice-editor { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+.platform-dice-editor :deep(.n-form-item) { margin-bottom: 4px; }
+.platform-rule { margin-bottom: 10px; }
+.platform-audio-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: 100%; }
+.platform-audio-field__hint { margin: 4px 0 0; color: var(--sc-text-secondary, #71717a); font-size: 12px; line-height: 1.4; }
+.platform-audio-preview { display: flex; flex-wrap: wrap; gap: 8px; }
 </style>

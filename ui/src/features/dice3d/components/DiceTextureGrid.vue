@@ -32,7 +32,6 @@ const upload = async (event: Event) => {
   uploadingType.value = type
   try {
     const result = await uploadImageAttachment(file, {
-      channelId: props.platform ? 'platform-dice3d-texture' : 'dice3d-texture',
       rootId: props.platform ? 'platform' : props.worldId,
       rootIdType: props.platform ? 'platform_dice3d_texture' : 'dice3d_texture',
       confirm: true,
