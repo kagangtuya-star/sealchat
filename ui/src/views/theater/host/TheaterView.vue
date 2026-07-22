@@ -83,6 +83,7 @@ const characterSnapshot = ref<ChatCharactersSnapshotPayload>({
 })
 let theaterBridge: TheaterHostBridge | null = null
 let theaterSync: TheaterSyncClient | null = null
+let theaterSyncGeneration = 0
 
 audioStudio.setPlaybackAuthority(false)
 
@@ -276,36 +277,64 @@ const startTheaterBridge = () => {
 }
 
 const startTheaterSync = async () => {
-  await theaterSync?.stop()
+  const generation = ++theaterSyncGeneration
+  const targetWorldId = worldId.value
+  const targetChannelId = channelId.value
+  const previousClient = theaterSync
   theaterSync = null
   theaterSyncReady.value = false
+  theaterSyncing.value = false
   theaterPermissions.value = []
-  if (!worldId.value || !channelId.value) return
-  if (chat.currentWorldId !== worldId.value) chat.setCurrentWorld(worldId.value)
+  await previousClient?.stop()
+  const isCurrent = () => generation === theaterSyncGeneration
+  if (!isCurrent() || !targetWorldId || !targetChannelId) return
+  if (chat.currentWorldId !== targetWorldId) chat.setCurrentWorld(targetWorldId)
   await chat.tryInit()
-  if (chat.curChannel?.id !== channelId.value) {
-    const switched = await chat.channelSwitchTo(channelId.value)
+  if (!isCurrent()) return
+  if (chat.curChannel?.id !== targetChannelId) {
+    const switched = await chat.channelSwitchTo(targetChannelId)
+    if (!isCurrent()) return
     if (!switched) throw new Error('无法进入小剧场频道')
   }
   const client = new TheaterSyncClient({
-    worldId: worldId.value,
+    worldId: targetWorldId,
     channelId: '',
-    inputChannelId: channelId.value,
+    inputChannelId: targetChannelId,
     scopeType: 'world',
     store: stageStore,
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
     onPermissionsChange: (permissions) => {
+      if (!isCurrent() || theaterSync !== client) return
       theaterPermissions.value = permissions
       theaterBridge?.setPermissions(resolveBridgePermissions(permissions))
     },
-    onSyncingChange: (syncing) => { theaterSyncing.value = syncing },
-    onPreloadRequested: (sceneIds, requestId) => { void stageAppRef.value?.preloadScenes(sceneIds, requestId) },
-    onPointerTrace: (trace) => { stageAppRef.value?.appendPointerTrace(trace) },
-    onError: (error) => message.warning(error),
+    onSyncingChange: (syncing) => {
+      if (isCurrent() && theaterSync === client) theaterSyncing.value = syncing
+    },
+    onPreloadRequested: (sceneIds, requestId) => {
+      if (isCurrent() && theaterSync === client) void stageAppRef.value?.preloadScenes(sceneIds, requestId)
+    },
+    onPointerTrace: (trace) => {
+      if (isCurrent() && theaterSync === client) stageAppRef.value?.appendPointerTrace(trace)
+    },
+    onError: (error) => {
+      if (isCurrent() && theaterSync === client) message.warning(error)
+    },
   })
+  if (!isCurrent()) return
   theaterSync = client
-  await client.start()
-  theaterSyncReady.value = true
+  try {
+    await client.start()
+    if (!isCurrent() || theaterSync !== client) {
+      await client.stop()
+      return
+    }
+    theaterSyncReady.value = true
+  } catch (error) {
+    await client.stop()
+    if (theaterSync === client) theaterSync = null
+    if (isCurrent()) throw error
+  }
 }
 
 const handleTheaterContext = (event: MessageEvent) => {
@@ -398,6 +427,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  theaterSyncGeneration += 1
   window.removeEventListener('message', handleTheaterContext)
 	window.removeEventListener('message', handleDice3DMessage)
   appearancePreview.value = null

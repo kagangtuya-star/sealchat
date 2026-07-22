@@ -635,6 +635,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
+    if (!this.started) return
     this.stopWatch = watch(() => [
       this.options.store.state.activeSceneId,
       this.options.store.state.liveState,
@@ -642,6 +643,7 @@ export class TheaterSyncClient {
       this.options.store.state.persistentObjects,
     ], () => this.scheduleFlush(), { deep: true, flush: 'sync' })
     await this.subscribe()
+    if (!this.started) return
     if (!Object.keys(this.baseDocument.scenes).length && this.permissions.includes('stage.object.edit')) this.scheduleFlush(0)
     this.reconcileTimer = setInterval(() => { void this.reloadIfIdle() }, 30_000)
   }
@@ -744,6 +746,7 @@ export class TheaterSyncClient {
     if (!this.started) return
     try {
       const response = await api.get<TheaterSnapshotResponse>(this.theaterBase())
+      if (!this.started) return
       const data = response.data
       const nextRevision = finite(data.revision, 0)
       this.schemaVersion = finite(data.schemaVersion, 1)
@@ -781,6 +784,7 @@ export class TheaterSyncClient {
       }
       this.hasLoaded = true
     } catch (error) {
+      if (!this.started) return
       this.options.onError?.(errorMessage(error))
       throw error
     }
@@ -837,6 +841,7 @@ export class TheaterSyncClient {
     this.options.onSyncingChange?.(true)
     try {
       for (const mutation of mutations) {
+        if (!this.started) return
         const response = await api.post(`${this.theaterBase()}/mutations`, {
           mutationId: mutationId('mutation'),
           worldId: this.options.worldId,
@@ -845,11 +850,13 @@ export class TheaterSyncClient {
           type: mutation.type,
           payload: mutation.payload,
         })
+        if (!this.started) return
         this.revision = finite(response.data?.revision, this.revision + 1)
       }
       this.baseDocument = desired
       this.consecutiveConflicts = 0
     } catch (error) {
+      if (!this.started) return
       const conflict = isRevisionConflict(error)
       if (!conflict) this.options.onError?.(errorMessage(error))
       if (conflict) {

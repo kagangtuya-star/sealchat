@@ -225,9 +225,15 @@ const isEditingCurrentChannel = computed(() => {
 const isEmbedMode = computed(() => route.path === '/embed');
 const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+const routeWorldId = computed(() => typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '');
 const theaterEntryEnabled = computed(() => {
   if (['/embed', '/split', '/theater'].includes(route.path)) return false;
-  return !!chat.currentWorldId && !!chat.curChannel?.id;
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  return !!worldId
+    && !!chat.curChannel?.id
+    && String(chat.currentWorldId || '').trim() === worldId
+    && (!channelWorldId || channelWorldId === worldId);
 });
 
 let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -283,10 +289,11 @@ const openSplitView = async () => {
 };
 
 const openTheaterView = async () => {
-  const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
-  if (!worldId || !channelId) {
-    message.warning('请先进入频道');
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
     return;
   }
   await router.push({
