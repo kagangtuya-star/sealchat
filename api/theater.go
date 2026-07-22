@@ -2,7 +2,10 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -73,7 +76,7 @@ func TheaterSnapshotGet(c *fiber.Ctx) error {
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
-	etag := theaterSnapshotETag(result.Revision, result.Checksum)
+	etag := theaterSnapshotETag(result.Revision, result.Checksum, result.Permissions)
 	c.Set(fiber.HeaderETag, etag)
 	c.Set(fiber.HeaderCacheControl, "private, no-cache")
 	if result.Unchanged || matchETag(c.Get(fiber.HeaderIfNoneMatch), etag) {
@@ -82,8 +85,11 @@ func TheaterSnapshotGet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "roomId": result.RoomID, "worldId": result.WorldID, "channelId": result.ChannelID, "revision": result.Revision, "schemaVersion": result.SchemaVersion, "checksum": result.Checksum, "snapshot": result.Snapshot, "limits": result.Limits, "permissions": result.Permissions})
 }
 
-func theaterSnapshotETag(revision int64, checksum string) string {
-	return `"` + strconv.FormatInt(revision, 10) + `-` + checksum + `"`
+func theaterSnapshotETag(revision int64, checksum string, permissions []string) string {
+	normalizedPermissions := append([]string(nil), permissions...)
+	sort.Strings(normalizedPermissions)
+	permissionHash := sha256.Sum256([]byte(strings.Join(normalizedPermissions, "\x00")))
+	return `"v2-` + strconv.FormatInt(revision, 10) + `-` + checksum + `-` + hex.EncodeToString(permissionHash[:8]) + `"`
 }
 
 func TheaterMutationPost(c *fiber.Ctx) error {

@@ -44,7 +44,7 @@ func TheaterObserverSnapshotGet(c *fiber.Ctx) error {
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
-	etag := theaterSnapshotETag(result.Revision, result.Checksum)
+	etag := theaterSnapshotETag(result.Revision, result.Checksum, result.Permissions)
 	c.Set(fiber.HeaderETag, etag)
 	c.Set(fiber.HeaderCacheControl, "private, no-cache")
 	if result.Unchanged || matchETag(c.Get(fiber.HeaderIfNoneMatch), etag) {
