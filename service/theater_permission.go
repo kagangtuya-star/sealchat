@@ -133,8 +133,6 @@ func theaterPermissionForMutation(mutationType string) string {
 		return TheaterPermissionSceneSwitch
 	case TheaterMutationCharacterBind, TheaterMutationCharacterUpdate:
 		return TheaterPermissionCharacterEdit
-	case TheaterMutationObjectToggle:
-		return TheaterPermissionActionTrigger
 	case TheaterMutationSceneCreate, TheaterMutationSceneUpdate, TheaterMutationSceneDelete,
 		TheaterMutationObjectCreate, TheaterMutationObjectUpdate, TheaterMutationObjectBatchUpdate, TheaterMutationObjectDelete,
 		TheaterMutationResourceAttach, TheaterMutationResourceDetach:

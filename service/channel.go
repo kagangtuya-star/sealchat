@@ -353,6 +353,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelTheaterView,
 			pm.PermFuncChannelTheaterSceneSwitch,
 			pm.PermFuncChannelTheaterObjectEdit,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
 			pm.PermFuncChannelTheaterCharacterEdit,
 			pm.PermFuncChannelTheaterResourceUpload,
 			pm.PermFuncChannelTheaterResourceDelete,
@@ -384,6 +385,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelTheaterView,
 			pm.PermFuncChannelTheaterSceneSwitch,
 			pm.PermFuncChannelTheaterObjectEdit,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
 			pm.PermFuncChannelTheaterCharacterEdit,
 			pm.PermFuncChannelTheaterResourceUpload,
 			pm.PermFuncChannelTheaterResourceDelete,
@@ -422,6 +424,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelInvite,
 			pm.PermFuncChannelMessagePin,
 			pm.PermFuncChannelTheaterView,
+			pm.PermFuncChannelTheaterObjectEditDelegated,
 			pm.PermFuncChannelTheaterActionTrigger,
 		}
 	})

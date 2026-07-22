@@ -54,7 +54,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 			return nil, theaterPayloadError(err.Error())
 		}
 		raw, _ := json.Marshal(payload)
-		result, err := ApplyTheaterMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationSceneApply, Payload: raw}, meta)
+		result, err := applyTheaterActionMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationSceneApply, Payload: raw}, meta)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +70,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 			return nil, theaterPayloadError("object.toggle action 缺少 objectId")
 		}
 		raw, _ := json.Marshal(payload)
-		result, err := ApplyTheaterMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectToggle, Payload: raw}, meta)
+		result, err := applyTheaterActionMutation(ctx, actorID, TheaterMutationCommand{MutationID: mutationID, WorldID: command.WorldID, ChannelID: command.ChannelID, ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectToggle, Payload: raw}, meta)
 		if err != nil {
 			return nil, err
 		}

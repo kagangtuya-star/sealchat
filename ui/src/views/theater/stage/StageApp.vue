@@ -592,6 +592,13 @@ const canEditObject = (object: StageObject | null | undefined) => Boolean(object
   canEditAllObjects.value
   || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
 )
+const canInteractObject = (object: StageObject | null | undefined) => Boolean(
+  object
+  && canTriggerActions.value
+  && object.visible
+  && object.interactive
+  && ['text', 'image', 'button'].includes(object.type),
+)
 
 const confirmDelete = (title: string, content: string, onPositiveClick: () => void) => {
   let destroyDialog = () => {}
@@ -1510,7 +1517,7 @@ const addAction = (type: StageAction['type']) => {
 }
 
 const triggerObjectActions = (object: StageObject) => {
-  if (!canTriggerActions.value || !['text', 'image', 'button'].includes(object.type) || !object.interactive || !object.visible) return
+  if (!canInteractObject(object)) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
   object.actions.forEach((action) => {
     const parsed = stageActionSchema.safeParse(action)
@@ -3327,8 +3334,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
-    listening: (!viewToolActive.value && canEditObject(object))
-      || (canTriggerActions.value && object.interactive && ['text', 'image', 'button'].includes(object.type)),
+    listening: (!viewToolActive.value && canEditObject(object)) || canInteractObject(object),
   })
   if (object.type === 'drawing') {
     return

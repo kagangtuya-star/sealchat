@@ -154,6 +154,82 @@ func TestWorldTheaterTextActionChatSendUsesInputChannel(t *testing.T) {
 	}
 }
 
+func TestWorldTheaterMemberActionUsesComponentGrant(t *testing.T) {
+	ownerID, worldID, _ := initWorldTheaterServiceTest(t)
+	memberID := "member-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.WorldMemberModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()},
+		WorldID:           worldID, UserID: memberID, Role: model.WorldRoleMember, JoinedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for index, sceneID := range []string{"scene-one", "scene-two"} {
+		if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
+			MutationID: fmt.Sprintf("scene-%d", index), WorldID: worldID, ExpectedRevision: int64(index), Type: TheaterMutationSceneCreate,
+			Payload: worldTheaterPayload(t, map[string]any{"sceneId": sceneID, "name": sceneID, "order": index, "state": map[string]any{}}),
+		}, TheaterRequestMeta{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
+		MutationID: "create-switch", WorldID: worldID, ExpectedRevision: 2, Type: TheaterMutationObjectCreate,
+		Payload: worldTheaterPayload(t, map[string]any{
+			"sceneId": "scene-one",
+			"object": map[string]any{
+				"id": "scene-switch", "kind": "button", "name": "Switch",
+				"x": 0, "y": 0, "width": 10, "height": 10, "rotation": 0,
+				"z": 0, "orderKey": "a", "visible": true, "interactive": true,
+				"content": map[string]any{}, "metadata": map[string]any{},
+				"actions": []map[string]any{{
+					"id": "switch", "type": TheaterMutationSceneApply,
+					"payload": map[string]any{"sceneId": "scene-two"},
+				}},
+			},
+		}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyTheaterMutation(nil, memberID, TheaterMutationCommand{
+		MutationID: "direct-switch", WorldID: worldID, ExpectedRevision: 3, Type: TheaterMutationSceneApply,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "scene-two"}),
+	}, TheaterRequestMeta{}); !IsTheaterErrorCode(err, TheaterErrorPermissionDenied) {
+		t.Fatalf("direct scene switch error = %v", err)
+	}
+	if _, err := ApplyTheaterMutation(nil, memberID, TheaterMutationCommand{
+		MutationID: "direct-toggle", WorldID: worldID, ExpectedRevision: 3, Type: TheaterMutationObjectToggle,
+		Payload: worldTheaterPayload(t, map[string]any{"objectId": "scene-switch"}),
+	}, TheaterRequestMeta{}); !IsTheaterErrorCode(err, TheaterErrorMutationTypeUnsupported) {
+		t.Fatalf("direct object toggle error = %v", err)
+	}
+
+	result, err := TriggerTheaterAction(context.Background(), memberID, TheaterActionCommand{
+		ActionRequestID: "member-switch", WorldID: worldID, ObjectID: "scene-switch", ActionID: "switch", ExpectedRevision: 3,
+	}, TheaterRequestMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mutation == nil || result.Mutation.Revision != 4 {
+		t.Fatalf("unexpected action result: %#v", result)
+	}
+	room := worldTheaterRoom(t, worldID, "")
+	if room.ActiveSceneID != "scene-two" {
+		t.Fatalf("active scene = %q", room.ActiveSceneID)
+	}
+
+	if _, err := ApplyTheaterMutation(nil, ownerID, TheaterMutationCommand{
+		MutationID: "disable-switch", WorldID: worldID, ExpectedRevision: 4, Type: TheaterMutationObjectUpdate,
+		Payload: worldTheaterPayload(t, map[string]any{"objectId": "scene-switch", "fields": map[string]any{"interactive": false}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TriggerTheaterAction(context.Background(), memberID, TheaterActionCommand{
+		ActionRequestID: "member-switch-disabled", WorldID: worldID, ObjectID: "scene-switch", ActionID: "switch", ExpectedRevision: 5,
+	}, TheaterRequestMeta{}); !IsTheaterErrorCode(err, TheaterErrorPermissionDenied) {
+		t.Fatalf("disabled component action error = %v", err)
+	}
+}
+
 func TestMergeTheaterRoomsToWorld(t *testing.T) {
 	actorID, worldID, firstChannelID := initWorldTheaterServiceTest(t)
 	secondChannelID := "channel-" + utils.NewIDWithLength(8)

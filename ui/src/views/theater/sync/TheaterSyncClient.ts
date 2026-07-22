@@ -553,6 +553,12 @@ const isRevisionConflict = (error: unknown) => {
     && value?.response?.data?.error?.code === 'STAGE_REVISION_CONFLICT'
 }
 
+const isPermissionDenied = (error: unknown) => {
+  const value = error as any
+  return value?.response?.status === 403
+    || value?.response?.data?.error?.code === 'STAGE_PERMISSION_DENIED'
+}
+
 export class TheaterSyncClient {
   private revision = 0
   private schemaVersion = 1
@@ -714,9 +720,21 @@ export class TheaterSyncClient {
     try {
       response = await this.postAction(payload)
     } catch (error) {
+      if (isPermissionDenied(error)) {
+        await this.reload(true, undefined, true)
+        return true
+      }
       if (!isRevisionConflict(error)) throw error
       await this.reload(true)
-      response = await this.postAction(payload)
+      try {
+        response = await this.postAction(payload)
+      } catch (retryError) {
+        if (isPermissionDenied(retryError)) {
+          await this.reload(true, undefined, true)
+          return true
+        }
+        throw retryError
+      }
     }
     const result = response.data?.result
     if (result?.mutation?.revision !== undefined) this.revision = finite(result.mutation.revision, this.revision)
@@ -742,7 +760,7 @@ export class TheaterSyncClient {
     while (this.saving) await new Promise((resolve) => setTimeout(resolve, 20))
   }
 
-  private async reload(force = false, localChange?: { base: TheaterDocument, desired: TheaterDocument }) {
+  private async reload(force = false, localChange?: { base: TheaterDocument, desired: TheaterDocument }, silent = false) {
     if (!this.started) return
     try {
       const response = await api.get<TheaterSnapshotResponse>(this.theaterBase())
@@ -785,8 +803,10 @@ export class TheaterSyncClient {
       this.hasLoaded = true
     } catch (error) {
       if (!this.started) return
-      this.options.onError?.(errorMessage(error))
-      throw error
+      if (!silent) {
+        this.options.onError?.(errorMessage(error))
+        throw error
+      }
     }
   }
 
@@ -833,8 +853,7 @@ export class TheaterSyncClient {
     }
     const denied = mutations.find((mutation) => !canApplyMutation(mutation, this.permissions, this.baseDocument))
     if (denied) {
-      this.options.onError?.(`缺少权限：${denied.permission}`)
-      await this.reload(true)
+      await this.reload(true, undefined, true)
       return
     }
     this.saving = true
@@ -858,7 +877,8 @@ export class TheaterSyncClient {
     } catch (error) {
       if (!this.started) return
       const conflict = isRevisionConflict(error)
-      if (!conflict) this.options.onError?.(errorMessage(error))
+      const permissionDenied = isPermissionDenied(error)
+      if (!conflict && !permissionDenied) this.options.onError?.(errorMessage(error))
       if (conflict) {
         this.flushAgain = false
         if (this.flushTimer) clearTimeout(this.flushTimer)
@@ -871,7 +891,7 @@ export class TheaterSyncClient {
           this.options.onError?.('舞台状态持续冲突，本地修改已保留，请稍后重试')
         }
       } else {
-        await this.reload(true)
+        await this.reload(true, undefined, permissionDenied)
       }
     } finally {
       this.saving = false

@@ -17,7 +17,22 @@ import (
 	"sealchat/utils"
 )
 
+type theaterMutationAuthorization int
+
+const (
+	theaterMutationAuthorizationDirect theaterMutationAuthorization = iota
+	theaterMutationAuthorizationAction
+)
+
 func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMutationCommand, meta TheaterRequestMeta) (*TheaterMutationResult, error) {
+	return applyTheaterMutation(ctx, actorID, command, meta, theaterMutationAuthorizationDirect)
+}
+
+func applyTheaterActionMutation(ctx context.Context, actorID string, command TheaterMutationCommand, meta TheaterRequestMeta) (*TheaterMutationResult, error) {
+	return applyTheaterMutation(ctx, actorID, command, meta, theaterMutationAuthorizationAction)
+}
+
+func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMutationCommand, meta TheaterRequestMeta, authorization theaterMutationAuthorization) (*TheaterMutationResult, error) {
 	startedAt := time.Now()
 	defer func() {
 		RecordTheaterMetric("theater_mutation_latency_ms", map[string]string{"type": command.Type}, float64(time.Since(startedAt).Milliseconds()))
@@ -28,6 +43,12 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		return nil, theaterPayloadError("mutationId 无效")
 	}
 	permission := theaterPermissionForMutation(command.Type)
+	if authorization == theaterMutationAuthorizationAction {
+		if command.Type != TheaterMutationSceneApply && command.Type != TheaterMutationObjectToggle {
+			return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "动作不支持此 mutation type", 400, map[string]any{"type": command.Type})
+		}
+		permission = TheaterPermissionActionTrigger
+	}
 	if permission == "" {
 		return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "不支持 mutation type", 400, map[string]any{"type": command.Type})
 	}
@@ -37,7 +58,7 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	}
 	_, channel, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, permission)
 	delegatedObjectEdit := false
-	if err != nil && command.Type == TheaterMutationObjectUpdate {
+	if err != nil && authorization == theaterMutationAuthorizationDirect && command.Type == TheaterMutationObjectUpdate {
 		if _, delegatedChannel, delegatedErr := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionObjectEditDelegated); delegatedErr == nil {
 			channel = delegatedChannel
 			delegatedObjectEdit = true
