@@ -37,6 +37,7 @@ type ChannelIdentityInput struct {
 	AvatarDecorations          protocol.AvatarDecorationList
 	IsDefault                  bool
 	IsTemporary                bool
+	BotAppearanceMode          string
 	ICOOCOnActivate            string
 	FolderIDs                  []string
 	TheaterPresentation        *protocol.TheaterPresentation
@@ -267,6 +268,30 @@ func ChannelIdentityUpdate(userID string, identityID string, input *ChannelIdent
 }
 
 func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, identityID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
+	if input == nil {
+		return nil, errors.New("参数不能为空")
+	}
+	input.BotAppearanceMode = strings.ToLower(strings.TrimSpace(input.BotAppearanceMode))
+	if input.BotAppearanceMode != "" && input.BotAppearanceMode != "inherit" && input.BotAppearanceMode != "custom" {
+		return nil, errors.New("BOT 外观继承模式无效")
+	}
+	if input.BotAppearanceMode != "" {
+		owner := model.UserGet(ownerUserID)
+		if owner == nil || !owner.IsBot {
+			return nil, errors.New("仅 BOT 支持外观继承模式")
+		}
+		if input.BotAppearanceMode == "inherit" {
+			input.DisplayName = strings.TrimSpace(owner.Nickname)
+			if input.DisplayName == "" {
+				input.DisplayName = strings.TrimSpace(owner.Username)
+			}
+			if input.DisplayName == "" {
+				input.DisplayName = "Bot"
+			}
+			input.Color = model.ChannelIdentityNormalizeColor(owner.NickColor)
+			input.AvatarAttachmentID = strings.TrimSpace(owner.Avatar)
+		}
+	}
 	if err := validateIdentityInput(input); err != nil {
 		return nil, err
 	}
@@ -296,6 +321,9 @@ func ChannelIdentityUpdateWithAccess(ownerUserID string, operatorUserID string, 
 		"avatar_attachment_id": input.AvatarAttachmentID,
 		"avatar_decoration":    avatarDecorations,
 		"is_default":           input.IsDefault,
+	}
+	if input.BotAppearanceMode != "" {
+		values["bot_appearance_mode"] = input.BotAppearanceMode
 	}
 	if input.TheaterPresentationSet || input.TheaterPresentation != nil {
 		values["theater_presentation"] = input.TheaterPresentation
@@ -610,6 +638,7 @@ func ChannelIdentitySerialize(item *model.ChannelIdentityModel) map[string]any {
 		"theaterPresentation": item.TheaterPresentation,
 		"isDefault":           item.IsDefault,
 		"isTemporary":         item.IsTemporary,
+		"botAppearanceMode":   item.BotAppearanceMode,
 		"icOocOnActivate":     item.ICOOCOnActivate,
 		"sortOrder":           item.SortOrder,
 		"folderIds":           item.FolderIDs,

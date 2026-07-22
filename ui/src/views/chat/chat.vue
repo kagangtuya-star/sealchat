@@ -3523,6 +3523,7 @@ const identityForm = reactive({
   theaterPresentation: null as TheaterPresentation | null,
   isDefault: false,
   isTemporary: false,
+  botAppearanceMode: '' as '' | 'inherit' | 'custom',
   icOocOnActivate: '' as '' | 'ic' | 'ooc',
   folderIds: [] as string[],
   characterCardId: '' as string,
@@ -3557,12 +3558,22 @@ const identityVariantAvatarEditorFile = ref<File | null>(null);
 const identityManageTargetUserId = ref('');
 const identityManageTargetLabel = ref('');
 const identityManageTargetRoleLabel = ref('');
+const identityManageTargetAvatar = ref('');
+const identityManageTargetKind = ref<'self' | 'user' | 'bot'>('self');
 const identityManageCandidateModalVisible = ref(false);
 const identityManageCandidateKeyword = ref('');
 const identityManageCandidates = ref<ChannelIdentityManageCandidate[]>([]);
 const identityManageCandidatesLoading = ref(false);
 const identityManageCandidateSelectedUserId = ref<string | null>(null);
+const identityManageBotModalVisible = ref(false);
+const identityManageBots = ref<UserInfo[]>([]);
+const identityManageBotsLoading = ref(false);
+const identityManageBotSelectedUserId = ref<string | null>(null);
 const currentIdentityTargetUserId = computed(() => identityManageTargetUserId.value || user.info.id || '');
+const isManagingBotIdentity = computed(() => identityManageTargetKind.value === 'bot');
+const botBaseAppearanceInherited = computed(() => (
+  isManagingBotIdentity.value && identityForm.botAppearanceMode !== 'custom'
+));
 const isManagingOtherUserIdentity = computed(() => (
   !!identityManageTargetUserId.value && identityManageTargetUserId.value !== (user.info.id || '')
 ));
@@ -3573,7 +3584,12 @@ const currentManagedIdentityLabel = computed(() => {
   return identityManageTargetLabel.value || identityManageTargetUserId.value;
 });
 const currentChannelIdentities = computed(() => (
-  chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+  isManagingBotIdentity.value
+    ? chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value).filter(item => item.isDefault).slice(0, 1)
+    : chat.getScopedChannelIdentities(chat.curChannel?.id || '', currentIdentityTargetUserId.value)
+));
+const managedIdentityFallbackAvatar = computed(() => (
+  resolveAttachmentUrl(identityManageTargetAvatar.value) || user.info.avatar || ''
 ));
 const currentEditingIdentityVariants = computed(() => {
   const channelId = chat.curChannel?.id || '';
@@ -3594,6 +3610,9 @@ const identityFolderMembership = computed<Record<string, string[]>>(() => (
 ));
 const isEditingTemporaryIdentity = computed(() => identityDialogMode.value === 'edit' && Boolean(editingIdentity.value?.isTemporary));
 const identityDialogTitle = computed(() => {
+  if (isManagingBotIdentity.value) {
+    return '编辑 BOT 频道外观';
+  }
   if (identityDialogMode.value === 'create') {
     return '创建频道角色';
   }
@@ -4038,9 +4057,13 @@ const resetIdentityManageTarget = () => {
   identityManageTargetUserId.value = '';
   identityManageTargetLabel.value = '';
   identityManageTargetRoleLabel.value = '';
+  identityManageTargetAvatar.value = '';
+  identityManageTargetKind.value = 'self';
   identityManageCandidateSelectedUserId.value = null;
   identityManageCandidateKeyword.value = '';
   identityManageCandidates.value = [];
+  identityManageBotSelectedUserId.value = null;
+  identityManageBots.value = [];
 };
 
 const loadIdentityManageCandidates = async (keyword = '') => {
@@ -4080,6 +4103,54 @@ const openIdentityManageUserDialog = async () => {
   }
 };
 
+const openIdentityManageBotDialog = async () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (!canManageChannelFeatures.value) {
+    message.warning('你没有设置当前频道 BOT 外观的权限');
+    return;
+  }
+  identityManageBotModalVisible.value = true;
+  identityManageBotsLoading.value = true;
+  identityManageBotSelectedUserId.value = isManagingBotIdentity.value ? currentIdentityTargetUserId.value : null;
+  try {
+    const resp = await chat.channelMemberListAll(channelId, 200);
+    const roleId = `ch-${channelId}-bot`;
+    const found = (resp?.data?.items || [])
+      .filter(item => item.roleId === roleId && Boolean(item.user?.id))
+      .map(item => item.user!);
+    identityManageBots.value = Array.from(new Map(found.map(item => [item.id, item])).values());
+    if (identityManageBots.value.length === 1) {
+      identityManageBotSelectedUserId.value = identityManageBots.value[0].id;
+    }
+  } catch (error: any) {
+    message.error(error?.response?.data?.error || '加载频道 BOT 失败');
+  } finally {
+    identityManageBotsLoading.value = false;
+  }
+};
+
+const confirmIdentityManageBot = async () => {
+  const channelId = chat.curChannel?.id || '';
+  const targetUserId = identityManageBotSelectedUserId.value || '';
+  if (!channelId || !targetUserId) {
+    message.warning('请选择 BOT');
+    return;
+  }
+  const selected = identityManageBots.value.find(item => item.id === targetUserId);
+  identityManageTargetUserId.value = targetUserId;
+  identityManageTargetLabel.value = selected?.nick || selected?.username || targetUserId;
+  identityManageTargetRoleLabel.value = 'BOT';
+  identityManageTargetAvatar.value = selected?.avatar || '';
+  identityManageTargetKind.value = 'bot';
+  identityManageBotModalVisible.value = false;
+  await chat.loadChannelIdentities(channelId, true, targetUserId);
+  identityManageVisible.value = true;
+};
+
 const confirmIdentityManageUser = async () => {
   if (!chat.curChannel?.id) {
     return;
@@ -4093,6 +4164,8 @@ const confirmIdentityManageUser = async () => {
   identityManageTargetUserId.value = targetUserId === (user.info.id || '') ? '' : targetUserId;
   identityManageTargetLabel.value = selected?.nickname || selected?.username || targetUserId;
   identityManageTargetRoleLabel.value = selected?.roleLabel || '';
+  identityManageTargetAvatar.value = selected?.avatar || '';
+  identityManageTargetKind.value = targetUserId === (user.info.id || '') ? 'self' : 'user';
   identityManageCandidateModalVisible.value = false;
   await chat.loadChannelIdentities(chat.curChannel.id, true, identityManageTargetUserId.value || undefined);
   identityManageVisible.value = true;
@@ -5316,11 +5389,14 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(identity?.theaterPresentation);
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.isTemporary = Boolean(identity?.isTemporary);
+  identityForm.botAppearanceMode = isManagingBotIdentity.value
+    ? (identity?.botAppearanceMode === 'custom' ? 'custom' : 'inherit')
+    : '';
   identityForm.icOocOnActivate = identity?.isTemporary
     ? (identity.icOocOnActivate === 'ooc' ? 'ooc' : 'ic')
     : '';
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
-  identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+  identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
   identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
@@ -5429,7 +5505,7 @@ const openIdentityCreate = async () => {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
   // Load character cards for the channel
-  if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+  if (!isManagingBotIdentity.value && !characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
     await characterCardStore.loadCards(chat.curChannel.id);
   }
   identityForm.characterCardId = '';
@@ -5444,10 +5520,10 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   // Load character cards for the channel
   if (chat.curChannel?.id) {
     await chat.loadChannelIdentityVariants(chat.curChannel.id, true, currentIdentityTargetUserId.value);
-    if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+    if (!isManagingBotIdentity.value && !characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
       await characterCardStore.loadCards(chat.curChannel.id);
     }
-    identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+    identityForm.characterCardId = !isManagingBotIdentity.value && identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
     identityOriginalCardId.value = identityForm.characterCardId;
   }
   identityDialogVisible.value = true;
@@ -5768,6 +5844,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       : null,
     isDefault: identityForm.isDefault,
     isTemporary: identityForm.isTemporary,
+    botAppearanceMode: isManagingBotIdentity.value ? identityForm.botAppearanceMode : '',
     icOocOnActivate: identityForm.isTemporary ? (identityForm.icOocOnActivate || (chat.icMode === 'ooc' ? 'ooc' : 'ic')) : '',
     folderIds: identityForm.folderIds,
   };
@@ -5856,7 +5933,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       } else {
         savedIdentity = await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
         // Handle character card binding changes for existing identity
-        if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        if (!isManagingBotIdentity.value && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
@@ -18165,8 +18242,20 @@ onBeforeUnmount(() => {
       </div>
     </template>
     <n-form label-width="90px" label-placement="left" class="identity-dialog__form">
+      <n-form-item v-if="isManagingBotIdentity" label="全局资料">
+        <div class="flex flex-col gap-1">
+          <n-switch
+            :value="identityForm.botAppearanceMode !== 'custom'"
+            @update:value="identityForm.botAppearanceMode = $event ? 'inherit' : 'custom'"
+          >
+            <template #checked>跟随 BOT 全局资料</template>
+            <template #unchecked>使用频道自定义资料</template>
+          </n-switch>
+          <n-text depth="3">仅控制昵称、颜色、头像；头像装饰与小剧场演出始终按当前频道保存。</n-text>
+        </div>
+      </n-form-item>
       <n-form-item label="频道昵称">
-        <n-input v-model:value="identityForm.displayName" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
+        <n-input v-model:value="identityForm.displayName" :disabled="botBaseAppearanceInherited" maxlength="32" show-count placeholder="请输入频道内显示的昵称" />
       </n-form-item>
       <n-form-item label="昵称颜色">
         <div class="identity-color-field">
@@ -18176,6 +18265,7 @@ onBeforeUnmount(() => {
             :show-alpha="false"
             size="small"
             class="identity-color-picker"
+            :disabled="botBaseAppearanceInherited"
             @update:value="handleIdentityColorPickerUpdate"
           />
           <n-input
@@ -18183,10 +18273,11 @@ onBeforeUnmount(() => {
             size="small"
             placeholder="#RRGGBB"
             class="identity-color-input"
+            :disabled="botBaseAppearanceInherited"
             @blur="handleIdentityColorBlur"
             @keyup.enter="handleIdentityColorBlur"
           />
-          <n-button tertiary size="small" @click="clearIdentityColor">清除</n-button>
+          <n-button tertiary size="small" :disabled="botBaseAppearanceInherited" @click="clearIdentityColor">清除</n-button>
         </div>
       </n-form-item>
       <n-form-item label="频道头像">
@@ -18194,13 +18285,13 @@ onBeforeUnmount(() => {
           <AvatarVue
             :size="48"
             :border="false"
-            :src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :src="identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
             :use-text-fallback="identityForm.isTemporary"
             :fallback-text="identityForm.displayName"
           />
           <n-space>
-            <n-button size="small" type="primary" @click="handleIdentityAvatarTrigger">上传头像</n-button>
-            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
+            <n-button size="small" type="primary" :disabled="botBaseAppearanceInherited" @click="handleIdentityAvatarTrigger">上传头像</n-button>
+            <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary :disabled="botBaseAppearanceInherited" @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
       </n-form-item>
@@ -18228,7 +18319,7 @@ onBeforeUnmount(() => {
           <n-text depth="3">仅用于小剧场消息演出，不影响频道消息头像。</n-text>
         </div>
       </n-form-item>
-      <n-form-item v-if="!isEditingTemporaryIdentity" label="绑定人物卡">
+      <n-form-item v-if="!isEditingTemporaryIdentity && !isManagingBotIdentity" label="绑定人物卡">
         <n-select
           v-model:value="identityForm.characterCardId"
           :options="characterCardSelectOptions"
@@ -18236,12 +18327,12 @@ onBeforeUnmount(() => {
           clearable
         />
       </n-form-item>
-      <n-form-item v-if="!isEditingTemporaryIdentity" class="identity-dialog__check-item">
+      <n-form-item v-if="!isEditingTemporaryIdentity && !isManagingBotIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isDefault">
           设为频道默认身份
         </n-checkbox>
       </n-form-item>
-      <n-form-item v-if="identityForm.isTemporary || isEditingTemporaryIdentity" label="切换到此角色时">
+      <n-form-item v-if="!isManagingBotIdentity && (identityForm.isTemporary || isEditingTemporaryIdentity)" label="切换到此角色时">
         <div class="identity-mini-mode-switch">
           <n-button-group size="small">
             <n-button
@@ -18260,7 +18351,7 @@ onBeforeUnmount(() => {
           <span class="identity-mini-mode-switch__hint">切换到这个临时角色时，自动切到{{ temporaryIdentityActivateModeLabel }}</span>
         </div>
       </n-form-item>
-      <n-form-item v-if="identityDialogMode === 'create'" class="identity-dialog__check-item">
+      <n-form-item v-if="identityDialogMode === 'create' && !isManagingBotIdentity" class="identity-dialog__check-item">
         <n-checkbox v-model:checked="identityForm.isTemporary">
           创建为临时 NPC 角色
         </n-checkbox>
@@ -18271,7 +18362,9 @@ onBeforeUnmount(() => {
           <div class="identity-variant-section__header">
             <div>
               <div class="identity-variant-section__title">为当前频道角色配置头像差分</div>
-              <div class="identity-variant-section__hint">可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复</div>
+              <div class="identity-variant-section__hint">
+                {{ isManagingBotIdentity ? 'BOT 需在消息中指定身份差分后生效。' : '可通过表情标签或输入 =关键词 在聊天中切换 =还原 恢复' }}
+              </div>
             </div>
             <n-button size="small" type="primary" @click="openIdentityVariantCreate">新增差分</n-button>
           </div>
@@ -18296,7 +18389,7 @@ onBeforeUnmount(() => {
               <AvatarVue
                 :size="40"
                 :border="false"
-                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : user.info.avatar)"
+                :src="resolveAttachmentUrl(variant.avatarAttachmentId || identityForm.avatarAttachmentId) || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
                 :use-text-fallback="identityForm.isTemporary"
                 :fallback-text="variant.displayName || identityForm.displayName"
               />
@@ -18346,7 +18439,7 @@ onBeforeUnmount(() => {
   >
     <AvatarDecorationEditor
       v-model="identityForm.avatarDecorations"
-      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+      :avatar-src="identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
       :fallback-text="identityForm.displayName"
       :preview-name="identityForm.displayName || '频道角色预览'"
       :upload-channel-id="chat.curChannel?.id"
@@ -18411,7 +18504,7 @@ onBeforeUnmount(() => {
           <AvatarVue
             :size="48"
             :border="false"
-            :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || (identityForm.isTemporary ? '' : user.info.avatar)"
+            :src="identityVariantAvatarPreview || resolveAttachmentUrl(identityVariantForm.avatarAttachmentId) || identityAvatarDisplay || (identityForm.isTemporary ? '' : managedIdentityFallbackAvatar)"
             :use-text-fallback="identityForm.isTemporary"
             :fallback-text="identityVariantForm.displayName || identityForm.displayName"
           />
@@ -18491,7 +18584,7 @@ onBeforeUnmount(() => {
     :target-user-id="currentIdentityTargetUserId"
     :preview-name="identityForm.displayName || '角色名'"
     :world-template="currentWorldTheaterTemplate"
-    :can-set-world-template="canSetWorldTheaterTemplate"
+    :can-set-world-template="canSetWorldTheaterTemplate && !isManagingBotIdentity"
     :world-template-saving="worldTheaterTemplateSaving"
     @apply="handleTheaterPresentationApply"
     @set-world-template="handleSetWorldTheaterTemplate"
@@ -18558,7 +18651,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <n-space>
-            <n-tooltip trigger="hover">
+            <n-tooltip v-if="!isManagingBotIdentity" trigger="hover">
               <template #trigger>
                 <n-button
                   quaternary
@@ -18573,7 +18666,7 @@ onBeforeUnmount(() => {
               </template>
               导出当前频道角色
             </n-tooltip>
-            <n-tooltip trigger="hover">
+            <n-tooltip v-if="!isManagingBotIdentity" trigger="hover">
               <template #trigger>
                 <n-button
                   quaternary
@@ -18589,6 +18682,18 @@ onBeforeUnmount(() => {
               导入角色配置
             </n-tooltip>
             <n-button
+              v-if="canManageChannelFeatures && !isManagingBotIdentity"
+              text
+              size="small"
+              @click="openIdentityManageBotDialog"
+            >
+              <template #icon>
+                <n-icon :component="Settings" size="14" />
+              </template>
+              设置 BOT
+            </n-button>
+            <n-button
+              v-if="!isManagingBotIdentity"
               text
               size="small"
               @click="icOocRoleConfigPanelVisible = true"
@@ -18599,6 +18704,7 @@ onBeforeUnmount(() => {
               场内场外映射
             </n-button>
             <n-button
+              v-if="!isManagingBotIdentity"
               text
               size="small"
               :disabled="identitySyncing"
@@ -18610,7 +18716,7 @@ onBeforeUnmount(() => {
               从其他频道同步
             </n-button>
             <n-button
-              v-if="canManageOtherUserIdentities"
+              v-if="canManageOtherUserIdentities && !isManagingBotIdentity"
               text
               size="small"
               @click="openIdentityManageUserDialog"
@@ -18627,13 +18733,13 @@ onBeforeUnmount(() => {
               type="warning"
               @click="exitIdentityManageUserMode"
             >
-              退出代管
+              {{ isManagingBotIdentity ? '退出 BOT 设置' : '退出代管' }}
             </n-button>
           </n-space>
         </div>
       </template>
-      <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager">
-        <div class="identity-manager__sidebar">
+      <div v-if="currentChannelIdentities.length || identityFolders.length" class="identity-manager" :class="{ 'identity-manager--bot': isManagingBotIdentity }">
+        <div v-if="!isManagingBotIdentity" class="identity-manager__sidebar">
           <div class="identity-folder-header">
             <div class="identity-folder-header__title">
               <n-icon :component="Folders" size="16" />
@@ -18678,7 +18784,7 @@ onBeforeUnmount(() => {
           </n-scrollbar>
         </div>
         <div class="identity-manager__content">
-          <div class="identity-manager__toolbar">
+          <div v-if="!isManagingBotIdentity" class="identity-manager__toolbar">
             <n-checkbox :checked="isAllIdentitySelected" :indeterminate="!!identitySelection.length && !isAllIdentitySelected" @update:checked="toggleSelectAll">
               全选
             </n-checkbox>
@@ -18707,6 +18813,7 @@ onBeforeUnmount(() => {
               :class="{ 'is-selected': identitySelection.includes(identity.id) }"
             >
               <n-checkbox
+                v-if="!isManagingBotIdentity"
                 class="identity-list__item-check"
                 :checked="identitySelection.includes(identity.id)"
                 @update:checked="val => handleIdentitySelection(identity.id, val)"
@@ -18714,7 +18821,7 @@ onBeforeUnmount(() => {
               <AvatarVue
                 :size="40"
                 :border="false"
-                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || (identity.isTemporary ? '' : user.info.avatar)"
+                :src="resolveAttachmentUrl(identity.avatarAttachmentId) || (identity.isTemporary ? '' : managedIdentityFallbackAvatar)"
                 :use-text-fallback="identity.isTemporary"
                 :fallback-text="identity.displayName"
               />
@@ -18732,30 +18839,30 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="identity-list__hint">ID：{{ identity.id }}</div>
                 <div class="identity-list__hint">差分：{{ chat.getIdentityVariants(chat.curChannel?.id || '', identity.id, currentIdentityTargetUserId).length }} 个</div>
-                <div class="identity-list__folders">
+                <div v-if="!isManagingBotIdentity" class="identity-list__folders">
                   <n-tag size="small" v-if="!(identity.folderIds?.length)">未分组</n-tag>
                   <n-tag v-for="folderId in identity.folderIds" :key="folderId" size="small" type="info">{{ resolveFolderName(folderId) }}</n-tag>
                 </div>
               </div>
               <div class="identity-list__actions">
                 <n-button text size="small" @click="openIdentityEdit(identity)">编辑</n-button>
-                <n-button text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
+                <n-button v-if="!isManagingBotIdentity" text size="small" type="error" :disabled="currentChannelIdentities.length === 1" @click="deleteIdentity(identity)">删除</n-button>
               </div>
             </div>
           </div>
           <n-empty v-else description="该分组暂无角色">
-            <template #extra>
+            <template v-if="!isManagingBotIdentity" #extra>
               <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
             </template>
           </n-empty>
         </div>
       </div>
       <n-empty v-else description="暂无频道角色">
-        <template #extra>
+        <template v-if="!isManagingBotIdentity" #extra>
           <n-button size="small" type="primary" @click="openIdentityCreate">创建新角色</n-button>
         </template>
       </n-empty>
-      <template #footer>
+      <template v-if="!isManagingBotIdentity" #footer>
         <n-button type="primary" block @click="openIdentityCreate">创建新角色</n-button>
       </template>
     </n-drawer-content>
@@ -18802,6 +18909,41 @@ onBeforeUnmount(() => {
         <n-button type="primary" :disabled="!identityManageCandidateSelectedUserId" @click="confirmIdentityManageUser">确认</n-button>
       </n-space>
     </div>
+  </n-modal>
+  <n-modal
+    v-model:show="identityManageBotModalVisible"
+    preset="card"
+    title="设置 BOT"
+    :style="{ width: 'min(560px, 92vw)' }"
+  >
+    <n-spin :show="identityManageBotsLoading">
+      <div class="space-y-2" style="max-height: 360px; overflow: auto;">
+        <div
+          v-for="item in identityManageBots"
+          :key="item.id"
+          class="identity-manage-candidate"
+          :class="{ 'is-active': identityManageBotSelectedUserId === item.id }"
+          @click="identityManageBotSelectedUserId = item.id"
+        >
+          <AvatarVue :size="40" :border="false" :src="resolveAttachmentUrl(item.avatar) || ''" :fallback-text="item.nick || item.username || item.id" />
+          <div class="identity-manage-candidate__meta">
+            <div class="identity-manage-candidate__name">
+              {{ item.nick || item.username || item.id }}
+              <n-tag size="small" type="info">BOT</n-tag>
+            </div>
+            <div class="identity-manage-candidate__sub">{{ item.username || item.id }}</div>
+          </div>
+          <n-radio :checked="identityManageBotSelectedUserId === item.id" />
+        </div>
+        <n-empty v-if="!identityManageBotsLoading && !identityManageBots.length" description="当前频道未绑定 BOT" />
+      </div>
+    </n-spin>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="identityManageBotModalVisible = false">取消</n-button>
+        <n-button type="primary" :disabled="!identityManageBotSelectedUserId" @click="confirmIdentityManageBot">确认</n-button>
+      </n-space>
+    </template>
   </n-modal>
   <n-modal
     v-model:show="folderDialogVisible"
@@ -22400,6 +22542,10 @@ onBeforeUnmount(() => {
   gap: 1rem;
   min-height: 420px;
   overflow: hidden;
+}
+
+.identity-manager.identity-manager--bot {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .identity-manager__sidebar {

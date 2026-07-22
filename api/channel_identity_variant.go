@@ -69,8 +69,8 @@ func ChannelIdentityVariantList(c *fiber.Ctx) error {
 		items []*model.ChannelIdentityVariantModel
 	)
 	if identityID != "" {
-		if _, err = model.ChannelIdentityValidateOwnership(identityID, ctx.TargetUserID, channelID); err != nil {
-			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		if _, err = service.ValidateChannelIdentityActorIdentity(ctx, channelID, identityID); err != nil {
+			return handleChannelIdentityActorErr(c, err)
 		}
 		items, err = model.ChannelIdentityVariantListByIdentityID(channelID, ctx.TargetUserID, identityID)
 	} else {
@@ -109,6 +109,9 @@ func ChannelIdentityVariantCreate(c *fiber.Ctx) error {
 	}
 	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
 	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if _, err := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, payload.IdentityID); err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	item, err := service.ChannelIdentityVariantCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityVariantInput{
@@ -151,6 +154,9 @@ func ChannelIdentityVariantUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if _, err := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, payload.IdentityID); err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
 	item, err := service.ChannelIdentityVariantUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, variantID, &service.ChannelIdentityVariantInput{
 		ChannelID:                  payload.ChannelID,
 		IdentityID:                 payload.IdentityID,
@@ -191,6 +197,15 @@ func ChannelIdentityVariantDelete(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		variant, variantErr := service.ChannelIdentityVariantGetForUser(ctx.TargetUserID, channelID, variantID)
+		if variantErr != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": variantErr.Error()})
+		}
+		if _, err := service.ValidateChannelIdentityActorIdentity(ctx, channelID, variant.IdentityID); err != nil {
+			return handleChannelIdentityActorErr(c, err)
+		}
+	}
 	if err := service.ChannelIdentityVariantDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, variantID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -215,6 +230,9 @@ func ChannelIdentityVariantReorder(c *fiber.Ctx) error {
 	}
 	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
 	if err != nil {
+		return handleChannelIdentityActorErr(c, err)
+	}
+	if _, err := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, payload.IdentityID); err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
 	if err := service.ChannelIdentityVariantReorderWithAccess(ctx.TargetUserID, ctx.OperatorUserID, payload.ChannelID, payload.IdentityID, payload.IDs); err != nil {

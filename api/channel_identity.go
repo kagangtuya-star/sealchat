@@ -21,6 +21,7 @@ type channelIdentityPayload struct {
 	AvatarDecorations          protocol.AvatarDecorationList        `json:"avatarDecorations"`
 	IsDefault                  bool                                 `json:"isDefault"`
 	IsTemporary                bool                                 `json:"isTemporary"`
+	BotAppearanceMode          string                               `json:"botAppearanceMode"`
 	ICOOCOnActivate            string                               `json:"icOocOnActivate"`
 	FolderIDs                  []string                             `json:"folderIds"`
 	TheaterPresentation        protocol.OptionalTheaterPresentation `json:"theaterPresentation"`
@@ -37,6 +38,11 @@ func ChannelIdentityList(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, channelID, strings.TrimSpace(c.Query("targetUserId")))
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		if err := service.EnsureBotChannelIdentity(ctx.TargetUserID, channelID); err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 	result, err := service.ChannelIdentityListByUser(channelID, ctx.TargetUserID)
 	if err != nil {
@@ -97,6 +103,9 @@ func ChannelIdentityCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 仅允许编辑默认频道外观"})
+	}
 	item, err := service.ChannelIdentityCreateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, &service.ChannelIdentityInput{
 		ChannelID:                  payload.ChannelID,
 		DisplayName:                payload.DisplayName,
@@ -150,6 +159,14 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		if _, ownershipErr := service.ValidateChannelIdentityActorIdentity(ctx, payload.ChannelID, identityID); ownershipErr != nil {
+			return handleChannelIdentityActorErr(c, ownershipErr)
+		}
+		payload.IsDefault = true
+		payload.IsTemporary = false
+		payload.FolderIDs = nil
+	}
 	item, err := service.ChannelIdentityUpdateWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:                  payload.ChannelID,
 		DisplayName:                payload.DisplayName,
@@ -158,6 +175,7 @@ func ChannelIdentityUpdate(c *fiber.Ctx) error {
 		AvatarDecorations:          resolveChannelIdentityPayloadDecorations(payload),
 		IsDefault:                  payload.IsDefault,
 		IsTemporary:                payload.IsTemporary,
+		BotAppearanceMode:          payload.BotAppearanceMode,
 		ICOOCOnActivate:            payload.ICOOCOnActivate,
 		FolderIDs:                  payload.FolderIDs,
 		TheaterPresentation:        payload.TheaterPresentation.Value,
@@ -197,6 +215,9 @@ func ChannelIdentityDelete(c *fiber.Ctx) error {
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
 	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "不能删除 BOT 默认频道外观"})
+	}
 	if err := service.ChannelIdentityDeleteWithAccess(ctx.TargetUserID, ctx.OperatorUserID, channelID, identityID); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
@@ -234,6 +255,9 @@ func ChannelIdentityReplaceTemporary(c *fiber.Ctx) error {
 	ctx, err := resolveChannelIdentityActorFromRequest(c, payload.ChannelID, payload.TargetUserID)
 	if err != nil {
 		return handleChannelIdentityActorErr(c, err)
+	}
+	if ctx.IsBotTarget {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "BOT 不支持临时频道角色"})
 	}
 	result, err := service.ChannelIdentityReplaceTemporaryWithAccess(ctx.TargetUserID, ctx.OperatorUserID, identityID, &service.ChannelIdentityInput{
 		ChannelID:              payload.ChannelID,

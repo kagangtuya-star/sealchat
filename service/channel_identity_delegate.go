@@ -6,12 +6,14 @@ import (
 	"strings"
 
 	"sealchat/model"
+	"sealchat/pm"
 )
 
 var (
 	ErrChannelIdentityDelegationDisabled  = errors.New("channel identity delegation disabled")
 	ErrChannelIdentityDelegationForbidden = errors.New("channel identity delegation forbidden")
 	ErrChannelIdentityTargetNotInChannel  = errors.New("channel identity target not in channel")
+	ErrChannelBotIdentityNotDefault       = errors.New("channel bot identity is not default")
 )
 
 type ChannelIdentityActorContext struct {
@@ -21,6 +23,7 @@ type ChannelIdentityActorContext struct {
 	OperatorRank   int
 	TargetRank     int
 	IsDelegated    bool
+	IsBotTarget    bool
 }
 
 type ChannelIdentityManageCandidateQuery struct {
@@ -84,7 +87,8 @@ func ResolveChannelIdentityActor(channelID, operatorUserID, requestedTargetUserI
 		return nil, ErrChannelPermissionDenied
 	}
 	targetRank := resolveChannelIdentityUserRank(channel, roleMap, targetUserID)
-	if targetRank <= 0 {
+	targetIsBot := isBoundChannelBot(roleMap, channelID, targetUserID)
+	if targetRank <= 0 && !targetIsBot {
 		return nil, ErrChannelIdentityTargetNotInChannel
 	}
 
@@ -95,9 +99,16 @@ func ResolveChannelIdentityActor(channelID, operatorUserID, requestedTargetUserI
 		OperatorRank:   operatorRank,
 		TargetRank:     targetRank,
 		IsDelegated:    targetUserID != operatorUserID,
+		IsBotTarget:    targetIsBot,
 	}
 
 	if !ctx.IsDelegated {
+		return ctx, nil
+	}
+	if ctx.IsBotTarget {
+		if !pm.CanWithChannelRole(operatorUserID, channelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
+			return nil, ErrChannelIdentityDelegationForbidden
+		}
 		return ctx, nil
 	}
 
@@ -112,6 +123,34 @@ func ResolveChannelIdentityActor(channelID, operatorUserID, requestedTargetUserI
 		return nil, ErrChannelIdentityDelegationForbidden
 	}
 	return ctx, nil
+}
+
+func isBoundChannelBot(roleMap map[string][]string, channelID, userID string) bool {
+	user := model.UserGet(strings.TrimSpace(userID))
+	if user == nil || !user.IsBot {
+		return false
+	}
+	targetRoleID := "ch-" + strings.TrimSpace(channelID) + "-bot"
+	for _, roleID := range roleMap[user.ID] {
+		if strings.TrimSpace(roleID) == targetRoleID {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidateChannelIdentityActorIdentity(actor *ChannelIdentityActorContext, channelID, identityID string) (*model.ChannelIdentityModel, error) {
+	if actor == nil {
+		return nil, ErrChannelPermissionDenied
+	}
+	identity, err := model.ChannelIdentityValidateOwnership(strings.TrimSpace(identityID), actor.TargetUserID, strings.TrimSpace(channelID))
+	if err != nil {
+		return nil, err
+	}
+	if actor.IsBotTarget && !identity.IsDefault {
+		return nil, ErrChannelBotIdentityNotDefault
+	}
+	return identity, nil
 }
 
 func loadChannelIdentityRoleMap(channelID string) (map[string][]string, error) {

@@ -23,6 +23,7 @@ type ChannelIdentityModel struct {
 	IsDefault           bool                          `json:"isDefault" gorm:"default:false"`
 	IsTemporary         bool                          `json:"isTemporary" gorm:"default:false"`
 	IsHidden            bool                          `json:"isHidden" gorm:"default:false"`
+	BotAppearanceMode   string                        `json:"botAppearanceMode,omitempty" gorm:"size:16;default:''"`
 	ICOOCOnActivate     string                        `json:"icOocOnActivate,omitempty" gorm:"-"`
 	SortOrder           int                           `json:"sortOrder" gorm:"index"`
 	FolderIDs           []string                      `json:"folderIds,omitempty" gorm:"-"`

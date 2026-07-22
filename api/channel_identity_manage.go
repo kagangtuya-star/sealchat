@@ -44,6 +44,8 @@ func handleChannelIdentityActorErr(c *fiber.Ctx, err error) error {
 	case errors.Is(err, service.ErrChannelIdentityDelegationForbidden),
 		errors.Is(err, service.ErrChannelPermissionDenied):
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "无权管理该用户的频道角色"})
+	case errors.Is(err, service.ErrChannelBotIdentityNotDefault):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "只能编辑 BOT 默认频道外观"})
 	default:
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

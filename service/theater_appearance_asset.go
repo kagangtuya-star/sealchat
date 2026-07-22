@@ -56,7 +56,7 @@ func CreateTheaterAppearanceAssetFromAttachment(ctx context.Context, operatorUse
 		return nil, newTheaterError(TheaterAppearanceAssetErrorInvalid, "purpose 无效", 400, nil)
 	}
 	identityID := strings.TrimSpace(input.IdentityID)
-	if _, err := model.ChannelIdentityValidateOwnership(identityID, actor.TargetUserID, channelID); err != nil {
+	if _, err := ValidateChannelIdentityActorIdentity(actor, channelID, identityID); err != nil {
 		return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "identity 不属于目标用户或频道", 400, nil)
 	}
 	variantID := strings.TrimSpace(input.VariantID)
@@ -132,7 +132,7 @@ func CreateTheaterAppearanceAssetUpload(ctx context.Context, operatorUserID, cha
 	if identityID == "" {
 		return nil, newTheaterError(TheaterAppearanceAssetErrorInvalid, "identityId 必填", 400, nil)
 	}
-	if _, err := model.ChannelIdentityValidateOwnership(identityID, actor.TargetUserID, channelID); err != nil {
+	if _, err := ValidateChannelIdentityActorIdentity(actor, channelID, identityID); err != nil {
 		return nil, newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "identity 不属于目标用户或频道", 400, nil)
 	}
 	variantID := strings.TrimSpace(input.VariantID)

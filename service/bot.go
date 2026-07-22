@@ -348,6 +348,9 @@ func SyncBotChannelAppearance(token *model.BotTokenModel) (*BotAppearanceSyncRes
 			if identity == nil || identity.ID == "" {
 				continue
 			}
+			if strings.EqualFold(strings.TrimSpace(identity.BotAppearanceMode), "custom") {
+				continue
+			}
 			updates := map[string]any{}
 			if identity.DisplayName != displayName {
 				updates["display_name"] = displayName
@@ -415,12 +418,10 @@ func EnsureBotChannelIdentity(userID, channelID string) error {
 	if _, err := model.MemberGetByUserIDAndChannelIDBase(user.ID, channelID, displayName, true); err != nil {
 		return err
 	}
-	existing, err := model.ChannelIdentityList(channelID, user.ID)
-	if err != nil {
-		return err
-	}
-	if len(existing) > 0 {
+	if existing, err := model.ChannelIdentityFindDefault(channelID, user.ID); err == nil && existing != nil {
 		return nil
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
 	}
 	sortOrder, err := model.ChannelIdentityMaxSort(channelID, user.ID)
 	if err != nil {
@@ -434,6 +435,7 @@ func EnsureBotChannelIdentity(userID, channelID string) error {
 		AvatarAttachmentID: strings.TrimSpace(user.Avatar),
 		SortOrder:          sortOrder + 1,
 		IsDefault:          true,
+		BotAppearanceMode:  "inherit",
 	}
 	return model.ChannelIdentityUpsert(identity)
 }
