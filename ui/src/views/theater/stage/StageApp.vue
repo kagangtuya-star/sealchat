@@ -3082,7 +3082,8 @@ const createObjectNode = (object: StageObject) => {
     event.cancelBubble = true
     selectObject(object.id)
   })
-  wrapper.on('click tap', () => {
+  wrapper.on('click tap', (event) => {
+    if ('button' in event.evt && event.evt.button !== 0) return
     if (activeCanvasTool.value || quickDeleteActive.value) return
     const current = getObject(object.id)
     if (current) triggerObjectActions(current)
