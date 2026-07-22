@@ -1,6 +1,7 @@
 import { computed, reactive, watch, type ComputedRef } from 'vue'
 import {
   createDefaultStageSurfaceStyle,
+  isStageActionTarget,
   isSafeStageImageUrl,
   normalizeStageSurfaceStyle,
   type StageAction,
@@ -1162,8 +1163,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
-    if (!object || !['text', 'image', 'button'].includes(object.type)) return false
+    if (!object || !isStageActionTarget(object.type)) return false
+    const enableDrawingInteraction = object.type === 'drawing' && object.actions.length === 0
     object.actions.push(clone(action))
+    if (enableDrawingInteraction) object.interactive = true
     return true
   })
 

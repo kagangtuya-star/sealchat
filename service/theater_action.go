@@ -14,6 +14,10 @@ type theaterStoredAction struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+func isTheaterActionTargetKind(kind string) bool {
+	return kind == "drawing" || kind == "text" || kind == "image" || kind == "button"
+}
+
 func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterActionCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
 	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
 		return nil, err
@@ -26,7 +30,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	if err != nil {
 		return nil, err
 	}
-	if !object.Visible || !object.Interactive || (object.Kind != "text" && object.Kind != "image" && object.Kind != "button") {
+	if !object.Visible || !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
 	}
 	var actions []theaterStoredAction

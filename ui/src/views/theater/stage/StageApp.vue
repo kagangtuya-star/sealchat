@@ -47,6 +47,7 @@ import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import {
   WORLD_UNIT_PX,
+  isStageActionTarget,
   type StageAction,
   type StageActionTriggeredPayload,
   type StageDrawing,
@@ -624,7 +625,7 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && canTriggerActions.value
   && object.visible
   && object.interactive
-  && ['text', 'image', 'button'].includes(object.type),
+  && isStageActionTarget(object.type),
 )
 
 type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
@@ -5052,7 +5053,7 @@ onBeforeUnmount(() => {
                 @update:checked="updateSelectedAspectRatioLocked"
               >锁定比例</n-checkbox>
             </div>
-            <template v-if="canEditAllObjects && ['text', 'image', 'button'].includes(selectedObject.type)">
+            <template v-if="canEditAllObjects && isStageActionTarget(selectedObject.type)">
               <label>点击动作</label>
               <div class="theater-action-add">
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>

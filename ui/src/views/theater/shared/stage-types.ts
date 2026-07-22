@@ -7,6 +7,10 @@ export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' 
 export type StageDrawingTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon'
 export type StageDrawingDash = 'solid' | 'dashed' | 'dotted'
 
+export const isStageActionTarget = (type: StageObjectType) => (
+  type === 'drawing' || type === 'text' || type === 'image' || type === 'button'
+)
+
 export interface StageDrawingStyle {
   stroke: string
   strokeWidth: number

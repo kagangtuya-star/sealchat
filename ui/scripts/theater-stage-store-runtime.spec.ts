@@ -41,6 +41,19 @@ assert.equal(store.isSceneFixedObject(sceneText.id), false)
 assert.equal(store.isSceneFixedObject(fixedText.id), true)
 assert.equal(store.setParent(sceneText.id, fixedText.id), false)
 
+const drawing = store.addDrawing({
+  tool: 'line',
+  style: { stroke: '#ffffff', strokeWidth: 2, opacity: 1, fill: null, dash: 'solid' },
+}, { x: 0, y: 0, width: 2, height: 2, rotation: 0 })
+assert.equal(drawing.interactive, false)
+assert.equal(store.addObjectAction(drawing.id, {
+  id: 'drawing-send',
+  type: 'chat.send',
+  payload: { content: '绘制动作' },
+}), true)
+assert.equal(store.activeObjects.value[drawing.id].interactive, true)
+assert.equal(store.activeObjects.value[drawing.id].actions.length, 1)
+
 const nextScene = store.scenes.value.find((scene) => scene.id !== activeScene.id)
 assert.ok(nextScene)
 store.selectScene(nextScene.id)

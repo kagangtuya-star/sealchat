@@ -1,4 +1,5 @@
 import type { TheaterStageStore } from '../stage/StageStore'
+import { isStageActionTarget } from '../shared/stage-types'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
@@ -359,7 +360,7 @@ export class TheaterHostBridge {
       return
     }
     const object = this.options.stageStore.activeObjects.value[payload.objectId]
-    if (!object || !object.visible || !object.interactive || !['text', 'image', 'button'].includes(object.type)) {
+    if (!object || !object.visible || !object.interactive || !isStageActionTarget(object.type)) {
       this.debug('stage action object rejected', payload.objectId)
       return
     }
