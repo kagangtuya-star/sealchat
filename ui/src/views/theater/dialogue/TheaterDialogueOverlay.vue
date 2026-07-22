@@ -25,6 +25,8 @@ const props = defineProps<{
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
+const bodyContentRef = ref<HTMLElement | null>(null)
 const richTextRef = ref<InstanceType<typeof RichTextContent> | null>(null)
 const visibleInViewport = ref(true)
 const snapshot = ref<TheaterDialogueRuntimeSnapshot>(props.runtime.getSnapshot())
@@ -32,8 +34,32 @@ const livePresentation = ref<ReturnType<typeof resolveTheaterDialoguePresentatio
 const appearanceCache = useTheaterAppearanceCache()
 let unsubscribe: (() => void) | null = null
 let intersectionObserver: IntersectionObserver | null = null
+let bodyContentObserver: { disconnect: () => void } | null = null
 let motionQuery: MediaQueryList | null = null
 let invalidateAppearance: ((event: Event) => void) | null = null
+
+/** Keep the latest revealed line visible while dialogue text grows. */
+const stickDialogueBodyToBottom = () => {
+  const body = bodyRef.value
+  const content = bodyContentRef.value
+  if (!body || !content) return
+
+  // Rich performance: base layer already has full height; follow the overlay frontier only.
+  const overlay = content.querySelector('.twin-layer-message__overlay-text')
+  if (overlay) {
+    const frontier = overlay.lastElementChild
+    if (!(frontier instanceof HTMLElement)) return
+    const bodyRect = body.getBoundingClientRect()
+    const frontierRect = frontier.getBoundingClientRect()
+    if (frontierRect.bottom > bodyRect.bottom) {
+      body.scrollTop += frontierRect.bottom - bodyRect.bottom
+    }
+    return
+  }
+
+  // Plain / non-performance: content height tracks revealed text.
+  body.scrollTop = body.scrollHeight
+}
 
 const current = computed(() => snapshot.value.queue.current)
 const message = computed(() => current.value?.message || null)
@@ -90,6 +116,30 @@ watch(
   () => presentation.value.dialogue.charactersPerSecond,
   (speed) => props.runtime.setCharactersPerSecond(speed),
   { immediate: true },
+)
+
+watch(bodyContentRef, (el) => {
+  bodyContentObserver?.disconnect()
+  bodyContentObserver = null
+  if (!el) return
+  // Height growth (plain reveal / reflow) + DOM growth (rich overlay chars).
+  const resizeObserver = new ResizeObserver(() => { stickDialogueBodyToBottom() })
+  const mutationObserver = new MutationObserver(() => { stickDialogueBodyToBottom() })
+  resizeObserver.observe(el)
+  mutationObserver.observe(el, { childList: true, subtree: true, characterData: true })
+  bodyContentObserver = {
+    disconnect: () => {
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
+    },
+  }
+  void nextTick(stickDialogueBodyToBottom)
+}, { flush: 'post' })
+
+// Plain-text reveal updates text without always resizing in the same tick; keep in sync.
+watch(
+  () => current.value?.revealedCharacters,
+  () => { void nextTick(stickDialogueBodyToBottom) },
 )
 
 const layerStyle = (layer: TheaterVisualLayer): CSSProperties => ({
@@ -162,6 +212,8 @@ watch(
 onBeforeUnmount(() => {
   unsubscribe?.()
   intersectionObserver?.disconnect()
+  bodyContentObserver?.disconnect()
+  bodyContentObserver = null
   motionQuery?.removeEventListener('change', updateReducedMotion)
   if (invalidateAppearance) window.removeEventListener('sealchat:theater-appearance-invalidated', invalidateAppearance)
 })
@@ -210,19 +262,21 @@ onBeforeUnmount(() => {
           <div v-if="!narration.enabled" class="theater-dialogue-speaker" :style="{ ...textLayerStyle('speaker'), color: speakerColor }">
             <span class="theater-dialogue-speaker__value">{{ message?.actor.displayName || '角色' }}</span>
           </div>
-          <div class="theater-dialogue-body" :style="contentStyle">
-            <RichTextContent
-              v-if="showRichContent"
-              ref="richTextRef"
-              :key="message?.messageId"
-              class="theater-dialogue-rich-text"
-              :content="richContent"
-              :autoplay="useRichPlayback && typing"
-              :characters-per-second="presentation.dialogue.charactersPerSecond"
-              :attachment-resolver="resolveAttachmentUrl"
-              @state-change="state => { if (state.completed && typing) props.runtime.completeCurrent() }"
-            />
-            <span v-else>{{ revealedText }}</span>
+          <div ref="bodyRef" class="theater-dialogue-body" :style="contentStyle">
+            <div ref="bodyContentRef" class="theater-dialogue-body__content">
+              <RichTextContent
+                v-if="showRichContent"
+                ref="richTextRef"
+                :key="message?.messageId"
+                class="theater-dialogue-rich-text"
+                :content="richContent"
+                :autoplay="useRichPlayback && typing"
+                :characters-per-second="presentation.dialogue.charactersPerSecond"
+                :attachment-resolver="resolveAttachmentUrl"
+                @state-change="state => { if (state.completed && typing) props.runtime.completeCurrent() }"
+              />
+              <span v-else>{{ revealedText }}</span>
+            </div>
           </div>
         </div>
       </section>
