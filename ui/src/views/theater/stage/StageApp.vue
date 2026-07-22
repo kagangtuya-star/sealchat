@@ -3677,8 +3677,14 @@ const resizeStage = () => {
   const element = viewportRef.value
   if (!stage || !element) return
   const rect = element.getBoundingClientRect()
-  viewportSize.value = { width: Math.max(1, rect.width), height: Math.max(1, rect.height) }
+  const nextViewportSize = { width: Math.max(1, rect.width), height: Math.max(1, rect.height) }
+  if (
+    viewportSize.value.width === nextViewportSize.width
+    && viewportSize.value.height === nextViewportSize.height
+  ) return
+  viewportSize.value = nextViewportSize
   stage.size(viewportSize.value)
+  syncField()
   clampOpenPanels()
   applyCamera()
 }
