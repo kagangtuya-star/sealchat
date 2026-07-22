@@ -22,10 +22,79 @@ var (
 )
 
 const (
+	// 旧版仅匹配 [2d6=1+2] 且 count 必填
 	legacyDefaultDice3DBotPattern = `(?i)\[(?P<count>\d+)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
-	bracketDice3DBotPattern       = `(?i)\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
-	defaultDice3DBotPattern       = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
+	// 方括号等号式：[2d6=1+2] / [1d6=4]
+	bracketDice3DBotPattern = `(?i)\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
+	// 旧「增强」式：会把 1d6+1d8=2[1d6] 误匹配成 1d8=2
+	looseDice3DBotPattern = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
+	// 海豹注解式：2[1d6] / 6[1d8] / 15[d20]（多骰复合结果的可靠面值来源）
+	annotDice3DBotPattern = `(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`
+	// 裸式 NdS=vals：1d100=42 / 2d6=3+5；解析时会丢弃「点数后紧跟 [」的误匹配
+	bareDice3DBotPattern = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
+	// ResultDetail 等内部解析仍复用裸式（带误匹配过滤）
+	defaultDice3DBotPattern = bareDice3DBotPattern
 )
+
+func defaultDice3DBotRules() []protocol.Dice3DBotRule {
+	return []protocol.Dice3DBotRule{
+		{
+			ID:                    "seal-annot",
+			Name:                  "海豹注解式",
+			Enabled:               true,
+			Pattern:               annotDice3DBotPattern,
+			CountGroup:            "count",
+			SidesGroup:            "sides",
+			ValuesGroup:           "values",
+			ValueSeparatorPattern: `\+`,
+			Priority:              10,
+		},
+		{
+			ID:                    "seal-standard",
+			Name:                  "海豹标准",
+			Enabled:               true,
+			Pattern:               bareDice3DBotPattern,
+			CountGroup:            "count",
+			SidesGroup:            "sides",
+			ValuesGroup:           "values",
+			ValueSeparatorPattern: `\+`,
+			Priority:              0,
+		},
+	}
+}
+
+func isObsoleteSealDice3DBotPattern(pattern string) bool {
+	switch pattern {
+	case legacyDefaultDice3DBotPattern, bracketDice3DBotPattern, looseDice3DBotPattern:
+		return true
+	default:
+		return false
+	}
+}
+
+func migrateDice3DBotRules(rules []protocol.Dice3DBotRule) []protocol.Dice3DBotRule {
+	hasAnnot := false
+	hasSealFamily := false
+	out := make([]protocol.Dice3DBotRule, 0, len(rules)+1)
+	for _, rule := range rules {
+		if rule.ID == "seal-annot" || rule.Pattern == annotDice3DBotPattern {
+			hasAnnot = true
+		}
+		if rule.ID == "seal-standard" || rule.ID == "seal-annot" ||
+			isObsoleteSealDice3DBotPattern(rule.Pattern) ||
+			rule.Pattern == bareDice3DBotPattern || rule.Pattern == annotDice3DBotPattern {
+			hasSealFamily = true
+		}
+		if isObsoleteSealDice3DBotPattern(rule.Pattern) {
+			rule.Pattern = bareDice3DBotPattern
+		}
+		out = append(out, rule)
+	}
+	if hasSealFamily && !hasAnnot {
+		out = append([]protocol.Dice3DBotRule{defaultDice3DBotRules()[0]}, out...)
+	}
+	return out
+}
 
 func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 	return protocol.Dice3DWorldConfig{
@@ -52,17 +121,8 @@ func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 			MaxDice:     60,
 			Interactive: true,
 		},
-		Audio: protocol.Dice3DAudioConfig{Enabled: true, Volume: 0.65},
-		BotRules: []protocol.Dice3DBotRule{{
-			ID:                    "seal-standard",
-			Name:                  "海豹骰标准",
-			Enabled:               true,
-			Pattern:               defaultDice3DBotPattern,
-			CountGroup:            "count",
-			SidesGroup:            "sides",
-			ValuesGroup:           "values",
-			ValueSeparatorPattern: `\+`,
-		}},
+		Audio:    protocol.Dice3DAudioConfig{Enabled: true, Volume: 0.65},
+		BotRules: defaultDice3DBotRules(),
 	}
 }
 
@@ -119,15 +179,14 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	}
 	if len(value.BotRules) == 0 {
 		value.BotRules = defaults.BotRules
+	} else {
+		value.BotRules = migrateDice3DBotRules(value.BotRules)
 	}
 	if len(value.BotRules) > 50 {
 		return value, fmt.Errorf("%w: BOT 规则过多", ErrDice3DConfigInvalid)
 	}
 	for index := range value.BotRules {
 		rule := &value.BotRules[index]
-		if rule.Pattern == legacyDefaultDice3DBotPattern || rule.Pattern == bracketDice3DBotPattern {
-			rule.Pattern = defaultDice3DBotPattern
-		}
 		if strings.TrimSpace(rule.ID) == "" {
 			rule.ID = fmt.Sprintf("rule-%d", index+1)
 		}
@@ -344,9 +403,12 @@ func BuildDiceVisualPayload(messageID, worldID, channelID, actorUserID, content 
 			if roll == nil || roll.IsError {
 				continue
 			}
-			parsed := parseDiceGroups(defaultDice3DBotPattern, `\+`, roll.ResultDetail)
+			// 优先注解/池式（面值准确），避免 NdS=vals 在复合式中误取公式段
+			parsed := parseDiceScriptAnnotGroups(roll.ResultDetail)
 			parsed = append(parsed, parseDiceScriptPoolGroups(roll.ResultDetail)...)
-			parsed = append(parsed, parseDiceScriptSingleGroups(roll.ResultDetail)...)
+			if len(parsed) == 0 {
+				parsed = parseDiceGroups(defaultDice3DBotPattern, `\+`, roll.ResultDetail)
+			}
 			groups = append(groups, parsed...)
 		}
 	}
@@ -360,6 +422,11 @@ func BuildDiceVisualPayload(messageID, worldID, channelID, actorUserID, content 
 			if len(parsed) > 0 {
 				break
 			}
+		}
+		// 规则未命中时仍尝试内置海豹注解/池式，覆盖默认规则被改坏的情况
+		if len(groups) == 0 {
+			groups = append(groups, parseDiceScriptAnnotGroups(content)...)
+			groups = append(groups, parseDiceScriptPoolGroups(content)...)
 		}
 	}
 	if len(groups) == 0 {
@@ -414,21 +481,67 @@ func parseDiceGroups(pattern, separatorPattern, content string) []protocol.DiceV
 	return parseDiceGroupsWithRegex(re, separator, content, "count", "sides", "values")
 }
 
-func parseDiceScriptSingleGroups(content string) []protocol.DiceVisualGroup {
-	re := regexp.MustCompile(`(?i)(\d+)\[(?:1)?d(\d+)\]`)
+// parseDiceScriptAnnotGroups 解析海豹结果注解：
+//
+//	2[1d6] / 15[d20]           → 前置点数即面值
+//	3[2d6=1+2]                 → 括号内等号后为各面值
+//	1d6+1d8=2[1d6]+6[1d8]=8    → 提取 2@d6、6@d8
+func parseDiceScriptAnnotGroups(content string) []protocol.DiceVisualGroup {
+	re := regexp.MustCompile(`(?i)(\d+)\[(\d*)d(\d+)(?:=(\d+(?:\+\d+)*))?\]`)
 	groups := make([]protocol.DiceVisualGroup, 0)
 	for _, match := range re.FindAllStringSubmatch(content, -1) {
-		if len(match) != 3 {
+		if len(match) != 5 {
+			continue
+		}
+		sides, sidesErr := strconv.Atoi(match[3])
+		if sidesErr != nil || !supportedDice3DSides(sides) {
+			continue
+		}
+		if match[4] != "" {
+			countText := strings.TrimSpace(match[2])
+			if countText == "" {
+				countText = "1"
+			}
+			count, countErr := strconv.Atoi(countText)
+			if countErr != nil || count < 1 || count > 100 {
+				continue
+			}
+			parts := strings.Split(match[4], "+")
+			if len(parts) != count {
+				continue
+			}
+			values := make([]int, 0, count)
+			valid := true
+			for _, part := range parts {
+				value, valueErr := strconv.Atoi(strings.TrimSpace(part))
+				if valueErr != nil || value < 1 || value > sides {
+					valid = false
+					break
+				}
+				values = append(values, value)
+			}
+			if valid {
+				groups = append(groups, protocol.DiceVisualGroup{Type: fmt.Sprintf("d%d", sides), Results: values})
+			}
+			continue
+		}
+		// 无内联面值：仅接受 1 颗骰（count 空或 1），前置数字为面值
+		countText := strings.TrimSpace(match[2])
+		if countText != "" && countText != "1" {
 			continue
 		}
 		value, valueErr := strconv.Atoi(match[1])
-		sides, sidesErr := strconv.Atoi(match[2])
-		if valueErr != nil || sidesErr != nil || !supportedDice3DSides(sides) || value < 1 || value > sides {
+		if valueErr != nil || value < 1 || value > sides {
 			continue
 		}
 		groups = append(groups, protocol.DiceVisualGroup{Type: fmt.Sprintf("d%d", sides), Results: []int{value}})
 	}
 	return groups
+}
+
+// parseDiceScriptSingleGroups 保留旧入口，转发到注解解析。
+func parseDiceScriptSingleGroups(content string) []protocol.DiceVisualGroup {
+	return parseDiceScriptAnnotGroups(content)
 }
 
 func parseDiceScriptPoolGroups(content string) []protocol.DiceVisualGroup {
@@ -472,20 +585,37 @@ func parseDiceGroupsWithRegex(re, separator *regexp.Regexp, content, countName, 
 		return nil
 	}
 	groups := make([]protocol.DiceVisualGroup, 0)
-	for _, match := range re.FindAllStringSubmatch(content, -1) {
-		if countIndex >= len(match) || sidesIndex >= len(match) || valuesIndex >= len(match) {
+	// 使用 Index 以便丢弃「面值后紧跟 [」的误匹配（如 1d8=2[1d6] 中的 1d8=2）
+	for _, loc := range re.FindAllStringSubmatchIndex(content, -1) {
+		if len(loc) < 2 {
 			continue
 		}
-		countText := strings.TrimSpace(match[countIndex])
+		matchEnd := loc[1]
+		if matchEnd < len(content) && content[matchEnd] == '[' {
+			continue
+		}
+		// 重建 named groups：loc 为 [fullStart, fullEnd, g1s, g1e, ...]
+		get := func(subexpIndex int) string {
+			if subexpIndex <= 0 {
+				return ""
+			}
+			startIdx := 2 * subexpIndex
+			endIdx := startIdx + 1
+			if endIdx >= len(loc) || loc[startIdx] < 0 || loc[endIdx] < 0 {
+				return ""
+			}
+			return content[loc[startIdx]:loc[endIdx]]
+		}
+		countText := strings.TrimSpace(get(countIndex))
 		if countText == "" {
 			countText = "1"
 		}
 		count, countErr := strconv.Atoi(countText)
-		sides, sidesErr := strconv.Atoi(match[sidesIndex])
+		sides, sidesErr := strconv.Atoi(get(sidesIndex))
 		if countErr != nil || sidesErr != nil || count < 1 || count > 100 || !supportedDice3DSides(sides) {
 			continue
 		}
-		parts := separator.Split(strings.TrimSpace(match[valuesIndex]), -1)
+		parts := separator.Split(strings.TrimSpace(get(valuesIndex)), -1)
 		if len(parts) != count {
 			continue
 		}

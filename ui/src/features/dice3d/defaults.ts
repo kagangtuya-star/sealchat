@@ -15,10 +15,20 @@ export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
     lingerMs: 8000, maxDice: 60, interactive: true,
   },
   audio: { enabled: true, volume: 0.65 },
-  botRules: [{
-    id: 'seal-standard', name: '海豹骰标准', enabled: true,
-    pattern: String.raw`(?i)\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`,
-    countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
-    valueSeparatorPattern: String.raw`\+`, priority: 0,
-  }],
+  botRules: [
+    {
+      id: 'seal-annot', name: '海豹注解式', enabled: true,
+      // 2[1d6] / 6[1d8]：复合掷骰结果的可靠面值来源
+      pattern: String.raw`(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 10,
+    },
+    {
+      id: 'seal-standard', name: '海豹标准', enabled: true,
+      // 1d100=42 / [2d6=1+2]；后端会丢弃「点数后紧跟 [」的误匹配
+      pattern: String.raw`(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`,
+      countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
+      valueSeparatorPattern: String.raw`\+`, priority: 0,
+    },
+  ],
 })

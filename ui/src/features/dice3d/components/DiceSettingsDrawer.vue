@@ -115,7 +115,8 @@ const addBotRule = () => {
 		id: `rule-${Date.now()}`,
 		name: '自定义规则',
 		enabled: true,
-			pattern: String.raw`\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`,
+		// 默认模板：海豹注解式 2[1d6]；亦可用 (?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)
+		pattern: String.raw`(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`,
 		countGroup: 'count',
 		sidesGroup: 'sides',
 		valuesGroup: 'values',

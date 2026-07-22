@@ -12,7 +12,7 @@ const props = defineProps<{ config: Dice3DWorldConfig; label: string }>()
 
 const addRule = () => props.config.botRules.push({
   id: `platform-rule-${Date.now()}`, name: '自定义规则', enabled: true,
-  pattern: String.raw`\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`,
+  pattern: String.raw`(?i)(?P<values>\d+)\[(?P<count>\d*)d(?P<sides>\d+)\]`,
   countGroup: 'count', sidesGroup: 'sides', valuesGroup: 'values',
   valueSeparatorPattern: String.raw`\+`, priority: 0,
 })
