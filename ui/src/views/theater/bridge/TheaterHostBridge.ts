@@ -359,7 +359,7 @@ export class TheaterHostBridge {
       return
     }
     const object = this.options.stageStore.activeObjects.value[payload.objectId]
-    if (!object || !object.visible || !object.interactive || !['image', 'button'].includes(object.type)) {
+    if (!object || !object.visible || !object.interactive || !['text', 'image', 'button'].includes(object.type)) {
       this.debug('stage action object rejected', payload.objectId)
       return
     }

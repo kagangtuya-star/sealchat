@@ -962,7 +962,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
-    if (!object || !['image', 'button'].includes(object.type)) return false
+    if (!object || !['text', 'image', 'button'].includes(object.type)) return false
     object.actions.push(clone(action))
     return true
   })

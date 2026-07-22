@@ -26,7 +26,7 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	if err != nil {
 		return nil, err
 	}
-	if !object.Visible || !object.Interactive || (object.Kind != "image" && object.Kind != "button") {
+	if !object.Visible || !object.Interactive || (object.Kind != "text" && object.Kind != "image" && object.Kind != "button") {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
 	}
 	var actions []theaterStoredAction

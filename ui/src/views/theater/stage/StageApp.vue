@@ -1510,7 +1510,7 @@ const addAction = (type: StageAction['type']) => {
 }
 
 const triggerObjectActions = (object: StageObject) => {
-  if (!canTriggerActions.value || !['image', 'button'].includes(object.type) || !object.interactive || !object.visible) return
+  if (!canTriggerActions.value || !['text', 'image', 'button'].includes(object.type) || !object.interactive || !object.visible) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
   object.actions.forEach((action) => {
     const parsed = stageActionSchema.safeParse(action)
@@ -3328,7 +3328,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
     listening: (!viewToolActive.value && canEditObject(object))
-      || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
+      || (canTriggerActions.value && object.interactive && ['text', 'image', 'button'].includes(object.type)),
   })
   if (object.type === 'drawing') {
     return
@@ -4560,7 +4560,7 @@ onBeforeUnmount(() => {
                 @update:checked="updateSelectedAspectRatioLocked"
               >锁定比例</n-checkbox>
             </div>
-            <template v-if="canEditAllObjects && (selectedObject.type === 'image' || selectedObject.type === 'button')">
+            <template v-if="canEditAllObjects && ['text', 'image', 'button'].includes(selectedObject.type)">
               <label>点击动作</label>
               <div class="theater-action-add">
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>

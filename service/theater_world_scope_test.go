@@ -118,7 +118,7 @@ func (function worldTheaterChatSenderFunc) SendTheaterChat(ctx context.Context, 
 	return function(ctx, request)
 }
 
-func TestWorldTheaterActionChatSendUsesInputChannel(t *testing.T) {
+func TestWorldTheaterTextActionChatSendUsesInputChannel(t *testing.T) {
 	actorID, worldID, inputChannelID := initWorldTheaterServiceTest(t)
 	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
 		MutationID: "world-scene", WorldID: worldID, Type: TheaterMutationSceneCreate,
@@ -129,7 +129,7 @@ func TestWorldTheaterActionChatSendUsesInputChannel(t *testing.T) {
 	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
 		MutationID: "world-object", WorldID: worldID, ExpectedRevision: 1, Type: TheaterMutationObjectCreate,
 		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "world-scene", "object": map[string]any{
-			"id": "world-button", "kind": "button", "name": "Send", "x": 0, "y": 0, "width": 10, "height": 10,
+			"id": "world-text", "kind": "text", "name": "Send", "x": 0, "y": 0, "width": 10, "height": 10,
 			"rotation": 0, "z": 0, "orderKey": "a", "visible": true, "interactive": true,
 			"content": map[string]any{}, "metadata": map[string]any{},
 			"actions": []map[string]any{{"id": "send", "type": "chat.send", "payload": map[string]any{"content": "World hello"}}},
@@ -145,7 +145,7 @@ func TestWorldTheaterActionChatSendUsesInputChannel(t *testing.T) {
 	t.Cleanup(func() { SetTheaterChatSender(nil) })
 	if _, err := TriggerTheaterAction(context.Background(), actorID, TheaterActionCommand{
 		ActionRequestID: "world-action", WorldID: worldID, InputChannelID: inputChannelID,
-		ObjectID: "world-button", ActionID: "send", ExpectedRevision: 2,
+		ObjectID: "world-text", ActionID: "send", ExpectedRevision: 2,
 	}, TheaterRequestMeta{}); err != nil {
 		t.Fatal(err)
 	}
