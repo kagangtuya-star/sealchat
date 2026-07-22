@@ -19246,9 +19246,9 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel.id"
   />
 
-	<DiceOverlayLoader v-if="!isTheaterEmbedMode" :surface-element="messagesListRef" />
+	<DiceOverlayLoader v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled" :surface-element="messagesListRef" />
 	<DiceDock
-		v-if="!isTheaterEmbedMode"
+		v-if="!isTheaterEmbedMode && display.settings.dice3dEnabled"
 		:enabled="dice3dProfile?.dockEnabled === true"
 			:x="dice3dProfile?.dockX"
 			:y="dice3dProfile?.dockY"

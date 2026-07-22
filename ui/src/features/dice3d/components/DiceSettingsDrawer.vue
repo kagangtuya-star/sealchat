@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 
 import type { Dice3DBotRule, Dice3DMemberProfile, Dice3DWorldConfig, DiceVisualPayload } from '@/types'
+import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
 import { loadDice3DSettings, saveDice3DProfile, saveDice3DWorldSettings } from '../api'
@@ -17,7 +18,12 @@ const DiceSkinPreview = defineAsyncComponent(() => import('./DiceSkinPreview.vue
 const props = defineProps<{ show: boolean, worldId: string, canManageWorld?: boolean }>()
 const emit = defineEmits<{ (event: 'update:show', value: boolean): void, (event: 'profile-saved', profile: Dice3DMemberProfile): void }>()
 const message = useMessage()
+const display = useDisplayStore()
 const utils = useUtilsStore()
+const dice3dLocalEnabled = computed({
+  get: () => display.settings.dice3dEnabled !== false,
+  set: (value: boolean) => display.updateSettings({ dice3dEnabled: value }),
+})
 const loading = ref(false)
 const saving = ref(false)
 const tab = ref<'world' | 'personal'>('personal')
@@ -254,6 +260,15 @@ const save = async () => {
           <n-tabs v-model:value="tab" type="segment" class="dice-settings-tabs">
           <n-tab-pane name="personal" tab="我的骰子">
             <n-form label-placement="top" size="small">
+              <n-form-item label="启用 3D 骰子">
+                <div class="dice-local-enable">
+                  <n-switch v-model:value="dice3dLocalEnabled">
+                    <template #checked>已启用</template>
+                    <template #unchecked>已关闭</template>
+                  </n-switch>
+                  <span class="dice-local-enable__hint">仅本机生效；关闭后不播放 3D 动画，不影响掷骰结果</span>
+                </div>
+              </n-form-item>
               <n-form-item label="使用个人骰子皮肤覆盖世界默认">
                 <n-switch v-model:value="profile.useOverride" />
               </n-form-item>
@@ -378,6 +393,8 @@ const save = async () => {
 <style scoped>
 .dice-settings-tabs { margin-top: 14px; }
 .dice-preview-actions { margin-top: 8px; }
+.dice-local-enable { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; width: 100%; }
+.dice-local-enable__hint { color: var(--sc-text-secondary, #71717a); font-size: 12px; line-height: 1.4; }
 .dice-style-toolbar { width: 100%; display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; }
 .dice-surface-panel { margin-bottom: 14px; padding: 12px; border: 1px solid var(--sc-border-muted, rgba(148,163,184,.22)); border-radius: 11px; background: color-mix(in srgb, var(--sc-bg-surface, #18181b) 96%, transparent); }
 @media (max-width: 560px) { .dice-style-toolbar { grid-template-columns: 1fr 1fr; }.dice-style-toolbar :deep(.n-select) { grid-column: 1 / -1; } }

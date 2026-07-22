@@ -1,4 +1,5 @@
 import type { DiceVisualPayload } from '@/types'
+import { useDisplayStore } from '@/stores/display'
 
 type Listener = (payload: DiceVisualPayload) => void
 type ActivationListener = () => void
@@ -13,6 +14,14 @@ const pruneSeen = () => {
   if (seenRollIds.size <= 500) return
   const entries = [...seenRollIds.entries()].sort((left, right) => left[1] - right[1])
   entries.slice(0, entries.length - 400).forEach(([rollId]) => seenRollIds.delete(rollId))
+}
+
+const isDice3DLocallyEnabled = () => {
+  try {
+    return useDisplayStore().settings.dice3dEnabled !== false
+  } catch {
+    return true
+  }
 }
 
 export const dice3dRuntime = {
@@ -30,10 +39,12 @@ export const dice3dRuntime = {
 		return () => activationListeners.delete(listener)
 	},
 	requestLoad() {
+		if (!isDice3DLocallyEnabled()) return
 		loadRequested = true
 		activationListeners.forEach(listener => listener())
   },
   play(payload?: DiceVisualPayload | null) {
+    if (!isDice3DLocallyEnabled()) return
     if (!payload?.rollId || !payload.groups?.length || seenRollIds.has(payload.rollId)) return
     seenRollIds.set(payload.rollId, Date.now())
 		loadRequested = true
@@ -43,6 +54,7 @@ export const dice3dRuntime = {
 		listeners.forEach(listener => listener(payload))
   },
   forwardToTheater(payload: DiceVisualPayload) {
+    if (!isDice3DLocallyEnabled()) return false
     if (window.parent === window) return false
     window.parent.postMessage({ type: 'sealchat:dice3d-roll', payload }, window.location.origin)
     return true

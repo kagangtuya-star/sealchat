@@ -19,6 +19,7 @@ import { theaterPresentationSchema, type TheaterPresentation } from '@/types/the
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
 import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
 import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
+import { useDisplayStore } from '@/stores/display'
 import {
   installTheaterBridgeDebugConsoleCommand,
   isTheaterBridgeDebugEnabled,
@@ -29,6 +30,7 @@ const router = useRouter()
 const message = useMessage()
 const chat = useChatStore()
 const user = useUserStore()
+const display = useDisplayStore()
 const audioStudio = useAudioStudioStore()
 const { width } = useWindowSize()
 
@@ -488,7 +490,11 @@ function handleDice3DMessage(event: MessageEvent) {
           @appearance-preview-phase="sendAppearancePreviewPhase"
         />
         <div v-if="!theaterSyncReady" class="theater-sync-loading">正在加载后端舞台……</div>
-		<DiceOverlayLoader :surface-element="stageSurfaceRef" :chat-surface-element="iframeRef" />
+		<DiceOverlayLoader
+          v-if="display.settings.dice3dEnabled"
+          :surface-element="stageSurfaceRef"
+          :chat-surface-element="iframeRef"
+        />
       </section>
 
       <div

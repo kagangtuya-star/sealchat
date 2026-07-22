@@ -160,6 +160,7 @@ export interface DisplaySettings {
   identityRemarkAutoContrastEnabled: boolean
   showOwnIdentityRemark: boolean
   showOthersIdentityRemark: boolean
+  dice3dEnabled: boolean
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -577,6 +578,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   identityRemarkAutoContrastEnabled: true,
   showOwnIdentityRemark: true,
   showOthersIdentityRemark: true,
+  dice3dEnabled: true,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -883,6 +885,7 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
       identityRemarkAutoContrastEnabled: coerceBoolean((parsed as any)?.identityRemarkAutoContrastEnabled ?? true),
       showOwnIdentityRemark: coerceBoolean((parsed as any)?.showOwnIdentityRemark ?? true),
       showOthersIdentityRemark: coerceBoolean((parsed as any)?.showOthersIdentityRemark ?? true),
+      dice3dEnabled: coerceBoolean((parsed as any)?.dice3dEnabled ?? true),
     }
   } catch (error) {
     console.warn('加载常规设置设置失败，使用默认值', error)
@@ -1264,6 +1267,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showOthersIdentityRemark')
       ? coerceBoolean((patch as any).showOthersIdentityRemark)
       : base.showOthersIdentityRemark,
+  dice3dEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'dice3dEnabled')
+      ? coerceBoolean((patch as any).dice3dEnabled)
+      : base.dice3dEnabled,
 })
 
 export const useDisplayStore = defineStore('display', {

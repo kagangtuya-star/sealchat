@@ -1008,6 +1008,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">启用 3D 骰子</p>
+            <p class="section-desc">关闭后本机不播放 3D 掷骰动画，不影响掷骰指令与结果消息</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.dice3dEnabled">
+          <template #checked>已启用</template>
+          <template #unchecked>已关闭</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
