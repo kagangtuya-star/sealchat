@@ -2989,12 +2989,16 @@ const createDrawingNode = (drawing: StageDrawing, width: number, height: number)
     })
   }
   if (drawing.tool === 'triangle' || drawing.tool === 'polygon') {
+    // RegularPolygon is circularly inscribed; non-uniform stretch is applied via scale.
+    const size = Math.max(1, Math.min(width, height))
     return new Konva.RegularPolygon({
       ...common,
       x: width / 2,
       y: height / 2,
       sides: drawing.tool === 'triangle' ? 3 : drawing.sides || 6,
-      radius: Math.max(1, Math.min(width, height) / 2),
+      radius: size / 2,
+      scaleX: width / size,
+      scaleY: height / size,
       fill: style.fill || undefined,
     })
   }
@@ -3137,6 +3141,8 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
   if (object.type === 'drawing' && object.drawing) {
     wrapper.setAttr('stageDrawingSignature', JSON.stringify(object.drawing))
+    wrapper.setAttr('stageDrawingWidth', width)
+    wrapper.setAttr('stageDrawingHeight', height)
     wrapper.add(createDrawingNode(object.drawing, width, height))
     return
   }
@@ -3408,6 +3414,8 @@ const createObjectNode = (object: StageObject) => {
       props.store.commitObjectEdit()
       return
     }
+    // Bake Konva scale into logical width/height, then reset node scale so content
+    // geometry (esp. drawings) can be rebuilt at the final pixel size.
     current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.height = Number((Math.max(12, current.transform.height * WORLD_UNIT_PX * wrapper.scaleY()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.rotation = Number(wrapper.rotation().toFixed(6))
@@ -3416,6 +3424,9 @@ const createObjectNode = (object: StageObject) => {
     current.transform.scaleX = 1
     current.transform.scaleY = 1
     wrapper.scale({ x: 1, y: 1 })
+    // Apply size immediately so drawing/content does not flash back to the pre-scale box
+    // while waiting for the deep-watch sync after commitObjectEdit.
+    updateObjectNode(wrapper, current)
     props.store.commitObjectEdit()
   })
   objectNodes.set(object.id, wrapper)
@@ -3513,12 +3524,20 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
 }
 
 const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
-  if (
-    wrapper.getAttr('stageObjectType') !== object.type
-    || (object.type === 'drawing' && wrapper.getAttr('stageDrawingSignature') !== JSON.stringify(object.drawing))
-  ) rebuildObjectContent(wrapper, object)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+  // Drawings bake non-group transforms into width/height (scale reset to 1).
+  // Content must be rebuilt whenever pixel size changes, not only when style/points change;
+  // otherwise free-aspect stretch snaps back to the original geometry after transformend.
+  const drawingNeedsRebuild = object.type === 'drawing' && (
+    wrapper.getAttr('stageDrawingSignature') !== JSON.stringify(object.drawing)
+    || wrapper.getAttr('stageDrawingWidth') !== width
+    || wrapper.getAttr('stageDrawingHeight') !== height
+  )
+  if (
+    wrapper.getAttr('stageObjectType') !== object.type
+    || drawingNeedsRebuild
+  ) rebuildObjectContent(wrapper, object)
   const multiSelected = isBatchSelection.value && selectedIdSet.value.has(object.id)
   const selectedAncestor = multiSelected && !selectedMovementRootIds().includes(object.id)
   const groupedObjectDirectlySelected = !object.parentId
