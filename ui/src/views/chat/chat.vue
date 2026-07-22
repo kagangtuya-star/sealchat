@@ -77,6 +77,11 @@ import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useInter
 import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
+import {
+  clearTheaterAppearanceEditIntent,
+  consumeTheaterAppearanceEditIntent,
+  writeTheaterAppearanceEditIntent,
+} from '@/utils/theaterAppearanceEditIntent';
 import { useI18n } from 'vue-i18n';
 import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -5405,12 +5410,80 @@ const openIdentityDecorationEditor = () => {
   identityDecorationEditorVisible.value = true;
 };
 
-const openIdentityTheaterPresentationEditor = () => {
+const askEnterTheaterForAppearanceEdit = () => new Promise<boolean>((resolve) => {
+  let settled = false;
+  const settle = (value: boolean) => {
+    if (settled) return;
+    settled = true;
+    resolve(value);
+  };
+  dialog.warning({
+    title: '提示',
+    content: '编辑必须在小剧场模式进行，是否进入小剧场？',
+    positiveText: '进入',
+    negativeText: '取消',
+    onPositiveClick: () => settle(true),
+    onNegativeClick: () => settle(false),
+    onClose: () => settle(false),
+  });
+});
+
+const enterTheaterForAppearanceEdit = async (mode: 'base' | 'variant') => {
+  const worldId = routeWorldId.value || String(chat.currentWorldId || '').trim();
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const channelWorldId = String(chat.curChannel?.worldId || '').trim();
+  const identityId = String(editingIdentity.value?.id || '').trim();
+  if (!worldId || !channelId || String(chat.currentWorldId || '').trim() !== worldId || (channelWorldId && channelWorldId !== worldId)) {
+    message.warning('正在切换世界，请稍后再试');
+    return false;
+  }
+  if (!identityId) {
+    message.warning('请先保存频道角色后再编辑演出外观');
+    return false;
+  }
+  writeTheaterAppearanceEditIntent({
+    channelId,
+    identityId,
+    mode,
+    variantId: mode === 'variant' ? String(editingIdentityVariant.value?.id || '').trim() || undefined : undefined,
+    targetUserId: identityManageTargetUserId.value || undefined,
+    targetKind: identityManageTargetKind.value,
+    targetLabel: identityManageTargetLabel.value || undefined,
+    targetAvatar: identityManageTargetAvatar.value || undefined,
+  });
+  identityDialogVisible.value = false;
+  identityVariantDialogVisible.value = false;
+  identityManageVisible.value = false;
+  theaterPresentationEditorVisible.value = false;
+  try {
+    await router.push({
+      name: 'theater',
+      query: { worldId, channelId },
+    });
+    return true;
+  } catch (error) {
+    clearTheaterAppearanceEditIntent();
+    message.error(error instanceof Error ? error.message : '进入小剧场失败');
+    return false;
+  }
+};
+
+const ensureTheaterModeForAppearanceEdit = async (mode: 'base' | 'variant') => {
+  if (isTheaterEmbedMode.value) return true;
+  const confirmed = await askEnterTheaterForAppearanceEdit();
+  if (!confirmed) return false;
+  await enterTheaterForAppearanceEdit(mode);
+  return false;
+};
+
+const openIdentityTheaterPresentationEditor = async () => {
+  if (!(await ensureTheaterModeForAppearanceEdit('base'))) return;
   theaterPresentationEditorMode.value = 'base';
   theaterPresentationEditorVisible.value = true;
 };
 
-const openIdentityVariantTheaterPresentationEditor = () => {
+const openIdentityVariantTheaterPresentationEditor = async () => {
+  if (!(await ensureTheaterModeForAppearanceEdit('variant'))) return;
   theaterPresentationEditorMode.value = 'variant';
   theaterPresentationEditorVisible.value = true;
 };
@@ -5653,6 +5726,64 @@ const openIdentityVariantEdit = (variant: ChannelIdentityVariant) => {
   resetIdentityVariantForm(variant);
   identityVariantDialogVisible.value = true;
 };
+
+let theaterAppearanceEditResumeRunning = false;
+const resumeTheaterAppearanceEditIntent = async () => {
+  if (theaterAppearanceEditResumeRunning || !isTheaterEmbedMode.value) return;
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId) return;
+  const intent = consumeTheaterAppearanceEditIntent(channelId);
+  if (!intent) return;
+  theaterAppearanceEditResumeRunning = true;
+  try {
+    if (intent.targetUserId && intent.targetKind && intent.targetKind !== 'self') {
+      identityManageTargetUserId.value = intent.targetUserId;
+      identityManageTargetKind.value = intent.targetKind;
+      identityManageTargetLabel.value = intent.targetLabel || intent.targetUserId;
+      identityManageTargetAvatar.value = intent.targetAvatar || '';
+      identityManageTargetRoleLabel.value = intent.targetKind === 'bot' ? 'BOT' : '';
+    } else {
+      resetIdentityManageTarget();
+    }
+    await chat.loadChannelIdentities(channelId, true, currentIdentityTargetUserId.value);
+    const identity = chat.getScopedChannelIdentities(channelId, currentIdentityTargetUserId.value)
+      .find((item) => String(item.id || '') === intent.identityId);
+    if (!identity) {
+      message.warning('目标角色不存在，已取消自动进入编辑');
+      return;
+    }
+    await openIdentityEdit(identity);
+    if (intent.mode === 'variant') {
+      await chat.loadChannelIdentityVariants(channelId, true, currentIdentityTargetUserId.value);
+      const variants = chat.getIdentityVariants(channelId, intent.identityId, currentIdentityTargetUserId.value);
+      const variant = variants.find((item) => String(item.id || '') === String(intent.variantId || ''));
+      if (!variant) {
+        message.warning('目标差分不存在，已打开角色编辑');
+        return;
+      }
+      openIdentityVariantEdit(variant);
+      theaterPresentationEditorMode.value = 'variant';
+    } else {
+      theaterPresentationEditorMode.value = 'base';
+    }
+    await nextTick();
+    theaterPresentationEditorVisible.value = true;
+  } catch (error) {
+    console.warn('[theater-appearance-edit] resume failed', error);
+    message.warning('自动进入演出外观编辑失败，请手动打开');
+  } finally {
+    theaterAppearanceEditResumeRunning = false;
+  }
+};
+
+watch(
+  () => [isTheaterEmbedMode.value, String(chat.curChannel?.id || '')] as const,
+  ([theaterMode, channelId]) => {
+    if (!theaterMode || !channelId) return;
+    void resumeTheaterAppearanceEditIntent();
+  },
+  { immediate: true },
+);
 
 const handleIdentityVariantAvatarTrigger = () => {
   identityVariantAvatarInputRef.value?.click();
