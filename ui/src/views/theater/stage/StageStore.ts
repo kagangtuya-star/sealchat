@@ -8,6 +8,7 @@ import {
   type StageImageRef,
   type StageLiveState,
   type StageObject,
+  type StageObjectScope,
   type StageObjectTransform,
   type StageObjectType,
   type StageScene,
@@ -333,7 +334,7 @@ export interface TheaterStageStore {
   duplicateScene: () => void
   removeScene: () => void
   updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
-  addObject: (type: StageInsertableObjectType, persistent?: boolean) => StageObject
+  addObject: (type: StageInsertableObjectType, scope?: StageObjectScope) => StageObject
   addDrawing: (
     drawing: StageDrawing,
     transform: Pick<StageObjectTransform, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
@@ -375,7 +376,7 @@ export interface TheaterStageStore {
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
   toggleObject: (objectId: string) => boolean
-  isPersistentObject: (objectId: string) => boolean
+  isSceneFixedObject: (objectId: string) => boolean
   resetCamera: () => void
   getSnapshot: () => StageWorkspaceState
   applyScene: (sceneId: string) => boolean
@@ -625,8 +626,12 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (topObject) reorderObject(object.id, topObject.id, 'before')
   }
 
-  const addObject = (type: StageInsertableObjectType, persistent = false) => runObjectEdit('添加对象', () => {
-    const objects = persistent ? state.persistentObjects : state.liveState.sceneObjects
+  const objectCollectionForScope = (scope: StageObjectScope) => scope === 'scene-fixed'
+    ? state.persistentObjects
+    : state.liveState.sceneObjects
+
+  const addObject = (type: StageInsertableObjectType, scope: StageObjectScope = 'scene') => runObjectEdit('添加对象', () => {
+    const objects = objectCollectionForScope(scope)
     const object = makeObject(
       type === 'group'
         ? '新建组'
@@ -738,14 +743,14 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const copySelectedObject = () => {
     const rootId = state.selectedObjectId
     if (!rootId) return false
-    const persistent = isPersistentObject(rootId)
-    const collection = persistent ? state.persistentObjects : state.liveState.sceneObjects
+    const scope: StageObjectScope = isSceneFixedObject(rootId) ? 'scene-fixed' : 'scene'
+    const collection = objectCollectionForScope(scope)
     const objects = collectObjectSubtree(collection, rootId)
     if (!objects.length) return false
     clipboard = {
       version: 1,
       sourceSceneId: state.activeSceneId,
-      persistent,
+      scope,
       rootId,
       objects,
     }
@@ -763,10 +768,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const pasteObject = () => {
     if (!clipboard) return null
     return runObjectEdit('粘贴对象', () => {
-      const collection = clipboard!.persistent ? state.persistentObjects : state.liveState.sceneObjects
+      const collection = objectCollectionForScope(clipboard!.scope)
       const sourceRoot = clipboard!.objects.find((object) => object.id === clipboard!.rootId)
       const keepParent = sourceRoot?.parentId
-        && (clipboard!.persistent || clipboard!.sourceSceneId === state.activeSceneId)
+        && (clipboard!.scope === 'scene-fixed' || clipboard!.sourceSceneId === state.activeSceneId)
         && Boolean(collection[sourceRoot.parentId])
       pasteCount += 1
       const pasted = instantiateClipboardBundle(
@@ -807,7 +812,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const parent = getObject(parentId)
     if (!parent || parent.type !== 'group') return false
     if (collectDescendants(objectId).includes(parentId)) return false
-    if (isPersistentObject(objectId) !== isPersistentObject(parentId)) return false
+    if (isSceneFixedObject(objectId) !== isSceneFixedObject(parentId)) return false
     return true
   }
 
@@ -981,7 +986,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
-  const isPersistentObject = (objectId: string) => !!state.persistentObjects[objectId]
+  const isSceneFixedObject = (objectId: string) => !!state.persistentObjects[objectId]
   const resetCamera = () => Object.assign(state.camera, { x: 0, y: 0, zoom: 0.5 })
   const getSnapshot = () => clone(state)
   const applyScene = (sceneId: string) => {
@@ -1051,7 +1056,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     addObjectAction,
     removeObjectAction,
     toggleObject,
-    isPersistentObject,
+    isSceneFixedObject,
     resetCamera,
     getSnapshot,
     applyScene,

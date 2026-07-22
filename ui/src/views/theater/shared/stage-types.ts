@@ -216,6 +216,8 @@ export interface StageScene {
   state: StageSceneState
 }
 
+export type StageObjectScope = 'scene' | 'scene-fixed'
+
 export interface CameraState {
   x: number
   y: number

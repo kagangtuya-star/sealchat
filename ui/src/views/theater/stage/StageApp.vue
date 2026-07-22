@@ -27,7 +27,6 @@ import {
   LockOpen,
   Message,
   Photo,
-  Pin,
   Pencil,
   Plus,
   Select,
@@ -67,6 +66,7 @@ import {
   type TheaterStageMediaLocation,
 } from './stage-media'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
+import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
 import type { TheaterStageStore } from './StageStore'
@@ -1377,7 +1377,7 @@ const parentOptions = computed(() => Object.values(props.store.activeObjects.val
   .filter((object) => object.type === 'group'
     && object.id !== selectedObject.value?.id
     && (!selectedObject.value
-      || props.store.isPersistentObject(object.id) === props.store.isPersistentObject(selectedObject.value.id)))
+      || props.store.isSceneFixedObject(object.id) === props.store.isSceneFixedObject(selectedObject.value.id)))
   .map((object) => ({ label: object.name, value: object.id })))
 
 interface LayerRow {
@@ -3809,7 +3809,7 @@ const reparentObjectPreservingTransform = (objectId: string, parentId: string | 
   if (parentId) {
     let parent: StageObject | undefined = getObject(parentId)
     if (!parent || parent.type !== 'group') return false
-    if (props.store.isPersistentObject(objectId) !== props.store.isPersistentObject(parentId)) return false
+    if (props.store.isSceneFixedObject(objectId) !== props.store.isSceneFixedObject(parentId)) return false
     while (parent) {
       if (parent.id === objectId) return false
       parent = parent.parentId ? getObject(parent.parentId) : undefined
@@ -4209,7 +4209,12 @@ onBeforeUnmount(() => {
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('text')"><template #icon><n-icon><LetterT /></n-icon></template></n-button></template>添加文字</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image')"><template #icon><n-icon><Photo /></n-icon></template></n-button></template>添加图片面板</n-tooltip>
-        <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image', true)"><template #icon><n-icon><Pin /></n-icon></template></n-button></template>添加持久图片</n-tooltip>
+      </n-button-group>
+      <StageSceneFixedToolbar
+        v-if="canEditAllObjects"
+        @add="type => store.addObject(type, 'scene-fixed')"
+      />
+      <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('button')"><template #icon><n-icon><Bolt /></n-icon></template></n-button></template>添加动作按钮</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('group')"><template #icon><n-icon><FolderPlus /></n-icon></template></n-button></template>添加组</n-tooltip>
       </n-button-group>
@@ -4718,7 +4723,7 @@ onBeforeUnmount(() => {
                 <n-icon v-else :component="layerPreviewIcon(row.object)" />
               </span>
               <span class="theater-layer-row__name">{{ row.object.name }}</span>
-              <small v-if="store.isPersistentObject(row.object.id)">持久</small>
+              <small v-if="store.isSceneFixedObject(row.object.id)">场景固定</small>
             </button>
             <div v-if="canEditAllObjects" class="theater-layer-row__actions" @pointerdown.stop>
               <n-tooltip trigger="hover">

@@ -1,10 +1,10 @@
 import { toRaw } from 'vue'
-import type { StageObject } from '../shared/stage-types'
+import type { StageObject, StageObjectScope } from '../shared/stage-types'
 
 export interface StageClipboardBundle {
   version: 1
   sourceSceneId: string
-  persistent: boolean
+  scope: StageObjectScope
   rootId: string
   objects: StageObject[]
 }
@@ -16,7 +16,7 @@ export interface StageObjectCollectionsSnapshot {
 }
 
 export interface StageObjectPatch {
-  target: 'scene' | 'persistent'
+  target: StageObjectScope
   path: string[]
   beforeExists: boolean
   before?: unknown
@@ -125,7 +125,7 @@ export const createObjectHistoryEntry = (
   if (before.sceneId !== after.sceneId) return null
   const patches: StageObjectPatch[] = []
   diffRecord('scene', before.sceneObjects, after.sceneObjects, [], patches)
-  diffRecord('persistent', before.persistentObjects, after.persistentObjects, [], patches)
+  diffRecord('scene-fixed', before.persistentObjects, after.persistentObjects, [], patches)
   return patches.length ? {
     label,
     sceneId: before.sceneId,

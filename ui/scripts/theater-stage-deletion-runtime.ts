@@ -5,7 +5,7 @@ import { createTheaterStageStore } from '../src/views/theater/stage/StageStore'
 const store = createTheaterStageStore()
 const group = store.addObject('group')
 const child = store.addObject('text')
-const sibling = store.addObject('image', true)
+const sibling = store.addObject('image', 'scene-fixed')
 
 assert.equal(store.setParent(child.id, group.id), true)
 store.setBulkSelectionMode(true)
