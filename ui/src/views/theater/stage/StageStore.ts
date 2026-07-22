@@ -93,7 +93,7 @@ const makeObject = (
   },
   visible: true,
   locked: false,
-  aspectRatioLocked: type !== 'effect',
+  aspectRatioLocked: type === 'text' ? false : type !== 'effect',
   interactive: type !== 'effect',
   editable: false,
   fill: type === 'text' ? '#ffffff' : palette[order % palette.length],
