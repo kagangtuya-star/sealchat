@@ -20,6 +20,7 @@ import {
   Edit,
   Eye,
   EyeOff,
+  Filter,
   FolderPlus,
   Focus,
   GripVertical,
@@ -30,7 +31,9 @@ import {
   Message,
   Photo,
   Pencil,
+  Pin,
   Plus,
+  Search,
   Select,
   Settings,
   Stars,
@@ -1475,13 +1478,76 @@ const parentOptions = computed(() => Object.values(props.store.activeObjects.val
 
 const persistedCollapsedGroupIds = ref<Set<string>>(new Set())
 const temporaryExpandedGroupIds = ref<Set<string>>(new Set())
+const layerFilterOpen = ref(false)
+const layerNameFilter = ref('')
+const layerHiddenOnly = ref(false)
+const layerSceneFixedOnly = ref(false)
 let editorStateLoadVersion = 0
 
-const layerRows = computed(() => buildStageLayerRows(
-  Object.values(props.store.activeObjects.value).filter((object) => !isTheaterEffectObject(object)),
-  persistedCollapsedGroupIds.value,
-  temporaryExpandedGroupIds.value,
+const layerObjects = computed(() => Object.values(props.store.activeObjects.value)
+  .filter((object) => !isTheaterEffectObject(object)))
+const normalizedLayerNameFilter = computed(() => layerNameFilter.value.trim().toLocaleLowerCase())
+const layerFilterActive = computed(() => Boolean(
+  normalizedLayerNameFilter.value || layerHiddenOnly.value || layerSceneFixedOnly.value,
 ))
+const layerFilterActiveCount = computed(() => Number(Boolean(normalizedLayerNameFilter.value))
+  + Number(layerHiddenOnly.value)
+  + Number(layerSceneFixedOnly.value))
+const layerFilterMatchIds = computed(() => {
+  const name = normalizedLayerNameFilter.value
+  return new Set(layerObjects.value
+    .filter((object) => (!name || object.name.toLocaleLowerCase().includes(name))
+      && (!layerHiddenOnly.value || !object.visible)
+      && (!layerSceneFixedOnly.value || props.store.isSceneFixedObject(object.id)))
+    .map((object) => object.id))
+})
+const layerFilterContextGroupIds = computed(() => {
+  if (!layerFilterActive.value) return new Set<string>()
+  const groups = new Set<string>()
+  const objects = props.store.activeObjects.value
+  layerFilterMatchIds.value.forEach((objectId) => {
+    let parentId = objects[objectId]?.parentId
+    while (parentId) {
+      const parent = objects[parentId]
+      if (!parent) break
+      if (parent.type === 'group') groups.add(parent.id)
+      parentId = parent.parentId
+    }
+  })
+  return groups
+})
+const layerExpandedGroupIds = computed(() => new Set([
+  ...temporaryExpandedGroupIds.value,
+  ...layerFilterContextGroupIds.value,
+]))
+const layerRows = computed(() => {
+  const rows = buildStageLayerRows(
+    layerObjects.value,
+    persistedCollapsedGroupIds.value,
+    layerExpandedGroupIds.value,
+  )
+  if (!layerFilterActive.value) return rows
+  const includedIds = new Set([
+    ...layerFilterMatchIds.value,
+    ...layerFilterContextGroupIds.value,
+  ])
+  return rows.filter((row) => includedIds.has(row.object.id))
+})
+const canReorderLayerRows = computed(() => canEditAllObjects.value && !layerFilterActive.value)
+
+const toggleLayerFilterPanel = () => {
+  layerFilterOpen.value = !layerFilterOpen.value
+}
+
+const clearLayerFilters = () => {
+  layerNameFilter.value = ''
+  layerHiddenOnly.value = false
+  layerSceneFixedOnly.value = false
+}
+
+watch(layerFilterActive, (active) => {
+  if (active) layerFilterOpen.value = true
+})
 
 const selectedLayerExpansionIds = computed(() => stageLayerSelectionExpansionIds(
   props.store.activeObjects.value,
@@ -1515,7 +1581,7 @@ const loadTheaterGroupEditorState = async () => {
 
 const isLayerGroupCollapsed = (object: StageObject) => object.type === 'group'
   && persistedCollapsedGroupIds.value.has(object.id)
-  && !temporaryExpandedGroupIds.value.has(object.id)
+  && !layerExpandedGroupIds.value.has(object.id)
 
 const toggleLayerGroupCollapsed = async (object: StageObject) => {
   if (object.type !== 'group' || !canEditAllObjects.value) return
@@ -3964,16 +4030,41 @@ const saveEditedImage = async (file: File) => {
 
 const handleCanvasDrop = async (event: DragEvent) => {
   if (!canEditAllObjects.value || !canUploadResources.value) return
-  const file = Array.from(event.dataTransfer?.files || []).find((item) => supportedTheaterMedia.has(normalizedFileType(item)))
   const rect = viewportRef.value?.getBoundingClientRect()
-  if (!file || !rect) return
-  const object = props.store.addObject('image')
-  object.transform.x = (event.clientX - rect.left - rect.width / 2 - props.store.state.camera.x) / props.store.state.camera.zoom / WORLD_UNIT_PX
-  object.transform.y = (event.clientY - rect.top - rect.height / 2 - props.store.state.camera.y) / props.store.state.camera.zoom / WORLD_UNIT_PX
-  try {
-    await uploadImage(file, { kind: 'object', objectId: object.id })
-  } catch {
-    props.store.removeSelectedObject(false)
+  if (!rect) return
+  const files = Array.from(event.dataTransfer?.files || [])
+    .filter((item) => supportedTheaterMedia.has(normalizedFileType(item)))
+  if (!files.length) return
+
+  const { x: cameraX, y: cameraY, zoom } = props.store.state.camera
+  const baseX = (event.clientX - rect.left - rect.width / 2 - cameraX) / zoom / WORLD_UNIT_PX
+  const baseY = (event.clientY - rect.top - rect.height / 2 - cameraY) / zoom / WORLD_UNIT_PX
+  const step = 24 / zoom / WORLD_UNIT_PX
+  const createdIds: string[] = []
+  const errors: string[] = []
+
+  for (let i = 0; i < files.length; i += 1) {
+    const object = props.store.addObject('image')
+    object.transform.x = baseX + i * step
+    object.transform.y = baseY + i * step
+    try {
+      await uploadImage(files[i], { kind: 'object', objectId: object.id })
+      createdIds.push(object.id)
+    } catch (error) {
+      props.store.removeObjects([object.id], false)
+      errors.push(error instanceof Error ? error.message : '图片上传失败')
+    }
+  }
+
+  if (createdIds.length) {
+    props.store.setSelectedObjectIds(createdIds, createdIds[createdIds.length - 1])
+  }
+  if (errors.length) {
+    resourceError.value = files.length === 1
+      ? errors[0]
+      : `${createdIds.length} 个成功，${errors.length} 个失败：${errors[0]}${errors.length > 1 ? ` 等` : ''}`
+  } else {
+    resourceError.value = ''
   }
 }
 
@@ -4142,7 +4233,7 @@ const scheduleLayerDragFrame = () => {
 }
 
 const startLayerPointerDrag = (event: PointerEvent, objectId: string) => {
-  if (!canEditAllObjects.value || event.button !== 0 || layerDragSession) return
+  if (!canReorderLayerRows.value || event.button !== 0 || layerDragSession) return
   const grip = event.currentTarget as HTMLElement
   const row = grip.closest<HTMLElement>('.theater-layer-row')
   if (!row) return
@@ -5049,15 +5140,79 @@ onBeforeUnmount(() => {
           </template>
           <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
         </div>
-        <div class="theater-panel-heading"><span>层级</span></div>
+        <div class="theater-panel-heading theater-layer-list-heading">
+          <span>层级</span>
+          <div class="theater-panel-heading__actions">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="theater-layer-filter-toggle"
+                  :class="{ 'is-active': layerFilterOpen || layerFilterActive }"
+                  :aria-expanded="layerFilterOpen"
+                  :aria-label="layerFilterOpen ? '收起图层筛选' : '展开图层筛选'"
+                  @click="toggleLayerFilterPanel"
+                >
+                  <n-icon :component="Filter" />
+                  <small v-if="layerFilterActiveCount">{{ layerFilterActiveCount }}</small>
+                </button>
+              </template>
+              {{ layerFilterOpen ? '收起筛选' : '筛选组件' }}
+            </n-tooltip>
+          </div>
+        </div>
+        <div v-if="layerFilterOpen" class="theater-layer-filter" @pointerdown.stop>
+          <n-input
+            v-model:value="layerNameFilter"
+            class="theater-layer-filter__search"
+            clearable
+            size="small"
+            placeholder="搜索组件名称"
+          >
+            <template #prefix><n-icon :component="Search" /></template>
+          </n-input>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="theater-layer-filter__toggle"
+                :class="{ 'is-active': layerHiddenOnly }"
+                :aria-pressed="layerHiddenOnly"
+                aria-label="仅隐藏组件"
+                @click="layerHiddenOnly = !layerHiddenOnly"
+              ><n-icon :component="EyeOff" /></button>
+            </template>
+            仅隐藏
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <button
+                type="button"
+                class="theater-layer-filter__toggle"
+                :class="{ 'is-active': layerSceneFixedOnly }"
+                :aria-pressed="layerSceneFixedOnly"
+                aria-label="仅场景固定组件"
+                @click="layerSceneFixedOnly = !layerSceneFixedOnly"
+              ><n-icon :component="Pin" /></button>
+            </template>
+            仅场景固定
+          </n-tooltip>
+          <n-tooltip v-if="layerFilterActive" trigger="hover">
+            <template #trigger>
+              <button type="button" class="theater-layer-filter__clear" aria-label="清除图层筛选" @click="clearLayerFilters"><n-icon><X /></n-icon></button>
+            </template>
+            清除筛选
+          </n-tooltip>
+        </div>
         <div ref="layerListRef" class="theater-layer-list">
-          <button
-            v-if="canEditAllObjects"
+          <div
+            v-if="canReorderLayerRows"
             class="theater-layer-root-drop"
             :class="{ 'is-drop-target': layerDropTarget?.id === null }"
-          >
-            根层级
-          </button>
+            aria-hidden="true"
+          ></div>
+          <div v-if="layerFilterActive && !layerRows.length" class="theater-layer-list__empty">未找到匹配组件</div>
+          <div v-else-if="!layerFilterActive && !layerRows.length" class="theater-layer-list__empty">暂无组件</div>
           <div
             v-for="row in layerRows"
             :key="row.object.id"
@@ -5066,6 +5221,7 @@ onBeforeUnmount(() => {
             :class="{
               'is-active': store.selection.selectedIds.includes(row.object.id),
               'is-hidden': !row.object.visible,
+              'is-filter-context': layerFilterContextGroupIds.has(row.object.id) && !layerFilterMatchIds.has(row.object.id),
               'is-disabled': !canEditObject(row.object),
               'is-dragging': draggedLayerId === row.object.id,
               'is-drop-before': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'before',
@@ -5076,6 +5232,7 @@ onBeforeUnmount(() => {
           >
             <span
               class="theater-layer-row__grip"
+              :class="{ 'is-disabled': !canReorderLayerRows }"
               @pointerdown.stop="startLayerPointerDrag($event, row.object.id)"
               @pointermove.stop="moveLayerPointerDrag"
               @pointerup.stop="finishLayerPointerDrag($event)"
@@ -5150,7 +5307,7 @@ onBeforeUnmount(() => {
                 </template>
                 {{ row.object.locked ? '解锁位置' : '锁定位置' }}
               </n-tooltip>
-              <n-tooltip v-if="row.object.type === 'group'" trigger="hover">
+              <n-tooltip v-if="row.object.type === 'group' && !layerFilterActive" trigger="hover">
                 <template #trigger>
                   <button
                     type="button"
@@ -5439,12 +5596,24 @@ onBeforeUnmount(() => {
 .theater-surface-settings .is-disabled { opacity: .48; }
 .theater-surface-settings__reset { justify-self: start; color: var(--sc-text-secondary, #b5b5c5); }
 .theater-resource-error { color: #f87171; font-size: 10px; line-height: 1.3; }
+.theater-layer-list-heading { border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-layer-filter { display: flex; align-items: center; gap: 4px; padding: 6px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-layer-filter__search { min-width: 0; flex: 1; }
+.theater-layer-filter__toggle, .theater-layer-filter__clear, .theater-layer-filter-toggle {
+  position: relative; width: 26px; height: 26px; display: grid; place-items: center; flex: 0 0 26px; padding: 0;
+  border: 0; border-radius: 5px; color: var(--sc-fg-muted, #71717a); background: transparent; cursor: pointer;
+}
+.theater-layer-filter__toggle:hover, .theater-layer-filter__clear:hover, .theater-layer-filter-toggle:hover { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 9%, transparent); }
+.theater-layer-filter__toggle.is-active, .theater-layer-filter-toggle.is-active { color: #7dd3fc; background: rgba(56, 189, 248, .14); }
+.theater-layer-filter-toggle small { position: absolute; top: -3px; right: -3px; min-width: 13px; padding: 0 3px; border-radius: 8px; color: #082f49; background: #7dd3fc; font-size: 9px; line-height: 13px; }
+.theater-layer-filter__toggle:focus-visible, .theater-layer-filter__clear:focus-visible, .theater-layer-filter-toggle:focus-visible { outline: 2px solid var(--theater-accent); outline-offset: 1px; }
 .theater-layer-list { min-height: 100px; flex: 1; overflow: auto; padding: 4px 0; }
 .theater-layer-root-drop {
-  width: calc(100% - 12px); height: 25px; margin: 2px 6px 5px; border: 1px dashed var(--sc-border-mute, rgba(255, 255, 255, .16));
-  border-radius: 5px; color: var(--sc-fg-muted, #71717a); background: transparent; font-size: 10px; cursor: default;
+  position: relative; height: 8px; margin: 0 6px;
 }
-.theater-layer-root-drop.is-drop-target { border-color: #38bdf8; color: #7dd3fc; background: rgba(56, 189, 248, .1); }
+.theater-layer-root-drop::after { position: absolute; right: 0; bottom: 2px; left: 0; height: 2px; border-radius: 1px; background: #38bdf8; content: ''; opacity: 0; transition: opacity .12s ease; }
+.theater-layer-root-drop.is-drop-target::after { opacity: 1; }
+.theater-layer-list__empty { display: grid; min-height: 82px; place-items: center; padding: 12px; color: var(--sc-fg-muted, #71717a); font-size: 11px; text-align: center; }
 .theater-layer-row {
   position: relative; box-sizing: border-box; width: 100%; height: 38px; display: flex; align-items: center; gap: 5px;
   color: var(--sc-text-primary, #f4f4f5); background: transparent; font-size: 12px; text-align: left;
@@ -5452,6 +5621,7 @@ onBeforeUnmount(() => {
 }
 .theater-layer-row:hover { background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-layer-row.is-active { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-accent) 18%, transparent); }
+.theater-layer-row.is-filter-context:not(.is-active) { opacity: .66; }
 .theater-layer-row.is-dragging { opacity: .36; }
 .theater-layer-row.is-drag-preview {
   position: fixed; z-index: 10000; top: 0; left: 0; pointer-events: none; opacity: .92;
@@ -5469,6 +5639,7 @@ onBeforeUnmount(() => {
 .theater-layer-row.is-drop-after::after { bottom: 0; }
 .theater-layer-row__grip { width: 16px; height: 100%; flex: 0 0 16px; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; touch-action: none; user-select: none; }
 .theater-layer-row__grip:active { cursor: grabbing; }
+.theater-layer-row__grip.is-disabled, .theater-layer-row__grip.is-disabled:active { cursor: default; opacity: .48; }
 .theater-layer-row__select {
   min-width: 0; height: 100%; flex: 1; display: flex; align-items: center; gap: 7px; padding: 0; border: 0;
   color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer;
