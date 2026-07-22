@@ -94,7 +94,7 @@ const makeObject = (
   visible: true,
   locked: false,
   aspectRatioLocked: type === 'text' ? false : type !== 'effect',
-  interactive: type !== 'effect',
+  interactive: type !== 'effect' && type !== 'group',
   editable: false,
   fill: type === 'text' ? '#ffffff' : palette[order % palette.length],
   text: type === 'text' ? name : undefined,
@@ -259,8 +259,8 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     visible: input.visible !== false,
     locked: input.locked === true,
     aspectRatioLocked: input.aspectRatioLocked !== false,
-    interactive: input.interactive !== false,
-    editable: input.editable === true,
+    interactive: input.type === 'group' ? false : input.interactive !== false,
+    editable: input.type === 'group' ? false : input.editable === true,
     fill: input.type === 'text' ? '#ffffff' : typeof input.fill === 'string' ? input.fill : '#60a5fa',
     drawing,
     image: normalizeImageRef(input.image) || undefined,
@@ -270,7 +270,7 @@ const normalizeObject = (input: StageObject): StageObject | null => {
           effect: normalizeTheaterEffectConfig(input.content?.effect),
         }
       : input.content && typeof input.content === 'object' ? input.content : {},
-    actions: normalizeActions(input.actions),
+    actions: input.type === 'group' ? [] : normalizeActions(input.actions),
     metadata: input.type === 'text'
       ? {
           ...metadata,
@@ -353,6 +353,7 @@ export interface TheaterStageStore {
   beginObjectEdit: (label?: string) => void
   commitObjectEdit: () => void
   cancelObjectEdit: () => void
+  canSetParent: (objectId: string, parentId: string | null) => boolean
   setParent: (objectId: string, parentId: string | null) => boolean
   reparentObject: (
     objectId: string,
@@ -515,6 +516,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     selectedObjects.value.forEach((object) => {
       let objectChanged = false
       entries.forEach(([key, value]) => {
+        if (object.type === 'group' && (key === 'interactive' || key === 'editable')) return
         if (value === undefined || object[key] === value) return
         ;(object as unknown as Record<string, unknown>)[key] = value
         objectChanged = true
@@ -526,6 +528,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
   const setObjectFlag = (objectId: string, key: StageObjectQuickFlag, value: boolean) => runObjectEdit('快速修改对象', () => {
     const object = activeObjects.value[objectId]
+    if (object?.type === 'group' && key === 'editable') return false
     if (!object || object[key] === value) return false
     object[key] = value
     return true
@@ -631,7 +634,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     : state.liveState.sceneObjects
 
   const addObject = (type: StageInsertableObjectType, scope: StageObjectScope = 'scene') => runObjectEdit('添加对象', () => {
-    const objects = objectCollectionForScope(scope)
+    const objects = objectCollectionForScope(type === 'group' ? 'scene' : scope)
     const object = makeObject(
       type === 'group'
         ? '新建组'
@@ -701,6 +704,49 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return result
   }
 
+  type HierarchyComponentScope = StageObjectScope | 'mixed' | null
+
+  const componentScopeInSubtree = (objectId: string): HierarchyComponentScope => {
+    let scope: HierarchyComponentScope = null
+    for (const id of [objectId, ...collectDescendants(objectId)]) {
+      const object = getObject(id)
+      if (!object || object.type === 'group') continue
+      const next: StageObjectScope = isSceneFixedObject(id) ? 'scene-fixed' : 'scene'
+      if (scope && scope !== next) return 'mixed'
+      scope = next
+    }
+    return scope
+  }
+
+  const rootGroupId = (groupId: string) => {
+    let rootId = groupId
+    let parentId = getObject(rootId)?.parentId || null
+    while (parentId && getObject(parentId)?.type === 'group') {
+      rootId = parentId
+      parentId = getObject(rootId)?.parentId || null
+    }
+    return rootId
+  }
+
+  const reconcileGroupScopes = () => {
+    const groups = Object.values(activeObjects.value).filter((object) => object.type === 'group')
+    const roots = [...new Set(groups.map((group) => rootGroupId(group.id)))]
+    roots.forEach((rootId) => {
+      const componentScope = componentScopeInSubtree(rootId)
+      if (componentScope === 'mixed') return
+      const target = objectCollectionForScope(componentScope === 'scene-fixed' ? 'scene-fixed' : 'scene')
+      const groupIds = [rootId, ...collectDescendants(rootId)]
+        .filter((id) => getObject(id)?.type === 'group')
+      groupIds.forEach((id) => {
+        const group = getObject(id)
+        if (!group || target[id]) return
+        delete state.liveState.sceneObjects[id]
+        delete state.persistentObjects[id]
+        target[id] = group
+      })
+    })
+  }
+
   const selectedRootIds = (objectIds: string[]) => {
     const candidates = new Set(objectIds.filter((id) => Boolean(getObject(id))))
     return [...candidates].filter((id) => {
@@ -720,6 +766,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       collectDescendants(id).forEach((childId) => removedIds.add(childId))
     })
     removedIds.forEach((id) => delete getObjectCollection(id)[id])
+    if (removedIds.size) reconcileGroupScopes()
     if (removedIds.size) {
       setSelectedObjectIds(selection.selectedIds.filter((id) => !removedIds.has(id)))
     }
@@ -782,6 +829,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       )
       pasted.objects.forEach((object) => { collection[object.id] = object })
       placeObjectAbove(collection[pasted.rootId], collection, sourceRoot?.id || null)
+      reconcileGroupScopes()
       setSelectedObjectIds([pasted.rootId], pasted.rootId)
       return collection[pasted.rootId]
     })
@@ -812,7 +860,10 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const parent = getObject(parentId)
     if (!parent || parent.type !== 'group') return false
     if (collectDescendants(objectId).includes(parentId)) return false
-    if (isSceneFixedObject(objectId) !== isSceneFixedObject(parentId)) return false
+    const objectScope = componentScopeInSubtree(objectId)
+    const parentScope = componentScopeInSubtree(rootGroupId(parentId))
+    if (objectScope === 'mixed' || parentScope === 'mixed') return false
+    if (objectScope && parentScope && objectScope !== parentScope) return false
     return true
   }
 
@@ -820,6 +871,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!canSetParent(objectId, parentId)) return false
     const object = getObject(objectId)!
     object.parentId = parentId
+    reconcileGroupScopes()
     return true
   })
 
@@ -836,6 +888,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     object.transform.rotation = transform.rotation
     object.transform.scaleX = Math.min(100, Math.max(0.01, transform.scaleX))
     object.transform.scaleY = Math.min(100, Math.max(0.01, transform.scaleY))
+    reconcileGroupScopes()
     return true
   })
 
@@ -1002,6 +1055,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.scenes = value.scenes
     state.persistentObjects = value.persistentObjects
     state.camera = value.camera
+    reconcileGroupScopes()
     setSelectedObjectIds(value.selectedObjectId ? [value.selectedObjectId] : [], value.selectedObjectId)
   }
 
@@ -1045,6 +1099,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     beginObjectEdit,
     commitObjectEdit,
     cancelObjectEdit,
+    canSetParent,
     setParent,
     reparentObject,
     moveOrder,

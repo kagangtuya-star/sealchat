@@ -304,16 +304,32 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 	case *theaterObjectCreatePayload:
 		return applyTheaterObjectCreate(tx, room, actorID, payload)
 	case *theaterObjectUpdatePayload:
-		return applyTheaterObjectUpdate(tx, room, actorID, payload)
+		if err := applyTheaterObjectUpdate(tx, room, actorID, payload); err != nil {
+			return err
+		}
+		if _, scopeChanged := payload.Fields["sceneId"]; scopeChanged {
+			return nil
+		}
+		return validateTheaterObjectHierarchy(tx, room.ID)
 	case *theaterObjectBatchUpdatePayload:
+		scopeChanged := false
 		for i := range payload.Updates {
+			if _, ok := payload.Updates[i].Fields["sceneId"]; ok {
+				scopeChanged = true
+			}
 			if err := applyTheaterObjectUpdate(tx, room, actorID, &payload.Updates[i]); err != nil {
 				return err
 			}
 		}
-		return nil
+		if scopeChanged {
+			return nil
+		}
+		return validateTheaterObjectHierarchy(tx, room.ID)
 	case *theaterObjectDeletePayload:
-		return applyTheaterObjectDelete(tx, room, payload)
+		if err := applyTheaterObjectDelete(tx, room, payload); err != nil {
+			return err
+		}
+		return validateTheaterObjectHierarchy(tx, room.ID)
 	case *theaterObjectTogglePayload:
 		return applyTheaterObjectToggle(tx, room, payload)
 	case *theaterCharacterBindPayload:
@@ -465,6 +481,11 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 			return theaterPayloadError("parent 必须是组")
 		}
 	}
+	if input.Kind == "group" {
+		input.Interactive = false
+		input.Editable = false
+		input.Actions = json.RawMessage(`[]`)
+	}
 	visible := true
 	if input.Visible != nil {
 		visible = *input.Visible
@@ -520,9 +541,36 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 	if object.Locked && !IsWorldAdmin(room.WorldID, actorID) && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) {
 		return newTheaterError(TheaterErrorPermissionDenied, "对象已锁定", 403, nil)
 	}
+	if object.Kind == "group" {
+		if interactive, ok := payload.Fields["interactive"].(bool); ok && interactive {
+			return theaterPayloadError("组不能设置为可交互")
+		}
+		if editable, ok := payload.Fields["editable"].(bool); ok && editable {
+			return theaterPayloadError("组不能开放成员编辑")
+		}
+		if actions, ok := payload.Fields["actions"].([]any); ok && len(actions) > 0 {
+			return theaterPayloadError("组不能设置点击动作")
+		}
+	}
+	desiredSceneID := object.SceneID
+	if value, ok := payload.Fields["sceneId"]; ok {
+		if object.Kind != "group" {
+			return theaterPayloadError("只有组可以自适应跨场景属性")
+		}
+		desiredSceneID = strings.TrimSpace(fmt.Sprint(value))
+		if desiredSceneID != "" {
+			if _, err := loadTheaterScene(tx, room.ID, desiredSceneID); err != nil {
+				return err
+			}
+		}
+	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
 	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "aspectRatioLocked": "aspect_ratio_locked", "interactive": "interactive", "editable": "editable"}
 	for key, value := range payload.Fields {
+		if key == "sceneId" {
+			updates["scene_id"] = desiredSceneID
+			continue
+		}
 		if key == "scale" {
 			updates["scale"] = value
 			updates["scale_x"] = value
@@ -548,7 +596,7 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 				if err != nil {
 					return err
 				}
-				if parent.SceneID != object.SceneID || theaterObjectHasAncestor(tx, room.ID, parentID, object.ID) {
+				if parent.SceneID != desiredSceneID || theaterObjectHasAncestor(tx, room.ID, parentID, object.ID) {
 					return theaterPayloadError("parent 范围或循环无效")
 				}
 				if parent.Kind != "group" {
@@ -599,6 +647,27 @@ func theaterObjectHasAncestor(tx *gorm.DB, roomID, startID, targetID string) boo
 	return false
 }
 
+func validateTheaterObjectHierarchy(tx *gorm.DB, roomID string) error {
+	var objects []model.TheaterObjectModel
+	if err := tx.Select("id", "parent_id", "kind", "scene_id").Where("room_id = ?", roomID).Find(&objects).Error; err != nil {
+		return err
+	}
+	byID := make(map[string]model.TheaterObjectModel, len(objects))
+	for _, object := range objects {
+		byID[object.ID] = object
+	}
+	for _, object := range objects {
+		if object.ParentID == "" {
+			continue
+		}
+		parent, ok := byID[object.ParentID]
+		if !ok || parent.Kind != "group" || parent.SceneID != object.SceneID {
+			return theaterPayloadError("组成员必须处于同一场景范围")
+		}
+	}
+	return nil
+}
+
 func applyTheaterObjectDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload *theaterObjectDeletePayload) error {
 	if _, err := loadTheaterObject(tx, room.ID, payload.ObjectID); err != nil {
 		return err
@@ -619,6 +688,9 @@ func applyTheaterObjectDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload
 			}
 			ids = append(ids, childIDs...)
 		}
+	}
+	if err := tx.Unscoped().Where("room_id = ? AND object_id IN ?", room.ID, ids).Delete(&model.TheaterGroupEditorStateModel{}).Error; err != nil {
+		return err
 	}
 	return tx.Unscoped().Where("room_id = ? AND id IN ?", room.ID, ids).Delete(&model.TheaterObjectModel{}).Error
 }

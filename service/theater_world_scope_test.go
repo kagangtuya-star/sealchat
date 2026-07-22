@@ -112,6 +112,163 @@ func worldTheaterRoom(t *testing.T, worldID, channelID string) *model.TheaterRoo
 	return room
 }
 
+func TestTheaterGroupEditorStatePersistsPerUser(t *testing.T) {
+	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID := "group-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.TheaterObjectModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: groupID},
+		RoomID:            room.ID, Kind: "group", Name: "Group", Scale: 1, ScaleX: 1, ScaleY: 1,
+		Visible: true, AspectRatioLocked: true, ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`,
+		SchemaVersion: model.TheaterSchemaVersion,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTheaterGroupEditorState(context.Background(), actorID, worldID, channelID, groupID, true); err != nil {
+		t.Fatal(err)
+	}
+	state, err := GetTheaterGroupEditorState(context.Background(), actorID, worldID, channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.CollapsedGroupIDs) != 1 || state.CollapsedGroupIDs[0] != groupID {
+		t.Fatalf("unexpected collapsed groups: %#v", state.CollapsedGroupIDs)
+	}
+	otherIDs, err := model.TheaterGroupEditorCollapsedIDs(room.ID, "other-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(otherIDs) != 0 {
+		t.Fatalf("editor state leaked between users: %#v", otherIDs)
+	}
+	if err := SetTheaterGroupEditorState(context.Background(), actorID, worldID, channelID, groupID, false); err != nil {
+		t.Fatal(err)
+	}
+	state, err = GetTheaterGroupEditorState(context.Background(), actorID, worldID, channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.CollapsedGroupIDs) != 0 {
+		t.Fatalf("expanded group remained persisted: %#v", state.CollapsedGroupIDs)
+	}
+}
+
+func TestCreateTheaterGroupClearsComponentCapabilities(t *testing.T) {
+	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scale := 1.0
+	input := theaterObjectInput{
+		ID: "group-" + utils.NewIDWithLength(8), Kind: "group", Name: "Group",
+		Width: 12, Height: 8, ScaleX: &scale, ScaleY: &scale, OrderKey: "1",
+		Interactive: true, Editable: true, Content: json.RawMessage(`{}`),
+		Actions:  json.RawMessage(`[{"id":"action-1","type":"chat.send","payload":{"content":"x"}}]`),
+		Metadata: json.RawMessage(`{}`),
+	}
+	if err := createTheaterObject(model.GetDB(), room, actorID, nil, &input); err != nil {
+		t.Fatal(err)
+	}
+	var stored model.TheaterObjectModel
+	if err := model.GetDB().Where("room_id = ? AND id = ?", room.ID, input.ID).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Interactive || stored.Editable || stored.ActionsJSON != "[]" {
+		t.Fatalf("group capabilities not cleared: interactive=%v editable=%v actions=%s", stored.Interactive, stored.Editable, stored.ActionsJSON)
+	}
+	if err := applyTheaterObjectUpdate(model.GetDB(), room, actorID, &theaterObjectUpdatePayload{
+		ObjectID: input.ID,
+		Fields:   map[string]any{"editable": true},
+	}); err == nil {
+		t.Fatal("group accepted delegated editing")
+	}
+}
+
+func TestTheaterGroupSceneScopeAdaptsWithoutChangingMembers(t *testing.T) {
+	actorID, worldID, channelID := initWorldTheaterServiceTest(t)
+	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sceneID := "scene-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.TheaterSceneModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: sceneID}, RoomID: room.ID,
+		Name: "Scene", StateJSON: `{}`, SchemaVersion: model.TheaterSchemaVersion,
+		CreatedBy: actorID, UpdatedBy: actorID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	groupID := "group-" + utils.NewIDWithLength(8)
+	memberID := "member-" + utils.NewIDWithLength(8)
+	objects := []model.TheaterObjectModel{
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: groupID}, RoomID: room.ID, SceneID: sceneID,
+			Kind: "group", Name: "Group", Scale: 1, ScaleX: 1, ScaleY: 1, Visible: true,
+			AspectRatioLocked: true, ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`,
+			SchemaVersion: model.TheaterSchemaVersion,
+		},
+		{
+			StringPKBaseModel: model.StringPKBaseModel{ID: memberID}, RoomID: room.ID,
+			Kind: "image", Name: "Fixed", Scale: 1, ScaleX: 1, ScaleY: 1, Visible: true,
+			AspectRatioLocked: true, ContentJSON: `{}`, ActionsJSON: `[]`, MetadataJSON: `{}`,
+			SchemaVersion: model.TheaterSchemaVersion,
+		},
+	}
+	if err := model.GetDB().Create(&objects).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := applyTheaterObjectUpdate(model.GetDB(), room, actorID, &theaterObjectUpdatePayload{
+		ObjectID: groupID, Fields: map[string]any{"sceneId": ""},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyTheaterObjectUpdate(model.GetDB(), room, actorID, &theaterObjectUpdatePayload{
+		ObjectID: memberID, Fields: map[string]any{"parentId": groupID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTheaterObjectHierarchy(model.GetDB(), room.ID); err != nil {
+		t.Fatal(err)
+	}
+	var storedGroup, storedMember model.TheaterObjectModel
+	if err := model.GetDB().Where("id = ?", groupID).First(&storedGroup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Where("id = ?", memberID).First(&storedMember).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedGroup.SceneID != "" || storedMember.SceneID != "" || storedMember.ParentID != groupID {
+		t.Fatalf("adaptive group scope mismatch: group=%q member=%q parent=%q", storedGroup.SceneID, storedMember.SceneID, storedMember.ParentID)
+	}
+	if err := applyDecodedTheaterMutation(model.GetDB(), room, actorID, TheaterMutationObjectBatchUpdate, &theaterObjectBatchUpdatePayload{
+		Updates: []theaterObjectUpdatePayload{
+			{ObjectID: memberID, Fields: map[string]any{"parentId": ""}},
+			{ObjectID: groupID, Fields: map[string]any{"sceneId": sceneID}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Where("id = ?", groupID).First(&storedGroup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Where("id = ?", memberID).First(&storedMember).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedGroup.SceneID != sceneID || storedMember.SceneID != "" || storedMember.ParentID != "" {
+		t.Fatalf("detached group scope mismatch: group=%q member=%q parent=%q", storedGroup.SceneID, storedMember.SceneID, storedMember.ParentID)
+	}
+	if err := applyTheaterObjectUpdate(model.GetDB(), room, actorID, &theaterObjectUpdatePayload{
+		ObjectID: memberID, Fields: map[string]any{"sceneId": sceneID},
+	}); err == nil {
+		t.Fatal("component scene scope was changed by group adaptation")
+	}
+}
+
 type worldTheaterChatSenderFunc func(context.Context, TheaterChatSendRequest) (*TheaterChatSendResult, error)
 
 func (function worldTheaterChatSenderFunc) SendTheaterChat(ctx context.Context, request TheaterChatSendRequest) (*TheaterChatSendResult, error) {

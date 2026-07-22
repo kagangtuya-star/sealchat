@@ -77,6 +77,8 @@ func BindWorldTheaterRoutes(router fiber.Router) {
 
 func bindTheaterRoutes(router fiber.Router, base string) {
 	router.Get(base, TheaterSnapshotGet)
+	router.Get(base+"/editor-state/groups", TheaterGroupEditorStateGet)
+	router.Put(base+"/editor-state/groups/:objectId", TheaterGroupEditorStatePut)
 	router.Post(base+"/mutations", TheaterMutationPost)
 	router.Get(base+"/events", TheaterEventsGet)
 	router.Post(base+"/actions/trigger", TheaterActionTrigger)

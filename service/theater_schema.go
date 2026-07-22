@@ -569,13 +569,24 @@ func validateObjectFields(fields map[string]any, characterOnly bool) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "visible": true, "locked": true, "aspectRatioLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
+	allowed := map[string]bool{"sceneId": true, "parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "visible": true, "locked": true, "aspectRatioLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
 	if characterOnly {
 		allowed = map[string]bool{"x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "content": true, "metadata": true}
 	}
 	for key := range fields {
 		if !allowed[key] {
 			return theaterPayloadError("object fields 包含禁止字段: " + key)
+		}
+	}
+	if value, ok := fields["sceneId"]; ok {
+		sceneID, valid := value.(string)
+		if !valid {
+			return theaterPayloadError("object sceneId 无效")
+		}
+		if sceneID = strings.TrimSpace(sceneID); sceneID != "" {
+			if err := validateTheaterID(sceneID, "sceneId"); err != nil {
+				return err
+			}
 		}
 	}
 	for _, name := range []string{"scale", "scaleX", "scaleY"} {

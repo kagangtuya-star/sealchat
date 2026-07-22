@@ -97,6 +97,16 @@ type TheaterObjectModel struct {
 
 func (*TheaterObjectModel) TableName() string { return "theater_objects" }
 
+type TheaterGroupEditorStateModel struct {
+	StringPKBaseModel
+	RoomID    string `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_group_editor_state,priority:1"`
+	UserID    string `json:"userId" gorm:"size:100;not null;uniqueIndex:udx_theater_group_editor_state,priority:2;index"`
+	ObjectID  string `json:"objectId" gorm:"size:100;not null;uniqueIndex:udx_theater_group_editor_state,priority:3;index"`
+	Collapsed bool   `json:"collapsed" gorm:"not null;default:true"`
+}
+
+func (*TheaterGroupEditorStateModel) TableName() string { return "theater_group_editor_states" }
+
 type TheaterResourceModel struct {
 	StringPKBaseModel
 	RoomID             string     `json:"roomId" gorm:"size:100;not null;index:idx_theater_resource_hash,priority:1"`
@@ -233,6 +243,7 @@ func theaterModels() []any {
 		&TheaterSnapshotModel{},
 		&TheaterSceneModel{},
 		&TheaterObjectModel{},
+		&TheaterGroupEditorStateModel{},
 		&TheaterResourceModel{},
 		&TheaterResourceVariantModel{},
 		&TheaterResourceJobModel{},
@@ -251,7 +262,10 @@ func autoMigrateTheaterModels(conn *gorm.DB) error {
 	if err := conn.Exec("UPDATE theater_rooms SET scope_type = ? WHERE scope_type IS NULL OR scope_type = ''", TheaterScopeChannel).Error; err != nil {
 		return err
 	}
-	return conn.Exec("UPDATE theater_objects SET scale_x = scale, scale_y = scale WHERE scale <> 1 AND scale_x = 1 AND scale_y = 1").Error
+	if err := conn.Exec("UPDATE theater_objects SET scale_x = scale, scale_y = scale WHERE scale <> 1 AND scale_x = 1 AND scale_y = 1").Error; err != nil {
+		return err
+	}
+	return conn.Exec("UPDATE theater_objects SET interactive = ?, editable = ?, actions_json = ? WHERE kind = ?", false, false, "[]", "group").Error
 }
 
 func TheaterRoomFindByScope(worldID, channelID string) (*TheaterRoomModel, error) {
@@ -324,6 +338,28 @@ func TheaterRoomListByWorld(worldID string) ([]TheaterRoomModel, error) {
 	var rooms []TheaterRoomModel
 	err := GetDB().Where("world_id = ? AND channel_id <> ?", worldID, "").Order("updated_at DESC, id ASC").Find(&rooms).Error
 	return rooms, err
+}
+
+func TheaterGroupEditorCollapsedIDs(roomID, userID string) ([]string, error) {
+	var objectIDs []string
+	err := GetDB().Model(&TheaterGroupEditorStateModel{}).
+		Joins("JOIN theater_objects ON theater_objects.id = theater_group_editor_states.object_id AND theater_objects.room_id = theater_group_editor_states.room_id").
+		Where("theater_group_editor_states.room_id = ? AND theater_group_editor_states.user_id = ? AND theater_group_editor_states.collapsed = ? AND theater_objects.kind = ?", roomID, userID, true, "group").
+		Order("theater_group_editor_states.object_id ASC").
+		Pluck("theater_group_editor_states.object_id", &objectIDs).Error
+	return objectIDs, err
+}
+
+func TheaterGroupEditorStateSet(roomID, userID, objectID string, collapsed bool) error {
+	if !collapsed {
+		return GetDB().Unscoped().Where("room_id = ? AND user_id = ? AND object_id = ?", roomID, userID, objectID).
+			Delete(&TheaterGroupEditorStateModel{}).Error
+	}
+	state := TheaterGroupEditorStateModel{RoomID: roomID, UserID: userID, ObjectID: objectID, Collapsed: true}
+	return GetDB().Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "room_id"}, {Name: "user_id"}, {Name: "object_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"collapsed", "updated_at"}),
+	}).Create(&state).Error
 }
 
 func TheaterMutationFindByID(roomID, mutationID string) (*TheaterMutationModel, error) {

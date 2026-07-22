@@ -85,6 +85,31 @@ func TheaterSnapshotGet(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "roomId": result.RoomID, "worldId": result.WorldID, "channelId": result.ChannelID, "revision": result.Revision, "schemaVersion": result.SchemaVersion, "checksum": result.Checksum, "snapshot": result.Snapshot, "limits": result.Limits, "permissions": result.Permissions})
 }
 
+func TheaterGroupEditorStateGet(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	state, err := service.GetTheaterGroupEditorState(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "state": state})
+}
+
+func TheaterGroupEditorStatePut(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Collapsed bool `json:"collapsed"`
+	}
+	if err := decodeTheaterBody(c, &body, 4<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	if err := service.SetTheaterGroupEditorState(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("objectId"), body.Collapsed); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "objectId": c.Params("objectId"), "collapsed": body.Collapsed})
+}
+
 func theaterSnapshotETag(revision int64, checksum string, permissions []string) string {
 	normalizedPermissions := append([]string(nil), permissions...)
 	sort.Strings(normalizedPermissions)

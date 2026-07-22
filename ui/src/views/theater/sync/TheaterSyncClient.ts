@@ -214,6 +214,7 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
   if (!kind) return null
   const drawing = kind === 'drawing' ? drawingRef(content.drawing) : undefined
   if (kind === 'drawing' && !drawing) return null
+  const structuralGroup = kind === 'group'
   return {
     id: value.id,
     parentId: typeof value.parentId === 'string' && value.parentId ? value.parentId : null,
@@ -233,8 +234,8 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
     visible: value.visible !== false,
     locked: value.locked === true,
     aspectRatioLocked: value.aspectRatioLocked !== false,
-    interactive: value.interactive !== false,
-    editable: value.editable === true,
+    interactive: structuralGroup ? false : value.interactive !== false,
+    editable: structuralGroup ? false : value.editable === true,
     fill: typeof content.fill === 'string' ? content.fill : '#60a5fa',
     drawing,
     ...(typeof content.text === 'string' ? { text: content.text } : {}),
@@ -242,7 +243,7 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
     content,
     ownerUserId: typeof value.ownerUserId === 'string' ? value.ownerUserId : null,
     characterIdentityId: typeof value.characterIdentityId === 'string' ? value.characterIdentityId : null,
-    actions: Array.isArray(value.actions) ? value.actions as StageObject['actions'] : [],
+    actions: structuralGroup ? [] : Array.isArray(value.actions) ? value.actions as StageObject['actions'] : [],
     metadata: asObject(value.metadata),
   }
 }
@@ -265,8 +266,8 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   visible: object.visible,
   locked: object.locked,
   aspectRatioLocked: object.aspectRatioLocked,
-  interactive: object.interactive,
-  editable: object.editable,
+  interactive: object.type === 'group' ? false : object.interactive,
+  editable: object.type === 'group' ? false : object.editable,
   ownerUserId: object.ownerUserId || null,
   characterIdentityId: object.characterIdentityId || null,
   content: {
@@ -276,7 +277,7 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
     ...(object.image === undefined ? {} : { image: object.image }),
     ...(object.drawing === undefined ? {} : { drawing: object.drawing }),
   },
-  actions: clone(object.actions),
+  actions: object.type === 'group' ? [] : clone(object.actions),
   metadata: clone(object.metadata),
 })
 
@@ -350,6 +351,7 @@ const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState =
 
 const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnapshot): JsonObject => {
   const values: JsonObject = {
+    sceneId: object.sceneId || '',
     parentId: object.parentId || '',
     name: object.name,
     x: object.x,
@@ -371,6 +373,7 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     metadata: object.metadata,
   }
   const previousValues: JsonObject = {
+    sceneId: previous.sceneId || '',
     parentId: previous.parentId || '',
     name: previous.name,
     x: previous.x,
@@ -475,7 +478,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
   }))
 
   const objectUpdates: { objectId: string, fields: JsonObject }[] = []
-  Object.values(afterObjects).forEach((object) => {
+  sortObjectsByParent(Object.values(afterObjects)).forEach((object) => {
     const previous = beforeObjects[object.id]
     if (!previous) return
     const fields = objectFields(object, previous)
