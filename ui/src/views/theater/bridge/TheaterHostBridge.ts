@@ -45,7 +45,7 @@ interface TheaterHostBridgeOptions {
   onChatMessageCreated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
-  triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean>
+  triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean | StageAction>
   onSceneApplied?: (sceneId: string) => void
 }
 
@@ -369,7 +369,14 @@ export class TheaterHostBridge {
       return
     }
     try {
-      if (this.options.triggerStageAction && await this.options.triggerStageAction(payload)) return
+      if (this.options.triggerStageAction) {
+        const handled = await this.options.triggerStageAction(payload)
+        if (handled === true) return
+        if (handled) {
+          await this.executeStageAction(handled)
+          return
+        }
+      }
       await this.executeStageAction(action)
     } catch (error) {
       this.debug('stage action failed', error)

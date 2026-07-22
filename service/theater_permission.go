@@ -122,6 +122,24 @@ func CanAdministerTheater(actorID, worldID, channelID string) bool {
 	return err == nil
 }
 
+func CanReceiveFullTheaterState(actorID, worldID, channelID string) bool {
+	for _, permission := range []string{TheaterPermissionObjectEdit, TheaterPermissionSceneSwitch, TheaterPermissionAdminRestore} {
+		if _, _, err := requireTheaterPermission(actorID, worldID, channelID, permission); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func theaterPermissionsAllowFullState(permissions []string) bool {
+	for _, permission := range permissions {
+		if permission == TheaterPermissionObjectEdit || permission == TheaterPermissionSceneSwitch || permission == TheaterPermissionAdminRestore {
+			return true
+		}
+	}
+	return false
+}
+
 func CanSwitchTheaterScene(actorID, worldID, channelID string) bool {
 	_, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionSceneSwitch)
 	return err == nil

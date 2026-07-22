@@ -261,8 +261,8 @@ const startTheaterBridge = () => {
       if (!theaterSync) return false
       try {
         const handled = await theaterSync.triggerAction(payload)
-        if (handled && payload.action.type === 'scene.apply') {
-          await sendSceneDialogue(payload.action.payload.sceneId)
+        if (handled === true && payload.action.type === 'scene.apply') {
+          await sendSceneDialogue(stageStore.state.activeSceneId)
         }
         return handled
       } catch (error) {

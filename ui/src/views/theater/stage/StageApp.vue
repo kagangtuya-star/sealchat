@@ -583,6 +583,7 @@ const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
 const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
 const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
 const canDeleteResources = computed(() => hasPermission('stage.resource.delete'))
+const canManageResources = computed(() => canUploadResources.value || canDeleteResources.value)
 const referencedTheaterAudioAssetIds = computed(() => [...new Set(Object.values(props.store.activeObjects.value)
   .filter(isTheaterEffectObject)
   .map((object) => theaterEffectConfigFromObject(object).audio?.assetId)
@@ -599,6 +600,15 @@ const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   && object.interactive
   && ['text', 'image', 'button'].includes(object.type),
 )
+
+type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
+
+const canOpenPanel = (id: PanelId) => {
+  if (id === 'scene') return canEditAllObjects.value || canSwitchScene.value
+  if (id === 'inspector') return canEditAllObjects.value || canEditDelegatedObjects.value
+  if (id === 'asset') return canManageResources.value
+  return canEditAllObjects.value
+}
 
 const confirmDelete = (title: string, content: string, onPositiveClick: () => void) => {
   let destroyDialog = () => {}
@@ -824,7 +834,6 @@ const updateDrawingStyle = (style: StageDrawingStyle) => {
   if (isDrawingTool(activeCanvasTool.value)) drawingStyleMemory.set(activeCanvasTool.value, { ...style })
 }
 
-type PanelId = 'scene' | 'inspector' | 'layer' | 'effect' | 'asset'
 interface PanelLayout {
   x: number
   y: number
@@ -910,6 +919,7 @@ const panelStyle = (id: PanelId) => {
 }
 
 const togglePanel = (id: PanelId) => {
+  if (!canOpenPanel(id)) return
   if (id === 'scene') scenePanelOpen.value = !scenePanelOpen.value
   else if (id === 'inspector') inspectorPanelOpen.value = !inspectorPanelOpen.value
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
@@ -1237,7 +1247,7 @@ let foregroundSlot: SurfaceSlot | null = null
 const selectedObject = computed(() => {
   const id = props.store.state.selectedObjectId
   const object = id ? props.store.activeObjects.value[id] || null : null
-  return isTheaterEffectObject(object) ? null : object
+  return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
 const selectedEffectObject = computed(() => {
   const id = props.store.state.selectedObjectId
@@ -1501,6 +1511,17 @@ const canvasSelectionTarget = (objectId: string) => {
     || (selectedId && objectIsDescendantOf(selectedId, outerGroupId))
   ) return objectId
   return outerGroupId
+}
+
+const editableCanvasSelectionTarget = (objectId: string) => {
+  const preferredId = canvasSelectionTarget(objectId)
+  if (canEditObject(getObject(preferredId))) return preferredId
+  let target: StageObject | undefined = getObject(objectId)
+  while (target) {
+    if (canEditObject(target)) return target.id
+    target = target.parentId ? getObject(target.parentId) : undefined
+  }
+  return null
 }
 
 const addAction = (type: StageAction['type']) => {
@@ -3072,8 +3093,8 @@ const createObjectNode = (object: StageObject) => {
       event.cancelBubble = false
       return
     }
-    if (!canEditObject(current)) return
-    const selectionId = canvasSelectionTarget(object.id)
+    const selectionId = editableCanvasSelectionTarget(object.id)
+    if (!selectionId) return
     event.cancelBubble = selectionId === object.id
     const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
     if (
@@ -3085,9 +3106,10 @@ const createObjectNode = (object: StageObject) => {
   })
   wrapper.on('dblclick dbltap', (event) => {
     if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
-    if (!canEditObject(getObject(object.id))) return
+    const selectionId = editableCanvasSelectionTarget(object.id)
+    if (!selectionId) return
     event.cancelBubble = true
-    selectObject(object.id)
+    selectObject(selectionId)
   })
   wrapper.on('click tap', (event) => {
     if ('button' in event.evt && event.evt.button !== 0) return
@@ -3097,10 +3119,11 @@ const createObjectNode = (object: StageObject) => {
   })
   wrapper.on('contextmenu', (event) => {
     if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
-    if (!canEditObject(getObject(object.id))) return
+    const selectionId = editableCanvasSelectionTarget(object.id)
+    if (!selectionId) return
     event.evt.preventDefault()
     event.cancelBubble = true
-    openObjectInspector(object.id)
+    openObjectInspector(selectionId)
   })
   wrapper.on('pointerenter pointermove', () => {
     if (!quickDeleteActive.value || !stage || !quickDeleteOutline) return
@@ -3334,7 +3357,7 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
-    listening: (!viewToolActive.value && canEditObject(object)) || canInteractObject(object),
+    listening: (!viewToolActive.value && Boolean(editableCanvasSelectionTarget(object.id))) || canInteractObject(object),
   })
   if (object.type === 'drawing') {
     return
@@ -3998,7 +4021,7 @@ onMounted(() => {
   window.addEventListener('pointerup', stopPanelDrag)
   window.addEventListener('pointercancel', stopPanelDrag)
   window.addEventListener('keydown', handleStageShortcut)
-  void fetchTheaterAudioAssets()
+  if (canManageResources.value) void fetchTheaterAudioAssets()
 })
 
 watch(() => props.store.state.activeSceneId, (sceneId) => beginSceneMediaBatch(sceneId), { flush: 'sync' })
@@ -4026,10 +4049,22 @@ watch(viewToolActive, () => {
   updateTransformer()
 })
 watch(() => [props.syncReady, ...props.permissions], () => {
-  const object = selectedObject.value
+  const selectedId = props.store.state.selectedObjectId
+  const object = selectedId ? props.store.activeObjects.value[selectedId] : null
   if (object && !canEditObject(object)) props.store.clearSelection()
   if (!canEditAllObjects.value && props.store.selection.bulkMode) props.store.setBulkSelectionMode(false)
   if (!canEditAllObjects.value) quickDeleteActive.value = false
+  if (!canOpenPanel('scene')) scenePanelOpen.value = false
+  if (!canOpenPanel('inspector')) inspectorPanelOpen.value = false
+  if (!canOpenPanel('layer')) layerPanelOpen.value = false
+  if (!canOpenPanel('effect')) effectPanelOpen.value = false
+  if (!canOpenPanel('asset')) {
+    assetPanelOpen.value = false
+    theaterAudioAssets.value = []
+    theaterAudioQuota.value = null
+  } else {
+    void fetchTheaterAudioAssets()
+  }
   syncObjects()
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
@@ -4045,7 +4080,9 @@ watch([scenePanelOpen, inspectorPanelOpen, layerPanelOpen, effectPanelOpen, asse
   })
   observeOpenPanels()
 })
-watch(() => [props.worldId, props.channelId], () => { void fetchTheaterAudioAssets() })
+watch(() => [props.worldId, props.channelId], () => {
+  if (canManageResources.value) void fetchTheaterAudioAssets()
+})
 watch(theaterAudioMasterVolume, (volume) => {
   const normalized = Math.max(0, Math.min(1, volume))
   try {
@@ -4150,7 +4187,7 @@ onBeforeUnmount(() => {
           </template>
           {{ inspectorPanelOpen ? '隐藏组件编辑面板' : '显示组件编辑面板' }}
         </n-tooltip>
-        <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
+        <n-tooltip v-if="canEditAllObjects" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': layerPanelOpen }" aria-label="切换图层与属性面板" @click="togglePanel('layer')">
               <template #icon><n-icon><Stack2 /></n-icon></template>
@@ -4158,7 +4195,7 @@ onBeforeUnmount(() => {
           </template>
           图层与属性
         </n-tooltip>
-        <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
+        <n-tooltip v-if="canEditAllObjects" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': effectPanelOpen }" aria-label="切换特效层面板" @click="togglePanel('effect')">
               <template #icon><n-icon><Stars /></n-icon></template>
@@ -4166,7 +4203,7 @@ onBeforeUnmount(() => {
           </template>
           特效层
         </n-tooltip>
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="canManageResources" trigger="hover">
           <template #trigger>
             <n-button :class="{ 'is-active': assetPanelOpen }" aria-label="切换素材管理器" @click="togglePanel('asset')">
               <template #icon><n-icon><Archive /></n-icon></template>
@@ -4320,7 +4357,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <aside v-if="scenePanelOpen" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')">
+      <aside v-if="scenePanelOpen && canOpenPanel('scene')" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('scene', $event)">
           <span>场景</span>
           <div class="theater-panel-heading__actions">
@@ -4395,7 +4432,7 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <aside v-if="inspectorPanelOpen" class="theater-floating-panel theater-object-inspector" data-panel-id="inspector" :style="panelStyle('inspector')">
+      <aside v-if="inspectorPanelOpen && canOpenPanel('inspector')" class="theater-floating-panel theater-object-inspector" data-panel-id="inspector" :style="panelStyle('inspector')">
         <template v-if="isBatchSelection">
           <div class="theater-panel-heading" @pointerdown="startPanelDrag('inspector', $event)">
             <span>批量编辑</span>
@@ -4611,7 +4648,7 @@ onBeforeUnmount(() => {
         </template>
       </aside>
 
-      <aside v-if="layerPanelOpen" class="theater-floating-panel theater-layer-panel" data-panel-id="layer" :style="panelStyle('layer')">
+      <aside v-if="layerPanelOpen && canOpenPanel('layer')" class="theater-floating-panel theater-layer-panel" data-panel-id="layer" :style="panelStyle('layer')">
         <div class="theater-panel-heading theater-layer-panel__top-heading" @pointerdown="startPanelDrag('layer', $event)">
           <span>图层与属性</span>
           <div class="theater-panel-heading__actions">
@@ -4786,7 +4823,7 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <aside v-if="effectPanelOpen" class="theater-floating-panel theater-effect-panel" data-panel-id="effect" :style="panelStyle('effect')">
+      <aside v-if="effectPanelOpen && canOpenPanel('effect')" class="theater-floating-panel theater-effect-panel" data-panel-id="effect" :style="panelStyle('effect')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('effect', $event)">
           <span>特效层</span>
           <div class="theater-panel-heading__actions">
@@ -4810,7 +4847,7 @@ onBeforeUnmount(() => {
         />
       </aside>
 
-      <aside v-if="assetPanelOpen" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')">
+      <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('asset', $event)">
           <span>素材管理器</span>
           <div class="theater-panel-heading__actions">

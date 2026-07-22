@@ -5,6 +5,7 @@ import { chatEvent } from '@/stores/chat'
 import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
 import { isSafeStageImageUrl, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
+import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
 type JsonObject = Record<string, unknown>
 
@@ -739,7 +740,14 @@ export class TheaterSyncClient {
     const result = response.data?.result
     if (result?.mutation?.revision !== undefined) this.revision = finite(result.mutation.revision, this.revision)
     if (result?.kind === 'mutation') await this.reload(true)
-    return result?.kind !== 'local'
+    if (result?.kind === 'local') {
+      const action = stageActionSchema.safeParse({
+        ...payload.action,
+        payload: result.descriptor,
+      })
+      return action.success ? action.data : true
+    }
+    return true
   }
 
   private postAction(payload: StageActionTriggeredPayload) {

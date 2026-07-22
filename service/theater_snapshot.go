@@ -37,6 +37,9 @@ func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnaps
 	if err != nil {
 		return nil, err
 	}
+	if !theaterPermissionsAllowFullState(permissions) {
+		snapshot, checksum = projectTheaterSnapshotForMember(snapshot)
+	}
 	result := &TheaterSnapshotResult{
 		RoomID:        room.ID,
 		WorldID:       worldID,
@@ -60,6 +63,116 @@ func getTheaterSnapshot(actorID, worldID, channelID string, options TheaterSnaps
 		RecordTheaterMetric("theater_snapshot_bytes", nil, float64(len(raw)))
 	}
 	return result, nil
+}
+
+func projectTheaterSnapshotForMember(snapshot TheaterSharedSnapshot) (TheaterSharedSnapshot, string) {
+	projected := TheaterSharedSnapshot{
+		ActiveSceneID:     snapshot.ActiveSceneID,
+		LiveState:         snapshot.LiveState,
+		Scenes:            map[string]TheaterSceneSnapshot{},
+		PersistentObjects: projectTheaterObjectsForMember(snapshot.PersistentObjects),
+		Characters:        map[string]TheaterObjectSnapshot{},
+		Resources:         map[string]TheaterResourcePublic{},
+	}
+	if snapshot.ActiveSceneID != nil {
+		if scene, ok := snapshot.Scenes[*snapshot.ActiveSceneID]; ok {
+			scene.SwitchText = ""
+			scene.Objects = projectTheaterObjectsForMember(scene.Objects)
+			projected.Scenes[scene.ID] = scene
+		}
+	}
+	referencedResources := map[string]int64{}
+	if raw, err := json.Marshal(projected); err == nil {
+		countResourceIDsInJSON(string(raw), referencedResources)
+	}
+	for resourceID := range referencedResources {
+		if resource, ok := snapshot.Resources[resourceID]; ok {
+			projected.Resources[resourceID] = resource
+		}
+	}
+	_, checksum, err := canonicalTheaterJSON(projected)
+	if err != nil {
+		return projected, ""
+	}
+	return projected, checksum
+}
+
+func projectTheaterObjectsForMember(objects map[string]TheaterObjectSnapshot) map[string]TheaterObjectSnapshot {
+	result := map[string]TheaterObjectSnapshot{}
+	visibleMemo := map[string]bool{}
+	visiting := map[string]bool{}
+	var effectivelyVisible func(string) bool
+	effectivelyVisible = func(objectID string) bool {
+		if visible, ok := visibleMemo[objectID]; ok {
+			return visible
+		}
+		object, ok := objects[objectID]
+		if !ok || !object.Visible || visiting[objectID] {
+			visibleMemo[objectID] = false
+			return false
+		}
+		visiting[objectID] = true
+		visible := true
+		if object.ParentID != nil && strings.TrimSpace(*object.ParentID) != "" {
+			visible = effectivelyVisible(strings.TrimSpace(*object.ParentID))
+		}
+		delete(visiting, objectID)
+		visibleMemo[objectID] = visible
+		return visible
+	}
+	include := map[string]bool{}
+	for objectID, object := range objects {
+		if effectivelyVisible(objectID) || (object.Editable && !object.Locked) {
+			include[objectID] = true
+		}
+	}
+	for objectID := range include {
+		parentID := objects[objectID].ParentID
+		for parentID != nil && strings.TrimSpace(*parentID) != "" {
+			id := strings.TrimSpace(*parentID)
+			parent, ok := objects[id]
+			if !ok || include[id] {
+				break
+			}
+			include[id] = true
+			parentID = parent.ParentID
+		}
+	}
+	for objectID := range include {
+		object := objects[objectID]
+		if !object.Editable || object.Locked {
+			if object.Kind == "group" {
+				object.Name = "组件组"
+			} else {
+				object.Name = "组件"
+			}
+		}
+		object.Actions = redactTheaterActionsForMember(object.Actions)
+		result[objectID] = object
+	}
+	return result
+}
+
+func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {
+	var actions []map[string]any
+	if json.Unmarshal(raw, &actions) != nil {
+		return json.RawMessage(`[]`)
+	}
+	for _, action := range actions {
+		switch action["type"] {
+		case "chat.send", "chat.insert":
+			action["payload"] = map[string]any{"content": "redacted"}
+		case TheaterMutationSceneApply:
+			action["payload"] = map[string]any{"sceneId": "redacted"}
+		case TheaterMutationObjectToggle:
+			action["payload"] = map[string]any{"objectId": "redacted"}
+		}
+	}
+	result, err := json.Marshal(actions)
+	if err != nil {
+		return json.RawMessage(`[]`)
+	}
+	return result
 }
 
 func RestoreTheaterSnapshot(ctx context.Context, actorID string, command TheaterRestoreCommand, meta TheaterRequestMeta) (*TheaterMutationResult, error) {
@@ -489,17 +602,25 @@ func ListTheaterEvents(_ context.Context, actorID, worldID, channelID string, af
 	if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionView); err != nil {
 		return nil, err
 	}
-	return listTheaterEvents(actorID, worldID, channelID, afterRevision, limit, CanAdministerTheater(actorID, worldID, channelID))
+	return listTheaterEvents(
+		actorID,
+		worldID,
+		channelID,
+		afterRevision,
+		limit,
+		CanAdministerTheater(actorID, worldID, channelID),
+		CanReceiveFullTheaterState(actorID, worldID, channelID),
+	)
 }
 
 func ListTheaterEventsForObserver(_ context.Context, observerWorldID, channelID string, afterRevision int64, limit int) (*TheaterEventsResult, error) {
 	if err := canObserverAccessTheaterScope(channelID, observerWorldID); err != nil {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 旁观权限", 403, nil)
 	}
-	return listTheaterEvents("observer", observerWorldID, channelID, afterRevision, limit, false)
+	return listTheaterEvents("observer", observerWorldID, channelID, afterRevision, limit, false, false)
 }
 
-func listTheaterEvents(actorID, worldID, channelID string, afterRevision int64, limit int, allowManagement bool) (*TheaterEventsResult, error) {
+func listTheaterEvents(actorID, worldID, channelID string, afterRevision int64, limit int, allowManagement, allowDetails bool) (*TheaterEventsResult, error) {
 	room, err := model.TheaterRoomCreateIfMissing(worldID, channelID, actorID)
 	if err != nil {
 		return nil, err
@@ -523,7 +644,13 @@ func listTheaterEvents(actorID, worldID, channelID string, afterRevision int64, 
 		if item.RevisionAfter == nil || *item.RevisionAfter != result.ToRevision+1 {
 			return nil, newTheaterError(TheaterErrorHistoryExpired, "Theater event history 不连续", 410, nil)
 		}
-		result.Events = append(result.Events, TheaterEvent{MutationID: item.MutationID, RevisionBefore: item.RevisionBefore, Revision: *item.RevisionAfter, Type: item.Type, Payload: normalizedRawJSON(item.PayloadJSON, `{}`), CreatedAt: item.CreatedAt})
+		eventType := item.Type
+		payload := normalizedRawJSON(item.PayloadJSON, `{}`)
+		if !allowDetails {
+			eventType = "stage.changed"
+			payload = json.RawMessage(`{}`)
+		}
+		result.Events = append(result.Events, TheaterEvent{MutationID: item.MutationID, RevisionBefore: item.RevisionBefore, Revision: *item.RevisionAfter, Type: eventType, Payload: payload, CreatedAt: item.CreatedAt})
 		result.ToRevision = *item.RevisionAfter
 	}
 	return result, nil

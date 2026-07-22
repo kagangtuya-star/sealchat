@@ -57,8 +57,8 @@ func hasAudioTag(asset *model.AudioAsset, target string) bool {
 }
 
 func ListTheaterAudioAssets(actorID, worldID, channelID string) (*TheaterAudioAssetListResult, error) {
-	if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionView); err != nil {
-		return nil, err
+	if !CanManageTheaterResources(actorID, worldID, channelID) {
+		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 素材管理权限", 403, nil)
 	}
 	worldID = strings.TrimSpace(worldID)
 	items, _, err := AudioListAssets(AudioAssetFilters{

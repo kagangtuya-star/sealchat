@@ -265,6 +265,10 @@ func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, muta
 				return true
 			}
 			gap := theaterSnapshotEventForConnection(info, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, model.TheaterSchemaVersion, result.Checksum, "gap")
+			if !service.CanReceiveFullTheaterState(userID, mutation.WorldID, mutation.ChannelID) {
+				queue.Enqueue(theaterSnapshotEventForConnection(info, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, model.TheaterSchemaVersion, result.Checksum, "mutation"), gap)
+				return true
+			}
 			if managementMutation && !service.CanAdministerTheater(userID, mutation.WorldID, mutation.ChannelID) {
 				queue.Enqueue(theaterSnapshotEventForConnection(info, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, model.TheaterSchemaVersion, result.Checksum, "admin-replace"), gap)
 				return true

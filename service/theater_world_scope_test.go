@@ -353,3 +353,85 @@ func TestMergeTheaterRoomsToWorld(t *testing.T) {
 		t.Fatalf("idempotent room = %#v, %v", again, err)
 	}
 }
+
+func TestProjectTheaterSnapshotForMemberHidesSpoilers(t *testing.T) {
+	activeSceneID := "scene-active"
+	hiddenSceneID := "scene-hidden"
+	visible := TheaterObjectSnapshot{
+		ID: "visible", Kind: "button", Name: "幕后线索按钮", Visible: true, Interactive: true,
+		Content: json.RawMessage(`{"image":{"resourceId":"resource-visible"}}`),
+		Actions: json.RawMessage(`[
+			{"id":"send","type":"chat.send","payload":{"content":"隐藏台词"}},
+			{"id":"jump","type":"scene.apply","payload":{"sceneId":"scene-hidden"}}
+		]`),
+		Metadata: json.RawMessage(`{}`),
+	}
+	hidden := TheaterObjectSnapshot{
+		ID: "hidden", Kind: "button", Name: "尚未公开的线索", Visible: false,
+		Content: json.RawMessage(`{}`), Actions: json.RawMessage(`[]`), Metadata: json.RawMessage(`{}`),
+	}
+	delegated := TheaterObjectSnapshot{
+		ID: "delegated", Kind: "text", Name: "授权编辑组件", Visible: false, Editable: true,
+		Content: json.RawMessage(`{"text":"可编辑"}`), Actions: json.RawMessage(`[]`), Metadata: json.RawMessage(`{}`),
+	}
+	snapshot := TheaterSharedSnapshot{
+		ActiveSceneID: &activeSceneID,
+		LiveState:     json.RawMessage(`{}`),
+		Scenes: map[string]TheaterSceneSnapshot{
+			activeSceneID: {
+				ID: activeSceneID, Name: "当前场景", SwitchText: "切换台词", State: json.RawMessage(`{}`),
+				Objects: map[string]TheaterObjectSnapshot{visible.ID: visible, hidden.ID: hidden, delegated.ID: delegated},
+			},
+			hiddenSceneID: {
+				ID: hiddenSceneID, Name: "最终真相", State: json.RawMessage(`{}`), Objects: map[string]TheaterObjectSnapshot{},
+			},
+		},
+		PersistentObjects: map[string]TheaterObjectSnapshot{},
+		Characters:        map[string]TheaterObjectSnapshot{"character-secret": hidden},
+		Resources: map[string]TheaterResourcePublic{
+			"resource-visible": {},
+			"resource-hidden":  {},
+		},
+	}
+
+	projected, checksum := projectTheaterSnapshotForMember(snapshot)
+	if checksum == "" {
+		t.Fatal("projected snapshot checksum must not be empty")
+	}
+	if len(projected.Scenes) != 1 {
+		t.Fatalf("member must receive only active scene, got %d", len(projected.Scenes))
+	}
+	scene := projected.Scenes[activeSceneID]
+	if scene.SwitchText != "" {
+		t.Fatal("member snapshot must hide scene switch text")
+	}
+	if _, ok := scene.Objects[hidden.ID]; ok {
+		t.Fatal("hidden uneditable object leaked")
+	}
+	if scene.Objects[visible.ID].Name != "组件" {
+		t.Fatalf("visible uneditable object name leaked: %q", scene.Objects[visible.ID].Name)
+	}
+	if scene.Objects[delegated.ID].Name != delegated.Name {
+		t.Fatal("delegated editable object name must remain available")
+	}
+	if len(projected.Characters) != 0 {
+		t.Fatal("character management snapshot leaked")
+	}
+	if _, ok := projected.Resources["resource-visible"]; !ok {
+		t.Fatal("referenced resource missing")
+	}
+	if _, ok := projected.Resources["resource-hidden"]; ok {
+		t.Fatal("unreferenced resource leaked")
+	}
+
+	var actions []map[string]any
+	if err := json.Unmarshal(scene.Objects[visible.ID].Actions, &actions); err != nil {
+		t.Fatal(err)
+	}
+	if actions[0]["payload"].(map[string]any)["content"] != "redacted" {
+		t.Fatal("chat action content leaked")
+	}
+	if actions[1]["payload"].(map[string]any)["sceneId"] != "redacted" {
+		t.Fatal("scene action target leaked")
+	}
+}
