@@ -18,6 +18,7 @@ const options: DropdownOption[] = [
 const addSelected = (key: string | number) => {
   if (key === 'text' || key === 'image') emit('add', key)
 }
+const theaterSecondaryMenuProps = () => ({ class: 'theater-secondary-surface' })
 </script>
 
 <template>
@@ -36,7 +37,7 @@ const addSelected = (key: string | number) => {
       添加场景固定组件
     </n-tooltip>
 
-    <n-dropdown trigger="click" :options="options" @select="addSelected">
+    <n-dropdown trigger="click" :options="options" :menu-props="theaterSecondaryMenuProps" @select="addSelected">
       <n-button
         class="theater-scene-fixed-trigger theater-scene-fixed-trigger--menu"
         size="small"

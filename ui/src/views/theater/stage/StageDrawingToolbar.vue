@@ -65,6 +65,12 @@ const dashOptions = [
 ]
 const colorPresets = ['#f8fafc', '#ef4444', '#f59e0b', '#22c55e', '#38bdf8', '#8b5cf6', '#ec4899', '#111827']
 const paletteOpen = ref(false)
+const theaterRawPopoverThemeOverrides = {
+  color: 'transparent',
+  padding: '0',
+  boxShadow: 'none',
+}
+const theaterSecondaryMenuProps = { class: 'theater-secondary-surface' }
 
 const updateStyle = (patch: Partial<StageDrawingStyle>) => emit('update:style', { ...props.style, ...patch })
 const toggleFill = (checked: boolean) => updateStyle({ fill: checked ? props.style.fill || props.style.stroke : null })
@@ -98,6 +104,7 @@ const handlePrimaryClick = () => {
       :show-arrow="false"
       :disabled="disabled"
       raw
+      :theme-overrides="theaterRawPopoverThemeOverrides"
       @update:show="paletteOpen = $event"
     >
       <template #trigger>
@@ -207,6 +214,7 @@ const handlePrimaryClick = () => {
             :value="style.dash"
             :options="dashOptions"
             size="small"
+            :menu-props="theaterSecondaryMenuProps"
             @update:value="updateStyle({ dash: $event as StageDrawingDash })"
           />
         </label>

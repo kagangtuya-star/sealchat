@@ -488,6 +488,7 @@ const theaterPopoverThemeOverrides = {
   color: 'color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent)',
   boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
 }
+const theaterSecondaryMenuProps = () => ({ class: 'theater-secondary-surface' })
 
 const revealToolbarColors = () => { toolbarColorsVisible.value = true }
 const hideToolbarColors = () => { toolbarColorsVisible.value = false }
@@ -4115,7 +4116,7 @@ onBeforeUnmount(() => {
         </template>
         退出小剧场
       </n-tooltip>
-      <n-dropdown v-if="canManagePackages" trigger="click" :options="packageMenuOptions" @select="handlePackageMenuSelect">
+      <n-dropdown v-if="canManagePackages" trigger="click" :options="packageMenuOptions" :menu-props="theaterSecondaryMenuProps" @select="handlePackageMenuSelect">
         <button class="theater-stage-title is-actionable" type="button" :title="`${store.activeScene.value.name} · 导入/导出`" :aria-busy="packageBusy">
           {{ store.activeScene.value.name }}
         </button>
@@ -4337,6 +4338,8 @@ onBeforeUnmount(() => {
             trigger="manual"
             placement="right-start"
             :show-arrow="false"
+            :theme-overrides="theaterPopoverThemeOverrides"
+            class="theater-secondary-surface"
             :style="{ width: 'min(320px, calc(100vw - 24px))' }"
           >
             <template #trigger>
@@ -4615,7 +4618,7 @@ onBeforeUnmount(() => {
             <div class="theater-image-actions">
               <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
               <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState[surface.target] || store.state.liveState[surface.target]?.animated" :aria-label="`编辑${surface.label}`" @click="openImageEditor({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
-              <n-popover :theme-overrides="theaterPopoverThemeOverrides" trigger="click" placement="right-start" :width="300" :show-arrow="false">
+              <n-popover :theme-overrides="theaterPopoverThemeOverrides" class="theater-secondary-surface" trigger="click" placement="right-start" :width="300" :show-arrow="false">
                 <template #trigger>
                   <n-button size="tiny" quaternary :aria-label="`设置${surface.label}`"><template #icon><n-icon><Settings /></n-icon></template></n-button>
                 </template>
@@ -4847,13 +4850,38 @@ onBeforeUnmount(() => {
   position: relative; height: 100%; min-width: 0; display: flex; flex-direction: column;
   color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-page, #141418);
 }
-:global(.theater-secondary-surface) {
+/* 小剧场二级浮层半透明：优先级需压过 App.vue 自定义主题对 n-popover/n-dropdown 的实色 !important */
+:global(.theater-secondary-surface),
+:global(:root[data-custom-theme='true'] .theater-secondary-surface),
+:global(:root[data-custom-theme='true'] .n-popover.theater-secondary-surface),
+:global(:root[data-custom-theme='true'] .n-dropdown-menu.theater-secondary-surface),
+:global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface) {
   border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16)) !important;
-  color: var(--sc-text-primary, #f4f4f5);
+  color: var(--sc-text-primary, #f4f4f5) !important;
   background: color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent) !important;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .2) !important;
-  backdrop-filter: blur(8px) saturate(110%);
-  -webkit-backdrop-filter: blur(8px) saturate(110%);
+  backdrop-filter: blur(8px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(110%) !important;
+}
+:global(.n-popover.n-popover--raw:has(.theater-secondary-surface)),
+:global(.n-popover.n-popover--raw:has(.theater-secondary-surface) > .n-popover__content),
+:global(:root[data-custom-theme='true'] .n-popover.n-popover--raw:has(.theater-secondary-surface)),
+:global(:root[data-custom-theme='true'] .n-popover.n-popover--raw:has(.theater-secondary-surface) > .n-popover__content) {
+  --n-color: transparent !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+:global(:root[data-custom-theme='true'] .n-dropdown-menu.theater-secondary-surface .n-dropdown-option),
+:global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option) {
+  --n-color: transparent !important;
+  background-color: transparent !important;
+}
+:global(:root[data-custom-theme='true'] .n-dropdown-menu.theater-secondary-surface .n-dropdown-option:hover),
+:global(:root[data-custom-theme='true'] .n-dropdown-menu.theater-secondary-surface .n-dropdown-option--pending),
+:global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option--pending),
+:global(:root[data-custom-theme='true'] .n-base-select-menu.theater-secondary-surface .n-base-select-option:hover) {
+  background-color: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)) !important;
 }
 .theater-image-input { display: none; }
 .theater-stage-toolbar {
