@@ -19,13 +19,15 @@ const (
 	theaterMaxSceneObjects  = 2000
 	theaterMaxBatchUpdates  = 200
 	theaterMaxActions       = 32
+	theaterMaxSwitchText    = 10_000
 )
 
 type theaterSceneCreatePayload struct {
-	SceneID string         `json:"sceneId"`
-	Name    string         `json:"name"`
-	Order   int64          `json:"order"`
-	State   map[string]any `json:"state"`
+	SceneID    string         `json:"sceneId"`
+	Name       string         `json:"name"`
+	SwitchText string         `json:"switchText"`
+	Order      int64          `json:"order"`
+	State      map[string]any `json:"state"`
 }
 
 type theaterSceneUpdatePayload struct {
@@ -180,6 +182,9 @@ func validateDecodedTheaterPayload(mutationType string, decoded any) error {
 		if err := validateTheaterName(payload.Name); err != nil {
 			return err
 		}
+		if err := validateTheaterSwitchText(payload.SwitchText); err != nil {
+			return err
+		}
 		return validateSceneState(payload.State)
 	case *theaterSceneUpdatePayload:
 		if err := validateTheaterID(payload.SceneID, "sceneId"); err != nil {
@@ -272,6 +277,13 @@ func validateTheaterName(value string) error {
 	return nil
 }
 
+func validateTheaterSwitchText(value string) error {
+	if len([]rune(value)) > theaterMaxSwitchText {
+		return theaterPayloadError("switchText 长度无效")
+	}
+	return nil
+}
+
 func validateSceneState(state map[string]any) error {
 	allowed := map[string]bool{"background": true, "foreground": true, "surfaceStyles": true, "fieldWidth": true, "fieldHeight": true, "grid": true, "transition": true, "resources": true, "ccfolia": true}
 	for key, value := range state {
@@ -352,7 +364,7 @@ func validateSceneFields(fields map[string]any) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"name": true, "order": true, "locked": true, "state": true}
+	allowed := map[string]bool{"name": true, "switchText": true, "order": true, "locked": true, "state": true}
 	for key := range fields {
 		if !allowed[key] {
 			return theaterPayloadError("scene fields 包含禁止字段: " + key)
@@ -360,6 +372,15 @@ func validateSceneFields(fields map[string]any) error {
 	}
 	if name, ok := fields["name"].(string); ok {
 		if err := validateTheaterName(name); err != nil {
+			return err
+		}
+	}
+	if value, present := fields["switchText"]; present {
+		switchText, ok := value.(string)
+		if !ok {
+			return theaterPayloadError("switchText 无效")
+		}
+		if err := validateTheaterSwitchText(switchText); err != nil {
 			return err
 		}
 	}

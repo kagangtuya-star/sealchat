@@ -320,7 +320,7 @@ func applyTheaterSceneCreate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 		return theaterPayloadError("sceneId 已存在")
 	}
 	state, _ := json.Marshal(payload.State)
-	scene := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: payload.SceneID}, RoomID: room.ID, Name: strings.TrimSpace(payload.Name), SortOrder: payload.Order, StateJSON: string(state), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
+	scene := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: payload.SceneID}, RoomID: room.ID, Name: strings.TrimSpace(payload.Name), SwitchText: payload.SwitchText, SortOrder: payload.Order, StateJSON: string(state), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
 	if err := tx.Create(&scene).Error; err != nil {
 		return err
 	}
@@ -355,6 +355,8 @@ func applyTheaterSceneUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID 
 		switch key {
 		case "name":
 			updates["name"] = strings.TrimSpace(fmt.Sprint(value))
+		case "switchText":
+			updates["switch_text"] = fmt.Sprint(value)
 		case "order":
 			updates["sort_order"] = jsonNumberInt64(value)
 		case "locked":

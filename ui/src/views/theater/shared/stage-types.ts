@@ -210,6 +210,7 @@ export type StageSceneState = StageLiveState
 export interface StageScene {
   id: string
   name: string
+  switchText: string
   order: number
   locked: boolean
   state: StageSceneState

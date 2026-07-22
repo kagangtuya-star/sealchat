@@ -574,6 +574,7 @@ interface TheaterMessageSendRequest {
   content: string;
   channelId?: string;
   characterId?: string;
+  preserveComposer?: boolean;
 }
 
 interface TheaterComposerInsertRequest {
@@ -602,13 +603,13 @@ const sendMessageForTheater = async (payload: TheaterMessageSendRequest) => {
   if (spectatorInputDisabled.value) {
     return { ok: false as const, error: { code: 'PERMISSION_DENIED', message: '当前频道不允许发送消息' } };
   }
-  if (isEditing.value) {
+  if (!payload.preserveComposer && isEditing.value) {
     return { ok: false as const, error: { code: 'COMPOSER_BUSY', message: '正在编辑消息，无法执行舞台发送' } };
   }
   if (chat.connectState !== 'connected') {
     return { ok: false as const, error: { code: 'CHAT_DISCONNECTED', message: '聊天尚未连接' } };
   }
-  if (hasTheaterComposerDraft({
+  if (!payload.preserveComposer && hasTheaterComposerDraft({
     meaningfulText: isContentMeaningful(inputMode.value, textToSend.value),
     inlineImageCount: inlineImages.size,
   })) {
@@ -621,6 +622,28 @@ const sendMessageForTheater = async (payload: TheaterMessageSendRequest) => {
     const characterError = validateTheaterCharacter(identities, payload.characterId);
     if (characterError) return characterError;
     identityIdOverride = payload.characterId;
+  }
+
+  if (payload.preserveComposer) {
+    try {
+      const sent = await chat.messageCreate(
+        payload.content,
+        undefined,
+        undefined,
+        undefined,
+        identityIdOverride,
+        undefined,
+        [],
+      );
+      return sent
+        ? { ok: true as const, messageId: String(sent.id || '') }
+        : { ok: false as const, error: { code: 'MESSAGE_SEND_REJECTED', message: '聊天发送流程拒绝了消息' } };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: { code: 'MESSAGE_SEND_FAILED', message: error instanceof Error ? error.message : '消息发送失败' },
+      };
+    }
   }
 
   textToSend.value = payload.content;

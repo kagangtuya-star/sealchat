@@ -251,7 +251,7 @@ func importTheaterPackage(ctx context.Context, job *model.TheaterPackageJobModel
 			scene := remappedSnapshot.Scenes[id]
 			if err := tx.Create(&model.TheaterSceneModel{
 				StringPKBaseModel: model.StringPKBaseModel{ID: scene.ID}, RoomID: current.ID,
-				Name: scene.Name, SortOrder: maxOrder + int64(index) + 1, Locked: scene.Locked,
+				Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: maxOrder + int64(index) + 1, Locked: scene.Locked,
 				StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion,
 				CreatedBy: job.ActorUserID, UpdatedBy: job.ActorUserID,
 			}).Error; err != nil {
@@ -724,7 +724,7 @@ func remapTheaterPackageSnapshot(snapshot TheaterSharedSnapshot, remap theaterPa
 		if sceneChanged {
 			warnings = appendWarning(warnings, "部分世界、频道或身份引用已按目标世界重写")
 		}
-		newScene := TheaterSceneSnapshot{ID: newID, Name: scene.Name, Order: scene.Order, Locked: scene.Locked, State: state, Objects: map[string]TheaterObjectSnapshot{}}
+		newScene := TheaterSceneSnapshot{ID: newID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.Order, Locked: scene.Locked, State: state, Objects: map[string]TheaterObjectSnapshot{}}
 		for objectID, object := range scene.Objects {
 			mapped, objectChanged, err := remapTheaterPackageObject(object, remap)
 			if err != nil {

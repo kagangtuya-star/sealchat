@@ -95,6 +95,20 @@ for (const [name, payload] of [
   assert.deepEqual(parsed.payload, payload)
 }
 
+const sceneDialogueSend = {
+  content: '场景切换台词',
+  channelId: 'channel-1',
+  characterId: 'identity-1',
+  preserveComposer: true,
+}
+assert.deepEqual(parseTheaterBridgeMessage(createTheaterBridgeMessage(context, {
+  kind: 'command',
+  source: 'stage',
+  target: 'chat',
+  name: 'chat.message.send',
+  payload: sceneDialogueSend,
+})).payload, sceneDialogueSend)
+
 assert.throws(() => parseTheaterBridgeMessage({
   ...createTheaterBridgeMessage(context, {
     kind: 'event',

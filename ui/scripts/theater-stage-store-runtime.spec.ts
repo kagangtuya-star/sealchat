@@ -9,6 +9,13 @@ store.state.camera.zoom = 1
 store.resetCamera()
 assert.deepEqual(store.state.camera, { x: 0, y: 0, zoom: 0.5 })
 
+const activeScene = store.activeScene.value
+assert.equal(activeScene.switchText, '')
+assert.equal(store.updateSceneDetails(activeScene.id, '新场景名', '切换台词'), true)
+assert.equal(store.activeScene.value.name, '新场景名')
+assert.equal(store.activeScene.value.switchText, '切换台词')
+assert.equal(store.updateSceneDetails(activeScene.id, '新场景名', '切换台词'), false)
+
 const created = store.addObject('effect')
 const mediaUrl = 'https://example.com/effect.webp'
 

@@ -46,6 +46,7 @@ interface TheaterHostBridgeOptions {
   onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
   triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean>
+  onSceneApplied?: (sceneId: string) => void
 }
 
 const CHAT_BRIDGE_PERMISSIONS = [
@@ -170,6 +171,17 @@ export class TheaterHostBridge {
     } catch (error) {
       this.debug('invalid stage action rejected', error)
     }
+  }
+
+  async sendChatMessage(payload: ChatMessageSendPayload) {
+    if (!this.started) {
+      throw new TheaterBridgeRequestError('BRIDGE_NOT_READY', 'Theater bridge is not ready')
+    }
+    return this.stageClient.request<ChatMessageSendPayload, ChatMessageSendResult>(
+      'chat',
+      'chat.message.send',
+      payload,
+    )
   }
 
   selectChatCharacter(identityId: string) {
@@ -406,6 +418,7 @@ export class TheaterHostBridge {
       previousSceneId,
       transition: payload.transition,
     })
+    this.options.onSceneApplied?.(payload.sceneId)
     return { ok: true as const, sceneId: payload.sceneId }
   }
 

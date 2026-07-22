@@ -343,6 +343,7 @@ const stageSceneStateSchema = z.strictObject({
 const stageSceneSchema = z.strictObject({
   id: nonEmptyIdSchema,
   name: z.string().max(512),
+  switchText: z.string().max(10_000),
   order: z.number().finite(),
   locked: z.boolean(),
   state: stageSceneStateSchema,
@@ -443,6 +444,7 @@ export const chatMessageSendPayloadSchema = z.strictObject({
   content: z.string().min(1).max(10_000),
   channelId: nonEmptyIdSchema.optional(),
   characterId: nonEmptyIdSchema.optional(),
+  preserveComposer: z.boolean().optional(),
 })
 
 export const chatMessageSendResultSchema = z.union([

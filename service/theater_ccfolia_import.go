@@ -143,6 +143,7 @@ func (item *ccfoliaRoom) UnmarshalJSON(data []byte) error {
 
 type ccfoliaScene struct {
 	Name           string                   `json:"name"`
+	Text           string                   `json:"text"`
 	BackgroundURL  *string                  `json:"backgroundUrl"`
 	ForegroundURL  *string                  `json:"foregroundUrl"`
 	FieldObjectFit string                   `json:"fieldObjectFit"`
@@ -428,7 +429,7 @@ func importCCFOLIATheaterPackage(ctx context.Context, job *model.TheaterPackageJ
 			scene := conversion.Snapshot.Scenes[sceneID]
 			if err := tx.Create(&model.TheaterSceneModel{
 				StringPKBaseModel: model.StringPKBaseModel{ID: scene.ID}, RoomID: current.ID,
-				Name: scene.Name, SortOrder: maxOrder + int64(index) + 1, Locked: scene.Locked,
+				Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: maxOrder + int64(index) + 1, Locked: scene.Locked,
 				StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion,
 				CreatedBy: job.ActorUserID, UpdatedBy: job.ActorUserID,
 			}).Error; err != nil {
@@ -945,7 +946,12 @@ func convertCCFOLIABackup(backup ccfoliaBackup, worldID string, targets map[stri
 		}
 		warnings = append(warnings, sceneWarnings...)
 		name := ccfoliaName(entry.Scene.Name, "未命名场景")
-		snapshot.Scenes[targetID] = TheaterSceneSnapshot{ID: targetID, Name: name, Order: int64(index + 1), Locked: entry.Scene.Locked, State: state, Objects: objects}
+		switchText := entry.Scene.Text
+		if runes := []rune(switchText); len(runes) > theaterMaxSwitchText {
+			switchText = string(runes[:theaterMaxSwitchText])
+			warnings = appendWarning(warnings, "场景切换文本超过 SealChat 上限，已截断为 10000 字符: "+name)
+		}
+		snapshot.Scenes[targetID] = TheaterSceneSnapshot{ID: targetID, Name: name, SwitchText: switchText, Order: int64(index + 1), Locked: entry.Scene.Locked, State: state, Objects: objects}
 	}
 	persistent, itemWarnings, err := ccfoliaItems(backup.Entities.Items, worldID, targets, sceneNameIDs)
 	if err != nil {

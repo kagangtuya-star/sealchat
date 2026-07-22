@@ -57,6 +57,15 @@ const chatBridgeOnline = ref(false)
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
 const theaterPermissions = ref<string[]>([])
+const sceneDialogueStorageKey = 'sealchat.theater.scene-switch-text.enabled.v1'
+const readSceneDialogueEnabled = () => {
+  try {
+    return window.localStorage.getItem(sceneDialogueStorageKey) === '1'
+  } catch {
+    return false
+  }
+}
+const sceneDialogueEnabled = ref(typeof window !== 'undefined' && readSceneDialogueEnabled())
 type AppearancePreviewState = {
   previewId: string
   draft: TheaterPresentation
@@ -177,7 +186,35 @@ const publishTheaterPointerTrace = (trace: StagePointerTraceInput) => {
   })
 }
 
+const sendSceneDialogue = async (sceneId: string) => {
+  const scene = stageStore.state.scenes[sceneId]
+  if (!sceneDialogueEnabled.value || !scene?.switchText) return
+  try {
+    const result = await theaterBridge?.sendChatMessage({
+      content: scene.switchText,
+      channelId: channelId.value,
+      preserveComposer: true,
+      ...(characterSnapshot.value.activeIdentityId ? { characterId: characterSnapshot.value.activeIdentityId } : {}),
+    })
+    if (result && !result.ok) message.warning(`场景已切换，台词发送失败：${result.error.message}`)
+  } catch (error) {
+    message.warning(`场景已切换，台词发送失败：${error instanceof Error ? error.message : '未知错误'}`)
+  }
+}
+
+const requestSceneSwitch = (sceneId: string) => {
+  if (!stageStore.applyScene(sceneId)) return
+  void sendSceneDialogue(sceneId)
+}
+
 watch(width, () => { splitRatio.value = normalizeRatio(splitRatio.value) })
+watch(sceneDialogueEnabled, (enabled) => {
+  try {
+    window.localStorage.setItem(sceneDialogueStorageKey, enabled ? '1' : '0')
+  } catch {
+    // The setting remains active for this page when storage is unavailable.
+  }
+})
 
 const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
   revision: 0,
@@ -218,10 +255,15 @@ const startTheaterBridge = () => {
     onChatMessageCreated: dialogueRuntime.created,
     onChatMessageUpdated: dialogueRuntime.updated,
     onChatMessageRemoved: ({ messageId }) => dialogueRuntime.removed(messageId),
+    onSceneApplied: (sceneId) => { void sendSceneDialogue(sceneId) },
     triggerStageAction: async (payload) => {
       if (!theaterSync) return false
       try {
-        return await theaterSync.triggerAction(payload)
+        const handled = await theaterSync.triggerAction(payload)
+        if (handled && payload.action.type === 'scene.apply') {
+          await sendSceneDialogue(payload.action.payload.sceneId)
+        }
+        return handled
       } catch (error) {
         message.warning(error instanceof Error ? error.message : '舞台动作执行失败')
         return true
@@ -401,9 +443,12 @@ function handleDice3DMessage(event: MessageEvent) {
           :permissions="theaterPermissions"
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
+          :scene-dialogue-enabled="sceneDialogueEnabled"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
           @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
+          @scene-switch-requested="requestSceneSwitch"
+          @update-scene-dialogue-enabled="sceneDialogueEnabled = $event"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"
           @toggle-chat="toggleChat"

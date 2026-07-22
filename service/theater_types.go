@@ -70,12 +70,13 @@ type TheaterSnapshotOptions struct {
 }
 
 type TheaterSceneSnapshot struct {
-	ID      string                           `json:"id"`
-	Name    string                           `json:"name"`
-	Order   int64                            `json:"order"`
-	Locked  bool                             `json:"locked"`
-	State   json.RawMessage                  `json:"state"`
-	Objects map[string]TheaterObjectSnapshot `json:"objects"`
+	ID         string                           `json:"id"`
+	Name       string                           `json:"name"`
+	SwitchText string                           `json:"switchText"`
+	Order      int64                            `json:"order"`
+	Locked     bool                             `json:"locked"`
+	State      json.RawMessage                  `json:"state"`
+	Objects    map[string]TheaterObjectSnapshot `json:"objects"`
 }
 
 type TheaterObjectSnapshot struct {

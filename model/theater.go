@@ -52,6 +52,7 @@ type TheaterSceneModel struct {
 	StringPKBaseModel
 	RoomID        string `json:"roomId" gorm:"size:100;not null;index:idx_theater_scene_room_sort,priority:1"`
 	Name          string `json:"name" gorm:"size:512;not null"`
+	SwitchText    string `json:"switchText" gorm:"type:text;not null;default:''"`
 	SortOrder     int64  `json:"sortOrder" gorm:"not null;index:idx_theater_scene_room_sort,priority:2"`
 	Locked        bool   `json:"locked" gorm:"not null;default:false"`
 	StateJSON     string `json:"stateJson" gorm:"not null"`

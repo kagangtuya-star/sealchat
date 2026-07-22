@@ -100,7 +100,7 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 		LiveState:     json.RawMessage(`{"worldId":"world-old","channelId":"channel-old","assetId":"audio-old"}`),
 		Scenes: map[string]TheaterSceneSnapshot{
 			"scene-old": {
-				ID: "scene-old", Name: "Scene", State: json.RawMessage(`{"resourceId":"resource-old"}`),
+				ID: "scene-old", Name: "Scene", SwitchText: "Scene dialogue", State: json.RawMessage(`{"resourceId":"resource-old"}`),
 				Objects: map[string]TheaterObjectSnapshot{
 					"object-parent": {ID: "object-parent", Kind: "group", Width: 10, Height: 10, Visible: true, Content: json.RawMessage(`{}`), Actions: json.RawMessage(`[]`), Metadata: json.RawMessage(`{}`)},
 					"object-child": {
@@ -140,6 +140,9 @@ func TestRemapTheaterPackageSnapshotCreatesIndependentReferences(t *testing.T) {
 		if !strings.Contains(combined, expected) {
 			t.Fatalf("missing remapped reference %q in %s", expected, combined)
 		}
+	}
+	if result.Scenes["scene-new"].SwitchText != "Scene dialogue" {
+		t.Fatalf("switch text not preserved: %q", result.Scenes["scene-new"].SwitchText)
 	}
 	if len(warnings) == 0 {
 		t.Fatal("expected identity remap warning")
@@ -219,7 +222,7 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 	sourceSceneID := "source-scene-" + utils.NewIDWithLength(6)
 	if err := model.GetDB().Create(&model.TheaterSceneModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: sourceSceneID}, RoomID: sourceRoom.ID,
-		Name: "Imported Scene", SortOrder: 1, StateJSON: `{}`, SchemaVersion: model.TheaterSchemaVersion,
+		Name: "Imported Scene", SwitchText: "Imported dialogue", SortOrder: 1, StateJSON: `{}`, SchemaVersion: model.TheaterSchemaVersion,
 		CreatedBy: actorID, UpdatedBy: actorID,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -333,6 +336,13 @@ func TestTheaterPackageImportAppendsAndIsJobIdempotent(t *testing.T) {
 		t.Fatalf("unexpected import summary: %#v", summary)
 	}
 	assertTheaterPackageTarget(t, targetRoom.ID, existingSceneID, 2, 1, 1)
+	var importedScene model.TheaterSceneModel
+	if err := model.GetDB().Where("room_id = ? AND name = ?", targetRoom.ID, "Imported Scene").First(&importedScene).Error; err != nil {
+		t.Fatal(err)
+	}
+	if importedScene.SwitchText != "Imported dialogue" {
+		t.Fatalf("imported switch text = %q", importedScene.SwitchText)
+	}
 	if _, err := importTheaterPackage(t.Context(), importJob); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +402,7 @@ func TestConvertCCFOLIAClickActions(t *testing.T) {
 						"missing-marker": {Width: 10, Height: 10, ImageURL: "marker.png", ClickAction: &ccfoliaClickAction{Type: "message", Text: "/scene 不存在"}},
 					},
 				},
-				"target": {Name: targetSceneName, Order: 2, FieldWidth: 100, FieldHeight: 100, GridSize: 10},
+				"target": {Name: targetSceneName, Text: "目标场景台词\n第二行", Order: 2, FieldWidth: 100, FieldHeight: 100, GridSize: 10},
 			},
 			Items: map[string]ccfoliaItem{},
 			Characters: map[string]ccfoliaCharacter{
@@ -438,6 +448,12 @@ func TestConvertCCFOLIAClickActions(t *testing.T) {
 
 	source := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "第一幕")
 	target := ccfoliaSnapshotSceneByName(t, conversion.Snapshot, "第二幕 - next")
+	if target.SwitchText != "目标场景台词\n第二行" {
+		t.Fatalf("target switch text = %q", target.SwitchText)
+	}
+	if source.SwitchText != "" || current.SwitchText != "" {
+		t.Fatal("scenes without CCFOLIA text must stay silent")
+	}
 	if len(source.Objects) != 3 {
 		t.Fatalf("source marker count = %d, want 3", len(source.Objects))
 	}

@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption, type InputInst } from 'naive-ui'
+import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -99,6 +99,7 @@ const props = defineProps<{
     previewName: string
     previewText: string
   } | null
+  sceneDialogueEnabled: boolean
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
@@ -111,6 +112,8 @@ const emit = defineEmits<{
   appearancePreviewCommand: [command: TheaterEditorCommand, transient?: boolean]
   appearancePreviewPhase: [phase: 'start' | 'end']
   preloadRequested: [sceneIds: string[]]
+  sceneSwitchRequested: [sceneId: string]
+  updateSceneDialogueEnabled: [enabled: boolean]
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -643,38 +646,61 @@ const removeActiveSceneWithConfirm = () => {
   confirmDelete('删除场景', `确定删除场景“${scene.name}”？场景内组件也会一并删除。`, () => props.store.removeScene())
 }
 
+const sceneEditMode = ref(false)
 const editingSceneId = ref<string | null>(null)
 const editingSceneName = ref('')
-const sceneNameInputRef = ref<InputInst | null>(null)
+const editingSceneSwitchText = ref('')
 
-const beginSceneNameEdit = (scene: StageScene) => {
+const beginSceneEdit = (scene: StageScene) => {
   if (!canEditAllObjects.value) return
   editingSceneId.value = scene.id
   editingSceneName.value = scene.name
-  void nextTick(() => sceneNameInputRef.value?.focus())
+  editingSceneSwitchText.value = scene.switchText
 }
 
-const cancelSceneNameEdit = () => {
+const closeSceneEditor = () => {
   editingSceneId.value = null
   editingSceneName.value = ''
+  editingSceneSwitchText.value = ''
 }
 
-const saveSceneName = () => {
+const toggleSceneEditMode = () => {
+  sceneEditMode.value = !sceneEditMode.value
+  closeSceneEditor()
+}
+
+watch(scenePanelOpen, (open) => {
+  if (open) return
+  sceneEditMode.value = false
+  closeSceneEditor()
+})
+
+const handleSceneClick = (scene: StageScene) => {
+  if (sceneEditMode.value) {
+    beginSceneEdit(scene)
+    return
+  }
+  if (canSwitchScene.value) emit('sceneSwitchRequested', scene.id)
+}
+
+const saveSceneDetails = () => {
   const sceneId = editingSceneId.value
   const name = editingSceneName.value.trim()
   if (!sceneId) return
   if (!name) {
     stageMessage.warning('场景名称不能为空')
-    void nextTick(() => sceneNameInputRef.value?.focus())
     return
   }
   if (Array.from(name).length > 512) {
     stageMessage.warning('场景名称不能超过 512 个字符')
-    void nextTick(() => sceneNameInputRef.value?.focus())
     return
   }
-  props.store.renameScene(sceneId, name)
-  cancelSceneNameEdit()
+  if (Array.from(editingSceneSwitchText.value).length > 10_000) {
+    stageMessage.warning('场景切换文本不能超过 10000 个字符')
+    return
+  }
+  props.store.updateSceneDetails(sceneId, name, editingSceneSwitchText.value)
+  closeSceneEditor()
 }
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -4291,7 +4317,7 @@ onBeforeUnmount(() => {
               </template>
               预加载全部场景到所有设备
             </n-tooltip>
-            <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
+            <n-button v-if="canEditAllObjects && canSwitchScene" text size="tiny" aria-label="新建场景" :disabled="sceneEditMode" @click="store.addScene"><n-icon><Plus /></n-icon></n-button>
             <n-button class="theater-panel-close" text size="tiny" aria-label="关闭场景面板" @click="scenePanelOpen = false"><n-icon><X /></n-icon></n-button>
           </div>
         </div>
@@ -4301,38 +4327,56 @@ onBeforeUnmount(() => {
           class="theater-scene-row"
           :class="{ 'has-preload-pulse': scenePreloadPulse[scene.id] }"
         >
-          <div v-if="editingSceneId === scene.id" class="theater-scene-name-editor">
-            <n-input ref="sceneNameInputRef" v-model:value="editingSceneName" size="small" maxlength="512" :aria-label="`编辑场景名称 ${scene.name}`" @keydown.enter.prevent="saveSceneName" @keydown.esc.prevent="cancelSceneNameEdit" />
-            <n-button text size="tiny" :disabled="!editingSceneName.trim()" @click="saveSceneName">保存</n-button>
-            <n-button text size="tiny" @click="cancelSceneNameEdit">取消</n-button>
-          </div>
-          <button
-            v-else
-            class="theater-scene-card"
-            :class="{ 'is-active': scene.id === store.state.activeSceneId }"
-            :disabled="!canSwitchScene"
-            @click="canSwitchScene && store.selectScene(scene.id)"
+          <n-popover
+            :show="sceneEditMode && editingSceneId === scene.id"
+            trigger="manual"
+            placement="right-start"
+            :show-arrow="false"
+            :style="{ width: 'min(320px, calc(100vw - 24px))' }"
           >
-            <span class="theater-scene-card__title">{{ scene.name }}</span>
-          </button>
-          <div class="theater-scene-row__actions">
-            <n-tooltip v-if="canSwitchScene && editingSceneId !== scene.id" trigger="hover">
+            <template #trigger>
+              <button
+                class="theater-scene-card"
+                :class="{ 'is-active': scene.id === store.state.activeSceneId, 'is-editing': editingSceneId === scene.id }"
+                :disabled="sceneEditMode ? !canEditAllObjects : !canSwitchScene"
+                @click="handleSceneClick(scene)"
+              >
+                <span class="theater-scene-card__title">{{ scene.name }}</span>
+              </button>
+            </template>
+            <div class="theater-scene-editor">
+              <strong>编辑场景</strong>
+              <label>
+                <span>名称</span>
+                <n-input v-model:value="editingSceneName" size="small" maxlength="512" />
+              </label>
+              <label>
+                <span>场景切换文本</span>
+                <n-input v-model:value="editingSceneSwitchText" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }" maxlength="10000" show-count />
+              </label>
+              <div class="theater-scene-editor__actions">
+                <n-button size="small" @click="closeSceneEditor">取消</n-button>
+                <n-button size="small" type="primary" :disabled="!editingSceneName.trim()" @click="saveSceneDetails">保存</n-button>
+              </div>
+            </div>
+          </n-popover>
+          <div v-if="canSwitchScene && !sceneEditMode" class="theater-scene-row__actions">
+            <n-tooltip v-if="canSwitchScene && !sceneEditMode" trigger="hover">
               <template #trigger>
                 <n-button class="theater-scene-preload" :class="{ 'is-ready-pulse': scenePreloadPulse[scene.id] }" text size="tiny" :type="scenePreloadStatus[scene.id] === 'ready' ? 'success' : scenePreloadStatus[scene.id] === 'error' ? 'error' : 'default'" :loading="scenePreloadStatus[scene.id] === 'loading'" :aria-label="`预加载场景 ${scene.name}`" @click="requestScenePreload([scene.id])"><n-icon><CloudDownload /></n-icon></n-button>
               </template>
               在所有设备预加载此场景
             </n-tooltip>
-            <n-tooltip v-if="canEditAllObjects && editingSceneId !== scene.id" trigger="hover">
-              <template #trigger>
-                <n-button class="theater-scene-edit" text size="tiny" :aria-label="`编辑场景 ${scene.name}`" @click="beginSceneNameEdit(scene)"><n-icon><Edit /></n-icon></n-button>
-              </template>
-              编辑场景名称
-            </n-tooltip>
           </div>
         </div>
-        <div v-if="canEditAllObjects && canSwitchScene" class="theater-scene-actions">
-          <n-button size="tiny" quaternary @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
-          <n-button size="tiny" quaternary :disabled="store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
+        <div v-if="canSwitchScene" class="theater-scene-actions">
+          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode" @click="store.duplicateScene"><template #icon><n-icon><Copy /></n-icon></template>复制</n-button>
+          <n-button v-if="canEditAllObjects" size="tiny" quaternary :disabled="sceneEditMode || store.scenes.value.length <= 1" @click="removeActiveSceneWithConfirm"><template #icon><n-icon><Trash /></n-icon></template>删除</n-button>
+          <n-button v-if="canEditAllObjects" size="tiny" quaternary :type="sceneEditMode ? 'primary' : 'default'" :aria-pressed="sceneEditMode" @click="toggleSceneEditMode"><template #icon><n-icon><Edit /></n-icon></template>编辑</n-button>
+          <label class="theater-scene-dialogue-toggle">
+            <span>台词</span>
+            <n-switch size="small" :value="sceneDialogueEnabled" @update:value="emit('updateSceneDialogueEnabled', $event)" />
+          </label>
         </div>
       </aside>
 
@@ -4911,14 +4955,13 @@ onBeforeUnmount(() => {
 .theater-panel-close { color: var(--sc-text-secondary, #b5b5c5); }
 .theater-panel-empty { padding: 28px 16px; color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; text-align: center; }
 .theater-scene-row { position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; }
-.theater-scene-row__actions, .theater-scene-name-editor { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.theater-scene-row__actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .theater-scene-row__actions {
   position: absolute; right: 0; padding-left: 6px; opacity: 0; pointer-events: none;
   background: linear-gradient(90deg, transparent, var(--theater-panel) 10px); transition: opacity .14s ease;
 }
 .theater-scene-row:hover .theater-scene-row__actions, .theater-scene-row:has(button:focus-visible) .theater-scene-row__actions, .theater-scene-row.has-preload-pulse .theater-scene-row__actions { opacity: 1; pointer-events: auto; }
-.theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 64px; }
-.theater-scene-name-editor :deep(.n-input) { flex: 1; min-width: 0; }
+.theater-scene-row:hover .theater-scene-card, .theater-scene-row:has(button:focus-visible) .theater-scene-card, .theater-scene-row.has-preload-pulse .theater-scene-card { padding-right: 36px; }
 .theater-scene-card {
   width: 100%; display: flex; align-items: center; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
   color: var(--sc-text-secondary, #b5b5c5); background: transparent; font-size: 12px; line-height: 1.2; text-align: left; cursor: pointer;
@@ -4926,8 +4969,9 @@ onBeforeUnmount(() => {
 }
 .theater-scene-card:hover { color: var(--sc-text-primary, #f4f4f5); background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-scene-card.is-active { color: var(--sc-text-primary, #f4f4f5); border-color: color-mix(in srgb, var(--theater-accent) 70%, transparent); background: color-mix(in srgb, var(--theater-accent) 16%, transparent); }
+.theater-scene-card.is-editing { outline: 1px solid var(--theater-accent); outline-offset: -2px; }
 .theater-scene-card__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theater-scene-preload, .theater-scene-edit { width: 28px; height: 28px; padding: 0; }
+.theater-scene-preload { width: 28px; height: 28px; padding: 0; }
 .theater-scene-preload.is-ready-pulse { animation: theater-scene-preload-ready .42s ease-out; }
 @keyframes theater-scene-preload-ready {
   0%, 100% { transform: translateY(0) scale(1); }
@@ -4935,7 +4979,12 @@ onBeforeUnmount(() => {
   68% { transform: translateY(1px) scale(.96); }
 }
 @media (prefers-reduced-motion: reduce) { .theater-scene-preload.is-ready-pulse { animation: none; } }
-.theater-scene-actions { display: flex; margin-top: auto; }
+.theater-scene-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; margin-top: auto; }
+.theater-scene-dialogue-toggle { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-editor { display: grid; gap: 10px; }
+.theater-scene-editor strong { font-size: 13px; }
+.theater-scene-editor label { display: grid; gap: 5px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
+.theater-scene-editor__actions { display: flex; justify-content: flex-end; gap: 6px; }
 .theater-object-editor__transform { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px 8px; }
 .theater-object-editor__transform label { color: var(--sc-text-secondary, #b5b5c5); font-size: 12px; }
 .theater-object-editor__checks { display: flex; flex-wrap: wrap; gap: 10px 14px; padding-top: 2px; }

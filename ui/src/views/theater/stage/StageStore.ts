@@ -129,6 +129,7 @@ const createScene = (name: string, order: number, color: string): StageScene => 
   return {
     id: uid('scene'),
     name,
+    switchText: '',
     order,
     locked: false,
     state: createLiveState(color, {
@@ -331,6 +332,7 @@ export interface TheaterStageStore {
   addScene: () => void
   duplicateScene: () => void
   removeScene: () => void
+  updateSceneDetails: (sceneId: string, name: string, switchText: string) => boolean
   addObject: (type: StageInsertableObjectType, persistent?: boolean) => StageObject
   addDrawing: (
     drawing: StageDrawing,
@@ -541,11 +543,13 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     clearSelection()
   }
 
-  const renameScene = (sceneId: string, name: string) => {
+  const updateSceneDetails = (sceneId: string, name: string, switchText: string) => {
     const scene = state.scenes[sceneId]
     const nextName = name.trim()
-    if (!scene || !nextName || scene.name === nextName) return false
+    if (!scene || !nextName || [...nextName].length > 512 || [...switchText].length > 10_000) return false
+    if (scene.name === nextName && scene.switchText === switchText) return false
     scene.name = nextName
+    scene.switchText = switchText
     return true
   }
 
@@ -1016,7 +1020,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     patchSelectedObjects,
     setObjectFlag,
     selectScene,
-    renameScene,
+    updateSceneDetails,
     addScene,
     duplicateScene,
     removeScene,

@@ -39,6 +39,7 @@ interface TheaterObjectSnapshot {
 interface TheaterSceneSnapshot {
   id: string
   name: string
+  switchText: string
   order: number
   locked: boolean
   state: JsonObject
@@ -92,6 +93,9 @@ const finite = (value: unknown, fallback: number) => Number.isFinite(value) ? Nu
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
 const mutationId = (prefix: string) => `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const objectBatchUpdateLimit = 200
+const normalizeSwitchText = (value: unknown) => typeof value === 'string'
+  ? Array.from(value).slice(0, 10_000).join('')
+  : ''
 
 const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
@@ -281,6 +285,7 @@ const normalizeDocument = (snapshot: TheaterSnapshotResponse['snapshot']): Theat
   scenes: Object.fromEntries(Object.entries(snapshot.scenes || {}).map(([id, scene]) => [id, {
     ...scene,
     id,
+    switchText: normalizeSwitchText(scene.switchText),
     state: serverStateFromStage(stageStateFromServer(scene.state, {})),
     objects: scene.objects || {},
   }])),
@@ -293,6 +298,7 @@ const documentFromWorkspace = (workspace: StageWorkspaceState): TheaterDocument 
   scenes: Object.fromEntries(Object.values(workspace.scenes).map((scene) => [scene.id, {
     id: scene.id,
     name: scene.name,
+    switchText: scene.switchText,
     order: scene.order,
     locked: scene.locked,
     state: serverStateFromStage(scene.state),
@@ -317,6 +323,7 @@ const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState =
     const value: StageScene = {
       id: scene.id,
       name: scene.name,
+      switchText: scene.switchText,
       order: scene.order,
       locked: scene.locked,
       state: stageStateFromServer(scene.state, objects),
@@ -441,7 +448,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     .forEach((scene) => mutations.push({
       type: 'scene.create',
       permission: 'stage.object.edit',
-      payload: { sceneId: scene.id, name: scene.name, order: scene.order, state: scene.state },
+      payload: { sceneId: scene.id, name: scene.name, switchText: scene.switchText, order: scene.order, state: scene.state },
     }))
 
   Object.values(after.scenes).forEach((scene) => {
@@ -449,6 +456,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
     if (!previous) return
     const fields: JsonObject = {}
     if (scene.name !== previous.name) fields.name = scene.name
+    if (scene.switchText !== previous.switchText) fields.switchText = scene.switchText
     if (scene.order !== previous.order) fields.order = scene.order
     if (scene.locked !== previous.locked) fields.locked = scene.locked
     if (!same(scene.state, previous.state)) fields.state = scene.state

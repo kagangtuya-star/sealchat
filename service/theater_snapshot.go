@@ -231,6 +231,9 @@ func validateTheaterSharedSnapshot(snapshot TheaterSharedSnapshot) error {
 		if err := json.Unmarshal(scene.State, &state); err != nil || validateSceneState(state) != nil {
 			return theaterPayloadError("scene state 无效")
 		}
+		if err := validateTheaterSwitchText(scene.SwitchText); err != nil {
+			return err
+		}
 		totalObjects += len(scene.Objects)
 	}
 	if totalObjects+len(snapshot.PersistentObjects) > theaterMaxObjects {
@@ -252,7 +255,7 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 		return err
 	}
 	for id, scene := range snapshot.Scenes {
-		row := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, RoomID: room.ID, Name: scene.Name, SortOrder: scene.Order, Locked: scene.Locked, StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
+		row := model.TheaterSceneModel{StringPKBaseModel: model.StringPKBaseModel{ID: id}, RoomID: room.ID, Name: scene.Name, SwitchText: scene.SwitchText, SortOrder: scene.Order, Locked: scene.Locked, StateJSON: defaultJSON(scene.State, `{}`), SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -367,7 +370,7 @@ func buildTheaterSnapshot(conn *gorm.DB, room *model.TheaterRoomModel, includeRe
 		return result, "", err
 	}
 	for _, scene := range scenes {
-		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, Order: scene.SortOrder, Locked: scene.Locked, State: normalizedRawJSON(scene.StateJSON, `{}`), Objects: map[string]TheaterObjectSnapshot{}}
+		result.Scenes[scene.ID] = TheaterSceneSnapshot{ID: scene.ID, Name: scene.Name, SwitchText: scene.SwitchText, Order: scene.SortOrder, Locked: scene.Locked, State: normalizedRawJSON(scene.StateJSON, `{}`), Objects: map[string]TheaterObjectSnapshot{}}
 	}
 	var objects []model.TheaterObjectModel
 	if err := conn.Where("room_id = ?", room.ID).Order("order_key ASC, id ASC").Find(&objects).Error; err != nil {
