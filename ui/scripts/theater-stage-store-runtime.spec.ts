@@ -9,6 +9,21 @@ store.state.camera.zoom = 1
 store.resetCamera()
 assert.deepEqual(store.state.camera, { x: 0, y: 0, zoom: 0.5 })
 
+const menuObjectStore = createTheaterStageStore()
+const expectedMenuOffsets = [
+  { x: 2, y: -1.5 },
+  { x: -2, y: 1.5 },
+  { x: -2, y: -1.5 },
+  { x: 2, y: 1.5 },
+]
+const menuObjectTypes = ['text', 'image', 'button', 'group'] as const
+for (const [index, type] of menuObjectTypes.entries()) {
+  const object = menuObjectStore.addObject(type)
+  assert.deepEqual({ x: object.transform.x, y: object.transform.y }, expectedMenuOffsets[index])
+}
+const fixedMenuImage = menuObjectStore.addObject('image', 'scene-fixed')
+assert.deepEqual({ x: fixedMenuImage.transform.x, y: fixedMenuImage.transform.y }, { x: 0, y: 0 })
+
 const activeScene = store.activeScene.value
 assert.equal(activeScene.switchText, '')
 assert.equal(store.updateSceneDetails(activeScene.id, '新场景名', '切换台词'), true)
@@ -39,6 +54,7 @@ assert.ok(pastedFixedText)
 assert.equal(store.isSceneFixedObject(pastedFixedText.id), true)
 
 const created = store.addObject('effect')
+assert.deepEqual({ x: created.transform.x, y: created.transform.y }, { x: 960, y: 540 })
 const mediaUrl = 'https://example.com/effect.webp'
 
 assert.equal(store.setObjectImage(created.id, mediaUrl, 'resource-1', 'image/webp'), true)

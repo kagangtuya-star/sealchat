@@ -29,6 +29,13 @@ import {
 import { createDefaultTheaterEffectConfig, normalizeTheaterEffectConfig } from '../effects/theater-effect-types'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
+const newObjectOffsets = [
+  { x: 0, y: 0 },
+  { x: 2, y: -1.5 },
+  { x: -2, y: 1.5 },
+  { x: -2, y: -1.5 },
+  { x: 2, y: 1.5 },
+] as const
 const stageObjectTypes: StageObjectType[] = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video', 'effect']
 type StageInsertableObjectType = Exclude<StageObjectType, 'drawing'>
 
@@ -81,8 +88,8 @@ const makeObject = (
   type,
   name,
   transform: {
-    x: type === 'effect' ? 960 : order * 1.5 - 3,
-    y: type === 'effect' ? 540 : order - 2,
+    x: type === 'effect' ? 960 : newObjectOffsets[order % newObjectOffsets.length].x,
+    y: type === 'effect' ? 540 : newObjectOffsets[order % newObjectOffsets.length].y,
     width: type === 'effect' ? 1600 : type === 'group' ? 12 : type === 'image' ? 9 : 7,
     height: type === 'effect' ? 900 : type === 'group' ? 8 : type === 'image' ? 6 : 4.5,
     rotation: 0,
