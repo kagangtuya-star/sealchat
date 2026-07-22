@@ -4260,7 +4260,6 @@ onBeforeUnmount(() => {
         @add="type => store.addObject(type, 'scene-fixed')"
       />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
-        <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('button')"><template #icon><n-icon><Bolt /></n-icon></template></n-button></template>添加动作按钮</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('group')"><template #icon><n-icon><FolderPlus /></n-icon></template></n-button></template>添加组</n-tooltip>
       </n-button-group>
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
