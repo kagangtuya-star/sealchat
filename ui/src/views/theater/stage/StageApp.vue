@@ -4993,7 +4993,7 @@ onBeforeUnmount(() => {
               </div>
               <template v-if="selectedObject.drawing.tool !== 'pen' && selectedObject.drawing.tool !== 'highlighter'">
                 <label>线型</label>
-                <n-select v-model:value="selectedObject.drawing.style.dash" :options="drawingDashOptions" size="small" />
+                <n-select v-model:value="selectedObject.drawing.style.dash" :options="drawingDashOptions" size="small" filterable :menu-props="theaterSecondaryMenuProps" />
               </template>
               <template v-if="['rectangle', 'ellipse', 'triangle', 'polygon'].includes(selectedObject.drawing.tool)">
                 <n-checkbox
@@ -5063,8 +5063,8 @@ onBeforeUnmount(() => {
               <div v-for="action in selectedObject.actions" :key="action.id" class="theater-action-row">
                 <small>{{ action.type }}</small>
                 <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
-                <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" />
-                <n-select v-else v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" />
+                <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                <n-select v-else v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                 <n-button text type="error" size="tiny" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)">删除</n-button>
               </div>
             </template>
@@ -5074,6 +5074,8 @@ onBeforeUnmount(() => {
                 :value="selectedObject.parentId"
                 :options="parentOptions"
                 size="small"
+                filterable
+                :menu-props="theaterSecondaryMenuProps"
                 clearable
                 placeholder="根层级"
                 @update:value="reparentObjectPreservingTransform(selectedObject.id, $event || null)"
