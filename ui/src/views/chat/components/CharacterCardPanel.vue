@@ -10,7 +10,10 @@ import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useUtilsStore } from '@/stores/utils';
-import { resolveCharacterCardNarratorCountBadge } from '@/utils/characterCardNarratorSettings';
+import {
+  filterAliveNarratorIdentityIds,
+  resolveCharacterCardNarratorCountBadge,
+} from '@/utils/characterCardNarratorSettings';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import AvatarVue from '@/components/avatar.vue';
@@ -223,12 +226,39 @@ const openOnlineCharacterCardPreview = (item: OnlineCharacterCardItem) => {
 const narratorSettingsVisible = ref(false);
 const narratorIdentityIdsDraft = ref<string[]>([]);
 
+const aliveIdentityIds = computed(() => identities.value.map((item) => item.id));
+
+const resolveActiveNarratorIdentityIds = (identityIds?: string[]) => {
+  const channelId = resolvedChannelId.value;
+  const stored = identityIds ?? cardStore.getNarratorIdentityIds(channelId);
+  const loadedIdentities = channelId ? chatStore.channelIdentities[channelId] : undefined;
+  // Identities not loaded yet: keep stored list to avoid false empty / accidental prune.
+  if (loadedIdentities === undefined) {
+    return Array.isArray(stored) ? stored : [];
+  }
+  return filterAliveNarratorIdentityIds(stored, loadedIdentities.map((item) => item.id));
+};
+
+const pruneStaleNarratorIdentities = () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || chatStore.channelIdentities[channelId] === undefined) {
+    return;
+  }
+  const stored = cardStore.getNarratorIdentityIds(channelId);
+  const active = resolveActiveNarratorIdentityIds(stored);
+  if (active.length === stored.length && active.every((id, index) => id === stored[index])) {
+    return;
+  }
+  cardStore.setNarratorIdentityIds(channelId, active);
+};
+
 const syncNarratorIdentityIdsDraft = () => {
-  narratorIdentityIdsDraft.value = cardStore.getNarratorIdentityIds(resolvedChannelId.value);
+  pruneStaleNarratorIdentities();
+  narratorIdentityIdsDraft.value = resolveActiveNarratorIdentityIds();
 };
 
 const narratorCountBadge = computed(() => resolveCharacterCardNarratorCountBadge(
-  cardStore.getNarratorIdentityIds(resolvedChannelId.value),
+  resolveActiveNarratorIdentityIds(),
 ));
 
 const openNarratorSettings = () => {
@@ -251,8 +281,13 @@ const handleNarratorSettingsSave = async () => {
     message.warning('请先选择频道');
     return false;
   }
-  cardStore.setNarratorIdentityIds(channelId, narratorIdentityIdsDraft.value);
-  for (const identityId of narratorIdentityIdsDraft.value) {
+  const nextIds = filterAliveNarratorIdentityIds(
+    narratorIdentityIdsDraft.value,
+    aliveIdentityIds.value,
+  );
+  narratorIdentityIdsDraft.value = nextIds;
+  cardStore.setNarratorIdentityIds(channelId, nextIds);
+  for (const identityId of nextIds) {
     await cardStore.broadcastActiveBadge(channelId, identityId, 'clear');
   }
   narratorSettingsVisible.value = false;
@@ -361,7 +396,11 @@ const handleRevalidateCharacterApi = async () => {
 };
 
 watch(() => props.visible, async (val) => {
-  if (val && resolvedChannelId.value && !characterApiDisabled.value) {
+  if (!val) {
+    return;
+  }
+  pruneStaleNarratorIdentities();
+  if (resolvedChannelId.value && !characterApiDisabled.value) {
     await loadPanelData(resolvedChannelId.value);
   }
 }, { immediate: true });
@@ -370,6 +409,13 @@ watch(resolvedChannelId, async (newId) => {
   syncNarratorIdentityIdsDraft();
   if (props.visible && newId && !characterApiDisabled.value) {
     await loadPanelData(newId);
+  }
+});
+
+watch(aliveIdentityIds, () => {
+  pruneStaleNarratorIdentities();
+  if (narratorSettingsVisible.value) {
+    narratorIdentityIdsDraft.value = resolveActiveNarratorIdentityIds();
   }
 });
 
