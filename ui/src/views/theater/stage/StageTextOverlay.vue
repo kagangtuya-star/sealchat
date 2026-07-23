@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CameraState, StageObject } from '../shared/stage-types'
+import type { CameraState, StageEntrancePlayback, StageObject } from '../shared/stage-types'
 import StageTextVisualObject from './StageTextVisualObject.vue'
 
 const props = defineProps<{
@@ -8,10 +8,16 @@ const props = defineProps<{
   camera: CameraState
   viewportWidth: number
   viewportHeight: number
+  entrancePlaybacks: Record<string, StageEntrancePlayback>
+  hiddenObjectIds: string[]
 }>()
 
+const hiddenObjectIds = computed(() => new Set(props.hiddenObjectIds))
 const roots = computed(() => Object.values(props.objects)
-  .filter((object) => object.parentId === null && object.visible)
+  .filter((object) => (
+    object.parentId === null
+    && (object.visible || props.entrancePlaybacks[object.id]?.direction === 'exit')
+  ))
   .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order))
 
 const cameraStyle = computed(() => ({
@@ -24,9 +30,11 @@ const cameraStyle = computed(() => ({
     <div class="theater-text-overlay__camera" :style="cameraStyle">
       <StageTextVisualObject
         v-for="object in roots"
-        :key="object.id"
+        :key="`${object.id}:${props.entrancePlaybacks[object.id]?.token || 0}`"
         :object="object"
         :objects="props.objects"
+        :entrance-playbacks="props.entrancePlaybacks"
+        :hidden-object-ids="hiddenObjectIds"
       />
     </div>
   </div>

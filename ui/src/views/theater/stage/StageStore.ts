@@ -3,6 +3,7 @@ import {
   createDefaultStageSurfaceStyle,
   isStageActionTarget,
   isSafeStageImageUrl,
+  normalizeStageEntranceConfig,
   normalizeStageSurfaceStyle,
   type StageAction,
   type StageDrawing,
@@ -113,7 +114,11 @@ const makeObject = (
   fill: type === 'text' ? '#ffffff' : palette[order % palette.length],
   text: type === 'text' ? name : undefined,
   content: type === 'effect' ? { effect: createDefaultTheaterEffectConfig() } : {},
-  metadata: type === 'text' ? { textEditorMode: 'plain' } : {},
+  metadata: type === 'text'
+    ? { textEditorMode: 'plain', entrance: normalizeStageEntranceConfig(null) }
+    : type === 'image'
+      ? { entrance: normalizeStageEntranceConfig(null) }
+      : {},
   actions: [],
   ...overrides,
 })
@@ -267,6 +272,9 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     ? Math.min(100, Math.max(0.01, value!))
     : legacyScale
   const metadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
+  const normalizedMetadata = (input.type === 'image' || input.type === 'text')
+    ? { ...metadata, entrance: normalizeStageEntranceConfig(metadata.entrance) }
+    : metadata
   return {
     ...input,
     transform: {
@@ -293,10 +301,10 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     actions: input.type === 'group' ? [] : normalizeActions(input.actions),
     metadata: input.type === 'text'
       ? {
-          ...metadata,
-          textEditorMode: metadata.textEditorMode === 'rich' || isRichTextValue(input.text) ? 'rich' : 'plain',
+          ...normalizedMetadata,
+          textEditorMode: normalizedMetadata.textEditorMode === 'rich' || isRichTextValue(input.text) ? 'rich' : 'plain',
         }
-      : metadata,
+      : normalizedMetadata,
   }
 }
 

@@ -49,6 +49,11 @@ import { compressImage } from '@/composables/useImageCompressor'
 import type { AudioAsset, AudioQuotaSummary } from '@/types/audio'
 import {
   WORLD_UNIT_PX,
+  STAGE_ENTRANCE_MAX_DURATION_MS,
+  normalizeStageEntranceConfig,
+  type StageEntranceConfig,
+  type StageEntrancePlayback,
+  type StageEntrancePreset,
   isStageActionTarget,
   type StageAction,
   type StageActionTriggeredPayload,
@@ -1430,6 +1435,8 @@ const finishPointerTrace = () => {
 
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
+const objectEntranceTweens = new Map<string, Konva.Tween>()
+const pendingObjectEntrances = new Set<string>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
 const activeAnimatedMedia = new Set<StageMediaSource>()
 const videoLoopStates = new WeakMap<HTMLVideoElement, { loopCount: number | null, completed: number }>()
@@ -1469,6 +1476,185 @@ const selectedObject = computed(() => {
   const object = id ? props.store.activeObjects.value[id] || null : null
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
+
+const isStaticImageObject = (object: StageObject | null | undefined): object is StageObject & { type: 'image' } => (
+  object?.type === 'image'
+  && Boolean(object.image)
+  && object.image?.animated !== true
+  && !object.image?.mimeType?.startsWith('video/')
+)
+
+const isEntranceConfigurableObject = (object: StageObject | null | undefined): object is StageObject => (
+  object?.type === 'text' || object?.type === 'image'
+)
+
+const supportsStageEntrance = (object: StageObject | null | undefined): object is StageObject => (
+  object?.type === 'text' || isStaticImageObject(object)
+)
+
+const entranceConfigFor = (object: StageObject): StageEntranceConfig => normalizeStageEntranceConfig(object.metadata?.entrance)
+
+const textEntrancePlaybacks = reactive<Record<string, StageEntrancePlayback>>({})
+const textEntranceTimers = new Map<string, number>()
+let textEntranceToken = 0
+
+const playTextTransition = (object: StageObject, direction: 'enter' | 'exit', force = false) => {
+  if (object.type !== 'text' || (direction === 'enter' && !object.visible)) return
+  const config = entranceConfigFor(object)
+  if (!force && config.preset === 'none') return
+  const previousTimer = textEntranceTimers.get(object.id)
+  if (previousTimer !== undefined) window.clearTimeout(previousTimer)
+  const token = ++textEntranceToken
+  textEntrancePlaybacks[object.id] = { ...config, direction, token }
+  textEntranceTimers.delete(object.id)
+  if (direction === 'enter') return
+  const timer = window.setTimeout(() => {
+    textEntranceTimers.delete(object.id)
+    if (textEntrancePlaybacks[object.id]?.token === token) delete textEntrancePlaybacks[object.id]
+  }, config.durationMs)
+  textEntranceTimers.set(object.id, timer)
+}
+
+const finishObjectTransition = (object: StageObject, node: Konva.Group) => {
+  objectEntranceTweens.get(object.id)?.destroy()
+  objectEntranceTweens.delete(object.id)
+  node.setAttrs({
+    x: object.transform.x * WORLD_UNIT_PX,
+    y: object.transform.y * WORLD_UNIT_PX,
+    rotation: object.transform.rotation,
+    scaleX: object.transform.scaleX,
+    scaleY: object.transform.scaleY,
+    opacity: 1,
+  })
+  node.setAttr('clipX', undefined)
+  node.setAttr('clipY', undefined)
+  node.setAttr('clipWidth', undefined)
+  node.setAttr('clipHeight', undefined)
+  node.visible(object.visible)
+}
+
+const playObjectTransition = (object: StageObject, node: Konva.Group, direction: 'enter' | 'exit', force = false) => {
+  if (!isStaticImageObject(object) || (direction === 'enter' && !object.visible)) return
+  const config = entranceConfigFor(object)
+  if (!force && config.preset === 'none') return
+  const image = node.findOne<Konva.Image>('.theater-object-image')
+  if (direction === 'enter' && !image?.image()) {
+    pendingObjectEntrances.add(object.id)
+    return
+  }
+  pendingObjectEntrances.delete(object.id)
+  finishObjectTransition(object, node)
+  if (config.preset === 'none') {
+    node.visible(object.visible)
+    return
+  }
+  const target = {
+    x: object.transform.x * WORLD_UNIT_PX,
+    y: object.transform.y * WORLD_UNIT_PX,
+    rotation: object.transform.rotation,
+    scaleX: object.transform.scaleX,
+    scaleY: object.transform.scaleY,
+    opacity: 1,
+  }
+  const duration = config.durationMs / 1_000
+  const attrs: Record<string, number> = direction === 'enter' ? { ...target } : {}
+  if (config.preset === 'fade') {
+    node.opacity(direction === 'enter' ? 0 : 1)
+    attrs.opacity = direction === 'enter' ? 1 : 0
+  } else if (config.preset === 'slide') {
+    if (direction === 'enter') {
+      node.setAttrs({ y: target.y + WORLD_UNIT_PX * 0.75, opacity: 0 })
+      attrs.y = target.y
+      attrs.opacity = 1
+    } else {
+      attrs.y = target.y + WORLD_UNIT_PX * 0.75
+      attrs.opacity = 0
+    }
+  } else if (config.preset === 'zoom') {
+    if (direction === 'enter') {
+      node.setAttrs({ scaleX: target.scaleX * 0.92, scaleY: target.scaleY * 0.92, opacity: 0 })
+      attrs.scaleX = target.scaleX
+      attrs.scaleY = target.scaleY
+      attrs.opacity = 1
+    } else {
+      attrs.scaleX = target.scaleX * 0.92
+      attrs.scaleY = target.scaleY * 0.92
+      attrs.opacity = 0
+    }
+  } else if (config.preset === 'mask') {
+    const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
+    const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+    node.setAttrs({ clipX: 0, clipY: 0, clipWidth: direction === 'enter' ? 0.01 : width, clipHeight: height })
+    attrs.clipWidth = direction === 'enter' ? width : 0.01
+  }
+  const tween = new Konva.Tween({
+    node,
+    duration,
+    easing: Konva.Easings.EaseOut,
+    ...attrs,
+    onFinish: () => finishObjectTransition(object, node),
+    onUpdate: () => worldLayer?.batchDraw(),
+  })
+  objectEntranceTweens.set(object.id, tween)
+  node.visible(true)
+  worldLayer?.batchDraw()
+  tween.play()
+}
+
+const playObjectEntrance = (object: StageObject, node: Konva.Group, force = false) => playObjectTransition(object, node, 'enter', force)
+
+const playStageObjectTransition = (
+  object: StageObject,
+  node: Konva.Group,
+  direction: 'enter' | 'exit',
+  force = false,
+) => {
+  if (object.type === 'text') playTextTransition(object, direction, force)
+  else playObjectTransition(object, node, direction, force)
+}
+
+const playStageObjectEntrance = (object: StageObject, node: Konva.Group, force = false) => (
+  playStageObjectTransition(object, node, 'enter', force)
+)
+
+const selectedEntranceConfig = computed(() => {
+  const object = selectedObject.value
+  return isEntranceConfigurableObject(object) ? entranceConfigFor(object) : normalizeStageEntranceConfig(null)
+})
+const selectedObjectSupportsEntrance = computed(() => isEntranceConfigurableObject(selectedObject.value))
+const selectedObjectCanPreviewEntrance = computed(() => supportsStageEntrance(selectedObject.value))
+const entrancePresetOptions: Array<{ label: string, value: StageEntrancePreset }> = [
+  { label: '无', value: 'none' },
+  { label: '淡入', value: 'fade' },
+  { label: '滑入', value: 'slide' },
+  { label: '缩放', value: 'zoom' },
+  { label: '遮罩揭示', value: 'mask' },
+]
+
+const updateSelectedEntrance = (patch: Partial<StageEntranceConfig>) => {
+  const object = selectedObject.value
+  if (!isEntranceConfigurableObject(object)) return
+  object.metadata = { ...object.metadata, entrance: normalizeStageEntranceConfig({ ...entranceConfigFor(object), ...patch }) }
+}
+
+const updateSelectedEntrancePreset = (value: string) => updateSelectedEntrance({ preset: value as StageEntrancePreset })
+const updateSelectedEntranceDuration = (value: number | null) => {
+  if (value !== null) updateSelectedEntrance({ durationMs: value })
+}
+
+const previewSelectedEntrance = () => {
+  const object = selectedObject.value
+  if (!supportsStageEntrance(object)) return
+  const node = objectNodes.get(object.id)
+  if (!node) return
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      if (selectedObject.value?.id === object.id && objectNodes.get(object.id) === node) {
+        playStageObjectEntrance(object, node, true)
+      }
+    })
+  })
+}
 const sequenceEditorActionId = ref('')
 const sequenceEditorVisible = computed({
   get: () => Boolean(sequenceEditorActionId.value && selectedObject.value),
@@ -2389,6 +2575,7 @@ interface SceneMediaBatch {
   settled: Set<string>
   reveals: Array<() => void>
   released: boolean
+  ready: boolean
   timeout: number | null
 }
 
@@ -2426,6 +2613,8 @@ interface SceneMorphSnapshot {
 let sceneMorphSnapshot: SceneMorphSnapshot | null = null
 let sceneMorphTweens: Konva.Tween[] = []
 let sceneMorphDelayTimers: number[] = []
+let pendingSceneEntrances: { sceneId: string, objectIds: Set<string> } | null = null
+const pendingTextEntranceIds = ref<string[]>([])
 const sceneMorphTextHidden = ref(false)
 const sceneMorphTextAnimating = ref(false)
 
@@ -2446,6 +2635,50 @@ const uniqueObjectIndex = (objects: StageObject[], key: (object: StageObject) =>
   return new Map(Array.from(grouped.entries())
     .filter(([, entries]) => entries.length === 1)
     .map(([value, entries]) => [value, entries[0]]))
+}
+
+const queueSceneEntrances = (sceneId: string, includePersistent = false) => {
+  const scene = props.store.state.scenes[sceneId]
+  if (!scene) {
+    pendingSceneEntrances = null
+    pendingTextEntranceIds.value = []
+    return
+  }
+  const objects = Object.values({
+    ...scene.state.sceneObjects,
+    ...(includePersistent ? props.store.state.persistentObjects : {}),
+  }).filter((object) => (
+    supportsStageEntrance(object)
+    && object.visible
+    && entranceConfigFor(object).preset !== 'none'
+  ))
+  pendingSceneEntrances = {
+    sceneId,
+    objectIds: new Set(objects.map((object) => object.id)),
+  }
+  pendingTextEntranceIds.value = objects.filter((object) => object.type === 'text').map((object) => object.id)
+}
+
+const hasPendingSceneEntrance = (objectId: string) => pendingSceneEntrances?.objectIds.has(objectId) === true
+
+const playPendingSceneEntrances = (sceneId: string) => {
+  if (pendingSceneEntrances?.sceneId !== sceneId) return
+  if (!props.syncReady) return
+  if (sceneMorphSnapshot?.sceneId === sceneId) return
+  if (sceneMediaBatch?.sceneId === sceneId && !sceneMediaBatch.ready) return
+  const objectIds = pendingSceneEntrances.objectIds
+  pendingSceneEntrances = null
+  pendingTextEntranceIds.value = []
+  objectIds.forEach((objectId) => {
+    const object = props.store.activeObjects.value[objectId]
+    const node = objectNodes.get(objectId)
+    if (!object || !node) return
+    if (!supportsStageEntrance(object) || entranceConfigFor(object).preset === 'none') {
+      finishObjectTransition(object, node)
+      return
+    }
+    playStageObjectEntrance(object, node)
+  })
 }
 
 const matchSceneMorphObjects = (previous: Map<string, SceneMorphItem>, next: StageObject[]) => {
@@ -2504,6 +2737,7 @@ const finishSceneMorph = () => {
   backgroundLayer?.batchDraw()
   worldLayer?.batchDraw()
   foregroundLayer?.batchDraw()
+  if (snapshot) playPendingSceneEntrances(snapshot.sceneId)
 }
 
 const prepareSceneMorph = (captureCurrent: boolean, sceneId: string) => {
@@ -2586,6 +2820,11 @@ const primeSceneMorphTargets = () => {
     if (object.parentId && props.store.state.liveState.sceneObjects[object.parentId]) return
     const node = objectNodes.get(object.id)
     if (!node) return
+    if (hasPendingSceneEntrance(object.id)) {
+      snapshot.matches.delete(object.id)
+      node.setAttrs({ visible: false, opacity: 1 })
+      return
+    }
     const target: SceneMorphVisual = {
       x: object.transform.x * WORLD_UNIT_PX,
       y: object.transform.y * WORLD_UNIT_PX,
@@ -2679,13 +2918,17 @@ const startSceneMorph = (sceneId: string) => {
 
 const beginSceneMediaBatch = (sceneId: string, captureCurrent = true) => {
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
+  pendingSceneEntrances = null
+  pendingTextEntranceIds.value = []
   prepareSceneMorph(captureCurrent, sceneId)
+  queueSceneEntrances(sceneId, !captureCurrent)
   sceneMediaBatch = {
     sceneId,
     expected: new Map(collectSceneMediaItems(sceneId).map((item) => [item.key, item.location.url])),
     settled: new Set(),
     reveals: [],
     released: false,
+    ready: false,
     timeout: null,
   }
   const batch = sceneMediaBatch
@@ -2744,10 +2987,12 @@ const releaseSceneMediaBatch = (batch: SceneMediaBatch) => {
   requestAnimationFrame(() => {
     reveals.forEach((reveal) => reveal())
     if (sceneMediaBatch !== batch) return
+    batch.ready = true
     backgroundLayer?.draw()
     foregroundLayer?.draw()
     worldLayer?.draw()
     startSceneMorph(batch.sceneId)
+    if (!sceneMorphSnapshot) playPendingSceneEntrances(batch.sceneId)
   })
 }
 
@@ -3748,6 +3993,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
       }
       placeholder.visible(false)
       label.visible(false)
+      if (pendingObjectEntrances.has(object.id)) playObjectEntrance(object, wrapper)
       wrapper.getLayer()?.batchDraw()
     })
   }, (errorMessage) => {
@@ -3791,7 +4037,9 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     rotation: object.transform.rotation,
     scaleX: object.transform.scaleX,
     scaleY: object.transform.scaleY,
-    visible: object.visible,
+    visible: props.syncReady
+      && !hasPendingSceneEntrance(object.id)
+      && (object.visible || objectEntranceTweens.has(object.id)),
     draggable: !object.locked
       && !viewToolActive.value
       && !activeCanvasTool.value
@@ -3897,6 +4145,13 @@ const syncObjects = () => {
   const objects = canvasStageObjects()
   for (const [objectId, node] of objectNodes) {
     if (objects[objectId]) continue
+    objectEntranceTweens.get(objectId)?.destroy()
+    objectEntranceTweens.delete(objectId)
+    pendingObjectEntrances.delete(objectId)
+    const textEntranceTimer = textEntranceTimers.get(objectId)
+    if (textEntranceTimer !== undefined) window.clearTimeout(textEntranceTimer)
+    textEntranceTimers.delete(objectId)
+    delete textEntrancePlaybacks[objectId]
     imageLoadVersions.delete(objectId)
     releaseObjectMedia(node)
     node.destroy()
@@ -4828,6 +5083,30 @@ onMounted(() => {
 })
 
 watch(() => props.store.state.activeSceneId, (sceneId) => beginSceneMediaBatch(sceneId), { flush: 'sync' })
+watch(
+  () => Object.fromEntries(Object.values(props.store.activeObjects.value).map((object) => [object.id, object.visible])),
+  (next, previous) => {
+    if (!props.syncReady) return
+    Object.entries(next).forEach(([objectId, visible]) => {
+      const object = props.store.activeObjects.value[objectId]
+      const previousVisible = previous?.[objectId]
+      if (object?.type !== 'text' || previousVisible === visible || pendingSceneEntrances) return
+      if (visible) playTextTransition(object, 'enter')
+      else if (previousVisible === true) playTextTransition(object, 'exit')
+    })
+    void nextTick(() => {
+      Object.entries(next).forEach(([objectId, visible]) => {
+        const object = props.store.activeObjects.value[objectId]
+        const node = objectNodes.get(objectId)
+        const previousVisible = previous?.[objectId]
+        if (!object || object.type === 'text' || !node || previousVisible === visible || pendingSceneEntrances) return
+        if (visible) playStageObjectEntrance(object, node)
+        else if (previousVisible === true) playStageObjectTransition(object, node, 'exit')
+      })
+    })
+  },
+  { flush: 'sync' },
+)
 watch(() => props.store.state.liveState.sceneObjects, () => {
   if (layerHierarchyMovePending) syncLayerHierarchy()
   else syncObjects()
@@ -4867,6 +5146,9 @@ watch(viewToolActive, () => {
   syncObjects()
   updateTransformer()
 })
+watch(() => props.syncReady, (ready, wasReady) => {
+  if (ready && !wasReady) beginSceneMediaBatch(props.store.state.activeSceneId, false)
+})
 watch(() => [props.syncReady, ...props.permissions], () => {
   const selectedId = props.store.state.selectedObjectId
   const object = selectedId ? props.store.activeObjects.value[selectedId] : null
@@ -4885,6 +5167,7 @@ watch(() => [props.syncReady, ...props.permissions], () => {
     void fetchTheaterAudioAssets()
   }
   syncObjects()
+  if (props.syncReady) playPendingSceneEntrances(props.store.state.activeSceneId)
 })
 watch(
   () => [props.worldId, props.channelId, props.scopeType, canEditAllObjects.value] as const,
@@ -4957,6 +5240,8 @@ onBeforeUnmount(() => {
   Array.from(pointerTraceVisuals.keys()).forEach(clearPointerTrace)
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
   sceneMediaBatch = null
+  pendingSceneEntrances = null
+  pendingTextEntranceIds.value = []
   finishSceneMorph()
   objectNodes.forEach(releaseObjectMedia)
   releaseStageMedia(backgroundSlot?.source)
@@ -4964,6 +5249,12 @@ onBeforeUnmount(() => {
   Array.from(activeAnimatedMedia).forEach(releaseStageMedia)
   mediaAnimation?.stop()
   mediaAnimation = null
+  objectEntranceTweens.forEach((tween) => tween.destroy())
+  objectEntranceTweens.clear()
+  pendingObjectEntrances.clear()
+  textEntranceTimers.forEach((timer) => window.clearTimeout(timer))
+  textEntranceTimers.clear()
+  Object.keys(textEntrancePlaybacks).forEach((objectId) => delete textEntrancePlaybacks[objectId])
   objectNodes.clear()
   imageLoadVersions.clear()
   stageMediaBlobCache.clear()
@@ -5183,6 +5474,8 @@ onBeforeUnmount(() => {
           :camera="store.state.camera"
           :viewport-width="viewportSize.width"
           :viewport-height="viewportSize.height"
+          :entrance-playbacks="textEntrancePlaybacks"
+          :hidden-object-ids="pendingTextEntranceIds"
         />
         <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
         <TheaterEffectOverlay
@@ -5384,6 +5677,38 @@ onBeforeUnmount(() => {
                 </n-tooltip>
                 <n-button size="small" quaternary type="error" :disabled="!selectedObject.image" @click="clearImage({ kind: 'object', objectId: selectedObject.id })">清除</n-button>
               </div>
+            </template>
+            <template v-if="selectedObjectSupportsEntrance && canEditAllObjects">
+              <label>显隐动画</label>
+              <div class="theater-entrance-editor">
+                <n-select
+                  :value="selectedEntranceConfig.preset"
+                  :options="entrancePresetOptions"
+                  size="small"
+                  :menu-props="theaterSecondaryMenuProps"
+                  @update:value="updateSelectedEntrancePreset"
+                />
+                <n-button
+                  size="small"
+                  :disabled="selectedEntranceConfig.preset === 'none' || !selectedObject.visible || !selectedObjectCanPreviewEntrance"
+                  @click="previewSelectedEntrance"
+                >
+                  <template #icon><n-icon><Stars /></n-icon></template>
+                  预览
+                </n-button>
+              </div>
+              <label>动画时长</label>
+              <n-input-number
+                :value="selectedEntranceConfig.durationMs"
+                :min="150"
+                :max="STAGE_ENTRANCE_MAX_DURATION_MS"
+                :step="50"
+                :precision="0"
+                size="small"
+                @update:value="updateSelectedEntranceDuration"
+              >
+                <template #suffix>ms</template>
+              </n-input-number>
             </template>
             <template v-if="selectedObject.type === 'drawing' && selectedObject.drawing">
               <label>描边</label>
@@ -6065,6 +6390,7 @@ onBeforeUnmount(() => {
 .theater-media-settings { display: grid; gap: 5px; padding: 9px; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-media-settings label, .theater-inspector label { color: var(--sc-fg-muted, #71717a); font-size: 10px; }
 .theater-image-actions { display: flex; align-items: center; gap: 4px; }
+.theater-entrance-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .theater-surface-settings { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 11px; overflow: hidden; }
 .theater-surface-settings > * { min-width: 0; }
 .theater-surface-settings__heading { color: var(--sc-text-primary, #f4f4f5); font-size: 13px; font-weight: 700; }

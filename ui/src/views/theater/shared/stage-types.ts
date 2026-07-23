@@ -136,6 +136,41 @@ export interface StageImageRef {
   loopCount?: number
 }
 
+export const stageEntrancePresets = ['none', 'fade', 'slide', 'zoom', 'mask'] as const
+export type StageEntrancePreset = typeof stageEntrancePresets[number]
+
+export interface StageEntranceConfig {
+  preset: StageEntrancePreset
+  durationMs: number
+}
+
+export interface StageEntrancePlayback extends StageEntranceConfig {
+  direction: 'enter' | 'exit'
+  token: number
+}
+
+export const STAGE_ENTRANCE_MIN_DURATION_MS = 150
+export const STAGE_ENTRANCE_MAX_DURATION_MS = 5_000
+
+export const createDefaultStageEntranceConfig = (): StageEntranceConfig => ({
+  preset: 'none',
+  durationMs: 400,
+})
+
+export const normalizeStageEntranceConfig = (input: unknown): StageEntranceConfig => {
+  const fallback = createDefaultStageEntranceConfig()
+  const value = input && typeof input === 'object' ? input as Partial<StageEntranceConfig> : {}
+  const durationMs = typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
+    ? Math.round(Math.min(STAGE_ENTRANCE_MAX_DURATION_MS, Math.max(STAGE_ENTRANCE_MIN_DURATION_MS, value.durationMs)))
+    : fallback.durationMs
+  return {
+    preset: stageEntrancePresets.includes(value.preset as StageEntrancePreset)
+      ? value.preset as StageEntrancePreset
+      : fallback.preset,
+    durationMs,
+  }
+}
+
 export interface StageSurfaceStyle {
   brightness: number
   blurPx: number

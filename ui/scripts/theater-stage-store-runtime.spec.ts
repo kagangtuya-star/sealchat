@@ -142,4 +142,41 @@ assert.equal(store.activeObjects.value[movedObject.id].parentId, null)
 assert.deepEqual(store.activeObjects.value[movedObject.id].transform, movedObjectOriginal)
 assert.deepEqual(store.selection.selectedIds, [movedObject.id])
 
+const batchClipboardStore = createTheaterStageStore()
+const batchSceneA = batchClipboardStore.addObject('image')
+const batchSceneB = batchClipboardStore.addObject('text')
+const batchFixed = batchClipboardStore.addObject('image', 'scene-fixed')
+assert.equal(batchClipboardStore.addObjectAction(batchSceneA.id, {
+  id: 'batch-toggle-peer',
+  type: 'object.toggle',
+  payload: { objectId: batchSceneB.id },
+}), true)
+batchClipboardStore.setBulkSelectionMode(true)
+batchClipboardStore.setSelectedObjectIds([batchSceneA.id, batchSceneB.id, batchFixed.id], batchFixed.id)
+assert.deepEqual(batchClipboardStore.selectionGroup.value.memberIds, [batchSceneA.id, batchSceneB.id, batchFixed.id])
+assert.deepEqual(batchClipboardStore.selectionGroup.value.rootIds, [batchSceneA.id, batchSceneB.id, batchFixed.id])
+assert.deepEqual(new Set(batchClipboardStore.selectionGroup.value.scopes), new Set(['scene', 'scene-fixed']))
+assert.equal(batchClipboardStore.copySelectedObjects(), true)
+assert.ok(batchClipboardStore.pasteObject())
+const pastedBatchIds = [...batchClipboardStore.selection.selectedIds]
+assert.equal(pastedBatchIds.length, 3)
+assert.equal(pastedBatchIds.every((id) => ![batchSceneA.id, batchSceneB.id, batchFixed.id].includes(id)), true)
+assert.equal(pastedBatchIds.filter((id) => batchClipboardStore.isSceneFixedObject(id)).length, 1)
+const pastedPeerAction = batchClipboardStore.activeObjects.value[pastedBatchIds[0]].actions[0]
+assert.equal(pastedPeerAction.type, 'object.toggle')
+if (pastedPeerAction.type === 'object.toggle') {
+  assert.equal(pastedPeerAction.payload.objectId, pastedBatchIds[1])
+}
+assert.equal(batchClipboardStore.patchSelectedObjects({ locked: true }), 3)
+assert.deepEqual(new Set(batchClipboardStore.selectionGroup.value.lockedIds), new Set(pastedBatchIds))
+assert.equal(batchClipboardStore.undo(), true)
+assert.deepEqual(batchClipboardStore.selectionGroup.value.lockedIds, [])
+
+const selectionParent = batchClipboardStore.addObject('group')
+const selectionChild = batchClipboardStore.addObject('image')
+assert.equal(batchClipboardStore.setParent(selectionChild.id, selectionParent.id), true)
+batchClipboardStore.setSelectedObjectIds([selectionParent.id, selectionChild.id], selectionChild.id)
+assert.deepEqual(batchClipboardStore.selectionGroup.value.memberIds, [selectionParent.id, selectionChild.id])
+assert.deepEqual(batchClipboardStore.selectionGroup.value.rootIds, [selectionParent.id])
+
 console.log('theater stage store runtime tests passed')

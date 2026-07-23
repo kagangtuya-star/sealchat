@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
-import { WORLD_UNIT_PX, type StageObject } from '../shared/stage-types'
+import { WORLD_UNIT_PX, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
 
 defineOptions({ name: 'StageTextVisualObject' })
 
 const props = defineProps<{
   object: StageObject
   objects: Record<string, StageObject>
+  entrancePlaybacks: Record<string, StageEntrancePlayback>
+  hiddenObjectIds: Set<string>
 }>()
 
 const contentRef = ref<HTMLElement | null>(null)
@@ -19,8 +21,18 @@ const isPlainText = computed(() => props.object.type === 'text'
   && props.object.metadata?.textEditorMode !== 'rich')
 
 const children = computed(() => Object.values(props.objects)
-  .filter((object) => object.parentId === props.object.id && object.visible)
+  .filter((object) => (
+    object.parentId === props.object.id
+    && (object.visible || props.entrancePlaybacks[object.id]?.direction === 'exit')
+  ))
   .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order))
+
+const entrancePlayback = computed(() => props.entrancePlaybacks[props.object.id])
+const entranceClass = computed(() => {
+  const playback = entrancePlayback.value
+  if (!playback || playback.preset === 'none') return undefined
+  return [`entrance-${playback.preset}`, playback.direction === 'enter' ? 'is-entering' : 'is-exiting']
+})
 
 const style = computed(() => {
   const transform = props.object.transform
@@ -30,6 +42,8 @@ const style = computed(() => {
     width: `${Math.max(0.5, transform.width) * WORLD_UNIT_PX}px`,
     height: `${Math.max(0.5, transform.height) * WORLD_UNIT_PX}px`,
     transform: `translate(-50%, -50%) rotate(${transform.rotation}deg) scale(${transform.scaleX}, ${transform.scaleY})`,
+    visibility: props.hiddenObjectIds.has(props.object.id) ? 'hidden' : undefined,
+    '--theater-text-entrance-duration': entrancePlayback.value ? `${entrancePlayback.value.durationMs}ms` : undefined,
   }
 })
 
@@ -98,7 +112,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="theater-text-visual-object" :style="style">
+  <div class="theater-text-visual-object" :class="entranceClass" :style="style">
     <div
       v-if="props.object.type === 'text'"
       ref="contentRef"
@@ -114,9 +128,11 @@ onBeforeUnmount(() => {
     </div>
     <StageTextVisualObject
       v-for="child in children"
-      :key="child.id"
+      :key="`${child.id}:${props.entrancePlaybacks[child.id]?.token || 0}`"
       :object="child"
       :objects="props.objects"
+      :entrance-playbacks="props.entrancePlaybacks"
+      :hidden-object-ids="props.hiddenObjectIds"
     />
   </div>
 </template>
@@ -127,6 +143,24 @@ onBeforeUnmount(() => {
   transform-origin: center;
   pointer-events: none;
 }
+
+.theater-text-visual-object.is-entering.entrance-fade { animation: theater-text-fade-in var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-exiting.entrance-fade { animation: theater-text-fade-out var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-entering.entrance-slide { animation: theater-text-slide-in var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-exiting.entrance-slide { animation: theater-text-slide-out var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-entering.entrance-zoom { animation: theater-text-zoom-in var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-exiting.entrance-zoom { animation: theater-text-zoom-out var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-entering.entrance-mask { animation: theater-text-mask-in var(--theater-text-entrance-duration) ease-out both; }
+.theater-text-visual-object.is-exiting.entrance-mask { animation: theater-text-mask-out var(--theater-text-entrance-duration) ease-out both; }
+
+@keyframes theater-text-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes theater-text-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes theater-text-slide-in { from { opacity: 0; translate: 0 18px; } to { opacity: 1; translate: 0 0; } }
+@keyframes theater-text-slide-out { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: 0 18px; } }
+@keyframes theater-text-zoom-in { from { opacity: 0; scale: .92; } to { opacity: 1; scale: 1; } }
+@keyframes theater-text-zoom-out { from { opacity: 1; scale: 1; } to { opacity: 0; scale: .92; } }
+@keyframes theater-text-mask-in { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+@keyframes theater-text-mask-out { from { clip-path: inset(0); } to { clip-path: inset(0 100% 0 0); } }
 
 .theater-text-visual-object__content {
   width: 100%;
