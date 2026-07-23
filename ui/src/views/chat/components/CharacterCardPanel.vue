@@ -1523,7 +1523,7 @@ const openEditPanel = async (card: CharacterCard) => {
             <div class="settings-row settings-row--template">
               <div>
                 <p class="settings-title">徽章模板</p>
-                <p class="settings-desc">使用 {属性名} 占位，例如：HP{生命值} SAN{理智} 闪避{闪避}</p>
+                <p class="settings-desc">支持 {属性名} 和 {对象.子项.属性}；单段属性会自动查找嵌套 JSON 中首个同名键。</p>
               </div>
               <div class="settings-template-input">
                 <n-input

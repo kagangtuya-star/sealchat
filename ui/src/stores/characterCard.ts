@@ -5,7 +5,12 @@ import { useUserStore } from './user';
 import { useDisplayStore } from './display';
 import { useCharacterCardTemplateStore } from './characterCardTemplate';
 import { useCharacterSheetStore } from './characterSheet';
-import { extractTemplateKeys, getWorldCardTemplate, hasRenderableBadgeData } from '@/utils/characterCardTemplate';
+import {
+  extractTemplateKeys,
+  getWorldCardTemplate,
+  hasRenderableBadgeData,
+  resolveTemplateValue,
+} from '@/utils/characterCardTemplate';
 import {
   clearNarratorBadgeCacheEntries,
   isCharacterCardNarratorIdentity,
@@ -1549,7 +1554,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const filteredAttrs: Record<string, any> = {};
     if (keys.length > 0) {
       for (const key of keys) {
-        const value = attrsSource[key];
+        const value = resolveTemplateValue(attrsSource, key);
         if (value !== undefined && value !== null && value !== '') {
           filteredAttrs[key] = value;
         }

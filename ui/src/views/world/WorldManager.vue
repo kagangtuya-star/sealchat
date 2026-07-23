@@ -191,7 +191,7 @@ const getDescriptionCountLabel = (value?: string) => {
             placeholder="留空则使用个人模板"
           />
           <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
-            示例：{{ DEFAULT_CARD_TEMPLATE }}
+            示例：{{ DEFAULT_CARD_TEMPLATE }}；支持 {对象.子项.属性}
           </span>
         </n-form-item>
         <n-form-item label="鼠标样式">
