@@ -85,6 +85,12 @@ import TheaterPresentationPreview from '@/components/theater-presentation/Theate
 import TheaterEffectOverlay from '../effects/TheaterEffectOverlay.vue'
 import { TheaterEffectRuntime, type TheaterEffectPlayback } from '../effects/theater-effect-runtime'
 import { isTheaterEffectObject, setTheaterEffectConfig, theaterEffectConfigFromObject } from '../effects/theater-effect-types'
+import {
+  emptyTheaterPanelOrganizer,
+  type TheaterPanelDomain,
+  type TheaterPanelFolder,
+  type TheaterPanelOrganizerSnapshot,
+} from '../effects/theater-panel-organizer'
 
 const props = defineProps<{
   store: TheaterStageStore
@@ -148,6 +154,7 @@ const theaterAudioQuota = ref<AudioQuotaSummary | null>(null)
 const theaterAudioLoading = ref(false)
 const theaterAudioUploading = ref(false)
 const theaterAudioError = ref('')
+const theaterPanelOrganizer = ref<TheaterPanelOrganizerSnapshot>(emptyTheaterPanelOrganizer())
 const theaterAudioPlayers = new Map<string, Howl>()
 const theaterAudioBaseVolumes = new Map<string, number>()
 const theaterAudioRetryIds = new Map<string, number>()
@@ -200,6 +207,13 @@ const theaterEditorStatePath = (objectId = '') => {
     ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/editor-state/groups`
     : `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/editor-state/groups`
   return objectId ? `${base}/${encodeURIComponent(objectId)}` : base
+}
+
+const theaterPanelOrganizerPath = (suffix = '') => {
+  const base = props.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/panel-organizer`
+    : `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/panel-organizer`
+  return suffix ? `${base}/${suffix}` : base
 }
 
 const stopPackagePolling = () => {
@@ -361,6 +375,80 @@ const theaterAudioErrorMessage = (error: unknown, fallback: string) => {
   return value?.message || fallback
 }
 
+const fetchTheaterPanelOrganizer = async () => {
+  if (!props.worldId || (props.scopeType !== 'world' && !props.channelId) || !props.syncReady) {
+    theaterPanelOrganizer.value = emptyTheaterPanelOrganizer()
+    return
+  }
+  try {
+    const response = await api.get<TheaterPanelOrganizerSnapshot>(theaterPanelOrganizerPath())
+    theaterPanelOrganizer.value = {
+      folders: response.data?.folders || [],
+      items: response.data?.items || [],
+    }
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '读取面板文件夹失败'))
+  }
+}
+
+const createTheaterPanelFolder = async (domain: TheaterPanelDomain, done?: (folder: TheaterPanelFolder | null) => void) => {
+  try {
+    const response = await api.post<{ folder?: TheaterPanelFolder }>(theaterPanelOrganizerPath('folders'), { domain, name: '' })
+    await fetchTheaterPanelOrganizer()
+    done?.(response.data?.folder || null)
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '创建文件夹失败'))
+    done?.(null)
+  }
+}
+
+const renameTheaterPanelFolder = async (folderId: string, name: string) => {
+  try {
+    await api.patch(theaterPanelOrganizerPath(`folders/${encodeURIComponent(folderId)}`), { name })
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '重命名文件夹失败'))
+  }
+}
+
+const deleteTheaterPanelFolder = async (folderId: string) => {
+  try {
+    await api.delete(theaterPanelOrganizerPath(`folders/${encodeURIComponent(folderId)}`))
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '删除文件夹失败'))
+  }
+}
+
+const setTheaterPanelFolderCollapsed = async (folderId: string, collapsed: boolean) => {
+  const folder = theaterPanelOrganizer.value.folders.find((item) => item.id === folderId)
+  if (folder) folder.collapsed = collapsed
+  try {
+    await api.put(theaterPanelOrganizerPath(`folders/${encodeURIComponent(folderId)}/state`), { collapsed })
+  } catch (error) {
+    if (folder) folder.collapsed = !collapsed
+    stageMessage.error(theaterAudioErrorMessage(error, '保存折叠状态失败'))
+  }
+}
+
+const reorderTheaterPanelFolders = async (domain: TheaterPanelDomain, folderIds: string[]) => {
+  try {
+    await api.put(theaterPanelOrganizerPath('folder-order'), { domain, folderIds })
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '调整文件夹顺序失败'))
+  }
+}
+
+const reorderTheaterPanelItems = async (domain: TheaterPanelDomain, folderId: string, targetIds: string[]) => {
+  try {
+    await api.put(theaterPanelOrganizerPath('item-order'), { domain, folderId, targetIds })
+    await fetchTheaterPanelOrganizer()
+  } catch (error) {
+    stageMessage.error(theaterAudioErrorMessage(error, '整理项目失败'))
+  }
+}
+
 const fetchTheaterAudioAssets = async () => {
   if (!props.worldId || !props.channelId) return
   theaterAudioLoading.value = true
@@ -480,12 +568,27 @@ const previewTheaterAudio = (asset: AudioAsset) => playTheaterAudioAsset(asset.i
 const deleteTheaterAudio = async (asset: AudioAsset) => {
   if (!canDeleteResources.value || !window.confirm(`删除音频素材“${asset.name}”？`)) return
   theaterAudioError.value = ''
-  try {
-    await api.delete(theaterAudioPath(asset.id))
-    await fetchTheaterAudioAssets()
+	try {
+		await api.delete(theaterAudioPath(asset.id))
+		await Promise.all([fetchTheaterAudioAssets(), fetchTheaterPanelOrganizer()])
   } catch (error) {
     theaterAudioError.value = theaterAudioErrorMessage(error, '删除音频素材失败')
   }
+}
+
+const deleteTheaterAudioBatch = async (assets: AudioAsset[]) => {
+  if (!canDeleteResources.value || !assets.length || !window.confirm(`删除选中的 ${assets.length} 条音频素材？`)) return
+  theaterAudioError.value = ''
+  let failed = 0
+  for (const asset of assets) {
+    try {
+      await api.delete(theaterAudioPath(asset.id))
+    } catch {
+      failed += 1
+    }
+  }
+  await Promise.all([fetchTheaterAudioAssets(), fetchTheaterPanelOrganizer()])
+  if (failed) stageMessage.warning(`${failed} 条音频删除失败；被引用素材不会删除`)
 }
 
 const effectRuntime = new TheaterEffectRuntime({
@@ -4506,6 +4609,14 @@ watch(
   () => { void loadTheaterGroupEditorState() },
   { immediate: true },
 )
+watch(
+  () => [props.worldId, props.channelId, props.scopeType, props.syncReady] as const,
+  () => { void fetchTheaterPanelOrganizer() },
+  { immediate: true },
+)
+watch([effectPanelOpen, assetPanelOpen], ([effectOpen, assetOpen]) => {
+  if (effectOpen || assetOpen) void fetchTheaterPanelOrganizer()
+})
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
   if (layerHierarchyMovePending) syncLayerHierarchy()
@@ -5373,9 +5484,17 @@ onBeforeUnmount(() => {
           :audio-loading="theaterAudioLoading"
           :audio-uploading="theaterAudioUploading"
           :audio-error="theaterAudioError"
+          :organizer-folders="theaterPanelOrganizer.folders"
+          :organizer-items="theaterPanelOrganizer.items"
           @update:editing-target="effectEditingTarget = $event"
           @upload="objectId => requestImageUpload({ kind: 'object', objectId })"
           @upload-audio="(objectId, file) => uploadTheaterAudio(file, objectId)"
+          @create-folder="done => createTheaterPanelFolder('effect', done)"
+          @rename-folder="renameTheaterPanelFolder"
+          @delete-folder="deleteTheaterPanelFolder"
+          @collapse-folder="setTheaterPanelFolderCollapsed"
+          @reorder-folders="folderIds => reorderTheaterPanelFolders('effect', folderIds)"
+          @reorder-items="(folderId, targetIds) => reorderTheaterPanelItems('effect', folderId, targetIds)"
         />
       </aside>
 
@@ -5397,11 +5516,20 @@ onBeforeUnmount(() => {
           :can-delete="canDeleteResources"
           :referenced-asset-ids="referencedTheaterAudioAssetIds"
           :master-volume="theaterAudioMasterVolume"
+          :organizer-folders="theaterPanelOrganizer.folders"
+          :organizer-items="theaterPanelOrganizer.items"
           @update:master-volume="theaterAudioMasterVolume = $event"
           @refresh="fetchTheaterAudioAssets"
           @upload="uploadTheaterAudio"
           @preview="previewTheaterAudio"
           @delete="deleteTheaterAudio"
+          @delete-batch="deleteTheaterAudioBatch"
+          @create-folder="done => createTheaterPanelFolder('audio', done)"
+          @rename-folder="renameTheaterPanelFolder"
+          @delete-folder="deleteTheaterPanelFolder"
+          @collapse-folder="setTheaterPanelFolderCollapsed"
+          @reorder-folders="folderIds => reorderTheaterPanelFolders('audio', folderIds)"
+          @reorder-items="(folderId, targetIds) => reorderTheaterPanelItems('audio', folderId, targetIds)"
         />
       </aside>
     </div>

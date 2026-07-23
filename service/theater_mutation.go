@@ -429,6 +429,10 @@ func applyTheaterSceneDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload 
 			return err
 		}
 	}
+	objectIDs := tx.Model(&model.TheaterObjectModel{}).Select("id").Where("room_id = ? AND scene_id = ?", room.ID, payload.SceneID)
+	if err := tx.Unscoped().Where("room_id = ? AND domain = ? AND target_id IN (?)", room.ID, TheaterPanelDomainEffect, objectIDs).Delete(&model.TheaterPanelItemModel{}).Error; err != nil {
+		return err
+	}
 	if err := tx.Unscoped().Where("room_id = ? AND scene_id = ?", room.ID, payload.SceneID).Delete(&model.TheaterObjectModel{}).Error; err != nil {
 		return err
 	}
@@ -690,6 +694,9 @@ func applyTheaterObjectDelete(tx *gorm.DB, room *model.TheaterRoomModel, payload
 		}
 	}
 	if err := tx.Unscoped().Where("room_id = ? AND object_id IN ?", room.ID, ids).Delete(&model.TheaterGroupEditorStateModel{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Unscoped().Where("room_id = ? AND domain = ? AND target_id IN ?", room.ID, TheaterPanelDomainEffect, ids).Delete(&model.TheaterPanelItemModel{}).Error; err != nil {
 		return err
 	}
 	return tx.Unscoped().Where("room_id = ? AND id IN ?", room.ID, ids).Delete(&model.TheaterObjectModel{}).Error

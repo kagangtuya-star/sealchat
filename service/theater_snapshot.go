@@ -356,6 +356,9 @@ func validateTheaterSharedSnapshot(snapshot TheaterSharedSnapshot) error {
 }
 
 func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, snapshot TheaterSharedSnapshot) error {
+	if err := tx.Unscoped().Where("room_id = ? AND domain = ?", room.ID, TheaterPanelDomainEffect).Delete(&model.TheaterPanelItemModel{}).Error; err != nil {
+		return err
+	}
 	if err := tx.Unscoped().Where("room_id = ?", room.ID).Delete(&model.TheaterObjectModel{}).Error; err != nil {
 		return err
 	}

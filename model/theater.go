@@ -107,6 +107,40 @@ type TheaterGroupEditorStateModel struct {
 
 func (*TheaterGroupEditorStateModel) TableName() string { return "theater_group_editor_states" }
 
+type TheaterPanelFolderModel struct {
+	StringPKBaseModel
+	RoomID    string `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_name,priority:1;index:idx_theater_panel_folder_order,priority:1"`
+	Domain    string `json:"domain" gorm:"size:16;not null;uniqueIndex:udx_theater_panel_folder_name,priority:2;index:idx_theater_panel_folder_order,priority:2"`
+	Name      string `json:"name" gorm:"size:128;not null;uniqueIndex:udx_theater_panel_folder_name,priority:3"`
+	SortOrder int64  `json:"sortOrder" gorm:"not null;default:0;index:idx_theater_panel_folder_order,priority:3"`
+	CreatedBy string `json:"createdBy" gorm:"size:100;index"`
+	UpdatedBy string `json:"updatedBy" gorm:"size:100"`
+	Collapsed bool   `json:"collapsed" gorm:"-"`
+}
+
+func (*TheaterPanelFolderModel) TableName() string { return "theater_panel_folders" }
+
+type TheaterPanelItemModel struct {
+	StringPKBaseModel
+	RoomID    string `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_item,priority:1;index:idx_theater_panel_item_order,priority:1"`
+	Domain    string `json:"domain" gorm:"size:16;not null;uniqueIndex:udx_theater_panel_item,priority:2;index:idx_theater_panel_item_order,priority:2"`
+	TargetID  string `json:"targetId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_item,priority:3;index"`
+	FolderID  string `json:"folderId,omitempty" gorm:"size:100;index:idx_theater_panel_item_order,priority:3"`
+	SortOrder int64  `json:"sortOrder" gorm:"not null;default:0;index:idx_theater_panel_item_order,priority:4"`
+}
+
+func (*TheaterPanelItemModel) TableName() string { return "theater_panel_items" }
+
+type TheaterPanelFolderStateModel struct {
+	StringPKBaseModel
+	RoomID    string `json:"roomId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_state,priority:1"`
+	UserID    string `json:"userId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_state,priority:2;index"`
+	FolderID  string `json:"folderId" gorm:"size:100;not null;uniqueIndex:udx_theater_panel_folder_state,priority:3;index"`
+	Collapsed bool   `json:"collapsed" gorm:"not null;default:true"`
+}
+
+func (*TheaterPanelFolderStateModel) TableName() string { return "theater_panel_folder_states" }
+
 type TheaterResourceModel struct {
 	StringPKBaseModel
 	RoomID             string     `json:"roomId" gorm:"size:100;not null;index:idx_theater_resource_hash,priority:1"`
@@ -244,6 +278,9 @@ func theaterModels() []any {
 		&TheaterSceneModel{},
 		&TheaterObjectModel{},
 		&TheaterGroupEditorStateModel{},
+		&TheaterPanelFolderModel{},
+		&TheaterPanelItemModel{},
+		&TheaterPanelFolderStateModel{},
 		&TheaterResourceModel{},
 		&TheaterResourceVariantModel{},
 		&TheaterResourceJobModel{},

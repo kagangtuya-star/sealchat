@@ -139,7 +139,10 @@ func DeleteTheaterAudioAsset(actorID, worldID, channelID, assetID string) error 
 	if referenced {
 		return newTheaterError(TheaterErrorResourceInUse, "音频素材仍被小剧场特效引用", 409, nil)
 	}
-	return AudioSafeDeleteAsset(asset.ID, false)
+	if err := AudioSafeDeleteAsset(asset.ID, false); err != nil {
+		return err
+	}
+	return model.GetDB().Unscoped().Where("domain = ? AND target_id = ?", TheaterPanelDomainAudio, asset.ID).Delete(&model.TheaterPanelItemModel{}).Error
 }
 
 func theaterAudioAssetReferenced(worldID, assetID string) (bool, error) {

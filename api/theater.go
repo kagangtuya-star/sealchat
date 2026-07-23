@@ -110,6 +110,106 @@ func TheaterGroupEditorStatePut(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "objectId": c.Params("objectId"), "collapsed": body.Collapsed})
 }
 
+func TheaterPanelOrganizerGet(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	state, err := service.GetTheaterPanelOrganizer(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "folders": state.Folders, "items": state.Items})
+}
+
+func TheaterPanelFolderPost(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Domain string `json:"domain"`
+		Name   string `json:"name"`
+	}
+	if err := decodeTheaterBody(c, &body, 8<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	folder, err := service.CreateTheaterPanelFolder(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), body.Domain, body.Name)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "requestId": requestID, "folder": folder})
+}
+
+func TheaterPanelFolderPatch(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decodeTheaterBody(c, &body, 8<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	folder, err := service.UpdateTheaterPanelFolder(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("folderId"), body.Name)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "folder": folder})
+}
+
+func TheaterPanelFolderDelete(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	if err := service.DeleteTheaterPanelFolder(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("folderId")); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.Status(fiber.StatusNoContent).Send(nil)
+}
+
+func TheaterPanelFolderStatePut(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Collapsed bool `json:"collapsed"`
+	}
+	if err := decodeTheaterBody(c, &body, 4<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	if err := service.SetTheaterPanelFolderCollapsed(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), c.Params("folderId"), body.Collapsed); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "collapsed": body.Collapsed})
+}
+
+func TheaterPanelFolderOrderPut(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Domain    string   `json:"domain"`
+		FolderIDs []string `json:"folderIds"`
+	}
+	if err := decodeTheaterBody(c, &body, 64<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	if err := service.ReorderTheaterPanelFolders(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), body.Domain, body.FolderIDs); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID})
+}
+
+func TheaterPanelItemOrderPut(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		Domain    string   `json:"domain"`
+		FolderID  string   `json:"folderId"`
+		TargetIDs []string `json:"targetIds"`
+	}
+	if err := decodeTheaterBody(c, &body, 128<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	if err := service.ReorderTheaterPanelItems(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), body.Domain, body.FolderID, body.TargetIDs); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID})
+}
+
 func theaterSnapshotETag(revision int64, checksum string, permissions []string) string {
 	normalizedPermissions := append([]string(nil), permissions...)
 	sort.Strings(normalizedPermissions)
