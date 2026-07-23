@@ -1257,6 +1257,11 @@ let selectionRect: Konva.Rect | null = null
 let quickDeleteOutline: Konva.Rect | null = null
 let resizeObserver: ResizeObserver | null = null
 let panning = false
+let panCandidate: {
+  pointerId: number
+  objectId: string | null
+} | null = null
+let suppressedObjectClickId: string | null = null
 let marqueeStart: { x: number, y: number } | null = null
 let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
@@ -3431,7 +3436,9 @@ const createObjectNode = (object: StageObject) => {
     }
     const selectionId = editableCanvasSelectionTarget(object.id)
     if (!selectionId) return
-    event.cancelBubble = selectionId === object.id
+    const lockedPanSurface = Boolean(current?.locked && selectionId === object.id)
+    event.cancelBubble = selectionId === object.id && !lockedPanSurface
+    if (lockedPanSurface) return
     const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
     if (
       props.store.selection.bulkMode
@@ -3451,8 +3458,20 @@ const createObjectNode = (object: StageObject) => {
   wrapper.on('click tap', (event) => {
     if ('button' in event.evt && event.evt.button !== 0) return
     if (activeCanvasTool.value || quickDeleteActive.value) return
+    if (suppressedObjectClickId === object.id) {
+      suppressedObjectClickId = null
+      event.cancelBubble = true
+      return
+    }
     const current = getObject(object.id)
     if (current?.type === 'group') return
+    if (!viewToolActive.value && current?.locked) {
+      const selectionId = editableCanvasSelectionTarget(object.id)
+      if (selectionId) {
+        const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
+        selectObject(selectionId, additive)
+      }
+    }
     if (current) triggerObjectActions(current)
   })
   wrapper.on('contextmenu', (event) => {
@@ -3857,8 +3876,28 @@ const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
   props.store.state.camera.y = pointer.y - stage.height() / 2 - worldPoint.y * zoom
 }
 
+const PAN_DRAG_THRESHOLD = 5
+
+const stageObjectIdFromTarget = (target: Konva.Node) => {
+  let node: Konva.Node | null = target
+  while (node && node !== stage) {
+    const objectId = node.getAttr('stageObjectId')
+    if (typeof objectId === 'string' && objectId) return objectId
+    node = node.getParent()
+  }
+  return null
+}
+
+const beginPanCandidate = (event: Konva.KonvaEventObject<PointerEvent>, objectId: string | null) => {
+  panning = false
+  panCandidate = { pointerId: event.evt.pointerId, objectId }
+  panPointer = { x: event.evt.clientX, y: event.evt.clientY }
+  panOrigin = { x: props.store.state.camera.x, y: props.store.state.camera.y }
+}
+
 const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
+  const objectId = stageObjectIdFromTarget(event.target)
   if (viewToolActive.value) {
     if (event.evt.button === 2) {
       const pointer = worldCameraGroup?.getRelativePointerPosition()
@@ -3867,11 +3906,8 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
       beginPointerTrace(pointer)
       return
     }
-    if (event.evt.button !== 0 || event.target !== stage) return
-    event.evt.preventDefault()
-    panning = true
-    panPointer = { x: event.evt.clientX, y: event.evt.clientY }
-    panOrigin = { x: props.store.state.camera.x, y: props.store.state.camera.y }
+    if (event.evt.button !== 0) return
+    beginPanCandidate(event, objectId)
     return
   }
   if (quickDeleteActive.value) {
@@ -3895,9 +3931,10 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
     renderDrawingDraft()
     return
   }
-  if (event.evt.button !== 0 || event.target !== stage) return
-  event.evt.preventDefault()
-  if (props.store.selection.bulkMode && canEditAllObjects.value) {
+  const hitObject = objectId ? getObject(objectId) : null
+  if (event.evt.button !== 0 || (event.target !== stage && !hitObject?.locked)) return
+  if (event.target === stage && props.store.selection.bulkMode && canEditAllObjects.value) {
+    event.evt.preventDefault()
     const pointer = stage.getPointerPosition()
     if (!pointer) return
     marqueeStart = pointer
@@ -3906,10 +3943,8 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
     interactionLayer?.batchDraw()
     return
   }
-  selectObject(null)
-  panning = true
-  panPointer = { x: event.evt.clientX, y: event.evt.clientY }
-  panOrigin = { x: props.store.state.camera.x, y: props.store.state.camera.y }
+  if (event.target === stage) selectObject(null)
+  beginPanCandidate(event, objectId)
 }
 
 const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
@@ -3944,9 +3979,16 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
     interactionLayer?.batchDraw()
     return
   }
-  if (!panning) return
-  props.store.state.camera.x = panOrigin.x + event.evt.clientX - panPointer.x
-  props.store.state.camera.y = panOrigin.y + event.evt.clientY - panPointer.y
+  if (!panCandidate || event.evt.pointerId !== panCandidate.pointerId) return
+  const deltaX = event.evt.clientX - panPointer.x
+  const deltaY = event.evt.clientY - panPointer.y
+  if (!panning) {
+    if (Math.hypot(deltaX, deltaY) < PAN_DRAG_THRESHOLD) return
+    panning = true
+  }
+  event.evt.preventDefault()
+  props.store.state.camera.x = panOrigin.x + deltaX
+  props.store.state.camera.y = panOrigin.y + deltaY
 }
 
 const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
@@ -3966,6 +4008,20 @@ const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
     const result = drawingResult(session)
     cancelDrawingSession()
     props.store.addDrawing(result.drawing, result.transform)
+    return
+  }
+  if (panCandidate) {
+    if (event && event.evt.pointerId !== panCandidate.pointerId) return
+    const candidate = panCandidate
+    const didPan = panning
+    panCandidate = null
+    panning = false
+    if (didPan && candidate.objectId) {
+      suppressedObjectClickId = candidate.objectId
+      window.setTimeout(() => {
+        if (suppressedObjectClickId === candidate.objectId) suppressedObjectClickId = null
+      }, 0)
+    }
     return
   }
   panning = false
@@ -5727,7 +5783,7 @@ onBeforeUnmount(() => {
 .theater-stage-reset-camera { flex: 0 0 auto; }
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
-.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: #343435; }
+.theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: #343435; touch-action: none; }
 .theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-hidden) { opacity: 0; }
 .theater-stage-viewport :deep(.theater-text-overlay.is-scene-morph-active) {
   transition: opacity var(--theater-scene-transition-duration, 400ms) ease-in-out;
