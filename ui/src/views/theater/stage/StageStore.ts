@@ -28,6 +28,11 @@ import {
   type StageObjectCollectionsSnapshot,
   type StageSelectionSnapshot,
 } from './stage-editing'
+import {
+  createStageSelectionGroup,
+  stageSelectionRootIds,
+  type StageSelectionGroup,
+} from './stage-selection'
 import { createDefaultTheaterEffectConfig, normalizeTheaterEffectConfig } from '../effects/theater-effect-types'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
@@ -337,6 +342,7 @@ export interface TheaterStageStore {
   activeScene: ComputedRef<StageScene>
   activeObjects: ComputedRef<Record<string, StageObject>>
   selection: TheaterStageSelectionState
+  selectionGroup: ComputedRef<StageSelectionGroup>
   selectedObjects: ComputedRef<StageObject[]>
   setBulkSelectionMode: (enabled: boolean) => void
   selectObject: (objectId: string | null, additive?: boolean) => void
@@ -357,6 +363,8 @@ export interface TheaterStageStore {
   removeObjects: (objectIds: string[], recordHistory?: boolean) => number
   removeSelectedObjects: (recordHistory?: boolean) => number
   removeSelectedObject: (recordHistory?: boolean) => void
+  copySelectedObjects: () => boolean
+  cutSelectedObjects: () => boolean
   copySelectedObject: () => boolean
   cutSelectedObject: () => boolean
   pasteObject: () => StageObject | null
@@ -423,9 +431,13 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const activeScene = computed(() => state.scenes[state.activeSceneId] || scenes.value[0])
   const activeObjects = computed(() => ({ ...state.liveState.sceneObjects, ...state.persistentObjects }))
   const selection = reactive<TheaterStageSelectionState>({ bulkMode: false, selectedIds: [] })
-  const selectedObjects = computed(() => selection.selectedIds
-    .map((id) => activeObjects.value[id])
-    .filter((object): object is StageObject => Boolean(object)))
+  const selectionGroup = computed(() => createStageSelectionGroup(
+    activeObjects.value,
+    selection.selectedIds,
+    state.selectedObjectId,
+    (objectId) => state.persistentObjects[objectId] ? 'scene-fixed' : 'scene',
+  ))
+  const selectedObjects = computed(() => selectionGroup.value.members)
   const editingState = reactive({ historyDepth: 0, clipboardReady: false })
   const history: NonNullable<ReturnType<typeof createObjectHistoryEntry>>[] = []
   let clipboard: StageClipboardBundle | null = null
@@ -525,7 +537,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     }
   }
 
-  const canCopy = computed(() => selectedObjects.value.length === 1)
+  const canCopy = computed(() => selectionGroup.value.rootIds.length > 0)
   const canCut = computed(() => canCopy.value)
   const canPaste = computed(() => editingState.clipboardReady)
   const canUndo = computed(() => editingState.historyDepth > 0)
@@ -834,17 +846,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
   }
 
-  const selectedRootIds = (objectIds: string[]) => {
-    const candidates = new Set(objectIds.filter((id) => Boolean(getObject(id))))
-    return [...candidates].filter((id) => {
-      let parentId = getObject(id)?.parentId || null
-      while (parentId) {
-        if (candidates.has(parentId)) return false
-        parentId = getObject(parentId)?.parentId || null
-      }
-      return true
-    })
-  }
+  const selectedRootIds = (objectIds: string[]) => stageSelectionRootIds(activeObjects.value, objectIds)
 
   const removeObjectsNow = (objectIds: string[]) => {
     const removedIds = new Set<string>()
@@ -874,51 +876,81 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (id) removeObjects([id], recordHistory)
   }
 
-  const copySelectedObject = () => {
-    const rootId = state.selectedObjectId
-    if (!rootId) return false
-    const scope: StageObjectScope = isSceneFixedObject(rootId) ? 'scene-fixed' : 'scene'
-    const collection = objectCollectionForScope(scope)
-    const objects = collectObjectSubtree(collection, rootId)
-    if (!objects.length) return false
+  const copySelectedObjects = () => {
+    const roots = selectionGroup.value.rootIds
+    if (!roots.length) return false
+    const clipboardRoots: StageClipboardBundle['roots'] = []
+    const clipboardObjects: StageClipboardBundle['objects'] = []
+    roots.forEach((rootId) => {
+      const scope: StageObjectScope = isSceneFixedObject(rootId) ? 'scene-fixed' : 'scene'
+      const collection = objectCollectionForScope(scope)
+      const objects = collectObjectSubtree(collection, rootId)
+      if (!objects.length) return
+      clipboardRoots.push({ id: rootId, scope })
+      objects.forEach((object) => clipboardObjects.push({ scope, object }))
+    })
+    if (!clipboardRoots.length) return false
     clipboard = {
-      version: 1,
+      version: 2,
       sourceSceneId: state.activeSceneId,
-      scope,
-      rootId,
-      objects,
+      roots: clipboardRoots,
+      objects: clipboardObjects,
     }
     pasteCount = 0
     editingState.clipboardReady = true
     return true
   }
 
-  const cutSelectedObject = () => {
-    if (!copySelectedObject()) return false
-    runObjectEdit('剪切对象', () => removeObjectsNow(state.selectedObjectId ? [state.selectedObjectId] : []))
+  const cutSelectedObjects = () => {
+    if (!copySelectedObjects()) return false
+    runObjectEdit(
+      selectionGroup.value.rootIds.length > 1 ? '批量剪切对象' : '剪切对象',
+      () => removeObjectsNow([...selectionGroup.value.rootIds]),
+    )
     return true
   }
+
+  const copySelectedObject = () => copySelectedObjects()
+  const cutSelectedObject = () => cutSelectedObjects()
 
   const pasteObject = () => {
     if (!clipboard) return null
     return runObjectEdit('粘贴对象', () => {
-      const collection = objectCollectionForScope(clipboard!.scope)
-      const sourceRoot = clipboard!.objects.find((object) => object.id === clipboard!.rootId)
-      const keepParent = sourceRoot?.parentId
-        && (clipboard!.scope === 'scene-fixed' || clipboard!.sourceSceneId === state.activeSceneId)
-        && Boolean(collection[sourceRoot.parentId])
+      const bundle = clipboard!
+      const rootParentIds = new Map<string, string | null>()
+      bundle.roots.forEach((root) => {
+        const collection = objectCollectionForScope(root.scope)
+        const sourceRoot = bundle.objects.find(({ object }) => object.id === root.id)?.object
+        const keepParent = sourceRoot?.parentId
+          && (root.scope === 'scene-fixed' || bundle.sourceSceneId === state.activeSceneId)
+          && Boolean(collection[sourceRoot.parentId])
+        rootParentIds.set(root.id, keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null)
+      })
       pasteCount += 1
       const pasted = instantiateClipboardBundle(
-        clipboard!,
+        bundle,
         uid,
         pasteCount,
-        keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null,
+        rootParentIds,
       )
-      pasted.objects.forEach((object) => { collection[object.id] = object })
-      placeObjectAbove(collection[pasted.rootId], collection, sourceRoot?.id || null)
+      pasted.objects.forEach(({ scope, object }) => {
+        objectCollectionForScope(scope)[object.id] = object
+      })
+      pasted.roots.forEach((root) => {
+        const collection = objectCollectionForScope(root.scope)
+        const object = collection[root.id]
+        if (!object) return
+        if (collection[root.sourceId]) {
+          placeObjectAbove(object, collection, root.sourceId)
+        } else if (!object.parentId || !collection[object.parentId]) {
+          placeObjectAbove(object, collection, null)
+        }
+      })
       reconcileGroupScopes()
-      setSelectedObjectIds([pasted.rootId], pasted.rootId)
-      return collection[pasted.rootId]
+      const pastedRootIds = pasted.roots.map((root) => root.id)
+      const primaryId = pastedRootIds[pastedRootIds.length - 1] || null
+      setSelectedObjectIds(pastedRootIds, primaryId)
+      return primaryId ? activeObjects.value[primaryId] || null : null
     })
   }
 
@@ -1228,6 +1260,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     activeScene,
     activeObjects,
     selection,
+    selectionGroup,
     selectedObjects,
     setBulkSelectionMode,
     selectObject,
@@ -1245,6 +1278,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     removeObjects,
     removeSelectedObjects,
     removeSelectedObject,
+    copySelectedObjects,
+    cutSelectedObjects,
     copySelectedObject,
     cutSelectedObject,
     pasteObject,

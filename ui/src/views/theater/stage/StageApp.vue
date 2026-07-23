@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { NBadge, NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  AspectRatio,
   Archive,
   Bolt,
+  BoltOff,
   Clipboard,
   ChevronDown,
   ChevronRight,
@@ -66,6 +68,7 @@ import {
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
+import { stageSelectionRootIds } from './stage-selection'
 import {
   resolveTheaterStageMediaLocation,
   theaterResourceContentPath,
@@ -134,6 +137,7 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
+const selectionQuickBar = reactive({ visible: false, left: 0, top: 0 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const packageInputRef = ref<HTMLInputElement | null>(null)
 const ccfoliaInputRef = ref<HTMLInputElement | null>(null)
@@ -959,8 +963,8 @@ const handleStageShortcut = (event: KeyboardEvent) => {
       .filter((object) => object.visible && object.type !== 'group')
       .map((object) => object.id))
     handled = true
-  } else if (key === 'c') handled = props.store.copySelectedObject()
-  else if (key === 'x' && canEditAllObjects.value) handled = props.store.cutSelectedObject()
+  } else if (key === 'c') handled = props.store.copySelectedObjects()
+  else if (key === 'x' && canEditAllObjects.value) handled = props.store.cutSelectedObjects()
   else if (key === 'v' && canEditAllObjects.value) handled = Boolean(props.store.pasteObject())
   else if (key === 'z' && !event.shiftKey && canEditAllObjects.value) handled = props.store.undo()
   if (handled) event.preventDefault()
@@ -1258,6 +1262,7 @@ let drawingDraftRoot: Konva.Group | null = null
 let pointerTraceRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let selectionRect: Konva.Rect | null = null
+let selectionGroupHitArea: Konva.Rect | null = null
 let quickDeleteOutline: Konva.Rect | null = null
 let resizeObserver: ResizeObserver | null = null
 let panning = false
@@ -1434,6 +1439,11 @@ let multiDrag: {
   driverStart: { x: number, y: number }
   nodes: Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>
 } | null = null
+let selectionGroupDrag: {
+  start: { x: number, y: number }
+  nodes: Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>
+} | null = null
+let batchTransformRootIds: string[] | null = null
 
 interface SurfaceSlot {
   group: Konva.Group
@@ -1505,7 +1515,7 @@ const stageObjects = props.store.activeObjects
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
-const batchMoveBlocked = computed(() => isBatchSelection.value && selectedObjects.value.some((object) => object.locked))
+const batchMoveBlocked = computed(() => isBatchSelection.value && props.store.selectionGroup.value.lockedIds.length > 0)
 
 const toggleSelectedDrawingFill = (checked: boolean) => {
   const drawing = selectedObject.value?.drawing
@@ -1547,6 +1557,16 @@ const updateBatchBoolean = (key: BatchBooleanKey, checked: boolean) => {
       updateTransformer()
     })
   }
+}
+const toggleBatchQuickFlag = (key: BatchBooleanKey) => {
+  const objects = batchBooleanObjects(key)
+  if (!objects.length) return
+  const next = !objects.every((object) => object[key])
+  props.store.patchSelectedObjects({ [key]: next })
+  void nextTick(() => {
+    syncObjects()
+    updateTransformer()
+  })
 }
 
 const updateSelectedAspectRatioLocked = (checked: boolean) => {
@@ -1603,19 +1623,7 @@ const updateSelectedScale = (dimension: 'scaleX' | 'scaleY', value: number | nul
   }
 }
 
-const rootObjectIds = (objectIds: string[]) => {
-  const selected = new Set(objectIds)
-  return objectIds.filter((id) => {
-    let parentId = getObject(id)?.parentId || null
-    while (parentId) {
-      if (selected.has(parentId)) return false
-      parentId = getObject(parentId)?.parentId || null
-    }
-    return true
-  })
-}
-
-const selectedMovementRootIds = () => rootObjectIds(props.store.selection.selectedIds)
+const selectedMovementRootIds = () => props.store.selectionGroup.value.rootIds
 
 const parentOptions = computed(() => Object.values(props.store.activeObjects.value)
   .filter((object) => object.type === 'group'
@@ -1905,31 +1913,103 @@ const applyCamera = () => {
   interactionLayer?.batchDraw()
 }
 
+const selectedMovementNodes = () => selectedMovementRootIds()
+  .map((id) => ({ id, node: objectNodes.get(id) }))
+  .filter((entry): entry is { id: string, node: Konva.Group } => Boolean(entry.node))
+
+const syncSelectionGroupHitArea = (nodes: Konva.Group[]) => {
+  if (!selectionGroupHitArea || !stage || !nodes.length) {
+    selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
+    selectionQuickBar.visible = false
+    return
+  }
+  const boxes = nodes.map((node) => node.getClientRect({
+    relativeTo: stage!,
+    skipShadow: true,
+  }))
+  const left = Math.min(...boxes.map((box) => box.x))
+  const top = Math.min(...boxes.map((box) => box.y))
+  const right = Math.max(...boxes.map((box) => box.x + box.width))
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height))
+  const padding = 8
+  const center = (left + right) / 2
+  const barWidth = 154
+  const barHeight = 36
+  const preferredTop = top - barHeight - 8
+  const horizontalMargin = barWidth / 2 + 4
+  selectionQuickBar.left = Math.min(
+    Math.max(center, horizontalMargin),
+    Math.max(horizontalMargin, viewportSize.value.width - horizontalMargin),
+  )
+  selectionQuickBar.top = preferredTop >= 4 ? preferredTop : Math.min(bottom + 8, Math.max(4, viewportSize.value.height - barHeight - 4))
+  selectionQuickBar.visible = true
+  selectionGroupHitArea.setAttrs({
+    x: left - padding,
+    y: top - padding,
+    width: Math.max(1, right - left + padding * 2),
+    height: Math.max(1, bottom - top + padding * 2),
+    visible: true,
+    listening: !batchMoveBlocked.value,
+    draggable: !batchMoveBlocked.value,
+  })
+}
+
+const applyObjectNodeTransform = (node: Konva.Group, object: StageObject) => {
+  if (object.type === 'group') {
+    object.transform.x = Number((node.x() / WORLD_UNIT_PX).toFixed(6))
+    object.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
+    object.transform.rotation = Number(node.rotation().toFixed(6))
+    object.transform.scaleX = Number(Math.min(100, Math.max(0.01, node.scaleX())).toFixed(6))
+    object.transform.scaleY = Number(Math.min(100, Math.max(0.01, node.scaleY())).toFixed(6))
+    return
+  }
+  object.transform.width = Number((Math.max(12, object.transform.width * WORLD_UNIT_PX * node.scaleX()) / WORLD_UNIT_PX).toFixed(6))
+  object.transform.height = Number((Math.max(12, object.transform.height * WORLD_UNIT_PX * node.scaleY()) / WORLD_UNIT_PX).toFixed(6))
+  object.transform.rotation = Number(node.rotation().toFixed(6))
+  object.transform.x = Number((node.x() / WORLD_UNIT_PX).toFixed(6))
+  object.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
+  object.transform.scaleX = 1
+  object.transform.scaleY = 1
+  node.scale({ x: 1, y: 1 })
+  updateObjectNode(node, object)
+}
+
 const updateTransformer = () => {
   if (!transformer) return
   if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) {
     transformer.nodes([])
     transformer.visible(false)
+    selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
+    selectionQuickBar.visible = false
     interactionLayer?.batchDraw()
     return
   }
   if (isBatchSelection.value) {
-    const nodes = selectedMovementRootIds()
-      .map((id) => objectNodes.get(id))
-      .filter((node): node is Konva.Group => Boolean(node))
+    const nodes = selectedMovementNodes().map(({ node }) => node)
+    const proportional = batchBooleanObjects('aspectRatioLocked').some((object) => object.aspectRatioLocked)
     transformer.nodes(nodes)
-    transformer.padding(0)
-    transformer.borderStrokeWidth(1)
-    transformer.borderDash([])
-    transformer.anchorSize(9)
-    transformer.rotateAnchorOffset(50)
-    transformer.keepRatio(false)
-    transformer.enabledAnchors([])
-    transformer.rotateEnabled(false)
+    transformer.visible(Boolean(nodes.length))
+    transformer.padding(8)
+    transformer.borderStrokeWidth(2)
+    transformer.borderDash([6, 4])
+    transformer.anchorSize(11)
+    transformer.rotateAnchorOffset(32)
+    transformer.keepRatio(proportional)
+    transformer.enabledAnchors(batchMoveBlocked.value ? [] : proportional
+      ? ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+      : [
+          'top-left', 'top-center', 'top-right',
+          'middle-left', 'middle-right',
+          'bottom-left', 'bottom-center', 'bottom-right',
+        ])
+    transformer.rotateEnabled(!batchMoveBlocked.value)
     transformer.forceUpdate()
+    syncSelectionGroupHitArea(nodes)
     interactionLayer?.batchDraw()
     return
   }
+  selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
+  selectionQuickBar.visible = false
   const object = selectedObject.value
   const node = object && canEditObject(object) && !object.locked ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
@@ -3576,36 +3656,17 @@ const createObjectNode = (object: StageObject) => {
   })
   wrapper.on('transformstart', () => {
     if (!canEditObject(getObject(object.id))) return
+    if (isBatchSelection.value && props.store.selectionGroup.value.rootIds.includes(object.id)) return
     props.store.beginObjectEdit('变换对象')
   })
   wrapper.on('transformend', () => {
+    if (isBatchSelection.value && props.store.selectionGroup.value.rootIds.includes(object.id)) return
     const current = getObject(object.id)
     if (!canEditObject(current)) {
       props.store.cancelObjectEdit()
       return
     }
-    if (current.type === 'group') {
-      current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
-      current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
-      current.transform.rotation = Number(wrapper.rotation().toFixed(6))
-      current.transform.scaleX = Number(Math.min(100, Math.max(0.01, wrapper.scaleX())).toFixed(6))
-      current.transform.scaleY = Number(Math.min(100, Math.max(0.01, wrapper.scaleY())).toFixed(6))
-      props.store.commitObjectEdit()
-      return
-    }
-    // Bake Konva scale into logical width/height, then reset node scale so content
-    // geometry (esp. drawings) can be rebuilt at the final pixel size.
-    current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
-    current.transform.height = Number((Math.max(12, current.transform.height * WORLD_UNIT_PX * wrapper.scaleY()) / WORLD_UNIT_PX).toFixed(6))
-    current.transform.rotation = Number(wrapper.rotation().toFixed(6))
-    current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
-    current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
-    current.transform.scaleX = 1
-    current.transform.scaleY = 1
-    wrapper.scale({ x: 1, y: 1 })
-    // Apply size immediately so drawing/content does not flash back to the pre-scale box
-    // while waiting for the deep-watch sync after commitObjectEdit.
-    updateObjectNode(wrapper, current)
+    applyObjectNodeTransform(wrapper, current)
     props.store.commitObjectEdit()
   })
   objectNodes.set(object.id, wrapper)
@@ -4060,8 +4121,8 @@ const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
       return bounds ? marqueeContains(box, bounds) : false
     })
     .map((object) => object.id)
-  const rootHits = rootObjectIds(hits)
-  const next = rootObjectIds(additive
+  const rootHits = stageSelectionRootIds(props.store.activeObjects.value, hits)
+  const next = stageSelectionRootIds(props.store.activeObjects.value, additive
     ? [...props.store.selection.selectedIds, ...rootHits]
     : rootHits)
   const primaryHit = [...rootHits].reverse().find((id) => next.includes(id))
@@ -4604,6 +4665,40 @@ onMounted(() => {
     anchorFill: '#0f172a',
     anchorSize: 9,
   })
+  transformer.on('transformstart', () => {
+    if (!isBatchSelection.value || batchMoveBlocked.value) return
+    const rootIds = [...selectedMovementRootIds()]
+    if (!rootIds.length) return
+    batchTransformRootIds = rootIds
+    selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
+    props.store.beginObjectEdit('批量变换对象')
+  })
+  transformer.on('transform', () => {
+    if (!batchTransformRootIds) return
+    syncSelectionGroupHitArea(selectedMovementNodes().map(({ node }) => node))
+    selectionGroupHitArea?.setAttrs({ visible: false, listening: false, draggable: false })
+  })
+  transformer.on('transformend', () => {
+    const rootIds = batchTransformRootIds
+    batchTransformRootIds = null
+    if (!rootIds) return
+    let valid = true
+    rootIds.forEach((id) => {
+      const object = getObject(id)
+      const node = objectNodes.get(id)
+      if (!object || !node || !canEditObject(object)) {
+        valid = false
+        return
+      }
+      applyObjectNodeTransform(node, object)
+    })
+    if (valid) props.store.commitObjectEdit()
+    else props.store.cancelObjectEdit()
+    void nextTick(() => {
+      syncObjects()
+      updateTransformer()
+    })
+  })
   transformer.on('contextmenu', (event) => {
     if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
     const selectedId = props.store.state.selectedObjectId
@@ -4620,6 +4715,78 @@ onMounted(() => {
     strokeWidth: 1,
     dash: [5, 4],
   })
+  selectionGroupHitArea = new Konva.Rect({
+    visible: false,
+    listening: false,
+    draggable: false,
+    fill: 'rgba(56, 189, 248, 0.001)',
+  })
+  selectionGroupHitArea.on('pointerdown', (event) => {
+    if (!stage || !selectionGroupHitArea || !transformer) return
+    const pointer = stage.getPointerPosition()
+    if (!pointer) return
+    selectionGroupHitArea.listening(false)
+    transformer.listening(false)
+    const target = stage.getIntersection(pointer)
+    selectionGroupHitArea.listening(true)
+    transformer.listening(true)
+    const objectId = target ? stageObjectIdFromTarget(target) : null
+    const selectionId = objectId ? editableCanvasSelectionTarget(objectId) : null
+    const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
+    if (!selectionId || (selectedIdSet.value.has(selectionId) && !additive)) return
+    event.cancelBubble = true
+    selectionGroupHitArea.draggable(false)
+    selectionGroupHitArea.stopDrag()
+    selectObject(selectionId, additive)
+  })
+  selectionGroupHitArea.on('dragstart', (event) => {
+    if (!isBatchSelection.value || batchMoveBlocked.value) {
+      selectionGroupHitArea?.stopDrag()
+      return
+    }
+    event.cancelBubble = true
+    const nodes = new Map<string, { node: Konva.Group, absolute: { x: number, y: number } }>()
+    selectedMovementNodes().forEach(({ id, node }) => {
+      nodes.set(id, { node, absolute: node.absolutePosition() })
+    })
+    selectionGroupDrag = {
+      start: selectionGroupHitArea!.position(),
+      nodes,
+    }
+    props.store.beginObjectEdit('批量移动对象')
+  })
+  selectionGroupHitArea.on('dragmove', (event) => {
+    if (!selectionGroupDrag) return
+    event.cancelBubble = true
+    const current = selectionGroupHitArea!.position()
+    const delta = {
+      x: current.x - selectionGroupDrag.start.x,
+      y: current.y - selectionGroupDrag.start.y,
+    }
+    selectionGroupDrag.nodes.forEach(({ node, absolute }) => {
+      node.absolutePosition({ x: absolute.x + delta.x, y: absolute.y + delta.y })
+    })
+    transformer?.forceUpdate()
+    syncSelectionGroupHitArea([...selectionGroupDrag.nodes.values()].map(({ node }) => node))
+    interactionLayer?.batchDraw()
+  })
+  selectionGroupHitArea.on('dragend', (event) => {
+    if (!selectionGroupDrag) return
+    event.cancelBubble = true
+    const currentDrag = selectionGroupDrag
+    selectionGroupDrag = null
+    currentDrag.nodes.forEach(({ node }, id) => {
+      const object = getObject(id)
+      if (!object) return
+      object.transform.x = Number((node.x() / WORLD_UNIT_PX).toFixed(6))
+      object.transform.y = Number((node.y() / WORLD_UNIT_PX).toFixed(6))
+    })
+    props.store.commitObjectEdit()
+    void nextTick(() => {
+      syncObjects()
+      updateTransformer()
+    })
+  })
   quickDeleteOutline = new Konva.Rect({
     visible: false,
     listening: false,
@@ -4634,7 +4801,7 @@ onMounted(() => {
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
-  interactionLayer.add(selectionRect, quickDeleteOutline, transformer)
+  interactionLayer.add(selectionRect, quickDeleteOutline, selectionGroupHitArea, transformer)
   stage.add(backgroundLayer, worldLayer, foregroundLayer, interactionLayer)
   backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
   worldLayer.getCanvas()._canvas.style.zIndex = '1'
@@ -4683,7 +4850,10 @@ watch(() => props.store.state.persistentObjects, () => {
   else syncObjects()
   effectRuntime.reconcile()
 }, { deep: true })
-watch(() => props.store.state.camera, applyCamera, { deep: true })
+watch(() => props.store.state.camera, () => {
+  applyCamera()
+  updateTransformer()
+}, { deep: true })
 watch(activeCanvasTool, () => {
   syncObjects()
   updateTransformer()
@@ -4931,19 +5101,26 @@ onBeforeUnmount(() => {
       </n-button-group>
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
-        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCopy.value" aria-label="复制组件" @click="store.copySelectedObject"><template #icon><n-icon><Copy /></n-icon></template></n-button></template>复制组件 Ctrl+C</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCopy.value" aria-label="复制所选组件" @click="store.copySelectedObjects"><template #icon><n-icon><Copy /></n-icon></template></n-button></template>复制所选组件 Ctrl+C</n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
-            <n-button
-              class="theater-bulk-select-tool"
-              :class="{ 'is-active': store.selection.bulkMode }"
-              aria-label="批量选择组件"
-              @click="toggleBulkSelectionMode"
+            <n-badge
+              class="theater-bulk-select-badge"
+              :value="store.selectionGroup.value.memberIds.length"
+              :max="99"
+              :show="store.selection.bulkMode && store.selectionGroup.value.memberIds.length > 0"
             >
-              <template #icon><n-icon><Select /></n-icon></template>
-            </n-button>
+              <n-button
+                class="theater-bulk-select-tool"
+                :class="{ 'is-active': store.selection.bulkMode }"
+                :aria-label="store.selection.bulkMode ? `批量选择组件，已选 ${store.selectionGroup.value.memberIds.length} 个` : '批量选择组件'"
+                @click="toggleBulkSelectionMode"
+              >
+                <template #icon><n-icon><Select /></n-icon></template>
+              </n-button>
+            </n-badge>
           </template>
-          批量选择组件
+          {{ store.selection.bulkMode ? `已选 ${store.selectionGroup.value.memberIds.length} 个组件` : '批量选择组件' }}
         </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -4959,7 +5136,7 @@ onBeforeUnmount(() => {
           </template>
           {{ quickDeleteActive ? '退出快速删除组件 Esc' : '快速删除组件' }}
         </n-tooltip>
-        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切组件" @click="store.cutSelectedObject"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切组件 Ctrl+X</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切所选组件" @click="store.cutSelectedObjects"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切所选组件 Ctrl+X</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.selectedObjects.value.length" aria-label="删除所选组件" @click="removeSelectedObjectsWithConfirm"><template #icon><n-icon><Trash /></n-icon></template></n-button></template>删除所选组件 Del / Backspace</n-tooltip>
@@ -4984,6 +5161,18 @@ onBeforeUnmount(() => {
         @drop.prevent="handleCanvasDrop"
       >
         <div ref="containerRef" class="theater-stage-canvas" />
+        <div
+          v-if="isBatchSelection && selectionQuickBar.visible"
+          class="theater-selection-quick-bar"
+          :style="{ left: `${selectionQuickBar.left}px`, top: `${selectionQuickBar.top}px` }"
+          @pointerdown.stop
+        >
+          <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('visible'), 'is-mixed': batchBooleanIndeterminate('visible') }" :disabled="!batchBooleanObjects('visible').length" aria-label="批量显示或隐藏" @click.stop="toggleBatchQuickFlag('visible')"><template #icon><n-icon><component :is="batchBooleanChecked('visible') ? Eye : EyeOff" /></n-icon></template></n-button></template>{{ batchBooleanChecked('visible') ? '隐藏所选组件' : '显示所选组件' }}</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('locked'), 'is-mixed': batchBooleanIndeterminate('locked') }" :disabled="!batchBooleanObjects('locked').length" aria-label="批量锁定或解锁位置" @click.stop="toggleBatchQuickFlag('locked')"><template #icon><n-icon><component :is="batchBooleanChecked('locked') ? Lock : LockOpen" /></n-icon></template></n-button></template>{{ batchBooleanChecked('locked') ? '解锁位置' : '锁定位置' }}</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('aspectRatioLocked'), 'is-mixed': batchBooleanIndeterminate('aspectRatioLocked') }" :disabled="!batchBooleanObjects('aspectRatioLocked').length" aria-label="批量锁定或解锁比例" @click.stop="toggleBatchQuickFlag('aspectRatioLocked')"><template #icon><n-icon><AspectRatio /></n-icon></template></n-button></template>{{ batchBooleanChecked('aspectRatioLocked') ? '解锁比例' : '锁定比例' }}</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('editable'), 'is-mixed': batchBooleanIndeterminate('editable') }" :disabled="!batchBooleanObjects('editable').length" aria-label="批量设置可编辑" @click.stop="toggleBatchQuickFlag('editable')"><template #icon><n-icon><Edit /></n-icon></template></n-button></template>{{ batchBooleanChecked('editable') ? '取消可编辑' : '设为可编辑' }}</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button :class="{ 'is-active': batchBooleanChecked('interactive'), 'is-mixed': batchBooleanIndeterminate('interactive') }" :disabled="!batchBooleanObjects('interactive').length" aria-label="批量设置可交互" @click.stop="toggleBatchQuickFlag('interactive')"><template #icon><n-icon><component :is="batchBooleanChecked('interactive') ? Bolt : BoltOff" /></n-icon></template></n-button></template>{{ batchBooleanChecked('interactive') ? '取消可交互' : '设为可交互' }}</n-tooltip>
+        </div>
         <StageTextOverlay
           :class="{
             'is-scene-morph-hidden': sceneMorphTextHidden,
@@ -5773,6 +5962,7 @@ onBeforeUnmount(() => {
   color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
+.theater-bulk-select-badge { display: inline-flex; }
 .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {
   color: #fff; background: var(--theater-accent); border-color: var(--theater-accent);
 }
@@ -5806,6 +5996,14 @@ onBeforeUnmount(() => {
 .theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
 .theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
+.theater-selection-quick-bar {
+  position: absolute; z-index: 20; display: inline-flex; gap: 2px; padding: 3px;
+  border: 1px solid var(--theater-border); border-radius: 6px; background: rgba(24, 24, 27, .92);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28); transform: translateX(-50%); pointer-events: auto;
+}
+.theater-selection-quick-bar :deep(.n-button) { width: 28px; height: 28px; padding: 0; }
+.theater-selection-quick-bar :deep(.n-button.is-active:not(:disabled)) { color: #fff; background: var(--theater-accent); border-color: var(--theater-accent); }
+.theater-selection-quick-bar :deep(.n-button.is-mixed:not(:disabled)) { color: #fbbf24; }
 .theater-floating-panel {
   position: absolute; z-index: 10; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   border: 1px solid var(--theater-border); border-radius: 7px; background: var(--theater-panel);

@@ -2,11 +2,20 @@ import { toRaw } from 'vue'
 import type { StageObject, StageObjectScope } from '../shared/stage-types'
 
 export interface StageClipboardBundle {
-  version: 1
+  version: 2
   sourceSceneId: string
+  roots: StageClipboardRoot[]
+  objects: StageClipboardObject[]
+}
+
+export interface StageClipboardRoot {
+  id: string
   scope: StageObjectScope
-  rootId: string
-  objects: StageObject[]
+}
+
+export interface StageClipboardObject {
+  scope: StageObjectScope
+  object: StageObject
 }
 
 export interface StageObjectCollectionsSnapshot {
@@ -188,15 +197,16 @@ export const instantiateClipboardBundle = (
   bundle: StageClipboardBundle,
   makeId: (prefix: string) => string,
   offset: number,
-  rootParentId: string | null,
+  rootParentIds: ReadonlyMap<string, string | null>,
 ) => {
-  const idMap = new Map(bundle.objects.map((object) => [object.id, makeId('object')]))
-  const objects = bundle.objects.map((source) => {
+  const idMap = new Map(bundle.objects.map(({ object }) => [object.id, makeId('object')]))
+  const rootIds = new Set(bundle.roots.map((root) => root.id))
+  const objects = bundle.objects.map(({ scope, object: source }) => {
     const object = clone(source)
     object.id = idMap.get(source.id)!
     object.metadata = { ...object.metadata, transitionKey: object.id }
-    object.parentId = source.id === bundle.rootId
-      ? rootParentId
+    object.parentId = rootIds.has(source.id)
+      ? rootParentIds.get(source.id) || null
       : source.parentId ? idMap.get(source.parentId) || null : null
     object.actions = object.actions.map((action) => {
       const copiedAction = clone(action)
@@ -219,12 +229,19 @@ export const instantiateClipboardBundle = (
       }
       return copiedAction
     })
-    if (source.id === bundle.rootId) {
+    if (rootIds.has(source.id)) {
       object.name = `${object.name} 副本`
       object.transform.x += offset
       object.transform.y += offset
     }
-    return object
+    return { scope, object }
   })
-  return { rootId: idMap.get(bundle.rootId)!, objects }
+  return {
+    roots: bundle.roots.map((root) => ({
+      sourceId: root.id,
+      id: idMap.get(root.id)!,
+      scope: root.scope,
+    })),
+    objects,
+  }
 }
