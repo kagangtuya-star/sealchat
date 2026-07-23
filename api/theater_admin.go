@@ -89,6 +89,7 @@ func bindTheaterRoutes(router fiber.Router, base string) {
 	router.Post(base+"/mutations", TheaterMutationPost)
 	router.Get(base+"/events", TheaterEventsGet)
 	router.Post(base+"/actions/trigger", TheaterActionTrigger)
+	router.Post(base+"/actions/trigger-batch", TheaterActionBatchTrigger)
 	router.Post(base+"/resources", TheaterResourceUpload)
 	router.Get(base+"/resources/:resourceId/processing", TheaterResourceProcessingGet)
 	router.Get(base+"/resources/:resourceId/variants/:variant/content-url", TheaterResourceVariantContentURL)

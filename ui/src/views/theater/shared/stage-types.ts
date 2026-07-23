@@ -92,6 +92,12 @@ export interface StageActionTriggeredPayload {
   actionId: string
   stepId?: string
   action: StageAction
+  execution?: {
+    id: string
+    mode: 'parallel' | 'sequential'
+    index: number
+    total: number
+  }
   pointer?: {
     x: number
     y: number

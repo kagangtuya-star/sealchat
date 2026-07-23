@@ -43,7 +43,10 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	if err != nil {
 		return nil, err
 	}
-	if !object.Visible || !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+	// Visibility controls hit testing in the client. Do not use it as an
+	// execution precondition: an action may hide its own source before later
+	// actions from the same click (for example, chat-driven effects) run.
+	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
 	}
 	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
@@ -132,4 +135,89 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	default:
 		return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "未知 StageAction", 400, map[string]any{"type": selected.Type})
 	}
+}
+
+// TriggerTheaterActionBatch applies independent visibility toggles from one
+// click as one theater mutation. This gives every client one final snapshot
+// instead of visibly replaying each toggle after the previous revision.
+func TriggerTheaterActionBatch(ctx context.Context, actorID string, command TheaterActionBatchCommand, meta TheaterRequestMeta) (*TheaterActionResult, error) {
+	if _, _, err := requireTheaterPermission(actorID, command.WorldID, command.ChannelID, TheaterPermissionActionTrigger); err != nil {
+		return nil, err
+	}
+	command.ActionRequestID = strings.TrimSpace(command.ActionRequestID)
+	if command.ActionRequestID == "" || len(command.ActionRequestID) > 128 {
+		return nil, theaterPayloadError("actionRequestId 无效")
+	}
+	if len(command.ActionIDs) < 2 || len(command.ActionIDs) > 32 {
+		return nil, theaterPayloadError("actionIds 数量无效")
+	}
+	room, err := model.TheaterRoomCreateIfMissing(command.WorldID, command.ChannelID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	object, err := loadTheaterObject(model.GetDB(), room.ID, command.ObjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
+		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
+	}
+	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
+		return nil, err
+	}
+	var actions []theaterStoredAction
+	if err := json.Unmarshal([]byte(object.ActionsJSON), &actions); err != nil {
+		return nil, theaterPayloadError("对象 actions 无效")
+	}
+	actionByID := make(map[string]theaterStoredAction, len(actions))
+	for _, action := range actions {
+		actionByID[action.ID] = action
+	}
+	seenActions := make(map[string]struct{}, len(command.ActionIDs))
+	visibleByObjectID := map[string]bool{}
+	order := make([]string, 0, len(command.ActionIDs))
+	for _, actionID := range command.ActionIDs {
+		actionID = strings.TrimSpace(actionID)
+		if actionID == "" {
+			return nil, theaterPayloadError("actionId 无效")
+		}
+		if _, exists := seenActions[actionID]; exists {
+			return nil, theaterPayloadError("actionIds 不能重复")
+		}
+		seenActions[actionID] = struct{}{}
+		action, exists := actionByID[actionID]
+		if !exists || action.Type != TheaterMutationObjectToggle {
+			return nil, theaterPayloadError("批量动作仅支持 object.toggle")
+		}
+		var payload theaterObjectTogglePayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil || strings.TrimSpace(payload.ObjectID) == "" {
+			return nil, theaterPayloadError("object.toggle action 无效")
+		}
+		targetID := strings.TrimSpace(payload.ObjectID)
+		if _, loaded := visibleByObjectID[targetID]; !loaded {
+			target, err := loadTheaterObject(model.GetDB(), room.ID, targetID)
+			if err != nil {
+				return nil, err
+			}
+			visibleByObjectID[targetID] = target.Visible
+			order = append(order, targetID)
+		}
+		visibleByObjectID[targetID] = !visibleByObjectID[targetID]
+	}
+	updates := make([]theaterObjectUpdatePayload, 0, len(order))
+	for _, objectID := range order {
+		updates = append(updates, theaterObjectUpdatePayload{ObjectID: objectID, Fields: map[string]any{"visible": visibleByObjectID[objectID]}})
+	}
+	payload, err := json.Marshal(theaterObjectBatchUpdatePayload{Updates: updates})
+	if err != nil {
+		return nil, err
+	}
+	mutation, err := applyTheaterActionMutation(ctx, actorID, TheaterMutationCommand{
+		MutationID: command.ActionRequestID, WorldID: command.WorldID, ChannelID: command.ChannelID,
+		ExpectedRevision: command.ExpectedRevision, Type: TheaterMutationObjectBatchUpdate, Payload: payload,
+	}, meta)
+	if err != nil {
+		return nil, err
+	}
+	return &TheaterActionResult{Kind: "mutation", Mutation: mutation}, nil
 }

@@ -44,7 +44,7 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 	}
 	permission := theaterPermissionForMutation(command.Type)
 	if authorization == theaterMutationAuthorizationAction {
-		if command.Type != TheaterMutationSceneApply && command.Type != TheaterMutationObjectToggle {
+		if command.Type != TheaterMutationSceneApply && command.Type != TheaterMutationObjectToggle && command.Type != TheaterMutationObjectBatchUpdate {
 			return nil, newTheaterError(TheaterErrorMutationTypeUnsupported, "动作不支持此 mutation type", 400, map[string]any{"type": command.Type})
 		}
 		permission = TheaterPermissionActionTrigger

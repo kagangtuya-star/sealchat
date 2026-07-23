@@ -1850,13 +1850,19 @@ const addAction = (type: StageAction['type']) => {
 const triggerObjectActions = (object: StageObject) => {
   if (!canInteractObject(object)) return
   const pointer = worldCameraGroup?.getRelativePointerPosition()
-  object.actions.forEach((action) => {
+  const execution = {
+    id: actionId(),
+    mode: object.metadata.actionExecutionMode === 'sequential' ? 'sequential' as const : 'parallel' as const,
+    total: object.actions.length,
+  }
+  object.actions.forEach((action, index) => {
     const parsed = stageActionSchema.safeParse(action)
     if (!parsed.success) return
     emit('actionTriggered', {
       objectId: object.id,
       actionId: parsed.data.id,
       action: parsed.data,
+      execution: { ...execution, index },
       ...(pointer ? {
         pointer: {
           x: Number((pointer.x / WORLD_UNIT_PX).toFixed(6)),
@@ -5207,6 +5213,17 @@ onBeforeUnmount(() => {
             </div>
             <template v-if="canEditAllObjects && isStageActionTarget(selectedObject.type)">
               <label>点击动作</label>
+              <label class="theater-action-execution-mode">
+                <span>执行方式</span>
+                <n-switch
+                  size="small"
+                  :value="selectedObject.metadata.actionExecutionMode !== 'sequential'"
+                  @update:value="selectedObject.metadata.actionExecutionMode = $event ? 'parallel' : 'sequential'"
+                >
+                  <template #checked>同步播放</template>
+                  <template #unchecked>依次播放</template>
+                </n-switch>
+              </label>
               <div class="theater-action-add">
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>
                 <n-button size="tiny" @click="addAction('chat.insert')">插入</n-button>
@@ -5875,6 +5892,7 @@ onBeforeUnmount(() => {
 .theater-drawing-inspector-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
 .theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
 .theater-inspector-actions, .theater-action-add { display: flex; flex-wrap: wrap; gap: 4px; }
+.theater-action-execution-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; }
 .theater-action-row { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
 .theater-action-row small { color: var(--sc-text-secondary, #b5b5c5); font-size: 9px; }
 @media (max-width: 1100px) {

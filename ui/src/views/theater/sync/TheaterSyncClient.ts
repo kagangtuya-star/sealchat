@@ -577,7 +577,10 @@ export class TheaterSyncClient {
   private flushAgain = false
   private pendingRemoteRevision = 0
   private hasLoaded = false
-  private actionQueue: Promise<void> = Promise.resolve()
+  // State mutations must retain revision order. Message and composer actions do
+  // not mutate the theater document, so keeping them out of this queue lets a
+  // single click start all of its effects together.
+  private mutationActionQueue: Promise<void> = Promise.resolve()
   private consecutiveConflicts = 0
 
   private theaterBase() {
@@ -681,12 +684,48 @@ export class TheaterSyncClient {
   }
 
   async triggerAction(payload: StageActionTriggeredPayload) {
-    const previous = this.actionQueue
+    if (payload.action.type !== 'scene.apply' && payload.action.type !== 'object.toggle') {
+      return this.triggerActionNow(payload)
+    }
+    const previous = this.mutationActionQueue
     let release!: () => void
-    this.actionQueue = new Promise<void>((resolve) => { release = resolve })
+    this.mutationActionQueue = new Promise<void>((resolve) => { release = resolve })
     await previous
     try {
       return await this.triggerActionNow(payload)
+    } finally {
+      release()
+    }
+  }
+
+  async triggerActionBatch(payloads: readonly StageActionTriggeredPayload[]) {
+    if (!payloads.length || !payloads.every((payload) => payload.action.type === 'object.toggle')) return false
+    const first = payloads[0]
+    const previous = this.mutationActionQueue
+    let release!: () => void
+    this.mutationActionQueue = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      await this.waitForSaving()
+      await this.flushNow()
+      await this.waitForSaving()
+      let response
+      try {
+        response = await this.postActionBatch(first, payloads)
+      } catch (error) {
+        if (isPermissionDenied(error)) {
+          await this.reload(true, undefined, true)
+          return true
+        }
+        if (!isRevisionConflict(error)) throw error
+        await this.reload(true)
+        response = await this.postActionBatch(first, payloads)
+      }
+      if (response.data?.result?.mutation?.revision !== undefined) {
+        this.revision = finite(response.data.result.mutation.revision, this.revision)
+      }
+      await this.reload(true)
+      return true
     } finally {
       release()
     }
@@ -760,6 +799,15 @@ export class TheaterSyncClient {
       actionId: payload.actionId,
       ...(payload.stepId ? { stepId: payload.stepId } : {}),
       inputChannelId: this.options.inputChannelId || this.options.channelId,
+      expectedRevision: this.revision,
+    })
+  }
+
+  private postActionBatch(first: StageActionTriggeredPayload, payloads: readonly StageActionTriggeredPayload[]) {
+    return api.post(`${this.theaterBase()}/actions/trigger-batch`, {
+      actionRequestId: mutationId('action-batch'),
+      objectId: first.objectId,
+      actionIds: payloads.map((payload) => payload.actionId),
       expectedRevision: this.revision,
     })
   }

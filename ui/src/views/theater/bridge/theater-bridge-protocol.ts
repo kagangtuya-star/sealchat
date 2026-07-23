@@ -472,6 +472,14 @@ export const stageActionTriggeredPayloadSchema = z.strictObject({
   actionId: nonEmptyIdSchema,
   stepId: nonEmptyIdSchema.optional(),
   action: stageActionSchema,
+  execution: z.strictObject({
+    id: nonEmptyIdSchema,
+    mode: z.enum(['parallel', 'sequential']),
+    index: z.number().int().min(0).max(31),
+    total: z.number().int().min(1).max(32),
+  }).refine((value) => value.index < value.total, {
+    message: 'execution index must be within total',
+  }).optional(),
   pointer: z.strictObject({
     x: z.number().finite(),
     y: z.number().finite(),

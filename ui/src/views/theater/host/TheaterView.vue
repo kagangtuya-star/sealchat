@@ -273,6 +273,15 @@ const startTheaterBridge = () => {
         return true
       }
     },
+    triggerStageActionBatch: async (payloads) => {
+      if (!theaterSync) return false
+      try {
+        return await theaterSync.triggerActionBatch(payloads)
+      } catch (error) {
+        message.warning(error instanceof Error ? error.message : '舞台动作批量执行失败')
+        return true
+      }
+    },
   })
   void theaterBridge.start().catch((error) => {
     console.warn('[theater-bridge] host startup failed', error)

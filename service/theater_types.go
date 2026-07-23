@@ -192,6 +192,15 @@ type TheaterActionCommand struct {
 	ExpectedRevision int64  `json:"expectedRevision"`
 }
 
+type TheaterActionBatchCommand struct {
+	ActionRequestID  string   `json:"actionRequestId"`
+	WorldID          string   `json:"worldId"`
+	ChannelID        string   `json:"channelId"`
+	ObjectID         string   `json:"objectId"`
+	ActionIDs        []string `json:"actionIds"`
+	ExpectedRevision int64    `json:"expectedRevision"`
+}
+
 type TheaterActionResult struct {
 	Kind       string                 `json:"kind"`
 	Mutation   *TheaterMutationResult `json:"mutation,omitempty"`

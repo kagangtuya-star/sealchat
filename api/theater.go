@@ -263,3 +263,19 @@ func TheaterActionTrigger(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
 }
+
+func TheaterActionBatchTrigger(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var command service.TheaterActionBatchCommand
+	if err := decodeTheaterBody(c, &command, 256<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	command.WorldID = c.Params("worldId")
+	command.ChannelID = c.Params("channelId")
+	result, err := service.TriggerTheaterActionBatch(c.Context(), user.ID, command, theaterRequestMeta(c, requestID))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
+}

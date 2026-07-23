@@ -49,6 +49,7 @@ interface TheaterHostBridgeOptions {
   onChatMessageUpdated?: (payload: TheaterDialogueMessagePayload) => void
   onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
   triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean | StageAction>
+  triggerStageActionBatch?: (payloads: readonly StageActionTriggeredPayload[]) => Promise<boolean>
   onSceneApplied?: (sceneId: string) => void
 }
 
@@ -103,6 +104,8 @@ export class TheaterHostBridge {
   private started = false
   private pendingChatMessages: Array<{ message: TheaterBridgeMessage, expiresAt: number }> = []
   private readonly runningSequenceActions = new Set<string>()
+  private readonly sequentialActionExecutions = new Map<string, Promise<void>>()
+  private readonly parallelActionExecutions = new Map<string, StageActionTriggeredPayload[]>()
   private sequenceGeneration = 0
   private characterSnapshot: ChatCharactersSnapshotPayload = {
     revision: 0,
@@ -160,6 +163,8 @@ export class TheaterHostBridge {
     this.started = false
     this.sequenceGeneration += 1
     this.runningSequenceActions.clear()
+    this.sequentialActionExecutions.clear()
+    this.parallelActionExecutions.clear()
     this.setChatOnline(false)
     this.pendingChatMessages = []
     this.routerUnsubscribers.forEach((unsubscribe) => unsubscribe())
@@ -363,12 +368,59 @@ export class TheaterHostBridge {
   }
 
   private async handleStageActionTriggered(payload: StageActionTriggeredPayload) {
+    if (payload.execution?.mode === 'parallel') {
+      const key = payload.execution.id
+      const batch = this.parallelActionExecutions.get(key) || []
+      batch.push(payload)
+      if (batch.length < payload.execution.total) {
+        this.parallelActionExecutions.set(key, batch)
+        return
+      }
+      this.parallelActionExecutions.delete(key)
+      await this.executeParallelStageActions(batch)
+      return
+    }
+    if (payload.execution?.mode !== 'sequential') {
+      await this.executeStageActionTriggered(payload)
+      return
+    }
+    const key = payload.execution.id
+    const previous = this.sequentialActionExecutions.get(key) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(() => this.executeStageActionTriggered(payload))
+    this.sequentialActionExecutions.set(key, current)
+    try {
+      await current
+    } finally {
+      if (payload.execution.index === payload.execution.total - 1 && this.sequentialActionExecutions.get(key) === current) {
+        this.sequentialActionExecutions.delete(key)
+      }
+    }
+  }
+
+  private async executeParallelStageActions(payloads: readonly StageActionTriggeredPayload[]) {
+    const ordered = [...payloads].sort((left, right) => (left.execution?.index || 0) - (right.execution?.index || 0))
+    if (
+      ordered.length > 1
+      && ordered.every((payload) => payload.action.type === 'object.toggle')
+      && this.options.triggerStageActionBatch
+    ) {
+      try {
+        await this.options.triggerStageActionBatch(ordered)
+      } catch (error) {
+        this.debug('stage action batch failed', error)
+      }
+      return
+    }
+    await Promise.all(ordered.map((payload) => this.executeStageActionTriggered(payload)))
+  }
+
+  private async executeStageActionTriggered(payload: StageActionTriggeredPayload) {
     if (!this.options.permissions.includes('stage.action.trigger')) {
       this.debug('stage action permission denied', payload.actionId)
       return
     }
     const object = this.options.stageStore.activeObjects.value[payload.objectId]
-    if (!object || !object.visible || !object.interactive || !isStageActionTarget(object.type)) {
+    if (!object || !object.interactive || !isStageActionTarget(object.type)) {
       this.debug('stage action object rejected', payload.objectId)
       return
     }
