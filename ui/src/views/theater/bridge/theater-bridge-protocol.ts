@@ -246,6 +246,12 @@ const sceneApplyActionSchema = z.strictObject({
   payload: z.strictObject({ sceneId: nonEmptyIdSchema }),
 })
 
+const effectPlayActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('effect.play'),
+  payload: z.strictObject({ effectId: nonEmptyIdSchema }),
+})
+
 const objectToggleActionSchema = z.strictObject({
   id: nonEmptyIdSchema,
   type: z.literal('object.toggle'),
@@ -256,6 +262,7 @@ const stageAtomicActionSchema = z.discriminatedUnion('type', [
   chatSendActionSchema,
   chatInsertActionSchema,
   sceneApplyActionSchema,
+  effectPlayActionSchema,
   objectToggleActionSchema,
 ])
 
@@ -263,6 +270,7 @@ const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
   chatSendActionSchema.omit({ id: true }),
   chatInsertActionSchema.omit({ id: true }),
   sceneApplyActionSchema.omit({ id: true }),
+  effectPlayActionSchema.omit({ id: true }),
   objectToggleActionSchema.omit({ id: true }),
 ])
 

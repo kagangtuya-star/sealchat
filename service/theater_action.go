@@ -104,6 +104,24 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 			return nil, err
 		}
 		return &TheaterActionResult{Kind: "mutation", Mutation: result}, nil
+	case "effect.play":
+		var payload theaterEffectPlayPayload
+		if err := decodeStrictJSON(selected.Payload, &payload); err != nil {
+			return nil, theaterPayloadError("effect.play action payload 无效")
+		}
+		target, err := loadTheaterObject(model.GetDB(), room.ID, strings.TrimSpace(payload.EffectID))
+		if err != nil {
+			return nil, err
+		}
+		if target.Kind != "effect" || (target.SceneID != "" && target.SceneID != room.ActiveSceneID) {
+			return nil, newTheaterError(TheaterErrorNotFound, "可播放特效不存在", 404, nil)
+		}
+		if !target.Visible {
+			return nil, newTheaterError(TheaterErrorNotFound, "特效未启用", 404, nil)
+		}
+		return &TheaterActionResult{Kind: "effect", Effect: &TheaterEffectActionResult{
+			TriggerID: mutationID, EffectID: target.ID, RoomID: room.ID, Revision: room.Revision,
+		}}, nil
 	case TheaterMutationObjectToggle:
 		var payload theaterObjectTogglePayload
 		if len(selected.Payload) > 0 {

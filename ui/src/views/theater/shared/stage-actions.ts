@@ -22,12 +22,13 @@ export const isStageSequenceAction = (action: StageAction): action is StageSeque
 export const createStageAtomicActionDescriptor = (
   type: StageAtomicAction['type'],
   sceneId: string,
-  objectId = '',
+  targetId = '',
 ): StageAtomicActionDescriptor => {
   if (type === 'chat.send') return { type, payload: { content: '舞台消息' } }
   if (type === 'chat.insert') return { type, payload: { content: '舞台台词' } }
   if (type === 'scene.apply') return { type, payload: { sceneId } }
-  return { type, payload: { objectId } }
+  if (type === 'effect.play') return { type, payload: { effectId: targetId } }
+  return { type, payload: { objectId: targetId } }
 }
 
 export const createStageSequenceStep = (sceneId: string, objectId = ''): StageSequenceStep => ({
@@ -90,6 +91,10 @@ const normalizeAtomicDescriptor = (value: unknown): StageAtomicActionDescriptor 
   if (action.type === 'scene.apply') {
     const sceneId = typeof action.payload.sceneId === 'string' ? action.payload.sceneId.trim() : ''
     return sceneId ? { type: action.type, payload: { sceneId } } : null
+  }
+  if (action.type === 'effect.play') {
+    const effectId = typeof action.payload.effectId === 'string' ? action.payload.effectId.trim() : ''
+    return effectId ? { type: action.type, payload: { effectId } } : null
   }
   if (action.type === 'object.toggle') {
     const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''

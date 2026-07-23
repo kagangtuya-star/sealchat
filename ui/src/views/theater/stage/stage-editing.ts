@@ -204,6 +204,19 @@ export const instantiateClipboardBundle = (
       if (copiedAction.type === 'object.toggle' && idMap.has(copiedAction.payload.objectId)) {
         copiedAction.payload.objectId = idMap.get(copiedAction.payload.objectId)!
       }
+      if (copiedAction.type === 'effect.play' && idMap.has(copiedAction.payload.effectId)) {
+        copiedAction.payload.effectId = idMap.get(copiedAction.payload.effectId)!
+      }
+      if (copiedAction.type === 'action.sequence') {
+        copiedAction.payload.steps.forEach((step) => {
+          if (step.action.type === 'object.toggle' && idMap.has(step.action.payload.objectId)) {
+            step.action.payload.objectId = idMap.get(step.action.payload.objectId)!
+          }
+          if (step.action.type === 'effect.play' && idMap.has(step.action.payload.effectId)) {
+            step.action.payload.effectId = idMap.get(step.action.payload.effectId)!
+          }
+        })
+      }
       return copiedAction
     })
     if (source.id === bundle.rootId) {

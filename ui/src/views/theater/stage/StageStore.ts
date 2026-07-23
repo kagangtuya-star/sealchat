@@ -206,6 +206,9 @@ const normalizeActions = (input: unknown): StageAction[] => {
     } else if (action.type === 'scene.apply') {
       const sceneId = typeof action.payload.sceneId === 'string' ? action.payload.sceneId.trim() : ''
       if (sceneId) result.push({ id, type: action.type, payload: { sceneId } })
+    } else if (action.type === 'effect.play') {
+      const effectId = typeof action.payload.effectId === 'string' ? action.payload.effectId.trim() : ''
+      if (effectId) result.push({ id, type: action.type, payload: { effectId } })
     } else if (action.type === 'object.toggle') {
       const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
       if (objectId) result.push({ id, type: action.type, payload: { objectId } })

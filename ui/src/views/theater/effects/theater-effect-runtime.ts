@@ -54,6 +54,8 @@ export class TheaterEffectRuntime {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly lastTriggeredAt = new Map<string, number>()
   private readonly lastTriggeredMessageId = new Map<string, string>()
+  private readonly playedTriggerIds = new Set<string>()
+  private readonly playedTriggerOrder: string[] = []
   private active: TheaterEffectPlayback[] = []
   private currentMessage: TheaterDialogueMessage | null = null
   private currentMessageId = ''
@@ -79,6 +81,21 @@ export class TheaterEffectRuntime {
   preview = (object: StageObject) => {
     if (!isTheaterEffectObject(object)) return
     this.start(object, true)
+  }
+
+  play = (effectId: string, triggerId = '') => {
+    if (triggerId && this.playedTriggerIds.has(triggerId)) return true
+    const object = this.options.getObjects().find((item) => item.id === effectId)
+    if (!isTheaterEffectObject(object) || !object.visible) return false
+    if (triggerId) {
+      this.playedTriggerIds.add(triggerId)
+      this.playedTriggerOrder.push(triggerId)
+      if (this.playedTriggerOrder.length > 256) {
+        this.playedTriggerIds.delete(this.playedTriggerOrder.shift()!)
+      }
+    }
+    this.start(object, false)
+    return true
   }
 
   stop = (effectId: string) => {
@@ -109,6 +126,8 @@ export class TheaterEffectRuntime {
     this.timers.forEach((timer) => this.scheduler.clearTimeout(timer))
     this.timers.clear()
     this.active = []
+    this.playedTriggerIds.clear()
+    this.playedTriggerOrder.length = 0
     this.listeners.clear()
   }
 

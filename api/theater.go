@@ -261,6 +261,9 @@ func TheaterActionTrigger(c *fiber.Ctx) error {
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}
+	if err := publishTheaterEffectTriggered(command.WorldID, command.ChannelID, result.Effect); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
 	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
 }
 

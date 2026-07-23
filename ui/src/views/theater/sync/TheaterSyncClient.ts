@@ -83,6 +83,7 @@ interface TheaterSyncOptions {
   onSyncingChange?: (syncing: boolean) => void
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
   onPointerTrace?: (trace: StagePointerTrace) => void
+  onEffectTriggered?: (effectId: string, triggerId: string) => void
   onError?: (message: string) => void
 }
 
@@ -632,6 +633,16 @@ export class TheaterSyncClient {
     this.options.onPointerTrace?.({ traceId, displayName, color, points, finished: payload.finished === true })
   }
 
+  private readonly onEffectTriggered = (event: any) => {
+    const theater = event?.theater
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    const payload = asObject(theater.payload)
+    const effectId = typeof payload.effectId === 'string' ? payload.effectId.trim() : ''
+    const triggerId = typeof payload.triggerId === 'string' ? payload.triggerId.trim() : ''
+    if (!effectId || !triggerId) return
+    this.options.onEffectTriggered?.(effectId, triggerId)
+  }
+
   private readonly onGatewayConnected = () => {
     void this.subscribe()
   }
@@ -646,6 +657,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.mutation.rejected' as any, this.onGatewayEvent)
     chatEvent.on('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.on('theater.pointer.trace' as any, this.onPointerTrace)
+    chatEvent.on('theater.effect.triggered' as any, this.onEffectTriggered)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
     if (!this.started) return
@@ -675,6 +687,7 @@ export class TheaterSyncClient {
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
     chatEvent.off('theater.preload.requested' as any, this.onPreloadRequested)
     chatEvent.off('theater.pointer.trace' as any, this.onPointerTrace)
+    chatEvent.off('theater.effect.triggered' as any, this.onEffectTriggered)
     chatEvent.off('connected' as any, this.onGatewayConnected)
     try {
       await this.options.sendGatewayAPI('theater.unsubscribe', {})

@@ -50,6 +50,7 @@ interface TheaterHostBridgeOptions {
   onChatMessageRemoved?: (payload: TheaterDialogueMessageRemovedPayload) => void
   triggerStageAction?: (payload: StageActionTriggeredPayload) => Promise<boolean | StageAction>
   triggerStageActionBatch?: (payloads: readonly StageActionTriggeredPayload[]) => Promise<boolean>
+  playStageEffect?: (effectId: string, triggerId?: string) => boolean
   onSceneApplied?: (sceneId: string) => void
 }
 
@@ -73,6 +74,8 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
       return right.type === 'chat.insert' && left.payload.content === right.payload.content
     case 'scene.apply':
       return right.type === 'scene.apply' && left.payload.sceneId === right.payload.sceneId
+    case 'effect.play':
+      return right.type === 'effect.play' && left.payload.effectId === right.payload.effectId
     case 'object.toggle':
       return right.type === 'object.toggle' && left.payload.objectId === right.payload.objectId
     case 'action.sequence':
@@ -486,6 +489,12 @@ export class TheaterHostBridge {
         throw new TheaterBridgeRequestError('PERMISSION_DENIED', 'Missing permission: stage.scene.switch')
       }
       this.applyScene({ sceneId: action.payload.sceneId })
+      return
+    }
+    if (action.type === 'effect.play') {
+      if (!this.options.playStageEffect?.(action.payload.effectId, action.id)) {
+        throw new TheaterBridgeRequestError('EFFECT_NOT_FOUND', `Effect not found: ${action.payload.effectId}`)
+      }
       return
     }
     if (action.type === 'object.toggle') {

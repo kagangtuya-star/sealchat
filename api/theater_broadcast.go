@@ -232,6 +232,36 @@ func (info *ConnInfo) closeTheaterQueue() {
 
 type LocalTheaterEventPublisher struct{}
 
+func publishTheaterEffectTriggered(worldID, channelID string, effect *service.TheaterEffectActionResult) error {
+	if effect == nil || userId2ConnInfoGlobal == nil {
+		return nil
+	}
+	var room model.TheaterRoomModel
+	if err := model.GetDB().Where("id = ? AND world_id = ? AND channel_id = ?", effect.RoomID, worldID, channelID).First(&room).Error; err != nil {
+		return err
+	}
+	event := theaterGatewayEvent(protocol.EventTheaterEffectTriggered, worldID, channelID, room.ID, effect.Revision, effect.TriggerID, map[string]any{
+		"triggerId": effect.TriggerID,
+		"effectId":  effect.EffectID,
+	})
+	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if info == nil || info.User == nil || info.User.IsBot || !canConnectionViewTheater(userID, info, worldID, channelID) {
+				return true
+			}
+			subscription, queue := info.theaterState()
+			if subscription == nil || queue == nil || subscription.WorldID != worldID || subscription.ChannelID != channelID {
+				return true
+			}
+			gap := theaterSnapshotEventForConnection(info, worldID, channelID, room.ID, room.Revision, room.SchemaVersion, room.StateHash, "gap")
+			queue.Enqueue(event, gap)
+			return true
+		})
+		return true
+	})
+	return nil
+}
+
 func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, mutation model.TheaterMutationModel) error {
 	if mutation.Status == "rejected" {
 		return publishRejectedTheaterMutation(mutation)

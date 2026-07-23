@@ -164,6 +164,8 @@ func redactTheaterActionsForMember(raw json.RawMessage) json.RawMessage {
 			action["payload"] = map[string]any{"content": "redacted"}
 		case TheaterMutationSceneApply:
 			action["payload"] = map[string]any{"sceneId": "redacted"}
+		case "effect.play":
+			action["payload"] = map[string]any{"effectId": "redacted"}
 		case TheaterMutationObjectToggle:
 			action["payload"] = map[string]any{"objectId": "redacted"}
 		}

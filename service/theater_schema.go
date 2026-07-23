@@ -101,6 +101,10 @@ type theaterObjectTogglePayload struct {
 	Visible  *bool  `json:"visible,omitempty"`
 }
 
+type theaterEffectPlayPayload struct {
+	EffectID string `json:"effectId"`
+}
+
 type theaterCharacterBindPayload struct {
 	SceneID     *string            `json:"sceneId"`
 	Object      theaterObjectInput `json:"object"`
@@ -704,6 +708,14 @@ func validateTheaterAtomicAction(action theaterStoredAction) error {
 		var payload theaterSceneApplyPayload
 		if err := decodeStrictJSON(action.Payload, &payload); err != nil || strings.TrimSpace(payload.SceneID) == "" {
 			return theaterPayloadError("scene.apply action payload 无效")
+		}
+	case "effect.play":
+		var payload theaterEffectPlayPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+			return theaterPayloadError("effect.play action payload 无效")
+		}
+		if err := validateTheaterID(strings.TrimSpace(payload.EffectID), "effect.play effectId"); err != nil {
+			return err
 		}
 	case TheaterMutationObjectToggle:
 		var payload theaterObjectTogglePayload

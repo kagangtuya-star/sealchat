@@ -202,10 +202,18 @@ type TheaterActionBatchCommand struct {
 }
 
 type TheaterActionResult struct {
-	Kind       string                 `json:"kind"`
-	Mutation   *TheaterMutationResult `json:"mutation,omitempty"`
-	Descriptor json.RawMessage        `json:"descriptor,omitempty"`
-	Chat       *TheaterChatSendResult `json:"chat,omitempty"`
+	Kind       string                     `json:"kind"`
+	Mutation   *TheaterMutationResult     `json:"mutation,omitempty"`
+	Descriptor json.RawMessage            `json:"descriptor,omitempty"`
+	Chat       *TheaterChatSendResult     `json:"chat,omitempty"`
+	Effect     *TheaterEffectActionResult `json:"effect,omitempty"`
+}
+
+type TheaterEffectActionResult struct {
+	TriggerID string `json:"triggerId"`
+	EffectID  string `json:"effectId"`
+	RoomID    string `json:"roomId"`
+	Revision  int64  `json:"revision"`
 }
 
 type TheaterRestoreCommand struct {

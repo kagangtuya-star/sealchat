@@ -15,6 +15,7 @@ import type {
   StageSequenceAction,
   StageSequenceStep,
 } from '../shared/stage-types'
+import { isTheaterEffectObject } from '../effects/theater-effect-types'
 
 const props = defineProps<{
   show: boolean
@@ -33,6 +34,7 @@ const actionTypeOptions: Array<{ label: string, value: StageAtomicAction['type']
   { label: '发送消息', value: 'chat.send' },
   { label: '插入输入框', value: 'chat.insert' },
   { label: '切换场景', value: 'scene.apply' },
+  { label: '播放特效', value: 'effect.play' },
   { label: '切换组件显隐', value: 'object.toggle' },
 ]
 const addActionOptions = actionTypeOptions.map(({ label, value }) => ({ label, key: value }))
@@ -92,13 +94,28 @@ const objectOptions = (sceneId: string | null) => {
   return [...values.values()]
 }
 
+const effectOptions = (sceneId: string | null) => {
+  const scene = sceneId ? props.scenes.find((item) => item.id === sceneId) : null
+  const local = scene
+    ? Object.values(scene.state.sceneObjects)
+      .filter(isTheaterEffectObject)
+      .map((object) => ({ label: object.name, value: object.id }))
+    : []
+  const fixed = Object.values(props.persistentObjects)
+    .filter(isTheaterEffectObject)
+    .map((object) => ({ label: `${object.name} · 跨场景`, value: object.id }))
+  return [...new Map([...local, ...fixed].map((option) => [option.value, option])).values()]
+}
+
 const firstObjectId = (sceneId: string | null) => objectOptions(sceneId)[0]?.value || ''
 
 const addStep = (type: StageAtomicAction['type']) => {
   if (!props.action || props.action.payload.steps.length >= STAGE_SEQUENCE_MAX_STEPS) return
   const sceneId = props.activeSceneId || props.scenes[0]?.id || ''
+  const targetId = type === 'effect.play' ? effectOptions(sceneId)[0]?.value || '' : firstObjectId(sceneId)
+  if (type === 'effect.play' && !targetId) return
   const step = createStageSequenceStep(sceneId, firstObjectId(sceneId))
-  step.action = createStageAtomicActionDescriptor(type, sceneId, firstObjectId(sceneId))
+  step.action = createStageAtomicActionDescriptor(type, sceneId, targetId)
   props.action.payload.steps.push(step)
 }
 
@@ -114,6 +131,10 @@ const removeStep = (stepId: string) => {
 }
 
 const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
+  if (step.action.type === 'effect.play' && !effectOptions(sceneId || null).length) {
+    openSelectKey.value = ''
+    return
+  }
   step.sceneId = sceneId || null
   if (step.action.type === 'scene.apply') step.action.payload.sceneId = sceneId
   if (step.action.type === 'object.toggle') {
@@ -121,6 +142,13 @@ const updateStepScene = (step: StageSequenceStep, sceneId: string) => {
     const objectId = step.action.payload.objectId
     if (options.length && !options.some((option) => option.value === objectId)) {
       step.action.payload.objectId = options[0].value
+    }
+  }
+  if (step.action.type === 'effect.play') {
+    const options = effectOptions(step.sceneId)
+    const effectId = step.action.payload.effectId
+    if (options.length && !options.some((option) => option.value === effectId)) {
+      step.action.payload.effectId = options[0].value
     }
   }
   openSelectKey.value = ''
@@ -134,6 +162,12 @@ const updateTiming = (step: StageSequenceStep, mode: 'after' | 'delay' | 'sync')
 const updateStepObject = (step: StageSequenceStep, objectId: string) => {
   if (step.action.type !== 'object.toggle') return
   step.action.payload.objectId = objectId
+  openSelectKey.value = ''
+}
+
+const updateStepEffect = (step: StageSequenceStep, effectId: string) => {
+  if (step.action.type !== 'effect.play') return
+  step.action.payload.effectId = effectId
   openSelectKey.value = ''
 }
 
@@ -279,6 +313,17 @@ onBeforeUnmount(() => {
               placeholder="选择组件"
               @update:show="updateSelectShow('object', step, $event)"
               @update:value="updateStepObject(step, $event)"
+            />
+            <n-select
+              v-else-if="step.action.type === 'effect.play'"
+              :value="step.action.payload.effectId"
+              :show="isSequenceSelectOpen('effect', step.id)"
+              :options="effectOptions(step.sceneId)"
+              filterable
+              :menu-props="sequenceSelectMenuProps"
+              placeholder="选择特效"
+              @update:show="updateSelectShow('effect', step, $event)"
+              @update:value="updateStepEffect(step, $event)"
             />
             <span v-else class="theater-sequence-row__operation">切换至所选场景</span>
 

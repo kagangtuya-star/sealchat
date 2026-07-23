@@ -59,6 +59,14 @@ const chatBridgeOnline = ref(false)
 const theaterSyncing = ref(false)
 const theaterSyncReady = ref(false)
 const theaterPermissions = ref<string[]>([])
+
+const theaterActionErrorMessage = (error: unknown, fallback: string) => {
+  const responseMessage = (error as { response?: { data?: { error?: { message?: unknown } } } })
+    ?.response?.data?.error?.message
+  if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage
+  return error instanceof Error ? error.message : fallback
+}
+
 const sceneDialogueStorageKey = 'sealchat.theater.scene-switch-text.enabled.v1'
 const readSceneDialogueEnabled = () => {
   try {
@@ -268,7 +276,7 @@ const startTheaterBridge = () => {
         }
         return handled
       } catch (error) {
-        message.warning(error instanceof Error ? error.message : '舞台动作执行失败')
+        message.warning(theaterActionErrorMessage(error, '舞台动作执行失败'))
         if (payload.stepId) throw error
         return true
       }
@@ -278,10 +286,11 @@ const startTheaterBridge = () => {
       try {
         return await theaterSync.triggerActionBatch(payloads)
       } catch (error) {
-        message.warning(error instanceof Error ? error.message : '舞台动作批量执行失败')
+        message.warning(theaterActionErrorMessage(error, '舞台动作批量执行失败'))
         return true
       }
     },
+    playStageEffect: (effectId, triggerId) => stageAppRef.value?.playEffect(effectId, triggerId) === true,
   })
   void theaterBridge.start().catch((error) => {
     console.warn('[theater-bridge] host startup failed', error)
@@ -328,6 +337,9 @@ const startTheaterSync = async () => {
     },
     onPointerTrace: (trace) => {
       if (isCurrent() && theaterSync === client) stageAppRef.value?.appendPointerTrace(trace)
+    },
+    onEffectTriggered: (effectId, triggerId) => {
+      if (isCurrent() && theaterSync === client) stageAppRef.value?.playEffect(effectId, triggerId)
     },
     onError: (error) => {
       if (isCurrent() && theaterSync === client) message.warning(error)

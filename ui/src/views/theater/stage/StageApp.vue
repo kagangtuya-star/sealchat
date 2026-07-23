@@ -720,6 +720,10 @@ const referencedTheaterAudioAssetIds = computed(() => [...new Set(Object.values(
   .filter(isTheaterEffectObject)
   .map((object) => theaterEffectConfigFromObject(object).audio?.assetId)
   .filter((assetId): assetId is string => Boolean(assetId)))])
+const effectActionOptions = computed(() => Object.values(props.store.activeObjects.value)
+  .filter(isTheaterEffectObject)
+  .sort((left, right) => left.transform.z - right.transform.z || left.transform.order - right.transform.order)
+  .map((object) => ({ label: object.name, value: object.id })))
 const isDrawingTool = (tool: StageCanvasTool | null): tool is StageDrawingTool => Boolean(tool && tool !== 'eraser')
 const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
   canEditAllObjects.value
@@ -1848,7 +1852,10 @@ const addAction = (type: StageAction['type']) => {
       ? { id: actionId(), type, payload: { content: '舞台台词' } }
       : type === 'scene.apply'
         ? { id: actionId(), type, payload: { sceneId: props.store.state.activeSceneId } }
-        : { id: actionId(), type, payload: { objectId: object.id } }
+        : type === 'effect.play'
+          ? { id: actionId(), type, payload: { effectId: effectActionOptions.value[0]?.value || '' } }
+          : { id: actionId(), type, payload: { objectId: object.id } }
+  if (action.type === 'effect.play' && !action.payload.effectId) return
   props.store.addObjectAction(object.id, action)
 }
 
@@ -2675,7 +2682,9 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
   if (batch.settled.size >= batch.expected.size) releaseSceneMediaBatch(batch)
 }
 
-defineExpose({ preloadScenes, appendPointerTrace })
+const playEffect = (effectId: string, triggerId = '') => effectRuntime.play(effectId, triggerId)
+
+defineExpose({ preloadScenes, appendPointerTrace, playEffect })
 
 const setImageFit = (
   node: Konva.Image,
@@ -5284,6 +5293,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" @click="addAction('chat.send')">发送</n-button>
                 <n-button size="tiny" @click="addAction('chat.insert')">插入</n-button>
                 <n-button size="tiny" @click="addAction('scene.apply')">场景</n-button>
+                <n-button size="tiny" :disabled="!effectActionOptions.length" @click="addAction('effect.play')">特效</n-button>
                 <n-button size="tiny" @click="addAction('object.toggle')">显隐</n-button>
                 <n-button size="tiny" @click="addAction('action.sequence')">组合</n-button>
               </div>
@@ -5291,6 +5301,7 @@ onBeforeUnmount(() => {
                 <small>{{ action.type }}</small>
                 <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
                 <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                 <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                 <n-button v-else size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
                 <n-button text type="error" size="tiny" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)">删除</n-button>

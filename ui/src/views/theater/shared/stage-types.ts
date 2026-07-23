@@ -53,6 +53,13 @@ export type StageAtomicAction =
   }
   | {
     id: string
+    type: 'effect.play'
+    payload: {
+      effectId: string
+    }
+  }
+  | {
+    id: string
     type: 'object.toggle'
     payload: {
       objectId: string
