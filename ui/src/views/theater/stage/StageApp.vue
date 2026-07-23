@@ -1041,6 +1041,7 @@ const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
   }
 }
 const panelLayouts = ref<Partial<Record<PanelId, PanelLayout>>>(readPanelLayouts())
+const frontPanelId = ref<PanelId | null>(null)
 let panelResizeObserver: ResizeObserver | null = null
 let draggingPanel: { id: PanelId, pointerX: number, pointerY: number, x: number, y: number } | null = null
 
@@ -1097,7 +1098,12 @@ const panelStyle = (id: PanelId) => {
     top: `${layout.y}px`,
     width: `${layout.width}px`,
     height: `${layout.height}px`,
+    zIndex: frontPanelId.value === id ? '11' : '10',
   }
+}
+
+const bringPanelToFront = (id: PanelId) => {
+  frontPanelId.value = id
 }
 
 const togglePanel = (id: PanelId) => {
@@ -1107,6 +1113,17 @@ const togglePanel = (id: PanelId) => {
   else if (id === 'layer') layerPanelOpen.value = !layerPanelOpen.value
   else if (id === 'effect') effectPanelOpen.value = !effectPanelOpen.value
   else assetPanelOpen.value = !assetPanelOpen.value
+
+  const isOpen = id === 'scene'
+    ? scenePanelOpen.value
+    : id === 'inspector'
+      ? inspectorPanelOpen.value
+      : id === 'layer'
+        ? layerPanelOpen.value
+        : id === 'effect'
+          ? effectPanelOpen.value
+          : assetPanelOpen.value
+  if (isOpen) bringPanelToFront(id)
 }
 
 const resetWorkspaceLayout = async () => {
@@ -4911,7 +4928,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <aside v-if="scenePanelOpen && canOpenPanel('scene')" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')">
+      <aside v-if="scenePanelOpen && canOpenPanel('scene')" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')" @pointerdown.capture="bringPanelToFront('scene')" @focusin="bringPanelToFront('scene')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('scene', $event)">
           <span>场景</span>
           <div class="theater-panel-heading__actions">
@@ -4986,7 +5003,7 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <aside v-if="inspectorPanelOpen && canOpenPanel('inspector')" class="theater-floating-panel theater-object-inspector" data-panel-id="inspector" :style="panelStyle('inspector')">
+      <aside v-if="inspectorPanelOpen && canOpenPanel('inspector')" class="theater-floating-panel theater-object-inspector" data-panel-id="inspector" :style="panelStyle('inspector')" @pointerdown.capture="bringPanelToFront('inspector')" @focusin="bringPanelToFront('inspector')">
         <template v-if="isBatchSelection">
           <div class="theater-panel-heading" @pointerdown="startPanelDrag('inspector', $event)">
             <span>批量编辑</span>
@@ -5212,7 +5229,7 @@ onBeforeUnmount(() => {
         </template>
       </aside>
 
-      <aside v-if="layerPanelOpen && canOpenPanel('layer')" class="theater-floating-panel theater-layer-panel" data-panel-id="layer" :style="panelStyle('layer')">
+      <aside v-if="layerPanelOpen && canOpenPanel('layer')" class="theater-floating-panel theater-layer-panel" data-panel-id="layer" :style="panelStyle('layer')" @pointerdown.capture="bringPanelToFront('layer')" @focusin="bringPanelToFront('layer')">
         <div class="theater-panel-heading theater-layer-panel__top-heading" @pointerdown="startPanelDrag('layer', $event)">
           <span>图层与属性</span>
           <div class="theater-panel-heading__actions">
@@ -5466,7 +5483,7 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <aside v-if="effectPanelOpen && canOpenPanel('effect')" class="theater-floating-panel theater-effect-panel" data-panel-id="effect" :style="panelStyle('effect')">
+      <aside v-if="effectPanelOpen && canOpenPanel('effect')" class="theater-floating-panel theater-effect-panel" data-panel-id="effect" :style="panelStyle('effect')" @pointerdown.capture="bringPanelToFront('effect')" @focusin="bringPanelToFront('effect')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('effect', $event)">
           <span>特效层</span>
           <div class="theater-panel-heading__actions">
@@ -5498,7 +5515,7 @@ onBeforeUnmount(() => {
         />
       </aside>
 
-      <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')">
+      <aside v-if="assetPanelOpen && canOpenPanel('asset')" class="theater-floating-panel theater-asset-panel" data-panel-id="asset" :style="panelStyle('asset')" @pointerdown.capture="bringPanelToFront('asset')" @focusin="bringPanelToFront('asset')">
         <div class="theater-panel-heading" @pointerdown="startPanelDrag('asset', $event)">
           <span>素材管理器</span>
           <div class="theater-panel-heading__actions">
