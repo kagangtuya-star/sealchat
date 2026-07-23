@@ -269,6 +269,7 @@ const startTheaterBridge = () => {
         return handled
       } catch (error) {
         message.warning(error instanceof Error ? error.message : '舞台动作执行失败')
+        if (payload.stepId) throw error
         return true
       }
     },

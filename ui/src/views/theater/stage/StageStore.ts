@@ -17,6 +17,7 @@ import {
   type StageSurfaceTarget,
   type StageWorkspaceState,
 } from '../shared/stage-types'
+import { normalizeStageSequenceAction } from '../shared/stage-actions'
 import {
   applyObjectHistoryEntry,
   cloneStageData,
@@ -208,6 +209,9 @@ const normalizeActions = (input: unknown): StageAction[] => {
     } else if (action.type === 'object.toggle') {
       const objectId = typeof action.payload.objectId === 'string' ? action.payload.objectId.trim() : ''
       if (objectId) result.push({ id, type: action.type, payload: { objectId } })
+    } else if (action.type === 'action.sequence') {
+      const sequence = normalizeStageSequenceAction(value)
+      if (sequence) result.push(sequence)
     }
     return result
   }, []).slice(0, 32)

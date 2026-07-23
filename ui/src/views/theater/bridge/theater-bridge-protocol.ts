@@ -252,11 +252,48 @@ const objectToggleActionSchema = z.strictObject({
   payload: z.strictObject({ objectId: nonEmptyIdSchema }),
 })
 
-export const stageActionSchema = z.discriminatedUnion('type', [
+const stageAtomicActionSchema = z.discriminatedUnion('type', [
   chatSendActionSchema,
   chatInsertActionSchema,
   sceneApplyActionSchema,
   objectToggleActionSchema,
+])
+
+const stageAtomicActionDescriptorSchema = z.discriminatedUnion('type', [
+  chatSendActionSchema.omit({ id: true }),
+  chatInsertActionSchema.omit({ id: true }),
+  sceneApplyActionSchema.omit({ id: true }),
+  objectToggleActionSchema.omit({ id: true }),
+])
+
+const stageSequenceActionSchema = z.strictObject({
+  id: nonEmptyIdSchema,
+  type: z.literal('action.sequence'),
+  payload: z.strictObject({
+    version: z.literal(1),
+    name: z.string().max(128),
+    steps: z.array(z.strictObject({
+      id: nonEmptyIdSchema,
+      sceneId: nonEmptyIdSchema.nullable(),
+      timing: z.discriminatedUnion('mode', [
+        z.strictObject({ mode: z.literal('after') }),
+        z.strictObject({ mode: z.literal('delay'), delayMs: z.number().int().min(0).max(60_000) }),
+        z.strictObject({ mode: z.literal('sync') }),
+      ]),
+      action: stageAtomicActionDescriptorSchema,
+    })).max(32),
+  }),
+}).superRefine((action, context) => {
+  const ids = new Set<string>()
+  action.payload.steps.forEach((step, index) => {
+    if (ids.has(step.id)) context.addIssue({ code: 'custom', path: ['payload', 'steps', index, 'id'], message: 'duplicate sequence step id' })
+    ids.add(step.id)
+  })
+})
+
+export const stageActionSchema = z.union([
+  stageAtomicActionSchema,
+  stageSequenceActionSchema,
 ])
 
 const stageDrawingSchema = z.strictObject({
@@ -433,6 +470,7 @@ export const sceneAppliedPayloadSchema = z.strictObject({
 export const stageActionTriggeredPayloadSchema = z.strictObject({
   objectId: nonEmptyIdSchema,
   actionId: nonEmptyIdSchema,
+  stepId: nonEmptyIdSchema.optional(),
   action: stageActionSchema,
   pointer: z.strictObject({
     x: z.number().finite(),

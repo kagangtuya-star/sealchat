@@ -14,6 +14,19 @@ type theaterStoredAction struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+type theaterStoredSequenceStep struct {
+	ID      string              `json:"id"`
+	SceneID *string             `json:"sceneId"`
+	Timing  json.RawMessage     `json:"timing"`
+	Action  theaterStoredAction `json:"action"`
+}
+
+type theaterStoredSequencePayload struct {
+	Version int                         `json:"version"`
+	Name    string                      `json:"name"`
+	Steps   []theaterStoredSequenceStep `json:"steps"`
+}
+
 func isTheaterActionTargetKind(kind string) bool {
 	return kind == "drawing" || kind == "text" || kind == "image" || kind == "button"
 }
@@ -33,6 +46,9 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	if !object.Visible || !object.Interactive || !isTheaterActionTargetKind(object.Kind) {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员交互", 403, nil)
 	}
+	if err := validateTheaterActions(json.RawMessage(object.ActionsJSON)); err != nil {
+		return nil, err
+	}
 	var actions []theaterStoredAction
 	if err := json.Unmarshal([]byte(object.ActionsJSON), &actions); err != nil {
 		return nil, theaterPayloadError("对象 actions 无效")
@@ -46,6 +62,28 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	}
 	if selected == nil {
 		return nil, newTheaterError(TheaterErrorNotFound, "StageAction 不存在", 404, nil)
+	}
+	if selected.Type == "action.sequence" {
+		stepID := strings.TrimSpace(command.StepID)
+		if stepID == "" {
+			return nil, theaterPayloadError("action.sequence 缺少 stepId")
+		}
+		var sequence theaterStoredSequencePayload
+		if err := decodeStrictJSON(selected.Payload, &sequence); err != nil || sequence.Version != 1 {
+			return nil, theaterPayloadError("action.sequence payload 无效")
+		}
+		selected = nil
+		for index := range sequence.Steps {
+			if sequence.Steps[index].ID == stepID {
+				selected = &sequence.Steps[index].Action
+				break
+			}
+		}
+		if selected == nil {
+			return nil, newTheaterError(TheaterErrorNotFound, "StageAction step 不存在", 404, nil)
+		}
+	} else if strings.TrimSpace(command.StepID) != "" {
+		return nil, theaterPayloadError("普通 StageAction 不能包含 stepId")
 	}
 	mutationID := strings.TrimSpace(command.ActionRequestID)
 	if mutationID == "" {

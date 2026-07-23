@@ -27,7 +27,7 @@ export interface StageDrawing {
   smoothing?: number
 }
 
-export type StageAction =
+export type StageAtomicAction =
   | {
     id: string
     type: 'chat.send'
@@ -59,9 +59,38 @@ export type StageAction =
     }
   }
 
+export type StageAtomicActionDescriptor = StageAtomicAction extends infer Action
+  ? Action extends StageAtomicAction ? Omit<Action, 'id'> : never
+  : never
+
+export type StageSequenceTiming =
+  | { mode: 'after' }
+  | { mode: 'delay', delayMs: number }
+  | { mode: 'sync' }
+
+export interface StageSequenceStep {
+  id: string
+  sceneId: string | null
+  timing: StageSequenceTiming
+  action: StageAtomicActionDescriptor
+}
+
+export interface StageSequenceAction {
+  id: string
+  type: 'action.sequence'
+  payload: {
+    version: 1
+    name: string
+    steps: StageSequenceStep[]
+  }
+}
+
+export type StageAction = StageAtomicAction | StageSequenceAction
+
 export interface StageActionTriggeredPayload {
   objectId: string
   actionId: string
+  stepId?: string
   action: StageAction
   pointer?: {
     x: number

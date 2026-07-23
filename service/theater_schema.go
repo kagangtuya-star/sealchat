@@ -641,38 +641,98 @@ func validateTheaterActions(raw json.RawMessage) error {
 			return theaterPayloadError("action.id 重复")
 		}
 		seen[action.ID] = struct{}{}
-		switch action.Type {
-		case TheaterMutationSceneApply:
-			var payload theaterSceneApplyPayload
-			if err := decodeStrictJSON(action.Payload, &payload); err != nil || strings.TrimSpace(payload.SceneID) == "" {
-				return theaterPayloadError("scene.apply action payload 无效")
+		if action.Type == "action.sequence" {
+			var sequence theaterStoredSequencePayload
+			if err := decodeStrictJSON(action.Payload, &sequence); err != nil || sequence.Version != 1 || len(sequence.Steps) > theaterMaxActions {
+				return theaterPayloadError("action.sequence payload 无效")
 			}
-		case TheaterMutationObjectToggle:
-			var payload theaterObjectTogglePayload
-			if len(action.Payload) > 0 {
-				if err := decodeStrictJSON(action.Payload, &payload); err != nil {
-					return theaterPayloadError("object.toggle action payload 无效")
+			if len(sequence.Name) > 128 {
+				return theaterPayloadError("action.sequence name 无效")
+			}
+			stepIDs := map[string]struct{}{}
+			for _, step := range sequence.Steps {
+				if err := validateTheaterID(step.ID, "action.sequence step.id"); err != nil {
+					return err
+				}
+				if _, ok := stepIDs[step.ID]; ok {
+					return theaterPayloadError("action.sequence step.id 重复")
+				}
+				stepIDs[step.ID] = struct{}{}
+				if step.SceneID != nil {
+					if err := validateTheaterID(strings.TrimSpace(*step.SceneID), "action.sequence sceneId"); err != nil {
+						return err
+					}
+				}
+				var timing struct {
+					Mode    string `json:"mode"`
+					DelayMS *int   `json:"delayMs,omitempty"`
+				}
+				if err := decodeStrictJSON(step.Timing, &timing); err != nil {
+					return theaterPayloadError("action.sequence timing 无效")
+				}
+				switch timing.Mode {
+				case "after", "sync":
+					if timing.DelayMS != nil {
+						return theaterPayloadError("action.sequence timing 无效")
+					}
+				case "delay":
+					if timing.DelayMS == nil || *timing.DelayMS < 0 || *timing.DelayMS > 60_000 {
+						return theaterPayloadError("action.sequence delayMs 无效")
+					}
+				default:
+					return theaterPayloadError("action.sequence timing.mode 无效")
+				}
+				if err := validateTheaterAtomicAction(step.Action); err != nil {
+					return err
+				}
+				if strings.TrimSpace(step.Action.ID) != "" {
+					return theaterPayloadError("action.sequence step.action 不能包含 id")
 				}
 			}
-		case "chat.send":
-			var payload theaterChatSendPayload
-			if err := decodeStrictJSON(action.Payload, &payload); err != nil {
-				return theaterPayloadError("chat.send action payload 无效")
-			}
-			if _, err := normalizeTheaterChatSendPayload(payload); err != nil {
-				return err
-			}
-		case "chat.insert":
-			var payload any
-			if err := json.Unmarshal(action.Payload, &payload); err != nil {
-				return theaterPayloadError("chat.insert action payload 无效")
-			}
-			if err := rejectUnsafeTheaterJSON(payload); err != nil {
-				return err
-			}
-		default:
-			return theaterPayloadError("action.type 无效")
+			continue
 		}
+		if err := validateTheaterAtomicAction(action); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTheaterAtomicAction(action theaterStoredAction) error {
+	switch action.Type {
+	case TheaterMutationSceneApply:
+		var payload theaterSceneApplyPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil || strings.TrimSpace(payload.SceneID) == "" {
+			return theaterPayloadError("scene.apply action payload 无效")
+		}
+	case TheaterMutationObjectToggle:
+		var payload theaterObjectTogglePayload
+		if len(action.Payload) > 0 {
+			if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+				return theaterPayloadError("object.toggle action payload 无效")
+			}
+		}
+		if strings.TrimSpace(payload.ObjectID) == "" {
+			return theaterPayloadError("object.toggle action payload 无效")
+		}
+	case "chat.send":
+		var payload theaterChatSendPayload
+		if err := decodeStrictJSON(action.Payload, &payload); err != nil {
+			return theaterPayloadError("chat.send action payload 无效")
+		}
+		if _, err := normalizeTheaterChatSendPayload(payload); err != nil {
+			return err
+		}
+	case "chat.insert":
+		var payload any
+		if err := json.Unmarshal(action.Payload, &payload); err != nil {
+			return theaterPayloadError("chat.insert action payload 无效")
+		}
+		if err := rejectUnsafeTheaterJSON(payload); err != nil {
+			return err
+		}
+	default:
+		return theaterPayloadError("action.type 无效")
 	}
 	return nil
 }

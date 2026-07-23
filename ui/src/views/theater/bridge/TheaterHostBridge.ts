@@ -1,5 +1,7 @@
 import type { TheaterStageStore } from '../stage/StageStore'
 import { isStageActionTarget } from '../shared/stage-types'
+import { sequenceStepAction } from '../shared/stage-actions'
+import { runStageActionSequence } from '../stage/theater-action-sequence-runtime'
 import { TheaterBridgeClient, TheaterBridgeRequestError } from './TheaterBridgeClient'
 import {
   THEATER_BRIDGE_VERSION,
@@ -72,6 +74,8 @@ const sameStageAction = (left: StageAction, right: StageAction) => {
       return right.type === 'scene.apply' && left.payload.sceneId === right.payload.sceneId
     case 'object.toggle':
       return right.type === 'object.toggle' && left.payload.objectId === right.payload.objectId
+    case 'action.sequence':
+      return right.type === 'action.sequence' && JSON.stringify(left.payload) === JSON.stringify(right.payload)
   }
 }
 
@@ -98,6 +102,8 @@ export class TheaterHostBridge {
   private chatOnline = false
   private started = false
   private pendingChatMessages: Array<{ message: TheaterBridgeMessage, expiresAt: number }> = []
+  private readonly runningSequenceActions = new Set<string>()
+  private sequenceGeneration = 0
   private characterSnapshot: ChatCharactersSnapshotPayload = {
     revision: 0,
     updatedAt: 0,
@@ -152,6 +158,8 @@ export class TheaterHostBridge {
   stop() {
     if (!this.started) return
     this.started = false
+    this.sequenceGeneration += 1
+    this.runningSequenceActions.clear()
     this.setChatOnline(false)
     this.pendingChatMessages = []
     this.routerUnsubscribers.forEach((unsubscribe) => unsubscribe())
@@ -370,6 +378,10 @@ export class TheaterHostBridge {
       return
     }
     try {
+      if (action.type === 'action.sequence') {
+        await this.executeStageActionSequence(payload.objectId, action)
+        return
+      }
       if (this.options.triggerStageAction) {
         const handled = await this.options.triggerStageAction(payload)
         if (handled === true) return
@@ -384,7 +396,39 @@ export class TheaterHostBridge {
     }
   }
 
+  private async executeStageActionSequence(objectId: string, action: Extract<StageAction, { type: 'action.sequence' }>) {
+    const key = `${objectId}:${action.id}`
+    if (this.runningSequenceActions.has(key)) return
+    const generation = this.sequenceGeneration
+    this.runningSequenceActions.add(key)
+    try {
+      await runStageActionSequence(action.payload.steps, async (step) => {
+        if (!this.started || generation !== this.sequenceGeneration) {
+          throw new TheaterBridgeRequestError('CANCELLED', 'Stage action sequence cancelled')
+        }
+        const atomicAction = sequenceStepAction(step)
+        if (this.options.triggerStageAction) {
+          const handled = await this.options.triggerStageAction({
+            objectId,
+            actionId: action.id,
+            stepId: step.id,
+            action: atomicAction,
+          })
+          if (handled === true) return
+          if (handled) {
+            await this.executeStageAction(handled)
+            return
+          }
+        }
+        await this.executeStageAction(atomicAction)
+      })
+    } finally {
+      this.runningSequenceActions.delete(key)
+    }
+  }
+
   private async executeStageAction(action: StageAction) {
+    if (action.type === 'action.sequence') return
     if (action.type === 'scene.apply') {
       if (!this.options.permissions.includes('stage.scene.switch')) {
         throw new TheaterBridgeRequestError('PERMISSION_DENIED', 'Missing permission: stage.scene.switch')

@@ -758,6 +758,7 @@ export class TheaterSyncClient {
       actionRequestId: mutationId('action'),
       objectId: payload.objectId,
       actionId: payload.actionId,
+      ...(payload.stepId ? { stepId: payload.stepId } : {}),
       inputChannelId: this.options.inputChannelId || this.options.channelId,
       expectedRevision: this.revision,
     })

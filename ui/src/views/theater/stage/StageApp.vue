@@ -76,7 +76,9 @@ import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar
 import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
+import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
 import type { TheaterStageStore } from './StageStore'
+import { createStageSequenceAction, isStageSequenceAction } from '../shared/stage-actions'
 import TheaterDialogueOverlay from '../dialogue/TheaterDialogueOverlay.vue'
 import type { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
@@ -1448,6 +1450,21 @@ const selectedObject = computed(() => {
   const object = id ? props.store.activeObjects.value[id] || null : null
   return isTheaterEffectObject(object) || !canEditObject(object) ? null : object
 })
+const sequenceEditorActionId = ref('')
+const sequenceEditorVisible = computed({
+  get: () => Boolean(sequenceEditorActionId.value && selectedObject.value),
+  set: (value) => { if (!value) sequenceEditorActionId.value = '' },
+})
+const editingSequenceAction = computed(() => {
+  const action = selectedObject.value?.actions.find((item) => item.id === sequenceEditorActionId.value)
+  return action && isStageSequenceAction(action) ? action : null
+})
+const openSequenceEditor = (actionId: string) => {
+  const object = selectedObject.value
+  if (!object || !canEditAllObjects.value) return
+  object.interactive = true
+  sequenceEditorActionId.value = actionId
+}
 const selectedEffectObject = computed(() => {
   const id = props.store.state.selectedObjectId
   const object = id ? props.store.activeObjects.value[id] || null : null
@@ -1813,6 +1830,13 @@ const editableCanvasSelectionTarget = (objectId: string) => {
 const addAction = (type: StageAction['type']) => {
   const object = selectedObject.value
   if (!object || !canEditAllObjects.value) return
+  object.interactive = true
+  if (type === 'action.sequence') {
+    const sequence = createStageSequenceAction(props.store.state.activeSceneId, object.id)
+    props.store.addObjectAction(object.id, sequence)
+    sequenceEditorActionId.value = sequence.id
+    return
+  }
   const action: StageAction = type === 'chat.send'
     ? { id: actionId(), type, payload: { content: '舞台消息' } }
     : type === 'chat.insert'
@@ -5188,12 +5212,14 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" @click="addAction('chat.insert')">插入</n-button>
                 <n-button size="tiny" @click="addAction('scene.apply')">场景</n-button>
                 <n-button size="tiny" @click="addAction('object.toggle')">显隐</n-button>
+                <n-button size="tiny" @click="addAction('action.sequence')">组合</n-button>
               </div>
               <div v-for="action in selectedObject.actions" :key="action.id" class="theater-action-row">
                 <small>{{ action.type }}</small>
                 <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
                 <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
-                <n-select v-else v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                <n-select v-else-if="action.type === 'object.toggle'" v-model:value="action.payload.objectId" :options="Object.values(store.activeObjects.value).map((item) => ({ label: item.name, value: item.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
+                <n-button v-else size="tiny" secondary @click="openSequenceEditor(action.id)">编辑组合 · {{ action.payload.steps.length }} 项</n-button>
                 <n-button text type="error" size="tiny" @click="removeObjectActionWithConfirm(selectedObject.id, action.id)">删除</n-button>
               </div>
             </template>
@@ -5558,6 +5584,14 @@ onBeforeUnmount(() => {
       @update:show="value => { imageEditorVisible = value }"
       @cancel="closeImageEditor"
       @confirm="saveEditedImage"
+    />
+    <TheaterActionSequenceEditor
+      v-model:show="sequenceEditorVisible"
+      :component-name="selectedObject?.name || ''"
+      :action="editingSequenceAction"
+      :scenes="store.scenes.value"
+      :persistent-objects="store.state.persistentObjects"
+      :active-scene-id="store.state.activeSceneId"
     />
   </section>
 </template>
