@@ -794,6 +794,7 @@ export class TheaterSyncClient {
         const selectedIds = [...this.options.store.selection.selectedIds]
         const primaryId = this.options.store.state.selectedObjectId
         const workspace = workspaceFromDocument(nextDocument)
+        if (this.hasLoaded) workspace.camera = this.options.store.getSnapshot().camera
         if (localChange) {
           const current = this.options.store.getSnapshot()
           workspace.camera = current.camera
