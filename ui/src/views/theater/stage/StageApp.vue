@@ -738,6 +738,11 @@ const canEditObject = (object: StageObject | null | undefined) => Boolean(object
   canEditAllObjects.value
   || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
 )
+const canDragObject = (object: StageObject | null | undefined) => Boolean(
+  object
+  && !object.locked
+  && canEditObject(object),
+)
 const canInteractObject = (object: StageObject | null | undefined) => Boolean(
   object
   && canTriggerActions.value
@@ -3744,9 +3749,13 @@ const createObjectNode = (object: StageObject) => {
   wrapper.setAttr('stageObjectId', object.id)
   rebuildObjectContent(wrapper, object)
   wrapper.on('pointerdown', (event) => {
-    if (viewToolActive.value) return
-    if (event.evt.button !== 0) return
     const current = getObject(object.id)
+    if (viewToolActive.value) {
+      // Editable unlocked objects remain movable in view mode instead of starting a canvas pan.
+      if (canDragObject(current)) event.cancelBubble = true
+      return
+    }
+    if (event.evt.button !== 0) return
     if (current?.type === 'group') return
     if (quickDeleteActive.value) {
       if (!canEditAllObjects.value) return
@@ -4040,16 +4049,16 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     visible: props.syncReady
       && !hasPendingSceneEntrance(object.id)
       && (object.visible || objectEntranceTweens.has(object.id)),
-    draggable: !object.locked
-      && !viewToolActive.value
+    draggable: canDragObject(object)
       && !activeCanvasTool.value
       && !quickDeleteActive.value
-      && canEditObject(object)
-      && groupedObjectDirectlySelected
+      && (viewToolActive.value || groupedObjectDirectlySelected)
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
     listening: object.type === 'group'
       ? true
-      : (!viewToolActive.value && Boolean(editableCanvasSelectionTarget(object.id))) || canInteractObject(object),
+      : (!viewToolActive.value && Boolean(editableCanvasSelectionTarget(object.id)))
+        || (viewToolActive.value && canDragObject(object))
+        || canInteractObject(object),
   })
   if (object.type === 'drawing') {
     return
