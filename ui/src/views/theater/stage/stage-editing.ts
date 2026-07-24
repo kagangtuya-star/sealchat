@@ -3,10 +3,13 @@ import type { StageAction, StageObject, StageObjectScope } from '../shared/stage
 
 export interface StageClipboardBundle {
   version: 2
+  copyMode: StageCopyMode
   sourceSceneId: string
   roots: StageClipboardRoot[]
   objects: StageClipboardObject[]
 }
+
+export type StageCopyMode = 'in-place' | 'offset'
 
 export interface StageClipboardRoot {
   id: string

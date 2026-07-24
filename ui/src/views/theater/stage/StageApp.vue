@@ -81,7 +81,9 @@ import {
   type TheaterStageMediaLocation,
 } from './stage-media'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
+import StageCopyToolbar from './StageCopyToolbar.vue'
 import StageSceneFixedToolbar from './StageSceneFixedToolbar.vue'
+import type { StageCopyMode } from './stage-editing'
 import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
 import StageTextOverlay from './StageTextOverlay.vue'
 import TheaterActionSequenceEditor from './TheaterActionSequenceEditor.vue'
@@ -733,6 +735,7 @@ const imageEditorTarget = ref<ImageTarget | null>(null)
 const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
 const activeCanvasTool = ref<StageCanvasTool | null>(null)
+const copyMode = ref<StageCopyMode>('offset')
 const quickDeleteActive = ref(false)
 const viewToolActive = ref(false)
 const drawingStyle = ref<StageDrawingStyle>({
@@ -1079,6 +1082,8 @@ const isEditableShortcutTarget = (target: EventTarget | null) => {
   return Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'))
 }
 
+const copySelectedObjects = () => props.store.copySelectedObjects(copyMode.value)
+
 const handleStageShortcut = (event: KeyboardEvent) => {
   if (
     event.isComposing
@@ -1124,7 +1129,7 @@ const handleStageShortcut = (event: KeyboardEvent) => {
       .filter((object) => object.visible && object.type !== 'group')
       .map((object) => object.id))
     handled = true
-  } else if (key === 'c') handled = props.store.copySelectedObjects()
+  } else if (key === 'c') handled = copySelectedObjects()
   else if (key === 'x' && canEditAllObjects.value) handled = props.store.cutSelectedObjects()
   else if (key === 'v' && canEditAllObjects.value) handled = Boolean(props.store.pasteObject())
   else if (key === 'z' && !event.shiftKey && canEditAllObjects.value) handled = props.store.undo()
@@ -5568,7 +5573,12 @@ onBeforeUnmount(() => {
       </n-button-group>
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
-        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCopy.value" aria-label="复制所选组件" @click="store.copySelectedObjects"><template #icon><n-icon><Copy /></n-icon></template></n-button></template>复制所选组件 Ctrl+C</n-tooltip>
+        <StageCopyToolbar
+          :mode="copyMode"
+          :disabled="!store.canCopy.value"
+          @copy="copySelectedObjects"
+          @select-mode="copyMode = $event"
+        />
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-badge

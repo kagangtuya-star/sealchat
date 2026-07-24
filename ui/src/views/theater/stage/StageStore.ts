@@ -27,6 +27,7 @@ import {
   createObjectHistoryEntry,
   instantiateClipboardBundle,
   type StageClipboardBundle,
+  type StageCopyMode,
   type StageObjectCollectionsSnapshot,
   type StageSelectionSnapshot,
 } from './stage-editing'
@@ -373,7 +374,7 @@ export interface TheaterStageStore {
   removeObjects: (objectIds: string[], recordHistory?: boolean) => number
   removeSelectedObjects: (recordHistory?: boolean) => number
   removeSelectedObject: (recordHistory?: boolean) => void
-  copySelectedObjects: () => boolean
+  copySelectedObjects: (mode?: StageCopyMode) => boolean
   cutSelectedObjects: () => boolean
   copySelectedObject: () => boolean
   cutSelectedObject: () => boolean
@@ -908,7 +909,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (id) removeObjects([id], recordHistory)
   }
 
-  const copySelectedObjects = () => {
+  const copySelectedObjects = (copyMode: StageCopyMode = 'offset') => {
     const roots = selectionGroup.value.rootIds
     if (!roots.length) return false
     const clipboardRoots: StageClipboardBundle['roots'] = []
@@ -924,6 +925,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!clipboardRoots.length) return false
     clipboard = {
       version: 2,
+      copyMode,
       sourceSceneId: state.activeSceneId,
       roots: clipboardRoots,
       objects: clipboardObjects,
@@ -958,11 +960,11 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
           && Boolean(collection[sourceRoot.parentId])
         rootParentIds.set(root.id, keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null)
       })
-      pasteCount += 1
+      const offset = bundle.copyMode === 'offset' ? ++pasteCount : 0
       const pasted = instantiateClipboardBundle(
         bundle,
         uid,
-        pasteCount,
+        offset,
         rootParentIds,
       )
       pasted.objects.forEach(({ scope, object }) => {
