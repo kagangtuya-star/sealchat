@@ -1273,7 +1273,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setSelectedObjectIds(value.selectedObjectId ? [value.selectedObjectId] : [], value.selectedObjectId)
   }
 
-  watch(() => state.liveState, saveLiveState, { deep: true })
+  watch(() => state.liveState, saveLiveState, { deep: true, flush: 'sync' })
   watch(activeObjects, () => {
     const valid = selection.selectedIds.filter((id) => Boolean(activeObjects.value[id]))
     if (valid.length !== selection.selectedIds.length) setSelectedObjectIds(valid)

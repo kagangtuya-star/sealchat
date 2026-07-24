@@ -25,7 +25,7 @@ func TheaterResourceUpload(c *fiber.Ctx) error {
 		return theaterErrorResponse(c, requestID, err)
 	}
 	defer file.Close()
-	result, err := service.CreateTheaterResourceUpload(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), service.TheaterResourceUploadInput{Reader: file, Size: fileHeader.Size, Filename: fileHeader.Filename, ClientResourceID: c.FormValue("clientResourceId"), MediaKind: c.FormValue("mediaKind"), ProcessingProfile: c.FormValue("processingProfile")})
+	result, err := service.CreateTheaterResourceUpload(c.Context(), user.ID, c.Params("worldId"), c.Params("channelId"), service.TheaterResourceUploadInput{Reader: file, Size: fileHeader.Size, Filename: fileHeader.Filename, ClientResourceID: c.FormValue("clientResourceId"), MediaKind: c.FormValue("mediaKind"), ProcessingProfile: c.FormValue("processingProfile"), TargetObjectID: c.FormValue("targetObjectId")})
 	if err != nil {
 		return theaterErrorResponse(c, requestID, err)
 	}

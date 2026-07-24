@@ -3,7 +3,7 @@ import { watch, type WatchStopHandle } from 'vue'
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
 import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
-import { isSafeStageImageUrl, normalizeStageSurfaceStyle } from '../shared/stage-types'
+import { isSafeStageImageUrl, normalizeStageEntranceConfig, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 import { stageActionSchema } from '../bridge/theater-bridge-protocol'
 
@@ -208,6 +208,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
 
 const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
   const content = asObject(value.content)
+  const metadata = asObject(value.metadata)
   const legacyScale = finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1
   const kind = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video', 'effect'].includes(value.kind)
     ? value.kind as StageObjectType
@@ -245,7 +246,9 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
     ownerUserId: typeof value.ownerUserId === 'string' ? value.ownerUserId : null,
     characterIdentityId: typeof value.characterIdentityId === 'string' ? value.characterIdentityId : null,
     actions: structuralGroup ? [] : Array.isArray(value.actions) ? value.actions as StageObject['actions'] : [],
-    metadata: asObject(value.metadata),
+    metadata: kind === 'image' || kind === 'text'
+      ? { ...metadata, entrance: normalizeStageEntranceConfig(metadata.entrance) }
+      : metadata,
   }
 }
 
@@ -273,7 +276,9 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   characterIdentityId: object.characterIdentityId || null,
   content: {
     ...asObject(object.content),
-    fill: object.fill,
+    ...(object.type === 'image' && !Object.prototype.hasOwnProperty.call(asObject(object.content), 'fill')
+      ? {}
+      : { fill: object.fill }),
     ...(object.text === undefined ? {} : { text: object.text }),
     ...(object.image === undefined ? {} : { image: object.image }),
     ...(object.drawing === undefined ? {} : { drawing: object.drawing }),
@@ -281,6 +286,16 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   actions: object.type === 'group' ? [] : clone(object.actions),
   metadata: clone(object.metadata),
 })
+
+const normalizeObjectSnapshots = (
+  objects: Record<string, TheaterObjectSnapshot> | undefined,
+  sceneId: string | null,
+): Record<string, TheaterObjectSnapshot> => Object.fromEntries(
+  Object.entries(objects || {}).flatMap(([id, object]) => {
+    const parsed = objectFromServer({ ...object, id })
+    return parsed ? [[id, objectForServer(parsed, sceneId)]] : []
+  }),
+)
 
 const normalizeDocument = (snapshot: TheaterSnapshotResponse['snapshot']): TheaterDocument => ({
   activeSceneId: typeof snapshot.activeSceneId === 'string' && snapshot.activeSceneId ? snapshot.activeSceneId : null,
@@ -290,9 +305,9 @@ const normalizeDocument = (snapshot: TheaterSnapshotResponse['snapshot']): Theat
     id,
     switchText: normalizeSwitchText(scene.switchText),
     state: serverStateFromStage(stageStateFromServer(scene.state, {})),
-    objects: scene.objects || {},
+    objects: normalizeObjectSnapshots(scene.objects, id),
   }])),
-  persistentObjects: snapshot.persistentObjects || {},
+  persistentObjects: normalizeObjectSnapshots(snapshot.persistentObjects, null),
 })
 
 const documentFromWorkspace = (workspace: StageWorkspaceState): TheaterDocument => ({
@@ -547,7 +562,9 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
 
 const delegatedObjectFields = new Set([
   'name', 'x', 'y', 'width', 'height', 'rotation', 'scaleX', 'scaleY', 'z', 'orderKey', 'content',
+  'locked', 'aspectRatioLocked', 'metadata',
 ])
+const delegatedLockedObjectFields = new Set(['locked', 'aspectRatioLocked', 'content', 'metadata'])
 
 const canApplyMutation = (mutation: TheaterMutation, permissions: string[], baseDocument: TheaterDocument) => {
   if (permissions.includes(mutation.permission)) return true
@@ -555,8 +572,8 @@ const canApplyMutation = (mutation: TheaterMutation, permissions: string[], base
   const objectId = typeof mutation.payload.objectId === 'string' ? mutation.payload.objectId : ''
   const object = allObjects(baseDocument)[objectId]
   const fields = asObject(mutation.payload.fields)
-  return Boolean(object?.editable && !object.locked)
-    && Object.keys(fields).every((field) => delegatedObjectFields.has(field))
+  if (!object?.editable || !Object.keys(fields).every((field) => delegatedObjectFields.has(field))) return false
+  return !object.locked || Object.keys(fields).every((field) => delegatedLockedObjectFields.has(field))
 }
 
 const errorMessage = (error: unknown) => {
@@ -866,10 +883,9 @@ export class TheaterSyncClient {
       try {
         const selectedIds = [...this.options.store.selection.selectedIds]
         const primaryId = this.options.store.state.selectedObjectId
+        const current = this.hasLoaded ? this.options.store.getSnapshot() : null
         const workspace = workspaceFromDocument(nextDocument)
-        if (this.hasLoaded) workspace.camera = this.options.store.getSnapshot().camera
-        if (localChange) {
-          const current = this.options.store.getSnapshot()
+        if (current) {
           workspace.camera = current.camera
           workspace.selectedObjectId = current.selectedObjectId && (
             workspace.persistentObjects[current.selectedObjectId]

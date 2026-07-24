@@ -37,6 +37,7 @@ type TheaterResourceUploadInput struct {
 	ClientResourceID  string
 	MediaKind         string
 	ProcessingProfile string
+	TargetObjectID    string
 }
 
 type TheaterResourceUploadResult struct {
@@ -129,7 +130,9 @@ func normalizeTheaterMediaConfig(config utils.TheaterMediaConfig) utils.TheaterM
 
 func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelID string, input TheaterResourceUploadInput) (*TheaterResourceUploadResult, error) {
 	if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionResourceUpload); err != nil {
-		return nil, err
+		if err := requireDelegatedTheaterImageUpload(actorID, worldID, channelID, input.TargetObjectID); err != nil {
+			return nil, err
+		}
 	}
 	if input.Reader == nil {
 		return nil, theaterPayloadError("file 必填")
@@ -248,6 +251,30 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 	auditTheaterResourceState(resource.ID, "pending", "")
 	public, err := theaterResourcePublicFromModel(model.GetDB(), resource)
 	return &TheaterResourceUploadResult{Resource: public}, err
+}
+
+func requireDelegatedTheaterImageUpload(actorID, worldID, channelID, objectID string) error {
+	if strings.TrimSpace(objectID) == "" {
+		return newTheaterError(TheaterErrorPermissionDenied, "成员上传图片需要目标组件", 403, map[string]any{"permission": TheaterPermissionResourceUpload})
+	}
+	if _, _, err := requireTheaterPermission(actorID, worldID, channelID, TheaterPermissionObjectEditDelegated); err != nil {
+		return err
+	}
+	room, err := model.TheaterRoomFindByScope(worldID, channelID)
+	if err != nil {
+		return err
+	}
+	if room == nil {
+		return newTheaterError(TheaterErrorPermissionDenied, "目标组件不存在", 403, nil)
+	}
+	object, err := loadTheaterObject(model.GetDB(), room.ID, objectID)
+	if err != nil {
+		return err
+	}
+	if object.Kind != "image" || !object.Editable {
+		return newTheaterError(TheaterErrorPermissionDenied, "成员不能上传该对象图片", 403, map[string]any{"permission": TheaterPermissionObjectEditDelegated})
+	}
+	return nil
 }
 
 func backfillTheaterResourceLoopCount(ctx context.Context, resource *model.TheaterResourceModel) error {

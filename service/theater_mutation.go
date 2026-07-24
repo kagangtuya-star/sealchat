@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -131,7 +132,7 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		}
 		current.Revision = nextRevision
 		current.UpdatedBy = actorID
-		if err := applyDecodedTheaterMutation(tx, &current, actorID, command.Type, decoded); err != nil {
+		if err := applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, &current, actorID, command.Type, decoded, delegatedObjectEdit); err != nil {
 			return err
 		}
 		if err := recalculateTheaterResourceReferences(tx, current.ID); err != nil {
@@ -223,7 +224,8 @@ func applyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 
 var delegatedTheaterObjectFields = map[string]bool{
 	"name": true, "x": true, "y": true, "width": true, "height": true,
-	"rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "content": true,
+	"rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true,
+	"locked": true, "aspectRatioLocked": true, "content": true, "metadata": true,
 }
 
 func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *theaterObjectUpdatePayload) error {
@@ -231,13 +233,71 @@ func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *t
 	if err != nil {
 		return err
 	}
-	if !object.Editable || object.Locked {
+	if !object.Editable {
 		return newTheaterError(TheaterErrorPermissionDenied, "对象未开放成员编辑", 403, map[string]any{"permission": TheaterPermissionObjectEditDelegated})
 	}
 	for field := range payload.Fields {
 		if !delegatedTheaterObjectFields[field] {
 			return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改对象管理字段", 403, map[string]any{"field": field})
 		}
+		if (field == "locked" || field == "aspectRatioLocked") && object.Kind != "image" {
+			return newTheaterError(TheaterErrorPermissionDenied, "成员只能修改图片组件锁定项", 403, map[string]any{"field": field})
+		}
+		if object.Locked && delegatedTheaterObjectTransformFields[field] {
+			return newTheaterError(TheaterErrorPermissionDenied, "对象位置已锁定", 403, map[string]any{"field": field})
+		}
+	}
+	if content, ok := payload.Fields["content"]; ok {
+		if object.Kind == "image" {
+			if err := validateDelegatedTheaterObjectJSONField(object, object.ContentJSON, content, "image", "content"); err != nil {
+				return err
+			}
+		}
+	}
+	if metadata, ok := payload.Fields["metadata"]; ok {
+		if err := validateDelegatedTheaterObjectJSONField(object, object.MetadataJSON, metadata, "entrance", "metadata"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var delegatedTheaterObjectTransformFields = map[string]bool{
+	"x": true, "y": true, "width": true, "height": true, "rotation": true,
+	"scale": true, "scaleX": true, "scaleY": true,
+}
+
+func validateDelegatedTheaterObjectJSONField(object *model.TheaterObjectModel, raw string, value any, allowedKey, field string) error {
+	if object.Kind != "image" {
+		return newTheaterError(TheaterErrorPermissionDenied, "成员只能修改图片组件"+field, 403, map[string]any{"field": field})
+	}
+	before := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &before); err != nil {
+			return err
+		}
+	}
+	after, ok := value.(map[string]any)
+	if !ok {
+		return theaterPayloadError("object " + field + " 无效")
+	}
+	_, beforeHasAllowed := before[allowedKey]
+	_, afterHasAllowed := after[allowedKey]
+	beforeRest := make(map[string]any, len(before))
+	for key, item := range before {
+		beforeRest[key] = item
+	}
+	afterRest := make(map[string]any, len(after))
+	for key, item := range after {
+		afterRest[key] = item
+	}
+	delete(beforeRest, allowedKey)
+	delete(afterRest, allowedKey)
+	if !reflect.DeepEqual(beforeRest, afterRest) || beforeHasAllowed && !afterHasAllowed {
+		return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改图片组件"+field+"的其他字段", 403, map[string]any{"field": field})
+	}
+	if !beforeHasAllowed && !afterHasAllowed {
+		return newTheaterError(TheaterErrorPermissionDenied, "成员未修改允许字段", 403, map[string]any{"field": field})
 	}
 	return nil
 }
@@ -292,6 +352,10 @@ func createTheaterAudit(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 }
 
 func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any) error {
+	return applyDecodedTheaterMutationWithDelegatedObjectEdit(tx, room, actorID, mutationType, decoded, false)
+}
+
+func applyDecodedTheaterMutationWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID, mutationType string, decoded any, delegatedObjectEdit bool) error {
 	switch payload := decoded.(type) {
 	case *theaterSceneCreatePayload:
 		return applyTheaterSceneCreate(tx, room, actorID, payload)
@@ -306,7 +370,7 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 	case *theaterObjectCreatePayload:
 		return applyTheaterObjectCreate(tx, room, actorID, payload)
 	case *theaterObjectUpdatePayload:
-		if err := applyTheaterObjectUpdate(tx, room, actorID, payload); err != nil {
+		if err := applyTheaterObjectUpdateWithDelegatedObjectEdit(tx, room, actorID, payload, delegatedObjectEdit); err != nil {
 			return err
 		}
 		if _, scopeChanged := payload.Fields["sceneId"]; scopeChanged {
@@ -319,7 +383,7 @@ func applyDecodedTheaterMutation(tx *gorm.DB, room *model.TheaterRoomModel, acto
 			if _, ok := payload.Updates[i].Fields["sceneId"]; ok {
 				scopeChanged = true
 			}
-			if err := applyTheaterObjectUpdate(tx, room, actorID, &payload.Updates[i]); err != nil {
+			if err := applyTheaterObjectUpdateWithDelegatedObjectEdit(tx, room, actorID, &payload.Updates[i], delegatedObjectEdit); err != nil {
 				return err
 			}
 		}
@@ -573,11 +637,15 @@ func loadTheaterObject(tx *gorm.DB, roomID, objectID string) (*model.TheaterObje
 }
 
 func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterObjectUpdatePayload) error {
+	return applyTheaterObjectUpdateWithDelegatedObjectEdit(tx, room, actorID, payload, false)
+}
+
+func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.TheaterRoomModel, actorID string, payload *theaterObjectUpdatePayload, delegatedObjectEdit bool) error {
 	object, err := loadTheaterObject(tx, room.ID, payload.ObjectID)
 	if err != nil {
 		return err
 	}
-	if object.Locked && !IsWorldAdmin(room.WorldID, actorID) && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) {
+	if object.Locked && !delegatedObjectEdit && !IsWorldAdmin(room.WorldID, actorID) && !pm.CanWithSystemRole(actorID, pm.PermModAdmin) {
 		return newTheaterError(TheaterErrorPermissionDenied, "对象已锁定", 403, nil)
 	}
 	if object.Kind == "group" {

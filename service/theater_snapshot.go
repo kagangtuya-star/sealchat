@@ -122,7 +122,7 @@ func projectTheaterObjectsForMember(objects map[string]TheaterObjectSnapshot) ma
 	}
 	include := map[string]bool{}
 	for objectID, object := range objects {
-		if effectivelyVisible(objectID) || (object.Editable && !object.Locked) {
+		if effectivelyVisible(objectID) || object.Editable {
 			include[objectID] = true
 		}
 	}
@@ -140,7 +140,7 @@ func projectTheaterObjectsForMember(objects map[string]TheaterObjectSnapshot) ma
 	}
 	for objectID := range include {
 		object := objects[objectID]
-		if !object.Editable || object.Locked {
+		if !object.Editable {
 			if object.Kind == "group" {
 				object.Name = "组件组"
 			} else {

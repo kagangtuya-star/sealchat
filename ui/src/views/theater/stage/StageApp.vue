@@ -745,7 +745,7 @@ const effectActionOptions = computed(() => Object.values(props.store.activeObjec
 const isDrawingTool = (tool: StageCanvasTool | null): tool is StageDrawingTool => Boolean(tool && tool !== 'eraser')
 const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
   canEditAllObjects.value
-  || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
+  || (canEditDelegatedObjects.value && object!.editable)
 )
 const canDragObject = (object: StageObject | null | undefined) => Boolean(
   object
@@ -1738,6 +1738,9 @@ const selectedEntranceConfig = computed(() => {
 })
 const selectedObjectSupportsEntrance = computed(() => isEntranceConfigurableObject(selectedObject.value))
 const selectedObjectCanPreviewEntrance = computed(() => supportsStageEntrance(selectedObject.value))
+const canEditSelectedTransform = computed(() => Boolean(selectedObject.value) && (
+  canEditAllObjects.value || !selectedObject.value!.locked
+))
 const entrancePresetOptions: Array<{ label: string, value: StageEntrancePreset }> = [
   { label: '无', value: 'none' },
   { label: '淡入', value: 'fade' },
@@ -4513,6 +4516,13 @@ const targetImageRef = (target: ImageTarget) => target.kind === 'scene'
 
 const targetImageUrl = (target: ImageTarget) => targetImageRef(target)?.url || ''
 
+const canUploadImageTarget = (target: ImageTarget) => {
+  if (canEditAllObjects.value && canUploadResources.value) return true
+  if (target.kind !== 'object') return false
+  const object = props.store.activeObjects.value[target.objectId]
+  return object?.type === 'image' && canEditObject(object)
+}
+
 const applyImageUrl = (
   target: ImageTarget,
   url: string,
@@ -4608,7 +4618,7 @@ const theaterMediaDimensions = (file: File): Promise<{ width: number, height: nu
 })
 
 const uploadImage = async (file: File, target: ImageTarget) => {
-  if (!canEditAllObjects.value || !canUploadResources.value) throw new Error('缺少小剧场资源编辑权限')
+  if (!canUploadImageTarget(target)) throw new Error('缺少小剧场图片编辑权限')
   if (!props.worldId || !props.channelId) throw new Error('缺少小剧场频道信息')
   resourceUploading.value = true
   resourceError.value = ''
@@ -4623,6 +4633,7 @@ const uploadImage = async (file: File, target: ImageTarget) => {
     formData.append('file', prepared)
     formData.append('mediaKind', 'image')
     formData.append('clientResourceId', crypto.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    if (!canUploadResources.value && target.kind === 'object') formData.append('targetObjectId', target.objectId)
     const response = await api.post<TheaterResourceResponse>(theaterResourcePath(), formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
@@ -4632,7 +4643,8 @@ const uploadImage = async (file: File, target: ImageTarget) => {
     if (resource?.status !== 'ready') resource = await waitForResource(resourceId)
     const variant = resource?.playbackVariant || 'original'
     const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
-    const url = theaterResourceContentPath(theaterMediaScope(), resourceId, variant)
+    const resourceBase = urlBase.startsWith('//') ? `${window.location.protocol}${urlBase}` : urlBase
+    const url = `${resourceBase.replace(/\/$/, '')}${theaterResourceContentPath(theaterMediaScope(), resourceId, variant)}`
     if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
@@ -4662,7 +4674,8 @@ const handleImageInput = async (event: Event) => {
 }
 
 const clearImage = (target: ImageTarget) => {
-  if (!canEditAllObjects.value) return
+  if (target.kind === 'object' && !canEditObject(props.store.activeObjects.value[target.objectId])) return
+  if (target.kind === 'scene' && !canEditAllObjects.value) return
   applyImageUrl(target, '')
   resourceError.value = ''
 }
@@ -5806,15 +5819,15 @@ onBeforeUnmount(() => {
               <label>内容</label>
               <n-input v-model:value="selectedObject.text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
             </template>
-            <template v-if="selectedObject.type === 'image' && canEditAllObjects">
+            <template v-if="selectedObject.type === 'image' && canEditObject(selectedObject)">
               <label>图片</label>
               <div class="theater-image-actions">
-                <n-button size="small" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'object', objectId: selectedObject.id })">
+                <n-button size="small" :disabled="!canUploadImageTarget({ kind: 'object', objectId: selectedObject.id })" :loading="resourceUploading" @click="requestImageUpload({ kind: 'object', objectId: selectedObject.id })">
                   <template #icon><n-icon><Photo /></n-icon></template>上传替换
                 </n-button>
                 <n-tooltip trigger="hover">
                   <template #trigger>
-                    <n-button size="small" :disabled="!canUploadResources || !selectedObject.image || selectedObject.image.animated || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
+                    <n-button size="small" :disabled="!canUploadImageTarget({ kind: 'object', objectId: selectedObject.id }) || !selectedObject.image || selectedObject.image.animated || resourceUploading" aria-label="编辑图片" @click="openImageEditor({ kind: 'object', objectId: selectedObject.id })">
                       <template #icon><n-icon><Edit /></n-icon></template>
                     </n-button>
                   </template>
@@ -5823,7 +5836,7 @@ onBeforeUnmount(() => {
                 <n-button size="small" quaternary type="error" :disabled="!selectedObject.image" @click="clearImage({ kind: 'object', objectId: selectedObject.id })">清除</n-button>
               </div>
             </template>
-            <template v-if="selectedObjectSupportsEntrance && canEditAllObjects">
+            <template v-if="selectedObject.type === 'image' && selectedObjectSupportsEntrance && canEditObject(selectedObject)">
               <label>显隐动画</label>
               <div class="theater-entrance-editor">
                 <n-select
@@ -5905,27 +5918,27 @@ onBeforeUnmount(() => {
               <n-input v-model:value="selectedObject.fill" />
             </template>
             <div class="theater-object-editor__transform">
-              <label>X</label><n-input-number v-model:value="selectedObject.transform.x" :precision="2" />
-              <label>Y</label><n-input-number v-model:value="selectedObject.transform.y" :precision="2" />
+              <label>X</label><n-input-number v-model:value="selectedObject.transform.x" :precision="2" :disabled="!canEditSelectedTransform" />
+              <label>Y</label><n-input-number v-model:value="selectedObject.transform.y" :precision="2" :disabled="!canEditSelectedTransform" />
               <template v-if="selectedObject.type === 'group'">
                 <label>旋转</label><n-input-number v-model:value="selectedObject.transform.rotation" :precision="2" />
                 <label>缩放 X</label><n-input-number :value="selectedObject.transform.scaleX" :min="0.01" :max="100" :step="0.1" :precision="2" @update:value="updateSelectedScale('scaleX', $event)" />
                 <label>缩放 Y</label><n-input-number :value="selectedObject.transform.scaleY" :min="0.01" :max="100" :step="0.1" :precision="2" @update:value="updateSelectedScale('scaleY', $event)" />
               </template>
               <template v-else>
-                <label>宽</label><n-input-number :value="selectedObject.transform.width" :min="0.5" :precision="2" @update:value="updateSelectedDimension('width', $event)" />
-                <label>高</label><n-input-number :value="selectedObject.transform.height" :min="0.5" :precision="2" @update:value="updateSelectedDimension('height', $event)" />
+                <label>宽</label><n-input-number :value="selectedObject.transform.width" :min="0.5" :precision="2" :disabled="!canEditSelectedTransform" @update:value="updateSelectedDimension('width', $event)" />
+                <label>高</label><n-input-number :value="selectedObject.transform.height" :min="0.5" :precision="2" :disabled="!canEditSelectedTransform" @update:value="updateSelectedDimension('height', $event)" />
                 <template v-if="selectedObject.image?.animated">
                   <label>循环次数</label><n-input-number :value="selectedObject.image.loopCount ?? null" :min="1" :max="65535" :step="1" :precision="0" clearable placeholder="无限循环" @update:value="updateSelectedLoopCount" />
                 </template>
               </template>
             </div>
-            <div v-if="canEditAllObjects" class="theater-object-editor__checks">
-              <n-checkbox v-model:checked="selectedObject.visible">显示</n-checkbox>
-              <n-checkbox v-if="selectedObject.type !== 'group'" v-model:checked="selectedObject.interactive">可交互</n-checkbox>
-              <n-checkbox v-if="selectedObject.type !== 'group'" v-model:checked="selectedObject.editable">可编辑</n-checkbox>
+            <div v-if="canEditAllObjects || (selectedObject.type === 'image' && canEditObject(selectedObject))" class="theater-object-editor__checks">
+              <n-checkbox v-if="canEditAllObjects" v-model:checked="selectedObject.visible">显示</n-checkbox>
+              <n-checkbox v-if="canEditAllObjects && selectedObject.type !== 'group'" v-model:checked="selectedObject.interactive">可交互</n-checkbox>
+              <n-checkbox v-if="canEditAllObjects && selectedObject.type !== 'group'" v-model:checked="selectedObject.editable">可编辑</n-checkbox>
               <n-checkbox
-                v-if="selectedObject.type === 'group'"
+                v-if="canEditAllObjects && selectedObject.type === 'group'"
                 :checked="store.isSceneFixedObject(selectedObject.id)"
                 disabled
               >跨场景</n-checkbox>
