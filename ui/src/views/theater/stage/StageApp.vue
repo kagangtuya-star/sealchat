@@ -139,6 +139,15 @@ const emit = defineEmits<{
   updateSceneDialogueEnabled: [enabled: boolean]
 }>()
 
+const stageActionDescriptions: Record<StageAction['type'], string> = {
+  'chat.send': '发送消息',
+  'chat.insert': '插入输入框',
+  'scene.apply': '切换场景',
+  'effect.play': '触发特效',
+  'object.toggle': '显隐切换',
+  'action.sequence': '组合动作',
+}
+
 const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
@@ -5948,7 +5957,7 @@ onBeforeUnmount(() => {
                 <n-button size="tiny" @click="addAction('action.sequence')">组合</n-button>
               </div>
               <div v-for="action in selectedObject.actions" :key="action.id" class="theater-action-row">
-                <small>{{ action.type }}</small>
+                <small>{{ action.type }} {{ stageActionDescriptions[action.type] }}</small>
                 <n-input v-if="action.type === 'chat.send' || action.type === 'chat.insert'" v-model:value="action.payload.content" size="tiny" maxlength="10000" />
                 <n-select v-else-if="action.type === 'scene.apply'" v-model:value="action.payload.sceneId" :options="store.scenes.value.map((scene) => ({ label: scene.name, value: scene.id }))" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
                 <n-select v-else-if="action.type === 'effect.play'" v-model:value="action.payload.effectId" :options="effectActionOptions" size="tiny" filterable :menu-props="theaterSecondaryMenuProps" />
