@@ -508,13 +508,14 @@ const formatOverlayEditorCurrentValue = (source: OverlayEditorSource) => {
 const overlayTemplatePreviewItems = computed(() => overlayTemplateEditorItems.value
   .map(item => {
     const current = resolveOverlayEditorSource(item.current);
-    const max = resolveOverlayEditorSource(item.max);
+    const hasMax = item.max.value.trim() !== '';
+    const max = hasMax ? resolveOverlayEditorSource(item.max) : null;
     const min = resolveOverlayEditorSource(item.min) ?? 0;
-    if (current === null || max === null || max <= min) return null;
-    const percent = Math.min(100, Math.max(0, ((current - min) / (max - min)) * 100));
+    if (current === null || (hasMax && (max === null || max <= min))) return null;
+    const percent = max === null ? 100 : Math.min(100, Math.max(0, ((current - min) / (max - min)) * 100));
     return { ...item, current, max, percent };
   })
-  .filter((item): item is OverlayEditorItem & { current: number; max: number; percent: number } => !!item));
+  .filter((item): item is OverlayEditorItem & { current: number; max: number | null; percent: number } => !!item));
 
 const serializeOverlayTemplateEditor = () => JSON.stringify({
   version: 1,
@@ -2296,7 +2297,7 @@ const openEditPanel = async (card: CharacterCard) => {
           <div v-for="item in overlayTemplatePreviewItems" :key="item.id" class="overlay-template-preview__stat">
             <div class="overlay-template-preview__stat-line" :style="{ color: item.textColor }">
               <span>{{ item.name }}</span>
-              <span>{{ item.current }}/{{ item.max }}</span>
+              <span>{{ item.max === null ? item.current : `${item.current}/${item.max}` }}</span>
             </div>
             <div class="overlay-template-preview__bar">
               <span :style="{ width: `${item.percent}%`, backgroundColor: item.barColor }" />

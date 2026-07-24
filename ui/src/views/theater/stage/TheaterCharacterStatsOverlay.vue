@@ -33,7 +33,7 @@ interface ResolvedStat {
   id: string;
   name: string;
   current: number;
-  max: number;
+  max: number | null;
   min: number;
   barColor: string;
   textColor: string;
@@ -234,7 +234,21 @@ const resolveStat = (template: TheaterCharacterStatTemplate, attrs: Record<strin
   const current = resolveNumericSource(template.current, attrs);
   const max = resolveNumericSource(template.max, attrs);
   const min = resolveNumericSource(template.min, attrs) ?? 0;
-  if (current === null || max === null || !Number.isFinite(min) || max <= min) return null;
+  if (current === null || !Number.isFinite(min) || (template.max !== undefined && (max === null || max <= min))) return null;
+  if (max === null) {
+    return {
+      id: template.id,
+      name: template.name,
+      current,
+      max: null,
+      min,
+      barColor: template.barColor || '#ffffff',
+      textColor: template.textColor || '#ffffff',
+      fillLeft: 0,
+      fillWidth: 100,
+      zeroLeft: 0,
+    };
+  }
   const range = max - min;
   const currentRatio = clamp((current - min) / range, 0, 1);
   const zeroRatio = clamp((0 - min) / range, 0, 1);
@@ -386,7 +400,7 @@ onBeforeUnmount(() => {
                   />
                   <span v-if="stat.min < 0 && stat.max > 0" class="theater-character-stat__zero" :style="{ left: `${stat.zeroLeft}%` }" />
                   <span class="theater-character-stat__name">{{ stat.name }}</span>
-                  <span class="theater-character-stat__value">{{ stat.current }}/{{ stat.max }}</span>
+                  <span class="theater-character-stat__value">{{ stat.max === null ? stat.current : `${stat.current}/${stat.max}` }}</span>
                 </div>
               </div>
             </div>
