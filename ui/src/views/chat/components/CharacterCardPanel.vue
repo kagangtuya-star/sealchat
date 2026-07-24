@@ -339,6 +339,31 @@ interface OverlayEditorItem {
   textColor: string;
 }
 
+const overlayTemplatePresets: Record<'shinobigami' | 'coc', TheaterCharacterOverlayTemplate> = {
+  shinobigami: {
+    version: 1,
+    preferredColumns: 2,
+    items: [
+      { id: 'stat_1784894687587_3', name: '器術', current: { path: '1-$忍神.damageSwitches.器术' }, min: { path: '0' }, max: { path: '1' }, barColor: '#e26b0a', textColor: '#f8fafc' },
+      { id: 'stat_1784905856482_1', name: '体術', current: { path: '1-$忍神.damageSwitches.体术' }, max: { path: '1' }, barColor: '#76933c', textColor: '#f8fafc' },
+      { id: 'stat_1784905861076_2', name: '忍術', current: { path: '1-$忍神.damageSwitches.忍术' }, max: { path: '1' }, barColor: '#c00000', textColor: '#f8fafc' },
+      { id: 'stat_1784905870297_3', name: '謀術', current: { path: '1-$忍神.damageSwitches.谋术' }, max: { path: '1' }, barColor: '#948a54', textColor: '#f8fafc' },
+      { id: 'stat_1784905871219_4', name: '戦術', current: { path: '1-$忍神.damageSwitches.战术' }, max: { path: '1' }, barColor: '#16365c', textColor: '#f8fafc' },
+      { id: 'stat_1784905872110_5', name: '妖術', current: { path: '1-$忍神.damageSwitches.妖术' }, max: { path: '1' }, barColor: '#60497a', textColor: '#f8fafc' },
+    ],
+  },
+  coc: {
+    version: 1,
+    preferredColumns: 2,
+    items: [
+      { id: 'stat_1784894687587_3', name: 'HP', current: { path: '生命值' }, min: { path: '0' }, max: { path: '生命值上限' }, barColor: '#B73F42', textColor: '#f8fafc' },
+      { id: 'stat_1784905872110_5', name: 'MP', current: { path: '魔法值' }, max: { path: '意志/5' }, barColor: '#436C85', textColor: '#f8fafc' },
+      { id: 'stat_1784912214206_2', name: 'SAN', current: { path: '理智' }, max: { path: '意志' }, barColor: '#DE9960', textColor: '#f8fafc' },
+      { id: 'stat_1784912230676_3', name: '幸运', current: { path: '幸运' }, barColor: '#82B29B', textColor: '#f8fafc' },
+    ],
+  },
+};
+
 const overlayTemplateEditorItems = ref<OverlayEditorItem[]>([]);
 const templateModeOptions = [
   { label: '继承频道', value: 'inherit' },
@@ -675,6 +700,46 @@ const saveOverlayTemplateEditor = async () => {
     snapshotTemplateSaving.value = false;
   }
 };
+
+const applyOverlayTemplatePreset = async (target: 'channel' | 'personal', preset: keyof typeof overlayTemplatePresets) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  const templateJson = JSON.stringify(overlayTemplatePresets[preset], null, 2);
+  snapshotTemplateSaving.value = true;
+  try {
+    if (target === 'channel') {
+      const normalizedBadgeTemplate = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
+      badgeTemplate.value = normalizedBadgeTemplate;
+      persistBadgeTemplate();
+      await snapshotStore.updateSettings(channelId, {
+        badgeTemplate: normalizedBadgeTemplate,
+        theaterOverlayTemplateJson: templateJson,
+      });
+      theaterOverlayTemplateJson.value = templateJson;
+      await snapshotStore.refreshChannel(channelId);
+      message.success('小剧场数据浮层模板已覆写');
+    } else {
+      personalOverlayTemplateMode.value = 'custom';
+      personalOverlayTemplateJson.value = templateJson;
+      await snapshotStore.updatePreference(channelId, {
+        badgeTemplateMode: personalBadgeTemplateMode.value,
+        badgeTemplate: personalBadgeTemplate.value,
+        theaterOverlayTemplateMode: 'custom',
+        theaterOverlayTemplateJson: templateJson,
+      });
+      await snapshotStore.syncLocalSnapshot(channelId, true);
+      message.success('个人小剧场浮层模板已覆写');
+    }
+  } catch (e: any) {
+    message.error(e?.response?.err || e?.message || '模板覆写失败');
+  } finally {
+    snapshotTemplateSaving.value = false;
+  }
+};
+
+const applyDefaultOverlayTemplatePreset = (preset: keyof typeof overlayTemplatePresets) => (
+  applyOverlayTemplatePreset(canSyncBadgeTemplate.value ? 'channel' : 'personal', preset)
+);
 
 const loadPanelData = async (channelId: string) => {
   await snapshotStore.initializeChannel(channelId);
@@ -1916,6 +1981,13 @@ const openEditPanel = async (card: CharacterCard) => {
               </n-button>
             </div>
             <div class="settings-row settings-row--template">
+              <p class="settings-title">启用默认模板</p>
+              <div class="overlay-template-presets">
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultOverlayTemplatePreset('shinobigami')">忍神</n-button>
+                <n-button size="tiny" :disabled="snapshotTemplateSaving" @click="applyDefaultOverlayTemplatePreset('coc')">COC</n-button>
+              </div>
+            </div>
+            <div class="settings-row settings-row--template">
               <p class="settings-title">个人小剧场浮层模板</p>
               <div class="settings-template-input settings-template-input--inline">
                 <n-select v-model:value="personalOverlayTemplateMode" size="small" :options="templateModeOptions" />
@@ -2678,6 +2750,11 @@ const openEditPanel = async (card: CharacterCard) => {
 
 .settings-template-input--inline {
   min-width: 250px;
+}
+
+.overlay-template-presets {
+  display: flex;
+  gap: 0.4rem;
 }
 
 .overlay-template-editor {
