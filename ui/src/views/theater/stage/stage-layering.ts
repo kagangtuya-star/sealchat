@@ -1,6 +1,7 @@
 import type Konva from 'konva'
 
 import type { StageObject } from '../shared/stage-types'
+import { compareStageLayersBottomToTop } from './stage-layer-order'
 
 export const syncStageObjectHierarchy = (
   objects: Record<string, StageObject>,
@@ -15,7 +16,7 @@ export const syncStageObjectHierarchy = (
     childrenByParent.set(parentId, children)
   })
   childrenByParent.forEach((children) => {
-    children.sort((left, right) => left.transform.z - right.transform.z || left.transform.order - right.transform.order)
+    children.sort(compareStageLayersBottomToTop)
   })
   const attachChildren = (parentId: string | null) => {
     const parent = parentId ? objectNodes.get(parentId) : objectRoot

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RichTextContent from '@/components/rich-text/RichTextContent.vue'
 import { WORLD_UNIT_PX, type StageEntrancePlayback, type StageObject } from '../shared/stage-types'
+import { compareStageLayersBottomToTop } from './stage-layer-order'
 
 defineOptions({ name: 'StageTextVisualObject' })
 
@@ -25,7 +26,7 @@ const children = computed(() => Object.values(props.objects)
     object.parentId === props.object.id
     && (object.visible || props.entrancePlaybacks[object.id]?.direction === 'exit')
   ))
-  .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order))
+  .sort(compareStageLayersBottomToTop))
 
 const entrancePlayback = computed(() => props.entrancePlaybacks[props.object.id])
 const entranceClass = computed(() => {

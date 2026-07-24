@@ -1,4 +1,5 @@
 import type { StageObject } from '../shared/stage-types'
+import { compareStageLayersTopToBottom } from './stage-layer-order'
 
 export interface StageLayerRow {
   object: StageObject
@@ -19,7 +20,7 @@ export const buildStageLayerRows = (
     childrenByParent.set(object.parentId, children)
   })
   childrenByParent.forEach((children) => {
-    children.sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)
+    children.sort(compareStageLayersTopToBottom)
   })
   const append = (parentId: string | null, depth: number) => {
     childrenByParent.get(parentId)?.forEach((object) => {

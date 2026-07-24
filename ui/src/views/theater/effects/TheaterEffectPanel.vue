@@ -20,6 +20,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Edit, Eye, EyeOff, Filte
 import type { StageObject } from '../shared/stage-types'
 import type { AudioAsset } from '@/types/audio'
 import type { TheaterStageStore } from '../stage/StageStore'
+import { compareStageLayersTopToBottom } from '../stage/stage-layer-order'
 import type { TheaterEffectRuntime } from './theater-effect-runtime'
 import type { TheaterPanelFolder, TheaterPanelItem } from './theater-panel-organizer'
 import { useTheaterPointerSort, type TheaterPointerDrag, type TheaterPointerTarget } from './useTheaterPointerSort'
@@ -61,7 +62,7 @@ const emit = defineEmits<{
 
 const effects = computed(() => Object.values(props.store.activeObjects.value)
   .filter(isTheaterEffectObject)
-  .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order))
+  .sort(compareStageLayersTopToBottom))
 const filteredEffects = computed(() => effects.value.filter(matchesEffectFilter))
 const checkedEffectIds = ref<string[]>([])
 const editingFolderId = ref('')

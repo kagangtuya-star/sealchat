@@ -36,6 +36,11 @@ import {
   stageSelectionRootIds,
   type StageSelectionGroup,
 } from './stage-selection'
+import {
+  compareStageLayersTopToBottom,
+  stageLayerRankBetween,
+  type StageLayerRank,
+} from './stage-layer-order'
 import { createDefaultTheaterEffectConfig, normalizeTheaterEffectConfig } from '../effects/theater-effect-types'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
@@ -722,7 +727,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     object.parentId = null
     const topObject = Object.values(activeObjects.value)
       .filter((item) => item.parentId === null && item.id !== object.id)
-      .sort((a, b) => b.transform.z - a.transform.z || b.transform.order - a.transform.order)[0]
+      .sort(compareStageLayersTopToBottom)[0]
     if (topObject) reorderObject(object.id, topObject.id, 'before')
   }
 
@@ -1077,21 +1082,19 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
 
     let siblings: StageObject[] = []
     let insertIndex = -1
-    let rank = 0
+    let rank: StageLayerRank | null = null
     let normalizeRanks = false
     if (target) {
       siblings = Object.values(activeObjects.value)
         .filter((item) => item.parentId === parentId && item.id !== objectId)
-        .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)
+        .sort(compareStageLayersTopToBottom)
       const targetIndex = siblings.findIndex((item) => item.id === target.id)
+      if (targetIndex < 0) return false
       insertIndex = targetIndex + (placement === 'after' ? 1 : 0)
       const above = siblings[insertIndex - 1]
       const below = siblings[insertIndex]
-      rank = above && below
-        ? (above.transform.z + below.transform.z) / 2
-        : above ? above.transform.z - 1 : below ? below.transform.z + 1 : 1
-      normalizeRanks = !Number.isFinite(rank)
-        || Boolean(above && below && (rank === above.transform.z || rank === below.transform.z))
+      rank = stageLayerRankBetween(above, below)
+      normalizeRanks = rank === null
     }
 
     const affectedIds = new Set<string>([objectId])
@@ -1120,8 +1123,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
           item.transform.order = normalizedRank
         })
       } else {
-        object.transform.z = rank
-        object.transform.order = rank
+        object.transform.z = rank!.z
+        object.transform.order = rank!.order
       }
     }
 
@@ -1136,7 +1139,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!object) return
     const siblings = Object.values(activeObjects.value)
       .filter((item) => item.parentId === object.parentId)
-      .sort((a, b) => b.transform.z - a.transform.z || b.transform.order - a.transform.order)
+      .sort(compareStageLayersTopToBottom)
     const index = siblings.findIndex((item) => item.id === objectId)
     const target = siblings[index - direction]
     if (!target) return
@@ -1149,15 +1152,22 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!object || !target || object.id === target.id || object.parentId !== target.parentId) return
     const siblings = Object.values(activeObjects.value)
       .filter((item) => item.parentId === object.parentId)
-      .sort((a, b) => b.transform.z - a.transform.z || b.transform.order - a.transform.order)
+      .sort(compareStageLayersTopToBottom)
       .filter((item) => item.id !== objectId)
     const targetIndex = siblings.findIndex((item) => item.id === targetId)
     if (targetIndex < 0) return
-    siblings.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, object)
+    const insertionIndex = targetIndex + (placement === 'after' ? 1 : 0)
+    const rank = stageLayerRankBetween(siblings[insertionIndex - 1], siblings[insertionIndex])
+    if (rank) {
+      object.transform.z = rank.z
+      object.transform.order = rank.order
+      return
+    }
+    siblings.splice(insertionIndex, 0, object)
     siblings.forEach((item, index) => {
-      const rank = siblings.length - index
-      item.transform.z = rank
-      item.transform.order = rank
+      const normalizedRank = siblings.length - index
+      item.transform.z = normalizedRank
+      item.transform.order = normalizedRank
     })
   })
 

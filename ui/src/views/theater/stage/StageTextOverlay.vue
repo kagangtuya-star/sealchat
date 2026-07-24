@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { CameraState, StageEntrancePlayback, StageObject } from '../shared/stage-types'
+import { compareStageLayersBottomToTop } from './stage-layer-order'
 import StageTextVisualObject from './StageTextVisualObject.vue'
 
 const props = defineProps<{
@@ -18,7 +19,7 @@ const roots = computed(() => Object.values(props.objects)
     object.parentId === null
     && (object.visible || props.entrancePlaybacks[object.id]?.direction === 'exit')
   ))
-  .sort((a, b) => a.transform.z - b.transform.z || a.transform.order - b.transform.order))
+  .sort(compareStageLayersBottomToTop))
 
 const cameraStyle = computed(() => ({
   transform: `translate(${props.viewportWidth / 2 + props.camera.x}px, ${props.viewportHeight / 2 + props.camera.y}px) scale(${props.camera.zoom})`,

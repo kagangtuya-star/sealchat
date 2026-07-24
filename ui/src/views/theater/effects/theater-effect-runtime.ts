@@ -2,6 +2,7 @@ import type { StageObject } from '../shared/stage-types'
 import type { TheaterDialogueMessage } from '../bridge/theater-dialogue-queue'
 import type { TheaterDialogueRuntime, TheaterDialogueRuntimeSnapshot } from '../dialogue/theater-dialogue-runtime'
 import { cloneStageData } from '../stage/stage-editing'
+import { compareStageLayersBottomToTop } from '../stage/stage-layer-order'
 import {
   isTheaterEffectObject,
   theaterEffectConfigFromObject,
@@ -149,7 +150,7 @@ export class TheaterEffectRuntime {
     const now = this.scheduler.now()
     this.options.getObjects()
       .filter((object) => isTheaterEffectObject(object) && object.visible)
-      .sort((left, right) => left.transform.z - right.transform.z || left.transform.order - right.transform.order)
+      .sort(compareStageLayersBottomToTop)
       .forEach((object) => {
         const config = theaterEffectConfigFromObject(object)
         const lastTriggeredAt = this.lastTriggeredAt.get(object.id)

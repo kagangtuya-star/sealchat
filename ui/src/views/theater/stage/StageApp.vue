@@ -72,6 +72,7 @@ import {
 } from '../shared/stage-types'
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
+import { compareStageLayersBottomToTop, compareStageLayersTopToBottom } from './stage-layer-order'
 import { buildStageLayerRows, stageLayerSelectionExpansionIds } from './stage-layer-tree'
 import { stageSelectionRootIds } from './stage-selection'
 import {
@@ -784,7 +785,7 @@ const referencedTheaterAudioAssetIds = computed(() => [...new Set(Object.values(
   .filter((assetId): assetId is string => Boolean(assetId)))])
 const effectActionOptions = computed(() => Object.values(props.store.activeObjects.value)
   .filter(isTheaterEffectObject)
-  .sort((left, right) => left.transform.z - right.transform.z || left.transform.order - right.transform.order)
+  .sort(compareStageLayersBottomToTop)
   .map((object) => ({ label: object.name, value: object.id })))
 const isDrawingTool = (tool: StageCanvasTool | null): tool is StageDrawingTool => Boolean(tool && tool !== 'eraser')
 const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
@@ -5024,7 +5025,7 @@ const applyLayerDrop = (objectId: string, dropTarget: typeof layerDropTarget.val
   if (dropTarget.placement === 'inside' && target.type === 'group') {
     const topChild = Object.values(props.store.activeObjects.value)
       .filter((object) => object.parentId === target.id && object.id !== objectId)
-      .sort((left, right) => right.transform.z - left.transform.z || right.transform.order - left.transform.order)[0]
+      .sort(compareStageLayersTopToBottom)[0]
     if (!moveLayerObjectPreservingTransform(objectId, target.id, topChild?.id || null, 'before')) {
       stageMessage.warning('组内不能混合场景固定组件与当前场景组件')
     }
