@@ -203,32 +203,39 @@ export const useCharacterCardTemplateStore = defineStore('characterCardTemplate'
   const ensureBuiltinTemplates = async (items: CharacterCardTemplate[]) => {
     if (builtinTemplatesEnsured.value) return;
     if (!userStore.info?.id) return;
-    const contentIndex = new Map<string, CharacterCardTemplate>();
-    items.forEach(item => {
-      const idxKey = `${normalizeSheetType(item.sheetType)}::${item.content.trim()}`;
-      if (!contentIndex.has(idxKey)) {
-        contentIndex.set(idxKey, item);
-      }
-    });
-
-    let missing = false;
+    let ensured = true;
     for (const builtin of BUILTIN_CHARACTER_CARD_TEMPLATES) {
-      const idxKey = `${normalizeSheetType(builtin.sheetType)}::${builtin.content}`;
-      if (contentIndex.has(idxKey)) {
+      const matchingTemplates = items.filter(item => (
+        !item.readonly
+        && item.name === builtin.name
+        && normalizeSheetType(item.sheetType) === normalizeSheetType(builtin.sheetType)
+      ));
+      if (matchingTemplates.length) {
+        for (const template of matchingTemplates) {
+          if (template.content.trim() === builtin.content) continue;
+          const resp = await api.put(`/api/v1/character-card-templates/${template.id}`, {
+            content: builtin.content,
+          });
+          const updated = resp.data?.item as CharacterCardTemplate | undefined;
+          if (!updated?.id) {
+            ensured = false;
+            continue;
+          }
+          templateMap.value = { ...templateMap.value, [updated.id]: updated };
+        }
         continue;
       }
-      missing = true;
       const created = await createTemplate({
         name: builtin.name,
         sheetType: builtin.sheetType,
         content: builtin.content,
       });
-      if (created?.id) {
-        contentIndex.set(idxKey, created);
+      if (!created?.id) {
+        ensured = false;
       }
     }
 
-    if (!missing || BUILTIN_CHARACTER_CARD_TEMPLATES.every(item => contentIndex.has(`${normalizeSheetType(item.sheetType)}::${item.content}`))) {
+    if (ensured) {
       builtinTemplatesEnsured.value = true;
     }
   };
