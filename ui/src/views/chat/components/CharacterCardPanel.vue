@@ -1736,7 +1736,7 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
   const channelId = resolvedChannelId.value;
   if (!channelId) {
     message.warning('请先选择频道');
-    return;
+    return false;
   }
 
   const shouldSwitchCard = !characterApiDisabled.value && currentActiveCardId.value !== card.id;
@@ -1764,9 +1764,11 @@ const openCharacterSheet = async (card: CharacterCard, mode: 'view' | 'edit' = '
       });
     }
     await openCharacterSheetWindow(card, mode, { restoreToCurrentBinding });
+    return true;
   } catch (e: any) {
     clearChannelSheetSwitchState(channelId);
     message.error(e?.response?.data?.error || e?.message || '切换人物卡失败');
+    return false;
   } finally {
     if (cardSwitchingId.value === card.id) {
       cardSwitchingId.value = '';
@@ -1781,6 +1783,20 @@ const openPreview = async (card: CharacterCard) => {
 const openEditPanel = async (card: CharacterCard) => {
   await openCharacterSheet(card, 'edit');
 };
+
+const openCardById = async (cardId: string, mode: 'view' | 'edit' = 'view') => {
+  const channelId = resolvedChannelId.value;
+  const normalizedCardId = String(cardId || '').trim();
+  if (!channelId || !normalizedCardId || characterApiDisabled.value) return false;
+
+  await loadPanelData(channelId);
+  const card = allChannelCards.value.find(item => item.id === normalizedCardId);
+  if (!card) return false;
+
+  return openCharacterSheet(card, mode);
+};
+
+defineExpose({ openCardById });
 </script>
 
 <template>

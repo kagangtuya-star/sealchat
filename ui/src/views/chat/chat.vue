@@ -766,6 +766,19 @@ const openCharacterCardForTheater = async (payload: { identityId: string }) => {
   if (!snapshot || !card) {
     return { ok: false as const, error: { code: 'CARD_UNAVAILABLE', message: '该角色没有可查看的人物卡快照' } };
   }
+  const isOwnCard = String(snapshot.userId || '') === String(user.info?.id || '');
+  const sourceCardId = String(snapshot.sourceCardId || '').trim();
+  if (isOwnCard) {
+    try {
+      const opened = sourceCardId
+        ? await characterCardPanelRef.value?.openCardById(sourceCardId, 'view')
+        : false;
+      if (opened) return { ok: true as const };
+    } catch (error) {
+      console.warn('[theater-bridge] failed to open editable character card', error);
+    }
+    message.warning('未能定位当前人物卡，已打开只读快照');
+  }
   const windowId = characterSheetStore.openSheet({
     id: `snapshot:${channelId}:${identityId}`,
     name: card.name,
@@ -1067,6 +1080,9 @@ const avatarReissueLoading = ref(false);
 const avatarReissueResultText = ref('');
 const emailNotificationDrawerVisible = ref(false);
 const characterCardPanelVisible = ref(false);
+const characterCardPanelRef = ref<{
+  openCardById: (cardId: string, mode?: 'view' | 'edit') => Promise<boolean>;
+} | null>(null);
 const characterCardAvailable = computed(() => {
   const channelId = chat.curChannel?.id || '';
   if (!channelId) return false;
@@ -18372,7 +18388,7 @@ onBeforeUnmount(() => {
     @cancel-relocate="handleCancelMultiSelectRelocate"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
-  <CharacterCardPanel v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
+  <CharacterCardPanel ref="characterCardPanelRef" v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
   <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
