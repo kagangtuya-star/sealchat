@@ -418,6 +418,7 @@ export interface TheaterStageStore {
   addObjectAction: (objectId: string, action: StageAction) => boolean
   removeObjectAction: (objectId: string, actionId: string) => boolean
   toggleObject: (objectId: string) => boolean
+  setEffectScope: (objectId: string, scope: StageObjectScope) => boolean
   isSceneFixedObject: (objectId: string) => boolean
   resetCamera: () => void
   getSnapshot: () => StageWorkspaceState
@@ -879,6 +880,23 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
   }
 
+  const setEffectScope = (objectId: string, scope: StageObjectScope) => runObjectEdit(
+    scope === 'scene-fixed' ? '设为跨场景特效' : '设为当前场景特效',
+    () => {
+      const object = activeObjects.value[objectId]
+      if (object?.type !== 'effect') return false
+      const currentScope: StageObjectScope = state.persistentObjects[objectId] ? 'scene-fixed' : 'scene'
+      if (currentScope === scope) return false
+
+      delete objectCollectionForScope(currentScope)[objectId]
+      object.parentId = null
+      objectCollectionForScope(scope)[objectId] = object
+      reconcileGroupScopes()
+      setSelectedObjectIds(selection.selectedIds, state.selectedObjectId)
+      return true
+    },
+  )
+
   const selectedRootIds = (objectIds: string[]) => stageSelectionRootIds(activeObjects.value, objectIds)
 
   const removeObjectsNow = (objectIds: string[]) => {
@@ -1339,6 +1357,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     addObjectAction,
     removeObjectAction,
     toggleObject,
+    setEffectScope,
     isSceneFixedObject,
     resetCamera,
     getSnapshot,

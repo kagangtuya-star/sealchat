@@ -15,7 +15,7 @@ import {
   NDropdown,
   useDialog,
 } from 'naive-ui'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Edit, Eye, EyeOff, Filter, Folder, GripVertical, Photo, Pin, Pinned, PlayerPlay, Search, Stars, Trash, Upload } from '@vicons/tabler'
 
 import type { StageObject } from '../shared/stage-types'
 import type { AudioAsset } from '@/types/audio'
@@ -243,6 +243,11 @@ const setEffectsVisible = (ids: string[], visible: boolean) => {
   props.store.commitObjectEdit()
 }
 
+const setEffectCrossScene = (object: StageObject, crossScene: boolean) => {
+  if (!props.canEdit || !isTheaterEffectObject(object)) return
+  props.store.setEffectScope(object.id, crossScene ? 'scene-fixed' : 'scene')
+}
+
 const folderVisibility = (folderId: string) => {
   const values = folderEffects(folderId).map((object) => object.visible)
   if (!values.length) return true
@@ -428,6 +433,7 @@ const handleAudioInput = (event: Event) => {
             <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
             <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
             <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="theaterEffectConfigFromObject(object).kind === 'builtin' ? Stars : Photo" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
+            <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
             <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
           </div>
         </div>
@@ -450,6 +456,7 @@ const handleAudioInput = (event: Event) => {
           <button class="theater-pointer-sort-handle" type="button" aria-label="拖拽特效排序" @pointerdown="beginEffectSort($event, object.id)" @pointermove="pointerSort.move" @pointerup="pointerSort.end" @pointercancel="pointerSort.cancel"><n-icon><GripVertical /></n-icon></button>
           <n-checkbox :checked="checkedEffectIds.includes(object.id)" @update:checked="$event ? checkedEffectIds.push(object.id) : checkedEffectIds = checkedEffectIds.filter(id => id !== object.id)" />
           <button type="button" class="theater-effect-row__select" @click="selectEffect(object)"><n-icon :component="theaterEffectConfigFromObject(object).kind === 'builtin' ? Stars : Photo" /><span>{{ object.name }}</span><small>{{ theaterEffectConfigFromObject(object).keywords.length }}</small></button>
+          <button v-if="canEdit" type="button" class="theater-effect-row__icon" :aria-label="store.isSceneFixedObject(object.id) ? '改为仅当前场景生效' : '设为跨场景生效'" :title="store.isSceneFixedObject(object.id) ? '跨场景：已启用' : '跨场景：未启用'" @click="setEffectCrossScene(object, !store.isSceneFixedObject(object.id))"><n-icon :component="store.isSceneFixedObject(object.id) ? Pinned : Pin" /></button>
           <button v-if="canEdit" type="button" class="theater-effect-row__icon" @click="store.setObjectFlag(object.id, 'visible', !object.visible)"><n-icon :component="object.visible ? Eye : EyeOff" /></button>
         </div>
       </section>
@@ -576,6 +583,9 @@ const handleAudioInput = (event: Event) => {
         <n-input-number :value="config.builtin.mediaTransform.rotation" :min="-360" :max="360" @update:value="value => value !== null && editConfig('修改特效媒体', next => { next.builtin.mediaTransform.rotation = value })" />
         <n-checkbox :checked="config.builtin.mediaTransform.mirror" @update:checked="value => editConfig('修改特效媒体', next => { next.builtin.mediaTransform.mirror = value })">镜像媒体</n-checkbox>
       </template>
+
+      <label>生效范围</label>
+      <n-checkbox :checked="store.isSceneFixedObject(selectedEffect.id)" :disabled="!canEdit" @update:checked="value => setEffectCrossScene(selectedEffect!, value)">跨场景</n-checkbox>
 
       <label>画布控制</label>
       <n-button-group size="small">

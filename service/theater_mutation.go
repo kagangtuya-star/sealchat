@@ -660,14 +660,19 @@ func applyTheaterObjectUpdateWithDelegatedObjectEdit(tx *gorm.DB, room *model.Th
 		}
 	}
 	desiredSceneID := object.SceneID
-	if value, ok := payload.Fields["sceneId"]; ok {
-		if object.Kind != "group" {
-			return theaterPayloadError("只有组可以自适应跨场景属性")
+	if value, scopeChanged := payload.Fields["sceneId"]; scopeChanged {
+		if object.Kind != "group" && object.Kind != "effect" {
+			return theaterPayloadError("只有组或特效可以调整跨场景属性")
 		}
 		desiredSceneID = strings.TrimSpace(fmt.Sprint(value))
 		if desiredSceneID != "" {
 			if _, err := loadTheaterScene(tx, room.ID, desiredSceneID); err != nil {
 				return err
+			}
+		}
+		if object.Kind == "effect" && object.ParentID != "" {
+			if _, parentUpdated := payload.Fields["parentId"]; !parentUpdated {
+				return theaterPayloadError("特效调整跨场景属性时必须同时更新 parentId")
 			}
 		}
 	}
